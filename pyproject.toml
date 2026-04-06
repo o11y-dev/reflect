@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "o11y-reflect"
+version = "0.3.0"
+description = "See why your AI coding agents fail, stall, or burn budget — local-first telemetry for Claude, Copilot, Gemini, and Cursor"
+requires-python = ">=3.9"
+readme = "README.md"
+license = "Apache-2.0"
+keywords = ["observability", "opentelemetry", "ai-agents", "claude", "copilot", "gemini", "telemetry"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: System :: Monitoring",
+]
+dependencies = [
+    "click>=8.0",
+    "rich>=13.0",
+    "orjson>=3.0",
+    "fastapi>=0.100",
+    "uvicorn>=0.20",
+]
+
+[project.urls]
+Homepage = "https://o11y.dev"
+Repository = "https://github.com/o11y-dev/reflect"
+Documentation = "https://github.com/o11y-dev/reflect#readme"
+Issues = "https://github.com/o11y-dev/reflect/issues"
+Changelog = "https://github.com/o11y-dev/reflect/blob/main/CHANGELOG.md"
+
+[project.scripts]
+reflect = "reflect.core:main"
+
+[project.optional-dependencies]
+test = ["pytest>=7.0", "pytest-cov>=4.0"]
+e2e = ["playwright>=1.40"]
+
+[tool.pytest.ini_options]
+addopts = "--cov=reflect --cov-report=term-missing --cov-fail-under=65"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+"src/reflect/core.py" = ["E402"]  # re-exports placed after conditional setup block
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+reflect = ["data/demo-traces.json", "data/index.html", "data/skills/reflect/SKILL.md"]
