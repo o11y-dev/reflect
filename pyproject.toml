@@ -51,6 +51,7 @@ testpaths = ["tests"]
 [tool.ruff]
 target-version = "py39"
 line-length = 100
+exclude = ["serve.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
