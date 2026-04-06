@@ -60,6 +60,13 @@ ignore = ["E501"]
 "tests/*" = ["S101"]
 "src/reflect/core.py" = ["E402"]  # re-exports placed after conditional setup block
 
+[tool.semantic_release]
+version_toml = ["pyproject.toml:project.version"]
+version_variables = []
+major_on_zero = false
+allow_zero_version = true
+tag_format = "v{version}"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
