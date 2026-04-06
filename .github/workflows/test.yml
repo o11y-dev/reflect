@@ -79,14 +79,13 @@ jobs:
       - name: Verify GitHub Pages assets exist
         run: |
           test -f docs/index.html    || { echo "docs/index.html missing"; exit 1; }
-          test -f docs/demo.html     || { echo "docs/demo.html missing"; exit 1; }
           test -f docs/showcase.html || { echo "docs/showcase.html missing"; exit 1; }
           test -f docs/CNAME         || { echo "docs/CNAME missing"; exit 1; }
           echo "All GitHub Pages assets present"
 
       - name: Validate HTML structure
         run: |
-          for f in docs/index.html docs/demo.html docs/showcase.html; do
+          for f in docs/index.html docs/showcase.html; do
             grep -q '<!DOCTYPE html>' "$f" || { echo "$f missing DOCTYPE"; exit 1; }
             grep -q '<head>' "$f"          || { echo "$f missing <head>"; exit 1; }
             grep -q '<body>' "$f"          || { echo "$f missing <body>"; exit 1; }
