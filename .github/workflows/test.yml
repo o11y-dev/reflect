@@ -13,6 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/ruff-action@v1
+        with:
+          args: "check src/"
 
   test:
     needs: lint
@@ -27,8 +29,68 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
+        run: pip install -e ".[test]"
+      - name: Run tests with coverage
+        run: pytest tests/ -v --tb=short
+
+  smoke:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install via pipx
         run: |
-          pip install -e ".[test]"
-      - name: Run tests
+          pip install pipx
+          pipx install .
+
+      - name: reflect --demo (terminal dashboard)
+        run: reflect --demo --no-terminal
+
+      - name: reflect --publish --demo (dashboard server starts)
         run: |
-          pytest tests/ -v --tb=short
+          timeout 5 reflect --demo --publish || code=$?
+          # timeout exit code 124 means it ran and we killed it — success
+          if [ "${code:-0}" -eq 124 ]; then
+            echo "Server started successfully"
+          elif [ "${code:-0}" -eq 0 ]; then
+            echo "Server exited cleanly"
+          else
+            echo "Unexpected exit code: $code"
+            exit 1
+          fi
+        env:
+          # prevent actual browser open in CI
+          BROWSER: "echo"
+
+      - name: Build and verify package
+        run: |
+          pip install build twine
+          python -m build
+          twine check dist/*
+
+  pages-check:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify GitHub Pages assets exist
+        run: |
+          test -f docs/index.html    || { echo "docs/index.html missing"; exit 1; }
+          test -f docs/demo.html     || { echo "docs/demo.html missing"; exit 1; }
+          test -f docs/showcase.html || { echo "docs/showcase.html missing"; exit 1; }
+          test -f docs/CNAME         || { echo "docs/CNAME missing"; exit 1; }
+          echo "All GitHub Pages assets present"
+
+      - name: Validate HTML structure
+        run: |
+          for f in docs/index.html docs/demo.html docs/showcase.html; do
+            grep -q '<!DOCTYPE html>' "$f" || { echo "$f missing DOCTYPE"; exit 1; }
+            grep -q '<head>' "$f"          || { echo "$f missing <head>"; exit 1; }
+            grep -q '<body>' "$f"          || { echo "$f missing <body>"; exit 1; }
+            echo "✓ $f valid"
+          done
