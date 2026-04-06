@@ -43,5 +43,5 @@ reports/
 # Agent config (uncomment to track)
 # AGENTS.md
 # CLAUDE.md
-skills/
+/skills/
 skills-lock.json
