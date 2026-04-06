@@ -35,7 +35,9 @@ htmlcov/
 
 # State / local data
 state/
-reports/
+/reports/
+docs/reports/*
+!docs/reports/showcase.json
 
 # Environment
 .env

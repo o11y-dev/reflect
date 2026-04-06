@@ -2057,7 +2057,17 @@ function renderDashboardError(kind, message){
     return;
   }
   if (kind === 'report-fetch-failed') {
-    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;color:#ff453a;font-family:monospace">Error loading report artifact. Check the ?report= path and same-origin hosting.</div>';
+    document.body.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;background:#000;color:#edf3ff;font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;text-align:center;padding:40px">
+      <div style="font-size:48px;font-weight:800;letter-spacing:-.04em;margin-bottom:16px">reflect</div>
+      <div style="color:rgba(255,255,255,.55);font-size:18px;max-width:480px;line-height:1.65;margin-bottom:32px">Local-first telemetry for AI coding agents.<br>See why your agents fail, stall, or burn budget.</div>
+      <pre style="background:#07101b;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:20px 28px;font-size:15px;color:#72f4d1;text-align:left;margin-bottom:32px">pipx install o11y-reflect
+reflect setup
+reflect --publish</pre>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center">
+        <a href="https://github.com/o11y-dev/reflect" style="padding:12px 20px;background:linear-gradient(135deg,#72f4d1,#7ab6ff);color:#04111d;border-radius:12px;text-decoration:none;font-weight:700">View on GitHub</a>
+        <a href="showcase.html" style="padding:12px 20px;border:1px solid rgba(255,255,255,.12);color:#edf3ff;border-radius:12px;text-decoration:none;font-weight:700">See a demo</a>
+      </div>
+    </div>`;
     return;
   }
   document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;color:#ff453a;font-family:monospace">Error decoding data: ' + message + '</div>';
@@ -2065,7 +2075,7 @@ function renderDashboardError(kind, message){
 
 async function loadDashboardData(){
   const params = new URLSearchParams(window.location.search);
-  const report = params.get('report') || '/api/data';
+  const report = params.get('report') || 'reports/showcase.json';
   try {
     if (report) {
       const response = await fetch(report, {headers: {Accept: 'application/json'}});
