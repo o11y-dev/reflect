@@ -14,7 +14,7 @@ def _compute_tool_transitions(session_tool_seq: dict[str, list]) -> list[dict]:
     for _sid, seq in session_tool_seq.items():
         # Sort by timestamp and extract consecutive pairs
         ordered = [t for _, t, _ in sorted(seq, key=lambda x: x[0])]
-        for a, b in zip(ordered, ordered[1:]):
+        for a, b in zip(ordered, ordered[1:], strict=False):
             if a != b:
                 transitions[(a, b)] += 1
     return [

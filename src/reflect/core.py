@@ -42,7 +42,7 @@ import platform
 import re
 import shutil
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from importlib import metadata as importlib_metadata
 from pathlib import Path
 from urllib import error as urllib_error
@@ -432,7 +432,7 @@ def _release_update_status(*, allow_remote: bool) -> dict:
     if checked_at:
         try:
             checked_dt = datetime.fromisoformat(checked_at.replace("Z", "+00:00"))
-            cache_fresh = (datetime.now(timezone.utc) - checked_dt).total_seconds() < _UPDATE_CACHE_TTL_SECONDS
+            cache_fresh = (datetime.now(UTC) - checked_dt).total_seconds() < _UPDATE_CACHE_TTL_SECONDS
         except ValueError:
             checked_at = None
 
@@ -440,7 +440,7 @@ def _release_update_status(*, allow_remote: bool) -> dict:
         fetched_version = _fetch_latest_reflect_version()
         if fetched_version:
             latest_version = fetched_version
-            checked_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            checked_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
             source = "remote"
             _save_update_cache({
                 "latest_version": latest_version,
@@ -800,7 +800,7 @@ def main(
     since: datetime | None = None
     if time_range != "all":
         from datetime import timedelta
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         deltas = {"day": timedelta(days=1), "week": timedelta(days=7), "month": timedelta(days=30)}
         since = now - deltas[time_range]
 

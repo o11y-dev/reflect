@@ -4,7 +4,7 @@ import json
 import os
 import re
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from reflect.graph import (
@@ -103,7 +103,7 @@ def _parse_session_created_at(session: dict) -> float:
     if not isinstance(created, str) or not created:
         return 0.0
     try:
-        return datetime.strptime(created, "%Y-%m-%d %H:%M UTC").replace(tzinfo=timezone.utc).timestamp() * 1000
+        return datetime.strptime(created, "%Y-%m-%d %H:%M UTC").replace(tzinfo=UTC).timestamp() * 1000
     except ValueError:
         return 0.0
 
@@ -119,7 +119,7 @@ def _filter_dashboard_sessions(
 ) -> list[dict]:
     search_text = q.strip().lower()
     selected_agents = {agent for agent in (agents or set()) if agent}
-    now_ms = datetime.now(timezone.utc).timestamp() * 1000
+    now_ms = datetime.now(UTC).timestamp() * 1000
     range_ms = (
         24 * 60 * 60 * 1000 if range_name == "24h"
         else 7 * 24 * 60 * 60 * 1000 if range_name == "7d"
@@ -310,7 +310,7 @@ def _build_filtered_stats(stats: TelemetryStats, sessions: list[dict]) -> Teleme
             event_type = event.get("type")
             ts_ms = int(event.get("ts") or 0)
             if ts_ms > 0:
-                dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+                dt = datetime.fromtimestamp(ts_ms / 1000, tz=UTC)
                 day_key = dt.strftime("%Y-%m-%d")
                 activity_by_day[day_key] += 1
                 activity_by_hour[dt.hour] += 1
@@ -347,7 +347,7 @@ def _build_filtered_stats(stats: TelemetryStats, sessions: list[dict]) -> Teleme
         if not model_day:
             created_ms = _parse_session_created_at(session)
             if created_ms:
-                model_day = datetime.fromtimestamp(created_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+                model_day = datetime.fromtimestamp(created_ms / 1000, tz=UTC).strftime("%Y-%m-%d")
         if model_day:
             for model_name, count in model_counter.items():
                 model_by_day.setdefault(model_day, Counter())[model_name] += int(count)
@@ -375,8 +375,8 @@ def _build_filtered_stats(stats: TelemetryStats, sessions: list[dict]) -> Teleme
             last_event_candidates.append(max(int(span.get("t") or 0) for span in spans))
     last_ns = max(last_event_candidates, default=first_ns)
 
-    first_event_ts = datetime.fromtimestamp(first_ns / 1e9, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if first_ns else ""
-    last_event_ts = datetime.fromtimestamp(last_ns / 1e9, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if last_ns else ""
+    first_event_ts = datetime.fromtimestamp(first_ns / 1e9, tz=UTC).strftime("%Y-%m-%d %H:%M UTC") if first_ns else ""
+    last_event_ts = datetime.fromtimestamp(last_ns / 1e9, tz=UTC).strftime("%Y-%m-%d %H:%M UTC") if last_ns else ""
 
     return TelemetryStats(
         session_files=len(selected_ids),
@@ -814,7 +814,7 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
         first_ts_ns = stats.session_first_ts.get(sid)
         created = ""
         if first_ts_ns:
-            dt = datetime.fromtimestamp(first_ts_ns / 1e9, tz=timezone.utc)
+            dt = datetime.fromtimestamp(first_ts_ns / 1e9, tz=UTC)
             created = dt.strftime("%Y-%m-%d %H:%M UTC")
         model_counter = stats.session_models.get(sid, Counter())
         primary_model = model_counter.most_common(1)[0][0] if model_counter else ""

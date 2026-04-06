@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from reflect.graph import _compute_tool_transitions, _compute_weekly_trends
 from reflect.insights import (
@@ -46,7 +46,7 @@ def _render_terminal(  # noqa: C901
     range_labels = {"day": "Last 24h", "week": "Last 7 days", "month": "Last 30 days", "all": "All time"}
     range_label = range_labels.get(time_range, "Last 7 days")
     if since:
-        range_label += f"  ({since.strftime('%b %d')} — {datetime.now(tz=timezone.utc).strftime('%b %d')})"
+        range_label += f"  ({since.strftime('%b %d')} — {datetime.now(tz=UTC).strftime('%b %d')})"
     elif stats.first_event_ts and stats.last_event_ts:
         range_label = f"All time  ({stats.first_event_ts[:10]} → {stats.last_event_ts[:10]})"
     console.print(Rule(f"[bold cyan]AI Usage Dashboard[/]  [dim]{range_label}[/]"))
@@ -527,7 +527,7 @@ def _render_terminal(  # noqa: C901
         first_ts = stats.session_first_ts.get(sid)
         created = ""
         if first_ts:
-            dt = datetime.fromtimestamp(first_ts / 1e9, tz=timezone.utc)
+            dt = datetime.fromtimestamp(first_ts / 1e9, tz=UTC)
             created = dt.strftime("%Y-%m-%d %H:%M")
         model_ctr = stats.session_models.get(sid, Counter())
         primary = _fmt_model(model_ctr.most_common(1)[0][0]) if model_ctr else "—"

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -111,7 +111,7 @@ def _process_span(
         ts_int = int(ts_ns)
         timestamps_ns.append(ts_int)
         # Activity by day and hour
-        dt = datetime.fromtimestamp(ts_int / 1e9, tz=timezone.utc)
+        dt = datetime.fromtimestamp(ts_int / 1e9, tz=UTC)
         day_key = dt.strftime("%Y-%m-%d")
         activity_by_day[day_key] += 1
         activity_by_hour[dt.hour] += 1
@@ -523,11 +523,11 @@ def analyze_telemetry(
     if timestamps_ns:
         min_ts = min(timestamps_ns)
         max_ts = max(timestamps_ns)
-        min_dt = datetime.fromtimestamp(min_ts / 1e9, tz=timezone.utc)
-        max_dt = datetime.fromtimestamp(max_ts / 1e9, tz=timezone.utc)
+        min_dt = datetime.fromtimestamp(min_ts / 1e9, tz=UTC)
+        max_dt = datetime.fromtimestamp(max_ts / 1e9, tz=UTC)
         first_ts = min_dt.strftime("%Y-%m-%d %H:%M UTC")
         last_ts = max_dt.strftime("%Y-%m-%d %H:%M UTC")
-        unique_days = {datetime.fromtimestamp(t / 1e9, tz=timezone.utc).date() for t in timestamps_ns}
+        unique_days = {datetime.fromtimestamp(t / 1e9, tz=UTC).date() for t in timestamps_ns}
         days_active = len(unique_days)
 
     # Aggregate recovery stats
