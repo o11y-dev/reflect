@@ -3,14 +3,14 @@
 import json
 import os
 from datetime import datetime
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
+from conftest import make_span, wrap_otlp
+
 import reflect.core as core
 from reflect.core import main
-from conftest import make_span, wrap_otlp
 
 
 @pytest.fixture

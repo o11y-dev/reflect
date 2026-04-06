@@ -2,8 +2,9 @@
 import json
 
 import pytest
-from reflect.core import _flatten_otlp_attributes, _load_otlp_traces, _load_json_lines
-from conftest import make_span, wrap_otlp, CLAUDE, MODEL_CLAUDE, DAY1, HOUR
+from conftest import DAY1, HOUR, make_span, wrap_otlp
+
+from reflect.core import _flatten_otlp_attributes, _load_json_lines, _load_otlp_traces
 
 
 class TestFlattenOtlpAttributes:

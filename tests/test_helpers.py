@@ -1,6 +1,8 @@
 """Tests for module-level rendering helpers."""
 
-from reflect.core import _fmt_dur, _fmt_model, _fmt_tokens, _safe_ratio, _bar
+import pytest
+
+from reflect.core import _bar, _fmt_dur, _fmt_model, _fmt_tokens, _safe_ratio
 
 
 class TestFmtDur:
@@ -111,5 +113,3 @@ class TestBar:
         result = _bar(0, 0, "cyan")
         assert result.plain == ""
 
-
-import pytest

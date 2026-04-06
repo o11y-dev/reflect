@@ -597,6 +597,4 @@ def _render_terminal(  # noqa: C901
         console.print()
         console.print(f"  [bold green]Dashboard URL:[/] {publish_url}")
         console.print()
-        import webbrowser
-        webbrowser.open(publish_url)
     console.print()

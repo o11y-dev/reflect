@@ -1,15 +1,22 @@
 """Integration tests: files → TelemetryStats via analyze_telemetry."""
 
-import json
-from pathlib import Path
-import pytest
-from reflect.core import analyze_telemetry
 from conftest import (
-    make_span, wrap_otlp, ALL_SPANS, EXPECTED,
-    CLAUDE, COPILOT, GEMINI, MODEL_CLAUDE, MODEL_COPILOT, MODEL_GEMINI,
-    MCP_GITLAB, MCP_JIRA, MCP_POSTGRES, MCP_CORALOGIX, MCP_WIZ, MCP_CLOUDFLARE, MCP_PLAYWRIGHT,
-    DAY1, DAY2, DAY3, HOUR, MIN,
+    CLAUDE,
+    COPILOT,
+    DAY1,
+    EXPECTED,
+    GEMINI,
+    HOUR,
+    MCP_CLOUDFLARE,
+    MCP_GITLAB,
+    MCP_POSTGRES,
+    MIN,
+    MODEL_CLAUDE,
+    make_span,
+    wrap_otlp,
 )
+
+from reflect.core import analyze_telemetry
 
 
 class TestAnalyzeOtlpTraces:

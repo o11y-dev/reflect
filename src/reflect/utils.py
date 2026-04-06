@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections import Counter
 import json as _json_stdlib
 import logging
 import re
+from collections import Counter
 from pathlib import Path
 
 logger = logging.getLogger("reflect")

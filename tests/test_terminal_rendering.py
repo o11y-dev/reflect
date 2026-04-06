@@ -2,11 +2,13 @@
 
 import io
 from collections import Counter
+
 import pytest
+from conftest import make_span, wrap_otlp
 from rich.console import Console
+
 from reflect.core import _render_terminal, analyze_telemetry
 from reflect.models import TelemetryStats
-from conftest import make_span, wrap_otlp, MODEL_CLAUDE, MCP_CORALOGIX, DAY1, HOUR
 
 
 def render_to_string(stats, **kwargs) -> str:
@@ -19,13 +21,11 @@ def render_to_string(stats, **kwargs) -> str:
 
 @pytest.fixture
 def rich_stats(otlp_traces_file, tmp_path):
-    from pathlib import Path
     return analyze_telemetry(tmp_path / "s", tmp_path / "sp", otlp_traces_file)
 
 
 @pytest.fixture
 def empty_stats(tmp_path):
-    from pathlib import Path
     return analyze_telemetry(tmp_path / "s", tmp_path / "sp", None)
 
 

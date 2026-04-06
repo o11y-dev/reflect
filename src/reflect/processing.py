@@ -55,7 +55,6 @@ def _process_span(
     mcp_server_before: Counter | None = None,
     mcp_server_after: Counter | None = None,
     subagent_stops_by_type: Counter | None = None,
-    session_tags: dict[str, set[str]] | None = None,
     session_conversation: dict[str, list[dict]] | None = None,
 ) -> None:
     """Process a single flat span dict and update counters."""
@@ -107,30 +106,6 @@ def _process_span(
                 session_models[session_id] = Counter()
             session_models[session_id][model] += 1
 
-        # NEW: Extract technology tags/keywords for attribution
-        if session_tags is not None:
-            if session_id not in session_tags:
-                session_tags[session_id] = set()
-
-            # Search targets: prompt, file paths, tool inputs
-            search_str = ""
-            if "gen_ai.client.prompt" in attrs:
-                search_str += str(attrs["gen_ai.client.prompt"]).lower()
-            if "code.file.path" in attrs:
-                search_str += str(attrs["code.file.path"]).lower()
-            if "gen_ai.client.tool.input" in attrs:
-                search_str += str(attrs["gen_ai.client.tool.input"]).lower()
-
-            # Specific high-value tags to track
-            tech_keywords = {
-                "rtk", "redux", "react", "nextjs", "typescript", "python",
-                "fastapi", "sqlalchemy", "docker", "kubernetes", "otel",
-                "pytest", "jest", "eslint", "tailwind"
-            }
-            for kw in tech_keywords:
-                if kw in search_str:
-                    session_tags[session_id].add(kw)
-
     ts_ns = span.get("start_time_ns")
     if ts_ns is not None:
         ts_int = int(ts_ns)
@@ -180,12 +155,18 @@ def _process_span(
         session_tool_seq.setdefault(session_id, []).append(
             (int(start_ns), tool_name, is_ok)
         )
-    if session_id and tool_name and event in ("PreToolUse", "BeforeShellExecution", "BeforeMCPExecution") and start_ns:
+    # Record tool/shell/MCP invocations and results for per-session timelines and
+    # failure tracking.  PostToolUse/PostToolUseFailure events carry result status;
+    # BeforeShellExecution spans derive their label from gen_ai.client.command
+    # (no tool_name present for shell events).
+    _DETAIL_EVENTS = {
+        "PreToolUse", "PostToolUse", "PostToolUseFailure",
+        "BeforeShellExecution", "BeforeMCPExecution",
+    }
+    if session_id and start_ns and event in _DETAIL_EVENTS:
         dur = 0.0
         if end_ns:
             dur = (int(end_ns) - int(start_ns)) / 1e6
-        # If we see a PostToolUseFailure later for this span, we'll know it failed.
-        # But for the record itself, we check if it's currently a failure event.
         session_span_details.setdefault(session_id, []).append({
             "t": int(start_ns),
             "tool": tool_name or attrs.get("gen_ai.client.mcp_tool", attrs.get("gen_ai.client.command", "?")),

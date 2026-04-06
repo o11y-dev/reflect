@@ -1,17 +1,18 @@
 """Tests for graph analysis helpers."""
 
 from collections import Counter
-import pytest
+
+from conftest import DAY1, HOUR, MIN
+
 from reflect.core import (
-    _compute_tool_transitions,
-    _compute_tool_cooccurrence,
-    _compute_latency_histograms,
-    _compute_dep_graph,
-    _compute_session_timeline,
-    _compute_weekly_trends,
     AgentStats,
+    _compute_dep_graph,
+    _compute_latency_histograms,
+    _compute_session_timeline,
+    _compute_tool_cooccurrence,
+    _compute_tool_transitions,
+    _compute_weekly_trends,
 )
-from conftest import DAY1, HOUR, MIN, SEC
 
 
 class TestToolTransitions:
@@ -172,7 +173,7 @@ class TestDepGraph:
             session_agents={"s1": "claude"},
         )
         node_ids = {n["id"] for n in result["nodes"]}
-        links = {(l["source"], l["target"]) for l in result["links"]}
+        links = {(lnk["source"], lnk["target"]) for lnk in result["links"]}
 
         assert "get_issue" in node_ids
         assert "mcp-gitlab" in node_ids

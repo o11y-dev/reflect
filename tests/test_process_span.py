@@ -1,43 +1,52 @@
 """Tests for _process_span — the core span ingestion function."""
 
 from collections import Counter
-import pytest
-from reflect.core import _process_span, AgentStats
+
 from conftest import (
-    make_span, CLAUDE, COPILOT, MODEL_CLAUDE, MODEL_COPILOT,
-    DAY1, HOUR, MIN, SEC,
-    MCP_GITLAB, MCP_JIRA, MCP_POSTGRES, MCP_CORALOGIX, MCP_WIZ,
+    CLAUDE,
+    COPILOT,
+    DAY1,
+    GEMINI,
+    HOUR,
+    MCP_CORALOGIX,
+    MCP_JIRA,
+    MODEL_CLAUDE,
+    MODEL_COPILOT,
+    SEC,
+    make_span,
 )
+
+from reflect.core import AgentStats, _process_span
 
 
 def _fresh_counters():
     """Return a fresh set of all _process_span accumulator arguments."""
-    return dict(
-        events_by_type=Counter(),
-        models=Counter(),
-        tools=Counter(),
-        mcp_servers=Counter(),
-        subagent_types=Counter(),
-        sessions_seen=set(),
-        timestamps_ns=[],
-        tool_durations_ms={},
-        activity_by_day=Counter(),
-        activity_by_hour=Counter(),
-        model_by_day={},
-        session_events={},
-        session_models={},
-        session_first_ts={},
-        shell_commands=Counter(),
-        session_shell_commands={},
-        agents={},
-        session_tool_seq={},
-        session_span_details={},
-        token_totals={"input": 0, "output": 0, "cache_creation": 0, "cache_read": 0},
-        session_tokens={},
-        mcp_server_before=Counter(),
-        mcp_server_after=Counter(),
-        subagent_stops_by_type=Counter(),
-    )
+    return {
+        "events_by_type": Counter(),
+        "models": Counter(),
+        "tools": Counter(),
+        "mcp_servers": Counter(),
+        "subagent_types": Counter(),
+        "sessions_seen": set(),
+        "timestamps_ns": [],
+        "tool_durations_ms": {},
+        "activity_by_day": Counter(),
+        "activity_by_hour": Counter(),
+        "model_by_day": {},
+        "session_events": {},
+        "session_models": {},
+        "session_first_ts": {},
+        "shell_commands": Counter(),
+        "session_shell_commands": {},
+        "agents": {},
+        "session_tool_seq": {},
+        "session_span_details": {},
+        "token_totals": {"input": 0, "output": 0, "cache_creation": 0, "cache_read": 0},
+        "session_tokens": {},
+        "mcp_server_before": Counter(),
+        "mcp_server_after": Counter(),
+        "subagent_stops_by_type": Counter(),
+    }
 
 
 def process(span):
@@ -267,10 +276,6 @@ class TestAgentStats:
                                input_tokens=500, output_tokens=200))
         assert c["agents"]["gemini-code-assist"].total_input_tokens == 500
         assert c["agents"]["gemini-code-assist"].total_output_tokens == 200
-
-
-import pytest
-from conftest import GEMINI
 
 
 class TestEdgeCases:

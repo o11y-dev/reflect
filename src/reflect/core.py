@@ -844,7 +844,7 @@ def main(
                 _write_dashboard_artifact(stats, publish_artifact)
             publish_url = _publish_url_for_artifact(publish_artifact)
             if publish_url is None:
-                publish_url = f"http://127.0.0.1:8765/?report=api/data"
+                publish_url = "http://127.0.0.1:8765/?report=api/data"
 
         print(f"Report saved to:   {output}")
         if publish_artifact is not None:

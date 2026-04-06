@@ -1,23 +1,26 @@
 """Tests for derived metric calculations."""
 
 from collections import Counter
-import pytest
+
 from reflect.core import (
-    _percentile, compute_tool_percentiles, _safe_ratio,
-    build_strengths, build_observations, build_recommendations,
     TelemetryStats,
+    _percentile,
+    build_observations,
+    build_recommendations,
+    build_strengths,
+    compute_tool_percentiles,
 )
 
 
 def _make_stats(**overrides) -> TelemetryStats:
     """Build a minimal TelemetryStats for testing."""
-    defaults = dict(
-        session_files=0,
-        span_files=0,
-        total_events=0,
-        events_by_type=Counter(),
-        events_by_file={},
-    )
+    defaults = {
+        "session_files": 0,
+        "span_files": 0,
+        "total_events": 0,
+        "events_by_type": Counter(),
+        "events_by_file": {},
+    }
     defaults.update(overrides)
     return TelemetryStats(**defaults)
 

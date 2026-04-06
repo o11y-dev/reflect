@@ -2,16 +2,17 @@
 
 import json
 from collections import Counter
-from pathlib import Path
+
 import pytest
+
 from reflect.core import _build_dashboard_json, analyze_telemetry
-from reflect.models import AgentStats, TelemetryStats
 from reflect.dashboard import (
     _build_filtered_comparison_payload,
     _build_filtered_stats,
     _filter_dashboard_sessions,
     _load_session_telemetry,
 )
+from reflect.models import AgentStats, TelemetryStats
 
 
 @pytest.fixture
