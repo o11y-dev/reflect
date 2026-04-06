@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -31,7 +31,7 @@ def stamp_changelog(version: str) -> None:
     if not CHANGELOG.exists():
         return
     text = CHANGELOG.read_text(encoding="utf-8")
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     updated = re.sub(
         rf"## {re.escape(version)} \(unreleased\)",
         f"## {version} ({today})",
