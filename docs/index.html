@@ -2065,7 +2065,7 @@ reflect setup
 reflect --publish</pre>
       <div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center">
         <a href="https://github.com/o11y-dev/reflect" style="padding:12px 20px;background:linear-gradient(135deg,#72f4d1,#7ab6ff);color:#04111d;border-radius:12px;text-decoration:none;font-weight:700">View on GitHub</a>
-        <a href="showcase.html" style="padding:12px 20px;border:1px solid rgba(255,255,255,.12);color:#edf3ff;border-radius:12px;text-decoration:none;font-weight:700">See a demo</a>
+        <a href="showcase.html" style="padding:12px 20px;border:1px solid rgba(255,255,255,.12);color:#edf3ff;border-radius:12px;text-decoration:none;font-weight:700">View showcase</a>
       </div>
     </div>`;
     return;
@@ -2075,7 +2075,11 @@ reflect --publish</pre>
 
 async function loadDashboardData(){
   const params = new URLSearchParams(window.location.search);
-  const report = params.get('report') || 'reports/showcase.json';
+  const report = params.get('report');
+  if (!report && !params.get('data')) {
+    window.location.replace('showcase.html');
+    return null;
+  }
   try {
     if (report) {
       const response = await fetch(report, {headers: {Accept: 'application/json'}});
@@ -2103,6 +2107,7 @@ function updateUrlParams(mutator){
 
 async function initApp(){
   D = await loadDashboardData();
+  if (!D) return;
 
 /* ── Palette — Apple system colors ── */
 const P = {
