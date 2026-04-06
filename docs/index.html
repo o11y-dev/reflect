@@ -167,7 +167,7 @@ nav::after{
 }
 .tab{
   appearance:none;
-  padding:13px 18px 15px;
+  padding:14px 14px 11px;
   font-size:13px;
   font-weight:500;
   color:var(--text-3);
@@ -184,20 +184,22 @@ nav::after{
   border-radius:0;
   touch-action:manipulation;
   flex:1 1 0;
-  min-width:128px;
+  min-width:120px;
   position:relative;
   z-index:1;
+  overflow:visible;
 }
 .tab::before{
   content:'';
   position:absolute;
-  inset:8px 8px 10px;
-  border-radius:6px 6px 0 0;
-  background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,0));
+  inset:12px 4px -2px;
+  border-radius:8px 8px 0 0;
+  background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.08));
   opacity:0;
   transform:scale(.96);
   transition:opacity .26s ease, transform .34s cubic-bezier(.22,1,.36,1);
   pointer-events:none;
+  z-index:-1;
 }
 .tab:hover{color:var(--text-2)}
 .tab:hover::before{opacity:.5;transform:scale(1)}
@@ -205,7 +207,8 @@ nav::after{
 .tab.active::before{
   opacity:1;
   transform:scale(1);
-  background:linear-gradient(180deg,rgba(10,132,255,.14),rgba(94,92,230,.03));
+  background:linear-gradient(180deg,rgba(8,12,18,.16) 0%,rgba(8,12,18,.11) 48%,rgba(10,132,255,.16) 78%,rgba(100,210,255,.24) 100%);
+  box-shadow:0 8px 22px rgba(10,132,255,.12);
 }
 .tab:focus-visible{
   outline:2px solid rgba(100,210,255,.9);
@@ -513,7 +516,7 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 /* ── Session Browser — Split Pane ────────────────────────── */
 .session-browser{
   display:grid;
-  grid-template-columns:320px 1fr;
+  grid-template-columns:280px 1fr;
   gap:0;
   height:calc(100dvh - 150px);
   min-height:480px;
@@ -547,40 +550,66 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   border-bottom:1px solid var(--glass-border);
   flex-shrink:0;
 }
+.session-filter-launcher{
+  display:none;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:8px;
+  padding:8px 10px;
+  background:rgba(255,255,255,.03);
+  border:1px solid var(--glass-border);
+  border-radius:12px;
+}
+.session-filter-launcher-meta{
+  min-width:0;
+  font-size:12px;
+  color:var(--text-2);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
 .global-filter-shell{
-  margin-bottom:16px;
-  padding:14px;
-  background:var(--surface);
+  margin-bottom:10px;
+  padding:10px 12px 8px;
+  background:rgba(255,255,255,.02);
   backdrop-filter:saturate(180%) blur(var(--glass-blur));
   -webkit-backdrop-filter:saturate(180%) blur(var(--glass-blur));
   border:1px solid var(--glass-border);
-  border-radius:var(--radius);
-  box-shadow:var(--card-shadow);
+  border-radius:14px;
+  box-shadow:none;
 }
 .global-filter-top{
   display:flex;
-  align-items:flex-start;
+  align-items:center;
   justify-content:space-between;
   gap:12px;
-  margin-bottom:12px;
+  margin-bottom:8px;
 }
 .global-filter-title{
-  font-size:12px;
+  font-size:11px;
   font-weight:700;
-  letter-spacing:.12em;
+  letter-spacing:.1em;
   text-transform:uppercase;
   color:var(--text-3);
 }
-.global-filter-meta{font-size:12px;color:var(--text-2)}
+.global-filter-meta{font-size:11px;color:var(--text-2);margin-top:2px}
+.global-filter-actions{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+}
 .global-filter-grid{
   display:grid;
   grid-template-columns:minmax(220px,1.7fr) repeat(4,minmax(0,1fr));
-  gap:10px;
+  gap:8px;
   align-items:center;
 }
-.filter-field{display:flex;flex-direction:column;gap:6px}
+.filter-field{display:flex;flex-direction:column;gap:4px}
 .filter-label{
-  font-size:11px;
+  font-size:10px;
   font-weight:600;
   letter-spacing:.04em;
   color:var(--text-3);
@@ -591,8 +620,8 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   background:var(--surface2);
   border:1px solid var(--glass-border);
   border-radius:var(--radius-xs);
-  padding:8px 12px;
-  font-size:13px;
+  padding:7px 10px;
+  font-size:12px;
   color:var(--text);
 }
 .filter-select:focus-visible{
@@ -603,22 +632,22 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 .filter-chip-row{
   display:flex;
   align-items:center;
-  justify-content:space-between;
-  gap:12px;
-  margin-top:12px;
+  justify-content:flex-start;
+  gap:8px;
+  margin-top:8px;
   flex-wrap:wrap;
 }
-.filter-chips{display:flex;flex-wrap:wrap;gap:8px}
+.filter-chips{display:flex;flex-wrap:wrap;gap:6px}
 .filter-chip{
   display:inline-flex;
   align-items:center;
-  gap:6px;
-  padding:5px 10px;
+  gap:5px;
+  padding:4px 8px;
   border-radius:999px;
   background:rgba(10,132,255,.12);
   border:1px solid rgba(10,132,255,.24);
   color:rgba(255,255,255,.88);
-  font-size:12px;
+  font-size:11px;
 }
 .filter-chip button{
   appearance:none;
@@ -629,24 +658,45 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   font-size:12px;
   line-height:1;
 }
+.filter-compact-toggle,
+.filter-sheet-launch,
+.filter-sheet-close{
+  appearance:none;
+  border:1px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.03);
+  color:var(--text-2);
+  font-size:11px;
+  font-weight:600;
+  border-radius:10px;
+  padding:6px 9px;
+  cursor:pointer;
+}
+.filter-compact-toggle{display:none}
+.filter-compact-toggle:hover,
+.filter-sheet-launch:hover,
+.filter-sheet-close:hover{
+  color:var(--text);
+  background:rgba(255,255,255,.06);
+}
+.filter-sheet-close{display:none}
 .filter-clear{
   appearance:none;
   border:none;
   background:transparent;
   color:var(--text-2);
-  font-size:12px;
+  font-size:11px;
   font-weight:600;
   cursor:pointer;
 }
 .filter-clear:hover{color:var(--text)}
-.sb-list-head{padding:10px 12px 0;font-size:12px;color:var(--text-3)}
+.sb-list-head{padding:8px 10px 0;font-size:11px;color:var(--text-3)}
 .sb-search{
   width:100%;
   background:var(--surface2);
   border:1px solid var(--glass-border);
   border-radius:var(--radius-xs);
-  padding:8px 12px;
-  font-size:13px;
+  padding:7px 10px;
+  font-size:12px;
   color:var(--text);
   transition:border-color .15s;
 }
@@ -658,14 +708,14 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 }
 .sb-agent-pills{
   display:flex;
-  gap:6px;
-  margin-top:10px;
+  gap:5px;
+  margin-top:8px;
   flex-wrap:wrap;
 }
 .sb-pill{
   appearance:none;
-  padding:4px 12px;
-  font-size:11px;
+  padding:4px 9px;
+  font-size:10px;
   font-weight:600;
   border-radius:20px;
   border:1px solid var(--glass-border);
@@ -687,14 +737,46 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   flex:1;
   min-height:0;
   overflow-y:auto;
-  padding:6px;
+  padding:4px;
   overscroll-behavior:contain;
 }
-.sb-list::-webkit-scrollbar{width:6px}
+.sb-list::-webkit-scrollbar{width:5px}
 .sb-list::-webkit-scrollbar-track{background:transparent}
 .sb-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:3px}
+@media(max-width:1100px){
+  .global-filter-grid{grid-template-columns:minmax(220px,1.8fr) repeat(2,minmax(0,1fr))}
+  .filter-field-secondary{display:none}
+  .global-filter-shell.expanded .filter-field-secondary{display:flex}
+  .filter-compact-toggle{display:inline-flex}
+}
 @media(max-width:900px){.global-filter-grid{grid-template-columns:1fr 1fr}}
 @media(max-width:720px){.global-filter-grid{grid-template-columns:1fr}}
+.global-filter-backdrop{
+  position:fixed;
+  inset:0;
+  background:rgba(5,7,10,.5);
+  backdrop-filter:blur(6px);
+  z-index:39;
+}
+body.filter-sheet-open{overflow:hidden}
+@media(max-width:720px){
+  .session-filter-launcher{display:flex}
+  .global-filter-shell{
+    display:none;
+    position:fixed;
+    left:10px;
+    right:10px;
+    top:max(10px, env(safe-area-inset-top));
+    bottom:max(10px, env(safe-area-inset-bottom));
+    z-index:40;
+    overflow:auto;
+    padding:12px;
+    background:rgba(16,18,24,.98);
+  }
+  .global-filter-shell.mobile-open{display:block}
+  .global-filter-shell.mobile-open .filter-field-secondary{display:flex}
+  .filter-sheet-close{display:inline-flex}
+}
 
 /* Session card */
 .sb-card{
@@ -705,12 +787,12 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   border-top:none;
   border-right:none;
   border-bottom:none;
-  padding:12px 12px;
+  padding:9px 10px;
   border-radius:var(--radius-sm);
   cursor:pointer;
   border-left:3px solid transparent;
   transition:background-color .15s ease, border-color .15s ease, transform .15s ease;
-  margin-bottom:4px;
+  margin-bottom:2px;
   touch-action:manipulation;
 }
 .sb-card:hover{background:rgba(255,255,255,.04)}
@@ -722,25 +804,25 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   outline:2px solid rgba(100,210,255,.9);
   outline-offset:1px;
 }
-.sb-card-header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.sb-card-header{display:flex;align-items:center;gap:6px;margin-bottom:4px}
 .sb-agent-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.sb-card-agent{font-size:12px;font-weight:600;color:var(--text)}
-.sb-card-time{font-size:11px;color:var(--text-3);margin-left:auto;flex-shrink:0}
+.sb-card-agent{font-size:11px;font-weight:600;color:var(--text)}
+.sb-card-time{font-size:10px;color:var(--text-3);margin-left:auto;flex-shrink:0}
 .sb-card-prompt{
-  font-size:12px;
+  font-size:11px;
   font-style:italic;
   color:var(--text-3);
   overflow:hidden;
   text-overflow:ellipsis;
   white-space:nowrap;
-  margin-bottom:6px;
-  line-height:1.4;
+  margin-bottom:4px;
+  line-height:1.3;
 }
-.sb-card-badges{display:flex;gap:6px;flex-wrap:wrap}
+.sb-card-badges{display:flex;gap:4px;flex-wrap:wrap}
 .sb-card-badge{
-  font-size:10px;
+  font-size:9px;
   font-weight:600;
-  padding:2px 8px;
+  padding:2px 6px;
   border-radius:10px;
   background:rgba(255,255,255,.06);
   color:var(--text-2);
@@ -1032,6 +1114,80 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   font-size:11px;
   color:var(--text-3);
 }
+
+/* ── Chat-style conversation thread ── */
+.chat-thread{display:flex;flex-direction:column;gap:6px;padding:4px 0 2px}
+
+/* User prompt + agent response — full bubbles */
+.chat-msg{display:grid;grid-template-columns:52px minmax(0,1fr);gap:10px;align-items:start}
+.chat-msg .ev-rail{padding-top:8px}
+.chat-msg .ev-rail::after{right:8px;top:22px}
+.chat-msg .ev-dot{right:3px;top:6px}
+.chat-bubble{border-radius:14px;border:1px solid rgba(255,255,255,.08);overflow:hidden;transition:border-color .18s}
+.chat-bubble:hover{border-color:rgba(255,255,255,.13)}
+.chat-header{display:flex;align-items:center;gap:8px;padding:7px 12px 6px;border-bottom:1px solid rgba(255,255,255,.06)}
+.chat-who{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--node-color)}
+.chat-header-meta{font-size:11px;color:var(--text-3);margin-left:auto;text-align:right;max-width:32ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-content{padding:10px 12px}
+.chat-content .ev-preview{border-radius:8px;font-size:13px;padding:10px 12px}
+.chat-content .ev-preview-hint{margin-top:6px}
+.chat-msg.is-user .chat-bubble{
+  background:linear-gradient(180deg,rgba(10,132,255,.07),rgba(10,132,255,.02)),rgba(14,14,16,.8);
+  border-color:rgba(10,132,255,.18);
+}
+.chat-msg.is-agent .chat-bubble{
+  background:linear-gradient(180deg,rgba(191,90,242,.06),rgba(191,90,242,.02)),rgba(14,14,16,.8);
+  border-color:rgba(191,90,242,.14);
+}
+
+/* Compact activity chips for tool/MCP events */
+.chat-activity{display:grid;grid-template-columns:52px minmax(0,1fr);gap:10px;align-items:center}
+.chat-activity .ev-rail{display:flex;align-items:center;justify-content:flex-end;gap:4px;padding:0;height:24px}
+.chat-activity .ev-rail::after{display:none}
+.chat-activity .ev-dot{position:static;width:7px;height:7px;box-shadow:none}
+.chat-activity .ev-ts{font-size:10px}
+.chat-activity-chip{
+  display:flex;align-items:center;gap:6px;
+  padding:5px 10px;border-radius:8px;
+  border:1px solid rgba(255,255,255,.06);
+  background:rgba(255,255,255,.025);
+  font-size:12px;min-width:0;overflow:hidden;
+  transition:background .15s,border-color .15s;
+}
+.chat-activity-chip:hover{background:rgba(255,255,255,.045);border-color:rgba(255,255,255,.1)}
+.chip-icon{font-size:11px;flex-shrink:0;color:var(--node-color);font-style:normal}
+.chip-name{font-weight:600;color:rgba(255,255,255,.8);white-space:nowrap;flex-shrink:0}
+.chip-meta{color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1;padding-left:2px}
+.chip-dur{font-family:'SF Mono',ui-monospace,monospace;font-size:10px;color:var(--text-3);white-space:nowrap;flex-shrink:0;margin-left:auto;padding-left:8px}
+.chip-ok{color:var(--green);font-size:11px;flex-shrink:0}
+.chip-fail{color:var(--red);font-size:11px;flex-shrink:0}
+
+/* Session/subagent divider */
+.chat-divider{display:grid;grid-template-columns:52px minmax(0,1fr);gap:10px;align-items:center;padding:6px 0}
+.chat-divider .ev-rail{display:flex;align-items:center;justify-content:flex-end;height:20px;padding:0}
+.chat-divider .ev-rail::after{display:none}
+.chat-divider-inner{display:flex;align-items:center;gap:8px}
+.chat-divider-line{flex:1;height:1px;background:rgba(255,255,255,.06)}
+.chat-divider-label{font-size:10px;color:var(--text-3);letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
+
+/* Compact stats bar (replaces 4-card grid) */
+.conv-stats-bar{
+  display:flex;align-items:center;gap:4px;flex-wrap:wrap;
+  padding:7px 12px;border-radius:10px;
+  background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);
+  font-size:12px;color:var(--text-2);
+}
+.conv-stat-item{display:flex;align-items:center;gap:4px}
+.conv-stat-num{font-weight:700;color:var(--text);font-size:13px}
+.conv-stat-sep{color:rgba(255,255,255,.15);padding:0 4px}
+
+/* Loading state for auto-load */
+.chat-loading{display:flex;align-items:center;gap:8px;padding:20px 12px;color:var(--text-3);font-size:13px}
+.chat-loading-dot{width:6px;height:6px;border-radius:50%;background:var(--blue);animation:chat-pulse 1.2s ease-in-out infinite}
+.chat-loading-dot:nth-child(2){animation-delay:.2s}
+.chat-loading-dot:nth-child(3){animation-delay:.4s}
+@keyframes chat-pulse{0%,80%,100%{opacity:.3;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}
+
 @media(max-width:720px){
   .conversation-title{font-size:18px}
   .ev-node{grid-template-columns:1fr}
@@ -1054,6 +1210,27 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
     text-align:left;
     max-width:none;
   }
+  .sb-detail-header{padding:10px 12px}
+  .sb-detail-sid{font-size:12px;max-width:100%}
+  .sb-detail-stats{
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:8px 10px;
+  }
+  .sb-detail-stats span{min-width:0}
+  .sb-detail-tabs{
+    padding:8px 12px 0;
+    gap:6px;
+    overflow-x:auto;
+    scrollbar-width:none;
+  }
+  .sb-detail-tabs::-webkit-scrollbar{display:none}
+  .sb-detail-tab{
+    flex:0 0 auto;
+    padding:7px 10px;
+    font-size:11px;
+  }
+  .sb-detail-body{padding:8px 12px 12px}
 }
 
 /* Load full transcript button */
@@ -1107,62 +1284,62 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   outline:2px solid rgba(100,210,255,.9);
   outline-offset:2px;
 }
-.telemetry-shell{display:flex;flex-direction:column;gap:12px}
+.telemetry-shell{display:flex;flex-direction:column;gap:8px}
 .telemetry-summary{
   display:grid;
   grid-template-columns:repeat(4,minmax(0,1fr));
-  gap:8px;
+  gap:6px;
 }
 .telemetry-stat{
-  background:rgba(255,255,255,.03);
-  border:1px solid rgba(255,255,255,.08);
-  border-radius:10px;
-  padding:10px 12px;
+  background:rgba(255,255,255,.022);
+  border:1px solid rgba(205,214,226,.08);
+  border-radius:7px;
+  padding:7px 9px;
 }
 .telemetry-stat-kicker{
-  font-size:10px;
+  font-size:9px;
   text-transform:uppercase;
-  letter-spacing:.12em;
+  letter-spacing:.1em;
   color:var(--text-3);
   font-weight:700;
 }
 .telemetry-stat-value{
-  font-size:20px;
+  font-size:17px;
   font-weight:700;
-  margin-top:4px;
+  margin-top:2px;
   color:var(--text);
   letter-spacing:-.03em;
 }
 .telemetry-stat-sub{
-  margin-top:4px;
-  font-size:11px;
+  margin-top:2px;
+  font-size:10px;
   color:var(--text-3);
 }
 .telemetry-beat-row{
-  border:1px solid rgba(255,255,255,.08);
-  border-radius:12px;
-  background:rgba(255,255,255,.02);
-  padding:10px 12px 8px;
+  border:1px solid rgba(205,214,226,.08);
+  border-radius:8px;
+  background:rgba(255,255,255,.014);
+  padding:7px 9px 5px;
 }
 .telemetry-beat-scale{
   display:flex;
   justify-content:space-between;
   gap:10px;
-  margin-bottom:6px;
-  font-size:10px;
+  margin-bottom:4px;
+  font-size:9px;
   color:var(--text-3);
   font-family:'SF Mono',ui-monospace,monospace;
 }
 .telemetry-beat-track{
   position:relative;
-  height:58px;
+  height:var(--track-height, 46px);
 }
 .telemetry-beat-track::before{
   content:'';
   position:absolute;
   left:0;
   right:0;
-  top:32px;
+  top:calc(var(--track-height, 46px) - 21px);
   height:1px;
   background:rgba(255,255,255,.12);
 }
@@ -1170,10 +1347,10 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   appearance:none;
   position:absolute;
   left:var(--beat-left, 0%);
-  top:calc(19px - (var(--beat-level, 0) * 8px));
+  top:calc(var(--track-height, 46px) - 32px - (var(--beat-level, 0) * 7px));
   transform:translateX(-50%);
-  width:14px;
-  height:14px;
+  width:12px;
+  height:12px;
   padding:0;
   border:none;
   border-radius:999px;
@@ -1196,10 +1373,10 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 }
 .telemetry-beat-time{
   position:absolute;
-  top:40px;
+  top:calc(var(--track-height, 46px) - 16px);
   left:50%;
   transform:translateX(-50%);
-  font-size:9px;
+  font-size:8px;
   color:var(--text-3);
   font-family:'SF Mono',ui-monospace,monospace;
   white-space:nowrap;
@@ -1207,98 +1384,211 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 .telemetry-beat-bubble{
   position:absolute;
   left:50%;
-  bottom:18px;
+  bottom:14px;
   transform:translateX(-50%);
-  min-width:120px;
-  max-width:190px;
-  padding:6px 8px;
-  border-radius:8px;
+  min-width:112px;
+  max-width:168px;
+  padding:5px 7px;
+  border-radius:6px;
   border:1px solid rgba(100,210,255,.2);
   background:rgba(20,24,31,.96);
   box-shadow:0 12px 30px rgba(0,0,0,.28);
   text-align:left;
 }
-.telemetry-beat-label{
+.telemetry-observation{
+  appearance:none;
+  position:absolute;
+  left:var(--obs-left, 0%);
+  top:calc(var(--track-height, 46px) - 43px - (var(--obs-level, 0) * 9px));
+  transform:translateX(-50%);
+  width:12px;
+  height:12px;
+  padding:0;
+  border:none;
+  background:transparent;
+  cursor:pointer;
+  z-index:2;
+}
+.telemetry-observation::before{
+  content:'';
+  position:absolute;
+  inset:0;
+  border-radius:3px;
+  background:var(--obs-color, rgba(255,214,10,.88));
+  transform:rotate(45deg);
+  box-shadow:0 0 0 1px rgba(15,15,19,.95),0 0 0 1px color-mix(in srgb, var(--obs-color) 36%, transparent);
+}
+.telemetry-observation:hover::before{transform:scale(1.06)}
+.telemetry-observation:hover::before{transform:rotate(45deg) scale(1.06)}
+.telemetry-observation.active::before{
+  inset:0;
+  box-shadow:0 0 0 2px rgba(15,15,19,.95),0 0 0 1px color-mix(in srgb, var(--obs-color) 55%, white 0%),0 0 16px color-mix(in srgb, var(--obs-color) 28%, transparent);
+}
+.telemetry-observation:focus-visible{
+  outline:none;
+}
+.telemetry-observation-bubble{
+  position:absolute;
+  left:50%;
+  bottom:18px;
+  transform:translateX(-50%) translateY(4px);
+  min-width:148px;
+  max-width:220px;
+  padding:7px 8px;
+  border-radius:6px;
+  border:1px solid color-mix(in srgb, var(--obs-color) 34%, rgba(255,255,255,.08));
+  background:rgba(20,24,31,.98);
+  box-shadow:0 12px 30px rgba(0,0,0,.28);
+  text-align:left;
+  white-space:normal;
+  word-break:break-word;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .14s ease, transform .14s ease;
+  z-index:4;
+}
+.telemetry-observation:hover .telemetry-observation-bubble,
+.telemetry-observation:focus-visible .telemetry-observation-bubble,
+.telemetry-observation.active .telemetry-observation-bubble{
+  opacity:1;
+  transform:translateX(-50%) translateY(0);
+}
+.telemetry-observation-label{
   font-size:10px;
+  font-weight:700;
+  color:var(--text);
+  line-height:1.2;
+}
+.telemetry-observation-sub{
+  margin-top:3px;
+  font-size:10px;
+  color:var(--text-3);
+  line-height:1.3;
+}
+.telemetry-beat-label{
+  font-size:9px;
   font-weight:700;
   color:var(--text);
 }
 .telemetry-beat-sub{
-  margin-top:2px;
-  font-size:10px;
+  margin-top:1px;
+  font-size:9px;
   color:var(--text-3);
   line-height:1.2;
 }
 .telemetry-grid{
   display:grid;
-  grid-template-columns:minmax(0,1.55fr) minmax(300px,.8fr);
-  gap:12px;
+  grid-template-columns:minmax(0,1fr);
+  gap:8px;
   align-items:start;
 }
 .telemetry-panel{
-  background:rgba(255,255,255,.025);
-  border:1px solid rgba(255,255,255,.08);
-  border-radius:12px;
-  overflow:hidden;
+  background:rgba(13,18,24,.96);
+  border:1px solid rgba(205,214,226,.12);
+  border-radius:7px;
+  overflow:visible;
+  box-shadow:0 8px 18px rgba(0,0,0,.14);
 }
 .telemetry-panel-title{
   display:flex;
   align-items:center;
   justify-content:space-between;
-  gap:10px;
-  padding:12px 14px;
-  border-bottom:1px solid rgba(255,255,255,.07);
-  background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));
-  font-size:12px;
+  gap:8px;
+  flex-wrap:wrap;
+  padding:8px 9px;
+  border-bottom:1px solid rgba(205,214,226,.12);
+  background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.018));
+  font-size:10px;
   font-weight:700;
   color:var(--text);
+  letter-spacing:.04em;
+  text-transform:uppercase;
 }
 .telemetry-panel-sub{
-  font-size:11px;
+  font-size:9px;
   color:var(--text-3);
+  text-transform:none;
+  letter-spacing:0;
+}
+.telemetry-panel-head{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-width:0;
+}
+.telemetry-panel-actions{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+}
+.telemetry-trace-action{
+  appearance:none;
+  border:1px solid rgba(205,214,226,.16);
+  background:rgba(255,255,255,.03);
+  color:var(--text-2);
+  border-radius:5px;
+  padding:4px 6px;
+  font-size:9px;
+  font-weight:700;
+  letter-spacing:.04em;
+  cursor:pointer;
+}
+.telemetry-trace-action:hover{
+  border-color:rgba(205,214,226,.26);
+  background:rgba(255,255,255,.06);
+  color:var(--text);
+}
+.telemetry-trace-action:focus-visible{
+  outline:2px solid rgba(100,210,255,.9);
+  outline-offset:2px;
+}
+.telemetry-log-panel{
+  margin-top:8px;
 }
 .telemetry-ruler{
   display:grid;
-  grid-template-columns:272px minmax(0,1fr);
+  grid-template-columns:252px minmax(0,1fr);
   gap:0;
   align-items:stretch;
-  border-bottom:1px solid rgba(255,255,255,.06);
-  background:rgba(255,255,255,.02);
+  border-bottom:1px solid rgba(205,214,226,.1);
+  background:rgba(255,255,255,.018);
 }
 .telemetry-column-heads{
   display:grid;
-  grid-template-columns:minmax(0,1.45fr) minmax(76px,.7fr) 48px;
+  grid-template-columns:minmax(0,1fr) 72px 50px;
   gap:8px;
-  padding:8px 12px;
+  padding:6px 8px;
   align-items:center;
 }
 .telemetry-column-head{
-  font-size:10px;
+  font-size:9px;
   font-weight:700;
   color:var(--text-2);
   text-transform:uppercase;
-  letter-spacing:.08em;
+  letter-spacing:.11em;
 }
 .telemetry-ruler-track{
   position:relative;
-  min-height:30px;
-  border-left:1px solid rgba(255,255,255,.06);
+  min-height:24px;
+  border-left:1px solid rgba(205,214,226,.1);
   background:
-    linear-gradient(90deg,rgba(255,255,255,.06) 1px,transparent 1px) 0 0/20% 100%,
-    rgba(255,255,255,.015);
+    linear-gradient(90deg,rgba(255,255,255,.07) 1px,transparent 1px) 0 0/20% 100%,
+    rgba(255,255,255,.012);
 }
 .telemetry-ruler-track::before{
   content:'';
   position:absolute;
   inset:auto 0 0;
   height:1px;
-  background:rgba(255,255,255,.08);
+  background:rgba(255,255,255,.07);
 }
 .telemetry-ruler-tick{
   position:absolute;
-  top:6px;
+  top:3px;
   transform:translateX(-50%);
-  font-size:10px;
+  font-size:9px;
   color:var(--text-3);
   font-family:'SF Mono',ui-monospace,monospace;
 }
@@ -1306,79 +1596,84 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   content:'';
   position:absolute;
   left:50%;
-  top:15px;
+  top:12px;
   width:1px;
-  height:15px;
+  height:12px;
   background:rgba(255,255,255,.09);
 }
 .telemetry-waterfall{
   display:flex;
   flex-direction:column;
-  max-height:680px;
+  max-height:560px;
   overflow:auto;
+  background:
+    linear-gradient(180deg,rgba(255,255,255,.014),rgba(255,255,255,.008));
 }
 .telemetry-waterfall::-webkit-scrollbar{height:8px;width:8px}
 .telemetry-waterfall::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:4px}
 .telemetry-span-row{
   display:grid;
-  grid-template-columns:272px minmax(0,1fr);
+  grid-template-columns:252px minmax(0,1fr);
   gap:0;
   align-items:stretch;
-  border-bottom:1px solid rgba(255,255,255,.05);
-  background:rgba(255,255,255,.012);
+  border-bottom:1px solid rgba(205,214,226,.07);
+  background:rgba(255,255,255,.006);
   transition:background .16s ease,border-color .16s ease;
 }
-.telemetry-span-row:hover{background:rgba(255,255,255,.03)}
+.telemetry-span-row:nth-child(even){background:rgba(255,255,255,.015)}
+.telemetry-span-row:hover{background:rgba(255,255,255,.035)}
 .telemetry-span-row.active{
-  background:rgba(100,210,255,.08);
-  box-shadow:inset 0 0 0 1px rgba(100,210,255,.16);
+  background:rgba(31,111,235,.12);
+  box-shadow:inset 3px 0 0 rgba(114,168,255,.9);
 }
 .telemetry-span-main{
   display:grid;
-  grid-template-columns:minmax(0,1.45fr) minmax(76px,.7fr) 48px;
+  grid-template-columns:minmax(0,1fr) 72px 50px;
   gap:8px;
   align-items:center;
-  padding:6px 10px;
+  padding:3px 8px;
   min-width:0;
 }
 .telemetry-span-stack{
   position:relative;
   min-width:0;
-  padding-left:calc(var(--tree-depth, 0) * 14px + 18px);
+  padding-left:calc(var(--tree-depth, 0) * 11px + 14px);
 }
+.telemetry-span-stack[data-span-toggle]{cursor:pointer}
+.telemetry-span-stack[data-span-toggle]:hover .telemetry-span-title{color:#fff}
 .telemetry-span-stack.has-parent::before{
   content:'';
   position:absolute;
-  left:calc(var(--tree-depth, 0) * 14px + 7px);
-  top:-10px;
-  bottom:-10px;
+  left:calc(var(--tree-depth, 0) * 11px + 5px);
+  top:-6px;
+  bottom:-6px;
   width:1px;
-  background:rgba(255,255,255,.08);
+  background:rgba(205,214,226,.12);
 }
 .telemetry-span-stack.has-parent::after{
   content:'';
   position:absolute;
-  left:calc(var(--tree-depth, 0) * 14px + 7px);
-  top:14px;
-  width:10px;
+  left:calc(var(--tree-depth, 0) * 11px + 5px);
+  top:10px;
+  width:7px;
   height:1px;
-  background:rgba(255,255,255,.08);
+  background:rgba(205,214,226,.12);
 }
 .telemetry-span-toggle{
   appearance:none;
   position:absolute;
-  left:calc(var(--tree-depth, 0) * 14px);
+  left:calc(var(--tree-depth, 0) * 11px - 1px);
   top:1px;
-  width:14px;
-  height:14px;
-  border:1px solid rgba(255,255,255,.12);
-  border-radius:3px;
-  background:rgba(255,255,255,.04);
+  width:11px;
+  height:11px;
+  border:1px solid rgba(205,214,226,.18);
+  border-radius:2px;
+  background:rgba(255,255,255,.035);
   color:var(--text-2);
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  font-size:10px;
+  font-size:9px;
   line-height:1;
   cursor:pointer;
 }
@@ -1386,26 +1681,26 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 .telemetry-span-toggle[data-collapsed="true"]{color:#7ecbff;border-color:rgba(100,210,255,.28)}
 .telemetry-span-spacer{
   position:absolute;
-  left:calc(var(--tree-depth, 0) * 14px + 3px);
+  left:calc(var(--tree-depth, 0) * 11px + 1px);
   top:5px;
-  width:8px;
-  height:8px;
-  border-radius:2px;
-  background:rgba(255,255,255,.08);
+  width:5px;
+  height:5px;
+  border-radius:999px;
+  background:rgba(205,214,226,.16);
 }
 .telemetry-span-title{
-  font-size:11px;
-  font-weight:700;
+  font-size:10px;
+  font-weight:600;
   color:var(--text);
   white-space:nowrap;
   overflow:hidden;
   text-overflow:ellipsis;
 }
 .telemetry-span-meta{
-  margin-top:2px;
-  font-size:10px;
+  margin-top:1px;
+  font-size:8px;
   color:var(--text-3);
-  line-height:1.2;
+  line-height:1.15;
   white-space:nowrap;
   overflow:hidden;
   text-overflow:ellipsis;
@@ -1413,20 +1708,21 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 .telemetry-span-phase{
   display:inline-flex;
   align-items:center;
-  gap:5px;
-  font-size:9px;
+  gap:4px;
+  font-size:8px;
   text-transform:uppercase;
-  letter-spacing:.08em;
+  letter-spacing:.06em;
   color:var(--text-2);
+  justify-content:flex-end;
 }
 .telemetry-phase-dot{
-  width:8px;
-  height:8px;
-  border-radius:2px;
+  width:6px;
+  height:6px;
+  border-radius:999px;
   flex:0 0 auto;
 }
 .telemetry-span-duration{
-  font-size:10px;
+  font-size:9px;
   font-weight:700;
   color:var(--text-2);
   font-family:'SF Mono',ui-monospace,monospace;
@@ -1434,11 +1730,11 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 }
 .telemetry-span-lane{
   position:relative;
-  min-height:26px;
-  border-left:1px solid rgba(255,255,255,.06);
+  min-height:20px;
+  border-left:1px solid rgba(205,214,226,.1);
   background:
-    linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px) 0 0/20% 100%,
-    rgba(255,255,255,.015);
+    linear-gradient(90deg,rgba(255,255,255,.06) 1px,transparent 1px) 0 0/20% 100%,
+    rgba(255,255,255,.012);
 }
 .telemetry-span-track{
   position:absolute;
@@ -1446,69 +1742,69 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 }
 .telemetry-span-bar{
   position:absolute;
-  top:10px;
-  height:6px;
+  top:8px;
+  height:3px;
   border-radius:2px;
   min-width:2px;
-  box-shadow:0 0 0 1px rgba(255,255,255,.16) inset;
+  box-shadow:0 0 0 1px rgba(255,255,255,.14) inset;
 }
 .telemetry-span-start{
   position:absolute;
-  top:1px;
+  top:0;
   font-family:'SF Mono',ui-monospace,monospace;
-  font-size:9px;
+  font-size:8px;
   color:var(--text-3);
   transform:translateX(-50%);
 }
 .telemetry-chip-row{
   display:flex;
-  gap:6px;
+  gap:4px;
   flex-wrap:wrap;
-  margin-top:8px;
+  margin-top:6px;
 }
 .telemetry-chip{
   display:inline-flex;
   align-items:center;
-  gap:4px;
-  padding:3px 7px;
+  gap:3px;
+  padding:2px 6px;
   border-radius:999px;
   background:rgba(255,255,255,.05);
   color:var(--text-2);
-  font-size:10px;
+  font-size:9px;
   font-weight:600;
 }
 .telemetry-log-list{
   display:flex;
   flex-direction:column;
   gap:0;
-  max-height:720px;
+  max-height:260px;
   overflow:auto;
 }
 .telemetry-log-list::-webkit-scrollbar{width:6px}
 .telemetry-log-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:3px}
 .telemetry-log{
-  border-bottom:1px solid rgba(255,255,255,.06);
-  padding:11px 13px;
-  background:rgba(255,255,255,.02);
+  border-bottom:1px solid rgba(205,214,226,.08);
+  padding:7px 9px;
+  background:rgba(255,255,255,.012);
 }
 .telemetry-log.active{
-  background:rgba(100,210,255,.08);
+  background:rgba(31,111,235,.1);
 }
 .telemetry-log-top{
   display:flex;
   align-items:center;
-  gap:8px;
+  gap:6px;
   flex-wrap:wrap;
-  margin-bottom:8px;
+  margin-bottom:5px;
 }
 .telemetry-log-severity{
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  min-width:52px;
-  padding:3px 8px;
+  min-width:46px;
+  padding:2px 6px;
   border-radius:999px;
-  font-size:10px;
+  font-size:9px;
   font-weight:800;
   letter-spacing:.04em;
 }
@@ -1520,17 +1816,17 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 .telemetry-log-severity[data-severity="TRACE"]{background:rgba(142,142,147,.16);color:#c7c7cc}
 .telemetry-log-time{
   font-family:'SF Mono',ui-monospace,monospace;
-  font-size:11px;
+  font-size:10px;
   color:var(--text-3);
 }
 .telemetry-log-meta{
-  font-size:11px;
+  font-size:10px;
   color:var(--text-3);
 }
 .telemetry-log-body{
-  font-size:12px;
+  font-size:11px;
   color:var(--text);
-  line-height:1.6;
+  line-height:1.45;
   white-space:pre-wrap;
   word-break:break-word;
 }
@@ -1546,11 +1842,28 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   .telemetry-grid{grid-template-columns:1fr}
   .telemetry-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+@media(max-width:900px){
+  .sb-detail-header{padding:12px 14px}
+  .sb-detail-tabs{padding:10px 14px 0}
+  .sb-detail-body{padding:10px 14px 14px}
+  .sb-detail-stats{gap:10px 14px}
+  .conversation-shell{gap:12px}
+  .telemetry-panel-title{padding:7px 8px}
+  .telemetry-panel-head{
+    flex-direction:column;
+    align-items:flex-start;
+    gap:2px;
+  }
+  .telemetry-panel-actions{
+    width:100%;
+    justify-content:flex-start;
+  }
+}
 @media(max-width:720px){
   .telemetry-summary{grid-template-columns:1fr 1fr}
   .telemetry-ruler,
   .telemetry-span-row{grid-template-columns:1fr}
-  .telemetry-beat-track{height:72px}
+  .telemetry-beat-track{height:62px}
   .telemetry-beat-bubble{max-width:150px}
   .telemetry-column-heads,
   .telemetry-span-main{grid-template-columns:minmax(0,1fr) auto}
@@ -1559,6 +1872,38 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   .telemetry-ruler-track{display:none}
   .telemetry-span-lane{border-left:none}
   .telemetry-span-stack{padding-left:calc(var(--tree-depth, 0) * 12px + 18px)}
+}
+@media(max-width:640px){
+  .session-browser{
+    grid-template-rows:minmax(180px,30vh) minmax(0,1fr);
+    height:calc(100dvh - 108px);
+    min-height:0;
+    max-height:none;
+  }
+  .sb-filter-bar{padding:10px 10px 8px}
+  .sb-list-head{padding:8px 10px}
+  .sb-detail-header-row{gap:8px;margin-bottom:6px}
+  .sb-detail-model{font-size:11px}
+  .sb-detail-stats{grid-template-columns:1fr}
+  .conversation-summary{grid-template-columns:1fr 1fr;gap:8px}
+  .telemetry-summary{grid-template-columns:1fr}
+  .telemetry-column-head:nth-child(3),
+  .telemetry-span-duration{display:none}
+  .telemetry-column-heads,
+  .telemetry-span-main{grid-template-columns:minmax(0,1fr)}
+  .telemetry-log-list{max-height:220px}
+}
+@media(max-width:480px){
+  .sb-detail-header{padding:9px 10px}
+  .sb-detail-tabs{padding:8px 10px 0}
+  .sb-detail-body{padding:8px 10px 10px}
+  .conversation-summary{grid-template-columns:1fr}
+  .telemetry-beat-row{padding:6px 7px 4px}
+  .telemetry-beat-track{height:52px}
+  .telemetry-beat-bubble{display:none}
+  .telemetry-observation-bubble{display:none}
+  .telemetry-beat-time{top:26px}
+  .telemetry-panel-title{padding:6px 7px}
 }
 .compare-select,
 .compare-clear{
@@ -1690,14 +2035,24 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 
 <main id="main-content">
 
-<section class="global-filter-shell" aria-label="Session filters">
+<div class="session-filter-launcher" id="session-filter-launcher">
+  <div class="session-filter-launcher-meta" id="session-filter-launcher-meta">Showing all sessions</div>
+  <button type="button" class="filter-sheet-launch" id="filter-sheet-open">Filters</button>
+</div>
+
+<section class="global-filter-shell" id="global-filter-shell" aria-label="Session filters">
   <div class="global-filter-top">
     <div>
       <div class="global-filter-title">Session filters</div>
       <div class="global-filter-meta" id="global-filter-meta">Showing all sessions</div>
     </div>
+    <div class="global-filter-actions">
+      <button type="button" class="filter-compact-toggle" id="filter-compact-toggle" aria-expanded="false" aria-controls="global-filter-grid">More filters</button>
+      <button type="button" class="filter-clear" id="filter-clear">Clear filters</button>
+      <button type="button" class="filter-sheet-close" id="filter-sheet-close">Done</button>
+    </div>
   </div>
-  <div class="global-filter-grid">
+  <div class="global-filter-grid" id="global-filter-grid">
     <div class="filter-field">
       <label class="filter-label" for="sb-search">Search</label>
       <input type="text" class="sb-search" id="sb-search" name="session-search" autocomplete="off" spellcheck="false" placeholder="Search by prompt, session ID, model, or agent…"/>
@@ -1718,7 +2073,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         <option value="failing">Has failures</option>
       </select>
     </div>
-    <div class="filter-field">
+    <div class="filter-field filter-field-secondary">
       <label class="filter-label" for="filter-range">Range</label>
       <select class="filter-select" id="filter-range">
         <option value="all">All time</option>
@@ -1727,7 +2082,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         <option value="30d">Last 30 days</option>
       </select>
     </div>
-    <div class="filter-field">
+    <div class="filter-field filter-field-secondary">
       <label class="filter-label" for="filter-sort">Sort</label>
       <select class="filter-select" id="filter-sort">
         <option value="recent">Most recent</option>
@@ -1743,9 +2098,9 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
   </div>
   <div class="filter-chip-row">
     <div class="filter-chips" id="filter-chips"></div>
-    <button type="button" class="filter-clear" id="filter-clear">Clear filters</button>
   </div>
 </section>
+<div class="global-filter-backdrop" id="filter-sheet-backdrop" hidden></div>
 
 <!-- ════════════════════ SESSIONS BROWSER ════════════════════ -->
 <div class="tab-panel active" id="tab-sessions" role="tabpanel" aria-labelledby="tab-button-sessions">
@@ -1822,6 +2177,45 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
     </div>
   </div>
 
+</div>
+
+<!-- ════════════════════ COMPARE ════════════════════ -->
+<div class="tab-panel" id="tab-compare" role="tabpanel" aria-labelledby="tab-button-compare" hidden>
+  <div class="panel" id="compare-panel-main">
+    <div class="panel-title">Compare Cohorts</div>
+    <div id="compare-summary"></div>
+  </div>
+
+  <div class="cols-2">
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Comparison Details</div>
+      <div id="compare-details"></div>
+    </div>
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Baseline Agent Mix</div>
+      <div id="compare-baseline-agents"></div>
+    </div>
+  </div>
+
+  <div class="panel panel-no-hover">
+    <div class="panel-title">Compare Sessions <span style="color:var(--text-3);font-weight:400;font-size:11px">— select A then B</span></div>
+      <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:flex-end">
+        <div style="flex:1;min-width:200px">
+        <label for="cmp-a" style="display:block;font-size:11px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Session A</label>
+        <select id="cmp-a" class="compare-select" name="compare-session-a" autocomplete="off">
+          <option value="">— select —</option>
+        </select>
+      </div>
+      <div style="flex:1;min-width:200px">
+        <label for="cmp-b" style="display:block;font-size:11px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Session B</label>
+        <select id="cmp-b" class="compare-select" name="compare-session-b" autocomplete="off">
+          <option value="">— select —</option>
+        </select>
+      </div>
+      <button id="cmp-clear" class="compare-clear" type="button" title="Clear selection">Clear</button>
+    </div>
+    <div id="cmp-result"></div>
+  </div>
 </div>
 
 <!-- ════════════════════ OBSERVATIONS ════════════════════ -->
@@ -1956,45 +2350,6 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
     </table>
   </div>
 
-</div>
-
-<!-- ════════════════════ COMPARE ════════════════════ -->
-<div class="tab-panel" id="tab-compare" role="tabpanel" aria-labelledby="tab-button-compare" hidden>
-  <div class="panel" id="compare-panel-main">
-    <div class="panel-title">Compare Cohorts</div>
-    <div id="compare-summary"></div>
-  </div>
-
-  <div class="cols-2">
-    <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Comparison Details</div>
-      <div id="compare-details"></div>
-    </div>
-    <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Baseline Agent Mix</div>
-      <div id="compare-baseline-agents"></div>
-    </div>
-  </div>
-
-  <div class="panel panel-no-hover">
-    <div class="panel-title">Compare Sessions <span style="color:var(--text-3);font-weight:400;font-size:11px">— select A then B</span></div>
-      <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:flex-end">
-        <div style="flex:1;min-width:200px">
-        <label for="cmp-a" style="display:block;font-size:11px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Session A</label>
-        <select id="cmp-a" class="compare-select" name="compare-session-a" autocomplete="off">
-          <option value="">— select —</option>
-        </select>
-      </div>
-      <div style="flex:1;min-width:200px">
-        <label for="cmp-b" style="display:block;font-size:11px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Session B</label>
-        <select id="cmp-b" class="compare-select" name="compare-session-b" autocomplete="off">
-          <option value="">— select —</option>
-        </select>
-      </div>
-      <button id="cmp-clear" class="compare-clear" type="button" title="Clear selection">Clear</button>
-    </div>
-    <div id="cmp-result"></div>
-  </div>
 </div>
 
 <!-- ════════════════════ GRAPHS ════════════════════ -->
@@ -2282,13 +2637,21 @@ let filteredDashboardSessions = (D.sessions || []).slice();
   const pillContainer = document.getElementById('sb-agent-pills');
   const listHead = document.getElementById('sb-list-head');
   const metaEl = document.getElementById('global-filter-meta');
+  const launcherMetaEl = document.getElementById('session-filter-launcher-meta');
   const chipsEl = document.getElementById('filter-chips');
   const clearBtn = document.getElementById('filter-clear');
+  const filterShell = document.getElementById('global-filter-shell');
+  const compactToggleBtn = document.getElementById('filter-compact-toggle');
+  const filterSheetOpenBtn = document.getElementById('filter-sheet-open');
+  const filterSheetCloseBtn = document.getElementById('filter-sheet-close');
+  const filterSheetBackdrop = document.getElementById('filter-sheet-backdrop');
   const searchInput = document.getElementById('sb-search');
   const modelSelect = document.getElementById('filter-model');
   const statusSelect = document.getElementById('filter-status');
   const rangeSelect = document.getElementById('filter-range');
   const sortSelect = document.getElementById('filter-sort');
+  let reloadTimer = null;
+  let filterExpanded = false;
   const agentNames = ['claude','copilot','gemini','cursor'].filter(a => agentSet.has(a));
   const modelNames = [...new Set(sessions.map(s => s.primary_model).filter(Boolean))].sort((a,b) => a.localeCompare(b));
   modelNames.forEach(model => {
@@ -2329,6 +2692,33 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     });
   }
 
+  function scheduleDashboardReload(){
+    if (!reportSupportsServerFiltering()) return false;
+    if (reloadTimer) window.clearTimeout(reloadTimer);
+    reloadTimer = window.setTimeout(() => window.location.reload(), 120);
+    return true;
+  }
+
+  function isMobileFilterSheet(){
+    return window.matchMedia('(max-width: 720px)').matches;
+  }
+
+  function closeFilterSheet(){
+    filterShell.classList.remove('mobile-open');
+    document.body.classList.remove('filter-sheet-open');
+    if (filterSheetBackdrop) filterSheetBackdrop.hidden = true;
+  }
+
+  function syncFilterLayout(){
+    const mobile = isMobileFilterSheet();
+    filterShell.classList.toggle('expanded', filterExpanded || !mobile);
+    if (compactToggleBtn) {
+      compactToggleBtn.setAttribute('aria-expanded', String(filterExpanded || !mobile));
+      compactToggleBtn.textContent = filterExpanded ? 'Fewer filters' : 'More filters';
+    }
+    if (!mobile) closeFilterSheet();
+  }
+
   function updateAgentPills(){
     pillContainer.querySelectorAll('.sb-pill').forEach(p => {
       const isActive = p.dataset.agent === 'all'
@@ -2361,6 +2751,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     else if (filterState.agents.has(agent)) filterState.agents.delete(agent);
     else filterState.agents.add(agent);
     persistFilters();
+    if (scheduleDashboardReload()) return;
     renderSessionList();
   });
 
@@ -2369,16 +2760,17 @@ let filteredDashboardSessions = (D.sessions || []).slice();
   searchInput.addEventListener('input', () => {
     filterState.q = searchInput.value.trim();
     persistFilters();
+    if (scheduleDashboardReload()) return;
     renderSessionList();
   });
   modelSelect.value = modelNames.includes(filterState.model) ? filterState.model : 'all';
   statusSelect.value = filterState.status;
   rangeSelect.value = filterState.range;
   sortSelect.value = filterState.sort;
-  modelSelect.addEventListener('change', () => { filterState.model = modelSelect.value; persistFilters(); renderSessionList(); });
-  statusSelect.addEventListener('change', () => { filterState.status = statusSelect.value; persistFilters(); renderSessionList(); });
-  rangeSelect.addEventListener('change', () => { filterState.range = rangeSelect.value; persistFilters(); renderSessionList(); });
-  sortSelect.addEventListener('change', () => { filterState.sort = sortSelect.value; persistFilters(); renderSessionList(); });
+  modelSelect.addEventListener('change', () => { filterState.model = modelSelect.value; persistFilters(); if (scheduleDashboardReload()) return; renderSessionList(); });
+  statusSelect.addEventListener('change', () => { filterState.status = statusSelect.value; persistFilters(); if (scheduleDashboardReload()) return; renderSessionList(); });
+  rangeSelect.addEventListener('change', () => { filterState.range = rangeSelect.value; persistFilters(); if (scheduleDashboardReload()) return; renderSessionList(); });
+  sortSelect.addEventListener('change', () => { filterState.sort = sortSelect.value; persistFilters(); if (scheduleDashboardReload()) return; renderSessionList(); });
   clearBtn.addEventListener('click', () => {
     filterState.q = '';
     filterState.agents.clear();
@@ -2392,8 +2784,35 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     rangeSelect.value = 'all';
     sortSelect.value = 'recent';
     persistFilters();
+    if (scheduleDashboardReload()) return;
     renderSessionList();
   });
+  compactToggleBtn?.addEventListener('click', () => {
+    if (isMobileFilterSheet()) {
+      filterExpanded = true;
+      filterShell.classList.add('mobile-open');
+      document.body.classList.add('filter-sheet-open');
+      if (filterSheetBackdrop) filterSheetBackdrop.hidden = false;
+      syncFilterLayout();
+      return;
+    }
+    filterExpanded = !filterExpanded;
+    syncFilterLayout();
+  });
+  filterSheetOpenBtn?.addEventListener('click', () => {
+    filterExpanded = true;
+    filterShell.classList.add('mobile-open');
+    document.body.classList.add('filter-sheet-open');
+    if (filterSheetBackdrop) filterSheetBackdrop.hidden = false;
+    syncFilterLayout();
+  });
+  filterSheetCloseBtn?.addEventListener('click', () => closeFilterSheet());
+  filterSheetBackdrop?.addEventListener('click', () => closeFilterSheet());
+  window.addEventListener('resize', syncFilterLayout);
+  document.addEventListener('keydown', evt => {
+    if (evt.key === 'Escape') closeFilterSheet();
+  });
+  syncFilterLayout();
 
   function removeFilterChip(kind, value){
     if (kind === 'q') filterState.q = '';
@@ -2408,6 +2827,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     rangeSelect.value = filterState.range;
     sortSelect.value = filterState.sort;
     persistFilters();
+    if (scheduleDashboardReload()) return;
     renderSessionList();
   }
 
@@ -2478,6 +2898,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     metaEl.textContent = hasFilters
       ? `Showing ${fmt(filtered.length)} of ${fmt(sessions.length)} sessions`
       : `Showing all ${fmt(sessions.length)} sessions`;
+    if (launcherMetaEl) launcherMetaEl.textContent = metaEl.textContent;
     listHead.textContent = `${fmt(filtered.length)} session${filtered.length === 1 ? '' : 's'} in view`;
     document.dispatchEvent(new CustomEvent('dashboard-filters-changed', {
       detail: { sessions: filteredDashboardSessions.slice(), hasFilters, filters: {...filterState, agents:[...filterState.agents]} }
@@ -2565,41 +2986,62 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     const conversation = session.conversation || [];
     const sessionStartTs = conversation.length > 0 ? conversation[0].ts : 0;
 
-    let loadBtnHtml = '';
-    if (session.full_id && (!session._fullLoaded || !session.telemetry)) {
-      loadBtnHtml = `<button class="sb-load-btn" id="sb-load-full" data-sid="${escHtml(session.full_id)}">Load full session detail</button>`;
-    }
+    const loadBtnHtml = ''; // sessions auto-load on selection — see auto-load below
 
     let timelineHtml = '';
+    const isActivityType = t => ['tool_call','tool_result','mcp_call','mcp_result'].includes(t);
+
     if (conversation.length > 0) {
-      timelineHtml = '<div class="ev-timeline">';
+      timelineHtml = '<div class="chat-thread">';
       conversation.forEach((ev, i) => {
         const relTime = fmtRelTime(ev.ts - sessionStartTs);
         const nodeColor = getEventNodeColor(ev);
-        const badge = getEventBadge(ev);
-        const meta = getEventMeta(ev);
-        const preview = ev.preview ? escHtml(ev.preview.slice(0, session._fullLoaded ? 5000 : 200)) : '';
-        const isLong = ev.preview && ev.preview.length > 200;
         const eventKind = `${ev.type || 'event'}${ev.type === 'tool_result' && ev.success === false ? ' fail' : ''}`;
-        const bodyLabel = getEventBodyLabel(ev);
+        const previewLimit = session._fullLoaded ? 5000 : 280;
+        const rawPreview = ev.preview ? ev.preview.slice(0, previewLimit) : '';
+        const preview = rawPreview ? escHtml(rawPreview) : '';
+        const isLong = ev.preview && ev.preview.length > 280;
+        const rail = `<div class="ev-rail"><span class="ev-ts">${relTime}</span><span class="ev-dot" aria-hidden="true"></span></div>`;
 
-        timelineHtml += `<div class="ev-node" data-kind="${escHtml(eventKind)}" style="--node-color:${nodeColor}">
-          <div class="ev-rail">
-            <span class="ev-ts">${relTime}</span>
-            <span class="ev-dot" aria-hidden="true"></span>
-          </div>
-          <div class="ev-card">
-            <div class="ev-node-header">
-              ${badge}
-              ${meta ? `<span class="ev-meta">${meta}</span>` : ''}
-            </div>
-            ${preview ? `<div class="ev-body-label">${escHtml(bodyLabel)}</div>
-            <button type="button" class="ev-preview${session._fullLoaded ? ' full-content' : ''}${isLong ? ' expandable' : ''}" data-eidx="${i}" aria-expanded="false">${preview}</button>
-            ${isLong ? `<div class="ev-preview-hint">Tap to expand</div>` : ''}` : ''}
-          </div>
-        </div>`;
+        if (ev.type === 'prompt' || ev.type === 'response') {
+          const isUser = ev.type === 'prompt';
+          const who = isUser ? 'User' : (ev.model ? ev.model.replace(/^claude-/,'').replace(/-\d{8}$/,'') : 'Agent');
+          const meta = getEventMeta(ev);
+          timelineHtml += `<div class="chat-msg ${isUser ? 'is-user' : 'is-agent'}" data-kind="${escHtml(eventKind)}" style="--node-color:${nodeColor}">${rail}<div class="chat-bubble"><div class="chat-header"><span class="chat-who">${escHtml(who)}</span>${meta ? `<span class="chat-header-meta">${escHtml(meta)}</span>` : ''}</div>${preview ? `<div class="chat-content"><button type="button" class="ev-preview${session._fullLoaded ? ' full-content' : ''}${isLong ? ' expandable' : ''}" data-eidx="${i}" aria-expanded="false">${preview}</button>${isLong ? `<div class="ev-preview-hint">Tap to expand</div>` : ''}</div>` : `<div class="chat-content" style="color:var(--text-3);font-size:12px;font-style:italic">No content captured</div>`}</div></div>`;
+
+        } else if (isActivityType(ev.type)) {
+          let icon = '→', name = '', meta2 = '', statusHtml = '';
+          const dur = ev.duration_ms ? `<span class="chip-dur">${fmtDur(ev.duration_ms)}</span>` : '';
+          if (ev.type === 'tool_call') {
+            icon = '▶'; name = ev.tool_name || 'Tool';
+            meta2 = ev.preview ? ev.preview.slice(0,72) : '';
+          } else if (ev.type === 'tool_result') {
+            icon = ev.success !== false ? '✓' : '✗'; name = ev.tool_name || 'Result';
+            meta2 = ev.preview ? ev.preview.slice(0,72) : '';
+            statusHtml = ev.success !== false ? '<span class="chip-ok">ok</span>' : '<span class="chip-fail">failed</span>';
+          } else if (ev.type === 'mcp_call') {
+            icon = '⬡'; name = ev.tool_name || 'MCP';
+            meta2 = ev.server || '';
+          } else if (ev.type === 'mcp_result') {
+            icon = '⬡'; name = (ev.tool_name || 'MCP') + ' ↩';
+            meta2 = ev.server || '';
+          }
+          timelineHtml += `<div class="chat-activity" data-kind="${escHtml(eventKind)}" style="--node-color:${nodeColor}"><div class="ev-rail"><span class="ev-ts">${relTime}</span><span class="ev-dot" aria-hidden="true"></span></div><div class="chat-activity-chip"><em class="chip-icon">${icon}</em><span class="chip-name">${escHtml(name)}</span>${meta2 ? `<span class="chip-meta">${escHtml(meta2)}</span>` : ''}${dur}${statusHtml}</div></div>`;
+
+        } else {
+          // session_start, session_end, subagent_* — slim divider
+          const label = ev.type === 'session_start' ? 'session start'
+            : ev.type === 'session_end' ? 'session end'
+            : ev.type === 'subagent_start' ? `subagent · ${ev.subagent_type || 'start'}`
+            : ev.type === 'subagent_stop' ? 'subagent done'
+            : (ev.type || 'event');
+          timelineHtml += `<div class="chat-divider" data-kind="${escHtml(eventKind)}" style="--node-color:${nodeColor}"><div class="ev-rail"><span class="ev-ts" style="font-size:10px">${relTime}</span></div><div class="chat-divider-inner"><div class="chat-divider-line"></div><span class="chat-divider-label">${escHtml(label)}</span><div class="chat-divider-line"></div></div></div>`;
+        }
       });
       timelineHtml += '</div>';
+
+    } else if (session.full_id && !session._fullLoaded) {
+      timelineHtml = `<div class="chat-loading"><div class="chat-loading-dot"></div><div class="chat-loading-dot"></div><div class="chat-loading-dot"></div><span>Loading conversation…</span></div>`;
     } else {
       timelineHtml = '<div style="color:var(--text-3);text-align:center;padding:40px">No conversation data for this session</div>';
     }
@@ -2621,8 +3063,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
         session._detailTab = tab.dataset.tab || 'conversation';
         renderSessionDetail(session);
         if (session._detailTab === 'telemetry' && session.full_id && !session.telemetry && !session._loadingDetail) {
-          const refreshedBtn = detailEl.querySelector('#sb-load-full');
-          if (refreshedBtn) tryLoadFullDetail(session.full_id || session.id, refreshedBtn);
+          tryLoadFullDetail(session.full_id || session.id, null);
         }
       });
     });
@@ -2642,24 +3083,52 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       });
     });
 
-    detailEl.querySelectorAll('.telemetry-span-toggle').forEach(el => {
-      el.addEventListener('click', evt => {
-        evt.stopPropagation();
-        if (!(session._collapsedSpanIds instanceof Set)) session._collapsedSpanIds = new Set();
-        const spanKey = el.dataset.spanToggle || '';
-        if (!spanKey) return;
-        if (session._collapsedSpanIds.has(spanKey)) session._collapsedSpanIds.delete(spanKey);
-        else session._collapsedSpanIds.add(spanKey);
+    detailEl.querySelectorAll('.telemetry-observation').forEach(el => {
+      el.addEventListener('click', () => {
+        const observationId = el.dataset.observationId || '';
+        session._telemetryObservationId = session._telemetryObservationId === observationId ? '' : observationId;
         renderSessionDetail(session);
       });
     });
 
-    // Load full transcript button
-    const loadBtn = detailEl.querySelector('#sb-load-full');
-    if (loadBtn) {
-      loadBtn.addEventListener('click', () => {
-        tryLoadFullDetail(session.full_id || session.id, loadBtn);
+    const toggleSpanKey = (spanKey) => {
+      if (!(session._collapsedSpanIds instanceof Set)) session._collapsedSpanIds = new Set();
+      if (!spanKey) return;
+      if (session._collapsedSpanIds.has(spanKey)) session._collapsedSpanIds.delete(spanKey);
+      else session._collapsedSpanIds.add(spanKey);
+      renderSessionDetail(session);
+    };
+
+    detailEl.querySelectorAll('.telemetry-span-toggle').forEach(el => {
+      el.addEventListener('click', evt => {
+        evt.stopPropagation();
+        toggleSpanKey(el.dataset.spanToggle || '');
       });
+    });
+
+    detailEl.querySelectorAll('.telemetry-span-stack[data-span-toggle]').forEach(el => {
+      el.addEventListener('click', evt => {
+        if (evt.target.closest('.telemetry-span-toggle')) return;
+        toggleSpanKey(el.dataset.spanToggle || '');
+      });
+    });
+
+    detailEl.querySelectorAll('.telemetry-trace-action').forEach(el => {
+      el.addEventListener('click', () => {
+        if (!(session._collapsedSpanIds instanceof Set)) session._collapsedSpanIds = new Set();
+        const action = el.dataset.telemetryAction || '';
+        const spans = (session.telemetry?.spans || []).slice(0, 120);
+        const treeRows = buildTelemetryTreeRows(spans, session, null, 0);
+        const keys = treeRows.filter(row => row.hasChildren).map(row => row.key);
+        if (action === 'collapse-all') session._collapsedSpanIds = new Set(keys);
+        if (action === 'expand-all') session._collapsedSpanIds = new Set();
+        renderSessionDetail(session);
+      });
+    });
+
+    // Auto-load full detail silently on selection — no button required
+    if (session.full_id && !session._fullLoaded && !session._loadingDetail) {
+      tryLoadFullDetail(session.full_id || session.id, null);
     }
   }
 
@@ -2726,41 +3195,20 @@ let filteredDashboardSessions = (D.sessions || []).slice();
   function renderConversationCasefile(session, conversation, loadBtnHtml, timelineHtml){
     const promptCount = conversation.filter(ev => ev.type === 'prompt').length;
     const responseCount = conversation.filter(ev => ev.type === 'response').length;
-    const toolCount = conversation.filter(ev => ['tool_call','tool_result','mcp_call','mcp_result'].includes(ev.type)).length;
+    const toolCallCount = conversation.filter(ev => ev.type === 'tool_call' || ev.type === 'mcp_call').length;
     const failureCount = conversation.filter(ev => ev.type === 'tool_result' && ev.success === false).length;
-    return `<div class="conversation-shell">
-      <div class="conversation-toolbar">
-        <div>
-          <div class="conversation-eyebrow">Conversation casefile</div>
-          <div class="conversation-title">Readable session transcript</div>
-          <div class="conversation-sub">A scannable operator log of prompts, responses, tools, and failures. The timeline is ordered by relative session time so you can actually follow what happened.</div>
-        </div>
-        ${loadBtnHtml}
-      </div>
-      <div class="conversation-summary">
-        <div class="conversation-stat">
-          <div class="conversation-stat-label">Prompts</div>
-          <div class="conversation-stat-value">${fmt(promptCount)}</div>
-          <div class="conversation-stat-sub">User asks</div>
-        </div>
-        <div class="conversation-stat">
-          <div class="conversation-stat-label">Responses</div>
-          <div class="conversation-stat-value">${fmt(responseCount)}</div>
-          <div class="conversation-stat-sub">Model turns</div>
-        </div>
-        <div class="conversation-stat">
-          <div class="conversation-stat-label">Tool activity</div>
-          <div class="conversation-stat-value">${fmt(toolCount)}</div>
-          <div class="conversation-stat-sub">Tools + MCP hops</div>
-        </div>
-        <div class="conversation-stat">
-          <div class="conversation-stat-label">Failures</div>
-          <div class="conversation-stat-value" style="color:${failureCount ? 'var(--red)' : 'var(--text)'}">${fmt(failureCount)}</div>
-          <div class="conversation-stat-sub">${failureCount ? 'Needs attention' : 'Clean run'}</div>
-        </div>
-      </div>
-      ${timelineHtml}
+    const failPart = failureCount
+      ? `<span class="conv-stat-sep">·</span><div class="conv-stat-item" style="color:var(--red)"><span class="conv-stat-num" style="color:var(--red)">${fmt(failureCount)}</span> failed</div>`
+      : '';
+    const statsBar = `<div class="conv-stats-bar">
+      <div class="conv-stat-item"><span class="conv-stat-num">${fmt(promptCount)}</span> prompts</div>
+      <span class="conv-stat-sep">·</span>
+      <div class="conv-stat-item"><span class="conv-stat-num">${fmt(responseCount)}</span> responses</div>
+      <span class="conv-stat-sep">·</span>
+      <div class="conv-stat-item"><span class="conv-stat-num">${fmt(toolCallCount)}</span> tool calls</div>
+      ${failPart}
     </div>`;
+    return `<div class="conversation-shell">${statsBar}${timelineHtml}</div>`;
   }
 
   function telemetryBeatLabel(ev){
@@ -2778,6 +3226,98 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     if (ev.server) return ev.server;
     if (ev.preview) return (ev.preview || '').slice(0, 56);
     return getEventMeta(ev) || '';
+  }
+
+  function telemetryObservationColor(tone){
+    if (tone === 'error') return 'rgba(255,105,97,.96)';
+    if (tone === 'success') return 'rgba(48,209,88,.9)';
+    if (tone === 'info') return 'rgba(100,210,255,.9)';
+    return 'rgba(255,214,10,.94)';
+  }
+
+  function buildSessionObservationMarkers(session, spans, logs, anchorMs, sessionStartTs){
+    const markers = [];
+    const seen = new Set();
+    const conversation = session.conversation || [];
+    const addMarker = (id, rel, tone, label, sub) => {
+      const relMs = Number(rel || 0);
+      if (!Number.isFinite(relMs)) return;
+      const clamped = Math.max(0, relMs);
+      const dedupeKey = `${label}:${Math.round(clamped / 5000)}`;
+      if (seen.has(dedupeKey)) return;
+      seen.add(dedupeKey);
+      markers.push({ id, rel: clamped, tone, label, sub: sub || '' });
+    };
+
+    const firstFailure = conversation.find(ev => ev.type === 'tool_result' && ev.success === false);
+    if (firstFailure) {
+      addMarker(
+        'tool-failure',
+        Number(firstFailure.ts || 0) - Number(sessionStartTs || 0),
+        'error',
+        'Tool failure',
+        firstFailure.tool_name || 'A tool result failed'
+      );
+    }
+
+    const errorLog = logs.find(log => ['ERROR', 'FATAL'].includes(log.severity || ''));
+    if (errorLog) {
+      addMarker(
+        'error-log',
+        telemetryAbsMs(errorLog, anchorMs) - Number(sessionStartTs || 0),
+        'error',
+        'Error log',
+        errorLog.event || errorLog.tool_name || errorLog.mcp_tool || errorLog.service || 'OTLP log'
+      );
+    }
+
+    const slowestSpan = spans
+      .filter(span => Number(span.duration_ms || 0) >= 5000)
+      .sort((a, b) => Number(b.duration_ms || 0) - Number(a.duration_ms || 0))[0];
+    if (slowestSpan) {
+      const slowLabel = slowestSpan.tool_name || slowestSpan.mcp_tool || slowestSpan.event || slowestSpan.name || 'Span';
+      addMarker(
+        'slow-span',
+        telemetryAbsMs(slowestSpan, anchorMs) - Number(sessionStartTs || 0),
+        'warn',
+        'Slow span',
+        `${slowLabel} · ${fmtDur(Number(slowestSpan.duration_ms || 0))}`
+      );
+    }
+
+    let longestGap = 0;
+    let longestGapStart = 0;
+    for (let i = 1; i < conversation.length; i += 1) {
+      const prevTs = Number(conversation[i - 1]?.ts || 0);
+      const currTs = Number(conversation[i]?.ts || 0);
+      const gap = currTs - prevTs;
+      if (gap > longestGap) {
+        longestGap = gap;
+        longestGapStart = prevTs;
+      }
+    }
+    if (longestGap >= 60000) {
+      addMarker(
+        'long-gap',
+        (longestGapStart + longestGap / 2) - Number(sessionStartTs || 0),
+        'warn',
+        'Long pause',
+        fmtDur(longestGap)
+      );
+    }
+
+    if (Number(session.recovered_failures || 0) > 0 && conversation.length) {
+      const recoverAt = Number(conversation[conversation.length - 1]?.ts || sessionStartTs || 0) - Number(sessionStartTs || 0);
+      addMarker(
+        'recovered',
+        recoverAt,
+        'success',
+        'Recovered',
+        `${fmt(session.recovered_failures || 0)} failure${Number(session.recovered_failures || 0) === 1 ? '' : 's'} recovered`
+      );
+    }
+
+    return markers.sort((a, b) => a.rel - b.rel).slice(0, 6);
   }
 
   function pickTelemetryMoments(session){
@@ -2807,6 +3347,30 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     return 0;
   }
 
+  function stringifyEventContent(value){
+    if (typeof value === 'string') return value;
+    if (value === null || value === undefined) return '';
+    if (Array.isArray(value)) {
+      return value.map(item => {
+        if (typeof item === 'string') return item;
+        if (item && typeof item === 'object') {
+          if (typeof item.text === 'string') return item.text;
+          if (typeof item.content === 'string') return item.content;
+          try { return JSON.stringify(item); }
+          catch (_) { return String(item); }
+        }
+        return String(item || '');
+      }).filter(Boolean).join('\n');
+    }
+    if (value && typeof value === 'object') {
+      if (typeof value.text === 'string') return value.text;
+      if (typeof value.content === 'string') return value.content;
+      try { return JSON.stringify(value); }
+      catch (_) { return String(value); }
+    }
+    return String(value);
+  }
+
   function normalizeLoadedConversation(events, existingConversation){
     const existing = Array.isArray(existingConversation) ? existingConversation : [];
     return (events || []).map((ev, idx) => {
@@ -2814,7 +3378,9 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       return {
         type: ev.type,
         ts: parseEventTs(ev.ts || ev.timestamp || ev.time) || Number(fallback.ts || 0) || 0,
-        preview: ev.content || ev.preview || ev.input || '',
+        preview: stringifyEventContent(
+          ev.content !== undefined ? ev.content : (ev.preview !== undefined ? ev.preview : ev.input)
+        ) || '',
         tool_name: ev.tool_name || '',
         model: ev.model || '',
         input_tokens: ev.input_tokens || 0,
@@ -2865,26 +3431,84 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     return 'rgba(255,255,255,.4)';
   }
 
-  function buildTelemetryBeatRail(beats, sessionStartTs){
-    const maxRel = Math.max(1, ...beats.map(beat => Math.max(0, Number(beat.ts || 0) - Number(sessionStartTs || 0))));
-    let lastLeft = -100;
-    let clusterLevel = 0;
+  function telemetryTimelineLeft(rel, maxRel){
+    const safeMax = Math.max(1, Number(maxRel || 0));
+    const normalized = Math.max(0, Math.min(1, Number(rel || 0) / safeMax));
+    const curve = 2.35;
+    const scaled = (Math.exp(normalized * curve) - 1) / (Math.exp(curve) - 1);
+    return Math.max(0, Math.min(100, scaled * 100));
+  }
+
+  function spreadTimelineLefts(rawLefts, minGap){
+    if (!rawLefts.length) return [];
+    const spread = rawLefts.slice();
+    for (let i = 1; i < spread.length; i += 1) {
+      spread[i] = Math.max(spread[i], spread[i - 1] + minGap);
+    }
+    if (spread[spread.length - 1] > 100) {
+      const overflow = spread[spread.length - 1] - 100;
+      for (let i = 0; i < spread.length; i += 1) spread[i] -= overflow;
+    }
+    if (spread[0] < 0) {
+      const shift = -spread[0];
+      for (let i = 0; i < spread.length; i += 1) spread[i] += shift;
+    }
+    for (let i = spread.length - 2; i >= 0; i -= 1) {
+      spread[i] = Math.min(spread[i], spread[i + 1] - minGap);
+    }
+    return spread.map(left => Math.max(0, Math.min(100, left)));
+  }
+
+  function layoutTimelinePoints(items, maxRel, options){
+    const minGap = Number(options?.minGap || 0);
+    const minLabelGap = Number(options?.minLabelGap || minGap || 0);
+    const laneGap = Number(options?.laneGap || minGap || 0);
+    const rawLefts = items.map(item => telemetryTimelineLeft(item.rel, maxRel));
+    const lefts = spreadTimelineLefts(rawLefts, minGap);
+    const laneEnds = [];
+    let lastLabelLeft = -100;
+    let maxLevel = 0;
+    return {
+      maxLevel,
+      items: items.map((item, index) => {
+        const left = lefts[index];
+        let level = 0;
+        while (laneEnds[level] !== undefined && (left - laneEnds[level]) < laneGap) level += 1;
+        laneEnds[level] = left;
+        maxLevel = Math.max(maxLevel, level);
+        const showTime = item.forceLabel || (left - lastLabelLeft >= minLabelGap);
+        if (showTime) lastLabelLeft = left;
+        return { ...item, left, level, showTime };
+      }),
+      get maxLevel(){ return maxLevel; },
+    };
+  }
+
+  function buildTelemetryBeatRail(beats, sessionStartTs, activeBeatId, observations, activeObservationId){
+    const beatItems = beats.map((beat, index) => ({
+      beat,
+      index,
+      rel: Math.max(0, Number(beat.ts || 0) - Number(sessionStartTs || 0)),
+      forceLabel: activeBeatId && beat._beatId === activeBeatId,
+    }));
+    const observationItems = (observations || []).map(item => ({
+      ...item,
+      forceLabel: activeObservationId && item.id === activeObservationId,
+    }));
+    const maxRel = Math.max(
+      1,
+      ...beatItems.map(item => item.rel),
+      ...observationItems.map(item => Math.max(0, Number(item.rel || 0)))
+    );
+    const beatLayout = layoutTimelinePoints(beatItems, maxRel, { minGap: 1.2, laneGap: 3.4, minLabelGap: 11 });
+    const observationLayout = layoutTimelinePoints(observationItems, maxRel, { minGap: 1.6, laneGap: 4.5, minLabelGap: 16 });
+    const maxLevel = Math.max(beatLayout.maxLevel || 0, observationLayout.maxLevel || 0);
+    const height = 46 + (maxLevel * 8);
     return {
       maxRel,
-      items: beats.map((beat, index) => {
-        const rel = Math.max(0, Number(beat.ts || 0) - Number(sessionStartTs || 0));
-        const left = Math.max(0, Math.min(100, (rel / maxRel) * 100));
-        if (Math.abs(left - lastLeft) < 4) clusterLevel = (clusterLevel + 1) % 3;
-        else clusterLevel = 0;
-        lastLeft = left;
-        return {
-          beat,
-          index,
-          left,
-          level: clusterLevel,
-          rel,
-        };
-      }),
+      height,
+      items: beatLayout.items,
+      observations: observationLayout.items,
     };
   }
 
@@ -2898,11 +3522,39 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       byId.set(key, span);
       children.set(key, []);
     });
+    const visualParentByKey = new Map();
     const roots = [];
+    const traceStacks = new Map();
     ordered.forEach(span => {
+      const key = span._treeKey;
       const parentId = span.parent_id || '';
-      if (parentId && byId.has(parentId)) children.get(parentId).push(span);
-      else roots.push(span);
+      const explicitParent = parentId && byId.has(parentId) ? parentId : '';
+      const traceKey = span.trace_id || '__trace__';
+      const stack = traceStacks.get(traceKey) || [];
+      const spanStart = Number(span.rel_ms || 0);
+      const spanEnd = spanStart + Number(span.duration_ms || 0);
+      while (stack.length) {
+        const top = stack[stack.length - 1];
+        const topEnd = Number(top.rel_ms || 0) + Number(top.duration_ms || 0);
+        if (topEnd >= spanStart) break;
+        stack.pop();
+      }
+      let visualParent = explicitParent;
+      if (!visualParent && stack.length) {
+        const candidate = stack[stack.length - 1];
+        const candidateEnd = Number(candidate.rel_ms || 0) + Number(candidate.duration_ms || 0);
+        if (candidate._treeKey !== key && candidateEnd >= spanEnd && Number(candidate.duration_ms || 0) >= Number(span.duration_ms || 0)) {
+          visualParent = candidate._treeKey;
+        }
+      }
+      if (visualParent) {
+        visualParentByKey.set(key, visualParent);
+        children.get(visualParent).push(span);
+      } else {
+        roots.push(span);
+      }
+      stack.push(span);
+      traceStacks.set(traceKey, stack);
     });
     const sortChildren = list => list.sort((a, b) => {
       const rel = Number(a.rel_ms || 0) - Number(b.rel_ms || 0);
@@ -2922,7 +3574,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
         span,
         key,
         depth,
-        hasParent: Boolean(span.parent_id && byId.has(span.parent_id)),
+        hasParent: visualParentByKey.has(key),
         hasChildren: descendants.length > 0,
         collapsed,
         active,
@@ -2931,6 +3583,17 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     }
     roots.forEach(root => visit(root, 0));
     return rows;
+  }
+
+  function telemetrySpanServiceLabel(span){
+    if (span.service) return span.service;
+    if (span.agent) return `${span.agent} agent`;
+    if (span.mcp_server) return `mcp:${span.mcp_server}`;
+    if (span.tool_name) return `tool:${span.tool_name}`;
+    if (span.mcp_tool) return `tool:${span.mcp_tool}`;
+    if (span.model) return span.model;
+    if (span.phase) return span.phase;
+    return '';
   }
 
   function renderTelemetryCockpit(session){
@@ -2972,8 +3635,18 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       return Number(a.rel_ms || 0) - Number(b.rel_ms || 0);
     });
     const rowSpans = treeRows.slice(0, 120);
+    const collapsibleKeys = treeRows.filter(row => row.hasChildren).map(row => row.key);
+    const collapsedCount = treeRows.filter(row => row.collapsed).length;
     const sessionStartTs = session.conversation?.[0]?.ts || beats[0]?.ts || 0;
-    const beatRail = buildTelemetryBeatRail(beats, sessionStartTs);
+    const observationMarkers = buildSessionObservationMarkers(session, spans, logs, anchorMs, sessionStartTs);
+    const activeObservation = observationMarkers.find(item => item.id === session._telemetryObservationId) || null;
+    const beatRail = buildTelemetryBeatRail(
+      beats,
+      sessionStartTs,
+      activeBeat?._beatId || '',
+      observationMarkers,
+      activeObservation?.id || ''
+    );
     const rulerTicks = [0, .25, .5, .75, 1].map(fraction => ({
       left: fraction * 100,
       label: fmtDur(traceWindowMs * fraction),
@@ -2999,10 +3672,10 @@ let filteredDashboardSessions = (D.sessions || []).slice();
         </div>
         ${beats.length ? `<div class="telemetry-beat-row">
           <div class="telemetry-beat-scale">
-            <span>Session timeline</span>
+            <span>Session timeline${observationMarkers.length ? ` · ${fmt(observationMarkers.length)} observations` : ''}</span>
             <span>${escHtml(fmtRelTime(beatRail.maxRel))}</span>
           </div>
-          <div class="telemetry-beat-track">${beatRail.items.map(item => `
+          <div class="telemetry-beat-track" style="--track-height:${beatRail.height}px">${beatRail.items.map(item => `
             <button
               type="button"
               class="telemetry-beat${activeBeat && item.beat._beatId === activeBeat._beatId ? ' active' : ''}"
@@ -3015,20 +3688,43 @@ let filteredDashboardSessions = (D.sessions || []).slice();
                   <div class="telemetry-beat-label">${escHtml(telemetryBeatLabel(item.beat))}</div>
                   <div class="telemetry-beat-sub">${escHtml(telemetryBeatSub(item.beat))}</div>
                 </div>` : ''}
-              <div class="telemetry-beat-time">${fmtRelTime(item.rel)}</div>
+              ${item.showTime ? `<div class="telemetry-beat-time">${fmtRelTime(item.rel)}</div>` : ''}
             </button>
-          `).join('')}</div>
+          `).join('')}
+          ${beatRail.observations.map(item => {
+            const active = activeObservation && activeObservation.id === item.id;
+            return `
+            <button
+              type="button"
+              class="telemetry-observation${active ? ' active' : ''}"
+              data-observation-id="${escHtml(item.id)}"
+              style="--obs-left:${item.left}%;--obs-level:${item.level};--obs-color:${telemetryObservationColor(item.tone)}"
+              aria-label="${escHtml(`${item.label} at ${fmtRelTime(item.rel)}`)}"
+              title="${escHtml(item.sub ? `${item.label}: ${item.sub}` : item.label)}"
+            >
+              <div class="telemetry-observation-bubble">
+                <div class="telemetry-observation-label">${escHtml(item.label)}</div>
+                <div class="telemetry-observation-sub">${escHtml(item.sub || fmtRelTime(item.rel))}</div>
+              </div>
+            </button>`;
+          }).join('')}</div>
         </div>` : ''}
         <div class="telemetry-grid">
           <div class="telemetry-panel">
             <div class="telemetry-panel-title">
-              <span>Trace explorer</span>
-              <span class="telemetry-panel-sub">dense gantt view aligned to the first trace event</span>
+              <div class="telemetry-panel-head">
+                <span>Trace timeline</span>
+                <span class="telemetry-panel-sub">Jaeger-style waterfall with nested spans aligned to trace start</span>
+              </div>
+              <div class="telemetry-panel-actions">
+                ${collapsedCount ? `<button type="button" class="telemetry-trace-action" data-telemetry-action="expand-all">Expand all</button>` : ''}
+                ${collapsibleKeys.length ? `<button type="button" class="telemetry-trace-action" data-telemetry-action="collapse-all">Collapse spans</button>` : ''}
+              </div>
             </div>
             <div class="telemetry-ruler">
               <div class="telemetry-column-heads">
-                <span class="telemetry-column-head">Name</span>
-                <span class="telemetry-column-head">Service / phase</span>
+                <span class="telemetry-column-head">Service &amp; operation</span>
+                <span class="telemetry-column-head">Phase</span>
                 <span class="telemetry-column-head">Dur</span>
               </div>
               <div class="telemetry-ruler-track">
@@ -3047,11 +3743,12 @@ let filteredDashboardSessions = (D.sessions || []).slice();
                 const width = Math.max(2, Math.min(100 - left, (durationMs / traceWindowMs) * 100));
                 const active = row.active;
                 const title = span.tool_name || span.mcp_tool || span.event || span.name || 'Span';
-                const sub = [span.trace_id ? `trace ${String(span.trace_id).slice(0, 8)}` : '', fmtRelTime(relMs)].filter(Boolean).join(' · ');
+                const serviceLabel = telemetrySpanServiceLabel(span);
+                const sub = [serviceLabel, span.trace_id ? `trace ${String(span.trace_id).slice(0, 8)}` : '', fmtRelTime(relMs)].filter(Boolean).join(' · ');
                 return `
                   <div class="telemetry-span-row${active ? ' active' : ''}">
                     <div class="telemetry-span-main">
-                      <div class="telemetry-span-stack${row.hasParent ? ' has-parent' : ''}" style="--tree-depth:${row.depth}">
+                      <div class="telemetry-span-stack${row.hasParent ? ' has-parent' : ''}" style="--tree-depth:${row.depth}"${row.hasChildren ? ` data-span-toggle="${escHtml(row.key)}"` : ''}>
                         ${row.hasChildren
                           ? `<button type="button" class="telemetry-span-toggle" data-span-toggle="${escHtml(row.key)}" data-collapsed="${row.collapsed ? 'true' : 'false'}" aria-label="${row.collapsed ? 'Expand' : 'Collapse'} ${escHtml(title)}">${row.collapsed ? '+' : '−'}</button>`
                           : `<span class="telemetry-span-spacer" aria-hidden="true"></span>`}
@@ -3060,7 +3757,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
                       </div>
                       <div class="telemetry-span-phase">
                         <span class="telemetry-phase-dot" style="background:${telemetryPhaseColor(span.phase)}"></span>
-                        <span>${escHtml([span.service || 'unknown', span.phase || 'span'].filter(Boolean).join(' · '))}</span>
+                        <span>${escHtml(span.phase || 'span')}</span>
                       </div>
                       <div class="telemetry-span-duration">${fmtDur(durationMs || 0)}</div>
                     </div>
@@ -3075,27 +3772,27 @@ let filteredDashboardSessions = (D.sessions || []).slice();
               }).join('') : `<div class="telemetry-empty">No OTLP spans matched this session.</div>`}
             </div>
           </div>
-          <div class="telemetry-panel">
-            <div class="telemetry-panel-title">
-              <span>Log dock</span>
-              <span class="telemetry-panel-sub">focus-first events around the selected session moment</span>
-            </div>
-            <div class="telemetry-log-list">
-              ${orderedLogs.length ? orderedLogs.map(log => {
-                const active = activeBeat && telemetryMatchBeat(activeBeat, log, anchorMs);
-                const meta = [log.service, log.event || log.tool_name || log.mcp_tool || log.mcp_server, log.trace_id ? `trace ${String(log.trace_id).slice(0, 8)}` : ''].filter(Boolean).join(' · ');
-                return `
-                  <div class="telemetry-log${active ? ' active' : ''}">
-                    <div class="telemetry-log-top">
-                      <span class="telemetry-log-severity" data-severity="${escHtml(log.severity || 'TRACE')}">${escHtml(log.severity || 'TRACE')}</span>
-                      <span class="telemetry-log-time">${fmtRelTime(Number(log.rel_ms || 0))}</span>
-                      ${meta ? `<span class="telemetry-log-meta">${escHtml(meta)}</span>` : ''}
-                    </div>
-                    <div class="telemetry-log-body">${escHtml(log.body || 'No log body')}</div>
-                    ${renderTelemetryAttrs(log.attrs)}
-                  </div>`;
-              }).join('') : `<div class="telemetry-empty">No OTLP logs matched this session.</div>`}
-            </div>
+        </div>
+        <div class="telemetry-panel telemetry-log-panel">
+          <div class="telemetry-panel-title">
+            <span>Log dock</span>
+            <span class="telemetry-panel-sub">OTLP log records for the selected session, placed below the trace waterfall</span>
+          </div>
+          <div class="telemetry-log-list">
+            ${orderedLogs.length ? orderedLogs.map(log => {
+              const active = activeBeat && telemetryMatchBeat(activeBeat, log, anchorMs);
+              const meta = [log.service, log.event || log.tool_name || log.mcp_tool || log.mcp_server, log.trace_id ? `trace ${String(log.trace_id).slice(0, 8)}` : ''].filter(Boolean).join(' · ');
+              return `
+                <div class="telemetry-log${active ? ' active' : ''}">
+                  <div class="telemetry-log-top">
+                    <span class="telemetry-log-severity" data-severity="${escHtml(log.severity || 'TRACE')}">${escHtml(log.severity || 'TRACE')}</span>
+                    <span class="telemetry-log-time">${fmtRelTime(Number(log.rel_ms || 0))}</span>
+                    ${meta ? `<span class="telemetry-log-meta">${escHtml(meta)}</span>` : ''}
+                  </div>
+                  <div class="telemetry-log-body">${escHtml(log.body || 'No log body')}</div>
+                  ${renderTelemetryAttrs(log.attrs)}
+                </div>`;
+            }).join('') : `<div class="telemetry-empty">No OTLP logs matched this session.</div>`}
           </div>
         </div>
       </div>`;
