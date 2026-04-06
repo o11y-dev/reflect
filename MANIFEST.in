@@ -1,0 +1,4 @@
+include LICENSE
+include CHANGELOG.md
+include README.md
+recursive-include src/reflect/data *.json *.md
