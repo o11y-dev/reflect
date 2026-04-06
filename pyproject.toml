@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "o11y-reflect"
 version = "0.3.0"
 description = "See why your AI coding agents fail, stall, or burn budget — local-first telemetry for Claude, Copilot, Gemini, and Cursor"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 readme = "README.md"
 license = "Apache-2.0"
 keywords = ["observability", "opentelemetry", "ai-agents", "claude", "copilot", "gemini", "telemetry"]
@@ -15,8 +15,6 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Quality Assurance",
@@ -49,7 +47,7 @@ addopts = "--cov=reflect --cov-report=term-missing --cov-fail-under=65"
 testpaths = ["tests"]
 
 [tool.ruff]
-target-version = "py39"
+target-version = "py311"
 line-length = 100
 exclude = ["serve.py"]
 
