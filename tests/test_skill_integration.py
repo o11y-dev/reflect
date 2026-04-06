@@ -8,7 +8,7 @@ from conftest import make_span, wrap_otlp
 
 from reflect.core import main
 
-SKILL_MD = Path(__file__).parent.parent / "skills" / "reflect" / "SKILL.md"
+SKILL_MD = Path(__file__).parent.parent / "src" / "reflect" / "data" / "skills" / "reflect" / "SKILL.md"
 
 
 class TestSkillMd:
