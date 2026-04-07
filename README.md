@@ -9,16 +9,21 @@
 
 Local-first telemetry for Claude Code, GitHub Copilot, Gemini CLI, and Cursor. One install, real insight, no cloud required.
 
+## Requirements
+
+- Python 3.11+
+- [pipx](https://pipx.pypa.io/stable/installation/) (recommended) or pip
+
 ## Quickstart
 
 ```bash
 pipx install o11y-reflect
 reflect setup
-# use your AI tool normally, then:
+# use your AI tool normally for a bit, then:
 reflect
 ```
 
-That's it. `reflect setup` installs hooks, wires your agents, and starts capturing telemetry to `~/.reflect/state/`. `reflect` renders an interactive terminal dashboard.
+`reflect setup` modifies your agent config files to install OpenTelemetry hooks (e.g. `~/.claude/settings.json` for Claude Code, `~/.config/github-copilot/` for Copilot) and starts writing spans to `~/.reflect/state/`. `reflect` then reads those spans and renders an interactive terminal dashboard.
 
 **No telemetry yet?** Try the demo:
 
@@ -42,8 +47,8 @@ reflect --demo
 ```bash
 reflect                        # interactive terminal dashboard (default)
 reflect --no-terminal          # markdown report
-reflect --dashboard-artifact out.json  # JSON for hosted dashboards
-reflect --publish              # open hosted dashboard in browser
+reflect --dashboard-artifact out.json  # JSON artifact for dashboards
+reflect --publish              # open local dashboard in browser
 reflect --demo                 # instant demo with sample data
 ```
 
@@ -54,7 +59,7 @@ reflect doctor
 reflect update
 ```
 
-`reflect doctor` includes an update advisor for package drift, live pipx drift, skill-copy drift, and hook wiring drift. `reflect update --apply` upgrades the pipx package when a newer release is available.
+`reflect doctor` checks that your installation is healthy: hooks are wired correctly, the installed package matches the latest release, and skill files are up to date. `reflect update --apply` upgrades the pipx package when a newer release is available.
 
 ## Supported agents
 
@@ -98,7 +103,6 @@ reflect --dashboard-artifact docs/reports/latest.json --publish
 For a safe public example, this repo also ships a curated GitHub Pages demo:
 
 - `https://reflect.o11y.dev/showcase.html`
-- direct dashboard view: `https://reflect.o11y.dev/demo.html`
 
 ### All options
 
@@ -138,7 +142,7 @@ reflect → reads traces → terminal dashboard / report / hosted view
 
 ## Skill package
 
-`reflect` ships with a portable skill at `skills/reflect/SKILL.md` for Claude Code. After `reflect setup`, the `/reflect` skill is available in your AI tool for in-session telemetry analysis.
+`reflect` ships with a portable skill for Claude Code. After `reflect setup`, the `/reflect` skill is available in your Claude Code session for in-session telemetry analysis.
 
 ## Analysis schema
 
@@ -146,11 +150,11 @@ See [`docs/ai-observability-schema.md`](docs/ai-observability-schema.md) for the
 
 ## Part of o11y.dev
 
-`reflect` is the entry point to the [o11y.dev](https://o11y.dev) ecosystem:
+`reflect` is the entry point to the [o11y.dev](https://o11y.dev) ecosystem. `reflect setup` handles the required pieces automatically; the rest are optional:
 
-- **[opentelemetry-hooks](https://github.com/o11y-dev/opentelemetry-hooks)** — instrumentation engine for AI coding agents
-- **[opentelemetry-skill](https://github.com/o11y-dev/opentelemetry-skill)** — observability knowledge layer for AI assistants
-- **[gateway](https://github.com/o11y-dev/gateway)** — optional OTLP gateway for team/hosted telemetry
+- **[opentelemetry-hooks](https://github.com/o11y-dev/opentelemetry-hooks)** — instrumentation engine that captures spans from AI coding agents *(installed by `reflect setup`)*
+- **[opentelemetry-skill](https://github.com/o11y-dev/opentelemetry-skill)** — observability knowledge layer for AI assistants *(optional)*
+- **[gateway](https://github.com/o11y-dev/gateway)** — OTLP gateway for team or hosted telemetry *(optional)*
 
 ## License
 
