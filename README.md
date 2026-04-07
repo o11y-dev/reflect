@@ -5,9 +5,31 @@
 [![License](https://img.shields.io/github/license/o11y-dev/reflect)](LICENSE)
 [![CI](https://github.com/o11y-dev/reflect/actions/workflows/test.yml/badge.svg)](https://github.com/o11y-dev/reflect/actions/workflows/test.yml)
 
-**See why your AI coding agents fail, stall, or burn budget.**
+**Your AI agents are doing things you can't see. reflect shows you.**
 
-Local-first telemetry for Claude Code, GitHub Copilot, Gemini CLI, and Cursor. One install, real insight, no cloud required.
+Local-first telemetry for Claude Code, GitHub Copilot, Gemini CLI, and Cursor — token spend, tool failure rates, latency, and what's actually burning your budget. No cloud. No account. Runs on your machine.
+
+```
+$ reflect
+
+  reflect  ·  47 sessions  ·  claude · copilot · cursor  ·  1.2M tokens
+
+ ╭─ Insights ──────────────────────────────────────────────────────────────╮
+ │  ⚠  Bash tool failure rate 34% — most failures cluster before midnight  │
+ │  ⚠  Top session consumed 18% of all tokens (context blowout pattern)    │
+ │  ✓  Cache hit rate 61% — prompt structure is consistent                 │
+ │  ✓  claude outperforms cursor: 2.1× lower tool failure rate             │
+ ╰─────────────────────────────────────────────────────────────────────────╯
+
+ ╭─ Agent Comparison ──────────────────────────────────────────────────────╮
+ │  Agent    Sessions  Input      Cache   Tool Failures  Quality            │
+ │  claude   31        680K       61%     8%             ████░ High         │
+ │  copilot  9         190K       44%     21%            ███░░ Medium       │
+ │  cursor   7         330K       12%     34%            ██░░░ Low          │
+ ╰─────────────────────────────────────────────────────────────────────────╯
+```
+
+> Try it yourself in 10 seconds: `pipx install o11y-reflect && reflect --demo`
 
 ## Requirements
 
@@ -30,6 +52,15 @@ reflect
 ```bash
 reflect --demo
 ```
+
+## What people actually find
+
+Running `reflect` for the first time is usually surprising:
+
+- One session consumed 30–40% of your total tokens (almost always a context blowout, not useful work)
+- Your tool failure rate is higher than you thought — Bash failures often go unnoticed because the agent silently retries
+- Cache hit rate varies dramatically by agent; switching prompt style can cut costs 30–50%
+- If you use multiple agents, one is almost always measurably more efficient than the others for the same class of task
 
 ## How it works
 
@@ -161,13 +192,13 @@ reflect → reads traces → terminal dashboard / report / hosted view
 
 See [`docs/ai-observability-schema.md`](docs/ai-observability-schema.md) for the canonical cross-tool analysis schema.
 
-## Part of o11y.dev
+## Related
 
-`reflect` is the entry point to the [o11y.dev](https://o11y.dev) ecosystem. `reflect setup` handles the required pieces automatically; the rest are optional:
+`reflect setup` automatically installs **[opentelemetry-hooks](https://github.com/o11y-dev/opentelemetry-hooks)**, the instrumentation layer that captures spans from your AI agents.
 
-- **[opentelemetry-hooks](https://github.com/o11y-dev/opentelemetry-hooks)** — instrumentation engine that captures spans from AI coding agents *(installed by `reflect setup`)*
-- **[opentelemetry-skill](https://github.com/o11y-dev/opentelemetry-skill)** — observability knowledge layer for AI assistants *(optional)*
-- **[gateway](https://github.com/o11y-dev/gateway)** — OTLP gateway for team or hosted telemetry *(optional)*
+Two optional extras if you need them:
+- **[opentelemetry-skill](https://github.com/o11y-dev/opentelemetry-skill)** — observability knowledge for AI assistants
+- **[gateway](https://github.com/o11y-dev/gateway)** — OTLP gateway for team/shared telemetry
 
 ## License
 
