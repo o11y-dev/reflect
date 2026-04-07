@@ -5,26 +5,75 @@
 [![License](https://img.shields.io/github/license/o11y-dev/reflect)](LICENSE)
 [![CI](https://github.com/o11y-dev/reflect/actions/workflows/test.yml/badge.svg)](https://github.com/o11y-dev/reflect/actions/workflows/test.yml)
 
-**See why your AI coding agents fail, stall, or burn budget.**
+**Your AI agents are doing things you can't see. reflect shows you.**
 
-Local-first telemetry for Claude Code, GitHub Copilot, Gemini CLI, and Cursor. One install, real insight, no cloud required.
+Local-first telemetry for Claude Code, GitHub Copilot, Gemini CLI, and Cursor — token spend, tool failure rates, latency, and what's actually burning your budget. No cloud. No account. Runs on your machine.
+
+```
+$ reflect
+
+  reflect  ·  47 sessions  ·  claude · copilot · cursor  ·  1.2M tokens
+
+ ╭─ Insights ──────────────────────────────────────────────────────────────╮
+ │  ⚠  Bash tool failure rate 34% — most failures cluster before midnight  │
+ │  ⚠  Top session consumed 18% of all tokens (context blowout pattern)    │
+ │  ✓  Cache hit rate 61% — prompt structure is consistent                 │
+ │  ✓  claude outperforms cursor: 2.1× lower tool failure rate             │
+ ╰─────────────────────────────────────────────────────────────────────────╯
+
+ ╭─ Agent Comparison ──────────────────────────────────────────────────────╮
+ │  Agent    Sessions  Input      Cache   Tool Failures  Quality            │
+ │  claude   31        680K       61%     8%             ████░ High         │
+ │  copilot  9         190K       44%     21%            ███░░ Medium       │
+ │  cursor   7         330K       12%     34%            ██░░░ Low          │
+ ╰─────────────────────────────────────────────────────────────────────────╯
+```
+
+> Try it yourself in 10 seconds: `pipx install o11y-reflect && reflect --demo`
+
+## Requirements
+
+- Python 3.11+
+- [pipx](https://pipx.pypa.io/stable/installation/) (recommended) or pip
 
 ## Quickstart
 
 ```bash
 pipx install o11y-reflect
 reflect setup
-# use your AI tool normally, then:
+# use your AI tool normally for a bit, then:
 reflect
 ```
 
-That's it. `reflect setup` installs hooks, wires your agents, and starts capturing telemetry to `~/.reflect/state/`. `reflect` renders an interactive terminal dashboard.
+`reflect setup` modifies your agent config files to install OpenTelemetry hooks (e.g. `~/.claude/settings.json` for Claude Code, `~/.config/github-copilot/` for Copilot) and starts writing spans to `~/.reflect/state/`. `reflect` then reads those spans and renders an interactive terminal dashboard.
 
 **No telemetry yet?** Try the demo:
 
 ```bash
 reflect --demo
 ```
+
+## What people actually find
+
+Running `reflect` for the first time is usually surprising:
+
+- One session consumed 30–40% of your total tokens (almost always a context blowout, not useful work)
+- Your tool failure rate is higher than you thought — Bash failures often go unnoticed because the agent silently retries
+- Cache hit rate varies dramatically by agent; switching prompt style can cut costs 30–50%
+- If you use multiple agents, one is almost always measurably more efficient than the others for the same class of task
+
+## How it works
+
+AI coding agents like Claude Code and Copilot support **hooks** — scripts that fire at key lifecycle moments (session start, tool call, prompt, stop). `reflect setup` installs a small OpenTelemetry instrumentation layer into each agent's config. From that point on, every tool call, token usage event, and session boundary is recorded as an **OTLP span** and written locally to `~/.reflect/state/`.
+
+When you run `reflect`, it:
+
+1. **Reads spans** from `~/.reflect/state/` (or falls back to each agent's native session logs if hooks aren't available)
+2. **Normalizes** them into a single cross-agent data model — so a Claude tool call and a Copilot tool call look the same
+3. **Aggregates** per-session and cross-session metrics: token totals, tool failure rates, latency percentiles, subagent delegation patterns
+4. **Renders** the results as a terminal dashboard, markdown report, or JSON artifact for a hosted web view
+
+Nothing leaves your machine. There's no cloud backend, no account, no API key.
 
 ## What you get
 
@@ -42,8 +91,8 @@ reflect --demo
 ```bash
 reflect                        # interactive terminal dashboard (default)
 reflect --no-terminal          # markdown report
-reflect --dashboard-artifact out.json  # JSON for hosted dashboards
-reflect --publish              # open hosted dashboard in browser
+reflect --dashboard-artifact out.json  # JSON artifact for dashboards
+reflect --publish              # open local dashboard in browser
 reflect --demo                 # instant demo with sample data
 ```
 
@@ -54,7 +103,7 @@ reflect doctor
 reflect update
 ```
 
-`reflect doctor` includes an update advisor for package drift, live pipx drift, skill-copy drift, and hook wiring drift. `reflect update --apply` upgrades the pipx package when a newer release is available.
+`reflect doctor` checks that your installation is healthy: hooks are wired correctly, the installed package matches the latest release, and skill files are up to date. `reflect update --apply` upgrades the pipx package when a newer release is available.
 
 ## Supported agents
 
@@ -98,7 +147,6 @@ reflect --dashboard-artifact docs/reports/latest.json --publish
 For a safe public example, this repo also ships a curated GitHub Pages demo:
 
 - `https://reflect.o11y.dev/showcase.html`
-- direct dashboard view: `https://reflect.o11y.dev/demo.html`
 
 ### All options
 
@@ -138,19 +186,19 @@ reflect → reads traces → terminal dashboard / report / hosted view
 
 ## Skill package
 
-`reflect` ships with a portable skill at `skills/reflect/SKILL.md` for Claude Code. After `reflect setup`, the `/reflect` skill is available in your AI tool for in-session telemetry analysis.
+`reflect` ships with a portable skill for Claude Code. After `reflect setup`, the `/reflect` skill is available in your Claude Code session for in-session telemetry analysis.
 
 ## Analysis schema
 
 See [`docs/ai-observability-schema.md`](docs/ai-observability-schema.md) for the canonical cross-tool analysis schema.
 
-## Part of o11y.dev
+## Related
 
-`reflect` is the entry point to the [o11y.dev](https://o11y.dev) ecosystem:
+`reflect setup` automatically installs **[opentelemetry-hooks](https://github.com/o11y-dev/opentelemetry-hooks)**, the instrumentation layer that captures spans from your AI agents.
 
-- **[opentelemetry-hooks](https://github.com/o11y-dev/opentelemetry-hooks)** — instrumentation engine for AI coding agents
-- **[opentelemetry-skill](https://github.com/o11y-dev/opentelemetry-skill)** — observability knowledge layer for AI assistants
-- **[gateway](https://github.com/o11y-dev/gateway)** — optional OTLP gateway for team/hosted telemetry
+Two optional extras if you need them:
+- **[opentelemetry-skill](https://github.com/o11y-dev/opentelemetry-skill)** — observability knowledge for AI assistants
+- **[gateway](https://github.com/o11y-dev/gateway)** — OTLP gateway for team/shared telemetry
 
 ## License
 
