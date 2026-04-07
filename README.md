@@ -31,6 +31,19 @@ reflect
 reflect --demo
 ```
 
+## How it works
+
+AI coding agents like Claude Code and Copilot support **hooks** — scripts that fire at key lifecycle moments (session start, tool call, prompt, stop). `reflect setup` installs a small OpenTelemetry instrumentation layer into each agent's config. From that point on, every tool call, token usage event, and session boundary is recorded as an **OTLP span** and written locally to `~/.reflect/state/`.
+
+When you run `reflect`, it:
+
+1. **Reads spans** from `~/.reflect/state/` (or falls back to each agent's native session logs if hooks aren't available)
+2. **Normalizes** them into a single cross-agent data model — so a Claude tool call and a Copilot tool call look the same
+3. **Aggregates** per-session and cross-session metrics: token totals, tool failure rates, latency percentiles, subagent delegation patterns
+4. **Renders** the results as a terminal dashboard, markdown report, or JSON artifact for a hosted web view
+
+Nothing leaves your machine. There's no cloud backend, no account, no API key.
+
 ## What you get
 
 - **Token economy** — input, output, cache hits, largest-session concentration
