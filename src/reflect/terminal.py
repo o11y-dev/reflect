@@ -13,7 +13,6 @@ from reflect.insights import (
 from reflect.models import TelemetryStats
 from reflect.utils import (
     _bar,
-    _fmt_dur,
     _fmt_model,
     _fmt_tokens,
     _safe_ratio,
@@ -528,17 +527,8 @@ def _render_terminal(  # noqa: C901
         if first_ts:
             dt = datetime.fromtimestamp(first_ts / 1e9, tz=UTC)
             created = dt.strftime("%Y-%m-%d %H:%M")
-        model_ctr = stats.session_models.get(sid, Counter())
-        primary = _fmt_model(model_ctr.most_common(1)[0][0]) if model_ctr else "—"
-        spans = stats.session_span_details.get(sid, [])
-        fail_cnt = sum(1 for sp in spans if sp["event"] == "PostToolUseFailure")
-        dur_ms = 0.0
-        if spans:
-            ts_sorted = sorted(sp["t"] for sp in spans)
-            dur_ms = (ts_sorted[-1] - ts_sorted[0]) / 1e6
         tok = stats.session_tokens.get(sid, {})
-        in_tok  = _fmt_tokens(tok.get("input", 0))  if tok.get("input")  else "[dim]—[/]"
-        out_tok = _fmt_tokens(tok.get("output", 0)) if tok.get("output") else "[dim]—[/]"
+        in_tok = _fmt_tokens(tok.get("input", 0)) if tok.get("input") else "[dim]—[/]"
 
         score = stats.session_quality_scores.get(sid, 0.0)
         score_color = "green" if score > 70 else "yellow" if score > 40 else "red"
