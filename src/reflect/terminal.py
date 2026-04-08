@@ -127,7 +127,7 @@ def _render_terminal(  # noqa: C901
 
         for ag_name, ag in sorted(stats.agents.items()):
             ag_top_model = _fmt_model(ag.models_by_count.most_common(1)[0][0]) if ag.models_by_count else "—"
-            ag_top_tools = ", ".join(t for t, _ in ag.tools_by_count.most_common(3))
+            ag_top_tools = ag.tools_by_count.most_common(1)[0][0] if ag.tools_by_count else "—"
             avg_q = ag.total_quality_score / len(ag.sessions_seen) if ag.sessions_seen else 0
             q_color = "green" if avg_q > 70 else "yellow" if avg_q > 40 else "red"
             ag_tool_calls = ag.events_by_type.get("PreToolUse", 0)
@@ -494,17 +494,12 @@ def _render_terminal(  # noqa: C901
     # ── Sessions ──────────────────────────────────────────────────────────────
     multi_agent = len(stats.agents) > 1
     sess_tbl = Table(box=box.SIMPLE_HEAD, show_lines=False)
-    sess_tbl.add_column("Session",       style="cyan",    no_wrap=True, max_width=50)
+    sess_tbl.add_column("Session",       style="cyan",    no_wrap=True, max_width=24)
     if multi_agent:
-        sess_tbl.add_column("Agent",     style="dim",     no_wrap=True)
+        sess_tbl.add_column("Agent",     style="dim",     no_wrap=True, max_width=7)
     sess_tbl.add_column("Started (UTC)", style="dim",     no_wrap=True, min_width=16)
-    sess_tbl.add_column("Events",        justify="right", style="bold white", min_width=6)
     sess_tbl.add_column("Score",         justify="right", style="bold green", min_width=5)
-    sess_tbl.add_column("Primary Model", style="magenta", no_wrap=True, min_width=14)
-    sess_tbl.add_column("Dur",           justify="right", style="dim",  no_wrap=True, min_width=7)
-    sess_tbl.add_column("In Tok",        justify="right", style="cyan", min_width=7)
-    sess_tbl.add_column("Out Tok",       justify="right", style="green", min_width=7)
-    sess_tbl.add_column("Fail",          justify="right", style="red",  min_width=4)
+    sess_tbl.add_column("In Tok",        justify="right", style="cyan", min_width=6)
 
     for sid in sorted(stats.sessions_seen, key=lambda s: stats.session_events.get(s, 0), reverse=True):
         # Derive session name from first prompt preview
@@ -548,20 +543,13 @@ def _render_terminal(  # noqa: C901
         score = stats.session_quality_scores.get(sid, 0.0)
         score_color = "green" if score > 70 else "yellow" if score > 40 else "red"
 
-        row = [
-            session_name,
-        ]
+        row = [session_name]
         if multi_agent:
             row.append(agent_name or "—")
         row.extend([
             created or "—",
-            f"{stats.session_events.get(sid, 0):,}",
             f"[{score_color}]{score:.0f}[/]",
-            primary,
-            _fmt_dur(dur_ms),
             in_tok,
-            out_tok,
-            str(fail_cnt) if fail_cnt else "[dim]0[/]",
         ])
         sess_tbl.add_row(*row)
 

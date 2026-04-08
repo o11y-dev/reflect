@@ -713,7 +713,8 @@ def _extract_session_id(attrs: dict) -> str:
 
 def _extract_model_name(attrs: dict) -> str:
     return (
-        attrs.get("gen_ai.request.model")
+        attrs.get("gen_ai.response.model")
+        or attrs.get("gen_ai.request.model")
         or attrs.get("model")
         or ""
     )
