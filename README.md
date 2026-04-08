@@ -93,7 +93,12 @@ Running `reflect` for the first time is usually surprising:
 
 ## How it works
 
-AI coding agents like Claude Code and Copilot support **hooks** — scripts that fire at key lifecycle moments (session start, tool call, prompt, stop). `reflect setup` installs a small OpenTelemetry instrumentation layer into each agent's config. From that point on, every tool call, token usage event, and session boundary is recorded as an **OTLP span** and written locally to `~/.reflect/state/`.
+AI coding agents expose telemetry in two ways, and `reflect setup` uses whichever the agent supports:
+
+- **Hooks** (Claude Code, OpenAI Codex CLI, Qwen Code) — scripts that fire at key lifecycle moments (session start, tool call, prompt, stop). `reflect setup` installs a small [opentelemetry-hooks](https://github.com/o11y-dev/opentelemetry-hooks) instrumentation layer into the agent's config file.
+- **Native OpenTelemetry** (GitHub Copilot, Gemini CLI) — the agent has built-in OTLP export that just needs to be pointed at the local collector. `reflect setup` writes the relevant settings (`github.copilot.chat.otel.*` for Copilot, `GEMINI_TELEMETRY_*` env vars for Gemini).
+
+Either way, every tool call, token usage event, and session boundary is recorded as an **OTLP span** and written locally to `~/.reflect/state/`.
 
 When you run `reflect`, it:
 
@@ -205,13 +210,14 @@ Commands:
 reflect setup
     ├── installs opentelemetry-hooks
     ├── edits each agent's settings file to enable telemetry
-    │       Claude Code  → ~/.claude/settings.json       (adds hook entries)
-    │       Copilot      → VS Code settings.json         (sets otel.* keys)
-    │       Gemini CLI   → ~/.gemini/settings.json       (sets env vars)
+    │       via hooks        Claude Code  → ~/.claude/settings.json
+    │                        Codex CLI    → ~/.codex/config.toml
+    │       via native otel  Copilot      → VS Code settings.json  (otel.* keys)
+    │                        Gemini CLI   → ~/.gemini/settings.json (env vars)
     ├── distributes skill packages
     └── enables local span export to ~/.reflect/state/
 
-Your AI tool → hooks capture spans → ~/.reflect/state/
+Your AI tool → hooks -or- native OTLP → ~/.reflect/state/
 
 reflect → reads traces → terminal dashboard / report / hosted view
 ```
