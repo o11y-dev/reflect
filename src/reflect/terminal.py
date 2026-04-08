@@ -59,11 +59,11 @@ def _render_terminal(  # noqa: C901
 
     insight_items: list[str] = []
     for s in _strengths[:3]:
-        insight_items.append(f"[green]+[/] {s.replace('**', '')}")
+        insight_items.append(f"[green]✓[/] {s.replace('**', '')}")
     for o in _observations[:3]:
-        insight_items.append(f"[yellow]![/] {o.replace('**', '')}")
+        insight_items.append(f"[yellow]⚠[/] {o.replace('**', '')}")
     for r in _recommendations[:4]:
-        insight_items.append(f"[cyan]>[/] {r}")
+        insight_items.append(f"[cyan]→[/] {r}")
 
     if insight_items:
         console.print(Panel(
@@ -118,7 +118,7 @@ def _render_terminal(  # noqa: C901
         agent_tbl.add_column("Agent",    style="bold white", no_wrap=True)
         agent_tbl.add_column("Sessions", justify="right")
         agent_tbl.add_column("Events",   justify="right")
-        agent_tbl.add_column("Quality",  justify="right")
+        agent_tbl.add_column("Quality",  no_wrap=True)
         agent_tbl.add_column("Top Model", style="magenta", no_wrap=True)
         agent_tbl.add_column("Top Tools", style="dim")
         agent_tbl.add_column("In Tok",   justify="right", style="cyan")
@@ -134,11 +134,15 @@ def _render_terminal(  # noqa: C901
             ag_failures = ag.events_by_type.get("PostToolUseFailure", 0)
             ag_fail_pct = round(100 * ag_failures / ag_tool_calls, 1) if ag_tool_calls else 0
 
+            q_filled = round(avg_q / 100 * 5)
+            q_label = "High" if avg_q > 70 else "Med" if avg_q > 40 else "Low"
+            quality_cell = _bar(q_filled, 5, q_color) + Text(f" {q_label}", style=q_color)
+
             agent_tbl.add_row(
                 ag_name,
                 str(len(ag.sessions_seen)),
                 f"{ag.total_events:,}",
-                Text(f"{avg_q:.1f}%", style=q_color),
+                quality_cell,
                 ag_top_model,
                 ag_top_tools or "—",
                 _fmt_tokens(ag.total_input_tokens),
