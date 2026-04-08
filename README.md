@@ -34,20 +34,25 @@ $ reflect --demo
 ╰───────────────────╯ ╰─────────────────╯ ╰─────────────────╯
 
 ╭────────────────────────────── Agent Comparison ──────────────────────────────╮
-│                                                   Top     In     Out   Fail  │
-│   Agent    Sess  Events  Quality      Top Model   Tool   Tok     Tok      %  │
-│  ────────────────────────────────────────────────────────────────────────    │
-│   claude      4      46  ████░ High   —           Read  275K   44.5K   16%   │
-│   copilot     2      20  ████░ High   —           Read   33K    6.3K   12%   │
-│   cursor      1      11  █░░░░ Low    —           Write  95K    8.0K   60%   │
-│   gemini      1       8  ████░ High   —           Read   12K    2.5K    0%   │
+│                                                        Top    In    Out  Fail │
+│   Agent     Sess  Events  Quality      Top Model       Tool  Tok    Tok     % │
+│  ──────────────────────────────────────────────────────────────────────────  │
+│   claude       4      46  ████░ High   sonnet-4-5      Read  275K  44.5K  16% │
+│   copilot      2      20  ████░ High   gpt-4o          Read   33K   6.3K  12% │
+│   cursor       1      11  █░░░░ Low    —               Write  95K   8.0K  60% │
+│   gemini       1       8  ████░ High   gemini-2.0-fla… Read   12K   2.5K   0% │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 
-╭───────────────────────────────── Top Tools ──────────────────────────────────╮
-│   Read    ████████████  24   2000ms                                          │
-│   Bash    ███████████░  22   1000ms                                          │
-│   Edit    ████████░░░░  16   1000ms                                          │
-│   Write   ███░░░░░░░░░   6   1000ms                                          │
+╭───────────────────────────── Sessions (8 total) ─────────────────────────────╮
+│   Session                    Agent     Started (UTC)      Score   In Tok      │
+│  ──────────────────────────────────────────────────────────────────────────  │
+│   implement the entire da…   claude    2026-03-16 20:10      60   180.0K      │
+│   migrate the users table…   cursor    2026-03-20 17:25      20    95.0K      │
+│   investigate the memory …   claude    2026-03-22 14:55      80    45.0K      │
+│   refactor the auth modul…   claude    2026-03-23 10:10      90    28.0K      │
+│   add cursor-based pagina…   copilot   2026-03-21 10:40      80    18.0K      │
+│   fix the token expiry bu…   copilot   2026-03-17 09:40      90    15.0K      │
+│   review PR #142 for secu…   gemini    2026-03-18 16:03      90    12.0K      │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 
 ─────────────────────────────── reflect.o11y.dev ───────────────────────────────
