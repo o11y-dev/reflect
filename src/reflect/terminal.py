@@ -13,7 +13,6 @@ from reflect.insights import (
 from reflect.models import TelemetryStats
 from reflect.utils import (
     _bar,
-    _fmt_dur,
     _fmt_model,
     _fmt_tokens,
     _safe_ratio,
@@ -59,11 +58,11 @@ def _render_terminal(  # noqa: C901
 
     insight_items: list[str] = []
     for s in _strengths[:3]:
-        insight_items.append(f"[green]+[/] {s.replace('**', '')}")
+        insight_items.append(f"[green]✓[/] {s.replace('**', '')}")
     for o in _observations[:3]:
-        insight_items.append(f"[yellow]![/] {o.replace('**', '')}")
+        insight_items.append(f"[yellow]⚠[/] {o.replace('**', '')}")
     for r in _recommendations[:4]:
-        insight_items.append(f"[cyan]>[/] {r}")
+        insight_items.append(f"[cyan]→[/] {r}")
 
     if insight_items:
         console.print(Panel(
@@ -118,7 +117,7 @@ def _render_terminal(  # noqa: C901
         agent_tbl.add_column("Agent",    style="bold white", no_wrap=True)
         agent_tbl.add_column("Sessions", justify="right")
         agent_tbl.add_column("Events",   justify="right")
-        agent_tbl.add_column("Quality",  justify="right")
+        agent_tbl.add_column("Quality",  no_wrap=True)
         agent_tbl.add_column("Top Model", style="magenta", no_wrap=True)
         agent_tbl.add_column("Top Tools", style="dim")
         agent_tbl.add_column("In Tok",   justify="right", style="cyan")
@@ -127,18 +126,22 @@ def _render_terminal(  # noqa: C901
 
         for ag_name, ag in sorted(stats.agents.items()):
             ag_top_model = _fmt_model(ag.models_by_count.most_common(1)[0][0]) if ag.models_by_count else "—"
-            ag_top_tools = ", ".join(t for t, _ in ag.tools_by_count.most_common(3))
+            ag_top_tools = ag.tools_by_count.most_common(1)[0][0] if ag.tools_by_count else "—"
             avg_q = ag.total_quality_score / len(ag.sessions_seen) if ag.sessions_seen else 0
             q_color = "green" if avg_q > 70 else "yellow" if avg_q > 40 else "red"
             ag_tool_calls = ag.events_by_type.get("PreToolUse", 0)
             ag_failures = ag.events_by_type.get("PostToolUseFailure", 0)
             ag_fail_pct = round(100 * ag_failures / ag_tool_calls, 1) if ag_tool_calls else 0
 
+            q_filled = round(avg_q / 100 * 5)
+            q_label = "High" if avg_q > 70 else "Med" if avg_q > 40 else "Low"
+            quality_cell = _bar(q_filled, 5, q_color) + Text(f" {q_label}", style=q_color)
+
             agent_tbl.add_row(
                 ag_name,
                 str(len(ag.sessions_seen)),
                 f"{ag.total_events:,}",
-                Text(f"{avg_q:.1f}%", style=q_color),
+                quality_cell,
                 ag_top_model,
                 ag_top_tools or "—",
                 _fmt_tokens(ag.total_input_tokens),
@@ -490,17 +493,12 @@ def _render_terminal(  # noqa: C901
     # ── Sessions ──────────────────────────────────────────────────────────────
     multi_agent = len(stats.agents) > 1
     sess_tbl = Table(box=box.SIMPLE_HEAD, show_lines=False)
-    sess_tbl.add_column("Session",       style="cyan",    no_wrap=True, max_width=50)
+    sess_tbl.add_column("Session",       style="cyan",    no_wrap=True, max_width=24)
     if multi_agent:
-        sess_tbl.add_column("Agent",     style="dim",     no_wrap=True)
+        sess_tbl.add_column("Agent",     style="dim",     no_wrap=True, max_width=7)
     sess_tbl.add_column("Started (UTC)", style="dim",     no_wrap=True, min_width=16)
-    sess_tbl.add_column("Events",        justify="right", style="bold white", min_width=6)
     sess_tbl.add_column("Score",         justify="right", style="bold green", min_width=5)
-    sess_tbl.add_column("Primary Model", style="magenta", no_wrap=True, min_width=14)
-    sess_tbl.add_column("Dur",           justify="right", style="dim",  no_wrap=True, min_width=7)
-    sess_tbl.add_column("In Tok",        justify="right", style="cyan", min_width=7)
-    sess_tbl.add_column("Out Tok",       justify="right", style="green", min_width=7)
-    sess_tbl.add_column("Fail",          justify="right", style="red",  min_width=4)
+    sess_tbl.add_column("In Tok",        justify="right", style="cyan", min_width=6)
 
     for sid in sorted(stats.sessions_seen, key=lambda s: stats.session_events.get(s, 0), reverse=True):
         # Derive session name from first prompt preview
@@ -529,35 +527,19 @@ def _render_terminal(  # noqa: C901
         if first_ts:
             dt = datetime.fromtimestamp(first_ts / 1e9, tz=UTC)
             created = dt.strftime("%Y-%m-%d %H:%M")
-        model_ctr = stats.session_models.get(sid, Counter())
-        primary = _fmt_model(model_ctr.most_common(1)[0][0]) if model_ctr else "—"
-        spans = stats.session_span_details.get(sid, [])
-        fail_cnt = sum(1 for sp in spans if sp["event"] == "PostToolUseFailure")
-        dur_ms = 0.0
-        if spans:
-            ts_sorted = sorted(sp["t"] for sp in spans)
-            dur_ms = (ts_sorted[-1] - ts_sorted[0]) / 1e6
         tok = stats.session_tokens.get(sid, {})
-        in_tok  = _fmt_tokens(tok.get("input", 0))  if tok.get("input")  else "[dim]—[/]"
-        out_tok = _fmt_tokens(tok.get("output", 0)) if tok.get("output") else "[dim]—[/]"
+        in_tok = _fmt_tokens(tok.get("input", 0)) if tok.get("input") else "[dim]—[/]"
 
         score = stats.session_quality_scores.get(sid, 0.0)
         score_color = "green" if score > 70 else "yellow" if score > 40 else "red"
 
-        row = [
-            session_name,
-        ]
+        row = [session_name]
         if multi_agent:
             row.append(agent_name or "—")
         row.extend([
             created or "—",
-            f"{stats.session_events.get(sid, 0):,}",
             f"[{score_color}]{score:.0f}[/]",
-            primary,
-            _fmt_dur(dur_ms),
             in_tok,
-            out_tok,
-            str(fail_cnt) if fail_cnt else "[dim]0[/]",
         ])
         sess_tbl.add_row(*row)
 

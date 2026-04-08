@@ -10,26 +10,55 @@
 Local-first telemetry for Claude Code, GitHub Copilot, Gemini CLI, and Cursor — token spend, tool failure rates, latency, and what's actually burning your budget. No cloud. No account. Runs on your machine.
 
 ```
-$ reflect
+$ reflect --demo
 
-  reflect  ·  47 sessions  ·  claude · copilot · cursor  ·  1.2M tokens
+─────────── AI Usage Dashboard  All time  (2026-03-16 → 2026-03-23) ────────────
 
- ╭─ Insights ──────────────────────────────────────────────────────────────╮
- │  ⚠  Bash tool failure rate 34% — most failures cluster before midnight  │
- │  ⚠  Top session consumed 18% of all tokens (context blowout pattern)    │
- │  ✓  Cache hit rate 61% — prompt structure is consistent                 │
- │  ✓  claude outperforms cursor: 2.1× lower tool failure rate             │
- ╰─────────────────────────────────────────────────────────────────────────╯
+╭────────────────────────────────── Insights ──────────────────────────────────╮
+│ ✓ Good prompt-to-action ratio — 4.2 tool calls per prompt, showing           │
+│   effective task delegation.                                                 │
+│ ✓ Effective subagent delegation — 1 Task subagent, keeping main context      │
+│   focused.                                                                   │
+│ ⚠ 7 tool failures (20.6% of tool calls). Path and schema validation up       │
+│   front can reduce iteration cost.                                           │
+│ ⚠ Top session consumed 42% of all tokens — context blowout pattern.          │
+│ → Use a fixed prompt contract: Goal, Context, Constraints, Output, Done-when │
+│ → Pin relevant files in the first prompt to reduce exploratory tool churn.   │
+╰──────────────────────────────────────────────────────────────────────────────╯
 
- ╭─ Agent Comparison ──────────────────────────────────────────────────────╮
- │  Agent    Sessions  Input      Cache   Tool Failures  Quality            │
- │  claude   31        680K       61%     8%             ████░ High         │
- │  copilot  9         190K       44%     21%            ███░░ Medium       │
- │  cursor   7         330K       12%     34%            ██░░░ Low          │
- ╰─────────────────────────────────────────────────────────────────────────╯
+╭── Quality Score ──╮ ╭─── Sessions ────╮ ╭── Active Days ──╮
+│       75.0%       │ │        8        │ │        8        │
+╰───────────────────╯ ╰─────────────────╯ ╰─────────────────╯
+╭───── Prompts ─────╮ ╭── Tool/Prompt ──╮ ╭─── Failure % ───╮
+│         8         │ │      4.2:1      │ │      20.6%      │
+╰───────────────────╯ ╰─────────────────╯ ╰─────────────────╯
+
+╭────────────────────────────── Agent Comparison ──────────────────────────────╮
+│                                                        Top    In    Out  Fail │
+│   Agent     Sess  Events  Quality      Top Model       Tool  Tok    Tok     % │
+│  ──────────────────────────────────────────────────────────────────────────  │
+│   claude       4      46  ████░ High   sonnet-4-5      Read  275K  44.5K  16% │
+│   copilot      2      20  ████░ High   gpt-4o          Read   33K   6.3K  12% │
+│   cursor       1      11  █░░░░ Low    —               Write  95K   8.0K  60% │
+│   gemini       1       8  ████░ High   gemini-2.0-fla… Read   12K   2.5K   0% │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+╭───────────────────────────── Sessions (8 total) ─────────────────────────────╮
+│   Session                    Agent     Started (UTC)      Score   In Tok      │
+│  ──────────────────────────────────────────────────────────────────────────  │
+│   implement the entire da…   claude    2026-03-16 20:10      60   180.0K      │
+│   migrate the users table…   cursor    2026-03-20 17:25      20    95.0K      │
+│   investigate the memory …   claude    2026-03-22 14:55      80    45.0K      │
+│   refactor the auth modul…   claude    2026-03-23 10:10      90    28.0K      │
+│   add cursor-based pagina…   copilot   2026-03-21 10:40      80    18.0K      │
+│   fix the token expiry bu…   copilot   2026-03-17 09:40      90    15.0K      │
+│   review PR #142 for secu…   gemini    2026-03-18 16:03      90    12.0K      │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+─────────────────────────────── reflect.o11y.dev ───────────────────────────────
 ```
 
-> Try it yourself in 10 seconds: `pipx install o11y-reflect && reflect --demo`
+> Run this yourself: `pipx install o11y-reflect && reflect --demo`
 
 ## Requirements
 
