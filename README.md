@@ -204,7 +204,10 @@ Commands:
 ```
 reflect setup
     ├── installs opentelemetry-hooks
-    ├── wires agent configs (Claude, Copilot, Gemini)
+    ├── edits each agent's settings file to enable telemetry
+    │       Claude Code  → ~/.claude/settings.json       (adds hook entries)
+    │       Copilot      → VS Code settings.json         (sets otel.* keys)
+    │       Gemini CLI   → ~/.gemini/settings.json       (sets env vars)
     ├── distributes skill packages
     └── enables local span export to ~/.reflect/state/
 
