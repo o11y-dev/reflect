@@ -10,26 +10,54 @@
 Local-first telemetry for Claude Code, GitHub Copilot, Gemini CLI, and Cursor — token spend, tool failure rates, latency, and what's actually burning your budget. No cloud. No account. Runs on your machine.
 
 ```
-$ reflect
+$ reflect --demo
 
-  reflect  ·  47 sessions  ·  claude · copilot · cursor  ·  1.2M tokens
+─────────── AI Usage Dashboard  All time  (2026-03-23 → 2026-03-23) ────────────
 
- ╭─ Insights ──────────────────────────────────────────────────────────────╮
- │  ⚠  Bash tool failure rate 34% — most failures cluster before midnight  │
- │  ⚠  Top session consumed 18% of all tokens (context blowout pattern)    │
- │  ✓  Cache hit rate 61% — prompt structure is consistent                 │
- │  ✓  claude outperforms cursor: 2.1× lower tool failure rate             │
- ╰─────────────────────────────────────────────────────────────────────────╯
+╭────────────────────────────────── Insights ──────────────────────────────────╮
+│ + Active usage — good foundation for continuous improvement.                 │
+│ ! 3 tool failures detected (150.0% of tool calls). Path and schema           │
+│   validation up front can reduce iteration cost.                             │
+│ > Use a fixed prompt contract: Goal, Context, Constraints, Output, Done-when │
+│ > Split large tasks into user stories; start a fresh session each milestone  │
+╰──────────────────────────────────────────────────────────────────────────────╯
 
- ╭─ Agent Comparison ──────────────────────────────────────────────────────╮
- │  Agent    Sessions  Input      Cache   Tool Failures  Quality            │
- │  claude   31        680K       61%     8%             ████░ High         │
- │  copilot  9         190K       44%     21%            ███░░ Medium       │
- │  cursor   7         330K       12%     34%            ██░░░ Low          │
- ╰─────────────────────────────────────────────────────────────────────────╯
+╭── Quality Score ──╮ ╭─── Sessions ────╮ ╭── Active Days ──╮
+│       68.3%       │ │        3        │ │        1        │
+╰───────────────────╯ ╰─────────────────╯ ╰─────────────────╯
+╭───── Prompts ─────╮ ╭── Tool/Prompt ──╮ ╭─── Failure % ───╮
+│         3         │ │      0.7:1      │ │     150.0%      │
+╰───────────────────╯ ╰─────────────────╯ ╰─────────────────╯
+
+╭────────────────────────────── Agent Comparison ──────────────────────────────╮
+│                                              Top      In     Out    Fail     │
+│   Agent     Sess   Events   Quality   Model  Tool    Tok     Tok       %     │
+│  ──────────────────────────────────────────────────────────────────────────  │
+│   claude        1       4   95.0%     —      Read      0       0    0.0%    │
+│   copilot       1       4   85.0%     —      Bash      0       0    0.0%    │
+│   cursor        1       5   25.0%     —      Write  50.0K   5.0K   200.0%  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+╭───────────────────────────────── Top Tools ──────────────────────────────────╮
+│   Tool                   #    p50 (ms)                                       │
+│  ─────────────────────────────────────                                       │
+│   Bash    ████████████   3       1000                                        │
+│   Read    ████████░░░░   2       1000                                        │
+│   Write   ████████░░░░   2       1000                                        │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+╭───────────────────────────── Sessions (3 total) ─────────────────────────────╮
+│   Session                Agent    Started (UTC)       Dur                    │
+│  ───────────────────────────────────────────────────────                     │
+│   demo-low-quality       cursor   2026-03-23 13:51    5s                     │
+│   demo-medium-recovery   copilot  2026-03-23 13:53    4s                     │
+│   demo-high-quality      claude   2026-03-23 13:50    3s                     │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+─────────────────────────────── reflect.o11y.dev ───────────────────────────────
 ```
 
-> Try it yourself in 10 seconds: `pipx install o11y-reflect && reflect --demo`
+> Run this yourself: `pipx install o11y-reflect && reflect --demo`
 
 ## Requirements
 
