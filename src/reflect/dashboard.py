@@ -917,7 +917,7 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
                     "output": estimated_out,
                 }
                 token_source = "estimated_cursor_transcript"
-                token_note = _cursor_estimate_note()
+                token_note = _cursor_estimate_note(has_full_transcript=True)
             else:
                 token_source = "cursor_local_unavailable"
                 token_note = (
@@ -1341,7 +1341,7 @@ def _load_session_detail(session_id: str, stats: TelemetryStats) -> dict | None:
             "session_id": session_id,
             "agent": agent_name,
             "events": [],
-            "source": "unavailable" if warnings else "telemetry",
+            "source": "native_unavailable" if agent_name else ("unavailable" if warnings else "telemetry"),
             "warnings": warnings,
         }
     detail.setdefault("warnings", [])
