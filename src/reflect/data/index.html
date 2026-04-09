@@ -2967,9 +2967,10 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       : (session.token_note || '');
     const tokenNote = estimatedTokens
       ? (session._fullLoaded
-        ? 'Token counts are estimated from Cursor transcript text because exact per-session usage is not present in local telemetry.'
-        : 'Token counts are estimated from the available Cursor transcript preview because exact per-session usage is not present in local telemetry. Load the full transcript to refine this estimate.')
+        ? 'Token counts are estimated from Cursor transcript text with a rough len(text)/4 heuristic because exact per-session usage is not present in local telemetry.'
+        : 'Token counts are estimated from the available Cursor transcript preview with a rough len(text)/4 heuristic because exact per-session usage is not present in local telemetry. Load the full transcript to refine this estimate.')
       : (session.token_note || '');
+    const detailWarnings = Array.isArray(session._detailWarnings) ? session._detailWarnings : [];
     const activeDetailTab = session._detailTab || 'conversation';
 
     let headerHtml = `<div class="sb-detail-header">
@@ -2987,6 +2988,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
         ${session.failure_count > 0 ? `<span style="color:var(--red)">Failures: <strong>${session.failure_count}</strong></span>` : ''}
       </div>
       ${tokenNote ? `<div class="sb-detail-model" style="margin-top:8px">${escHtml(tokenNote)}</div>` : ''}
+      ${detailWarnings.length ? `<div class="sb-detail-model" style="margin-top:8px;color:var(--yellow)">${detailWarnings.map(w => escHtml(w)).join(' · ')}</div>` : ''}
     </div>`;
 
     const conversation = session.conversation || [];
@@ -3605,6 +3607,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
   function renderTelemetryCockpit(session){
     const telemetry = session.telemetry;
     const summary = telemetry?.summary || {};
+    const telemetryWarnings = telemetry?.warnings || [];
     if (!telemetry || (!(summary.spans || 0) && !(summary.logs || 0))) {
       return `<div class="telemetry-empty">
         <div style="font-size:15px;color:var(--text);font-weight:700;margin-bottom:8px">Telemetry cockpit</div>
@@ -3676,6 +3679,9 @@ let filteredDashboardSessions = (D.sessions || []).slice();
             </div>
           `).join('')}
         </div>
+        ${telemetryWarnings.length ? `<div class="telemetry-chip-row">${telemetryWarnings.map(warning => `
+          <span class="telemetry-chip" title="${escHtml(warning)}">${escHtml(warning)}</span>
+        `).join('')}</div>` : ''}
         ${beats.length ? `<div class="telemetry-beat-row">
           <div class="telemetry-beat-scale">
             <span>Session timeline${observationMarkers.length ? ` · ${fmt(observationMarkers.length)} observations` : ''}</span>
@@ -3847,6 +3853,10 @@ let filteredDashboardSessions = (D.sessions || []).slice();
           const conv = normalizeLoadedConversation(events, sessions[idx].conversation);
           if (conv.length > 0) sessions[idx].conversation = conv;
           if (telemetry) sessions[idx].telemetry = telemetry;
+          sessions[idx]._detailWarnings = Array.from(new Set([
+            ...(data.warnings || []),
+            ...((telemetry && telemetry.warnings) || []),
+          ].filter(Boolean)));
           sessions[idx]._fullLoaded = true;
           sessions[idx]._loadingDetail = false;
           const estimated = getEstimatedSessionTokens(sessions[idx]);
@@ -3855,7 +3865,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
             sessions[idx].output_tokens = estimated.output;
             sessions[idx]._estimatedTokens = true;
             sessions[idx].token_source = 'estimated_cursor_transcript';
-            sessions[idx].token_note = 'Token counts are estimated from Cursor transcript text because exact per-session usage is not present in local telemetry.';
+            sessions[idx].token_note = 'Token counts are estimated from Cursor transcript text with a rough len(text)/4 heuristic because exact per-session usage is not present in local telemetry.';
           }
           renderSessionDetail(sessions[idx]);
         } else if (btn) {
@@ -4411,7 +4421,7 @@ function buildBarList(elId, obj, color){
 buildBarList('tools-list', D.tools_by_count, P.blue);
 buildBarList('skills-list', D.skills_by_count || D.subagent_types_by_count || {}, P.purple);
 
-/* MCP availability table */
+/* MCP observed completion table */
 (function buildMcpPanel(){
   const before = D.mcp_server_before || {};
   const after  = D.mcp_server_after  || {};
@@ -4424,13 +4434,13 @@ buildBarList('skills-list', D.skills_by_count || D.subagent_types_by_count || {}
   const rows = servers.map(s => {
     const calls = before[s] || 0;
     const done  = after[s]  || 0;
-    const avail = calls > 0 ? Math.round(done / calls * 100) : 0;
-    const color = avail >= 95 ? 'var(--green)' : avail >= 80 ? 'var(--yellow)' : 'var(--red)';
+    const completion = calls > 0 ? Math.round(done / calls * 100) : 0;
+    const color = completion >= 95 ? 'var(--green)' : completion >= 80 ? 'var(--yellow)' : 'var(--red)';
     return `<tr>
       <td title="${s}">${s}</td>
       <td style="text-align:right">${calls.toLocaleString()}</td>
       <td style="text-align:right">${done.toLocaleString()}</td>
-      <td style="text-align:right"><span style="color:${color};font-weight:600">${avail}%</span></td>
+      <td style="text-align:right"><span style="color:${color};font-weight:600">${completion}%</span></td>
     </tr>`;
   }).join('');
   document.getElementById('mcp-list').innerHTML = `<table class="data-table">
@@ -4438,7 +4448,7 @@ buildBarList('skills-list', D.skills_by_count || D.subagent_types_by_count || {}
       <th>Server</th>
       <th style="text-align:right">Calls</th>
       <th style="text-align:right">Completed</th>
-      <th style="text-align:right">Avail</th>
+      <th style="text-align:right">Completion</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;

@@ -79,6 +79,14 @@ def _estimate_cursor_tokens_from_native(file_path: Path) -> tuple[int, int]:
     return (input_tokens, output_tokens)
 
 
+def _cursor_estimate_note(full_transcript: bool = True) -> str:
+    scope = "local Cursor transcript" if full_transcript else "available Cursor transcript preview"
+    return (
+        f"Token counts are estimated from the {scope} with a rough len(text)/4 heuristic "
+        "because exact per-session usage is not present in local telemetry."
+    )
+
+
 def _extract_skill_name_from_preview(preview: str) -> str:
     if not isinstance(preview, str) or not preview.strip():
         return ""
@@ -693,11 +701,16 @@ def _load_session_telemetry(
                 "warnings": 0,
                 "services": 0,
                 "duration_ms": 0,
+                "truncated_spans": 0,
+                "truncated_logs": 0,
             },
             "spans": [],
             "logs": [],
+            "warnings": [],
         }
 
+    truncated_spans = max(0, len(raw_spans) - 400)
+    truncated_logs = max(0, len(raw_logs) - 500)
     spans: list[dict] = []
     for span in raw_spans[:400]:
         attrs = span.get("attributes") or {}
@@ -762,6 +775,11 @@ def _load_session_telemetry(
     warning_count = sum(1 for log in logs if log.get("severity") == "WARN")
     session_end_ns = max(anchor_candidates) if anchor_candidates else anchor_ns
     duration_ms = round((session_end_ns - anchor_ns) / 1e6, 1) if anchor_ns and session_end_ns else 0.0
+    telemetry_warnings: list[str] = []
+    if truncated_spans:
+        telemetry_warnings.append(f"Showing first 400 of {len(raw_spans)} telemetry spans.")
+    if truncated_logs:
+        telemetry_warnings.append(f"Showing first 500 of {len(raw_logs)} telemetry logs.")
 
     return {
         "summary": {
@@ -772,9 +790,12 @@ def _load_session_telemetry(
             "services": len(services),
             "duration_ms": duration_ms,
             "anchor_ns": anchor_ns,
+            "truncated_spans": truncated_spans,
+            "truncated_logs": truncated_logs,
         },
         "spans": spans,
         "logs": logs,
+        "warnings": telemetry_warnings,
     }
 
 
@@ -896,10 +917,7 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
                     "output": estimated_out,
                 }
                 token_source = "estimated_cursor_transcript"
-                token_note = (
-                    "Token counts are estimated from the local Cursor transcript because exact "
-                    "per-session usage is not present in local telemetry."
-                )
+                token_note = _cursor_estimate_note()
             else:
                 token_source = "cursor_local_unavailable"
                 token_note = (
@@ -1126,164 +1144,183 @@ def _load_detail_from_native(session_id: str, agent: str, file_path: Path) -> di
     except ImportError:
         _loads = _json.loads
 
-    events: list[dict] = []
+    if agent not in {"claude", "copilot", "gemini", "cursor"}:
+        return {
+            "session_id": session_id,
+            "agent": agent,
+            "events": [],
+            "source": "native_unavailable",
+            "warnings": [f"Session detail loading is not implemented for agent '{agent}' yet."],
+        }
 
-    if agent == "claude":
-        for line in file_path.open("r", encoding="utf-8"):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = _loads(line)
-            except (ValueError, _json.JSONDecodeError):
-                continue
-            etype = entry.get("type")
-            ts = entry.get("timestamp", "")
-            if etype == "user":
+    events: list[dict] = []
+    try:
+        if agent == "claude":
+            for line in file_path.open("r", encoding="utf-8"):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = _loads(line)
+                except (ValueError, _json.JSONDecodeError):
+                    continue
+                etype = entry.get("type")
+                ts = entry.get("timestamp", "")
+                if etype == "user":
+                    content = entry.get("message", {}).get("content", "")
+                    if isinstance(content, list):
+                        content = " ".join(
+                            item.get("text", "") for item in content
+                            if isinstance(item, dict) and item.get("type") == "text"
+                        )
+                    events.append({"type": "prompt", "content": str(content), "timestamp": ts})
+                elif etype == "assistant":
+                    msg = entry.get("message", {}) or {}
+                    usage = msg.get("usage", {}) or {}
+                    model = msg.get("model", "")
+                    content_items = msg.get("content") or []
+                    text_parts: list[str] = []
+                    tool_uses: list[dict] = []
+                    for item in content_items:
+                        if not isinstance(item, dict):
+                            continue
+                        if item.get("type") == "text":
+                            text_parts.append(item.get("text", ""))
+                        elif item.get("type") == "tool_use":
+                            tool_uses.append({
+                                "type": "tool_call",
+                                "tool_name": item.get("name", ""),
+                                "input": _json.dumps(item.get("input", {}), default=str)[:2000],
+                                "timestamp": ts,
+                            })
+                    events.append({
+                        "type": "response",
+                        "content": "\n".join(text_parts)[:5000],
+                        "model": model,
+                        "input_tokens": usage.get("input_tokens", 0),
+                        "output_tokens": usage.get("output_tokens", 0),
+                        "cache_read_tokens": usage.get("cache_read_input_tokens", 0),
+                        "timestamp": ts,
+                    })
+                    events.extend(tool_uses)
+
+        elif agent == "copilot":
+            for line in file_path.open("r", encoding="utf-8"):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = _loads(line)
+                except (ValueError, _json.JSONDecodeError):
+                    continue
+                etype = entry.get("type")
+                data = entry.get("data", {})
+                ts = entry.get("timestamp", "")
+                if etype == "user.message":
+                    events.append({"type": "prompt", "content": data.get("content", ""), "timestamp": ts})
+                elif etype == "assistant.message":
+                    events.append({
+                        "type": "response",
+                        "content": data.get("content", "")[:5000],
+                        "model": data.get("model", ""),
+                        "output_tokens": data.get("outputTokens", 0),
+                        "timestamp": ts,
+                    })
+                elif etype == "tool.execution_start":
+                    events.append({
+                        "type": "tool_call",
+                        "tool_name": data.get("toolName", ""),
+                        "input": _json.dumps(data.get("arguments", {}), default=str)[:2000],
+                        "timestamp": ts,
+                    })
+                elif etype == "tool.execution_complete":
+                    events.append({
+                        "type": "tool_result",
+                        "tool_name": data.get("toolName", ""),
+                        "success": bool(data.get("success", False)),
+                        "timestamp": ts,
+                    })
+                elif etype == "session.shutdown":
+                    metrics = data.get("modelMetrics") or {}
+                    total_in = sum(int((m.get("usage") or {}).get("inputTokens") or 0) for m in metrics.values())
+                    total_out = sum(int((m.get("usage") or {}).get("outputTokens") or 0) for m in metrics.values())
+                    total_cr = sum(int((m.get("usage") or {}).get("cacheReadTokens") or 0) for m in metrics.values())
+                    if total_in or total_out or total_cr:
+                        events.append({
+                            "type": "session_end",
+                            "input_tokens": total_in,
+                            "output_tokens": total_out,
+                            "cache_read_tokens": total_cr,
+                            "timestamp": ts,
+                        })
+
+        elif agent == "gemini":
+            payload = _loads(file_path.read_text())
+            for msg in payload.get("messages") or []:
+                if not isinstance(msg, dict):
+                    continue
+                ts = msg.get("timestamp", "")
+                if msg.get("type") == "user":
+                    events.append({"type": "prompt", "content": msg.get("content", ""), "timestamp": ts})
+                elif msg.get("type") == "gemini":
+                    events.append({
+                        "type": "response",
+                        "content": msg.get("content", "")[:5000],
+                        "model": msg.get("model", ""),
+                        "input_tokens": (msg.get("tokens") or {}).get("input", 0),
+                        "output_tokens": (msg.get("tokens") or {}).get("output", 0),
+                        "timestamp": ts,
+                    })
+                    for call in msg.get("toolCalls") or []:
+                        if not isinstance(call, dict):
+                            continue
+                        events.append({
+                            "type": "tool_call",
+                            "tool_name": call.get("displayName") or call.get("name", ""),
+                            "input": _json.dumps(call.get("args", {}), default=str)[:2000],
+                            "timestamp": call.get("timestamp", ts),
+                        })
+
+        elif agent == "cursor":
+            for line in file_path.open("r", encoding="utf-8"):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = _loads(line)
+                except (ValueError, _json.JSONDecodeError):
+                    continue
+                role = entry.get("role")
+                ts = entry.get("timestamp", "")
                 content = entry.get("message", {}).get("content", "")
                 if isinstance(content, list):
                     content = " ".join(
-                        item.get("text", "") for item in content
-                        if isinstance(item, dict) and item.get("type") == "text"
+                        item.get("text", "") for item in content if isinstance(item, dict)
                     )
-                events.append({"type": "prompt", "content": str(content), "timestamp": ts})
-            elif etype == "assistant":
-                msg = entry.get("message", {}) or {}
-                usage = msg.get("usage", {}) or {}
-                model = msg.get("model", "")
-                content_items = msg.get("content") or []
-                text_parts: list[str] = []
-                tool_uses: list[dict] = []
-                for item in content_items:
-                    if not isinstance(item, dict):
-                        continue
-                    if item.get("type") == "text":
-                        text_parts.append(item.get("text", ""))
-                    elif item.get("type") == "tool_use":
-                        tool_uses.append({
-                            "type": "tool_call",
-                            "tool_name": item.get("name", ""),
-                            "input": _json.dumps(item.get("input", {}), default=str)[:2000],
-                            "timestamp": ts,
-                        })
-                events.append({
-                    "type": "response",
-                    "content": "\n".join(text_parts)[:5000],
-                    "model": model,
-                    "input_tokens": usage.get("input_tokens", 0),
-                    "output_tokens": usage.get("output_tokens", 0),
-                    "cache_read_tokens": usage.get("cache_read_input_tokens", 0),
-                    "timestamp": ts,
-                })
-                events.extend(tool_uses)
+                if role == "user":
+                    events.append({"type": "prompt", "content": str(content)[:5000], "timestamp": ts})
+                elif role == "assistant":
+                    events.append({"type": "response", "content": str(content)[:5000], "timestamp": ts})
+    except (OSError, ValueError, _json.JSONDecodeError) as exc:
+        logger.warning("Failed to load %s session detail from %s: %s", agent, file_path, exc)
+        return {
+            "session_id": session_id,
+            "agent": agent,
+            "events": [],
+            "source": "native_error",
+            "warnings": [f"Failed to load native session detail from {file_path}."],
+        }
 
-    elif agent == "copilot":
-        for line in file_path.open("r", encoding="utf-8"):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = _loads(line)
-            except (ValueError, _json.JSONDecodeError):
-                continue
-            etype = entry.get("type")
-            data = entry.get("data", {})
-            ts = entry.get("timestamp", "")
-            if etype == "user.message":
-                events.append({"type": "prompt", "content": data.get("content", ""), "timestamp": ts})
-            elif etype == "assistant.message":
-                events.append({
-                    "type": "response",
-                    "content": data.get("content", "")[:5000],
-                    "model": data.get("model", ""),
-                    "output_tokens": data.get("outputTokens", 0),
-                    "timestamp": ts,
-                })
-            elif etype == "tool.execution_start":
-                events.append({
-                    "type": "tool_call",
-                    "tool_name": data.get("toolName", ""),
-                    "input": _json.dumps(data.get("arguments", {}), default=str)[:2000],
-                    "timestamp": ts,
-                })
-            elif etype == "tool.execution_complete":
-                events.append({
-                    "type": "tool_result",
-                    "tool_name": data.get("toolName", ""),
-                    "success": bool(data.get("success", False)),
-                    "timestamp": ts,
-                })
-            elif etype == "session.shutdown":
-                metrics = data.get("modelMetrics") or {}
-                total_in = sum(int((m.get("usage") or {}).get("inputTokens") or 0) for m in metrics.values())
-                total_out = sum(int((m.get("usage") or {}).get("outputTokens") or 0) for m in metrics.values())
-                total_cr = sum(int((m.get("usage") or {}).get("cacheReadTokens") or 0) for m in metrics.values())
-                if total_in or total_out or total_cr:
-                    events.append({
-                        "type": "session_end",
-                        "input_tokens": total_in,
-                        "output_tokens": total_out,
-                        "cache_read_tokens": total_cr,
-                        "timestamp": ts,
-                    })
-
-    elif agent == "gemini":
-        payload = _loads(file_path.read_text())
-        for msg in payload.get("messages") or []:
-            if not isinstance(msg, dict):
-                continue
-            ts = msg.get("timestamp", "")
-            if msg.get("type") == "user":
-                events.append({"type": "prompt", "content": msg.get("content", ""), "timestamp": ts})
-            elif msg.get("type") == "gemini":
-                events.append({
-                    "type": "response",
-                    "content": msg.get("content", "")[:5000],
-                    "model": msg.get("model", ""),
-                    "input_tokens": (msg.get("tokens") or {}).get("input", 0),
-                    "output_tokens": (msg.get("tokens") or {}).get("output", 0),
-                    "timestamp": ts,
-                })
-                for call in msg.get("toolCalls") or []:
-                    if not isinstance(call, dict):
-                        continue
-                    events.append({
-                        "type": "tool_call",
-                        "tool_name": call.get("displayName") or call.get("name", ""),
-                        "input": _json.dumps(call.get("args", {}), default=str)[:2000],
-                        "timestamp": call.get("timestamp", ts),
-                    })
-
-    elif agent == "cursor":
-        for line in file_path.open("r", encoding="utf-8"):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = _loads(line)
-            except (ValueError, _json.JSONDecodeError):
-                continue
-            role = entry.get("role")
-            ts = entry.get("timestamp", "")
-            content = entry.get("message", {}).get("content", "")
-            if isinstance(content, list):
-                content = " ".join(
-                    item.get("text", "") for item in content if isinstance(item, dict)
-                )
-            if role == "user":
-                events.append({"type": "prompt", "content": str(content)[:5000], "timestamp": ts})
-            elif role == "assistant":
-                events.append({"type": "response", "content": str(content)[:5000], "timestamp": ts})
-
-    return {"session_id": session_id, "agent": agent, "events": events, "source": "native"}
+    return {"session_id": session_id, "agent": agent, "events": events, "source": "native", "warnings": []}
 
 
 def _load_session_detail(session_id: str, stats: TelemetryStats) -> dict | None:
     """Load full conversation detail for a session from its source file."""
     detail: dict | None = None
     source_info = stats.session_source.get(session_id)
+    agent_name = source_info[0] if source_info else ""
     if source_info:
-        agent_name, file_path = source_info
+        _, file_path = source_info
         fp = Path(file_path)
         if fp.exists():
             detail = _load_detail_from_native(session_id, agent_name, fp)
@@ -1294,10 +1331,20 @@ def _load_session_detail(session_id: str, stats: TelemetryStats) -> dict | None:
             detail = {"session_id": session_id, "agent": "", "events": conv, "source": "spans"}
 
     telemetry = _load_session_telemetry(session_id, stats.session_first_ts.get(session_id))
-    if detail is None and (telemetry.get("summary") or {}).get("spans", 0) == 0 and (telemetry.get("summary") or {}).get("logs", 0) == 0:
-        return None
     if detail is None:
-        detail = {"session_id": session_id, "agent": "", "events": [], "source": "telemetry"}
+        warnings = []
+        if agent_name:
+            warnings.append(f"Session detail loading is not implemented for agent '{agent_name}' yet.")
+        elif (telemetry.get("summary") or {}).get("spans", 0) == 0 and (telemetry.get("summary") or {}).get("logs", 0) == 0:
+            warnings.append("No stored conversation or OTLP telemetry was found for this session.")
+        detail = {
+            "session_id": session_id,
+            "agent": agent_name,
+            "events": [],
+            "source": "unavailable" if warnings else "telemetry",
+            "warnings": warnings,
+        }
+    detail.setdefault("warnings", [])
     detail["telemetry"] = telemetry
     return detail
 

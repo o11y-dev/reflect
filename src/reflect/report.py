@@ -233,7 +233,7 @@ def render_report(
         reverse=True,
     )
     if all_mcp_servers:
-        mcp_avail_lines += ["| Server | Calls | Completions | Availability |", "|--------|-------|-------------|--------------|"]
+        mcp_avail_lines += ["| Server | Calls | Completions | Completion rate |", "|--------|-------|-------------|-----------------|"]
         for srv in all_mcp_servers[:15]:
             before = stats.mcp_server_before.get(srv, 0)
             after = stats.mcp_server_after.get(srv, 0)
@@ -353,7 +353,7 @@ def render_report(
         "",
         *weekly_lines,
         "",
-        "## MCP Server Availability",
+        "## Observed MCP Completion",
         "",
         *mcp_avail_lines,
         "",

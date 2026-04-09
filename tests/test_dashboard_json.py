@@ -2,6 +2,7 @@
 
 import json
 from collections import Counter
+from unittest.mock import patch
 
 import pytest
 
@@ -10,6 +11,7 @@ from reflect.dashboard import (
     _build_filtered_comparison_payload,
     _build_filtered_stats,
     _filter_dashboard_sessions,
+    _load_session_detail,
     _load_session_telemetry,
 )
 from reflect.models import AgentStats, TelemetryStats
@@ -92,6 +94,31 @@ class TestBuildDashboardJson:
 
         assert session["token_source"] == "cursor_local_unavailable"
         assert "Exact per-session Cursor token usage is not present" in session["token_note"]
+
+    def test_cursor_transcript_estimate_note_mentions_heuristic(self):
+        stats = TelemetryStats(
+            session_files=0,
+            span_files=0,
+            total_events=0,
+            events_by_type=Counter(),
+            events_by_file={},
+            sessions_seen={"cursor-session-2"},
+            session_events={"cursor-session-2": 2},
+            session_models={},
+            session_first_ts={},
+            agents={},
+            session_tokens={},
+            session_source={"cursor-session-2": ("cursor", "/tmp/cursor-session-2.jsonl")},
+            session_conversation={"cursor-session-2": [{"type": "prompt", "preview": "hello"}]},
+        )
+
+        with patch("reflect.dashboard.Path.exists", return_value=True), \
+             patch("reflect.dashboard._estimate_cursor_tokens_from_native", return_value=(12, 8)):
+            data = json.loads(_build_dashboard_json(stats))
+
+        session = data["sessions"][0]
+        assert session["token_source"] == "estimated_cursor_transcript"
+        assert "len(text)/4 heuristic" in session["token_note"]
 
     def test_extracts_skill_usage_from_tool_call_previews(self):
         stats = TelemetryStats(
@@ -381,3 +408,63 @@ class TestBuildDashboardJson:
         assert telemetry["spans"][0]["tool_name"] == "Bash"
         assert telemetry["logs"][0]["severity"] == "ERROR"
         assert telemetry["logs"][0]["body"] == "claude_code.api_error"
+
+    def test_load_session_telemetry_reports_truncation(self, tmp_path):
+        session_id = "sess-trunc"
+        trace_path = tmp_path / "otel-traces.json"
+        spans = [
+            {
+                "traceId": f"{index:032x}"[-32:],
+                "spanId": f"{index:016x}"[-16:],
+                "parentSpanId": "",
+                "name": "gen_ai.client.hook.PreToolUse",
+                "startTimeUnixNano": str(1_000_000_000 + index),
+                "endTimeUnixNano": str(1_000_000_100 + index),
+                "attributes": [
+                    {"key": "gen_ai.client.session_id", "value": {"stringValue": session_id}},
+                    {"key": "gen_ai.client.hook.event", "value": {"stringValue": "PreToolUse"}},
+                ],
+            }
+            for index in range(405)
+        ]
+        trace_path.write_text(json.dumps({
+            "resourceSpans": [{
+                "resource": {"attributes": []},
+                "scopeSpans": [{"scope": {"name": "test"}, "spans": spans}],
+            }],
+        }) + "\n", encoding="utf-8")
+
+        telemetry = _load_session_telemetry(session_id, otlp_traces_file=trace_path)
+
+        assert telemetry["summary"]["spans"] == 405
+        assert telemetry["summary"]["truncated_spans"] == 5
+        assert telemetry["warnings"] == ["Showing first 400 of 405 telemetry spans."]
+        assert len(telemetry["spans"]) == 400
+
+    def test_load_session_detail_returns_warning_for_unknown_agent(self):
+        stats = TelemetryStats(
+            session_files=0,
+            span_files=0,
+            total_events=0,
+            events_by_type=Counter(),
+            events_by_file={},
+            sessions_seen={"unknown-session"},
+            session_events={"unknown-session": 0},
+            session_models={},
+            session_first_ts={},
+            agents={},
+            session_source={"unknown-session": ("windsurf", "/tmp/windsurf-session.jsonl")},
+        )
+
+        with patch("reflect.dashboard.Path.exists", return_value=True), \
+             patch("reflect.dashboard._load_session_telemetry", return_value={
+                 "summary": {"spans": 0, "logs": 0},
+                 "spans": [],
+                 "logs": [],
+                 "warnings": [],
+             }):
+            detail = _load_session_detail("unknown-session", stats)
+
+        assert detail is not None
+        assert detail["source"] == "native_unavailable"
+        assert detail["warnings"] == ["Session detail loading is not implemented for agent 'windsurf' yet."]
