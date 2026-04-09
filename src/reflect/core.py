@@ -1022,6 +1022,85 @@ def _snapshot_detected_agent_configs(console, agents: list[dict]) -> None:
             console.print(f"  [green]\u2713[/] Saved {agent['name']} config snapshot \u2192 {snapshot}")
 
 
+def _configure_copilot_native_otel(console, hook_config: dict[str, str]) -> None:
+    endpoint = hook_config.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    copilot_endpoint = endpoint.replace(":4317", ":4318") if endpoint.endswith(":4317") else endpoint
+    desired = {
+        "github.copilot.chat.otel.enabled": True,
+        "github.copilot.chat.otel.otlpEndpoint": copilot_endpoint,
+        "github.copilot.chat.otel.exporterType": "otlp-http",
+        "github.copilot.chat.otel.captureContent": False,
+    }
+
+    updated_any = False
+    for settings_path in _agent_config_candidates({"name": "GitHub Copilot"}):
+        try:
+            settings = _json_loads(settings_path.read_text())
+        except Exception as exc:
+            console.print(f"  [red]\u2717[/] Failed to read Copilot settings {settings_path}: {exc}")
+            continue
+
+        changed = False
+        for key, value in desired.items():
+            if settings.get(key) != value:
+                settings[key] = value
+                changed = True
+
+        if changed:
+            settings_path.write_text(_json_stdlib.dumps(settings, indent=2) + "\n")
+            console.print(f"  [green]\u2713[/] Enabled native Copilot OTel in {settings_path}")
+            updated_any = True
+        else:
+            console.print(f"  [green]\u2713[/] Native Copilot OTel already enabled in {settings_path}")
+            updated_any = True
+
+    if not updated_any:
+        console.print("  [dim]\u2022[/] No VS Code Copilot settings files detected; kept env guidance only.")
+
+
+def _configure_gemini_native_otel(console, hook_config: dict[str, str]) -> None:
+    settings_path = Path.home() / ".gemini" / "settings.json"
+    if not settings_path.exists():
+        console.print("  [dim]\u2022[/] No Gemini CLI settings file detected; kept env guidance only.")
+        return
+
+    endpoint = hook_config.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    protocol = hook_config.get("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+    gemini_protocol = "http" if protocol.startswith("http") else "grpc"
+
+    try:
+        settings = _json_loads(settings_path.read_text())
+    except Exception as exc:
+        console.print(f"  [red]\u2717[/] Failed to read Gemini CLI settings {settings_path}: {exc}")
+        return
+
+    telemetry = settings.setdefault("telemetry", {})
+    desired = {
+        "enabled": True,
+        "target": "local",
+        "useCollector": True,
+        "otlpEndpoint": endpoint,
+        "otlpProtocol": gemini_protocol,
+        "logPrompts": False,
+    }
+
+    changed = False
+    for key, value in desired.items():
+        if telemetry.get(key) != value:
+            telemetry[key] = value
+            changed = True
+
+    if "outfile" in telemetry:
+        telemetry.pop("outfile", None)
+        changed = True
+
+    if changed:
+        settings_path.write_text(_json_stdlib.dumps(settings, indent=2) + "\n")
+        console.print(f"  [green]\u2713[/] Enabled native Gemini telemetry in {settings_path}")
+    else:
+        console.print(f"  [green]\u2713[/] Native Gemini telemetry already enabled in {settings_path}")
+
+
 
 
 @main.command()
@@ -1122,8 +1201,8 @@ def setup() -> None:
         home_logs.symlink_to(ws_logs)
         console.print(f"  [green]\u2713[/] Linked workspace logs \u2192 {ws_logs}")
 
-    # 5. Delegate agent wiring to opentelemetry-hooks
-    console.print("\n[bold]Step 5: Wire agents via opentelemetry-hooks[/]")
+    # 5. Delegate hook-based agent wiring to opentelemetry-hooks
+    console.print("\n[bold]Step 5: Wire hook-based agents via opentelemetry-hooks[/]")
     if otel_hook:
         try:
             subprocess.check_call([otel_hook, "setup"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1132,15 +1211,21 @@ def setup() -> None:
             console.print(f"  [red]\u2717[/] opentelemetry-hooks setup failed (exit {exc.returncode})")
             console.print("    Run manually: [bold]otel-hook setup[/]")
     else:
-        console.print("  [yellow]\u2022[/] otel-hook not found; skipping agent wiring")
+        console.print("  [yellow]\u2022[/] otel-hook not found; skipping hook-based agent wiring")
         console.print("    Install first: [bold]pipx install opentelemetry-hooks[/]")
 
-    # 6. Distribute Skills
-    console.print("\n[bold]Step 6: Distribute AI Agent Skills[/]")
+    # 6. Configure native OTel agents (Copilot, Gemini) — these have built-in OTLP export,
+    # no hooks needed, reflect configures them directly.
+    console.print("\n[bold]Step 6: Enable native OTel for Copilot and Gemini[/]")
+    _configure_copilot_native_otel(console, config)
+    _configure_gemini_native_otel(console, config)
+
+    # 7. Distribute Skills
+    console.print("\n[bold]Step 7: Distribute AI Agent Skills[/]")
     _distribute_skills(console)
 
-    # 7. Summary
-    console.print("\n[bold]Step 7: Next steps[/]")
+    # 8. Summary
+    console.print("\n[bold]Step 8: Next steps[/]")
     console.print(f"[bold green]Done![/] Data will be written to [bold]{REFLECT_HOME}/state/[/]")
     console.print("\nRun [bold]reflect doctor[/] to confirm capture health, then run [bold]reflect[/] to view your dashboard.")
     console.print()
