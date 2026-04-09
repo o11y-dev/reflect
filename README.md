@@ -144,17 +144,25 @@ reflect update
 
 `reflect doctor` checks that your installation is healthy: hooks are wired correctly, the installed package matches the latest release, and skill files are up to date. `reflect update --apply` upgrades the pipx package when a newer release is available.
 
-## Supported agents
+## Agent instrumentation landscape
 
-| Agent | Path | Confidence |
-|---|---|---|
-| Claude Code | Native logs + hooks | High |
-| GitHub Copilot CLI | Native OTel + hooks | High |
-| VS Code Copilot | Native OTel | High |
-| Gemini CLI | Native OTel + hooks | High |
-| Codex | Native OTel + hooks | Medium |
-| Cursor | Session/log adapters | Medium |
-| OpenCode | Hooks/plugin | Medium |
+reflect's mission is to make every AI coding agent observable with zero manual instrumentation. `reflect setup` handles it: it detects which agents you have, wires each one using the best available path, and starts collecting spans.
+
+| Agent | Instrumentation | What you get | Confidence |
+|---|---|---|---|
+| Claude Code | Native OTel + hooks | Metrics, logs, tool calls, sessions | High |
+| GitHub Copilot VS Code | Native OTel | Traces, metrics, logs | High |
+| GitHub Copilot CLI | Native OTel + hooks | Traces, metrics, logs | High |
+| Gemini CLI | Native OTel + hooks | Traces, metrics, logs | High |
+| OpenAI Codex CLI | Native OTel (interactive) | Traces (interactive mode only) | Medium |
+| Cursor | Session/log adapters | Tool calls, sessions (no token counts) | Medium |
+| OpenCode | Hooks | Sessions, tool calls | Medium |
+| Windsurf, Trae, Cline, others | Hooks (best-effort) | Sessions, process boundaries | Low |
+
+**Instrumentation paths:**
+- **Native OTel** — agent has built-in OTLP export; reflect configures it to point at the local collector
+- **Hooks** — `opentelemetry-hooks` intercepts agent lifecycle events (session start, tool calls, stop)
+- **Session/log adapters** — reflect reads the agent's local session files directly when spans aren't available
 
 When hook spans and OTLP traces are absent, `reflect` falls back to rich local session stores:
 

@@ -1211,7 +1211,6 @@ def _configure_codex_native_otel(console, hook_config: dict[str, str]) -> None:
         "log_user_prompt = false\n"
     )
 
-    import re
     if re.search(r"^\[otel\]", original, re.MULTILINE):
         # Replace existing [otel] section (up to next section or end of file)
         updated = re.sub(
