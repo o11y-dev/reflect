@@ -39,6 +39,7 @@ from __future__ import annotations
 import io
 import json as _json_stdlib
 import os
+import tomllib
 import platform
 import re
 import shutil
@@ -1139,6 +1140,91 @@ def _configure_gemini_native_otel(console, hook_config: dict[str, str]) -> None:
         console.print(f"  [green]\u2713[/] Native Gemini telemetry already enabled in {settings_path}")
 
 
+def _configure_copilot_cli_native_otel(console, hook_config: dict[str, str]) -> None:
+    """Set Copilot CLI OTel env vars in VS Code settings.json env block."""
+    endpoint = hook_config.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    copilot_endpoint = endpoint.replace(":4317", ":4318") if endpoint.endswith(":4317") else endpoint
+
+    desired_env = {
+        "COPILOT_OTEL_ENABLED": "true",
+        "COPILOT_OTEL_OTLP_ENDPOINT": copilot_endpoint,
+    }
+
+    updated_any = False
+    for settings_path in _agent_config_candidates({"name": "GitHub Copilot"}):
+        try:
+            settings = _json_loads(settings_path.read_text())
+        except Exception as exc:
+            console.print(f"  [red]\u2717[/] Failed to read Copilot settings {settings_path}: {exc}")
+            continue
+
+        env = settings.setdefault("env", {})
+        changed = False
+        for key, value in desired_env.items():
+            if env.get(key) != value:
+                env[key] = value
+                changed = True
+
+        if changed:
+            settings_path.write_text(_json_stdlib.dumps(settings, indent=2) + "\n")
+            console.print(f"  [green]\u2713[/] Enabled Copilot CLI OTel env vars in {settings_path}")
+        else:
+            console.print(f"  [green]\u2713[/] Copilot CLI OTel env vars already set in {settings_path}")
+        updated_any = True
+
+    if not updated_any:
+        console.print("  [dim]\u2022[/] No VS Code Copilot settings files detected; skipping Copilot CLI env vars.")
+
+
+def _configure_codex_native_otel(console, hook_config: dict[str, str]) -> None:
+    """Write [otel] section to ~/.codex/config.toml (interactive mode only)."""
+    config_path = Path.home() / ".codex" / "config.toml"
+    endpoint = hook_config.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+
+    desired_otel = {
+        "exporter": f'{{otlp-grpc = {{endpoint = "{endpoint}"}}}}',
+        "log_user_prompt": "false",
+    }
+
+    if config_path.exists():
+        try:
+            existing = tomllib.loads(config_path.read_text())
+        except Exception as exc:
+            console.print(f"  [red]\u2717[/] Failed to read Codex config {config_path}: {exc}")
+            return
+        existing_otel = existing.get("otel", {})
+        already_set = (
+            existing_otel.get("log_user_prompt") is False
+            and "otlp-grpc" in str(existing_otel.get("exporter", ""))
+        )
+        if already_set:
+            console.print(f"  [green]\u2713[/] Native Codex OTel already enabled in {config_path}")
+            return
+    else:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Append or replace [otel] section — read original text to preserve other sections
+    original = config_path.read_text() if config_path.exists() else ""
+    otel_block = (
+        "\n[otel]\n"
+        f'exporter = {{otlp-grpc = {{endpoint = "{endpoint}"}}}}\n'
+        "log_user_prompt = false\n"
+    )
+
+    import re
+    if re.search(r"^\[otel\]", original, re.MULTILINE):
+        # Replace existing [otel] section (up to next section or end of file)
+        updated = re.sub(
+            r"\[otel\].*?(?=\n\[|\Z)", otel_block.strip() + "\n", original,
+            flags=re.DOTALL,
+        )
+    else:
+        updated = original.rstrip("\n") + otel_block
+
+    config_path.write_text(updated)
+    console.print(f"  [green]\u2713[/] Enabled native Codex OTel in {config_path}")
+
+
 
 
 @main.command()
@@ -1252,12 +1338,14 @@ def setup() -> None:
         console.print("  [yellow]\u2022[/] otel-hook not found; skipping hook-based agent wiring")
         console.print("    Install first: [bold]pipx install opentelemetry-hooks[/]")
 
-    # 6. Configure native OTel — Claude Code (metrics+logs), Copilot, and Gemini all have
-    # built-in OTLP export that reflect configures directly (no hooks needed for this path).
-    console.print("\n[bold]Step 6: Enable native OTel for Claude Code, Copilot, and Gemini[/]")
+    # 6. Configure native OTel for all agents that have built-in OTLP export.
+    # otel-hook setup (step 5) handles hook-based agents; this step handles native OTel.
+    console.print("\n[bold]Step 6: Enable native OTel (Claude Code, Copilot, Gemini, Codex)[/]")
     _configure_claude_native_otel(console, config)
     _configure_copilot_native_otel(console, config)
+    _configure_copilot_cli_native_otel(console, config)
     _configure_gemini_native_otel(console, config)
+    _configure_codex_native_otel(console, config)
 
     # 7. Distribute Skills
     console.print("\n[bold]Step 7: Distribute AI Agent Skills[/]")
