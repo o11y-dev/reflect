@@ -100,7 +100,7 @@ Running `reflect` for the first time is usually surprising:
   - Claude Code: `env` block in `~/.claude/settings.json` (metrics + logs only, not traces)
   - GitHub Copilot VS Code: `github.copilot.chat.otel.*` keys in VS Code `settings.json`
   - GitHub Copilot CLI: `COPILOT_OTEL_ENABLED` / `COPILOT_OTEL_OTLP_ENDPOINT` env vars
-  - Gemini CLI: `GEMINI_TELEMETRY_*` env vars in `~/.gemini/settings.json`
+  - Gemini CLI: `telemetry.*` keys in `~/.gemini/settings.json` (e.g. `telemetry.enabled`, `telemetry.otlpEndpoint`)
   - OpenAI Codex CLI: `[otel]` section in `~/.codex/config.toml` (interactive mode only)
 
 Either way, every tool call, token usage event, and session boundary is recorded as an **OTLP span** and written locally to `~/.reflect/state/`.
@@ -228,7 +228,7 @@ reflect setup
     │       via native otel  Claude Code  → ~/.claude/settings.json  (env block, metrics+logs)
     │                        Copilot VS Code → VS Code settings.json (otel.* keys)
     │                        Copilot CLI  → VS Code settings.json  (env block)
-    │                        Gemini CLI   → ~/.gemini/settings.json  (env vars)
+    │                        Gemini CLI   → ~/.gemini/settings.json  (telemetry.* keys)
     │                        Codex CLI    → ~/.codex/config.toml    ([otel] section)
     ├── distributes skill packages
     └── enables local span export to ~/.reflect/state/

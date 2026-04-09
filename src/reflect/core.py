@@ -881,13 +881,16 @@ _HOOK_EVENTS_WITH_MATCHER = [
 ]
 
 
-_OTEL_SKILL_ZIP = "https://github.com/o11y-dev/opentelemetry-skill/archive/refs/heads/main.zip"
-_OTEL_SKILL_CACHE = REFLECT_HOME / "cache" / "opentelemetry-skill"
+# Pin to a specific release tag so skill distribution is reproducible.
+# Update this when a new opentelemetry-skill release should be adopted.
+_OTEL_SKILL_REF = "main"  # TODO: pin to a release tag once the project cuts one
+_OTEL_SKILL_ZIP = f"https://github.com/o11y-dev/opentelemetry-skill/archive/refs/heads/{_OTEL_SKILL_REF}.zip"
 
 
 def _fetch_opentelemetry_skill(console) -> Path | None:
     """Download opentelemetry-skill from GitHub and cache it. Returns the skill dir or None."""
-    skill_dir = _OTEL_SKILL_CACHE
+    # Derive from current REFLECT_HOME at call time so test patches take effect.
+    skill_dir = REFLECT_HOME / "cache" / "opentelemetry-skill" / _OTEL_SKILL_REF
     if (skill_dir / "SKILL.md").exists():
         console.print(f"  [green]\u2713[/] opentelemetry-skill already cached ({skill_dir})")
         return skill_dir
@@ -902,16 +905,20 @@ def _fetch_opentelemetry_skill(console) -> Path | None:
             if skill_dir.exists():
                 shutil.rmtree(skill_dir)
             skill_dir.mkdir(parents=True, exist_ok=True)
+            skill_root = skill_dir.resolve()
             for member in zf.namelist():
                 if member == top or not member.startswith(top):
                     continue
                 rel = member[len(top):]
                 dest = skill_dir / rel
+                resolved_dest = dest.resolve()
+                if os.path.commonpath([str(skill_root), str(resolved_dest)]) != str(skill_root):
+                    raise ValueError(f"Unsafe path in opentelemetry-skill archive: {member}")
                 if member.endswith("/"):
-                    dest.mkdir(parents=True, exist_ok=True)
+                    resolved_dest.mkdir(parents=True, exist_ok=True)
                 else:
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    dest.write_bytes(zf.read(member))
+                    resolved_dest.parent.mkdir(parents=True, exist_ok=True)
+                    resolved_dest.write_bytes(zf.read(member))
         if (skill_dir / "SKILL.md").exists():
             console.print(f"  [green]\u2713[/] Fetched opentelemetry-skill \u2192 {skill_dir}")
             return skill_dir

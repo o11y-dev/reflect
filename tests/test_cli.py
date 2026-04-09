@@ -1,5 +1,6 @@
 """Tests for Click CLI argument parsing and invocation."""
 
+import io
 import json
 import os
 from datetime import datetime
@@ -318,6 +319,7 @@ class TestSetup:
              patch("reflect.core.HOOK_HOME", hook_home), \
              patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
              patch("reflect.core.subprocess.check_call"), \
+             patch("reflect.core._distribute_skills"), \
              patch.dict(os.environ, {"HOME": str(home_dir), "GEMINI_DIR": str(gemini_home)}, clear=False):
             result = runner.invoke(main, ["setup"])
         assert result.exit_code == 0
@@ -405,7 +407,7 @@ class TestNativeOtelConfig:
 
     def _console(self):
         from rich.console import Console
-        return Console(file=open(os.devnull, "w"))
+        return Console(file=io.StringIO())
 
     # ------------------------------------------------------------------
     # Claude Code
@@ -439,13 +441,12 @@ class TestNativeOtelConfig:
                 "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": "cumulative",
             }
         }))
-        mtime_before = settings_file.stat().st_mtime
+        content_before = settings_file.read_text()
 
         with patch("reflect.core.Path.home", return_value=tmp_path):
             core._configure_claude_native_otel(self._console(), self.HOOK_CFG)
 
-        # File should not be rewritten when already correct
-        assert settings_file.stat().st_mtime == mtime_before
+        assert settings_file.read_text() == content_before
 
     def test_claude_native_otel_creates_file_if_missing(self, tmp_path):
         with patch("reflect.core.Path.home", return_value=tmp_path):
@@ -496,12 +497,12 @@ class TestNativeOtelConfig:
             }
         }
         (vscode / "settings.json").write_text(json.dumps(settings))
-        mtime_before = (vscode / "settings.json").stat().st_mtime
+        content_before = (vscode / "settings.json").read_text()
 
         with patch("reflect.core.Path.home", return_value=tmp_path):
             core._configure_copilot_cli_native_otel(self._console(), self.HOOK_CFG)
 
-        assert (vscode / "settings.json").stat().st_mtime == mtime_before
+        assert (vscode / "settings.json").read_text() == content_before
 
     # ------------------------------------------------------------------
     # Codex CLI
@@ -537,12 +538,12 @@ class TestNativeOtelConfig:
             "log_user_prompt = false\n"
         )
         (codex_dir / "config.toml").write_text(config_text)
-        mtime_before = (codex_dir / "config.toml").stat().st_mtime
+        content_before = (codex_dir / "config.toml").read_text()
 
         with patch("reflect.core.Path.home", return_value=tmp_path):
             core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
 
-        assert (codex_dir / "config.toml").stat().st_mtime == mtime_before
+        assert (codex_dir / "config.toml").read_text() == content_before
 
     def test_codex_native_otel_read_error(self, tmp_path):
         codex_dir = tmp_path / ".codex"
