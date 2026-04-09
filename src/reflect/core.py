@@ -39,11 +39,11 @@ from __future__ import annotations
 import io
 import json as _json_stdlib
 import os
-import tomllib
 import platform
 import re
 import shutil
 import subprocess
+import tomllib
 import zipfile
 from datetime import UTC, datetime
 from importlib import metadata as importlib_metadata
@@ -960,7 +960,7 @@ def _distribute_skills(console) -> None:
 
         # 2. Project path (local to workspace)
         try:
-            project_skill_base = project_root / agent["skill_path"]
+            project_skill_base = Path.cwd() / agent["skill_path"]
             project_skill_base.mkdir(parents=True, exist_ok=True)
             for skill_name, skill_src in available_skills.items():
                 dest = project_skill_base / skill_name
@@ -1181,11 +1181,6 @@ def _configure_codex_native_otel(console, hook_config: dict[str, str]) -> None:
     config_path = Path.home() / ".codex" / "config.toml"
     endpoint = hook_config.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
 
-    desired_otel = {
-        "exporter": f'{{otlp-grpc = {{endpoint = "{endpoint}"}}}}',
-        "log_user_prompt": "false",
-    }
-
     if config_path.exists():
         try:
             existing = tomllib.loads(config_path.read_text())
@@ -1263,7 +1258,6 @@ def setup() -> None:
             console.print("    Install manually: [bold]pipx install opentelemetry-hooks[/]")
 
     console.print("\n[bold]Step 4: Configure local telemetry export[/]")
-    otel_hook_cmd = otel_hook or "/usr/local/bin/otel-hook"
     config_path = HOOK_HOME / "otel_config.json"
     if config_path.exists():
         backup = _copy_config_snapshot("opentelemetry-hooks", config_path)
