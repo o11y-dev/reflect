@@ -36,12 +36,15 @@ Usage:
 
 from __future__ import annotations
 
+import io
 import json as _json_stdlib
 import os
 import platform
 import re
 import shutil
 import subprocess
+import tomllib
+import zipfile
 from datetime import UTC, datetime
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -878,26 +881,71 @@ _HOOK_EVENTS_WITH_MATCHER = [
 ]
 
 
+# Pin to a specific release tag so skill distribution is reproducible.
+# Update this when a new opentelemetry-skill release should be adopted.
+_OTEL_SKILL_REF = "main"  # TODO: pin to a release tag once the project cuts one
+_OTEL_SKILL_ZIP = f"https://github.com/o11y-dev/opentelemetry-skill/archive/refs/heads/{_OTEL_SKILL_REF}.zip"
+
+
+def _fetch_opentelemetry_skill(console) -> Path | None:
+    """Download opentelemetry-skill from GitHub and cache it. Returns the skill dir or None."""
+    # Derive from current REFLECT_HOME at call time so test patches take effect.
+    skill_dir = REFLECT_HOME / "cache" / "opentelemetry-skill" / _OTEL_SKILL_REF
+    if (skill_dir / "SKILL.md").exists():
+        console.print(f"  [green]\u2713[/] opentelemetry-skill already cached ({skill_dir})")
+        return skill_dir
+
+    console.print("  [yellow]\u2022[/] Fetching opentelemetry-skill from GitHub...")
+    try:
+        with urllib_request.urlopen(_OTEL_SKILL_ZIP, timeout=30) as resp:
+            data = resp.read()
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            # The zip contains a single top-level dir like "opentelemetry-skill-main/"
+            top = next(n for n in zf.namelist() if n.endswith("/") and n.count("/") == 1)
+            if skill_dir.exists():
+                shutil.rmtree(skill_dir)
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            skill_root = skill_dir.resolve()
+            for member in zf.namelist():
+                if member == top or not member.startswith(top):
+                    continue
+                rel = member[len(top):]
+                dest = skill_dir / rel
+                resolved_dest = dest.resolve()
+                if os.path.commonpath([str(skill_root), str(resolved_dest)]) != str(skill_root):
+                    raise ValueError(f"Unsafe path in opentelemetry-skill archive: {member}")
+                if member.endswith("/"):
+                    resolved_dest.mkdir(parents=True, exist_ok=True)
+                else:
+                    resolved_dest.parent.mkdir(parents=True, exist_ok=True)
+                    resolved_dest.write_bytes(zf.read(member))
+        if (skill_dir / "SKILL.md").exists():
+            console.print(f"  [green]\u2713[/] Fetched opentelemetry-skill \u2192 {skill_dir}")
+            return skill_dir
+        console.print("  [red]\u2717[/] opentelemetry-skill fetched but SKILL.md not found")
+        return None
+    except Exception as exc:
+        console.print(f"  [red]\u2717[/] Failed to fetch opentelemetry-skill: {exc}")
+        return None
+
+
 def _distribute_skills(console) -> None:
     """Distribute reflect and opentelemetry-skill to detected agents."""
-    project_root = Path.cwd()
+    # reflect skill is bundled with the package
+    bundled_skills_dir = Path(__file__).parent / "data" / "skills"
 
-    # Locate skills in the current repo structure
-    # reflect skill is in reflect/skills/reflect
-    # opentelemetry-skill is in the root as a dir
-    skills_to_distribute = {
-        "reflect": project_root / "reflect" / "skills" / "reflect",
-        "opentelemetry-skill": project_root / "opentelemetry-skill",
-    }
+    available_skills: dict[str, Path] = {}
 
-    # Verify skills exist
-    available_skills = {}
-    for name, path in skills_to_distribute.items():
-        if (path / "SKILL.md").exists():
-            available_skills[name] = path
+    reflect_skill = bundled_skills_dir / "reflect"
+    if (reflect_skill / "SKILL.md").exists():
+        available_skills["reflect"] = reflect_skill
+
+    otel_skill = _fetch_opentelemetry_skill(console)
+    if otel_skill:
+        available_skills["opentelemetry-skill"] = otel_skill
 
     if not available_skills:
-        console.print("  [yellow]\u2022[/] No local skills found to distribute.")
+        console.print("  [yellow]\u2022[/] No skills available to distribute.")
         return
 
     # Filter detected agents
@@ -919,7 +967,7 @@ def _distribute_skills(console) -> None:
 
         # 2. Project path (local to workspace)
         try:
-            project_skill_base = project_root / agent["skill_path"]
+            project_skill_base = Path.cwd() / agent["skill_path"]
             project_skill_base.mkdir(parents=True, exist_ok=True)
             for skill_name, skill_src in available_skills.items():
                 dest = project_skill_base / skill_name
@@ -982,54 +1030,42 @@ def _snapshot_detected_agent_configs(console, agents: list[dict]) -> None:
             console.print(f"  [green]\u2713[/] Saved {agent['name']} config snapshot \u2192 {snapshot}")
 
 
-def _derive_agent_env(agent: dict, hook_config: dict[str, str]) -> dict[str, str]:
+def _configure_claude_native_otel(console, hook_config: dict[str, str]) -> None:
+    settings_path = Path.home() / ".claude" / "settings.json"
     endpoint = hook_config.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
     protocol = hook_config.get("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
-    env = {
-        agent["env"]: str(agent["path"]),
+
+    desired_env = {
+        "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+        "OTEL_METRICS_EXPORTER": "otlp",
+        "OTEL_LOGS_EXPORTER": "otlp",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": protocol,
+        "OTEL_EXPORTER_OTLP_ENDPOINT": endpoint,
+        "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": "cumulative",
     }
 
-    if agent["name"] == "GitHub Copilot":
-        copilot_endpoint = endpoint.replace(":4317", ":4318") if endpoint.endswith(":4317") else endpoint
-        env.update({
-            "COPILOT_OTEL_ENABLED": "true",
-            "COPILOT_OTEL_ENDPOINT": copilot_endpoint,
-            "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
-            "COPILOT_OTEL_CAPTURE_CONTENT": "false",
-        })
-    elif agent["name"] == "Gemini CLI":
-        env.update({
-            "GEMINI_TELEMETRY_ENABLED": "true",
-            "GEMINI_TELEMETRY_TARGET": "local",
-            "GEMINI_TELEMETRY_USE_COLLECTOR": "true",
-            "GEMINI_TELEMETRY_OTLP_ENDPOINT": endpoint,
-            "GEMINI_TELEMETRY_OTLP_PROTOCOL": "http" if protocol.startswith("http") else "grpc",
-            "GEMINI_TELEMETRY_LOG_PROMPTS": "false",
-        })
+    if settings_path.exists():
+        try:
+            settings = _json_loads(settings_path.read_text())
+        except Exception as exc:
+            console.print(f"  [red]\u2717[/] Failed to read Claude Code settings {settings_path}: {exc}")
+            return
     else:
-        env.update({
-            "OTEL_EXPORTER_OTLP_ENDPOINT": endpoint,
-            "OTEL_EXPORTER_OTLP_PROTOCOL": protocol,
-        })
-    return env
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings = {}
 
+    env = settings.setdefault("env", {})
+    changed = False
+    for key, value in desired_env.items():
+        if env.get(key) != value:
+            env[key] = value
+            changed = True
 
-def _write_agent_env_files(console, agents: list[dict], hook_config: dict[str, str]) -> None:
-    for agent in agents:
-        agent_dir = _reflect_agent_dir(agent["name"])
-        agent_dir.mkdir(parents=True, exist_ok=True)
-        env_path = agent_dir / ".env"
-        env_vars = _derive_agent_env(agent, hook_config)
-        lines = [
-            f"# {agent['name']} environment managed by reflect setup",
-            f"# Home: {agent['path']}",
-            f"# Skills: {Path(agent['global_path']).expanduser()}",
-            "",
-        ]
-        for key, value in env_vars.items():
-            lines.append(f"{key}={value}")
-        env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        console.print(f"  [green]\u2713[/] Wrote {agent['name']} env file \u2192 {env_path}")
+    if changed:
+        settings_path.write_text(_json_stdlib.dumps(settings, indent=2) + "\n")
+        console.print(f"  [green]\u2713[/] Enabled native Claude Code OTel in {settings_path}")
+    else:
+        console.print(f"  [green]\u2713[/] Native Claude Code OTel already enabled in {settings_path}")
 
 
 def _configure_copilot_native_otel(console, hook_config: dict[str, str]) -> None:
@@ -1111,6 +1147,87 @@ def _configure_gemini_native_otel(console, hook_config: dict[str, str]) -> None:
         console.print(f"  [green]\u2713[/] Native Gemini telemetry already enabled in {settings_path}")
 
 
+def _configure_copilot_cli_native_otel(console, hook_config: dict[str, str]) -> None:
+    """Set Copilot CLI OTel env vars in VS Code settings.json env block."""
+    endpoint = hook_config.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    copilot_endpoint = endpoint.replace(":4317", ":4318") if endpoint.endswith(":4317") else endpoint
+
+    desired_env = {
+        "COPILOT_OTEL_ENABLED": "true",
+        "COPILOT_OTEL_OTLP_ENDPOINT": copilot_endpoint,
+    }
+
+    updated_any = False
+    for settings_path in _agent_config_candidates({"name": "GitHub Copilot"}):
+        try:
+            settings = _json_loads(settings_path.read_text())
+        except Exception as exc:
+            console.print(f"  [red]\u2717[/] Failed to read Copilot settings {settings_path}: {exc}")
+            continue
+
+        env = settings.setdefault("env", {})
+        changed = False
+        for key, value in desired_env.items():
+            if env.get(key) != value:
+                env[key] = value
+                changed = True
+
+        if changed:
+            settings_path.write_text(_json_stdlib.dumps(settings, indent=2) + "\n")
+            console.print(f"  [green]\u2713[/] Enabled Copilot CLI OTel env vars in {settings_path}")
+        else:
+            console.print(f"  [green]\u2713[/] Copilot CLI OTel env vars already set in {settings_path}")
+        updated_any = True
+
+    if not updated_any:
+        console.print("  [dim]\u2022[/] No VS Code Copilot settings files detected; skipping Copilot CLI env vars.")
+
+
+def _configure_codex_native_otel(console, hook_config: dict[str, str]) -> None:
+    """Write [otel] section to ~/.codex/config.toml (interactive mode only)."""
+    config_path = Path.home() / ".codex" / "config.toml"
+    endpoint = hook_config.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+
+    if config_path.exists():
+        try:
+            existing = tomllib.loads(config_path.read_text())
+        except Exception as exc:
+            console.print(f"  [red]\u2717[/] Failed to read Codex config {config_path}: {exc}")
+            return
+        existing_otel = existing.get("otel", {})
+        already_set = (
+            existing_otel.get("log_user_prompt") is False
+            and "otlp-grpc" in str(existing_otel.get("exporter", ""))
+        )
+        if already_set:
+            console.print(f"  [green]\u2713[/] Native Codex OTel already enabled in {config_path}")
+            return
+    else:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Append or replace [otel] section — read original text to preserve other sections
+    original = config_path.read_text() if config_path.exists() else ""
+    otel_block = (
+        "\n[otel]\n"
+        f'exporter = {{otlp-grpc = {{endpoint = "{endpoint}"}}}}\n'
+        "log_user_prompt = false\n"
+    )
+
+    if re.search(r"^\[otel\]", original, re.MULTILINE):
+        # Replace existing [otel] section (up to next section or end of file)
+        updated = re.sub(
+            r"\[otel\].*?(?=\n\[|\Z)", otel_block.strip() + "\n", original,
+            flags=re.DOTALL,
+        )
+    else:
+        updated = original.rstrip("\n") + otel_block
+
+    config_path.write_text(updated)
+    console.print(f"  [green]\u2713[/] Enabled native Codex OTel in {config_path}")
+
+
+
+
 @main.command()
 def setup() -> None:
     """Install opentelemetry-hooks, configure local data export, and suggest agent enablement."""
@@ -1148,7 +1265,6 @@ def setup() -> None:
             console.print("    Install manually: [bold]pipx install opentelemetry-hooks[/]")
 
     console.print("\n[bold]Step 4: Configure local telemetry export[/]")
-    otel_hook_cmd = otel_hook or "/usr/local/bin/otel-hook"
     config_path = HOOK_HOME / "otel_config.json"
     if config_path.exists():
         backup = _copy_config_snapshot("opentelemetry-hooks", config_path)
@@ -1209,76 +1325,34 @@ def setup() -> None:
         home_logs.symlink_to(ws_logs)
         console.print(f"  [green]\u2713[/] Linked workspace logs \u2192 {ws_logs}")
 
-    console.print("\n[bold]Step 5: Register Claude Code hooks[/]")
-    claude_settings_path = Path.home() / ".claude" / "settings.json"
-    if claude_settings_path.exists():
-        backup = _copy_config_snapshot("Claude Code", claude_settings_path)
-        console.print(f"  [green]\u2713[/] Saved Claude Code config snapshot \u2192 {backup}")
-        settings = _json_loads(claude_settings_path.read_text())
+    # 5. Delegate hook-based agent wiring to opentelemetry-hooks
+    console.print("\n[bold]Step 5: Wire hook-based agents via opentelemetry-hooks[/]")
+    if otel_hook:
+        try:
+            subprocess.check_call([otel_hook, "setup"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            console.print("  [green]\u2713[/] opentelemetry-hooks setup complete")
+        except subprocess.CalledProcessError as exc:
+            console.print(f"  [red]\u2717[/] opentelemetry-hooks setup failed (exit {exc.returncode})")
+            console.print("    Run manually: [bold]otel-hook setup[/]")
     else:
-        claude_settings_path.parent.mkdir(parents=True, exist_ok=True)
-        settings = {}
+        console.print("  [yellow]\u2022[/] otel-hook not found; skipping hook-based agent wiring")
+        console.print("    Install first: [bold]pipx install opentelemetry-hooks[/]")
 
-    hooks = settings.setdefault("hooks", {})
-    changed = False
-
-    def _hook_entry(cmd: str) -> dict:
-        return {"hooks": [{"type": "command", "command": cmd}]}
-
-    for event in _HOOK_EVENTS:
-        entries = hooks.get(event, [])
-        if not any(otel_hook_cmd in str(e) for e in entries):
-            hooks.setdefault(event, []).insert(0, _hook_entry(otel_hook_cmd))
-            changed = True
-
-    for event in _HOOK_EVENTS_WITH_MATCHER:
-        entries = hooks.get(event, [])
-        if not any(otel_hook_cmd in str(e) for e in entries):
-            entry = _hook_entry(otel_hook_cmd)
-            entry["matcher"] = "*"
-            hooks.setdefault(event, []).insert(0, entry)
-            changed = True
-
-    if changed:
-        claude_settings_path.write_text(_json_stdlib.dumps(settings, indent=2) + "\n")
-        console.print(f"  [green]\u2713[/] Registered hooks in Claude Code ({claude_settings_path})")
-    else:
-        console.print("  [green]\u2713[/] Hooks already registered in Claude Code")
-
-    # 6. Enable native Gemini telemetry in detected Gemini settings files
-    console.print("\n[bold]Step 6: Enable native Gemini telemetry[/]")
-    _configure_gemini_native_otel(console, config)
-
-    # 7. Enable native GitHub Copilot OTel in detected VS Code settings files
-    console.print("\n[bold]Step 7: Enable native GitHub Copilot OTel[/]")
+    # 6. Configure native OTel for all agents that have built-in OTLP export.
+    # otel-hook setup (step 5) handles hook-based agents; this step handles native OTel.
+    console.print("\n[bold]Step 6: Enable native OTel (Claude Code, Copilot, Gemini, Codex)[/]")
+    _configure_claude_native_otel(console, config)
     _configure_copilot_native_otel(console, config)
+    _configure_copilot_cli_native_otel(console, config)
+    _configure_gemini_native_otel(console, config)
+    _configure_codex_native_otel(console, config)
 
-    # 8. Agent-aware guidance
-    guidance_agents = [agent for agent in detected_agents if agent["name"] != "Claude Code"]
-    if guidance_agents:
-        console.print("\n[bold]Step 8: Detected agent homes[/]")
-        for agent in guidance_agents:
-            display_name = "Gemini" if agent["name"] == "Gemini CLI" else agent["name"]
-            console.print(
-                f"  [cyan]-[/] {display_name}: {agent['path']} "
-                f"([dim]{agent['entries']} entries in {agent['path_kind']}[/])"
-            )
-            console.print(f"    [dim]Next step:[/] {agent['recommendation']}")
-    else:
-        console.print("\n[bold]Step 8: Detected agent homes[/]")
-        console.print("[dim]No additional supported agent homes detected beyond Claude Code.[/]")
-
-    # 9. Distribute Skills
-    console.print("\n[bold]Step 9: Distribute AI Agent Skills[/]")
+    # 7. Distribute Skills
+    console.print("\n[bold]Step 7: Distribute AI Agent Skills[/]")
     _distribute_skills(console)
 
-    # 10. Write per-agent env files
-    if detected_agents:
-        console.print("\n[bold]Step 10: Write per-agent env files[/]")
-        _write_agent_env_files(console, detected_agents, config)
-
-    # 11. Summary
-    console.print("\n[bold]Step 11: Next steps[/]")
+    # 8. Summary
+    console.print("\n[bold]Step 8: Next steps[/]")
     console.print(f"[bold green]Done![/] Data will be written to [bold]{REFLECT_HOME}/state/[/]")
     console.print("\nRun [bold]reflect doctor[/] to confirm capture health, then run [bold]reflect[/] to view your dashboard.")
     console.print()

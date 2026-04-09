@@ -1,5 +1,6 @@
 """Tests for Click CLI argument parsing and invocation."""
 
+import io
 import json
 import os
 from datetime import datetime
@@ -317,12 +318,13 @@ class TestSetup:
         with patch("reflect.core.REFLECT_HOME", reflect_home), \
              patch("reflect.core.HOOK_HOME", hook_home), \
              patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call"), \
+             patch("reflect.core._distribute_skills"), \
              patch.dict(os.environ, {"HOME": str(home_dir), "GEMINI_DIR": str(gemini_home)}, clear=False):
             result = runner.invoke(main, ["setup"])
         assert result.exit_code == 0
-        assert "Detected agent homes" in result.output
-        assert "Gemini:" in result.output
-        assert "native Gemini OTel" in result.output
+        assert "native OTel" in result.output
+        assert "Gemini" in result.output
 
     def test_setup_writes_agent_env_files_and_backups(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
@@ -347,27 +349,25 @@ class TestSetup:
         with patch("reflect.core.REFLECT_HOME", reflect_home), \
              patch("reflect.core.HOOK_HOME", hook_home), \
              patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call"), \
              patch("reflect.core._distribute_skills"), \
              patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
             result = runner.invoke(main, ["setup"])
 
         assert result.exit_code == 0
 
-        claude_env = reflect_home / "agents" / "claude-code" / ".env"
-        copilot_env = reflect_home / "agents" / "github-copilot" / ".env"
-        gemini_env = reflect_home / "agents" / "gemini-cli" / ".env"
         hook_backup_dir = reflect_home / "agents" / "opentelemetry-hooks" / "config-snapshots"
         claude_backup_dir = reflect_home / "agents" / "claude-code" / "config-snapshots"
         copilot_backup_dir = reflect_home / "agents" / "github-copilot" / "config-snapshots"
         gemini_backup_dir = reflect_home / "agents" / "gemini-cli" / "config-snapshots"
 
-        assert claude_env.exists()
-        assert "CLAUDE_HOME=" in claude_env.read_text()
-        assert gemini_env.exists()
-        gemini_env_text = gemini_env.read_text()
-        assert "GEMINI_TELEMETRY_ENABLED=true" in gemini_env_text
-        assert "GEMINI_TELEMETRY_USE_COLLECTOR=true" in gemini_env_text
-        assert "GEMINI_TELEMETRY_OTLP_ENDPOINT=http://localhost:4317" in gemini_env_text
+        # Claude Code: native OTel env block written to settings.json
+        claude_settings = json.loads((claude_home / "settings.json").read_text())
+        assert claude_settings["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
+        assert claude_settings["env"]["OTEL_METRICS_EXPORTER"] == "otlp"
+        assert claude_settings["env"]["OTEL_LOGS_EXPORTER"] == "otlp"
+
+        # Gemini: native OTel settings written to settings.json
         gemini_settings = json.loads((gemini_home / "settings.json").read_text())
         assert gemini_settings["telemetry"]["enabled"] is True
         assert gemini_settings["telemetry"]["target"] == "local"
@@ -376,15 +376,17 @@ class TestSetup:
         assert gemini_settings["telemetry"]["otlpProtocol"] == "grpc"
         assert gemini_settings["telemetry"]["logPrompts"] is False
         assert "outfile" not in gemini_settings["telemetry"]
-        assert copilot_env.exists()
-        copilot_env_text = copilot_env.read_text()
-        assert "COPILOT_OTEL_ENABLED=true" in copilot_env_text
-        assert "COPILOT_OTEL_ENDPOINT=http://localhost:4318" in copilot_env_text
+
+        # Copilot VS Code: otel.* keys + CLI env vars written to settings.json
         copilot_settings = json.loads((vscode_settings / "settings.json").read_text())
         assert copilot_settings["github.copilot.chat.otel.enabled"] is True
         assert copilot_settings["github.copilot.chat.otel.otlpEndpoint"] == "http://localhost:4318"
         assert copilot_settings["github.copilot.chat.otel.exporterType"] == "otlp-http"
         assert copilot_settings["github.copilot.chat.otel.captureContent"] is False
+        assert copilot_settings["env"]["COPILOT_OTEL_ENABLED"] == "true"
+        assert copilot_settings["env"]["COPILOT_OTEL_OTLP_ENDPOINT"] == "http://localhost:4318"
+
+        # Config snapshots created
         assert hook_backup_dir.exists()
         assert any(hook_backup_dir.iterdir())
         assert claude_backup_dir.exists()
@@ -393,3 +395,161 @@ class TestSetup:
         assert any(gemini_backup_dir.iterdir())
         assert copilot_backup_dir.exists()
         assert any(copilot_backup_dir.iterdir())
+
+
+class TestNativeOtelConfig:
+    """Unit tests for per-agent native OTel configuration functions."""
+
+    HOOK_CFG = {
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+    }
+
+    def _console(self):
+        from rich.console import Console
+        return Console(file=io.StringIO())
+
+    # ------------------------------------------------------------------
+    # Claude Code
+    # ------------------------------------------------------------------
+
+    def test_claude_native_otel_creates_env_block(self, tmp_path):
+        settings_file = tmp_path / ".claude" / "settings.json"
+        settings_file.parent.mkdir(parents=True)
+        settings_file.write_text('{"hooks":{}}\n')
+
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            core._configure_claude_native_otel(self._console(), self.HOOK_CFG)
+
+        result = json.loads(settings_file.read_text())
+        assert result["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
+        assert result["env"]["OTEL_METRICS_EXPORTER"] == "otlp"
+        assert result["env"]["OTEL_LOGS_EXPORTER"] == "otlp"
+        assert result["env"]["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://localhost:4317"
+        assert result["env"]["OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE"] == "cumulative"
+
+    def test_claude_native_otel_idempotent(self, tmp_path):
+        settings_file = tmp_path / ".claude" / "settings.json"
+        settings_file.parent.mkdir(parents=True)
+        settings_file.write_text(json.dumps({
+            "env": {
+                "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+                "OTEL_METRICS_EXPORTER": "otlp",
+                "OTEL_LOGS_EXPORTER": "otlp",
+                "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+                "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
+                "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": "cumulative",
+            }
+        }))
+        content_before = settings_file.read_text()
+
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            core._configure_claude_native_otel(self._console(), self.HOOK_CFG)
+
+        assert settings_file.read_text() == content_before
+
+    def test_claude_native_otel_creates_file_if_missing(self, tmp_path):
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            core._configure_claude_native_otel(self._console(), self.HOOK_CFG)
+
+        settings_file = tmp_path / ".claude" / "settings.json"
+        assert settings_file.exists()
+        result = json.loads(settings_file.read_text())
+        assert result["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
+
+    def test_claude_native_otel_read_error(self, tmp_path):
+        settings_file = tmp_path / ".claude" / "settings.json"
+        settings_file.parent.mkdir(parents=True)
+        settings_file.write_text("not valid json {{{{")
+
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            # Should not raise
+            core._configure_claude_native_otel(self._console(), self.HOOK_CFG)
+
+    # ------------------------------------------------------------------
+    # Copilot CLI
+    # ------------------------------------------------------------------
+
+    def test_copilot_cli_native_otel_writes_env_block(self, tmp_path):
+        vscode = tmp_path / ".config" / "Code" / "User"
+        vscode.mkdir(parents=True)
+        (vscode / "settings.json").write_text('{"github.copilot.chat.otel.enabled": true}\n')
+
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            core._configure_copilot_cli_native_otel(self._console(), self.HOOK_CFG)
+
+        result = json.loads((vscode / "settings.json").read_text())
+        assert result["env"]["COPILOT_OTEL_ENABLED"] == "true"
+        assert result["env"]["COPILOT_OTEL_OTLP_ENDPOINT"] == "http://localhost:4318"
+
+    def test_copilot_cli_native_otel_no_settings_file(self, tmp_path):
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            # Should not raise when no VS Code settings exist
+            core._configure_copilot_cli_native_otel(self._console(), self.HOOK_CFG)
+
+    def test_copilot_cli_native_otel_idempotent(self, tmp_path):
+        vscode = tmp_path / ".config" / "Code" / "User"
+        vscode.mkdir(parents=True)
+        settings = {
+            "env": {
+                "COPILOT_OTEL_ENABLED": "true",
+                "COPILOT_OTEL_OTLP_ENDPOINT": "http://localhost:4318",
+            }
+        }
+        (vscode / "settings.json").write_text(json.dumps(settings))
+        content_before = (vscode / "settings.json").read_text()
+
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            core._configure_copilot_cli_native_otel(self._console(), self.HOOK_CFG)
+
+        assert (vscode / "settings.json").read_text() == content_before
+
+    # ------------------------------------------------------------------
+    # Codex CLI
+    # ------------------------------------------------------------------
+
+    def test_codex_native_otel_creates_config(self, tmp_path):
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
+
+        config = (tmp_path / ".codex" / "config.toml").read_text()
+        assert "[otel]" in config
+        assert "localhost:4317" in config
+        assert "log_user_prompt = false" in config
+
+    def test_codex_native_otel_appends_to_existing_config(self, tmp_path):
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "config.toml").write_text("[model]\nname = \"o3\"\n")
+
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
+
+        config = (codex_dir / "config.toml").read_text()
+        assert "[model]" in config  # existing section preserved
+        assert "[otel]" in config
+        assert "log_user_prompt = false" in config
+
+    def test_codex_native_otel_already_configured(self, tmp_path):
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        config_text = (
+            '[otel]\nexporter = {otlp-grpc = {endpoint = "http://localhost:4317"}}\n'
+            "log_user_prompt = false\n"
+        )
+        (codex_dir / "config.toml").write_text(config_text)
+        content_before = (codex_dir / "config.toml").read_text()
+
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
+
+        assert (codex_dir / "config.toml").read_text() == content_before
+
+    def test_codex_native_otel_read_error(self, tmp_path):
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "config.toml").write_text("[[[[invalid toml")
+
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            # Should not raise
+            core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
