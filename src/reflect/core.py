@@ -1030,6 +1030,7 @@ def _copy_config_snapshot(agent_name: str, source: Path) -> Path:
 
 
 def _agent_config_paths(agent: dict) -> list[Path]:
+    """Return every config path reflect knows to inspect for an agent."""
     home = Path.home()
     name = agent["name"]
     candidates: list[Path] = []

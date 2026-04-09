@@ -79,8 +79,8 @@ def _estimate_cursor_tokens_from_native(file_path: Path) -> tuple[int, int]:
     return (input_tokens, output_tokens)
 
 
-def _cursor_estimate_note(full_transcript: bool = True) -> str:
-    scope = "local Cursor transcript" if full_transcript else "available Cursor transcript preview"
+def _cursor_estimate_note(has_full_transcript: bool = True) -> str:
+    scope = "local Cursor transcript" if has_full_transcript else "available Cursor transcript preview"
     return (
         f"Token counts are estimated from the {scope} with a rough len(text)/4 heuristic "
         "because exact per-session usage is not present in local telemetry."
