@@ -93,7 +93,7 @@ Running `reflect` for the first time is usually surprising:
 
 ## How it works
 
-AI coding agents expose telemetry in two ways, and `reflect setup` uses whichever the agent supports:
+`reflect` takes care of instrumentation and session data collection end-to-end — you run `reflect setup` once and it handles the rest. AI coding agents expose telemetry in two ways, and `reflect setup` uses whichever the agent supports:
 
 - **Hooks** (Claude Code, OpenAI Codex CLI, Qwen Code) — scripts that fire at key lifecycle moments (session start, tool call, prompt, stop). `reflect setup` installs a small [opentelemetry-hooks](https://github.com/o11y-dev/opentelemetry-hooks) instrumentation layer into the agent's config file.
 - **Native OpenTelemetry** (GitHub Copilot, Gemini CLI) — the agent has built-in OTLP export that just needs to be pointed at the local collector. `reflect setup` writes the relevant settings (`github.copilot.chat.otel.*` for Copilot, `GEMINI_TELEMETRY_*` env vars for Gemini).
