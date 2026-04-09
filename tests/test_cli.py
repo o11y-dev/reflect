@@ -317,12 +317,12 @@ class TestSetup:
         with patch("reflect.core.REFLECT_HOME", reflect_home), \
              patch("reflect.core.HOOK_HOME", hook_home), \
              patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call"), \
              patch.dict(os.environ, {"HOME": str(home_dir), "GEMINI_DIR": str(gemini_home)}, clear=False):
             result = runner.invoke(main, ["setup"])
         assert result.exit_code == 0
-        assert "Detected agent homes" in result.output
-        assert "Gemini:" in result.output
-        assert "native Gemini OTel" in result.output
+        assert "native OTel" in result.output
+        assert "Gemini" in result.output
 
     def test_setup_writes_agent_env_files_and_backups(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
@@ -347,27 +347,25 @@ class TestSetup:
         with patch("reflect.core.REFLECT_HOME", reflect_home), \
              patch("reflect.core.HOOK_HOME", hook_home), \
              patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call"), \
              patch("reflect.core._distribute_skills"), \
              patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
             result = runner.invoke(main, ["setup"])
 
         assert result.exit_code == 0
 
-        claude_env = reflect_home / "agents" / "claude-code" / ".env"
-        copilot_env = reflect_home / "agents" / "github-copilot" / ".env"
-        gemini_env = reflect_home / "agents" / "gemini-cli" / ".env"
         hook_backup_dir = reflect_home / "agents" / "opentelemetry-hooks" / "config-snapshots"
         claude_backup_dir = reflect_home / "agents" / "claude-code" / "config-snapshots"
         copilot_backup_dir = reflect_home / "agents" / "github-copilot" / "config-snapshots"
         gemini_backup_dir = reflect_home / "agents" / "gemini-cli" / "config-snapshots"
 
-        assert claude_env.exists()
-        assert "CLAUDE_HOME=" in claude_env.read_text()
-        assert gemini_env.exists()
-        gemini_env_text = gemini_env.read_text()
-        assert "GEMINI_TELEMETRY_ENABLED=true" in gemini_env_text
-        assert "GEMINI_TELEMETRY_USE_COLLECTOR=true" in gemini_env_text
-        assert "GEMINI_TELEMETRY_OTLP_ENDPOINT=http://localhost:4317" in gemini_env_text
+        # Claude Code: native OTel env block written to settings.json
+        claude_settings = json.loads((claude_home / "settings.json").read_text())
+        assert claude_settings["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
+        assert claude_settings["env"]["OTEL_METRICS_EXPORTER"] == "otlp"
+        assert claude_settings["env"]["OTEL_LOGS_EXPORTER"] == "otlp"
+
+        # Gemini: native OTel settings written to settings.json
         gemini_settings = json.loads((gemini_home / "settings.json").read_text())
         assert gemini_settings["telemetry"]["enabled"] is True
         assert gemini_settings["telemetry"]["target"] == "local"
@@ -376,15 +374,17 @@ class TestSetup:
         assert gemini_settings["telemetry"]["otlpProtocol"] == "grpc"
         assert gemini_settings["telemetry"]["logPrompts"] is False
         assert "outfile" not in gemini_settings["telemetry"]
-        assert copilot_env.exists()
-        copilot_env_text = copilot_env.read_text()
-        assert "COPILOT_OTEL_ENABLED=true" in copilot_env_text
-        assert "COPILOT_OTEL_ENDPOINT=http://localhost:4318" in copilot_env_text
+
+        # Copilot VS Code: otel.* keys + CLI env vars written to settings.json
         copilot_settings = json.loads((vscode_settings / "settings.json").read_text())
         assert copilot_settings["github.copilot.chat.otel.enabled"] is True
         assert copilot_settings["github.copilot.chat.otel.otlpEndpoint"] == "http://localhost:4318"
         assert copilot_settings["github.copilot.chat.otel.exporterType"] == "otlp-http"
         assert copilot_settings["github.copilot.chat.otel.captureContent"] is False
+        assert copilot_settings["env"]["COPILOT_OTEL_ENABLED"] == "true"
+        assert copilot_settings["env"]["COPILOT_OTEL_OTLP_ENDPOINT"] == "http://localhost:4318"
+
+        # Config snapshots created
         assert hook_backup_dir.exists()
         assert any(hook_backup_dir.iterdir())
         assert claude_backup_dir.exists()
