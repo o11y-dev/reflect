@@ -1022,6 +1022,44 @@ def _snapshot_detected_agent_configs(console, agents: list[dict]) -> None:
             console.print(f"  [green]\u2713[/] Saved {agent['name']} config snapshot \u2192 {snapshot}")
 
 
+def _configure_claude_native_otel(console, hook_config: dict[str, str]) -> None:
+    settings_path = Path.home() / ".claude" / "settings.json"
+    endpoint = hook_config.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    protocol = hook_config.get("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+
+    desired_env = {
+        "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+        "OTEL_METRICS_EXPORTER": "otlp",
+        "OTEL_LOGS_EXPORTER": "otlp",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": protocol,
+        "OTEL_EXPORTER_OTLP_ENDPOINT": endpoint,
+        "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": "cumulative",
+    }
+
+    if settings_path.exists():
+        try:
+            settings = _json_loads(settings_path.read_text())
+        except Exception as exc:
+            console.print(f"  [red]\u2717[/] Failed to read Claude Code settings {settings_path}: {exc}")
+            return
+    else:
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings = {}
+
+    env = settings.setdefault("env", {})
+    changed = False
+    for key, value in desired_env.items():
+        if env.get(key) != value:
+            env[key] = value
+            changed = True
+
+    if changed:
+        settings_path.write_text(_json_stdlib.dumps(settings, indent=2) + "\n")
+        console.print(f"  [green]\u2713[/] Enabled native Claude Code OTel in {settings_path}")
+    else:
+        console.print(f"  [green]\u2713[/] Native Claude Code OTel already enabled in {settings_path}")
+
+
 def _configure_copilot_native_otel(console, hook_config: dict[str, str]) -> None:
     endpoint = hook_config.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
     copilot_endpoint = endpoint.replace(":4317", ":4318") if endpoint.endswith(":4317") else endpoint
@@ -1214,9 +1252,10 @@ def setup() -> None:
         console.print("  [yellow]\u2022[/] otel-hook not found; skipping hook-based agent wiring")
         console.print("    Install first: [bold]pipx install opentelemetry-hooks[/]")
 
-    # 6. Configure native OTel agents (Copilot, Gemini) — these have built-in OTLP export,
-    # no hooks needed, reflect configures them directly.
-    console.print("\n[bold]Step 6: Enable native OTel for Copilot and Gemini[/]")
+    # 6. Configure native OTel — Claude Code (metrics+logs), Copilot, and Gemini all have
+    # built-in OTLP export that reflect configures directly (no hooks needed for this path).
+    console.print("\n[bold]Step 6: Enable native OTel for Claude Code, Copilot, and Gemini[/]")
+    _configure_claude_native_otel(console, config)
     _configure_copilot_native_otel(console, config)
     _configure_gemini_native_otel(console, config)
 
