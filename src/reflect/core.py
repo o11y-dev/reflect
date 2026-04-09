@@ -36,12 +36,14 @@ Usage:
 
 from __future__ import annotations
 
+import io
 import json as _json_stdlib
 import os
 import platform
 import re
 import shutil
 import subprocess
+import zipfile
 from datetime import UTC, datetime
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -878,26 +880,64 @@ _HOOK_EVENTS_WITH_MATCHER = [
 ]
 
 
+_OTEL_SKILL_ZIP = "https://github.com/o11y-dev/opentelemetry-skill/archive/refs/heads/main.zip"
+_OTEL_SKILL_CACHE = REFLECT_HOME / "cache" / "opentelemetry-skill"
+
+
+def _fetch_opentelemetry_skill(console) -> Path | None:
+    """Download opentelemetry-skill from GitHub and cache it. Returns the skill dir or None."""
+    skill_dir = _OTEL_SKILL_CACHE
+    if (skill_dir / "SKILL.md").exists():
+        console.print(f"  [green]\u2713[/] opentelemetry-skill already cached ({skill_dir})")
+        return skill_dir
+
+    console.print("  [yellow]\u2022[/] Fetching opentelemetry-skill from GitHub...")
+    try:
+        with urllib_request.urlopen(_OTEL_SKILL_ZIP, timeout=30) as resp:
+            data = resp.read()
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            # The zip contains a single top-level dir like "opentelemetry-skill-main/"
+            top = next(n for n in zf.namelist() if n.endswith("/") and n.count("/") == 1)
+            if skill_dir.exists():
+                shutil.rmtree(skill_dir)
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            for member in zf.namelist():
+                if member == top or not member.startswith(top):
+                    continue
+                rel = member[len(top):]
+                dest = skill_dir / rel
+                if member.endswith("/"):
+                    dest.mkdir(parents=True, exist_ok=True)
+                else:
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(zf.read(member))
+        if (skill_dir / "SKILL.md").exists():
+            console.print(f"  [green]\u2713[/] Fetched opentelemetry-skill \u2192 {skill_dir}")
+            return skill_dir
+        console.print("  [red]\u2717[/] opentelemetry-skill fetched but SKILL.md not found")
+        return None
+    except Exception as exc:
+        console.print(f"  [red]\u2717[/] Failed to fetch opentelemetry-skill: {exc}")
+        return None
+
+
 def _distribute_skills(console) -> None:
     """Distribute reflect and opentelemetry-skill to detected agents."""
-    project_root = Path.cwd()
+    # reflect skill is bundled with the package
+    bundled_skills_dir = Path(__file__).parent / "data" / "skills"
 
-    # Locate skills in the current repo structure
-    # reflect skill is in reflect/skills/reflect
-    # opentelemetry-skill is in the root as a dir
-    skills_to_distribute = {
-        "reflect": project_root / "reflect" / "skills" / "reflect",
-        "opentelemetry-skill": project_root / "opentelemetry-skill",
-    }
+    available_skills: dict[str, Path] = {}
 
-    # Verify skills exist
-    available_skills = {}
-    for name, path in skills_to_distribute.items():
-        if (path / "SKILL.md").exists():
-            available_skills[name] = path
+    reflect_skill = bundled_skills_dir / "reflect"
+    if (reflect_skill / "SKILL.md").exists():
+        available_skills["reflect"] = reflect_skill
+
+    otel_skill = _fetch_opentelemetry_skill(console)
+    if otel_skill:
+        available_skills["opentelemetry-skill"] = otel_skill
 
     if not available_skills:
-        console.print("  [yellow]\u2022[/] No local skills found to distribute.")
+        console.print("  [yellow]\u2022[/] No skills available to distribute.")
         return
 
     # Filter detected agents
