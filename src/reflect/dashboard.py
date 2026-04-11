@@ -1332,10 +1332,16 @@ def _load_session_detail(session_id: str, stats: TelemetryStats) -> dict | None:
 
     telemetry = _load_session_telemetry(session_id, stats.session_first_ts.get(session_id))
     if detail is None:
+        summary = telemetry.get("summary") or {}
+        has_telemetry = summary.get("spans", 0) > 0 or summary.get("logs", 0) > 0
+        session_known = session_id in stats.sessions_seen
+        if not agent_name and not has_telemetry and not session_known:
+            return None
+
         warnings = []
         if agent_name:
             warnings.append(f"Session detail loading is not implemented for agent '{agent_name}' yet.")
-        elif (telemetry.get("summary") or {}).get("spans", 0) == 0 and (telemetry.get("summary") or {}).get("logs", 0) == 0:
+        elif not has_telemetry:
             warnings.append("No stored conversation or OTLP telemetry was found for this session.")
         detail = {
             "session_id": session_id,
