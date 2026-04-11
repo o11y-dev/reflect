@@ -120,6 +120,7 @@ from reflect.utils import (  # noqa: F401
     _json_loads,
     _safe_ratio,
     _stat_panel,
+    logger,
 )
 
 # ---------------------------------------------------------------------------
@@ -197,6 +198,15 @@ _AGENT_SPECS = [
         "skill_path": ".agents/skills/",
         "global_path": "~/.copilot/skills/",
         "recommendation": "Prefer native Copilot OTel on OTLP HTTP; add hooks for governance.",
+    },
+    {
+        "name": "OpenAI Codex CLI",
+        "env": "CODEX_HOME",
+        "default": lambda: Path.home() / ".codex",
+        "path_kind": "home",
+        "skill_path": ".codex/skills/",
+        "global_path": "~/.codex/skills/",
+        "recommendation": "Use native Codex OTel for interactive runs; reflect does not yet ship a native session adapter for Codex logs.",
     },
     {
         "name": "Windsurf",
@@ -308,6 +318,27 @@ _AGENT_SPECS = [
     },
 ]
 
+_IMPLEMENTED_AGENT_SUPPORT: dict[str, tuple[str, str]] = {
+    "Claude Code": ("Native OTel + hooks", "High"),
+    "Cursor": ("Session/log adapters", "Medium"),
+    "Gemini CLI": ("Native OTel + session adapters", "High"),
+    "GitHub Copilot": ("Native OTel + VS Code env", "High"),
+    "OpenAI Codex CLI": ("Native OTel config", "Medium"),
+}
+
+
+def _agent_support_summary(name: str) -> dict[str, str]:
+    telemetry_path, confidence = _IMPLEMENTED_AGENT_SUPPORT.get(
+        name,
+        ("Not implemented yet (setup only snapshots skills/config)", "Planned"),
+    )
+    status = "Implemented" if name in _IMPLEMENTED_AGENT_SUPPORT else "Planned"
+    return {
+        "support_status": status,
+        "telemetry_path": telemetry_path,
+        "confidence": confidence,
+    }
+
 
 def _agent_path(spec: dict) -> Path:
     override = os.environ.get(spec["env"])
@@ -342,6 +373,7 @@ def _detect_agents() -> list[dict]:
         detected = path.exists()
         agents.append({
             **spec,
+            **_agent_support_summary(spec["name"]),
             "path": path,
             "detected": detected,
             "entries": _count_path_entries(path) if detected else 0,
@@ -403,7 +435,8 @@ def _load_update_cache() -> dict:
         return {}
     try:
         return _json_loads(_UPDATE_CACHE_PATH.read_text())
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to read update cache %s: %s", _UPDATE_CACHE_PATH, exc)
         return {}
 
 
@@ -996,7 +1029,8 @@ def _copy_config_snapshot(agent_name: str, source: Path) -> Path:
     return dest
 
 
-def _agent_config_candidates(agent: dict) -> list[Path]:
+def _agent_config_paths(agent: dict) -> list[Path]:
+    """Return every config path reflect knows to inspect for an agent."""
     home = Path.home()
     name = agent["name"]
     candidates: list[Path] = []
@@ -1015,7 +1049,11 @@ def _agent_config_candidates(agent: dict) -> list[Path]:
         candidates.append(home / ".codex" / "config.toml")
     elif name == "Qwen Code":
         candidates.append(home / ".qwen" / "settings.json")
-    return [path for path in candidates if path.exists()]
+    return candidates
+
+
+def _agent_config_candidates(agent: dict) -> list[Path]:
+    return [path for path in _agent_config_paths(agent) if path.exists()]
 
 
 def _snapshot_detected_agent_configs(console, agents: list[dict]) -> None:
@@ -1078,8 +1116,9 @@ def _configure_copilot_native_otel(console, hook_config: dict[str, str]) -> None
         "github.copilot.chat.otel.captureContent": False,
     }
 
+    searched_paths = _agent_config_paths({"name": "GitHub Copilot"})
     updated_any = False
-    for settings_path in _agent_config_candidates({"name": "GitHub Copilot"}):
+    for settings_path in [path for path in searched_paths if path.exists()]:
         try:
             settings = _json_loads(settings_path.read_text())
         except Exception as exc:
@@ -1101,7 +1140,9 @@ def _configure_copilot_native_otel(console, hook_config: dict[str, str]) -> None
             updated_any = True
 
     if not updated_any:
-        console.print("  [dim]\u2022[/] No VS Code Copilot settings files detected; kept env guidance only.")
+        console.print("  [yellow]\u2022[/] Skipped native Copilot OTel: no VS Code settings.json file was found.")
+        for path in searched_paths:
+            console.print(f"    [dim]- {path}[/]")
 
 
 def _configure_gemini_native_otel(console, hook_config: dict[str, str]) -> None:
@@ -1157,8 +1198,9 @@ def _configure_copilot_cli_native_otel(console, hook_config: dict[str, str]) -> 
         "COPILOT_OTEL_OTLP_ENDPOINT": copilot_endpoint,
     }
 
+    searched_paths = _agent_config_paths({"name": "GitHub Copilot"})
     updated_any = False
-    for settings_path in _agent_config_candidates({"name": "GitHub Copilot"}):
+    for settings_path in [path for path in searched_paths if path.exists()]:
         try:
             settings = _json_loads(settings_path.read_text())
         except Exception as exc:
@@ -1180,7 +1222,9 @@ def _configure_copilot_cli_native_otel(console, hook_config: dict[str, str]) -> 
         updated_any = True
 
     if not updated_any:
-        console.print("  [dim]\u2022[/] No VS Code Copilot settings files detected; skipping Copilot CLI env vars.")
+        console.print("  [yellow]\u2022[/] Skipped Copilot CLI OTel env vars: no VS Code settings.json file was found.")
+        for path in searched_paths:
+            console.print(f"    [dim]- {path}[/]")
 
 
 def _configure_codex_native_otel(console, hook_config: dict[str, str]) -> None:
@@ -1347,6 +1391,15 @@ def setup() -> None:
     _configure_gemini_native_otel(console, config)
     _configure_codex_native_otel(console, config)
 
+    planned_agents = [agent for agent in detected_agents if agent.get("support_status") != "Implemented"]
+    if planned_agents:
+        console.print("\n[bold yellow]Telemetry gaps still not implemented[/]")
+        for agent in planned_agents:
+            console.print(
+                f"  [yellow]\u2022[/] {agent['name']}: {agent['telemetry_path']}. "
+                "reflect setup will not start collecting telemetry for this agent yet."
+            )
+
     # 7. Distribute Skills
     console.print("\n[bold]Step 7: Distribute AI Agent Skills[/]")
     _distribute_skills(console)
@@ -1457,12 +1510,19 @@ def doctor() -> None:
         )
 
     integrations = Table(box=box.SIMPLE, expand=True, show_header=True)
-    integrations.add_column("Supported integrations", style="bold cyan")
+    integrations.add_column("Integration", style="bold cyan")
     integrations.add_column("Env override", style="dim", no_wrap=True)
-    integrations.add_column("Default strategy")
+    integrations.add_column("Status", no_wrap=True)
+    integrations.add_column("Telemetry path")
+    integrations.add_column("Confidence", no_wrap=True)
     for agent in agents:
-        strategy = agent["recommendation"].split(";")[0].split(".")[0]
-        integrations.add_row(agent["name"], agent["env"], strategy)
+        integrations.add_row(
+            agent["name"],
+            agent["env"],
+            agent["support_status"],
+            agent["telemetry_path"],
+            agent["confidence"],
+        )
     console.print(Panel(integrations, title="Support matrix", border_style="green"))
 
     if otlp_traces and otlp_traces.exists():

@@ -307,6 +307,34 @@ class TestDoctor:
         assert "Gemini CLI" in result.output
         assert "Use native telemetry first" in result.output
 
+    def test_doctor_support_matrix_marks_planned_agents(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        windsurf_home = tmp_path / ".codeium" / "windsurf"
+        windsurf_home.mkdir(parents=True)
+        (reflect_home / "state").mkdir(parents=True)
+        hook_home.mkdir(parents=True)
+        advisor = {
+            "release": {
+                "current_version": "1.0.0",
+                "latest_version": None,
+                "checked_at": None,
+                "update_available": False,
+                "source": "unknown",
+            },
+            "local_issues": [],
+        }
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core._collect_update_advisor", return_value=advisor), \
+             patch.dict(os.environ, {"HOME": str(tmp_path)}, clear=False):
+            result = runner.invoke(main, ["doctor"])
+
+        assert result.exit_code == 0
+        assert "Windsurf" in result.output
+        assert "Planned" in result.output
+
 
 class TestSetup:
     def test_setup_surfaces_detected_agent_guidance(self, runner, tmp_path):
@@ -483,9 +511,28 @@ class TestNativeOtelConfig:
         assert result["env"]["COPILOT_OTEL_OTLP_ENDPOINT"] == "http://localhost:4318"
 
     def test_copilot_cli_native_otel_no_settings_file(self, tmp_path):
+        from rich.console import Console
+
+        stream = io.StringIO()
+        console = Console(file=stream)
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            # Should not raise when no VS Code settings exist
-            core._configure_copilot_cli_native_otel(self._console(), self.HOOK_CFG)
+            core._configure_copilot_cli_native_otel(console, self.HOOK_CFG)
+
+        output = stream.getvalue()
+        assert "Skipped Copilot CLI OTel env vars" in output
+        assert "settings.json" in output
+
+    def test_copilot_native_otel_no_settings_file_surfaces_skip(self, tmp_path):
+        from rich.console import Console
+
+        stream = io.StringIO()
+        console = Console(file=stream)
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            core._configure_copilot_native_otel(console, self.HOOK_CFG)
+
+        output = stream.getvalue()
+        assert "Skipped native Copilot OTel" in output
+        assert "settings.json" in output
 
     def test_copilot_cli_native_otel_idempotent(self, tmp_path):
         vscode = tmp_path / ".config" / "Code" / "User"

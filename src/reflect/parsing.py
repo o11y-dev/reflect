@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-from reflect.utils import _json_dumps, _json_loads
+from reflect.utils import _json_dumps, _json_loads, logger
 
 REFLECT_HOME = Path(os.environ.get("REFLECT_HOME", Path.home() / ".reflect"))
 HOOK_HOME = Path(os.environ.get("IDE_OTEL_HOOK_HOME", Path.home() / ".local" / "share" / "opentelemetry-hooks"))
@@ -436,7 +436,8 @@ def _iter_cursor_session_spans(file_path: Path) -> Iterable[dict]:
 def _iter_gemini_session_spans(file_path: Path) -> Iterable[dict]:
     try:
         payload = _json_loads(file_path.read_text())
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to read Gemini session file %s: %s", file_path, exc)
         return
     if not isinstance(payload, dict):
         return
@@ -734,7 +735,8 @@ def _load_session_model_hints(session_files: list[Path]) -> dict[str, str]:
     for session_file in session_files:
         try:
             payload = _json_loads(session_file.read_text())
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to read session model hints from %s: %s", session_file, exc)
             continue
         if not isinstance(payload, dict):
             continue

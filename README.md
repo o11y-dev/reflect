@@ -81,7 +81,7 @@ reflect setup
 reflect
 ```
 
-`reflect setup` modifies your agent config files to install OpenTelemetry hooks (e.g. `~/.claude/settings.json` for Claude Code, `~/.config/github-copilot/` for Copilot) and starts writing spans to `~/.reflect/state/`. `reflect` then reads those spans and renders an interactive terminal dashboard.
+`reflect setup` modifies config files for the agents with implemented telemetry wiring today (Claude Code, GitHub Copilot, Gemini CLI, and Codex native OTel) and starts writing spans to `~/.reflect/state/`. `reflect` then reads those spans and renders an interactive terminal dashboard.
 
 **No telemetry yet?** Try the demo:
 
@@ -100,9 +100,9 @@ Running `reflect` for the first time is usually surprising:
 
 ## How it works
 
-`reflect` takes care of instrumentation and session data collection end-to-end — you run `reflect setup` once and it handles the rest. AI coding agents expose telemetry in two ways, and `reflect setup` uses whichever the agent supports:
+`reflect` takes care of instrumentation and session data collection for the integrations that are implemented today. AI coding agents expose telemetry in two ways, and `reflect setup` uses whichever the verified integration supports:
 
-- **Hooks** (Claude Code, OpenAI Codex CLI, Qwen Code) — scripts that fire at key lifecycle moments (session start, tool call, prompt, stop). `reflect setup` installs a small [opentelemetry-hooks](https://github.com/o11y-dev/opentelemetry-hooks) instrumentation layer into the agent's config file.
+- **Hooks** (Claude Code today) — scripts that fire at key lifecycle moments (session start, tool call, prompt, stop). `reflect setup` installs a small [opentelemetry-hooks](https://github.com/o11y-dev/opentelemetry-hooks) instrumentation layer into the agent's config file where that path is verified.
 - **Native OpenTelemetry** (Claude Code, GitHub Copilot, Gemini CLI, OpenAI Codex CLI) — the agent has built-in OTLP export that just needs to be pointed at the local collector. `reflect setup` writes the relevant settings for each:
   - Claude Code: `env` block in `~/.claude/settings.json` (metrics + logs only, not traces)
   - GitHub Copilot VS Code: `github.copilot.chat.otel.*` keys in VS Code `settings.json`
@@ -127,7 +127,7 @@ Nothing leaves your machine. There's no cloud backend, no account, no API key.
 - **Tool efficiency** — failure rates, latency percentiles (p50/p90/p95/p99), tool-to-prompt ratio
 - **Agent comparison** — side-by-side across Claude, Copilot, Gemini, Cursor
 - **Model breakdown** — which models you're actually using and how much
-- **MCP server tracking** — usage counts and availability gaps
+- **MCP server tracking** — observed usage counts and completion gaps from recorded MCP events
 - **Subagent patterns** — delegation frequency and types
 - **Activity heatmaps** — by hour and day of week
 - **Actionable recommendations** — based on your actual usage patterns
@@ -149,11 +149,11 @@ reflect doctor
 reflect update
 ```
 
-`reflect doctor` checks that your installation is healthy: hooks are wired correctly, the installed package matches the latest release, and skill files are up to date. `reflect update --apply` upgrades the pipx package when a newer release is available.
+`reflect doctor` checks that your installation is healthy, shows which integrations are implemented vs still planned, and reports whether hooks are wired correctly, the installed package matches the latest release, and skill files are up to date. `reflect update --apply` upgrades the pipx package when a newer release is available.
 
 ## Agent instrumentation landscape
 
-reflect's mission is to make every AI coding agent observable with zero manual instrumentation. `reflect setup` handles it: it detects which agents you have, wires each one using the best available path, and starts collecting spans.
+reflect's mission is to make every AI coding agent observable with zero manual instrumentation. Today, though, only a subset of integrations have verified telemetry collection. `reflect setup` detects agent homes for guidance, but it only starts collection where wiring and parsing are implemented.
 
 | Agent | Instrumentation | What you get | Confidence |
 |---|---|---|---|
@@ -162,9 +162,10 @@ reflect's mission is to make every AI coding agent observable with zero manual i
 | GitHub Copilot CLI | Native OTel + hooks | Traces, metrics, logs | High |
 | Gemini CLI | Native OTel + hooks | Traces, metrics, logs | High |
 | OpenAI Codex CLI | Native OTel (interactive) | Traces (interactive mode only) | Medium |
-| Cursor | Session/log adapters | Tool calls, sessions (no token counts) | Medium |
-| OpenCode | Hooks | Sessions, tool calls | Medium |
-| Windsurf, Trae, Cline, others | Hooks (best-effort) | Sessions, process boundaries | Low |
+| Cursor | Session/log adapters | Tool calls, sessions, rough token estimates when exact usage is missing (`len(text) / 4`) | Medium |
+| Windsurf, Trae, Cline, Roo Code, Goose, OpenHands, Amp, Continue, iFlow, Pi, OpenClaw | Not implemented yet | Detection, config snapshots, and skill distribution only | Planned |
+
+**Why Cursor is only medium confidence:** local Cursor transcripts do not contain exact per-session usage, so reflect falls back to a rough `len(text) / 4` estimate when provider-side token usage is unavailable.
 
 **Instrumentation paths:**
 - **Native OTel** — agent has built-in OTLP export; reflect configures it to point at the local collector
