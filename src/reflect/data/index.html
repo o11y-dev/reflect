@@ -3607,7 +3607,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
   function renderTelemetryCockpit(session){
     const telemetry = session.telemetry;
     const summary = telemetry?.summary || {};
-    const telemetryWarnings = telemetry?.warnings || [];
+    const telemetryWarnings = Array.isArray(telemetry?.warnings) ? telemetry.warnings : [];
     if (!telemetry || (!(summary.spans || 0) && !(summary.logs || 0))) {
       return `<div class="telemetry-empty">
         <div style="font-size:15px;color:var(--text);font-weight:700;margin-bottom:8px">Telemetry cockpit</div>
