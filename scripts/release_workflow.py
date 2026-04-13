@@ -8,7 +8,9 @@ import re
 import subprocess
 import sys
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
@@ -55,7 +57,7 @@ def determine_version(
     manual_version: str | None = None,
     force: str | None = None,
     root: Path = ROOT,
-    runner: callable | None = None,
+    runner: Callable[..., Any] | None = None,
 ) -> str | None:
     if manual_version:
         return _validate_semver(manual_version)
@@ -90,8 +92,9 @@ def extract_release_notes(version: str, changelog_path: Path = CHANGELOG) -> str
     if not match:
         raise ValueError(f"no changelog section found for {version}")
 
-    next_heading = re.compile(r"^##\s+", flags=re.MULTILINE).search(text, match.end())
-    section = text[match.end() : next_heading.start() if next_heading else None].strip()
+    next_heading = re.search(r"^##\s+", text[match.end() :], flags=re.MULTILINE)
+    section_end = match.end() + next_heading.start() if next_heading else None
+    section = text[match.end() : section_end].strip()
     if not section:
         raise ValueError(f"changelog section for {version} is empty")
     return f"{section}\n"
