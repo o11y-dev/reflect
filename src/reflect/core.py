@@ -933,6 +933,80 @@ def report(
 # Skills command
 # ---------------------------------------------------------------------------
 
+# Known agent CLIs with their non-interactive (print-mode) flags.
+# First entry in the list is the auto-detection priority order.
+_SKILL_AGENT_SPECS: list[tuple[str, list[str]]] = [
+    ("claude", ["--print"]),
+    ("gemini", ["-p"]),
+    ("codex", ["--print"]),
+    ("qwen", ["--print"]),
+]
+
+
+def _resolve_skills_agent(agent: str | None) -> tuple[str, list[str]]:
+    """Return (binary, extra_flags) for the chosen or auto-detected agent CLI."""
+    if agent is not None:
+        for name, flags in _SKILL_AGENT_SPECS:
+            if name == agent:
+                return agent, flags
+        # Unknown agent — fall back to --print and hope for the best
+        return agent, ["--print"]
+    # Auto-detect: use the first available CLI
+    for name, flags in _SKILL_AGENT_SPECS:
+        if shutil.which(name):
+            return name, flags
+    click.echo(
+        "No supported agent CLI found (tried: claude, gemini, codex, qwen).\n"
+        "Install one or pass --agent <binary>.",
+        err=True,
+    )
+    raise SystemExit(1)
+
+
+def _select_skills(
+    skill_defs: list[dict],
+    console: "Console",
+    *,
+    yes: bool,
+) -> list[dict]:
+    """Show a numbered skill preview and let the user pick which to install."""
+    console.print(f"\nExtracted [bold]{len(skill_defs)}[/bold] skill(s):\n")
+    for i, s in enumerate(skill_defs, 1):
+        console.print(f"  [bold]{i}.[/bold] [cyan]{s['name']:<22}[/cyan] {s['description']}")
+
+    if yes:
+        return skill_defs
+
+    console.print()
+    raw = click.prompt(
+        "Select skills to install (e.g. 1,3) or press Enter for all",
+        default="all",
+        show_default=True,
+    ).strip()
+
+    if raw.lower() in ("all", ""):
+        return skill_defs
+
+    selected = []
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            idx = int(token)
+            if 1 <= idx <= len(skill_defs):
+                selected.append(skill_defs[idx - 1])
+            else:
+                console.print(f"  [yellow]Skipping out-of-range index {idx}[/yellow]")
+        except ValueError:
+            console.print(f"  [yellow]Ignoring non-numeric token '{token}'[/yellow]")
+
+    if not selected:
+        console.print("No valid skills selected. Aborted.")
+        raise SystemExit(0)
+
+    return selected
+
 
 def _serialize_sessions_for_skills(stats: "TelemetryStats") -> str:
     """Serialize top sessions to compact text for skill extraction prompts."""
@@ -975,15 +1049,17 @@ def _serialize_sessions_for_skills(stats: "TelemetryStats") -> str:
 )
 @click.option(
     "--agent",
-    default="claude",
-    show_default=True,
-    help="Agent CLI binary to use for skill extraction (e.g. claude, gemini).",
+    default=None,
+    help=(
+        "Agent CLI binary to use for skill extraction "
+        "(e.g. claude, gemini, codex). Auto-detected if not set."
+    ),
 )
 @click.option(
     "--yes",
     "-y",
     is_flag=True,
-    help="Skip confirmation prompt and write skills immediately.",
+    help="Install all extracted skills without prompting for selection.",
 )
 def skills(
     otlp_traces: Path | None,
@@ -991,17 +1067,18 @@ def skills(
     spans_dir: Path | None,
     time_range: str,
     demo: bool,
-    agent: str,
+    agent: str | None,
     yes: bool,
 ) -> None:
     """Extract reusable skills from your AI sessions using an agent."""
     import json as _json
-    import shutil
     import subprocess
     import tempfile
 
     from rich.console import Console
     console = Console(force_terminal=True)
+
+    agent_bin, agent_flags = _resolve_skills_agent(agent)
 
     stats, _, _, _, _, _ = _resolve_and_analyze(
         otlp_traces=otlp_traces,
@@ -1015,8 +1092,9 @@ def skills(
     prompt_file = Path(__file__).parent / "data" / "skills-extraction-prompt.md"
     prompt = prompt_file.read_text(encoding="utf-8") + "\n" + session_summaries
 
-    console.print(f"Running [bold]{agent} --print[/bold] ...")
-    result = subprocess.run([agent, "--print", prompt], capture_output=True, text=True)
+    flag_display = " ".join(agent_flags)
+    console.print(f"Running [bold]{agent_bin} {flag_display}[/bold] ...")
+    result = subprocess.run([agent_bin, *agent_flags, prompt], capture_output=True, text=True)
     if result.returncode != 0:
         click.echo(f"Agent exited with code {result.returncode}:\n{result.stderr}", err=True)
         raise SystemExit(1)
@@ -1030,15 +1108,13 @@ def skills(
         )
         raise SystemExit(1)
 
-    console.print(f"\nExtracted [bold]{len(skill_defs)}[/bold] skill(s):\n")
-    for s in skill_defs:
-        console.print(f"  [cyan]{s['name']:<20}[/cyan]  {s['description']}")
+    selected = _select_skills(skill_defs, console, yes=yes)
 
     detected = [a for a in _detect_agents() if a["detected"]]
     if not yes:
         console.print()
         confirmed = click.confirm(
-            f"Write {len(skill_defs)} skill(s) to {len(detected)} detected agent(s)?",
+            f"Write {len(selected)} skill(s) to {len(detected)} detected agent(s)?",
             default=True,
         )
         if not confirmed:
@@ -1047,7 +1123,7 @@ def skills(
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
-        for s in skill_defs:
+        for s in selected:
             skill_dir = tmp_path / s["name"]
             skill_dir.mkdir()
             skill_md = (
@@ -1059,16 +1135,16 @@ def skills(
         for agent_spec in detected:
             global_path = Path(agent_spec["global_path"]).expanduser()
             global_path.mkdir(parents=True, exist_ok=True)
-            for s in skill_defs:
+            for s in selected:
                 dest = global_path / s["name"]
                 if dest.exists():
                     shutil.rmtree(dest)
                 shutil.copytree(tmp_path / s["name"], dest)
             console.print(f"  [green]✓[/green] {agent_spec['name']}: {global_path}")
 
-    names = ", ".join(f"/{s['name']}" for s in skill_defs)
+    names = ", ".join(f"/{s['name']}" for s in selected)
     console.print(
-        f"\n[bold green]{len(skill_defs)} skill(s) ready.[/bold green] Use {names} in Claude Code."
+        f"\n[bold green]{len(selected)} skill(s) ready.[/bold green] Use {names} in Claude Code."
     )
 
 
