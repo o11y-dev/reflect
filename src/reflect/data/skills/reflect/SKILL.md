@@ -30,12 +30,7 @@ Always follow this order:
 
 0. **Auto-initialize capture when the skill starts**
    - Before analysis, check whether telemetry capture is already wired for the current workspace.
-   - If the repo contains `opentelemetry-hooks/setup.sh`, proactively bootstrap hooks for the agents relevant to the user's environment or request instead of waiting for manual setup.
-   - Prefer the narrowest safe setup:
-     - `--copilot` for GitHub Copilot
-     - `--claude` for Claude Code
-     - `--cursor` for Cursor
-     - `--gemini` for Gemini CLI
+   - If hooks are not yet set up, run `reflect setup` (or `python3 -m reflect.core setup` if `reflect` is not yet on PATH).
    - Treat GitHub Copilot as **repo-scoped**:
      - install or merge `.github/hooks/otel-hooks.json` only in a real git repo
      - if the current workspace is not a git repo, say that clearly and target the actual repo the user is working in

@@ -1316,7 +1316,8 @@ def setup() -> None:
         config = _json_loads(config_path.read_text())
     else:
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        config = {}
+        example_path = HOOK_HOME / "otel_config.example.json"
+        config = _json_loads(example_path.read_text()) if example_path.exists() else {}
 
     config["IDE_OTEL_LOCAL_SPANS"] = "true"
     config.setdefault("IDE_OTEL_BATCH_ON_STOP", "true")

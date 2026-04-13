@@ -425,6 +425,42 @@ class TestSetup:
         assert any(copilot_backup_dir.iterdir())
 
 
+    def test_setup_seeds_config_from_example_on_fresh_install(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        home_dir = tmp_path / "home"
+        hook_home.mkdir(parents=True)
+
+        example_config = {
+            "_comment_endpoint": "Set your OTLP endpoint here",
+            "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
+            "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+        }
+        (hook_home / "otel_config.example.json").write_text(
+            json.dumps(example_config, indent=2) + "\n"
+        )
+
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call"), \
+             patch("reflect.core._distribute_skills"), \
+             patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
+            result = runner.invoke(main, ["setup"])
+
+        assert result.exit_code == 0
+
+        config_path = hook_home / "otel_config.json"
+        assert config_path.exists(), "otel_config.json should be written on fresh install"
+
+        written = json.loads(config_path.read_text())
+        # Sentinel key from example must be preserved
+        assert "_comment_endpoint" in written, "Example sentinel key must be seeded into config"
+        assert written["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://localhost:4317"
+        # IDE_OTEL_LOCAL_SPANS must be forced to "true"
+        assert written["IDE_OTEL_LOCAL_SPANS"] == "true"
+
+
 class TestNativeOtelConfig:
     """Unit tests for per-agent native OTel configuration functions."""
 
