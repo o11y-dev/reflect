@@ -48,6 +48,16 @@ class TestHelp:
         assert result.exit_code == 0
         assert "update" in result.output.lower() or "Usage" in result.output
 
+    def test_report_help(self, runner):
+        result = runner.invoke(main, ["report", "--help"])
+        assert result.exit_code == 0
+        assert "Usage" in result.output
+
+    def test_skills_help(self, runner):
+        result = runner.invoke(main, ["skills", "--help"])
+        assert result.exit_code == 0
+        assert "Usage" in result.output
+
 
 class TestTerminalMode:
     def test_default_terminal_mode(self, runner, otlp_file, tmp_path):
@@ -75,41 +85,160 @@ class TestTerminalMode:
             mock_report.assert_called_once()
 
 
-class TestPublishFlag:
-    def test_publish_opens_browser(self, runner, otlp_file, tmp_path):
-        # webbrowser.open is called only in --no-terminal --publish mode
-        with patch("reflect.core.render_report") as mock_report, \
-             patch("webbrowser.open") as mock_open:
-            mock_report.return_value = "# report"
+class TestReportSubcommand:
+    def test_report_starts_server(self, runner, otlp_file, tmp_path):
+        with patch("reflect.core._start_publish_server") as mock_server:
             result = runner.invoke(main, [
+                "report",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
-                "--no-terminal",
-                "--publish",
             ])
-            assert result.exit_code == 0
-            mock_open.assert_called_once()
+        assert result.exit_code == 0
+        mock_server.assert_called_once()
 
-    def test_dashboard_artifact_writes_json_and_uses_report_url(self, runner, otlp_file, tmp_path):
-        artifact_path = tmp_path / "docs" / "reports" / "latest.json"
-        with patch("reflect.core.render_report") as mock_report, \
-             patch("webbrowser.open") as mock_open:
+    def test_report_with_output_saves_markdown(self, runner, otlp_file, tmp_path):
+        with patch("reflect.core._start_publish_server"), \
+             patch("reflect.core.render_report") as mock_report:
             mock_report.return_value = "# report"
             result = runner.invoke(main, [
+                "report",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
-                "--no-terminal",
-                "--dashboard-artifact", str(artifact_path),
-                "--publish",
+                "--output", str(tmp_path / "report.md"),
             ])
-            assert result.exit_code == 0
-            assert artifact_path.exists()
-            payload = json.loads(artifact_path.read_text())
-            assert "agents" in payload
-            assert "?report=" in result.output
-            mock_open.assert_called_once()
+        assert result.exit_code == 0
+        mock_report.assert_called_once()
+
+    def test_report_with_dashboard_artifact_writes_json(self, runner, otlp_file, tmp_path):
+        artifact_path = tmp_path / "docs" / "reports" / "latest.json"
+        with patch("reflect.core._start_publish_server"):
+            result = runner.invoke(main, [
+                "report",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+                "--dashboard-artifact", str(artifact_path),
+            ])
+        assert result.exit_code == 0
+        assert artifact_path.exists()
+        assert "agents" in json.loads(artifact_path.read_text())
+
+
+_FAKE_SKILLS = [
+    {"name": "debug-loop", "description": "Iterative debug workflow", "content": "## Steps\n1. Do the thing"},
+    {"name": "context-reset", "description": "Clear and re-establish scope", "content": "## Steps\n1. Reset"},
+    {"name": "test-first", "description": "Write tests before fixing", "content": "## Steps\n1. Test"},
+]
+_R = lambda code, out, err="": type("R", (), {"returncode": code, "stdout": out, "stderr": err})()  # noqa: E731
+
+
+class TestSkillsSubcommand:
+    def _agent_fixture(self, skill_dest, fake_skills=None):
+        return [{
+            "name": "Claude Code",
+            "detected": True,
+            "global_path": str(skill_dest),
+            "skill_path": ".claude/skills/",
+        }]
+
+    def test_skills_writes_all_with_yes(self, runner, otlp_file, tmp_path):
+        skill_dest = tmp_path / "skills"
+        fake_output = json.dumps([_FAKE_SKILLS[0]])
+        with patch("subprocess.run", return_value=_R(0, fake_output)), \
+             patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
+            result = runner.invoke(main, [
+                "skills", "--yes", "--agent", "claude",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        assert result.exit_code == 0
+        assert (skill_dest / "debug-loop" / "SKILL.md").exists()
+        assert "name: debug-loop" in (skill_dest / "debug-loop" / "SKILL.md").read_text()
+
+    def test_skills_partial_selection(self, runner, otlp_file, tmp_path):
+        """User selects only skill #1 from a list of 3."""
+        skill_dest = tmp_path / "skills"
+        fake_output = json.dumps(_FAKE_SKILLS)
+        with patch("subprocess.run", return_value=_R(0, fake_output)), \
+             patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
+            # --yes is NOT passed; input "1" selects only the first skill, then "y" confirms
+            result = runner.invoke(main, [
+                "skills", "--agent", "claude",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ], input="1\ny\n")
+        assert result.exit_code == 0
+        assert (skill_dest / "debug-loop" / "SKILL.md").exists()
+        assert not (skill_dest / "context-reset").exists()
+        assert not (skill_dest / "test-first").exists()
+
+    def test_skills_gemini_uses_p_flag(self, runner, otlp_file, tmp_path):
+        """gemini agent uses -p flag, not --print."""
+        fake_output = json.dumps([_FAKE_SKILLS[0]])
+        with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
+             patch("reflect.core._detect_agents", return_value=[]):
+            runner.invoke(main, [
+                "skills", "--yes", "--agent", "gemini",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "gemini"
+        assert "-p" in cmd
+        assert "--print" not in cmd
+
+    def test_skills_autodetect_picks_first_available(self, runner, otlp_file, tmp_path):
+        """With no --agent, auto-detection uses the first CLI found by shutil.which."""
+        fake_output = json.dumps([_FAKE_SKILLS[0]])
+        with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
+             patch("reflect.core._detect_agents", return_value=[]), \
+             patch("reflect.core.shutil.which", side_effect=lambda b: "/usr/bin/gemini" if b == "gemini" else None):
+            runner.invoke(main, [
+                "skills", "--yes",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "gemini"
+        assert "-p" in cmd
+
+    def test_skills_no_agent_available_exits(self, runner, otlp_file, tmp_path):
+        with patch("reflect.core.shutil.which", return_value=None):
+            result = runner.invoke(main, [
+                "skills",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        assert result.exit_code != 0
+
+    def test_skills_agent_failure_exits_nonzero(self, runner, otlp_file, tmp_path):
+        with patch("subprocess.run", return_value=_R(1, "", "error")), \
+             patch("reflect.core._detect_agents", return_value=[]):
+            result = runner.invoke(main, [
+                "skills", "--yes", "--agent", "claude",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        assert result.exit_code != 0
+
+    def test_skills_bad_json_exits_nonzero(self, runner, otlp_file, tmp_path):
+        with patch("subprocess.run", return_value=_R(0, "not json")), \
+             patch("reflect.core._detect_agents", return_value=[]):
+            result = runner.invoke(main, [
+                "skills", "--yes", "--agent", "claude",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        assert result.exit_code != 0
 
 
 class TestNoDataNoCrash:

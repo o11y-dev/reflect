@@ -138,7 +138,8 @@ Nothing leaves your machine. There's no cloud backend, no account, no API key.
 reflect                        # interactive terminal dashboard (default)
 reflect --no-terminal          # markdown report
 reflect --dashboard-artifact out.json  # JSON artifact for dashboards
-reflect --publish              # open local dashboard in browser
+reflect report                 # open local dashboard in browser
+reflect skills                 # extract reusable skills from your sessions
 reflect --demo                 # instant demo with sample data
 ```
 
@@ -196,7 +197,7 @@ A sibling `otel-logs.json` file is used automatically for enrichment when presen
 Write a JSON artifact for GitHub Pages or a local server:
 
 ```bash
-reflect --dashboard-artifact docs/reports/latest.json --publish
+reflect --dashboard-artifact docs/reports/latest.json
 ```
 
 For a safe public example, this repo also ships a curated GitHub Pages demo:
@@ -215,7 +216,6 @@ Options:
   --output PATH                Markdown report output path
   --terminal / --no-terminal   Terminal dashboard (default) or markdown report
   --dashboard-artifact PATH    Write dashboard JSON artifact
-  --publish                    Open dashboard in browser
   --demo                       Run with bundled sample data
   --help                       Show help
 
@@ -223,6 +223,8 @@ Commands:
   setup    Install hooks, wire agents, configure telemetry
   doctor   Check installation health and agent status
   update   Check release drift and optional package upgrade
+  report   Open the AI usage dashboard in a browser
+  skills   Extract reusable skills from your session history
 ```
 
 ## Data flow
