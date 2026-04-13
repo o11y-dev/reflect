@@ -64,11 +64,11 @@ def determine_version(
     if not version_tag_exists(project_version, root):
         return project_version
 
-    run = runner or subprocess.run
+    run_cmd = runner or subprocess.run
     command = ["semantic-release", "version", "--print"]
     if force:
         command.append(f"--{force}")
-    result = run(
+    result = run_cmd(
         command,
         cwd=root,
         check=False,
