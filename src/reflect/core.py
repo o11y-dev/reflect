@@ -718,6 +718,45 @@ def _render_update_advisor_panel(console, advisor: dict) -> None:
     console.print(Panel(table, title="Update advisor", border_style="cyan"))
 
 
+def _resolve_and_analyze(
+    *,
+    otlp_traces: Path | None,
+    sessions_dir: Path | None,
+    spans_dir: Path | None,
+    demo: bool,
+    time_range: str,
+) -> "tuple[TelemetryStats, Path | None, Path, Path, str, datetime | None]":
+    """Shared data-loading logic for main and subcommands."""
+    if demo:
+        _demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
+        if not _demo_traces.exists():
+            _demo_traces = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
+        if not _demo_traces.exists():
+            click.echo("Demo data not found. Re-install the package or run from the repo root.", err=True)
+            raise SystemExit(1)
+        otlp_traces = _demo_traces
+        sessions_dir = sessions_dir or Path(os.devnull)
+        spans_dir = spans_dir or Path(os.devnull)
+        time_range = "all"
+
+    since: datetime | None = None
+    if time_range != "all":
+        from datetime import timedelta
+        now = datetime.now(tz=UTC)
+        deltas = {"day": timedelta(days=1), "week": timedelta(days=7), "month": timedelta(days=30)}
+        since = now - deltas[time_range]
+
+    if sessions_dir is None:
+        sessions_dir = _default_sessions_dir()
+    if spans_dir is None:
+        spans_dir = _default_spans_dir()
+    if otlp_traces is None:
+        otlp_traces = _default_otlp_traces()
+
+    stats = analyze_telemetry(sessions_dir, spans_dir, otlp_traces, since=since)
+    return stats, otlp_traces, sessions_dir, spans_dir, time_range, since
+
+
 @click.group(invoke_without_command=True)
 @click.option(
     "--sessions-dir",
@@ -749,11 +788,6 @@ def _render_update_advisor_panel(console, advisor: dict) -> None:
     help="Render an interactive dashboard in the terminal using rich (default). Use --no-terminal to save a markdown report instead.",
 )
 @click.option(
-    "--publish",
-    is_flag=True,
-    help="Open the dashboard in a browser. Starts a local server and loads the data via ?report=... (no URL encoding).",
-)
-@click.option(
     "--dashboard-artifact",
     type=click.Path(path_type=Path),
     default=None,
@@ -776,7 +810,6 @@ def main(
     output: Path | None,
     otlp_traces: Path | None,
     terminal: bool,
-    publish: bool,
     dashboard_artifact: Path | None,
     demo: bool,
     time_range: str,
@@ -785,35 +818,15 @@ def main(
     if ctx.invoked_subcommand is not None:
         return
 
-    # --demo: use bundled sample data and force --all time range
-    if demo:
-        _demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
-        if not _demo_traces.exists():
-            # Fallback to repo-level state/ for development installs
-            _demo_traces = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
-        if not _demo_traces.exists():
-            click.echo("Demo data not found. Re-install the package or run from the repo root.", err=True)
-            raise SystemExit(1)
-        otlp_traces = _demo_traces
-        sessions_dir = sessions_dir or Path(os.devnull)
-        spans_dir = spans_dir or Path(os.devnull)
-        time_range = "all"
+    stats, otlp_traces, sessions_dir, spans_dir, time_range, since = _resolve_and_analyze(
+        otlp_traces=otlp_traces,
+        sessions_dir=sessions_dir,
+        spans_dir=spans_dir,
+        demo=demo,
+        time_range=time_range,
+    )
 
-    # Compute time cutoff
-    since: datetime | None = None
-    if time_range != "all":
-        from datetime import timedelta
-        now = datetime.now(tz=UTC)
-        deltas = {"day": timedelta(days=1), "week": timedelta(days=7), "month": timedelta(days=30)}
-        since = now - deltas[time_range]
-
-    # Resolve defaults
-    if sessions_dir is None:
-        sessions_dir = _default_sessions_dir()
-    if spans_dir is None:
-        spans_dir = _default_spans_dir()
-    if otlp_traces is None:
-        otlp_traces = _default_otlp_traces()
+    # Resolve output path (main-specific)
     if output is None:
         out_dir = REFLECT_HOME / "reports"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -822,8 +835,6 @@ def main(
     update_notice = _build_startup_update_notice()
     if update_notice:
         click.echo(f"reflect notice: {update_notice}")
-
-    stats = analyze_telemetry(sessions_dir, spans_dir, otlp_traces, since=since)
     if dashboard_artifact is not None:
         _write_dashboard_artifact(stats, dashboard_artifact)
 
@@ -838,33 +849,227 @@ def main(
     if not terminal:
         render_report(stats, sessions_dir, spans_dir, output)
 
-        publish_artifact = dashboard_artifact
-        publish_url: str | None = None
-        if publish:
-            if publish_artifact is None:
-                publish_artifact = _default_publish_artifact_path()
-                publish_artifact.parent.mkdir(parents=True, exist_ok=True)
-                _write_dashboard_artifact(stats, publish_artifact)
-            publish_url = _publish_url_for_artifact(publish_artifact)
-            if publish_url is None:
-                publish_url = "http://127.0.0.1:8765/?report=api/data"
-
         print(f"Report saved to:   {output}")
-        if publish_artifact is not None:
-            print(f"Dashboard JSON:    {publish_artifact}")
-        if publish_url is not None:
-            print(f"Dashboard URL:     {publish_url}")
+        if dashboard_artifact is not None:
+            print(f"Dashboard JSON:    {dashboard_artifact}")
         print(f"Analyzed events:   {stats.total_events:,}")
         print(f"Sessions:          {len(stats.sessions_seen)} unique")
         print(f"Active days:       {stats.days_active}")
         print(f"Top model:         {stats.models_by_count.most_common(1)[0][0] if stats.models_by_count else 'N/A'}")
         print(f"Tool-to-prompt:    {_safe_ratio(stats.events_by_type.get('PreToolUse', 0), stats.events_by_type.get('UserPromptSubmit', 0)):.1f}:1")
-        if publish_url is not None:
-            import webbrowser
-            webbrowser.open(publish_url)
-    if publish and terminal:
-        # Starts FastAPI server — blocks until Ctrl-C
-        _start_publish_server(stats)
+
+
+# ---------------------------------------------------------------------------
+# Report command
+# ---------------------------------------------------------------------------
+
+
+@main.command()
+@click.option(
+    "--otlp-traces",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="OTLP JSON traces file from the collector file exporter.",
+)
+@click.option(
+    "--sessions-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Directory containing session metadata JSON files.",
+)
+@click.option(
+    "--spans-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Directory containing local span JSONL files.",
+)
+@click.option("--day", "time_range", flag_value="day", help="Analyze last 24 hours.")
+@click.option("--week", "time_range", flag_value="week", default=True, help="Analyze last 7 days (default).")
+@click.option("--month", "time_range", flag_value="month", help="Analyze last 30 days.")
+@click.option("--all", "time_range", flag_value="all", help="Analyze all available data.")
+@click.option(
+    "--demo",
+    is_flag=True,
+    help="Run with bundled sample data.",
+)
+@click.option(
+    "--dashboard-artifact",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Also write the dashboard JSON artifact to a file.",
+)
+@click.option(
+    "--output",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Also save a markdown report to this file.",
+)
+def report(
+    otlp_traces: Path | None,
+    sessions_dir: Path | None,
+    spans_dir: Path | None,
+    time_range: str,
+    demo: bool,
+    dashboard_artifact: Path | None,
+    output: Path | None,
+) -> None:
+    """Open the AI usage dashboard in a browser via a local server."""
+    stats, _, sessions_dir, spans_dir, _, _ = _resolve_and_analyze(
+        otlp_traces=otlp_traces,
+        sessions_dir=sessions_dir,
+        spans_dir=spans_dir,
+        demo=demo,
+        time_range=time_range,
+    )
+    if dashboard_artifact is not None:
+        _write_dashboard_artifact(stats, dashboard_artifact)
+    if output is not None:
+        render_report(stats, sessions_dir, spans_dir, output)
+        print(f"Report saved to: {output}")
+    _start_publish_server(stats)
+
+
+# ---------------------------------------------------------------------------
+# Skills command
+# ---------------------------------------------------------------------------
+
+
+def _serialize_sessions_for_skills(stats: "TelemetryStats") -> str:
+    """Serialize top sessions to compact text for skill extraction prompts."""
+    lines = []
+    for session in list(stats.sessions_seen)[:20]:
+        lines.append(f"Session {session.session_id[:8]}:")
+        lines.append(f"  model={session.model} tools={session.tool_call_count} tokens={session.total_tokens}")
+        if session.tools_used:
+            lines.append(f"  tools_used={','.join(list(session.tools_used)[:10])}")
+    return "\n".join(lines)
+
+
+@main.command()
+@click.option(
+    "--otlp-traces",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="OTLP JSON traces file from the collector file exporter.",
+)
+@click.option(
+    "--sessions-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Directory containing session metadata JSON files.",
+)
+@click.option(
+    "--spans-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Directory containing local span JSONL files.",
+)
+@click.option("--day", "time_range", flag_value="day", help="Analyze last 24 hours.")
+@click.option("--week", "time_range", flag_value="week", default=True, help="Analyze last 7 days (default).")
+@click.option("--month", "time_range", flag_value="month", help="Analyze last 30 days.")
+@click.option("--all", "time_range", flag_value="all", help="Analyze all available data.")
+@click.option(
+    "--demo",
+    is_flag=True,
+    help="Run with bundled sample data.",
+)
+@click.option(
+    "--agent",
+    default="claude",
+    show_default=True,
+    help="Agent CLI binary to use for skill extraction (e.g. claude, gemini).",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Skip confirmation prompt and write skills immediately.",
+)
+def skills(
+    otlp_traces: Path | None,
+    sessions_dir: Path | None,
+    spans_dir: Path | None,
+    time_range: str,
+    demo: bool,
+    agent: str,
+    yes: bool,
+) -> None:
+    """Extract reusable skills from your AI sessions using an agent."""
+    import json as _json
+    import shutil
+    import subprocess
+    import tempfile
+
+    from rich.console import Console
+    console = Console(force_terminal=True)
+
+    stats, _, _, _, _, _ = _resolve_and_analyze(
+        otlp_traces=otlp_traces,
+        sessions_dir=sessions_dir,
+        spans_dir=spans_dir,
+        demo=demo,
+        time_range=time_range,
+    )
+
+    session_summaries = _serialize_sessions_for_skills(stats)
+    prompt_file = Path(__file__).parent / "data" / "skills-extraction-prompt.md"
+    prompt = prompt_file.read_text(encoding="utf-8") + "\n" + session_summaries
+
+    console.print(f"Running [bold]{agent} --print[/bold] ...")
+    result = subprocess.run([agent, "--print", prompt], capture_output=True, text=True)
+    if result.returncode != 0:
+        click.echo(f"Agent exited with code {result.returncode}:\n{result.stderr}", err=True)
+        raise SystemExit(1)
+
+    try:
+        skill_defs = _json.loads(result.stdout.strip())
+    except _json.JSONDecodeError as exc:
+        click.echo(
+            f"Could not parse agent output as JSON: {exc}\n\nOutput:\n{result.stdout[:500]}",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    console.print(f"\nExtracted [bold]{len(skill_defs)}[/bold] skill(s):\n")
+    for s in skill_defs:
+        console.print(f"  [cyan]{s['name']:<20}[/cyan]  {s['description']}")
+
+    detected = [a for a in _detect_agents() if a["detected"]]
+    if not yes:
+        console.print()
+        confirmed = click.confirm(
+            f"Write {len(skill_defs)} skill(s) to {len(detected)} detected agent(s)?",
+            default=True,
+        )
+        if not confirmed:
+            console.print("Aborted.")
+            return
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        for s in skill_defs:
+            skill_dir = tmp_path / s["name"]
+            skill_dir.mkdir()
+            skill_md = (
+                f"---\nname: {s['name']}\ndescription: {s['description']}\n---\n\n{s['content']}"
+            )
+            (skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
+
+        console.print()
+        for agent_spec in detected:
+            global_path = Path(agent_spec["global_path"]).expanduser()
+            global_path.mkdir(parents=True, exist_ok=True)
+            for s in skill_defs:
+                dest = global_path / s["name"]
+                if dest.exists():
+                    shutil.rmtree(dest)
+                shutil.copytree(tmp_path / s["name"], dest)
+            console.print(f"  [green]✓[/green] {agent_spec['name']}: {global_path}")
+
+    names = ", ".join(f"/{s['name']}" for s in skill_defs)
+    console.print(
+        f"\n[bold green]{len(skill_defs)} skill(s) ready.[/bold green] Use {names} in Claude Code."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1437,12 +1642,18 @@ def doctor() -> None:
         detected_table = Table(box=box.SIMPLE_HEAVY, expand=True)
         detected_table.add_column("Agent", style="bold")
         detected_table.add_column("Entries", justify="right", no_wrap=True)
+        detected_table.add_column("Skills", justify="right", no_wrap=True)
         detected_table.add_column("Path", overflow="fold")
         detected_table.add_column("Recommended next step", overflow="fold")
         for agent in detected_agents:
+            skills_count = 0
+            global_skills_path = Path(agent["global_path"]).expanduser()
+            if global_skills_path.exists():
+                skills_count = sum(1 for p in global_skills_path.iterdir() if p.is_dir())
             detected_table.add_row(
                 agent["name"],
                 str(agent["entries"]),
+                str(skills_count) if skills_count else "—",
                 f"{agent['path']} [dim]({agent['env']})[/]",
                 agent["recommendation"],
             )

@@ -48,6 +48,16 @@ class TestHelp:
         assert result.exit_code == 0
         assert "update" in result.output.lower() or "Usage" in result.output
 
+    def test_report_help(self, runner):
+        result = runner.invoke(main, ["report", "--help"])
+        assert result.exit_code == 0
+        assert "Usage" in result.output
+
+    def test_skills_help(self, runner):
+        result = runner.invoke(main, ["skills", "--help"])
+        assert result.exit_code == 0
+        assert "Usage" in result.output
+
 
 class TestTerminalMode:
     def test_default_terminal_mode(self, runner, otlp_file, tmp_path):
@@ -75,41 +85,98 @@ class TestTerminalMode:
             mock_report.assert_called_once()
 
 
-class TestPublishFlag:
-    def test_publish_opens_browser(self, runner, otlp_file, tmp_path):
-        # webbrowser.open is called only in --no-terminal --publish mode
-        with patch("reflect.core.render_report") as mock_report, \
-             patch("webbrowser.open") as mock_open:
-            mock_report.return_value = "# report"
+class TestReportSubcommand:
+    def test_report_starts_server(self, runner, otlp_file, tmp_path):
+        with patch("reflect.core._start_publish_server") as mock_server:
             result = runner.invoke(main, [
+                "report",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
-                "--no-terminal",
-                "--publish",
             ])
-            assert result.exit_code == 0
-            mock_open.assert_called_once()
+        assert result.exit_code == 0
+        mock_server.assert_called_once()
 
-    def test_dashboard_artifact_writes_json_and_uses_report_url(self, runner, otlp_file, tmp_path):
-        artifact_path = tmp_path / "docs" / "reports" / "latest.json"
-        with patch("reflect.core.render_report") as mock_report, \
-             patch("webbrowser.open") as mock_open:
+    def test_report_with_output_saves_markdown(self, runner, otlp_file, tmp_path):
+        with patch("reflect.core._start_publish_server"), \
+             patch("reflect.core.render_report") as mock_report:
             mock_report.return_value = "# report"
             result = runner.invoke(main, [
+                "report",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
-                "--no-terminal",
-                "--dashboard-artifact", str(artifact_path),
-                "--publish",
+                "--output", str(tmp_path / "report.md"),
             ])
-            assert result.exit_code == 0
-            assert artifact_path.exists()
-            payload = json.loads(artifact_path.read_text())
-            assert "agents" in payload
-            assert "?report=" in result.output
-            mock_open.assert_called_once()
+        assert result.exit_code == 0
+        mock_report.assert_called_once()
+
+    def test_report_with_dashboard_artifact_writes_json(self, runner, otlp_file, tmp_path):
+        artifact_path = tmp_path / "docs" / "reports" / "latest.json"
+        with patch("reflect.core._start_publish_server"):
+            result = runner.invoke(main, [
+                "report",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+                "--dashboard-artifact", str(artifact_path),
+            ])
+        assert result.exit_code == 0
+        assert artifact_path.exists()
+        assert "agents" in json.loads(artifact_path.read_text())
+
+
+class TestSkillsSubcommand:
+    def test_skills_invokes_agent_writes_and_distributes(self, runner, otlp_file, tmp_path):
+        fake_output = json.dumps([{
+            "name": "test-skill",
+            "description": "A test skill",
+            "content": "## Steps\n1. Do the thing",
+        }])
+        skill_dest = tmp_path / "skills"
+        with patch("subprocess.run") as mock_run, \
+             patch("reflect.core._detect_agents") as mock_agents:
+            mock_run.return_value = type("R", (), {"returncode": 0, "stdout": fake_output, "stderr": ""})()
+            mock_agents.return_value = [{
+                "name": "Claude Code",
+                "detected": True,
+                "global_path": str(skill_dest),
+                "skill_path": ".claude/skills/",
+            }]
+            result = runner.invoke(main, [
+                "skills", "--yes",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        assert result.exit_code == 0
+        assert (skill_dest / "test-skill" / "SKILL.md").exists()
+        content = (skill_dest / "test-skill" / "SKILL.md").read_text()
+        assert "name: test-skill" in content
+
+    def test_skills_agent_failure_exits_nonzero(self, runner, otlp_file, tmp_path):
+        with patch("subprocess.run") as mock_run, \
+             patch("reflect.core._detect_agents", return_value=[]):
+            mock_run.return_value = type("R", (), {"returncode": 1, "stdout": "", "stderr": "error"})()
+            result = runner.invoke(main, [
+                "skills", "--yes",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        assert result.exit_code != 0
+
+    def test_skills_bad_json_exits_nonzero(self, runner, otlp_file, tmp_path):
+        with patch("subprocess.run") as mock_run, \
+             patch("reflect.core._detect_agents", return_value=[]):
+            mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "not json", "stderr": ""})()
+            result = runner.invoke(main, [
+                "skills", "--yes",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        assert result.exit_code != 0
 
 
 class TestNoDataNoCrash:

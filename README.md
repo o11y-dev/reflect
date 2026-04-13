@@ -138,7 +138,8 @@ Nothing leaves your machine. There's no cloud backend, no account, no API key.
 reflect                        # interactive terminal dashboard (default)
 reflect --no-terminal          # markdown report
 reflect --dashboard-artifact out.json  # JSON artifact for dashboards
-reflect --publish              # open local dashboard in browser
+reflect report                 # open local dashboard in browser
+reflect skills                 # extract reusable skills from your sessions
 reflect --demo                 # instant demo with sample data
 ```
 
