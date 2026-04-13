@@ -70,4 +70,10 @@ tag_format = "v{version}"
 where = ["src"]
 
 [tool.setuptools.package-data]
-reflect = ["data/demo-traces.json", "data/index.html", "data/skills/reflect/SKILL.md"]
+reflect = [
+    "data/demo-traces.json",
+    "data/index.html",
+    "data/skills-extraction-prompt.md",
+    "data/skills/reflect/SKILL.md",
+    "data/skills/skills/SKILL.md",
+]

@@ -10,10 +10,11 @@ Run `reflect skills` to analyze your recent AI agent sessions and extract reusab
 ## Usage
 
 ```bash
-reflect skills                   # analyze last 7 days, use claude CLI
+reflect skills                   # analyze last 7 days, auto-detect agent CLI
 reflect skills --all             # analyze all available sessions
 reflect skills --week            # analyze last 7 days (default)
 reflect skills --agent gemini    # use Gemini CLI for extraction
+reflect skills --agent claude    # use Claude CLI for extraction
 reflect skills --yes             # skip confirmation prompt
 reflect skills --demo            # run with bundled sample data
 ```
@@ -32,7 +33,7 @@ Extracted skills are immediately available via `/skill-name` in Claude Code.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--agent` | `claude` | Agent CLI binary to use for extraction |
+| `--agent` | auto-detect | Agent CLI binary to use for extraction (prefers `claude`, falls back to `gemini`, `codex`, `qwen`) |
 | `--yes` / `-y` | off | Skip confirmation prompt |
 | `--all` / `--week` / `--month` / `--day` | `--week` | Time range for session analysis |
 | `--demo` | off | Use bundled sample data |

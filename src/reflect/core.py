@@ -24,9 +24,9 @@ Usage:
     python3 src/reflect/core.py \\
         --otlp-traces ~/.reflect/state/otlp/otel-traces.json --no-terminal
 
-    # Open the hosted dashboard view with encoded data
-    python3 src/reflect/core.py \\
-        --otlp-traces ~/.reflect/state/otlp/otel-traces.json --publish
+    # Open the local dashboard in a browser
+    python3 src/reflect/core.py report \\
+        --otlp-traces ~/.reflect/state/otlp/otel-traces.json
 
     # From local hook state (legacy)
     python3 src/reflect/core.py \\
@@ -47,6 +47,7 @@ import tomllib
 import zipfile
 from datetime import UTC, datetime
 from importlib import metadata as importlib_metadata
+from importlib import resources as importlib_resources
 from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -1009,14 +1010,49 @@ def _select_skills(
 
 
 def _serialize_sessions_for_skills(stats: TelemetryStats) -> str:
-    """Serialize top sessions to compact text for skill extraction prompts."""
+    """Serialize top sessions to compact text for skill extraction prompts.
+
+    ``stats.sessions_seen`` is a ``set[str]`` of session IDs.  We pull
+    supporting metadata from the per-session dicts on *stats* and sort by
+    event count (descending) so the most active sessions appear first.
+    """
+    session_ids = sorted(
+        stats.sessions_seen,
+        key=lambda sid: stats.session_events.get(sid, 0),
+        reverse=True,
+    )[:20]
+
     lines = []
-    for session in list(stats.sessions_seen)[:20]:
-        lines.append(f"Session {session.session_id[:8]}:")
-        lines.append(f"  model={session.model} tools={session.tool_call_count} tokens={session.total_tokens}")
-        if session.tools_used:
-            lines.append(f"  tools_used={','.join(list(session.tools_used)[:10])}")
+    for sid in session_ids:
+        event_count = stats.session_events.get(sid, 0)
+        models = stats.session_models.get(sid)
+        model_str = next(iter(models), "unknown") if models else "unknown"
+        tok = stats.session_tokens.get(sid, {})
+        total_tokens = tok.get("input", 0) + tok.get("output", 0)
+        # Derive a rough tool list from the session's tool sequence
+        tool_seq = stats.session_tool_seq.get(sid, [])
+        tools_used = list(dict.fromkeys(entry[1] for entry in tool_seq if len(entry) >= 2))
+        lines.append(f"Session {sid[:8]}:")
+        lines.append(f"  model={model_str} events={event_count} tokens={total_tokens}")
+        if tools_used:
+            lines.append(f"  tools_used={','.join(tools_used[:10])}")
     return "\n".join(lines)
+
+
+# Strict kebab-case: lowercase letters, digits, and hyphens only; 1-64 chars.
+_SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9\-]{0,62}[a-z0-9]$|^[a-z0-9]$")
+
+
+def _validate_skill_name(name: object) -> str:
+    """Return *name* if it is a safe path component, otherwise raise ``ValueError``."""
+    if not isinstance(name, str):
+        raise ValueError(f"Skill name must be a string, got {type(name).__name__!r}")
+    if not _SKILL_NAME_RE.match(name):
+        raise ValueError(
+            f"Skill name {name!r} is not a valid kebab-case identifier "
+            "(use lowercase letters, digits, and hyphens only; 1-64 chars)"
+        )
+    return name
 
 
 @main.command()
@@ -1089,8 +1125,16 @@ def skills(
     )
 
     session_summaries = _serialize_sessions_for_skills(stats)
-    prompt_file = Path(__file__).parent / "data" / "skills-extraction-prompt.md"
-    prompt = prompt_file.read_text(encoding="utf-8") + "\n" + session_summaries
+    try:
+        prompt_pkg = importlib_resources.files("reflect") / "data" / "skills-extraction-prompt.md"
+        prompt_text = prompt_pkg.read_text(encoding="utf-8")
+    except (FileNotFoundError, TypeError) as exc:
+        click.echo(
+            f"Could not load skills extraction prompt: {exc}",
+            err=True,
+        )
+        raise SystemExit(1) from exc
+    prompt = prompt_text + "\n" + session_summaries
 
     flag_display = " ".join(agent_flags)
     console.print(f"Running [bold]{agent_bin} {flag_display}[/bold] ...")
@@ -1124,10 +1168,15 @@ def skills(
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         for s in selected:
-            skill_dir = tmp_path / s["name"]
+            try:
+                safe_name = _validate_skill_name(s.get("name"))
+            except ValueError as exc:
+                click.echo(f"Skipping invalid skill name: {exc}", err=True)
+                continue
+            skill_dir = tmp_path / safe_name
             skill_dir.mkdir()
             skill_md = (
-                f"---\nname: {s['name']}\ndescription: {s['description']}\n---\n\n{s['content']}"
+                f"---\nname: {safe_name}\ndescription: {s['description']}\n---\n\n{s['content']}"
             )
             (skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
 
@@ -1136,10 +1185,23 @@ def skills(
             global_path = Path(agent_spec["global_path"]).expanduser()
             global_path.mkdir(parents=True, exist_ok=True)
             for s in selected:
-                dest = global_path / s["name"]
+                try:
+                    safe_name = _validate_skill_name(s.get("name"))
+                except ValueError:
+                    continue  # already warned above
+                src = tmp_path / safe_name
+                if not src.exists():
+                    continue
+                dest = global_path / safe_name
+                # Ensure dest stays within the intended skills directory
+                resolved_dest = dest.resolve()
+                resolved_base = global_path.resolve()
+                if not str(resolved_dest).startswith(str(resolved_base) + os.sep) and resolved_dest != resolved_base:
+                    click.echo(f"Skipping skill {safe_name!r}: resolved path escapes skills dir", err=True)
+                    continue
                 if dest.exists():
                     shutil.rmtree(dest)
-                shutil.copytree(tmp_path / s["name"], dest)
+                shutil.copytree(src, dest)
             console.print(f"  [green]✓[/green] {agent_spec['name']}: {global_path}")
 
     names = ", ".join(f"/{s['name']}" for s in selected)
@@ -1211,8 +1273,8 @@ def _fetch_opentelemetry_skill(console) -> Path | None:
 
 
 def _distribute_skills(console) -> None:
-    """Distribute reflect and opentelemetry-skill to detected agents."""
-    # reflect skill is bundled with the package
+    """Distribute reflect, skills, and opentelemetry-skill to detected agents."""
+    # reflect and skills skills are bundled with the package
     bundled_skills_dir = Path(__file__).parent / "data" / "skills"
 
     available_skills: dict[str, Path] = {}
@@ -1220,6 +1282,10 @@ def _distribute_skills(console) -> None:
     reflect_skill = bundled_skills_dir / "reflect"
     if (reflect_skill / "SKILL.md").exists():
         available_skills["reflect"] = reflect_skill
+
+    skills_skill = bundled_skills_dir / "skills"
+    if (skills_skill / "SKILL.md").exists():
+        available_skills["skills"] = skills_skill
 
     otel_skill = _fetch_opentelemetry_skill(console)
     if otel_skill:
@@ -1724,8 +1790,11 @@ def doctor() -> None:
         for agent in detected_agents:
             skills_count = 0
             global_skills_path = Path(agent["global_path"]).expanduser()
-            if global_skills_path.exists():
-                skills_count = sum(1 for p in global_skills_path.iterdir() if p.is_dir())
+            try:
+                if global_skills_path.is_dir():
+                    skills_count = sum(1 for p in global_skills_path.iterdir() if p.is_dir())
+            except OSError:
+                pass
             detected_table.add_row(
                 agent["name"],
                 str(agent["entries"]),
