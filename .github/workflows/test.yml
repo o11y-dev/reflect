@@ -48,9 +48,9 @@ jobs:
       - name: reflect --demo (terminal dashboard)
         run: reflect --demo --no-terminal
 
-      - name: reflect --publish --demo (dashboard server starts)
+      - name: reflect report --demo (dashboard server starts)
         run: |
-          timeout 5 reflect --demo --publish || code=$?
+          timeout 5 reflect report --demo || code=$?
           # timeout exit code 124 means it ran and we killed it — success
           if [ "${code:-0}" -eq 124 ]; then
             echo "Server started successfully"
