@@ -55,7 +55,11 @@ jobs:
           if [ -n "${{ inputs.force }}" ]; then
             ARGS+=(--force "${{ inputs.force }}")
           fi
-          VERSION=$(python3 scripts/release_workflow.py determine-version "${ARGS[@]}")
+          if [ "${#ARGS[@]}" -gt 0 ]; then
+            VERSION=$(python3 scripts/release_workflow.py determine-version "${ARGS[@]}")
+          else
+            VERSION=$(python3 scripts/release_workflow.py determine-version)
+          fi
           if [ -z "$VERSION" ]; then
             echo "::notice::No unreleased version found in pyproject.toml and no semantic-release bump was detected."
           else

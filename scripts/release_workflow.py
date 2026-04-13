@@ -41,7 +41,7 @@ def version_tag_exists(version: str, root: Path = ROOT) -> bool:
 
 
 def parse_semantic_release_output(output: str) -> str | None:
-    if "No release will be made" in output or "already been released" in output:
+    if "No release will be made" in output:
         return None
 
     versions = [
