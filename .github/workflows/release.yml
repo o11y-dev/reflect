@@ -30,6 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      version: ${{ steps.semver.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -118,12 +120,15 @@ jobs:
 
   publish:
     needs: release
+    if: needs.release.outputs.version != ''
     runs-on: ubuntu-latest
     environment: CD
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: v${{ needs.release.outputs.version }}
 
       - uses: actions/setup-python@v5
         with:
