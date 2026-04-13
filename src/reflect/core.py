@@ -1031,7 +1031,7 @@ def _serialize_sessions_for_skills(stats: TelemetryStats) -> str:
         total_tokens = tok.get("input", 0) + tok.get("output", 0)
         # Derive a rough tool list from the session's tool sequence
         tool_seq = stats.session_tool_seq.get(sid, [])
-        tools_used = list(dict.fromkeys(entry[1] for entry in tool_seq if len(entry) >= 2))
+        tools_used = list(dict.fromkeys(entry[1] for entry in tool_seq if len(entry) > 1))
         lines.append(f"Session {sid[:8]}:")
         lines.append(f"  model={model_str} events={event_count} tokens={total_tokens}")
         if tools_used:
@@ -1040,7 +1040,7 @@ def _serialize_sessions_for_skills(stats: TelemetryStats) -> str:
 
 
 # Strict kebab-case: lowercase letters, digits, and hyphens only; 1-64 chars.
-_SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9\-]{0,62}[a-z0-9]$|^[a-z0-9]$")
+_SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$")
 
 
 def _validate_skill_name(name: object) -> str:
@@ -1193,10 +1193,10 @@ def skills(
                 if not src.exists():
                     continue
                 dest = global_path / safe_name
-                # Ensure dest stays within the intended skills directory
+                # Ensure dest stays within the intended skills directory (must be a subdirectory)
                 resolved_dest = dest.resolve()
                 resolved_base = global_path.resolve()
-                if not str(resolved_dest).startswith(str(resolved_base) + os.sep) and resolved_dest != resolved_base:
+                if not str(resolved_dest).startswith(str(resolved_base) + os.sep):
                     click.echo(f"Skipping skill {safe_name!r}: resolved path escapes skills dir", err=True)
                     continue
                 if dest.exists():
