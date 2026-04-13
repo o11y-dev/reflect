@@ -16,7 +16,7 @@ def test_parse_semantic_release_output_ignores_already_released_version():
     assert release_workflow.parse_semantic_release_output(output) is None
 
 
-def test_determine_version_prefers_unreleased_pyproject_version(tmp_path: Path):
+def test_determine_version_prefers_untagged_pyproject_version(tmp_path: Path):
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nversion = "0.2.0"\n',
         encoding="utf-8",

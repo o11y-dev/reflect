@@ -20,7 +20,9 @@ SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
 
 def _validate_semver(version: str) -> str:
     if not SEMVER_PATTERN.fullmatch(version):
-        raise ValueError(f"version must be semver (e.g. 0.3.0), got: {version}")
+        raise ValueError(
+            f"version must be in semver format (MAJOR.MINOR.PATCH, e.g. 0.3.0), got: {version}"
+        )
     return version
 
 
