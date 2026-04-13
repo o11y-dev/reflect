@@ -725,7 +725,7 @@ def _resolve_and_analyze(
     spans_dir: Path | None,
     demo: bool,
     time_range: str,
-) -> "tuple[TelemetryStats, Path | None, Path, Path, str, datetime | None]":
+) -> tuple[TelemetryStats, Path | None, Path, Path, str, datetime | None]:
     """Shared data-loading logic for main and subcommands."""
     if demo:
         _demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
@@ -965,7 +965,7 @@ def _resolve_skills_agent(agent: str | None) -> tuple[str, list[str]]:
 
 def _select_skills(
     skill_defs: list[dict],
-    console: "Console",
+    console: object,
     *,
     yes: bool,
 ) -> list[dict]:
@@ -1008,7 +1008,7 @@ def _select_skills(
     return selected
 
 
-def _serialize_sessions_for_skills(stats: "TelemetryStats") -> str:
+def _serialize_sessions_for_skills(stats: TelemetryStats) -> str:
     """Serialize top sessions to compact text for skill extraction prompts."""
     lines = []
     for session in list(stats.sessions_seen)[:20]:
@@ -1106,7 +1106,7 @@ def skills(
             f"Could not parse agent output as JSON: {exc}\n\nOutput:\n{result.stdout[:500]}",
             err=True,
         )
-        raise SystemExit(1)
+        raise SystemExit(1) from exc
 
     selected = _select_skills(skill_defs, console, yes=yes)
 
