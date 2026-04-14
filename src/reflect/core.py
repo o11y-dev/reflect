@@ -980,6 +980,15 @@ _SKILL_AGENT_SPECS: list[tuple[str, list[str]]] = [
 ]
 
 
+def _strip_json_fences(text: str) -> str:
+    """Remove markdown code fences wrapping JSON output, if present."""
+    stripped = text.strip()
+    match = re.search(r"```(?:json)?\s*\n(.*?)\n```", stripped, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return stripped
+
+
 def _resolve_skills_agent(agent: str | None) -> tuple[str, list[str]]:
     """Return (binary, extra_flags) for the chosen or auto-detected agent CLI."""
     if agent is not None:
@@ -1172,15 +1181,18 @@ def skills(
         raise SystemExit(1) from exc
     prompt = prompt_text + "\n" + session_summaries
 
-    flag_display = " ".join(agent_flags)
-    console.print(f"Running [bold]{agent_bin} {flag_display}[/bold] ...")
-    result = subprocess.run([agent_bin, *agent_flags, prompt], capture_output=True, text=True)
+    with console.status(
+        f"[bold]Extracting skills with {agent_bin}...[/bold]",
+        spinner="dots",
+    ):
+        result = subprocess.run([agent_bin, *agent_flags, prompt], capture_output=True, text=True)
     if result.returncode != 0:
         click.echo(f"Agent exited with code {result.returncode}:\n{result.stderr}", err=True)
         raise SystemExit(1)
 
+    raw_output = _strip_json_fences(result.stdout)
     try:
-        skill_defs = _json.loads(result.stdout.strip())
+        skill_defs = _json.loads(raw_output)
     except _json.JSONDecodeError as exc:
         click.echo(
             f"Could not parse agent output as JSON: {exc}\n\nOutput:\n{result.stdout[:500]}",

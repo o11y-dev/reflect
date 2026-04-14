@@ -240,6 +240,62 @@ class TestSkillsSubcommand:
             ])
         assert result.exit_code != 0
 
+    def test_skills_strips_json_fences(self, runner, otlp_file, tmp_path):
+        """Agent output wrapped in ```json fences is parsed correctly."""
+        skill_dest = tmp_path / "skills"
+        fenced_output = '```json\n' + json.dumps([_FAKE_SKILLS[0]]) + '\n```'
+        with patch("subprocess.run", return_value=_R(0, fenced_output)), \
+             patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
+            result = runner.invoke(main, [
+                "skills", "--yes", "--agent", "claude",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        assert result.exit_code == 0
+        assert (skill_dest / "debug-loop" / "SKILL.md").exists()
+
+    def test_skills_strips_plain_fences(self, runner, otlp_file, tmp_path):
+        """Agent output wrapped in ``` fences (no language tag) is parsed correctly."""
+        skill_dest = tmp_path / "skills"
+        fenced_output = '```\n' + json.dumps([_FAKE_SKILLS[0]]) + '\n```'
+        with patch("subprocess.run", return_value=_R(0, fenced_output)), \
+             patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
+            result = runner.invoke(main, [
+                "skills", "--yes", "--agent", "claude",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        assert result.exit_code == 0
+        assert (skill_dest / "debug-loop" / "SKILL.md").exists()
+
+
+def test_strip_json_fences_variants():
+    from reflect.core import _strip_json_fences
+
+    raw = '[{"name": "x"}]'
+
+    # No fences -- returns as-is
+    assert _strip_json_fences(raw) == raw
+
+    # ```json fences
+    assert _strip_json_fences(f'```json\n{raw}\n```') == raw
+
+    # ``` fences (no language tag)
+    assert _strip_json_fences(f'```\n{raw}\n```') == raw
+
+    # Leading/trailing whitespace around fences
+    assert _strip_json_fences(f'  \n```json\n{raw}\n```\n  ') == raw
+
+    # Prose before/after fences (only content between fences extracted)
+    assert _strip_json_fences(f'Here is the JSON:\n```json\n{raw}\n```\nDone.') == raw
+
+    # Backticks inside JSON strings are not treated as closing fence
+    with_backticks = '[{"name": "x", "content": "```python\\nprint()\\n```"}]'
+    fenced = f'```json\n{with_backticks}\n```'
+    assert _strip_json_fences(fenced) == with_backticks
+
 
 class TestNoDataNoCrash:
     def test_empty_dirs_no_crash(self, runner, tmp_path):
