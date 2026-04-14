@@ -23,7 +23,7 @@ def bump_pyproject(version: str) -> None:
         count=1,
         flags=re.MULTILINE,
     )
-    if updated == text:
+    if not re.search(r'^version\s*=\s*"[^"]+"', text, flags=re.MULTILINE):
         print(f"warning: version string not found in {PYPROJECT}", file=sys.stderr)
     PYPROJECT.write_text(updated, encoding="utf-8")
 
@@ -54,6 +54,17 @@ def stamp_changelog(version: str, changelog_path: Path = CHANGELOG, *, today: st
     if not changelog_path.exists():
         return
     text = changelog_path.read_text(encoding="utf-8")
+
+    # If the version is already stamped with a date, skip stamping to avoid
+    # accidentally replacing a future unreleased section via the fallback.
+    already_stamped = re.compile(
+        rf"^## {re.escape(version)} \(\d{{4}}-\d{{2}}-\d{{2}}\)\s*$",
+        flags=re.MULTILINE,
+    )
+    if already_stamped.search(text):
+        _validate_section_not_empty(version, changelog_path)
+        return
+
     release_day = today or datetime.now(UTC).strftime("%Y-%m-%d")
     exact_heading = re.compile(rf"^## {re.escape(version)} \(unreleased\)$", re.MULTILINE)
     updated, replacements = exact_heading.subn(f"## {version} ({release_day})", text, count=1)
