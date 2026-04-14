@@ -28,15 +28,19 @@ def bump_pyproject(version: str) -> None:
     PYPROJECT.write_text(updated, encoding="utf-8")
 
 
-def stamp_changelog(version: str, changelog_path: Path = CHANGELOG) -> None:
+def stamp_changelog(version: str, changelog_path: Path = CHANGELOG, *, today: str | None = None) -> None:
     if not changelog_path.exists():
         return
     text = changelog_path.read_text(encoding="utf-8")
-    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    release_day = today or datetime.now(UTC).strftime("%Y-%m-%d")
     exact_heading = re.compile(rf"^## {re.escape(version)} \(unreleased\)$", re.MULTILINE)
-    updated, replacements = exact_heading.subn(f"## {version} ({today})", text, count=1)
+    updated, replacements = exact_heading.subn(f"## {version} ({release_day})", text, count=1)
     if replacements == 0:
-        updated, replacements = UNRELEASED_HEADING.subn(f"## {version} ({today})", text, count=1)
+        updated, replacements = UNRELEASED_HEADING.subn(
+            f"## {version} ({release_day})",
+            text,
+            count=1,
+        )
     if updated == text:
         print(f"warning: no unreleased entry for {version} in CHANGELOG.md", file=sys.stderr)
     changelog_path.write_text(updated, encoding="utf-8")

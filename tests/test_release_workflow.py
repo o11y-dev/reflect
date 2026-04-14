@@ -150,7 +150,7 @@ def test_extract_release_notes_requires_existing_section(tmp_path: Path):
         release_workflow.extract_release_notes("0.2.0", changelog)
 
 
-def test_stamp_changelog_updates_matching_unreleased_section(tmp_path: Path, monkeypatch):
+def test_stamp_changelog_updates_matching_unreleased_section(tmp_path: Path):
     changelog = tmp_path / "CHANGELOG.md"
     changelog.write_text(
         "\n".join([
@@ -164,17 +164,13 @@ def test_stamp_changelog_updates_matching_unreleased_section(tmp_path: Path, mon
         encoding="utf-8",
     )
 
-    fake_now = Mock()
-    fake_now.strftime.return_value = "2026-04-14"
-    monkeypatch.setattr(bump_version.datetime, "now", lambda tz: fake_now)
-
-    bump_version.stamp_changelog("0.2.1", changelog)
+    bump_version.stamp_changelog("0.2.1", changelog, today="2026-04-14")
 
     assert "## 0.2.1 (2026-04-14)" in changelog.read_text(encoding="utf-8")
 
 
 def test_stamp_changelog_promotes_first_unreleased_section_when_versions_differ(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path
 ):
     changelog = tmp_path / "CHANGELOG.md"
     changelog.write_text(
@@ -190,11 +186,7 @@ def test_stamp_changelog_promotes_first_unreleased_section_when_versions_differ(
         encoding="utf-8",
     )
 
-    fake_now = Mock()
-    fake_now.strftime.return_value = "2026-04-14"
-    monkeypatch.setattr(bump_version.datetime, "now", lambda tz: fake_now)
-
-    bump_version.stamp_changelog("0.2.1", changelog)
+    bump_version.stamp_changelog("0.2.1", changelog, today="2026-04-14")
 
     stamped = changelog.read_text(encoding="utf-8")
     assert "## 0.2.1 (2026-04-14)" in stamped
