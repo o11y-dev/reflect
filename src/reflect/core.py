@@ -975,6 +975,7 @@ _SKILL_AGENT_SPECS: list[tuple[str, list[str]]] = [
     ("codex", ["--print"]),
     ("qwen", ["--print"]),
 ]
+_SKILLS_CODE_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.IGNORECASE | re.DOTALL)
 
 
 def _resolve_skills_agent(agent: str | None) -> tuple[str, list[str]]:
@@ -1072,6 +1073,50 @@ def _serialize_sessions_for_skills(stats: TelemetryStats) -> str:
     return "\n".join(lines)
 
 
+def _parse_skills_agent_output(raw_output: str) -> list[dict]:
+    """Parse skills JSON from exact JSON, fenced JSON, or JSON wrapped in prose."""
+    cleaned = raw_output.strip()
+    if not cleaned:
+        raise ValueError("Agent returned empty output")
+
+    candidates: list[str] = []
+
+    def _add_candidate(value: str) -> None:
+        value = value.strip()
+        if value and value not in candidates:
+            candidates.append(value)
+
+    _add_candidate(cleaned)
+    fenced_match = _SKILLS_CODE_FENCE_RE.match(cleaned)
+    if fenced_match:
+        _add_candidate(fenced_match.group(1))
+
+    decoder = _json_stdlib.JSONDecoder()
+    json_start = min((idx for idx in (cleaned.find("["), cleaned.find("{")) if idx != -1), default=-1)
+    if json_start != -1:
+        try:
+            parsed, _ = decoder.raw_decode(cleaned[json_start:])
+        except _json_stdlib.JSONDecodeError:
+            pass
+        else:
+            if isinstance(parsed, list):
+                return parsed
+            if isinstance(parsed, dict) and isinstance(parsed.get("skills"), list):
+                return parsed["skills"]
+
+    for candidate in candidates:
+        try:
+            parsed = _json_stdlib.loads(candidate)
+        except _json_stdlib.JSONDecodeError:
+            continue
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict) and isinstance(parsed.get("skills"), list):
+            return parsed["skills"]
+
+    raise ValueError("Agent output did not contain a JSON array of skill definitions")
+
+
 # Strict kebab-case: lowercase letters, digits, and hyphens only; 1-64 chars.
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$")
 
@@ -1140,7 +1185,6 @@ def skills(
     yes: bool,
 ) -> None:
     """Extract reusable skills from your AI sessions using an agent."""
-    import json as _json
     import subprocess
     import tempfile
 
@@ -1171,14 +1215,16 @@ def skills(
 
     flag_display = " ".join(agent_flags)
     console.print(f"Running [bold]{agent_bin} {flag_display}[/bold] ...")
-    result = subprocess.run([agent_bin, *agent_flags, prompt], capture_output=True, text=True)
+    console.print("[dim]Extracting skills from recent sessions. This can take a moment...[/dim]")
+    with console.status("[bold cyan]Waiting for agent output...[/bold cyan]", spinner="dots"):
+        result = subprocess.run([agent_bin, *agent_flags, prompt], capture_output=True, text=True)
     if result.returncode != 0:
         click.echo(f"Agent exited with code {result.returncode}:\n{result.stderr}", err=True)
         raise SystemExit(1)
 
     try:
-        skill_defs = _json.loads(result.stdout.strip())
-    except _json.JSONDecodeError as exc:
+        skill_defs = _parse_skills_agent_output(result.stdout)
+    except ValueError as exc:
         click.echo(
             f"Could not parse agent output as JSON: {exc}\n\nOutput:\n{result.stdout[:500]}",
             err=True,

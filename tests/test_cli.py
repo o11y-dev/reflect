@@ -240,6 +240,32 @@ class TestSkillsSubcommand:
             ])
         assert result.exit_code != 0
 
+    def test_skills_accepts_fenced_json_output(self, runner, otlp_file, tmp_path):
+        fake_output = "```json\n" + json.dumps([_FAKE_SKILLS[0]]) + "\n```"
+        with patch("subprocess.run", return_value=_R(0, fake_output)), \
+             patch("reflect.core._detect_agents", return_value=[]):
+            result = runner.invoke(main, [
+                "skills", "--yes", "--agent", "claude",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        assert result.exit_code == 0
+        assert "1 skill(s) ready." in result.output
+
+    def test_skills_shows_processing_feedback(self, runner, otlp_file, tmp_path):
+        fake_output = json.dumps([_FAKE_SKILLS[0]])
+        with patch("subprocess.run", return_value=_R(0, fake_output)), \
+             patch("reflect.core._detect_agents", return_value=[]):
+            result = runner.invoke(main, [
+                "skills", "--yes", "--agent", "claude",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        assert result.exit_code == 0
+        assert "Extracting skills from recent sessions" in result.output
+
 
 class TestNoDataNoCrash:
     def test_empty_dirs_no_crash(self, runner, tmp_path):
