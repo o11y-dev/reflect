@@ -29,19 +29,15 @@ def test_parse_semantic_release_output_ignores_already_released_version():
     assert release_workflow.parse_semantic_release_output(output) is None
 
 
-def test_determine_version_prefers_untagged_pyproject_version(tmp_path: Path):
+def test_determine_version_prefers_untagged_pyproject_version(tmp_path: Path, monkeypatch):
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nversion = "0.2.0"\n',
         encoding="utf-8",
     )
 
-    original_version_tag_exists = release_workflow.version_tag_exists
-    release_workflow.version_tag_exists = lambda version, root: False
+    monkeypatch.setattr(release_workflow, "version_tag_exists", lambda version, root=None: False)
     runner = Mock()
-    try:
-        version = release_workflow.determine_version(root=tmp_path, runner=runner)
-    finally:
-        release_workflow.version_tag_exists = original_version_tag_exists
+    version = release_workflow.determine_version(root=tmp_path, runner=runner)
 
     assert version == "0.2.0"
     runner.assert_not_called()
@@ -76,6 +72,13 @@ def test_version_tag_exists_checks_tag_namespace_only(monkeypatch):
         "--quiet",
         "refs/tags/v0.2.0",
     ]
+
+
+def test_version_tag_exists_returns_false_when_tag_is_missing(monkeypatch):
+    run = Mock(return_value=Mock(returncode=1))
+    monkeypatch.setattr(release_workflow.subprocess, "run", run)
+
+    assert release_workflow.version_tag_exists("0.2.0") is False
 
 
 @pytest.mark.parametrize(
