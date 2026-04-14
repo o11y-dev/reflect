@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.3.0 (unreleased)
+## 0.2.2 (unreleased)
+
+## 0.2.1 (2026-04-14)
 
 ### Added
 - Chat-style conversation UI in hosted dashboard (prompts/responses as bubbles, tool events as compact chips)

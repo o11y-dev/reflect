@@ -11,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 CHANGELOG = ROOT / "CHANGELOG.md"
+UNRELEASED_HEADING = re.compile(r"^## (?P<version>\d+\.\d+\.\d+) \(unreleased\)$", re.MULTILINE)
 
 
 def bump_pyproject(version: str) -> None:
@@ -27,20 +28,22 @@ def bump_pyproject(version: str) -> None:
     PYPROJECT.write_text(updated, encoding="utf-8")
 
 
-def stamp_changelog(version: str) -> None:
-    if not CHANGELOG.exists():
+def stamp_changelog(version: str, changelog_path: Path = CHANGELOG, *, today: str | None = None) -> None:
+    if not changelog_path.exists():
         return
-    text = CHANGELOG.read_text(encoding="utf-8")
-    today = datetime.now(UTC).strftime("%Y-%m-%d")
-    updated = re.sub(
-        rf"## {re.escape(version)} \(unreleased\)",
-        f"## {version} ({today})",
-        text,
-        count=1,
-    )
+    text = changelog_path.read_text(encoding="utf-8")
+    release_day = today or datetime.now(UTC).strftime("%Y-%m-%d")
+    exact_heading = re.compile(rf"^## {re.escape(version)} \(unreleased\)$", re.MULTILINE)
+    updated, replacements = exact_heading.subn(f"## {version} ({release_day})", text, count=1)
+    if replacements == 0:
+        updated, replacements = UNRELEASED_HEADING.subn(
+            f"## {version} ({release_day})",
+            text,
+            count=1,
+        )
     if updated == text:
-        print(f"warning: no unreleased entry for {version} in CHANGELOG.md", file=sys.stderr)
-    CHANGELOG.write_text(updated, encoding="utf-8")
+        print(f"warning: no unreleased entry for {version} in {changelog_path}", file=sys.stderr)
+    changelog_path.write_text(updated, encoding="utf-8")
 
 
 def main(argv: list[str] | None = None) -> int:

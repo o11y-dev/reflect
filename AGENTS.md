@@ -56,6 +56,7 @@ python3 -m reflect.core --otlp-traces ~/.reflect/state/otlp/otel-traces.json --p
 - **Fallback gracefully.** Many attributes are optional, especially for non-OTLP local session sources. Guard optional fields explicitly.
 - **Keep optional dependency behavior intact.** `dashboard.py` imports FastAPI inside the publish server path on purpose.
 - **orjson first, stdlib json fallback.** Reuse the existing import shim pattern.
+- **Keep the changelog release-ready.** If your work affects a shipped release or changes the packaged version, update `CHANGELOG.md` in the active unreleased section before finishing so release automation can stamp it correctly.
 - **If you test the pipx-installed live dashboard, source edits are not enough.** Sync changed files into `~/.local/pipx/venvs/o11y-reflect/lib/python*/site-packages/reflect/` or reinstall before validating `reflect --publish`.
 - **Roadmap items do not live here by default.** If you discover durable roadmap or future-work items while working in `reflect`, mirror them into `../office/roadmap.md` or `../office/plan.md`. Keep this repo focused on implementation guidance and repo-local decisions.
 
