@@ -1721,7 +1721,7 @@ def setup() -> None:
     console.print("\n[bold]Step 5: Wire hook-based agents via opentelemetry-hooks[/]")
     if otel_hook:
         try:
-            subprocess.check_call([otel_hook, "setup"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.check_call([otel_hook, "setup", "--global"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             console.print("  [green]\u2713[/] opentelemetry-hooks setup complete")
         except subprocess.CalledProcessError as exc:
             console.print(f"  [red]\u2717[/] opentelemetry-hooks setup failed (exit {exc.returncode})")
