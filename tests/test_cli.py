@@ -251,7 +251,7 @@ class TestSkillsSubcommand:
                 "--spans-dir", str(tmp_path / "sp"),
             ])
         assert result.exit_code == 0
-        assert "1 skill(s) ready." in result.output
+        assert "debug-loop" in result.output
 
     def test_skills_shows_processing_feedback(self, runner, otlp_file, tmp_path):
         fake_output = json.dumps([_FAKE_SKILLS[0]])
