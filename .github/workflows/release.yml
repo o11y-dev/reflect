@@ -89,6 +89,10 @@ jobs:
             git push origin HEAD
           fi
 
+      - name: Build release notes
+        if: steps.semver.outputs.version != ''
+        run: python3 scripts/release_workflow.py release-notes "${{ steps.semver.outputs.version }}" > release-notes.md
+
       - name: Create and push tag
         if: steps.semver.outputs.version != ''
         run: |
@@ -104,10 +108,6 @@ jobs:
       - name: Verify package
         if: steps.semver.outputs.version != ''
         run: twine check dist/*
-
-      - name: Build release notes
-        if: steps.semver.outputs.version != ''
-        run: python3 scripts/release_workflow.py release-notes "${{ steps.semver.outputs.version }}" > release-notes.md
 
       - name: Create GitHub Release
         if: steps.semver.outputs.version != ''

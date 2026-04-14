@@ -28,6 +28,28 @@ def bump_pyproject(version: str) -> None:
     PYPROJECT.write_text(updated, encoding="utf-8")
 
 
+def _validate_section_not_empty(version: str, changelog_path: Path) -> None:
+    """Fail if the stamped changelog section has no content."""
+    text = changelog_path.read_text(encoding="utf-8")
+    heading = re.compile(
+        rf"^## {re.escape(version)}(?: \([^)]+\))?\s*$",
+        flags=re.MULTILINE,
+    )
+    match = heading.search(text)
+    if not match:
+        return  # Already warned about missing section
+    next_heading = re.search(r"^##\s+", text[match.end() :], flags=re.MULTILINE)
+    end = match.end() + next_heading.start() if next_heading else len(text)
+    section = text[match.end() : end].strip()
+    if not section:
+        print(
+            f"error: changelog section for {version} in {changelog_path} is empty — "
+            "please add release notes before releasing",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+
 def stamp_changelog(version: str, changelog_path: Path = CHANGELOG, *, today: str | None = None) -> None:
     if not changelog_path.exists():
         return
@@ -44,6 +66,7 @@ def stamp_changelog(version: str, changelog_path: Path = CHANGELOG, *, today: st
     if updated == text:
         print(f"warning: no unreleased entry for {version} in {changelog_path}", file=sys.stderr)
     changelog_path.write_text(updated, encoding="utf-8")
+    _validate_section_not_empty(version, changelog_path)
 
 
 def main(argv: list[str] | None = None) -> int:
