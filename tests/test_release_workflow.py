@@ -195,6 +195,69 @@ def test_stamp_changelog_promotes_first_unreleased_section_when_versions_differ(
     assert "0.3.0 (unreleased)" not in stamped
 
 
+def test_extract_release_notes_raises_on_empty_section(tmp_path: Path):
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        "\n".join([
+            "# Changelog",
+            "",
+            "## 0.3.0 (2026-04-14)",
+            "",
+            "## 0.2.1 (2026-04-14)",
+            "",
+            "### Added",
+            "- shipped change",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="changelog section for 0.3.0 is empty"):
+        release_workflow.extract_release_notes("0.3.0", changelog)
+
+
+def test_stamp_changelog_rejects_empty_section(tmp_path: Path):
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        "\n".join([
+            "# Changelog",
+            "",
+            "## 0.3.0 (unreleased)",
+            "",
+            "## 0.2.1 (2026-04-14)",
+            "",
+            "### Added",
+            "- shipped change",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit):
+        bump_version.stamp_changelog("0.3.0", changelog, today="2026-04-14")
+
+
+def test_stamp_changelog_succeeds_with_content(tmp_path: Path):
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        "\n".join([
+            "# Changelog",
+            "",
+            "## 0.3.0 (unreleased)",
+            "",
+            "### Added",
+            "- a real change",
+            "",
+            "## 0.2.1 (2026-04-14)",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+
+    bump_version.stamp_changelog("0.3.0", changelog, today="2026-04-14")
+    assert "## 0.3.0 (2026-04-14)" in changelog.read_text(encoding="utf-8")
+
+
 def test_stamp_changelog_warning_mentions_actual_path(tmp_path: Path):
     changelog = tmp_path / "nested" / "CHANGELOG.md"
     changelog.parent.mkdir()

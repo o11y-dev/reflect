@@ -1,6 +1,15 @@
 # Changelog
 
+## 0.3.1 (unreleased)
+
 ## 0.3.0 (2026-04-14)
+
+### Added
+- Rich loading spinner with live status feedback during agent subprocess in `reflect skills`
+- Fallback changelog stamping in `bump_version.py` when unreleased section version differs from target
+
+### Fixed
+- JSON fence parsing in skills command strips markdown code fences from agent output before parsing
 
 ## 0.2.1 (2026-04-14)
 
