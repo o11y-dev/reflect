@@ -975,7 +975,6 @@ _SKILL_AGENT_SPECS: list[tuple[str, list[str]]] = [
     ("codex", ["--print"]),
     ("qwen", ["--print"]),
 ]
-_SKILLS_CODE_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(.*)\s*```\s*$", re.IGNORECASE | re.DOTALL)
 
 
 def _resolve_skills_agent(agent: str | None) -> tuple[str, list[str]]:
@@ -1087,13 +1086,13 @@ def _parse_skills_agent_output(raw_output: str) -> list[dict]:
             candidates.append(value)
 
     _add_candidate(cleaned)
-    fenced_match = _SKILLS_CODE_FENCE_RE.match(cleaned)
-    if fenced_match:
-        _add_candidate(fenced_match.group(1))
+    fenced_candidate = _unwrap_code_fence_block(cleaned)
+    if fenced_candidate is not None:
+        _add_candidate(fenced_candidate)
 
-    decoder = _json_stdlib.JSONDecoder()
     json_start = _find_first_json_start(cleaned)
     if json_start != -1:
+        decoder = _json_stdlib.JSONDecoder()
         try:
             parsed, _ = decoder.raw_decode(cleaned[json_start:])
         except _json_stdlib.JSONDecodeError:
@@ -1118,9 +1117,22 @@ def _parse_skills_agent_output(raw_output: str) -> list[dict]:
 
 
 def _find_first_json_start(text: str) -> int:
-    """Return the earliest likely JSON container start or -1 if neither exists."""
+    """Return the earliest position of ``[`` or ``{`` in *text*, or -1 if absent."""
     json_starts = [idx for idx in (text.find("["), text.find("{")) if idx != -1]
     return min(json_starts, default=-1)
+
+
+def _unwrap_code_fence_block(text: str) -> str | None:
+    """Return inner text for a single fenced block, otherwise ``None``."""
+    if not text.startswith("```"):
+        return None
+    lines = text.splitlines()
+    if len(lines) < 3 or lines[-1].strip() != "```":
+        return None
+    opening_fence = lines[0].strip().lower()
+    if opening_fence not in {"```", "```json"}:
+        return None
+    return "\n".join(lines[1:-1]).strip()
 
 
 # Strict kebab-case: lowercase letters, digits, and hyphens only; 1-64 chars.
