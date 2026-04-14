@@ -396,7 +396,7 @@ class TestUpdateAdvisor:
 
         assert drift is None
 
-    def test_detect_hook_drift_returns_none_when_otel_hook_missing_config_present(self, tmp_path):
+    def test_detect_hook_drift_skips_when_otel_hook_not_installed_despite_config(self, tmp_path):
         hook_home = tmp_path / ".otel-hook-home"
         hook_home.mkdir()
         (hook_home / "otel_config.json").write_text('{"IDE_OTEL_LOCAL_SPANS": "true"}')
@@ -509,6 +509,61 @@ class TestDoctor:
         assert result.exit_code == 0
         assert "Windsurf" in result.output
         assert "Planned" in result.output
+
+    def test_doctor_otlp_logs_waiting_when_otel_hook_installed(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        (reflect_home / "state").mkdir(parents=True)
+        (reflect_home / "state" / "local_spans").mkdir(parents=True)
+        (reflect_home / "state" / "sessions").mkdir(parents=True)
+        hook_home.mkdir(parents=True)
+        advisor = {
+            "release": {
+                "current_version": "1.0.0",
+                "latest_version": None,
+                "checked_at": None,
+                "update_available": False,
+                "source": "unknown",
+            },
+            "local_issues": [],
+        }
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core._collect_update_advisor", return_value=advisor), \
+             patch.dict(os.environ, {"HOME": str(tmp_path)}, clear=False):
+            result = runner.invoke(main, ["doctor"])
+
+        assert result.exit_code == 0
+        assert "waiting" in result.output
+        assert "log export" in result.output
+
+    def test_doctor_otlp_logs_missing_when_otel_hook_not_installed(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        (reflect_home / "state").mkdir(parents=True)
+        (reflect_home / "state" / "local_spans").mkdir(parents=True)
+        (reflect_home / "state" / "sessions").mkdir(parents=True)
+        hook_home.mkdir(parents=True)
+        advisor = {
+            "release": {
+                "current_version": "1.0.0",
+                "latest_version": None,
+                "checked_at": None,
+                "update_available": False,
+                "source": "unknown",
+            },
+            "local_issues": [],
+        }
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value=None), \
+             patch("reflect.core._collect_update_advisor", return_value=advisor), \
+             patch.dict(os.environ, {"HOME": str(tmp_path)}, clear=False):
+            result = runner.invoke(main, ["doctor"])
+
+        assert result.exit_code == 0
+        assert "Install otel-hook" in result.output
 
 
 class TestSetup:
