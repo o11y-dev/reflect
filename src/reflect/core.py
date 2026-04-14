@@ -1824,6 +1824,13 @@ def doctor() -> None:
             _summarize_file(otlp_logs),
             str(otlp_logs),
         )
+    else:
+        exports.add_row(
+            "OTLP logs",
+            "[yellow]no gateway[/]",
+            "OpenTelemetry gateway collector is missing; logs require an OTLP collector on localhost:4317",
+            str(REFLECT_HOME / "state" / "otel-logs.json"),
+        )
     exports.add_row(
         "Hook spans",
         _status_markup(span_files > 0, present="capturing"),
