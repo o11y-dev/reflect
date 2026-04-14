@@ -195,6 +195,34 @@ def test_stamp_changelog_promotes_first_unreleased_section_when_versions_differ(
     assert "0.3.0 (unreleased)" not in stamped
 
 
+def test_stamp_changelog_skips_when_already_stamped_and_has_content(tmp_path: Path):
+    """Regression: UNRELEASED_HEADING fallback must not replace a future unreleased section."""
+    changelog = tmp_path / "CHANGELOG.md"
+    original = "\n".join([
+        "# Changelog",
+        "",
+        "## 0.3.1 (unreleased)",
+        "",
+        "## 0.3.0 (2026-04-14)",
+        "",
+        "### Added",
+        "- a real change",
+        "",
+        "## 0.2.1 (2026-04-14)",
+        "",
+        "### Added",
+        "- older change",
+        "",
+    ])
+    changelog.write_text(original, encoding="utf-8")
+
+    bump_version.stamp_changelog("0.3.0", changelog, today="2026-04-14")
+
+    result = changelog.read_text(encoding="utf-8")
+    assert result == original, "file must not be modified when version already stamped"
+    assert result.count("## 0.3.0") == 1, "must not create duplicate headings"
+
+
 def test_extract_release_notes_raises_on_empty_section(tmp_path: Path):
     changelog = tmp_path / "CHANGELOG.md"
     changelog.write_text(
