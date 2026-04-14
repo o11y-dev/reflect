@@ -975,6 +975,7 @@ _SKILL_AGENT_SPECS: list[tuple[str, list[str]]] = [
     ("codex", ["--print"]),
     ("qwen", ["--print"]),
 ]
+_SKILLS_JSON_DECODER = _json_stdlib.JSONDecoder()
 
 
 def _resolve_skills_agent(agent: str | None) -> tuple[str, list[str]]:
@@ -1092,9 +1093,8 @@ def _parse_skills_agent_output(raw_output: str) -> list[dict]:
 
     json_start = _find_first_json_start(cleaned)
     if json_start != -1:
-        decoder = _json_stdlib.JSONDecoder()
         try:
-            parsed, _ = decoder.raw_decode(cleaned[json_start:])
+            parsed, _ = _SKILLS_JSON_DECODER.raw_decode(cleaned[json_start:])
         except _json_stdlib.JSONDecodeError:
             pass
         else:
@@ -1129,8 +1129,7 @@ def _unwrap_code_fence_block(text: str) -> str | None:
     lines = text.splitlines()
     if len(lines) < 3 or lines[-1].strip() != "```":
         return None
-    opening_fence = lines[0].strip().lower()
-    if opening_fence not in {"```", "```json"}:
+    if not lines[0].strip().startswith("```"):
         return None
     return "\n".join(lines[1:-1]).strip()
 
