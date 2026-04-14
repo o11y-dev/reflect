@@ -2,6 +2,8 @@
 
 ## 0.3.0 (unreleased)
 
+## 0.2.1
+
 ### Added
 - Chat-style conversation UI in hosted dashboard (prompts/responses as bubbles, tool events as compact chips)
 - Auto-load session detail on selection (no manual button click)
