@@ -975,7 +975,7 @@ _SKILL_AGENT_SPECS: list[tuple[str, list[str]]] = [
     ("codex", ["--print"]),
     ("qwen", ["--print"]),
 ]
-_SKILLS_CODE_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.IGNORECASE | re.DOTALL)
+_SKILLS_CODE_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(.*)\s*```\s*$", re.IGNORECASE | re.DOTALL)
 
 
 def _resolve_skills_agent(agent: str | None) -> tuple[str, list[str]]:
@@ -1092,7 +1092,7 @@ def _parse_skills_agent_output(raw_output: str) -> list[dict]:
         _add_candidate(fenced_match.group(1))
 
     decoder = _json_stdlib.JSONDecoder()
-    json_start = min((idx for idx in (cleaned.find("["), cleaned.find("{")) if idx != -1), default=-1)
+    json_start = _find_first_json_start(cleaned)
     if json_start != -1:
         try:
             parsed, _ = decoder.raw_decode(cleaned[json_start:])
@@ -1115,6 +1115,12 @@ def _parse_skills_agent_output(raw_output: str) -> list[dict]:
             return parsed["skills"]
 
     raise ValueError("Agent output did not contain a JSON array of skill definitions")
+
+
+def _find_first_json_start(text: str) -> int:
+    """Return the earliest likely JSON container start or -1 if neither exists."""
+    json_starts = [idx for idx in (text.find("["), text.find("{")) if idx != -1]
+    return min(json_starts, default=-1)
 
 
 # Strict kebab-case: lowercase letters, digits, and hyphens only; 1-64 chars.
