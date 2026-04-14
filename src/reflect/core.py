@@ -1670,6 +1670,7 @@ def setup() -> None:
         config = _json_loads(example_path.read_text()) if example_path.exists() else {}
 
     config["IDE_OTEL_LOCAL_SPANS"] = "true"
+    config.setdefault("IDE_OTEL_ENABLE_LOGS", "true")
     config.setdefault("IDE_OTEL_BATCH_ON_STOP", "true")
     config.setdefault("OTEL_SERVICE_NAME", "ide-agent")
     config.setdefault("IDE_OTEL_APP_NAME", "ide-agent")
@@ -1825,12 +1826,20 @@ def doctor() -> None:
             str(otlp_logs),
         )
     else:
-        exports.add_row(
-            "OTLP logs",
-            "[yellow]no gateway[/]",
-            "OpenTelemetry gateway collector is missing; logs require an OTLP collector on localhost:4317",
-            str(REFLECT_HOME / "state" / "otel-logs.json"),
-        )
+        if otel_hook:
+            exports.add_row(
+                "OTLP logs",
+                "[yellow]waiting[/]",
+                "otel-hook log export is enabled (IDE_OTEL_ENABLE_LOGS); no log file written yet",
+                str(REFLECT_HOME / "state" / "otel-logs.json"),
+            )
+        else:
+            exports.add_row(
+                "OTLP logs",
+                "[red]missing[/]",
+                "Install otel-hook to enable log capture (IDE_OTEL_ENABLE_LOGS)",
+                str(REFLECT_HOME / "state" / "otel-logs.json"),
+            )
     exports.add_row(
         "Hook spans",
         _status_markup(span_files > 0, present="capturing"),
