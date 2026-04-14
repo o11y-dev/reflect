@@ -42,7 +42,7 @@ def stamp_changelog(version: str, changelog_path: Path = CHANGELOG, *, today: st
             count=1,
         )
     if updated == text:
-        print(f"warning: no unreleased entry for {version} in CHANGELOG.md", file=sys.stderr)
+        print(f"warning: no unreleased entry for {version} in {changelog_path}", file=sys.stderr)
     changelog_path.write_text(updated, encoding="utf-8")
 
 

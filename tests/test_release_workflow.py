@@ -1,5 +1,7 @@
 import re
+from contextlib import redirect_stderr
 from importlib.util import module_from_spec, spec_from_file_location
+from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -191,3 +193,15 @@ def test_stamp_changelog_promotes_first_unreleased_section_when_versions_differ(
     stamped = changelog.read_text(encoding="utf-8")
     assert "## 0.2.1 (2026-04-14)" in stamped
     assert "0.3.0 (unreleased)" not in stamped
+
+
+def test_stamp_changelog_warning_mentions_actual_path(tmp_path: Path):
+    changelog = tmp_path / "nested" / "CHANGELOG.md"
+    changelog.parent.mkdir()
+    changelog.write_text("# Changelog\n", encoding="utf-8")
+    stderr = StringIO()
+
+    with redirect_stderr(stderr):
+        bump_version.stamp_changelog("0.2.1", changelog, today="2026-04-14")
+
+    assert str(changelog) in stderr.getvalue()
