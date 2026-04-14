@@ -1117,7 +1117,7 @@ def _parse_skills_agent_output(raw_output: str) -> list[dict]:
 
 
 def _find_first_json_start(text: str) -> int:
-    """Return the earliest position of ``[`` or ``{`` in *text*, or -1 if absent."""
+    """Heuristically return the earliest ``[`` or ``{`` position in *text*, or -1 if absent."""
     json_starts = [idx for idx in (text.find("["), text.find("{")) if idx != -1]
     return min(json_starts, default=-1)
 
@@ -1234,7 +1234,7 @@ def skills(
     flag_display = " ".join(agent_flags)
     console.print(f"Running [bold]{agent_bin} {flag_display}[/bold] ...")
     console.print("[dim]Extracting skills from recent sessions. This can take a moment...[/dim]")
-    with console.status("[bold cyan]Waiting for agent output...[/bold cyan]", spinner="dots"):
+    with console.status("[bold cyan]Running skill extraction...[/bold cyan]", spinner="dots"):
         result = subprocess.run([agent_bin, *agent_flags, prompt], capture_output=True, text=True)
     if result.returncode != 0:
         click.echo(f"Agent exited with code {result.returncode}:\n{result.stderr}", err=True)
