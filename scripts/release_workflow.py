@@ -27,13 +27,27 @@ def _validate_semver(version: str) -> str:
 
 
 def read_project_version(pyproject_path: Path = PYPROJECT) -> str:
-    data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-    return _validate_semver(str(data["project"]["version"]))
+    try:
+        text = pyproject_path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise ValueError(f"{pyproject_path.name} not found") from exc
+
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"{pyproject_path.name} is not valid TOML") from exc
+
+    try:
+        version = data["project"]["version"]
+    except KeyError as exc:
+        raise ValueError(f"{pyproject_path.name} missing [project].version") from exc
+
+    return _validate_semver(str(version))
 
 
 def version_tag_exists(version: str, root: Path = ROOT) -> bool:
     result = subprocess.run(
-        ["git", "rev-parse", f"v{version}"],
+        ["git", "show-ref", "--tags", "--verify", "--quiet", f"refs/tags/v{version}"],
         cwd=root,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
