@@ -291,6 +291,11 @@ def test_strip_json_fences_variants():
     # Prose before/after fences (only content between fences extracted)
     assert _strip_json_fences(f'Here is the JSON:\n```json\n{raw}\n```\nDone.') == raw
 
+    # Backticks inside JSON strings are not treated as closing fence
+    with_backticks = '[{"name": "x", "content": "```python\\nprint()\\n```"}]'
+    fenced = f'```json\n{with_backticks}\n```'
+    assert _strip_json_fences(fenced) == with_backticks
+
 
 class TestNoDataNoCrash:
     def test_empty_dirs_no_crash(self, runner, tmp_path):

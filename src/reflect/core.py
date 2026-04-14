@@ -983,7 +983,7 @@ _SKILL_AGENT_SPECS: list[tuple[str, list[str]]] = [
 def _strip_json_fences(text: str) -> str:
     """Remove markdown code fences wrapping JSON output, if present."""
     stripped = text.strip()
-    match = re.search(r"```(?:json)?\s*\n(.*?)```", stripped, re.DOTALL)
+    match = re.search(r"```(?:json)?\s*\n(.*?)\n```", stripped, re.DOTALL)
     if match:
         return match.group(1).strip()
     return stripped
