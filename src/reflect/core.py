@@ -1181,7 +1181,6 @@ def skills(
         raise SystemExit(1) from exc
     prompt = prompt_text + "\n" + session_summaries
 
-    flag_display = " ".join(agent_flags)
     with console.status(
         f"[bold]Extracting skills with {agent_bin}...[/bold]",
         spinner="dots",
