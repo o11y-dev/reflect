@@ -377,6 +377,7 @@ class TestUpdateAdvisor:
         hook_home.mkdir()
 
         with patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
              patch("reflect.core._claude_hooks_registered", return_value=False):
             drift = core._detect_hook_drift()
 
@@ -384,6 +385,51 @@ class TestUpdateAdvisor:
         assert drift["component"] == "Hook wiring"
         assert "missing" in drift["summary"]
         assert "reflect setup" in drift["remediation"]
+
+    def test_detect_hook_drift_returns_none_when_otel_hook_not_installed(self, tmp_path):
+        hook_home = tmp_path / ".otel-hook-home"
+        hook_home.mkdir()
+
+        with patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value=None):
+            drift = core._detect_hook_drift()
+
+        assert drift is None
+
+    def test_detect_hook_drift_returns_none_when_otel_hook_missing_config_present(self, tmp_path):
+        hook_home = tmp_path / ".otel-hook-home"
+        hook_home.mkdir()
+        (hook_home / "otel_config.json").write_text('{"IDE_OTEL_LOCAL_SPANS": "true"}')
+
+        with patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value=None):
+            drift = core._detect_hook_drift()
+
+        assert drift is None
+
+    def test_detect_hook_drift_reports_config_missing_when_installed(self, tmp_path):
+        hook_home = tmp_path / ".otel-hook-home"
+        hook_home.mkdir()
+
+        with patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core._claude_hooks_registered", return_value=True):
+            drift = core._detect_hook_drift()
+
+        assert drift is not None
+        assert "hook export config is missing" in drift["summary"]
+
+    def test_detect_hook_drift_returns_none_when_fully_configured(self, tmp_path):
+        hook_home = tmp_path / ".otel-hook-home"
+        hook_home.mkdir()
+        (hook_home / "otel_config.json").write_text('{"IDE_OTEL_LOCAL_SPANS": "true"}')
+
+        with patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core._claude_hooks_registered", return_value=True):
+            drift = core._detect_hook_drift()
+
+        assert drift is None
 
     def test_publish_url_for_artifact_uses_docs_relative_ref(self, tmp_path):
         docs_dir = tmp_path / "docs"

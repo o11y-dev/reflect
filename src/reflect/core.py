@@ -639,6 +639,9 @@ def _claude_hooks_registered() -> bool | None:
 
 
 def _detect_hook_drift() -> dict | None:
+    if not shutil.which("otel-hook"):
+        return None
+
     config_path = HOOK_HOME / "otel_config.json"
     issues: list[str] = []
     if not config_path.exists():
@@ -1814,12 +1817,13 @@ def doctor() -> None:
         _summarize_file(otlp_traces),
         str(otlp_traces or _canonical_otlp_traces_path()),
     )
-    exports.add_row(
-        "OTLP logs",
-        _status_markup(bool(otlp_logs and otlp_logs.exists()), present="ready"),
-        _summarize_file(otlp_logs),
-        str(otlp_logs or (REFLECT_HOME / "state" / "otel-logs.json")),
-    )
+    if otlp_logs and otlp_logs.exists():
+        exports.add_row(
+            "OTLP logs",
+            _status_markup(True, present="ready"),
+            _summarize_file(otlp_logs),
+            str(otlp_logs),
+        )
     exports.add_row(
         "Hook spans",
         _status_markup(span_files > 0, present="capturing"),
