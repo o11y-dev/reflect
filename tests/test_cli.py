@@ -478,7 +478,9 @@ class TestUpdateAdvisor:
     def test_detect_hook_drift_returns_none_when_fully_configured(self, tmp_path):
         hook_home = tmp_path / ".otel-hook-home"
         hook_home.mkdir()
-        (hook_home / "otel_config.json").write_text('{"IDE_OTEL_LOCAL_SPANS": "true"}')
+        (hook_home / "otel_config.json").write_text(
+            '{"IDE_OTEL_LOCAL_SPANS": "true", "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317"}'
+        )
 
         with patch("reflect.core.HOOK_HOME", hook_home), \
              patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \

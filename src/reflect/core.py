@@ -654,6 +654,8 @@ def _detect_hook_drift() -> dict | None:
         else:
             if config.get("IDE_OTEL_LOCAL_SPANS") != "true":
                 issues.append("IDE_OTEL_LOCAL_SPANS is not enabled")
+            if "OTEL_EXPORTER_OTLP_ENDPOINT" not in config:
+                issues.append("OTEL_EXPORTER_OTLP_ENDPOINT not set (run reflect setup)")
 
     claude_status = _claude_hooks_registered()
     if claude_status is False:
@@ -1916,6 +1918,12 @@ def setup() -> None:
     config.setdefault("OTEL_SERVICE_NAME", "ide-agent")
     config.setdefault("IDE_OTEL_APP_NAME", "ide-agent")
     config.setdefault("IDE_OTEL_SUBSYSTEM_NAME", "ide-hooks")
+    # Gateway endpoint — written explicitly so otel_config.json is the single
+    # source of truth.  Step 6 (native OTel configurers) reads these values;
+    # opentelemetry-hooks itself also honours standard OTEL_EXPORTER_OTLP_*
+    # env vars, so hook-based agents forward spans to the gateway as well.
+    config.setdefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    config.setdefault("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
     config_path.write_text(_json_stdlib.dumps(config, indent=2) + "\n")
     console.print(f"  [green]\u2713[/] Hook config updated ({config_path})")
 

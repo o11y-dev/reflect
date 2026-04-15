@@ -12,6 +12,8 @@
 - `reflect skills` interactive agent selection: when multiple agent CLIs are installed, prompts with an arrow-key radio picker instead of silently picking the first detected one
 
 ### Fixed
+- `reflect setup` now writes `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_PROTOCOL` explicitly into `otel_config.json` so it is the single source of truth for the gateway address; native OTel configurers (Claude Code, Copilot, Gemini, Codex) and `opentelemetry-hooks` itself all read the endpoint from this file
+- `reflect doctor` now reports a drift warning when `OTEL_EXPORTER_OTLP_ENDPOINT` is absent from `otel_config.json`
 - `_extract_recovery_chains` now sorts spans by timestamp before pairing and skips non-actionable event types (Stop, SessionEnd, etc.) so failure→recovery pairs reflect actual workflows
 - `_serialize_sessions_for_skills` sorts `tool_seq` by timestamp before compressing so `tool_flow` is chronologically accurate
 - `_interactive_pick` guards `tty`/`termios` imports behind `try/except ImportError` for Windows compatibility
