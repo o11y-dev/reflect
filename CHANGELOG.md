@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.1 (unreleased)
+## 0.4.0 (2026-04-15)
 
 ### Added
 - Local OTLP gateway (`reflect gateway`) that accepts traces and logs over gRPC (:4317) and HTTP (:4318) and writes them to `~/.reflect/state/otlp/`
