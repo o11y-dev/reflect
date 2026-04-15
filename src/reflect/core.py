@@ -1892,14 +1892,14 @@ def setup() -> None:
         console.print("  [yellow]\u2022[/] Installing opentelemetry-hooks via pipx...")
         try:
             subprocess.check_call(
-                ["pipx", "install", "opentelemetry-hooks"],
+                ["pipx", "install", "opentelemetry-hooks>=0.10.0"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
             otel_hook = shutil.which("otel-hook")
             console.print(f"  [green]\u2713[/] Installed opentelemetry-hooks ({otel_hook})")
         except (subprocess.CalledProcessError, FileNotFoundError) as exc:
             console.print(f"  [red]\u2717[/] Failed to install opentelemetry-hooks: {exc}")
-            console.print("    Install manually: [bold]pipx install opentelemetry-hooks[/]")
+            console.print("    Install manually: [bold]pipx install opentelemetry-hooks>=0.10.0[/]")
 
     console.print("\n[bold]Step 4: Configure local telemetry export[/]")
     config_path = HOOK_HOME / "otel_config.json"
@@ -1977,7 +1977,7 @@ def setup() -> None:
             console.print("    Run manually: [bold]otel-hook setup[/]")
     else:
         console.print("  [yellow]\u2022[/] otel-hook not found; skipping hook-based agent wiring")
-        console.print("    Install first: [bold]pipx install opentelemetry-hooks[/]")
+        console.print("    Install first: [bold]pipx install opentelemetry-hooks>=0.10.0[/]")
 
     # 6. Configure native OTel for all agents that have built-in OTLP export.
     # otel-hook setup (step 5) handles hook-based agents; this step handles native OTel.
