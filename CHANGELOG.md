@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.1 (unreleased)
 
 ### Fixed
 - `reflect setup` Step 4 now writes `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_PROTOCOL` into `otel_config.json` via `setdefault`, so the gateway address lives in the config file rather than only in hardcoded fallback defaults across five native-OTel configurers
