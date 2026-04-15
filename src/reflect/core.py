@@ -1005,14 +1005,35 @@ def _compress_tool_sequence(tools: list[str]) -> list[str]:
     return result
 
 
+_ACTIONABLE_RECOVERY_EVENTS = {"PreToolUse", "BeforeShellExecution", "BeforeMCPExecution"}
+
+
 def _extract_recovery_chains(spans: list[dict]) -> list[str]:
-    """Return failed-tool→next-tool pairs as error-recovery signals."""
+    """Return failed-tool→next-actionable-tool pairs as error-recovery signals.
+
+    Spans are sorted chronologically by ``t`` first so ingestion order does not
+    produce misleading pairs.  Only actionable span types (PreToolUse /
+    BeforeShellExecution / BeforeMCPExecution) are considered as recovery steps,
+    skipping Stop/SessionEnd and other bookkeeping events.
+    """
     chains: list[str] = []
-    for i, span in enumerate(spans):
-        if not span.get("ok", True) and i + 1 < len(spans):
-            failed = span.get("tool", "?")
-            recovered = spans[i + 1].get("tool", "?")
-            chains.append(f"{failed}✗→{recovered}")
+    ordered = sorted(
+        spans,
+        key=lambda s: (0, s["t"]) if s.get("t") is not None else (1, 0),
+    )
+    for i, span in enumerate(ordered):
+        if span.get("ok", True):
+            continue
+        failed = span.get("tool")
+        if not failed:
+            continue
+        for next_span in ordered[i + 1:]:
+            if next_span.get("event") not in _ACTIONABLE_RECOVERY_EVENTS:
+                continue
+            recovered = next_span.get("tool")
+            if recovered:
+                chains.append(f"{failed}✗→{recovered}")
+            break
     return chains
 
 
@@ -1020,57 +1041,76 @@ def _interactive_pick(
     items: list[str],
     *,
     multi: bool,
-    prompt_hint: str,
 ) -> list[int]:
     """Raw-terminal interactive picker. Returns list of selected indices.
 
-    *multi=True*: space to toggle, all start checked.
-    *multi=False*: radio — arrows move, Enter confirms.
-    Falls back to first item (single) or all items (multi) when stdin is not a TTY.
+    *multi=True*: space to toggle checkboxes, all start checked.
+    *multi=False*: radio — arrows move cursor, Enter confirms.
+
+    Falls back to a Click prompt when stdin is not a TTY or when the platform
+    does not support raw-terminal mode (e.g. Windows without ``tty``/``termios``).
     """
     import sys
-    import tty
-    import termios
 
     n = len(items)
     if not sys.stdin.isatty():
         return list(range(n)) if multi else [0]
+
+    try:
+        import termios
+        import tty
+    except ImportError:
+        # Platform (e.g. Windows) does not support raw-terminal mode.
+        hint = "↑↓ select  Enter confirm" if not multi else "comma-separated numbers, empty=all"
+        click.echo(hint)
+        for i, label in enumerate(items, start=1):
+            click.echo(f"  {i}. {label}")
+        if multi:
+            raw = click.prompt("Select by number (empty for all)", default="", show_default=False)
+            if not raw.strip():
+                return list(range(n))
+            picked = []
+            for part in raw.split(","):
+                part = part.strip()
+                if part.isdigit():
+                    idx = int(part) - 1
+                    if 0 <= idx < n:
+                        picked.append(idx)
+            return sorted(set(picked)) or list(range(n))
+        choice = click.prompt("Select by number", type=click.IntRange(1, n), default=1)
+        return [choice - 1]
+
+    from rich.console import Console as _Console
+    con = _Console(force_terminal=True)
 
     selected = [True] * n if multi else [False] * n
     if not multi:
         selected[0] = True
     cursor = 0
 
-    def _hint() -> str:
-        if multi:
-            return "[dim]↑↓ move  Space toggle  a=all  n=none  Enter confirm[/dim]"
-        return "[dim]↑↓ move  Enter confirm[/dim]"
+    hint = (
+        "[dim]↑↓ move  Space toggle  a=all  n=none  Enter confirm[/dim]"
+        if multi
+        else "[dim]↑↓ move  Enter confirm[/dim]"
+    )
 
-    from rich.console import Console as _Console
-    con = _Console(force_terminal=True)
-
-    def _render(first: bool = False) -> int:
-        """Render the list; return number of lines printed."""
-        lines = 0
-        if not first:
-            pass  # caller handles cursor-up before calling
-        con.print(_hint())
-        lines += 1
+    def _render() -> int:
+        """Render the list and return the number of lines printed."""
+        con.print(hint)
+        lines = 1
         con.print()
         lines += 1
         for i, label in enumerate(items):
             arrow = "▶ " if i == cursor else "  "
-            if multi:
-                mark = "[green]●[/green]" if selected[i] else "[dim]○[/dim]"
+            mark = "[green]●[/green]" if selected[i] else "[dim]○[/dim]"
+            if i == cursor:
+                con.print(f"  {arrow}{mark} [bold]{label}[/bold]")
             else:
-                mark = "[green]●[/green]" if selected[i] else "[dim]○[/dim]"
-            style = "bold" if i == cursor else ""
-            con.print(f"  {arrow}{mark} [{style}]{label}[/{style}]" if style
-                      else f"  {arrow}{mark} {label}")
+                con.print(f"  {arrow}{mark} {label}")
             lines += 1
         return lines
 
-    lines_drawn = _render(first=True)
+    lines_drawn = _render()
 
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
@@ -1142,7 +1182,7 @@ def _resolve_skills_agent(agent: str | None) -> tuple[str, list[str]]:
     _con = _Console(force_terminal=True)
     _con.print(f"\n[bold]Found {len(available)} agent CLIs.[/bold] Which should extract skills?\n")
     labels = [name for name, _ in available]
-    indices = _interactive_pick(labels, multi=False, prompt_hint="Select agent")
+    indices = _interactive_pick(labels, multi=False)
     chosen = indices[0] if indices else 0
     return available[chosen]
 
@@ -1205,7 +1245,7 @@ def _select_skills(
         f"[cyan]{s['name']:<22}[/cyan] {s['description']}"
         for s in skill_defs
     ]
-    indices = _interactive_pick(labels, multi=True, prompt_hint="Select skills")
+    indices = _interactive_pick(labels, multi=True)
     if not indices:
         console.print("\n[yellow]No skills selected. Aborted.[/yellow]")
         raise SystemExit(0)
@@ -1237,11 +1277,12 @@ def _serialize_sessions_for_skills(stats: TelemetryStats) -> str:
         lines.append(f"Session {sid[:8]}:")
         lines.append(f"  model={model_str} events={event_count} tokens={total_tokens}")
 
-        # Ordered tool flow — compressed consecutive repeats, capped at 20 steps.
-        # E.g. "Read×3 → Grep → Edit → Bash" encodes a search-and-fix pattern.
+        # Ordered tool flow — sorted by timestamp, consecutive repeats collapsed,
+        # capped at 20 steps.  E.g. "Read×3 → Grep → Edit → Bash".
         tool_seq = stats.session_tool_seq.get(sid, [])
         if tool_seq:
-            compressed = _compress_tool_sequence([t for _, t, _ in tool_seq])
+            sorted_seq = sorted(tool_seq, key=lambda item: item[0])
+            compressed = _compress_tool_sequence([t for _, t, _ in sorted_seq])
             lines.append(f"  tool_flow={' → '.join(compressed[:20])}")
 
         # Top shell commands reveal domain (git, pytest, docker, npm …).
@@ -1250,13 +1291,15 @@ def _serialize_sessions_for_skills(stats: TelemetryStats) -> str:
             top_cmds = [cmd for cmd, _ in shell_cmds.most_common(5)]
             lines.append(f"  shell_cmds={' | '.join(top_cmds)}")
 
-        # First 80 chars of each user prompt — topic signal without full text.
+        # First 80 chars of each user prompt normalized to a single line.
+        # Raw previews may contain newlines that would break the line-oriented format.
         conv = stats.session_conversation.get(sid, [])
-        prompt_snippets = [
-            e["preview"][:80]
-            for e in conv
-            if e.get("type") == "prompt" and e.get("preview")
-        ]
+        prompt_snippets = []
+        for e in conv:
+            if e.get("type") == "prompt" and e.get("preview"):
+                snippet = " ".join(e["preview"].split())[:80]
+                if snippet:
+                    prompt_snippets.append(snippet)
         if prompt_snippets:
             joined = " / ".join(prompt_snippets[:3])
             lines.append(f"  prompts=[{joined}]")

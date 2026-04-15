@@ -7,6 +7,14 @@
 - `reflect gateway start/stop/status` daemon management commands
 - `reflect setup` now auto-starts the gateway after configuring native OTel
 - `reflect doctor` shows gateway running/stopped status in Overview
+- `reflect skills` session serialization now encodes trace-derived workflow fingerprints: ordered `tool_flow` (consecutive repeats collapsed), `shell_cmds`, prompt topic snippets (first 80 chars, whitespace-normalized), and `error_recovery` chains — giving the extraction AI real behavioral evidence instead of bare tool lists
+- `reflect skills` interactive skill selection: space-to-toggle checkboxes with ↑↓ navigation and Enter to confirm; falls back to numbered-list prompt when stdin is not a TTY or raw-terminal mode is unavailable (Windows)
+- `reflect skills` interactive agent selection: when multiple agent CLIs are installed, prompts with an arrow-key radio picker instead of silently picking the first detected one
+
+### Fixed
+- `_extract_recovery_chains` now sorts spans by timestamp before pairing and skips non-actionable event types (Stop, SessionEnd, etc.) so failure→recovery pairs reflect actual workflows
+- `_serialize_sessions_for_skills` sorts `tool_seq` by timestamp before compressing so `tool_flow` is chronologically accurate
+- `_interactive_pick` guards `tty`/`termios` imports behind `try/except ImportError` for Windows compatibility
 
 ### Dependencies
 - Added `grpcio>=1.60` and `opentelemetry-proto>=1.20`
