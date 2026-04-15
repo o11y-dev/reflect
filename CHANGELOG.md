@@ -2,6 +2,16 @@
 
 ## 0.3.1 (unreleased)
 
+### Added
+- Local OTLP gateway (`reflect gateway`) that accepts traces and logs over gRPC (:4317) and HTTP (:4318) and writes them to `~/.reflect/state/otlp/`
+- `reflect gateway start/stop/status` daemon management commands
+- `reflect setup` now auto-starts the gateway after configuring native OTel
+- `reflect doctor` shows gateway running/stopped status in Overview
+
+### Dependencies
+- Added `grpcio>=1.60` and `opentelemetry-proto>=1.20`
+- Added `httpx>=0.24` to test dependencies (required by FastAPI TestClient)
+
 ## 0.3.0 (2026-04-14)
 
 ### Added

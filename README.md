@@ -81,7 +81,7 @@ reflect setup
 reflect
 ```
 
-`reflect setup` modifies config files for the agents with implemented telemetry wiring today (Claude Code, GitHub Copilot, Gemini CLI, and Codex native OTel) and starts writing spans to `~/.reflect/state/`. `reflect` then reads those spans and renders an interactive terminal dashboard.
+`reflect setup` modifies config files for the agents with implemented telemetry wiring today (Claude Code, GitHub Copilot, Gemini CLI, and Codex native OTel), starts a local OTLP gateway on ports 4317 (gRPC) and 4318 (HTTP), and begins writing spans to `~/.reflect/state/`. `reflect` then reads those spans and renders an interactive terminal dashboard.
 
 **No telemetry yet?** Try the demo:
 
@@ -143,6 +143,22 @@ reflect skills                 # extract reusable skills from your sessions
 reflect --demo                 # instant demo with sample data
 ```
 
+## Local OTLP gateway
+
+`reflect setup` automatically starts a lightweight OTLP gateway that listens for telemetry from all agents:
+
+- **gRPC** on `127.0.0.1:4317` (Claude Code, Gemini CLI, Codex, otel-hook)
+- **HTTP** on `127.0.0.1:4318` (GitHub Copilot)
+
+The gateway writes received traces and logs as JSON lines to `~/.reflect/state/otlp/`, the same files `reflect` already reads. You can also manage the gateway manually:
+
+```bash
+reflect gateway start          # start as background daemon
+reflect gateway stop           # stop the daemon
+reflect gateway status         # check if running, show file sizes
+reflect gateway --foreground   # run in foreground (for debugging)
+```
+
 ## Health check
 
 ```bash
@@ -150,7 +166,7 @@ reflect doctor
 reflect update
 ```
 
-`reflect doctor` checks that your installation is healthy, shows which integrations are implemented vs still planned, and reports whether hooks are wired correctly, the installed package matches the latest release, and skill files are up to date. `reflect update --apply` upgrades the pipx package when a newer release is available.
+`reflect doctor` checks that your installation is healthy, shows which integrations are implemented vs still planned, and reports whether hooks are wired correctly, the OTLP gateway is running, the installed package matches the latest release, and skill files are up to date. `reflect update --apply` upgrades the pipx package when a newer release is available.
 
 ## Agent instrumentation landscape
 
@@ -220,11 +236,12 @@ Options:
   --help                       Show help
 
 Commands:
-  setup    Install hooks, wire agents, configure telemetry
+  setup    Install hooks, wire agents, configure telemetry, start gateway
   doctor   Check installation health and agent status
   update   Check release drift and optional package upgrade
   report   Open the AI usage dashboard in a browser
   skills   Extract reusable skills from your session history
+  gateway  Manage the local OTLP gateway (start/stop/status)
 ```
 
 ## Data flow
@@ -240,10 +257,11 @@ reflect setup
     │                        Copilot CLI  → VS Code settings.json  (env block)
     │                        Gemini CLI   → ~/.gemini/settings.json  (telemetry.* keys)
     │                        Codex CLI    → ~/.codex/config.toml    ([otel] section)
+    ├── starts local OTLP gateway (gRPC :4317, HTTP :4318)
     ├── distributes skill packages
     └── enables local span export to ~/.reflect/state/
 
-Your AI tool → hooks -or- native OTLP → ~/.reflect/state/
+Your AI tool → hooks -or- native OTLP → gateway → ~/.reflect/state/otlp/
 
 reflect → reads traces → terminal dashboard / report / hosted view
 ```

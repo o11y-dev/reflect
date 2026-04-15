@@ -1755,6 +1755,21 @@ def setup() -> None:
     _configure_gemini_native_otel(console, config)
     _configure_codex_native_otel(console, config)
 
+    # 6b. Start local OTLP gateway (receives native OTel from agents)
+    console.print("\n[bold]Step 6b: Start local OTLP gateway[/]")
+    from reflect.gateway import _is_running as _gateway_is_running
+    from reflect.gateway import daemon_start as _gateway_daemon_start
+
+    if _gateway_is_running():
+        console.print("  [green]\u2713[/] Gateway already running")
+    else:
+        try:
+            pid = _gateway_daemon_start()
+            console.print(f"  [green]\u2713[/] Gateway started (PID {pid}) — gRPC :4317 | HTTP :4318")
+        except Exception as exc:
+            console.print(f"  [red]\u2717[/] Failed to start gateway: {exc}")
+            console.print("    Start manually: [bold]reflect gateway start[/]")
+
     planned_agents = [agent for agent in detected_agents if agent.get("support_status") != "Implemented"]
     if planned_agents:
         console.print("\n[bold yellow]Telemetry gaps still not implemented[/]")
@@ -1816,6 +1831,12 @@ def doctor() -> None:
     summary.add_row("detected agents", f"[bold]{len(detected_agents)}[/] / {len(agents)}")
     summary.add_row("local spans", f"[bold]{span_files}[/] file(s)")
     summary.add_row("local sessions", f"[bold]{session_files}[/] file(s)")
+    from reflect.gateway import _is_running as _gw_running
+    gw_pid = _gw_running()
+    summary.add_row(
+        "otlp gateway",
+        _status_markup(gw_pid is not None, present=f"running (PID {gw_pid})", missing="stopped"),
+    )
     console.print(Panel(summary, title="Overview", border_style="blue"))
     _render_update_advisor_panel(console, update_advisor)
 
@@ -1981,6 +2002,81 @@ def update(apply: bool) -> None:
         if advisor["local_issues"]:
             console.print("For local hook or skill drift, run [bold]reflect setup[/] from the workspace root.")
     console.print()
+
+
+@main.group(invoke_without_command=True)
+@click.option("--grpc-port", type=int, default=4317, help="gRPC listen port (default 4317).")
+@click.option("--http-port", type=int, default=4318, help="HTTP listen port (default 4318).")
+@click.option("--foreground", is_flag=True, help="Run the gateway in the foreground (blocking).")
+@click.pass_context
+def gateway(ctx, grpc_port: int, http_port: int, foreground: bool) -> None:
+    """Local OTLP gateway — receive traces and logs from agents, write to local files."""
+    ctx.ensure_object(dict)
+    ctx.obj["grpc_port"] = grpc_port
+    ctx.obj["http_port"] = http_port
+    if ctx.invoked_subcommand is not None:
+        return
+    if foreground:
+        from reflect.gateway import start_gateway
+
+        start_gateway(grpc_port=grpc_port, http_port=http_port)
+    else:
+        # Default (no subcommand, no --foreground): start as daemon
+        ctx.invoke(gateway_start)
+
+
+@gateway.command("start")
+@click.pass_context
+def gateway_start(ctx) -> None:
+    """Start the gateway as a background daemon."""
+    from rich.console import Console
+
+    from reflect.gateway import daemon_start
+
+    console = Console(force_terminal=True)
+    grpc_port = ctx.obj["grpc_port"]
+    http_port = ctx.obj["http_port"]
+    try:
+        pid = daemon_start(grpc_port=grpc_port, http_port=http_port)
+    except RuntimeError as exc:
+        console.print(f"[yellow]{exc}[/]")
+        return
+    console.print(
+        f"[green]\u2713[/] Gateway started (PID {pid})"
+        f"  gRPC :{grpc_port}  HTTP :{http_port}"
+    )
+
+
+@gateway.command("stop")
+def gateway_stop() -> None:
+    """Stop the background gateway daemon."""
+    from rich.console import Console
+
+    from reflect.gateway import daemon_stop
+
+    console = Console(force_terminal=True)
+    if daemon_stop():
+        console.print("[green]\u2713[/] Gateway stopped")
+    else:
+        console.print("[yellow]Gateway is not running[/]")
+
+
+@gateway.command("status")
+def gateway_status() -> None:
+    """Show gateway daemon status."""
+    from rich.console import Console
+
+    from reflect.gateway import daemon_status
+
+    console = Console(force_terminal=True)
+    status = daemon_status()
+    if status["running"]:
+        console.print(f"[green]running[/] (PID {status['pid']})")
+    else:
+        console.print("[red]stopped[/]")
+    console.print(f"  traces: {status['traces_path']} ({_summarize_file(Path(status['traces_path']))})")
+    console.print(f"  logs:   {status['logs_path']} ({_summarize_file(Path(status['logs_path']))})")
+    console.print(f"  log:    {status['log_file']}")
 
 
 if __name__ == "__main__":
