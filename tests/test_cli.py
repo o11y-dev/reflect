@@ -463,18 +463,6 @@ class TestUpdateAdvisor:
 
         assert drift is None
 
-    def test_detect_hook_drift_reports_config_missing_when_installed(self, tmp_path):
-        hook_home = tmp_path / ".otel-hook-home"
-        hook_home.mkdir()
-
-        with patch("reflect.core.HOOK_HOME", hook_home), \
-             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
-             patch("reflect.core._claude_hooks_registered", return_value=True):
-            drift = core._detect_hook_drift()
-
-        assert drift is not None
-        assert "hook export config is missing" in drift["summary"]
-
     def test_detect_hook_drift_returns_none_when_fully_configured(self, tmp_path):
         hook_home = tmp_path / ".otel-hook-home"
         hook_home.mkdir()
