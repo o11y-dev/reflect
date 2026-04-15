@@ -989,24 +989,202 @@ def _strip_json_fences(text: str) -> str:
     return stripped
 
 
+def _compress_tool_sequence(tools: list[str]) -> list[str]:
+    """Collapse consecutive identical tool calls into Tool×N notation."""
+    if not tools:
+        return []
+    result: list[str] = []
+    cur, count = tools[0], 1
+    for t in tools[1:]:
+        if t == cur:
+            count += 1
+        else:
+            result.append(f"{cur}×{count}" if count > 1 else cur)
+            cur, count = t, 1
+    result.append(f"{cur}×{count}" if count > 1 else cur)
+    return result
+
+
+_ACTIONABLE_RECOVERY_EVENTS = {"PreToolUse", "BeforeShellExecution", "BeforeMCPExecution"}
+
+
+def _extract_recovery_chains(spans: list[dict]) -> list[str]:
+    """Return failed-tool→next-actionable-tool pairs as error-recovery signals.
+
+    Spans are sorted chronologically by ``t`` first so ingestion order does not
+    produce misleading pairs.  Only actionable span types (PreToolUse /
+    BeforeShellExecution / BeforeMCPExecution) are considered as recovery steps,
+    skipping Stop/SessionEnd and other bookkeeping events.
+    """
+    chains: list[str] = []
+    ordered = sorted(
+        spans,
+        key=lambda s: (0, s["t"]) if s.get("t") is not None else (1, 0),
+    )
+    for i, span in enumerate(ordered):
+        if span.get("ok", True):
+            continue
+        failed = span.get("tool")
+        if not failed:
+            continue
+        for next_span in ordered[i + 1:]:
+            if next_span.get("event") not in _ACTIONABLE_RECOVERY_EVENTS:
+                continue
+            recovered = next_span.get("tool")
+            if recovered:
+                chains.append(f"{failed}✗→{recovered}")
+            break
+    return chains
+
+
+def _interactive_pick(
+    items: list[str],
+    *,
+    multi: bool,
+) -> list[int]:
+    """Raw-terminal interactive picker. Returns list of selected indices.
+
+    *multi=True*: space to toggle checkboxes, all start checked.
+    *multi=False*: radio — arrows move cursor, Enter confirms.
+
+    Falls back to a Click prompt when stdin is not a TTY or when the platform
+    does not support raw-terminal mode (e.g. Windows without ``tty``/``termios``).
+    """
+    import sys
+
+    n = len(items)
+    if not sys.stdin.isatty():
+        return list(range(n)) if multi else [0]
+
+    try:
+        import termios
+        import tty
+    except ImportError:
+        # Platform (e.g. Windows) does not support raw-terminal mode.
+        hint = "↑↓ select  Enter confirm" if not multi else "comma-separated numbers, empty=all"
+        click.echo(hint)
+        for i, label in enumerate(items, start=1):
+            click.echo(f"  {i}. {label}")
+        if multi:
+            raw = click.prompt("Select by number (empty for all)", default="", show_default=False)
+            if not raw.strip():
+                return list(range(n))
+            picked = []
+            for part in raw.split(","):
+                part = part.strip()
+                if part.isdigit():
+                    idx = int(part) - 1
+                    if 0 <= idx < n:
+                        picked.append(idx)
+            return sorted(set(picked)) or list(range(n))
+        choice = click.prompt("Select by number", type=click.IntRange(1, n), default=1)
+        return [choice - 1]
+
+    from rich.console import Console as _Console
+    con = _Console(force_terminal=True)
+
+    selected = [True] * n if multi else [False] * n
+    if not multi:
+        selected[0] = True
+    cursor = 0
+
+    hint = (
+        "[dim]↑↓ move  Space toggle  a=all  n=none  Enter confirm[/dim]"
+        if multi
+        else "[dim]↑↓ move  Enter confirm[/dim]"
+    )
+
+    def _render() -> int:
+        """Render the list and return the number of lines printed."""
+        con.print(hint)
+        lines = 1
+        con.print()
+        lines += 1
+        for i, label in enumerate(items):
+            arrow = "▶ " if i == cursor else "  "
+            mark = "[green]●[/green]" if selected[i] else "[dim]○[/dim]"
+            if i == cursor:
+                con.print(f"  {arrow}{mark} [bold]{label}[/bold]")
+            else:
+                con.print(f"  {arrow}{mark} {label}")
+            lines += 1
+        return lines
+
+    lines_drawn = _render()
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        while True:
+            sys.stdout.write(f"\033[{lines_drawn}A\033[J")
+            sys.stdout.flush()
+            lines_drawn = _render()
+            ch = sys.stdin.read(1)
+            if ch in ("\r", "\n"):
+                break
+            elif ch == " " and multi:
+                selected[cursor] = not selected[cursor]
+            elif ch == "a" and multi:
+                selected = [True] * n
+            elif ch == "n" and multi:
+                selected = [False] * n
+            elif ch == "\x1b":
+                seq = sys.stdin.read(2)
+                if seq == "[A":  # up arrow
+                    cursor = (cursor - 1) % n
+                    if not multi:
+                        selected = [False] * n
+                        selected[cursor] = True
+                elif seq == "[B":  # down arrow
+                    cursor = (cursor + 1) % n
+                    if not multi:
+                        selected = [False] * n
+                        selected[cursor] = True
+            elif ch == "\x03":
+                raise KeyboardInterrupt
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+    return [i for i, s in enumerate(selected) if s]
+
+
 def _resolve_skills_agent(agent: str | None) -> tuple[str, list[str]]:
-    """Return (binary, extra_flags) for the chosen or auto-detected agent CLI."""
+    """Return (binary, extra_flags) for the chosen or auto-detected agent CLI.
+
+    When ``--agent`` is given the named binary is used directly.  Otherwise
+    all supported CLIs are probed and, if more than one is found, the user is
+    prompted to pick one interactively (arrows + Enter).
+    """
     if agent is not None:
         for name, flags in _SKILL_AGENT_SPECS:
             if name == agent:
                 return agent, flags
         # Unknown agent — fall back to --print and hope for the best
         return agent, ["--print"]
-    # Auto-detect: use the first available CLI
-    for name, flags in _SKILL_AGENT_SPECS:
-        if shutil.which(name):
-            return name, flags
-    click.echo(
-        "No supported agent CLI found (tried: claude, gemini, codex, qwen).\n"
-        "Install one or pass --agent <binary>.",
-        err=True,
-    )
-    raise SystemExit(1)
+
+    # Probe all supported CLIs
+    available = [(name, flags) for name, flags in _SKILL_AGENT_SPECS if shutil.which(name)]
+
+    if not available:
+        click.echo(
+            "No supported agent CLI found (tried: claude, gemini, codex, qwen).\n"
+            "Install one or pass --agent <binary>.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    if len(available) == 1:
+        return available[0]
+
+    # Multiple agents available — let the user choose
+    from rich.console import Console as _Console
+    _con = _Console(force_terminal=True)
+    _con.print(f"\n[bold]Found {len(available)} agent CLIs.[/bold] Which should extract skills?\n")
+    labels = [name for name, _ in available]
+    indices = _interactive_pick(labels, multi=False)
+    chosen = indices[0] if indices else 0
+    return available[chosen]
 
 
 def _select_skills(
@@ -1015,51 +1193,72 @@ def _select_skills(
     *,
     yes: bool,
 ) -> list[dict]:
-    """Show a numbered skill preview and let the user pick which to install."""
+    """Let the user pick which extracted skills to install.
+
+    In an interactive terminal: renders a space-to-toggle checkbox list
+    (↑↓ navigate, Space toggle, a=all, n=none, Enter confirm).
+
+    In non-interactive mode (piped / --yes): returns all skills or prompts
+    for a comma-separated index list as a fallback.
+    """
+    import sys
+
     console.print(f"\nExtracted [bold]{len(skill_defs)}[/bold] skill(s):\n")
-    for i, s in enumerate(skill_defs, 1):
-        console.print(f"  [bold]{i}.[/bold] [cyan]{s['name']:<22}[/cyan] {s['description']}")
 
     if yes:
+        for s in skill_defs:
+            console.print(f"  [green]✓[/green] [cyan]{s['name']:<22}[/cyan] {s['description']}")
         return skill_defs
 
-    console.print()
-    raw = click.prompt(
-        "Select skills to install (e.g. 1,3) or press Enter for all",
-        default="all",
-        show_default=True,
-    ).strip()
+    if not sys.stdin.isatty():
+        # Non-interactive fallback: numbered list + comma prompt
+        for i, s in enumerate(skill_defs, 1):
+            console.print(f"  [bold]{i}.[/bold] [cyan]{s['name']:<22}[/cyan] {s['description']}")
+        console.print()
+        raw = click.prompt(
+            "Select skills to install (e.g. 1,3) or press Enter for all",
+            default="all",
+            show_default=True,
+        ).strip()
+        if raw.lower() in ("all", ""):
+            return skill_defs
+        chosen: list[dict] = []
+        for token in raw.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            try:
+                idx = int(token)
+                if 1 <= idx <= len(skill_defs):
+                    chosen.append(skill_defs[idx - 1])
+                else:
+                    console.print(f"  [yellow]Skipping out-of-range index {idx}[/yellow]")
+            except ValueError:
+                console.print(f"  [yellow]Ignoring non-numeric token '{token}'[/yellow]")
+        if not chosen:
+            console.print("No valid skills selected. Aborted.")
+            raise SystemExit(0)
+        return chosen
 
-    if raw.lower() in ("all", ""):
-        return skill_defs
-
-    selected = []
-    for token in raw.split(","):
-        token = token.strip()
-        if not token:
-            continue
-        try:
-            idx = int(token)
-            if 1 <= idx <= len(skill_defs):
-                selected.append(skill_defs[idx - 1])
-            else:
-                console.print(f"  [yellow]Skipping out-of-range index {idx}[/yellow]")
-        except ValueError:
-            console.print(f"  [yellow]Ignoring non-numeric token '{token}'[/yellow]")
-
-    if not selected:
-        console.print("No valid skills selected. Aborted.")
+    # Interactive terminal: space-toggleable checkboxes
+    labels = [
+        f"[cyan]{s['name']:<22}[/cyan] {s['description']}"
+        for s in skill_defs
+    ]
+    indices = _interactive_pick(labels, multi=True)
+    if not indices:
+        console.print("\n[yellow]No skills selected. Aborted.[/yellow]")
         raise SystemExit(0)
-
-    return selected
+    return [skill_defs[i] for i in indices]
 
 
 def _serialize_sessions_for_skills(stats: TelemetryStats) -> str:
-    """Serialize top sessions to compact text for skill extraction prompts.
+    """Serialize top sessions to compact workflow fingerprints for skill extraction.
 
-    ``stats.sessions_seen`` is a ``set[str]`` of session IDs.  We pull
-    supporting metadata from the per-session dicts on *stats* and sort by
-    event count (descending) so the most active sessions appear first.
+    Each session is encoded as structured trace-derived signals rather than raw
+    conversation text: ordered tool flows, shell commands, prompt topic snippets,
+    and error-recovery chains.  This gives the extraction AI real behavioral
+    patterns to reason about at ~200 tokens/session instead of tens of thousands.
     """
     session_ids = sorted(
         stats.sessions_seen,
@@ -1067,20 +1266,50 @@ def _serialize_sessions_for_skills(stats: TelemetryStats) -> str:
         reverse=True,
     )[:20]
 
-    lines = []
+    lines: list[str] = []
     for sid in session_ids:
         event_count = stats.session_events.get(sid, 0)
         models = stats.session_models.get(sid)
         model_str = next(iter(models), "unknown") if models else "unknown"
         tok = stats.session_tokens.get(sid, {})
         total_tokens = tok.get("input", 0) + tok.get("output", 0)
-        # Derive a rough tool list from the session's tool sequence
-        tool_seq = stats.session_tool_seq.get(sid, [])
-        tools_used = list(dict.fromkeys(entry[1] for entry in tool_seq if len(entry) > 1))
+
         lines.append(f"Session {sid[:8]}:")
         lines.append(f"  model={model_str} events={event_count} tokens={total_tokens}")
-        if tools_used:
-            lines.append(f"  tools_used={','.join(tools_used[:10])}")
+
+        # Ordered tool flow — sorted by timestamp, consecutive repeats collapsed,
+        # capped at 20 steps.  E.g. "Read×3 → Grep → Edit → Bash".
+        tool_seq = stats.session_tool_seq.get(sid, [])
+        if tool_seq:
+            sorted_seq = sorted(tool_seq, key=lambda item: item[0])
+            compressed = _compress_tool_sequence([t for _, t, _ in sorted_seq])
+            lines.append(f"  tool_flow={' → '.join(compressed[:20])}")
+
+        # Top shell commands reveal domain (git, pytest, docker, npm …).
+        shell_cmds = stats.session_shell_commands.get(sid)
+        if shell_cmds:
+            top_cmds = [cmd for cmd, _ in shell_cmds.most_common(5)]
+            lines.append(f"  shell_cmds={' | '.join(top_cmds)}")
+
+        # First 80 chars of each user prompt normalized to a single line.
+        # Raw previews may contain newlines that would break the line-oriented format.
+        conv = stats.session_conversation.get(sid, [])
+        prompt_snippets = []
+        for e in conv:
+            if e.get("type") == "prompt" and e.get("preview"):
+                snippet = " ".join(e["preview"].split())[:80]
+                if snippet:
+                    prompt_snippets.append(snippet)
+        if prompt_snippets:
+            joined = " / ".join(prompt_snippets[:3])
+            lines.append(f"  prompts=[{joined}]")
+
+        # Error-recovery chains: failed tool → next tool shows debugging patterns.
+        spans = stats.session_span_details.get(sid, [])
+        recoveries = _extract_recovery_chains(spans)
+        if recoveries:
+            lines.append(f"  error_recovery={' | '.join(recoveries[:3])}")
+
     return "\n".join(lines)
 
 
