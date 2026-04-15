@@ -61,6 +61,11 @@ import click
 REFLECT_HOME = Path(os.environ.get("REFLECT_HOME", Path.home() / ".reflect"))
 HOOK_HOME = Path(os.environ.get("IDE_OTEL_HOOK_HOME",
                                  Path.home() / ".local" / "share" / "opentelemetry-hooks"))
+_HOOK_PACKAGE_SPEC = "opentelemetry-hooks==0.11.0"
+_HOOK_CFG_ENDPOINT_KEY = "OTEL_EXPORTER_OTLP_ENDPOINT"
+_HOOK_CFG_ENDPOINT_DEFAULT = "http://localhost:4317"
+_HOOK_CFG_PROTOCOL_KEY = "OTEL_EXPORTER_OTLP_PROTOCOL"
+_HOOK_CFG_PROTOCOL_DEFAULT = "grpc"
 
 # ---------------------------------------------------------------------------
 # Re-exports from split modules — keeps backward compatibility for serve.py,
@@ -654,6 +659,15 @@ def _detect_hook_drift() -> dict | None:
         else:
             if config.get("IDE_OTEL_LOCAL_SPANS") != "true":
                 issues.append("IDE_OTEL_LOCAL_SPANS is not enabled")
+            if not config.get(_HOOK_CFG_ENDPOINT_KEY):
+                issues.append(f"{_HOOK_CFG_ENDPOINT_KEY} is missing from hook config")
+            protocol = config.get(_HOOK_CFG_PROTOCOL_KEY)
+            if not protocol:
+                issues.append(f"{_HOOK_CFG_PROTOCOL_KEY} is missing from hook config")
+            elif protocol not in {"grpc", "http/protobuf"}:
+                issues.append(
+                    f"{_HOOK_CFG_PROTOCOL_KEY} has unsupported value in hook config: {protocol}"
+                )
 
     claude_status = _claude_hooks_registered()
     if claude_status is False:
@@ -1661,8 +1675,8 @@ def _snapshot_detected_agent_configs(console, agents: list[dict]) -> None:
 
 def _configure_claude_native_otel(console, hook_config: dict[str, str]) -> None:
     settings_path = Path.home() / ".claude" / "settings.json"
-    endpoint = hook_config.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
-    protocol = hook_config.get("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+    endpoint = hook_config.get(_HOOK_CFG_ENDPOINT_KEY, _HOOK_CFG_ENDPOINT_DEFAULT)
+    protocol = hook_config.get(_HOOK_CFG_PROTOCOL_KEY, _HOOK_CFG_PROTOCOL_DEFAULT)
 
     desired_env = {
         "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
@@ -1698,7 +1712,7 @@ def _configure_claude_native_otel(console, hook_config: dict[str, str]) -> None:
 
 
 def _configure_copilot_native_otel(console, hook_config: dict[str, str]) -> None:
-    endpoint = hook_config.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    endpoint = hook_config.get(_HOOK_CFG_ENDPOINT_KEY, _HOOK_CFG_ENDPOINT_DEFAULT)
     copilot_endpoint = endpoint.replace(":4317", ":4318") if endpoint.endswith(":4317") else endpoint
     desired = {
         "github.copilot.chat.otel.enabled": True,
@@ -1742,8 +1756,8 @@ def _configure_gemini_native_otel(console, hook_config: dict[str, str]) -> None:
         console.print("  [dim]\u2022[/] No Gemini CLI settings file detected; kept env guidance only.")
         return
 
-    endpoint = hook_config.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
-    protocol = hook_config.get("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+    endpoint = hook_config.get(_HOOK_CFG_ENDPOINT_KEY, _HOOK_CFG_ENDPOINT_DEFAULT)
+    protocol = hook_config.get(_HOOK_CFG_PROTOCOL_KEY, _HOOK_CFG_PROTOCOL_DEFAULT)
     gemini_protocol = "http" if protocol.startswith("http") else "grpc"
 
     try:
@@ -1781,7 +1795,7 @@ def _configure_gemini_native_otel(console, hook_config: dict[str, str]) -> None:
 
 def _configure_copilot_cli_native_otel(console, hook_config: dict[str, str]) -> None:
     """Set Copilot CLI OTel env vars in VS Code settings.json env block."""
-    endpoint = hook_config.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    endpoint = hook_config.get(_HOOK_CFG_ENDPOINT_KEY, _HOOK_CFG_ENDPOINT_DEFAULT)
     copilot_endpoint = endpoint.replace(":4317", ":4318") if endpoint.endswith(":4317") else endpoint
 
     desired_env = {
@@ -1821,7 +1835,7 @@ def _configure_copilot_cli_native_otel(console, hook_config: dict[str, str]) -> 
 def _configure_codex_native_otel(console, hook_config: dict[str, str]) -> None:
     """Write [otel] section to ~/.codex/config.toml (interactive mode only)."""
     config_path = Path.home() / ".codex" / "config.toml"
-    endpoint = hook_config.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    endpoint = hook_config.get(_HOOK_CFG_ENDPOINT_KEY, _HOOK_CFG_ENDPOINT_DEFAULT)
 
     if config_path.exists():
         try:
@@ -1890,14 +1904,14 @@ def setup() -> None:
         console.print("  [yellow]\u2022[/] Installing opentelemetry-hooks via pipx...")
         try:
             subprocess.check_call(
-                ["pipx", "install", "opentelemetry-hooks"],
+                ["pipx", "install", _HOOK_PACKAGE_SPEC],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
             otel_hook = shutil.which("otel-hook")
             console.print(f"  [green]\u2713[/] Installed opentelemetry-hooks ({otel_hook})")
         except (subprocess.CalledProcessError, FileNotFoundError) as exc:
             console.print(f"  [red]\u2717[/] Failed to install opentelemetry-hooks: {exc}")
-            console.print("    Install manually: [bold]pipx install opentelemetry-hooks[/]")
+            console.print(f"    Install manually: [bold]pipx install {_HOOK_PACKAGE_SPEC}[/]")
 
     console.print("\n[bold]Step 4: Configure local telemetry export[/]")
     config_path = HOOK_HOME / "otel_config.json"
@@ -1916,6 +1930,8 @@ def setup() -> None:
     config.setdefault("OTEL_SERVICE_NAME", "ide-agent")
     config.setdefault("IDE_OTEL_APP_NAME", "ide-agent")
     config.setdefault("IDE_OTEL_SUBSYSTEM_NAME", "ide-hooks")
+    config.setdefault(_HOOK_CFG_ENDPOINT_KEY, _HOOK_CFG_ENDPOINT_DEFAULT)
+    config.setdefault(_HOOK_CFG_PROTOCOL_KEY, _HOOK_CFG_PROTOCOL_DEFAULT)
     config_path.write_text(_json_stdlib.dumps(config, indent=2) + "\n")
     console.print(f"  [green]\u2713[/] Hook config updated ({config_path})")
 
@@ -1973,7 +1989,7 @@ def setup() -> None:
             console.print("    Run manually: [bold]otel-hook setup[/]")
     else:
         console.print("  [yellow]\u2022[/] otel-hook not found; skipping hook-based agent wiring")
-        console.print("    Install first: [bold]pipx install opentelemetry-hooks[/]")
+        console.print(f"    Install first: [bold]pipx install {_HOOK_PACKAGE_SPEC}[/]")
 
     # 6. Configure native OTel for all agents that have built-in OTLP export.
     # otel-hook setup (step 5) handles hook-based agents; this step handles native OTel.

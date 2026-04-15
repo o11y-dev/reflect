@@ -463,19 +463,19 @@ class TestUpdateAdvisor:
 
         assert drift is None
 
-    def test_detect_hook_drift_reports_config_missing_when_installed(self, tmp_path):
+    def test_detect_hook_drift_returns_none_when_fully_configured(self, tmp_path):
         hook_home = tmp_path / ".otel-hook-home"
         hook_home.mkdir()
+        (hook_home / "otel_config.json").write_text('{"IDE_OTEL_LOCAL_SPANS": "true", "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317", "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc"}')
 
         with patch("reflect.core.HOOK_HOME", hook_home), \
              patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
              patch("reflect.core._claude_hooks_registered", return_value=True):
             drift = core._detect_hook_drift()
 
-        assert drift is not None
-        assert "hook export config is missing" in drift["summary"]
+        assert drift is None
 
-    def test_detect_hook_drift_returns_none_when_fully_configured(self, tmp_path):
+    def test_detect_hook_drift_reports_missing_endpoint(self, tmp_path):
         hook_home = tmp_path / ".otel-hook-home"
         hook_home.mkdir()
         (hook_home / "otel_config.json").write_text('{"IDE_OTEL_LOCAL_SPANS": "true"}')
@@ -485,7 +485,38 @@ class TestUpdateAdvisor:
              patch("reflect.core._claude_hooks_registered", return_value=True):
             drift = core._detect_hook_drift()
 
-        assert drift is None
+        assert drift is not None
+        assert "OTEL_EXPORTER_OTLP_ENDPOINT" in drift["summary"]
+
+    def test_detect_hook_drift_reports_missing_protocol(self, tmp_path):
+        hook_home = tmp_path / ".otel-hook-home"
+        hook_home.mkdir()
+        (hook_home / "otel_config.json").write_text(
+            '{"IDE_OTEL_LOCAL_SPANS": "true", "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317"}'
+        )
+
+        with patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core._claude_hooks_registered", return_value=True):
+            drift = core._detect_hook_drift()
+
+        assert drift is not None
+        assert "OTEL_EXPORTER_OTLP_PROTOCOL" in drift["summary"]
+
+    def test_detect_hook_drift_reports_unsupported_protocol(self, tmp_path):
+        hook_home = tmp_path / ".otel-hook-home"
+        hook_home.mkdir()
+        (hook_home / "otel_config.json").write_text(
+            '{"IDE_OTEL_LOCAL_SPANS": "true", "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317", "OTEL_EXPORTER_OTLP_PROTOCOL": "json"}'
+        )
+
+        with patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core._claude_hooks_registered", return_value=True):
+            drift = core._detect_hook_drift()
+
+        assert drift is not None
+        assert "unsupported value" in drift["summary"]
 
     def test_publish_url_for_artifact_uses_docs_relative_ref(self, tmp_path):
         docs_dir = tmp_path / "docs"

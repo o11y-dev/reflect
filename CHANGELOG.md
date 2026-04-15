@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- `reflect setup` Step 4 now writes `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_PROTOCOL` into `otel_config.json` via `setdefault`, so the gateway address lives in the config file rather than only in hardcoded fallback defaults across five native-OTel configurers
+- `reflect doctor` / `_detect_hook_drift` flags a missing or unsupported `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_PROTOCOL` as drift, prompting existing installations to re-run `reflect setup`
+
+### Changed
+- Centralized OTLP endpoint/protocol config key names and defaults into `_HOOK_CFG_*` constants — a key rename or default change is now a one-line edit
+- Pinned `opentelemetry-hooks==0.11.0` in all pipx install calls via `_HOOK_PACKAGE_SPEC` constant for reproducible installs
+
 ## 0.4.0 (2026-04-15)
 
 ### Added
