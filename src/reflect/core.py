@@ -661,6 +661,13 @@ def _detect_hook_drift() -> dict | None:
                 issues.append("IDE_OTEL_LOCAL_SPANS is not enabled")
             if not config.get(_HOOK_CFG_ENDPOINT_KEY):
                 issues.append(f"{_HOOK_CFG_ENDPOINT_KEY} is missing from hook config")
+            protocol = config.get(_HOOK_CFG_PROTOCOL_KEY)
+            if not protocol:
+                issues.append(f"{_HOOK_CFG_PROTOCOL_KEY} is missing from hook config")
+            elif protocol not in {"grpc", "http/protobuf"}:
+                issues.append(
+                    f"{_HOOK_CFG_PROTOCOL_KEY} has unsupported value in hook config: {protocol}"
+                )
 
     claude_status = _claude_hooks_registered()
     if claude_status is False:
