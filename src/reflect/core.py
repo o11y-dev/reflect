@@ -654,6 +654,8 @@ def _detect_hook_drift() -> dict | None:
         else:
             if config.get("IDE_OTEL_LOCAL_SPANS") != "true":
                 issues.append("IDE_OTEL_LOCAL_SPANS is not enabled")
+            if not config.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+                issues.append("OTEL_EXPORTER_OTLP_ENDPOINT is missing from hook config")
 
     claude_status = _claude_hooks_registered()
     if claude_status is False:
@@ -1916,6 +1918,8 @@ def setup() -> None:
     config.setdefault("OTEL_SERVICE_NAME", "ide-agent")
     config.setdefault("IDE_OTEL_APP_NAME", "ide-agent")
     config.setdefault("IDE_OTEL_SUBSYSTEM_NAME", "ide-hooks")
+    config.setdefault("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    config.setdefault("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
     config_path.write_text(_json_stdlib.dumps(config, indent=2) + "\n")
     console.print(f"  [green]\u2713[/] Hook config updated ({config_path})")
 
