@@ -41,7 +41,7 @@ Changelog = "https://github.com/o11y-dev/reflect/blob/main/CHANGELOG.md"
 reflect = "reflect.core:main"
 
 [project.optional-dependencies]
-test = ["pytest>=7.0", "pytest-cov>=4.0"]
+test = ["pytest>=7.0", "pytest-cov>=4.0", "httpx>=0.24"]
 e2e = ["playwright>=1.40"]
 
 [tool.pytest.ini_options]

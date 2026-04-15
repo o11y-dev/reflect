@@ -93,6 +93,26 @@ class TestAppendJsonl:
 
 
 class TestProtoConversion:
+    def test_already_hex_ids_passed_through(self):
+        from reflect.gateway import _fix_trace_ids
+
+        payload = {
+            "resourceSpans": [{
+                "resource": {},
+                "scopeSpans": [{
+                    "spans": [{
+                        "traceId": "aabbccddaabbccddaabbccddaabbccdd",
+                        "spanId": "0123456789abcdef",
+                        "parentSpanId": "",
+                    }]
+                }]
+            }]
+        }
+        fixed = _fix_trace_ids(payload)
+        span = fixed["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+        assert span["traceId"] == "aabbccddaabbccddaabbccddaabbccdd"
+        assert span["spanId"] == "0123456789abcdef"
+
     def test_trace_ids_converted_to_hex(self):
         from reflect.gateway import _fix_trace_ids
 
@@ -192,6 +212,34 @@ class TestHttpEndpoints:
         assert traces_path.exists()
         spans_on_disk = json.loads(traces_path.read_text().strip())
         assert "resourceSpans" in spans_on_disk
+
+    def test_post_traces_normalizes_base64_ids(self, traces_path):
+        from fastapi.testclient import TestClient
+
+        from reflect.gateway import _build_http_app
+
+        app = _build_http_app(traces_path=traces_path)
+        client = TestClient(app)
+
+        payload = {
+            "resourceSpans": [{
+                "resource": {},
+                "scopeSpans": [{
+                    "spans": [{
+                        "traceId": "qrvM3aq7zN2qu8zdqrvM3Q==",
+                        "spanId": "ASNFZ4mrze8=",
+                        "name": "test",
+                    }]
+                }]
+            }]
+        }
+        resp = client.post("/v1/traces", json=payload)
+        assert resp.status_code == 200
+
+        written = json.loads(traces_path.read_text().strip())
+        span = written["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+        assert span["traceId"] == "aabbccddaabbccddaabbccddaabbccdd"
+        assert span["spanId"] == "0123456789abcdef"
 
     def test_post_logs(self, logs_path):
         from fastapi.testclient import TestClient

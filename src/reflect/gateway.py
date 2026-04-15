@@ -59,7 +59,7 @@ def _append_jsonl(path: Path, payload: dict) -> None:
     """Append a single JSON object as one line, using file locking."""
     path.parent.mkdir(parents=True, exist_ok=True)
     raw = orjson.dumps(payload) + b"\n"
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         os.write(fd, raw)
@@ -81,8 +81,13 @@ def append_logs(payload: dict, logs_path: Path | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _b64_to_hex(val: str) -> str:
-    """Convert base64-encoded bytes (from protobuf JSON) to hex string."""
+def _maybe_b64_to_hex(val: str) -> str:
+    """Convert base64-encoded ID to hex, passing through already-hex strings."""
+    if not val:
+        return val
+    # Already a hex string (32 hex chars for trace ID, 16 for span ID)
+    if all(c in "0123456789abcdefABCDEF" for c in val):
+        return val.lower()
     try:
         return base64.b64decode(val).hex()
     except Exception:
@@ -95,11 +100,11 @@ def _fix_trace_ids(payload: dict) -> dict:
         for ss in rs.get("scopeSpans", []):
             for span in ss.get("spans", []):
                 if "traceId" in span:
-                    span["traceId"] = _b64_to_hex(span["traceId"])
+                    span["traceId"] = _maybe_b64_to_hex(span["traceId"])
                 if "spanId" in span:
-                    span["spanId"] = _b64_to_hex(span["spanId"])
+                    span["spanId"] = _maybe_b64_to_hex(span["spanId"])
                 if "parentSpanId" in span:
-                    span["parentSpanId"] = _b64_to_hex(span["parentSpanId"])
+                    span["parentSpanId"] = _maybe_b64_to_hex(span["parentSpanId"])
     return payload
 
 
@@ -109,9 +114,9 @@ def _fix_log_ids(payload: dict) -> dict:
         for sl in rl.get("scopeLogs", []):
             for record in sl.get("logRecords", []):
                 if "traceId" in record:
-                    record["traceId"] = _b64_to_hex(record["traceId"])
+                    record["traceId"] = _maybe_b64_to_hex(record["traceId"])
                 if "spanId" in record:
-                    record["spanId"] = _b64_to_hex(record["spanId"])
+                    record["spanId"] = _maybe_b64_to_hex(record["spanId"])
                 # MessageToDict renders severityNumber as enum name string;
                 # Reflect expects an integer.
                 sn = record.get("severityNumber")
@@ -187,14 +192,14 @@ def _build_http_app(
     @app.post("/v1/traces")
     async def ingest_traces(request: Request) -> Response:
         body = await request.body()
-        payload = orjson.loads(body)
+        payload = _fix_trace_ids(orjson.loads(body))
         append_traces(payload, traces_path)
         return Response(content=b"{}", media_type="application/json")
 
     @app.post("/v1/logs")
     async def ingest_logs(request: Request) -> Response:
         body = await request.body()
-        payload = orjson.loads(body)
+        payload = _fix_log_ids(orjson.loads(body))
         append_logs(payload, logs_path)
         return Response(content=b"{}", media_type="application/json")
 
@@ -300,17 +305,17 @@ def daemon_start(grpc_port: int = 4317, http_port: int = 4318) -> int:
         raise RuntimeError(f"Gateway already running (PID {existing})")
 
     _PID_FILE.parent.mkdir(parents=True, exist_ok=True)
-    log_fd = open(_LOG_FILE, "a")  # noqa: SIM115
-    proc = subprocess.Popen(
-        [
-            sys.executable, "-m", "reflect.gateway",
-            "--grpc-port", str(grpc_port),
-            "--http-port", str(http_port),
-        ],
-        stdout=log_fd,
-        stderr=log_fd,
-        start_new_session=True,
-    )
+    with open(_LOG_FILE, "a") as log_fd:
+        proc = subprocess.Popen(
+            [
+                sys.executable, "-m", "reflect.gateway",
+                "--grpc-port", str(grpc_port),
+                "--http-port", str(http_port),
+            ],
+            stdout=log_fd,
+            stderr=log_fd,
+            start_new_session=True,
+        )
     _PID_FILE.write_text(str(proc.pid))
     return proc.pid
 

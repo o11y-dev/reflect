@@ -2007,7 +2007,7 @@ def update(apply: bool) -> None:
 @main.group(invoke_without_command=True)
 @click.option("--grpc-port", type=int, default=4317, help="gRPC listen port (default 4317).")
 @click.option("--http-port", type=int, default=4318, help="HTTP listen port (default 4318).")
-@click.option("--foreground", is_flag=True, help="Run the gateway in the foreground.")
+@click.option("--foreground", is_flag=True, help="Run the gateway in the foreground (blocking).")
 @click.pass_context
 def gateway(ctx, grpc_port: int, http_port: int, foreground: bool) -> None:
     """Local OTLP gateway — receive traces and logs from agents, write to local files."""
@@ -2016,13 +2016,13 @@ def gateway(ctx, grpc_port: int, http_port: int, foreground: bool) -> None:
     ctx.obj["http_port"] = http_port
     if ctx.invoked_subcommand is not None:
         return
-    # Default (no subcommand): run in foreground
-    if not foreground:
-        click.echo("hint: use --foreground to run inline, or 'reflect gateway start' for background")
-        click.echo("Starting in foreground...\n")
-    from reflect.gateway import start_gateway
+    if foreground:
+        from reflect.gateway import start_gateway
 
-    start_gateway(grpc_port=grpc_port, http_port=http_port)
+        start_gateway(grpc_port=grpc_port, http_port=http_port)
+    else:
+        # Default (no subcommand, no --foreground): start as daemon
+        ctx.invoke(gateway_start)
 
 
 @gateway.command("start")
