@@ -323,11 +323,11 @@ _AGENT_SPECS = [
         "recommendation": "Start with session/log adapters; native OTel and hooks still need verification.",
     },
     {
-        "name": "opencode",
+        "name": "OpenCode",
         "env": "OPENCODE_HOME",
         "default": lambda: Path.home() / ".config" / "opencode",
         "path_kind": "home",
-        "skill_path": ".config/opencode/skills/",
+        "skill_path": ".opencode/skills/",
         "global_path": "~/.config/opencode/skills/",
         "recommendation": "Use opencode run for skill extraction; opencode export for session telemetry.",
     },
@@ -339,7 +339,7 @@ _IMPLEMENTED_AGENT_SUPPORT: dict[str, tuple[str, str]] = {
     "Gemini CLI": ("Native OTel + session adapters", "High"),
     "GitHub Copilot": ("Native OTel + VS Code env", "High"),
     "OpenAI Codex CLI": ("Native OTel config", "Medium"),
-    "opencode": ("opencode run + export", "Medium"),
+    "OpenCode": ("opencode run + export", "Medium"),
 }
 
 
@@ -1005,6 +1005,7 @@ _SKILL_AGENT_SPECS: list[tuple[str, list[str]]] = [
     ("opencode", ["run"]),
     ("qwen", ["--print"]),
 ]
+_SKILL_AGENT_NAMES = ", ".join(name for name, _ in _SKILL_AGENT_SPECS)
 
 
 def _strip_json_fences(text: str) -> str:
@@ -1206,7 +1207,7 @@ def _resolve_skills_agent(agent: str | None) -> tuple[str, list[str]]:
 
     if not available:
         click.echo(
-            "No supported agent CLI found (tried: claude, gemini, codex, qwen).\n"
+            f"No supported agent CLI found (tried: {_SKILL_AGENT_NAMES}).\n"
             "Install one or pass --agent <binary>.",
             err=True,
         )

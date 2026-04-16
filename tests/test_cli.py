@@ -192,6 +192,53 @@ class TestSkillsSubcommand:
         assert "-p" in cmd
         assert "--print" not in cmd
 
+    def test_skills_cursor_agent_uses_print_flag(self, runner, otlp_file, tmp_path):
+        """cursor-agent uses --print flag."""
+        fake_output = json.dumps([_FAKE_SKILLS[0]])
+        with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
+             patch("reflect.core._detect_agents", return_value=[]):
+            runner.invoke(main, [
+                "skills", "--yes", "--agent", "cursor-agent",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "cursor-agent"
+        assert "--print" in cmd
+
+    def test_skills_copilot_uses_prompt_flag(self, runner, otlp_file, tmp_path):
+        """copilot uses --prompt flag, not --print."""
+        fake_output = json.dumps([_FAKE_SKILLS[0]])
+        with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
+             patch("reflect.core._detect_agents", return_value=[]):
+            runner.invoke(main, [
+                "skills", "--yes", "--agent", "copilot",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "copilot"
+        assert "--prompt" in cmd
+        assert "--print" not in cmd
+
+    def test_skills_opencode_uses_run_subcommand(self, runner, otlp_file, tmp_path):
+        """opencode uses 'run' subcommand, not --print."""
+        fake_output = json.dumps([_FAKE_SKILLS[0]])
+        with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
+             patch("reflect.core._detect_agents", return_value=[]):
+            runner.invoke(main, [
+                "skills", "--yes", "--agent", "opencode",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "opencode"
+        assert "run" in cmd
+        assert "--print" not in cmd
+
     def test_skills_autodetect_picks_first_available(self, runner, otlp_file, tmp_path):
         """With no --agent, auto-detection uses the first CLI found by shutil.which."""
         fake_output = json.dumps([_FAKE_SKILLS[0]])
