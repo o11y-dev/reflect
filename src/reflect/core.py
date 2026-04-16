@@ -322,6 +322,15 @@ _AGENT_SPECS = [
         "global_path": "~/.openclaw/skills/",
         "recommendation": "Start with session/log adapters; native OTel and hooks still need verification.",
     },
+    {
+        "name": "opencode",
+        "env": "OPENCODE_HOME",
+        "default": lambda: Path.home() / ".config" / "opencode",
+        "path_kind": "home",
+        "skill_path": ".config/opencode/skills/",
+        "global_path": "~/.config/opencode/skills/",
+        "recommendation": "Use opencode run for skill extraction; opencode export for session telemetry.",
+    },
 ]
 
 _IMPLEMENTED_AGENT_SUPPORT: dict[str, tuple[str, str]] = {
@@ -330,6 +339,7 @@ _IMPLEMENTED_AGENT_SUPPORT: dict[str, tuple[str, str]] = {
     "Gemini CLI": ("Native OTel + session adapters", "High"),
     "GitHub Copilot": ("Native OTel + VS Code env", "High"),
     "OpenAI Codex CLI": ("Native OTel config", "Medium"),
+    "opencode": ("opencode run + export", "Medium"),
 }
 
 
@@ -990,6 +1000,9 @@ _SKILL_AGENT_SPECS: list[tuple[str, list[str]]] = [
     ("claude", ["--print"]),
     ("gemini", ["-p"]),
     ("codex", ["--print"]),
+    ("cursor-agent", ["--print"]),
+    ("copilot", ["--prompt"]),
+    ("opencode", ["run"]),
     ("qwen", ["--print"]),
 ]
 
@@ -1094,8 +1107,8 @@ def _interactive_pick(
         choice = click.prompt("Select by number", type=click.IntRange(1, n), default=1)
         return [choice - 1]
 
+    import io as _io
     from rich.console import Console as _Console
-    con = _Console(force_terminal=True)
 
     selected = [True] * n if multi else [False] * n
     if not multi:
@@ -1108,20 +1121,31 @@ def _interactive_pick(
         else "[dim]↑↓ move  Enter confirm[/dim]"
     )
 
+    _in_raw_mode = False
+
     def _render() -> int:
         """Render the list and return the number of lines printed."""
-        con.print(hint)
+        buf = _io.StringIO()
+        buf_con = _Console(file=buf, force_terminal=True, highlight=False)
+        buf_con.print(hint)
         lines = 1
-        con.print()
+        buf_con.print()
         lines += 1
         for i, label in enumerate(items):
             arrow = "▶ " if i == cursor else "  "
             mark = "[green]●[/green]" if selected[i] else "[dim]○[/dim]"
             if i == cursor:
-                con.print(f"  {arrow}{mark} [bold]{label}[/bold]")
+                buf_con.print(f"  {arrow}{mark} [bold]{label}[/bold]")
             else:
-                con.print(f"  {arrow}{mark} {label}")
+                buf_con.print(f"  {arrow}{mark} {label}")
             lines += 1
+        output = buf.getvalue()
+        if _in_raw_mode:
+            # In raw mode \n only moves down — no carriage return — causing a
+            # staircase. Replace with \r\n so each line starts at column 0.
+            output = output.replace("\n", "\r\n")
+        sys.stdout.write(output)
+        sys.stdout.flush()
         return lines
 
     lines_drawn = _render()
@@ -1130,6 +1154,7 @@ def _interactive_pick(
     old_settings = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
+        _in_raw_mode = True
         while True:
             sys.stdout.write(f"\033[{lines_drawn}A\033[J")
             sys.stdout.flush()
