@@ -1107,7 +1107,6 @@ def _interactive_pick(
         choice = click.prompt("Select by number", type=click.IntRange(1, n), default=1)
         return [choice - 1]
 
-    import io as _io
     from rich.console import Console as _Console
 
     selected = [True] * n if multi else [False] * n
@@ -1125,7 +1124,7 @@ def _interactive_pick(
 
     def _render() -> int:
         """Render the list and return the number of lines printed."""
-        buf = _io.StringIO()
+        buf = io.StringIO()
         buf_con = _Console(file=buf, force_terminal=True, highlight=False)
         buf_con.print(hint)
         lines = 1
