@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.2 (unreleased)
+
+### Fixed
+- `reflect skills` interactive picker no longer produces a staircase layout — in raw terminal mode `\n` is now replaced with `\r\n` so each item starts at column 0
+
+### Added
+- `cursor-agent`, `copilot`, and `opencode` added to `_SKILL_AGENT_SPECS` so they appear in the "which CLI should extract skills?" picker when installed
+- `opencode` added to `_AGENT_SPECS` (detected via `~/.config/opencode`) and `_IMPLEMENTED_AGENT_SUPPORT` so it receives skills at install time and shows up in `reflect agents`
+
 ## 0.4.1 (2026-04-15)
 
 ### Fixed
