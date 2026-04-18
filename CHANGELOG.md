@@ -2,6 +2,9 @@
 
 ## 0.4.3 (unreleased)
 
+### Fixed
+- Corrected `SoftwareApplication` JSON-LD license metadata on `docs/index.html` and `docs/showcase.html` to Apache 2.0 (was incorrectly set to MIT)
+
 ### Changed
 - Landing page (`docs/showcase.html`) rewritten to align with the o11y.dev mission and agent-agnostic positioning: headline now reads "Observability for any AI coding agent", supported agents (Antigravity, Claude Code, Copilot, Cursor, Gemini CLI, OpenCode) rendered as an alphabetical chip row, and privacy/demo framing demoted from hero to a secondary callout
 - Landing page gains a "One platform, three surfaces" section covering `reflect`, `opentelemetry-hooks`, and the `Policies` engine (marked `v0.12 preview`), plus dual install paths (`pipx install o11y-reflect` and `pipx install opentelemetry-hooks`)
