@@ -461,11 +461,6 @@ EXPECTED = {
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def all_spans():
-    return list(ALL_SPANS)
-
-
-@pytest.fixture
 def otlp_traces_file(tmp_path):
     """Write all sessions to a tmp OTLP traces file, one JSON line per agent."""
     p = tmp_path / "otel-traces.json"
