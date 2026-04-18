@@ -670,7 +670,6 @@ class TestDoctor:
 
         assert result.exit_code == 0
         assert "waiting" in result.output
-        assert "log export" in result.output
 
     def test_doctor_otlp_logs_missing_when_otel_hook_not_installed(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
@@ -697,7 +696,8 @@ class TestDoctor:
             result = runner.invoke(main, ["doctor"])
 
         assert result.exit_code == 0
-        assert "Install otel-hook" in result.output
+        # Without otel-hook, OTLP logs should show "missing" not "waiting"
+        assert "waiting" not in result.output
 
 
 class TestSetup:

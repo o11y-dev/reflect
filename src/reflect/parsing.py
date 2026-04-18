@@ -545,28 +545,6 @@ def _load_rich_session_spans() -> tuple[list[dict], dict[str, int], dict[str, tu
     return spans, counts, source_map
 
 
-def _discover_rich_session_source_map() -> dict[str, tuple[str, str]]:
-    """Lightweight discovery: map session_id -> (agent, filepath) without parsing spans.
-
-    Extracts session IDs from filenames/paths rather than parsing file contents,
-    so this is fast even with hundreds of session files.
-    """
-    source_map: dict[str, tuple[str, str]] = {}
-    for source, file_path in _discover_rich_session_files():
-        if source == "copilot":
-            sid = file_path.parent.name  # copilot: .copilot/session-state/<sid>/events.jsonl
-        elif source == "gemini":
-            # gemini: session-<uuid>.json
-            stem = file_path.stem
-            sid = stem.replace("session-", "") if stem.startswith("session-") else stem
-        else:
-            # claude/cursor: <session-id>.jsonl
-            sid = file_path.stem
-        if sid and sid not in source_map:
-            source_map[sid] = (source, str(file_path))
-    return source_map
-
-
 def _otlp_attr_value(value) -> dict:
     if isinstance(value, bool):
         return {"boolValue": value}
