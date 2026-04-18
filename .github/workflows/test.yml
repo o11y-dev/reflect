@@ -84,6 +84,7 @@ jobs:
           test -f docs/robots.txt    || { echo "docs/robots.txt missing"; exit 1; }
           test -f docs/sitemap.xml   || { echo "docs/sitemap.xml missing"; exit 1; }
           test -f docs/favicon.svg   || { echo "docs/favicon.svg missing"; exit 1; }
+          test -f docs/og-image.png  || { echo "docs/og-image.png missing"; exit 1; }
           echo "All GitHub Pages assets present"
 
       - name: Validate HTML structure
