@@ -274,14 +274,6 @@ reflect → reads traces → terminal dashboard / report / hosted view
 
 See [`docs/ai-observability-schema.md`](docs/ai-observability-schema.md) for the canonical cross-tool analysis schema.
 
-## Related
-
-`reflect setup` automatically installs **[opentelemetry-hooks](https://github.com/o11y-dev/opentelemetry-hooks)**, the instrumentation layer that captures spans from your AI agents.
-
-Two optional extras if you need them:
-- **[opentelemetry-skill](https://github.com/o11y-dev/opentelemetry-skill)** — observability knowledge for AI assistants
-- **[gateway](https://github.com/o11y-dev/gateway)** — OTLP gateway for team/shared telemetry
-
 ## License
 
 [Apache-2.0](LICENSE)
