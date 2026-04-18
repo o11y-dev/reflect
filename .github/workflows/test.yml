@@ -81,6 +81,9 @@ jobs:
           test -f docs/index.html    || { echo "docs/index.html missing"; exit 1; }
           test -f docs/showcase.html || { echo "docs/showcase.html missing"; exit 1; }
           test -f docs/CNAME         || { echo "docs/CNAME missing"; exit 1; }
+          test -f docs/robots.txt    || { echo "docs/robots.txt missing"; exit 1; }
+          test -f docs/sitemap.xml   || { echo "docs/sitemap.xml missing"; exit 1; }
+          test -f docs/favicon.svg   || { echo "docs/favicon.svg missing"; exit 1; }
           echo "All GitHub Pages assets present"
 
       - name: Validate HTML structure
@@ -91,3 +94,19 @@ jobs:
             grep -q '<body>' "$f"          || { echo "$f missing <body>"; exit 1; }
             echo "✓ $f valid"
           done
+
+      - name: Validate SEO and positioning metadata
+        run: |
+          for f in docs/index.html docs/showcase.html; do
+            grep -q '<meta name="description"'        "$f" || { echo "$f missing meta description"; exit 1; }
+            grep -q '<link rel="canonical"'           "$f" || { echo "$f missing canonical link"; exit 1; }
+            grep -q '<meta property="og:title"'       "$f" || { echo "$f missing og:title"; exit 1; }
+            grep -q '<meta property="og:description"' "$f" || { echo "$f missing og:description"; exit 1; }
+            grep -q '<meta property="og:image"'       "$f" || { echo "$f missing og:image"; exit 1; }
+            grep -q '<meta name="twitter:card"'       "$f" || { echo "$f missing twitter:card"; exit 1; }
+            grep -q 'application/ld+json'             "$f" || { echo "$f missing JSON-LD"; exit 1; }
+            grep -q 'OpenTelemetry'                   "$f" || { echo "$f must mention OpenTelemetry"; exit 1; }
+            echo "✓ $f SEO metadata present"
+          done
+          grep -q 'Sitemap:' docs/robots.txt           || { echo "robots.txt missing Sitemap line"; exit 1; }
+          grep -q 'reflect.o11y.dev' docs/sitemap.xml  || { echo "sitemap.xml missing canonical host"; exit 1; }
