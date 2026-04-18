@@ -2621,6 +2621,8 @@ function fmtInlineMarkdown(s){
   return escHtml(s || '')
     .replace(/`([^`\n]+)`/g,'<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+    // Only treat single asterisks as emphasis when they are bounded like prose,
+    // so `*italic*` works without colliding with `**bold**` markers.
     .replace(/(^|[\s(])\*([^*\n]+)\*([)\].,!?:;]|\s|$)/g, (_, lead, body, tail) => `${lead}<em>${body}</em>${tail}`);
 }
 
@@ -2630,6 +2632,7 @@ function fmtMarkdown(s){
   const segments = source.split(/```/);
   return segments.map((segment, index) => {
     if (!segment) return '';
+    // Splitting on ``` yields alternating prose/code segments when fences are balanced.
     const isCodeBlock = index % 2 === 1;
     if (isCodeBlock) {
       return `<span class="md-code-block">${escHtml(segment).replace(/\n/g,'<br/>')}</span>`;

@@ -194,7 +194,7 @@ class TestBuildDashboardJson:
 
         assert data["sessions"][0]["has_telemetry"] is True
 
-    def test_build_dashboard_json_averages_quality_across_all_discovered_sessions(self):
+    def test_quality_score_averages_over_all_sessions_including_those_without_scores(self):
         stats = TelemetryStats(
             session_files=0,
             span_files=0,
