@@ -33,7 +33,7 @@
         "name": "reflect",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "macOS, Linux, Windows",
-        "description": "Observability for any AI coding agent. Turns local session data and OTLP telemetry into observation scores, helper-tool generation, and (coming) live-session policies.",
+        "description": "Observability for any AI coding agent. Turns local session data and OTLP telemetry into observation scores and helper-tool generation.",
         "url": "https://reflect.o11y.dev/",
         "downloadUrl": "https://pypi.org/project/o11y-reflect/",
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
@@ -262,7 +262,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
           </div>
           <div class="metric">
             <div class="k">Govern</div>
-            <div class="v">v0.12 preview</div>
+            <div class="v">Coming soon</div>
             <div class="s">Policies that inspect and mutate live agent sessions.</div>
           </div>
         </div>
@@ -287,10 +287,9 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
           <a href="https://github.com/o11y-dev/opentelemetry-hooks">o11y-dev/opentelemetry-hooks →</a>
         </article>
         <article class="product">
-          <span class="status preview">v0.12 preview</span>
+          <span class="status preview">Coming soon</span>
           <h3>Policies</h3>
-          <p>Rule evaluation at the hook boundary with per-IDE translation of deny / ask / mutate decisions. Extends opentelemetry-hooks to control live agent sessions. Coming soon.</p>
-          <a href="https://github.com/o11y-dev/opentelemetry-hooks/blob/main/SPEC-policy-engine.md">Read the spec →</a>
+          <p>Rule evaluation at the hook boundary with per-IDE translation of deny / ask / mutate decisions. Extends opentelemetry-hooks to control live agent sessions.</p>
         </article>
       </div>
     </section>
@@ -306,7 +305,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         <div class="install-card">
           <h3>reflect (reports &amp; scores)</h3>
           <pre><code>pipx install o11y-reflect
-reflect setup
+reflect setup   # wires all agents + installs skill packages
 reflect
 
 # no telemetry yet?
@@ -315,7 +314,7 @@ reflect --demo</code></pre>
         <div class="install-card">
           <h3>opentelemetry-hooks (capture only)</h3>
           <pre><code>pipx install opentelemetry-hooks
-opentelemetry-hooks install</code></pre>
+otel-hook setup</code></pre>
         </div>
       </div>
     </section>
