@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.3 (unreleased)
+## 0.5.0 (2026-04-18)
 
 ### Fixed
 - Corrected license references from MIT to Apache 2.0 on the hosted pages (`SoftwareApplication` JSON-LD in `docs/index.html` and `docs/showcase.html`, plus showcase footer copy)
