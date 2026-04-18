@@ -844,6 +844,7 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
         ),
         reverse=True,
     )
+    discovered_session_count = len(session_ids)
     for sid in session_ids:
         first_ts_ns = stats.session_first_ts.get(sid)
         created = ""
@@ -986,7 +987,11 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
     recommendations = build_recommendations(stats)
     achievements = build_achievement_badges(stats)
 
-    avg_quality = sum(stats.session_quality_scores.values()) / len(stats.sessions_seen) if stats.sessions_seen else 0
+    avg_quality = (
+        sum(float(stats.session_quality_scores.get(sid, 0.0)) for sid in session_ids) / discovered_session_count
+        if discovered_session_count
+        else 0
+    )
 
     # Agent comparison for HTML
     agent_comparison = []
@@ -1007,7 +1012,7 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
 
     data = {
         "total_spans": stats.total_events,
-        "unique_sessions": len(stats.sessions_seen),
+        "unique_sessions": discovered_session_count,
         "unique_models": len(stats.models_by_count),
         "avg_quality_score": avg_quality,
         "agent_comparison": agent_comparison,
