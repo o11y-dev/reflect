@@ -78,3 +78,4 @@ class TelemetryStats:
     session_conversation: dict[str, list[dict]] = field(default_factory=dict)
     # Map session_id → (agent_name, source_file_path) for lazy detail loading
     session_source: dict[str, tuple[str, str]] = field(default_factory=dict)
+    sessions_with_telemetry: set[str] = field(default_factory=set)

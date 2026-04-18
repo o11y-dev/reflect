@@ -827,6 +827,11 @@ body.filter-sheet-open{overflow:hidden}
   background:rgba(255,255,255,.06);
   color:var(--text-2);
 }
+.sb-card-badge-telemetry{
+  background:rgba(100,210,255,.1);
+  color:var(--teal);
+  border:1px solid rgba(100,210,255,.2);
+}
 
 /* Right panel — session detail */
 .sb-right{
@@ -1284,6 +1289,39 @@ body.filter-sheet-open{overflow:hidden}
   outline:2px solid rgba(100,210,255,.9);
   outline-offset:2px;
 }
+.session-observation-shell{display:flex;flex-direction:column;gap:12px}
+.session-observation-summary{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:10px;
+}
+.session-observation-card{
+  padding:12px 14px;
+  border-radius:12px;
+  border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.03);
+}
+.session-observation-card-label{
+  font-size:10px;
+  font-weight:700;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+  color:var(--text-3);
+  margin-bottom:7px;
+}
+.session-observation-card-value{
+  font-size:18px;
+  font-weight:700;
+  color:var(--text);
+  letter-spacing:-.03em;
+}
+.session-observation-card-sub{
+  margin-top:4px;
+  font-size:12px;
+  color:var(--text-2);
+  line-height:1.5;
+}
+.session-observation-list{display:flex;flex-direction:column;gap:10px}
 .telemetry-shell{display:flex;flex-direction:column;gap:8px}
 .telemetry-summary{
   display:grid;
@@ -2934,6 +2972,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
         <div class="sb-card-prompt">${prompt}</div>
         <div class="sb-card-badges">
           <div class="sb-card-badge">${fmt(s.event_count || 0)} events</div>
+          ${s.has_telemetry ? '<div class="sb-card-badge sb-card-badge-telemetry" title="OTLP telemetry available">OTLP</div>' : ''}
           ${tokens > 0 ? `<div class="sb-card-badge">${estimatedTokens ? '~' : ''}${fmtTokenShort(tokens)} tok</div>` : ''}
           ${s.quality_score ? `<div class="sb-card-badge" style="color:${s.quality_score > 70 ? 'var(--green)' : 'var(--yellow)'}">${s.quality_score.toFixed(0)}%</div>` : ''}
         </div>
@@ -2982,6 +3021,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       <div class="sb-detail-stats">
         <span>Duration: <strong>${fmtDur(session.duration_ms)}</strong></span>
         <span>Events: <strong>${fmt(session.event_count || 0)}</strong></span>
+        <span title="${session.has_telemetry ? 'OTLP traces or logs are available for this session.' : 'Loaded from local session storage only.'}">Telemetry: <strong>${session.has_telemetry ? 'OTLP' : 'Local only'}</strong></span>
         <span title="${tokenMeta}">In: <strong>${estimatedTokens ? '~' : ''}${fmtTokenShort(inTok)}</strong></span>
         <span title="${tokenMeta}">Out: <strong>${estimatedTokens ? '~' : ''}${fmtTokenShort(outTok)}</strong></span>
         ${cacheTok > 0 ? `<span>Cache: <strong>${fmtTokenShort(cacheTok)}</strong></span>` : ''}
@@ -3054,25 +3094,58 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       timelineHtml = '<div style="color:var(--text-3);text-align:center;padding:40px">No conversation data for this session</div>';
     }
 
-    const detailTabsHtml = `<div class="sb-detail-tabs">
-      <button type="button" class="sb-detail-tab${activeDetailTab === 'conversation' ? ' active' : ''}" data-tab="conversation">Conversation</button>
-      <button type="button" class="sb-detail-tab${activeDetailTab === 'telemetry' ? ' active' : ''}" data-tab="telemetry">Telemetry</button>
+    const detailTabs = [
+      { id: 'conversation', label: 'Conversation' },
+      { id: 'telemetry', label: 'Telemetry' },
+      { id: 'observations', label: 'Observations' },
+    ];
+    const detailTabsHtml = `<div class="sb-detail-tabs" role="tablist" aria-label="Session detail views">
+      ${detailTabs.map(tab => `<button
+        type="button"
+        id="sb-detail-tab-${tab.id}"
+        role="tab"
+        aria-selected="${activeDetailTab === tab.id ? 'true' : 'false'}"
+        aria-controls="sb-detail-body-panel"
+        tabindex="${activeDetailTab === tab.id ? '0' : '-1'}"
+        class="sb-detail-tab${activeDetailTab === tab.id ? ' active' : ''}"
+        data-tab="${tab.id}"
+      >${tab.label}</button>`).join('')}
     </div>`;
     const bodyHtml = activeDetailTab === 'telemetry'
       ? renderTelemetryCockpit(session)
-      : renderConversationCasefile(session, conversation, loadBtnHtml, timelineHtml);
+      : activeDetailTab === 'observations'
+        ? renderSessionObservations(session)
+        : renderConversationCasefile(session, conversation, loadBtnHtml, timelineHtml);
 
     detailEl.innerHTML = headerHtml
       + detailTabsHtml
-      + `<div class="sb-detail-body">${bodyHtml}</div>`;
+      + `<div class="sb-detail-body" id="sb-detail-body-panel" role="tabpanel" aria-labelledby="sb-detail-tab-${activeDetailTab}">${bodyHtml}</div>`;
 
-    detailEl.querySelectorAll('.sb-detail-tab').forEach(tab => {
+    const detailTabEls = [...detailEl.querySelectorAll('.sb-detail-tab')];
+    detailTabEls.forEach((tab, index) => {
       tab.addEventListener('click', () => {
         session._detailTab = tab.dataset.tab || 'conversation';
         renderSessionDetail(session);
-        if (session._detailTab === 'telemetry' && session.full_id && !session.telemetry && !session._loadingDetail) {
+        if (
+          (session._detailTab === 'telemetry' || session._detailTab === 'observations')
+          && session.full_id
+          && !session.telemetry
+          && !session._loadingDetail
+        ) {
           tryLoadFullDetail(session.full_id || session.id, null);
         }
+      });
+      tab.addEventListener('keydown', evt => {
+        const keyToIndex = {
+          ArrowRight: (index + 1) % detailTabEls.length,
+          ArrowLeft: (index - 1 + detailTabEls.length) % detailTabEls.length,
+          Home: 0,
+          End: detailTabEls.length - 1,
+        };
+        if (!(evt.key in keyToIndex)) return;
+        evt.preventDefault();
+        detailTabEls[keyToIndex[evt.key]].click();
+        detailTabEls[keyToIndex[evt.key]].focus();
       });
     });
 
@@ -3217,6 +3290,126 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       ${failPart}
     </div>`;
     return `<div class="conversation-shell">${statsBar}${timelineHtml}</div>`;
+  }
+
+  function sessionTelemetrySummary(session){
+    const summary = session.telemetry?.summary || {};
+    if (session.has_telemetry) {
+      if ((summary.spans || 0) || (summary.logs || 0)) {
+        return `OTLP telemetry is linked to this session with ${fmt(summary.spans || 0)} spans and ${fmt(summary.logs || 0)} logs loaded.`;
+      }
+      return 'OTLP telemetry is available for this session. Open the Telemetry tab to inspect the trace and log detail.';
+    }
+    return 'This session is loaded from the local session store only. No OTLP telemetry was found.';
+  }
+
+  function buildSessionObservations(session){
+    const conversation = Array.isArray(session.conversation) ? session.conversation : [];
+    const telemetry = session.telemetry || {};
+    const summary = telemetry.summary || {};
+    const spans = Array.isArray(telemetry.spans) ? telemetry.spans : [];
+    const logs = Array.isArray(telemetry.logs) ? telemetry.logs : [];
+    const sessionStartTs = conversation[0]?.ts || 0;
+    const anchorMs = Number(summary.anchor_ns || 0) / 1e6;
+    const promptCount = conversation.filter(ev => ev.type === 'prompt').length;
+    const responseCount = conversation.filter(ev => ev.type === 'response').length;
+    const toolCount = conversation.filter(ev => ev.type === 'tool_call' || ev.type === 'mcp_call').length;
+    const topTool = Object.entries(session.tools || {}).sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))[0];
+    const observations = [{
+      tone: session.has_telemetry ? 'recommendation' : 'observation',
+      label: 'Telemetry',
+      text: sessionTelemetrySummary(session),
+    }];
+
+    if (promptCount || responseCount || toolCount) {
+      observations.push({
+        tone: 'observation',
+        label: 'Flow',
+        text: `${fmt(promptCount)} prompts, ${fmt(responseCount)} responses, and ${fmt(toolCount)} tool or MCP actions were captured in this session.`,
+      });
+    }
+
+    if (session.failure_count > 0) {
+      const recovered = Number(session.recovered_failures || 0);
+      observations.push({
+        tone: recovered > 0 ? 'observation' : 'recommendation',
+        label: 'Reliability',
+        text: recovered > 0
+          ? `${fmt(session.failure_count)} failures were seen, and ${fmt(recovered)} recovered before the session ended.`
+          : `${fmt(session.failure_count)} failures were captured with no recovery signal in the local timeline.`,
+      });
+    } else if (toolCount > 0) {
+      observations.push({
+        tone: 'strength',
+        label: 'Reliability',
+        text: 'No tool failures were captured in this session timeline.',
+      });
+    }
+
+    if (session.quality_score) {
+      observations.push({
+        tone: session.quality_score >= 70 ? 'strength' : 'observation',
+        label: 'Quality score',
+        text: `Session quality scored ${session.quality_score.toFixed(0)}% based on completion, efficiency, reliability, and loop signals.`,
+      });
+    }
+
+    if (topTool) {
+      observations.push({
+        tone: 'observation',
+        label: 'Tooling',
+        text: `${topTool[0]} was the busiest tool in this session with ${fmt(Number(topTool[1] || 0))} calls.`,
+      });
+    }
+
+    buildSessionObservationMarkers(session, spans, logs, anchorMs, sessionStartTs).forEach(marker => {
+      observations.push({
+        tone: marker.tone === 'success' ? 'strength' : marker.tone === 'error' ? 'recommendation' : 'observation',
+        label: marker.label,
+        text: marker.sub || `Observed at ${fmtRelTime(marker.rel)}.`,
+      });
+    });
+
+    return observations.slice(0, 8);
+  }
+
+  function renderSessionObservations(session){
+    const conversation = Array.isArray(session.conversation) ? session.conversation : [];
+    const promptCount = conversation.filter(ev => ev.type === 'prompt').length;
+    const responseCount = conversation.filter(ev => ev.type === 'response').length;
+    const toolCount = conversation.filter(ev => ev.type === 'tool_call' || ev.type === 'mcp_call').length;
+    const summaryCards = [
+      {
+        label: 'Session source',
+        value: session.has_telemetry ? 'Local + OTLP' : 'Local only',
+        sub: session.has_telemetry ? 'Telemetry can be opened in the cockpit tab.' : 'Transcript is available even without telemetry.',
+      },
+      {
+        label: 'Captured flow',
+        value: `${fmt(promptCount)} / ${fmt(responseCount)}`,
+        sub: 'Prompts / responses in the visible session timeline.',
+      },
+      {
+        label: 'Execution',
+        value: fmt(toolCount),
+        sub: `${fmt(session.failure_count || 0)} failures across tool and MCP activity.`,
+      },
+    ];
+    return `<div class="session-observation-shell">
+      <div class="session-observation-summary">
+        ${summaryCards.map(card => `<div class="session-observation-card">
+          <div class="session-observation-card-label">${escHtml(card.label)}</div>
+          <div class="session-observation-card-value">${escHtml(card.value)}</div>
+          <div class="session-observation-card-sub">${escHtml(card.sub)}</div>
+        </div>`).join('')}
+      </div>
+      <div class="session-observation-list">
+        ${buildSessionObservations(session).map(item => `<div class="obs-item" data-tone="${escHtml(item.tone)}">
+          <div class="obs-item-label">${escHtml(item.label)}</div>
+          <div class="obs-item-body">${escHtml(item.text)}</div>
+        </div>`).join('')}
+      </div>
+    </div>`;
   }
 
   function telemetryBeatLabel(ev){

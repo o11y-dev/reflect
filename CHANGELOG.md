@@ -4,6 +4,7 @@
 
 ### Fixed
 - Corrected license references from MIT to Apache 2.0 on the hosted pages (`SoftwareApplication` JSON-LD in `docs/index.html` and `docs/showcase.html`, plus showcase footer copy)
+- Sessions tab now keeps locally discovered sessions visible even when no OTLP telemetry exists, marks which sessions have OTLP telemetry available, and adds an Observations detail tab alongside Conversation and Telemetry
 
 ### Changed
 - Landing page (`docs/showcase.html`) rewritten to align with the o11y.dev mission and agent-agnostic positioning: headline now reads "Observability for any AI coding agent", supported agents (Antigravity, Claude Code, Copilot, Cursor, Gemini CLI, OpenCode) rendered as an alphabetical chip row, and privacy/demo framing demoted from hero to a secondary callout

@@ -216,6 +216,9 @@ def _build_filtered_stats(stats: TelemetryStats, sessions: list[dict]) -> Teleme
         for sid in selected_ids
         if sid in stats.session_source
     }
+    sessions_with_telemetry = {
+        sid for sid in selected_ids if sid in stats.sessions_with_telemetry
+    }
     session_quality_scores = {
         sid: float(stats.session_quality_scores.get(sid, session_rows.get(sid, {}).get("quality_score") or 0.0))
         for sid in selected_ids
@@ -426,6 +429,7 @@ def _build_filtered_stats(stats: TelemetryStats, sessions: list[dict]) -> Teleme
         session_tags=session_tags,
         session_conversation=session_conversation,
         session_source=session_source,
+        sessions_with_telemetry=sessions_with_telemetry,
     )
 
 
@@ -831,7 +835,16 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
     # Sessions with event counts and primary model
     sessions_list = []
     session_agents: dict[str, str] = {}
-    for sid in sorted(stats.sessions_seen, key=lambda s: stats.session_events.get(s, 0), reverse=True):
+    session_ids = sorted(
+        set(stats.sessions_seen) | set(stats.session_source),
+        key=lambda sid: (
+            stats.session_events.get(sid, 0),
+            stats.session_first_ts.get(sid, 0),
+            sid,
+        ),
+        reverse=True,
+    )
+    for sid in session_ids:
         first_ts_ns = stats.session_first_ts.get(sid)
         created = ""
         if first_ts_ns:
@@ -950,6 +963,7 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
             "agent": agent_name,
             "first_prompt": first_prompt,
             "conversation": conv_events,
+            "has_telemetry": sid in stats.sessions_with_telemetry,
         })
 
     # Top commands

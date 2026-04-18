@@ -149,6 +149,50 @@ class TestBuildDashboardJson:
         assert data["skills_by_count"]["opentelemetry-skill"] == 1
         assert data["sessions"][0]["skills"]["reflect"] == 2
 
+    def test_build_dashboard_json_includes_native_only_sessions_without_telemetry(self):
+        stats = TelemetryStats(
+            session_files=0,
+            span_files=0,
+            total_events=0,
+            events_by_type=Counter(),
+            events_by_file={},
+            sessions_seen=set(),
+            session_events={},
+            session_models={},
+            session_first_ts={},
+            agents={},
+            session_tokens={},
+            session_source={"native-only-session": ("claude", "/tmp/native-only-session.jsonl")},
+        )
+
+        data = json.loads(_build_dashboard_json(stats))
+
+        assert len(data["sessions"]) == 1
+        assert data["sessions"][0]["full_id"] == "native-only-session"
+        assert data["sessions"][0]["agent"] == "claude"
+        assert data["sessions"][0]["has_telemetry"] is False
+
+    def test_build_dashboard_json_marks_sessions_with_telemetry(self):
+        stats = TelemetryStats(
+            session_files=0,
+            span_files=0,
+            total_events=1,
+            events_by_type=Counter({"UserPromptSubmit": 1}),
+            events_by_file={},
+            sessions_seen={"session-with-telemetry"},
+            session_events={"session-with-telemetry": 1},
+            session_models={},
+            session_first_ts={},
+            agents={},
+            session_tokens={},
+            session_source={"session-with-telemetry": ("copilot", "/tmp/session-with-telemetry.jsonl")},
+            sessions_with_telemetry={"session-with-telemetry"},
+        )
+
+        data = json.loads(_build_dashboard_json(stats))
+
+        assert data["sessions"][0]["has_telemetry"] is True
+
     def test_filter_dashboard_sessions_by_agent(self, rich_stats):
         data = json.loads(_build_dashboard_json(rich_stats))
         filtered = _filter_dashboard_sessions(data["sessions"], agents={"copilot"})
