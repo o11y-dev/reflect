@@ -311,6 +311,7 @@ def analyze_telemetry(
         _extract_session_id,
         _infer_otlp_logs_file,
         _load_json_lines,
+        _load_otlp_logs,
         _load_otlp_traces,
         _load_rich_session_spans,
         _load_session_model_hints,
@@ -370,6 +371,7 @@ def analyze_telemetry(
     subagent_stops_by_type: Counter[str] = Counter()
     session_conversation: dict[str, list[dict]] = {}
     session_source: dict[str, tuple[str, str]] = {}
+    sessions_with_telemetry: set[str] = set()
     total_events = 0
     since_ns: int = int(since.timestamp() * 1_000_000_000) if since else 0
 
@@ -392,6 +394,9 @@ def analyze_telemetry(
                 ts = span.get("start_time_ns", 0)
                 if since_ns and ts and int(ts) < since_ns:
                     continue
+                sid = _extract_session_id(span.get("attributes") or {})
+                if sid:
+                    sessions_with_telemetry.add(sid)
                 _process_span(span, *proc_args, **proc_kwargs)
                 file_events += 1
 
@@ -400,13 +405,36 @@ def analyze_telemetry(
 
     # Source 2: OTLP JSON from collector file exporter
     if otlp_traces_file and otlp_traces_file.exists():
+        # A synthesized OTLP file only counts as real telemetry when it came from
+        # existing span files or from a non-default explicit input, not when it was
+        # materialized solely from native local session stores.
+        otlp_from_external_source = (
+            materialized_local_otlp is None
+            or bool(span_files)
+            or sessions_dir != _default_sessions_dir()
+        )
         file_events = 0
         for span in _load_otlp_traces(otlp_traces_file, since_ns=since_ns):
+            if otlp_from_external_source:
+                sid = _extract_session_id(span.get("attributes") or {})
+                if sid:
+                    sessions_with_telemetry.add(sid)
             _process_span(span, *proc_args, **proc_kwargs)
             file_events += 1
 
         events_by_file[otlp_traces_file.name] = file_events
         total_events += file_events
+
+        if otlp_from_external_source:
+            otlp_logs_file = _infer_otlp_logs_file(otlp_traces_file)
+            if otlp_logs_file and otlp_logs_file.exists():
+                for record in _load_otlp_logs(otlp_logs_file):
+                    ts_ns = int(record.get("time_ns", 0) or record.get("observed_time_ns", 0) or 0)
+                    if since_ns and ts_ns and ts_ns < since_ns:
+                        continue
+                    sid = _extract_session_id(record.get("attributes") or {})
+                    if sid:
+                        sessions_with_telemetry.add(sid)
 
     # Source 3: Rich local agent session stores (session-first fallback)
     if use_rich_sessions and materialized_local_otlp is None:
@@ -610,4 +638,5 @@ def analyze_telemetry(
             for sid, evts in session_conversation.items()
         },
         session_source=session_source,
+        sessions_with_telemetry=sessions_with_telemetry,
     )

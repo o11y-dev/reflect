@@ -149,6 +149,76 @@ class TestBuildDashboardJson:
         assert data["skills_by_count"]["opentelemetry-skill"] == 1
         assert data["sessions"][0]["skills"]["reflect"] == 2
 
+    def test_build_dashboard_json_includes_native_only_sessions_without_telemetry(self):
+        stats = TelemetryStats(
+            session_files=0,
+            span_files=0,
+            total_events=0,
+            events_by_type=Counter(),
+            events_by_file={},
+            sessions_seen=set(),
+            session_events={},
+            session_models={},
+            session_first_ts={},
+            agents={},
+            session_tokens={},
+            session_source={"native-only-session": ("claude", "/tmp/native-only-session.jsonl")},
+        )
+
+        data = json.loads(_build_dashboard_json(stats))
+
+        assert len(data["sessions"]) == 1
+        assert data["unique_sessions"] == 1
+        assert data["sessions"][0]["full_id"] == "native-only-session"
+        assert data["sessions"][0]["agent"] == "claude"
+        assert data["sessions"][0]["has_telemetry"] is False
+
+    def test_build_dashboard_json_marks_sessions_with_telemetry(self):
+        stats = TelemetryStats(
+            session_files=0,
+            span_files=0,
+            total_events=1,
+            events_by_type=Counter({"UserPromptSubmit": 1}),
+            events_by_file={},
+            sessions_seen={"session-with-telemetry"},
+            session_events={"session-with-telemetry": 1},
+            session_models={},
+            session_first_ts={},
+            agents={},
+            session_tokens={},
+            session_source={"session-with-telemetry": ("copilot", "/tmp/session-with-telemetry.jsonl")},
+            sessions_with_telemetry={"session-with-telemetry"},
+        )
+
+        data = json.loads(_build_dashboard_json(stats))
+
+        assert data["sessions"][0]["has_telemetry"] is True
+
+    def test_quality_score_averages_over_all_sessions_including_those_without_scores(self):
+        stats = TelemetryStats(
+            session_files=0,
+            span_files=0,
+            total_events=1,
+            events_by_type=Counter({"UserPromptSubmit": 1}),
+            events_by_file={},
+            sessions_seen={"telemetry-session"},
+            session_events={"telemetry-session": 1},
+            session_models={},
+            session_first_ts={},
+            agents={},
+            session_tokens={},
+            session_source={
+                "telemetry-session": ("copilot", "/tmp/telemetry-session.jsonl"),
+                "native-only-session": ("claude", "/tmp/native-only-session.jsonl"),
+            },
+            session_quality_scores={"telemetry-session": 80.0},
+        )
+
+        data = json.loads(_build_dashboard_json(stats))
+
+        assert data["unique_sessions"] == 2
+        assert data["avg_quality_score"] == 40.0
+
     def test_filter_dashboard_sessions_by_agent(self, rich_stats):
         data = json.loads(_build_dashboard_json(rich_stats))
         filtered = _filter_dashboard_sessions(data["sessions"], agents={"copilot"})
@@ -468,3 +538,31 @@ class TestBuildDashboardJson:
         assert detail is not None
         assert detail["source"] == "native_unavailable"
         assert detail["warnings"] == ["Session detail loading is not implemented for agent 'windsurf' yet."]
+
+    def test_analyze_telemetry_marks_logs_only_sessions_as_having_telemetry(self, tmp_path):
+        session_id = "sess-log-only"
+        trace_path = tmp_path / "otel-traces.json"
+        log_path = tmp_path / "otel-logs.json"
+
+        trace_path.write_text(json.dumps({"resourceSpans": []}) + "\n", encoding="utf-8")
+        log_path.write_text(json.dumps({
+            "resourceLogs": [{
+                "resource": {"attributes": []},
+                "scopeLogs": [{
+                    "scope": {"name": "ide-hooks"},
+                    "logRecords": [{
+                        "timeUnixNano": "1000000000",
+                        "severityText": "INFO",
+                        "severityNumber": 9,
+                        "body": {"stringValue": "log only"},
+                        "attributes": [
+                            {"key": "gen_ai.client.session_id", "value": {"stringValue": session_id}},
+                        ],
+                    }],
+                }],
+            }],
+        }) + "\n", encoding="utf-8")
+
+        stats = analyze_telemetry(tmp_path / "sessions", tmp_path / "spans", trace_path)
+
+        assert session_id in stats.sessions_with_telemetry
