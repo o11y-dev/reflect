@@ -3100,7 +3100,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       { id: 'observations', label: 'Observations' },
     ];
     const activeDetailTabId = `sb-detail-tab-${activeDetailTab}`;
-    const detailTabsHtml = `<div class="sb-detail-tabs" role="tablist" aria-label="Session detail views">
+    const detailTabsHtml = `<div class="sb-detail-tabs" role="tablist" aria-label="Session detail tabs">
       ${detailTabs.map(tab => `<button
         type="button"
         id="sb-detail-tab-${tab.id}"
@@ -3307,6 +3307,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
   }
 
   function buildSessionObservations(session){
+    const MAX_SESSION_OBSERVATIONS = 8;
     const conversation = Array.isArray(session.conversation) ? session.conversation : [];
     const telemetry = session.telemetry || {};
     const summary = telemetry.summary || {};
@@ -3373,7 +3374,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       });
     });
 
-    return observations.slice(0, 8);
+    return observations.slice(0, MAX_SESSION_OBSERVATIONS);
   }
 
   function renderSessionObservations(session){
