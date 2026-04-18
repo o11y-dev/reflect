@@ -404,14 +404,16 @@ def analyze_telemetry(
 
     # Source 2: OTLP JSON from collector file exporter
     if otlp_traces_file and otlp_traces_file.exists():
-        otlp_counts_as_telemetry = not (
+        # When we synthesize an OTLP file from native session stores, those sessions
+        # should still show up as local-only until real OTLP traces/logs exist.
+        otlp_is_real_telemetry = not (
             materialized_local_otlp is not None
             and not span_files
             and sessions_dir == _default_sessions_dir()
         )
         file_events = 0
         for span in _load_otlp_traces(otlp_traces_file, since_ns=since_ns):
-            if otlp_counts_as_telemetry:
+            if otlp_is_real_telemetry:
                 sid = _extract_session_id(span.get("attributes") or {})
                 if sid:
                     sessions_with_telemetry.add(sid)
