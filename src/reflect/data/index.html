@@ -3099,6 +3099,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       { id: 'telemetry', label: 'Telemetry' },
       { id: 'observations', label: 'Observations' },
     ];
+    const activeDetailTabId = `sb-detail-tab-${activeDetailTab}`;
     const detailTabsHtml = `<div class="sb-detail-tabs" role="tablist" aria-label="Session detail views">
       ${detailTabs.map(tab => `<button
         type="button"
@@ -3119,9 +3120,16 @@ let filteredDashboardSessions = (D.sessions || []).slice();
 
     detailEl.innerHTML = headerHtml
       + detailTabsHtml
-      + `<div class="sb-detail-body" id="sb-detail-body-panel" role="tabpanel" aria-labelledby="sb-detail-tab-${activeDetailTab}">${bodyHtml}</div>`;
+      + `<div class="sb-detail-body" id="sb-detail-body-panel" role="tabpanel" aria-labelledby="${activeDetailTabId}">${bodyHtml}</div>`;
 
     const detailTabEls = [...detailEl.querySelectorAll('.sb-detail-tab')];
+    const getNextDetailTabIndex = (index, key) => {
+      if (key === 'ArrowRight') return (index + 1) % detailTabEls.length;
+      if (key === 'ArrowLeft') return (index - 1 + detailTabEls.length) % detailTabEls.length;
+      if (key === 'Home') return 0;
+      if (key === 'End') return detailTabEls.length - 1;
+      return -1;
+    };
     detailTabEls.forEach((tab, index) => {
       tab.addEventListener('click', () => {
         session._detailTab = tab.dataset.tab || 'conversation';
@@ -3136,16 +3144,11 @@ let filteredDashboardSessions = (D.sessions || []).slice();
         }
       });
       tab.addEventListener('keydown', evt => {
-        const keyToIndex = {
-          ArrowRight: (index + 1) % detailTabEls.length,
-          ArrowLeft: (index - 1 + detailTabEls.length) % detailTabEls.length,
-          Home: 0,
-          End: detailTabEls.length - 1,
-        };
-        if (!(evt.key in keyToIndex)) return;
+        const nextIndex = getNextDetailTabIndex(index, evt.key);
+        if (nextIndex < 0) return;
         evt.preventDefault();
-        detailTabEls[keyToIndex[evt.key]].click();
-        detailTabEls[keyToIndex[evt.key]].focus();
+        detailTabEls[nextIndex].click();
+        detailTabEls[nextIndex].focus();
       });
     });
 

@@ -404,12 +404,13 @@ def analyze_telemetry(
 
     # Source 2: OTLP JSON from collector file exporter
     if otlp_traces_file and otlp_traces_file.exists():
-        # When we synthesize an OTLP file from native session stores, those sessions
-        # should still show up as local-only until real OTLP traces/logs exist.
-        otlp_is_real_telemetry = not (
-            materialized_local_otlp is not None
-            and not span_files
-            and sessions_dir == _default_sessions_dir()
+        # A synthesized OTLP file only counts as real telemetry when it came from
+        # existing span files or from a non-default explicit input, not when it was
+        # materialized solely from native local session stores.
+        otlp_is_real_telemetry = (
+            materialized_local_otlp is None
+            or bool(span_files)
+            or sessions_dir != _default_sessions_dir()
         )
         file_events = 0
         for span in _load_otlp_traces(otlp_traces_file, since_ns=since_ns):
