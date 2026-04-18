@@ -3,9 +3,52 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>reflect showcase</title>
-  <meta name="description" content="A shareable reflect.o11y.dev demo with curated, safe sample telemetry.">
+  <title>reflect showcase — AI observability in action</title>
+  <meta name="description" content="A live reflect dashboard on curated sample telemetry. Observability for any AI coding agent — built on OpenTelemetry GenAI semantic conventions. See observation scores, helper-tool generation, and agent comparison, safely shareable.">
+  <link rel="canonical" href="https://reflect.o11y.dev/showcase.html">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0a0e16">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="reflect.o11y.dev">
+  <meta property="og:title" content="reflect showcase — AI observability in action">
+  <meta property="og:description" content="Live dashboard on curated sample telemetry. Observability for any AI coding agent, built on OpenTelemetry GenAI semantic conventions.">
+  <meta property="og:url" content="https://reflect.o11y.dev/showcase.html">
+  <meta property="og:image" content="https://reflect.o11y.dev/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="reflect showcase — AI observability in action">
+  <meta name="twitter:description" content="Live dashboard on curated sample telemetry. Observability for any AI coding agent, built on OpenTelemetry GenAI semantic conventions.">
+  <meta name="twitter:image" content="https://reflect.o11y.dev/og-image.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "name": "reflect",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "macOS, Linux, Windows",
+        "description": "Observability for any AI coding agent. Turns local session data and OTLP telemetry into observation scores, helper-tool generation, and (coming) live-session policies.",
+        "url": "https://reflect.o11y.dev/",
+        "downloadUrl": "https://pypi.org/project/o11y-reflect/",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "license": "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      {
+        "@type": "Organization",
+        "name": "o11y.dev",
+        "url": "https://reflect.o11y.dev/",
+        "sameAs": ["https://github.com/o11y-dev"]
+      }
+    ]
+  }
+  </script>
+
   <!-- Google Tag Manager -->
   <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
   new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
@@ -58,13 +101,28 @@
     }
     .hero-copy{padding:34px}
     h1{
-      margin:0 0 16px;font-size:clamp(2.6rem,6vw,5.3rem);line-height:.94;
-      letter-spacing:-.05em;font-weight:800;
+      margin:0 0 14px;font-size:clamp(2.4rem,5.2vw,4.6rem);line-height:.96;
+      letter-spacing:-.045em;font-weight:800;
+    }
+    .tagline{
+      margin:0 0 18px;color:var(--teal);
+      font-size:15px;letter-spacing:.22em;text-transform:uppercase;font-weight:700;
     }
     .lede{
-      margin:0;max-width:46rem;color:#d3def4;font-size:18px;line-height:1.65;
+      margin:0;max-width:48rem;color:#d3def4;font-size:17px;line-height:1.65;
     }
-    .cta-row{display:flex;flex-wrap:wrap;gap:14px;margin-top:28px}
+    .proof{
+      margin:18px 0 0;color:var(--muted);font-size:14px;line-height:1.6;
+    }
+    .chips{
+      display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;
+    }
+    .chip{
+      padding:6px 12px;border:1px solid var(--line);border-radius:999px;
+      font-size:12px;color:var(--text);background:rgba(255,255,255,.04);
+      letter-spacing:.02em;
+    }
+    .cta-row{display:flex;flex-wrap:wrap;gap:14px;margin-top:26px}
     .cta,.ghost{
       display:inline-flex;align-items:center;justify-content:center;gap:10px;
       padding:15px 20px;border-radius:16px;text-decoration:none;font-weight:700;
@@ -86,34 +144,66 @@
       padding:18px;border-radius:20px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);
     }
     .metric .k{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
-    .metric .v{margin-top:10px;font-size:30px;font-weight:800;letter-spacing:-.04em}
-    .metric .s{margin-top:6px;color:var(--muted);font-size:13px}
-    .install{
-      margin-top:28px;padding:26px 28px;
+    .metric .v{margin-top:10px;font-size:26px;font-weight:800;letter-spacing:-.04em}
+    .metric .s{margin-top:6px;color:var(--muted);font-size:13px;line-height:1.5}
+    h2{
+      margin:0 0 14px;font-size:22px;font-weight:700;letter-spacing:-.02em;
+    }
+    .section{margin-top:28px}
+    .section-head{
+      display:flex;align-items:baseline;justify-content:space-between;gap:16px;
+      margin-bottom:14px;
     }
     .section-title{
-      margin:0 0 10px;font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--gold)
+      margin:0;font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--gold)
+    }
+    .products{
+      display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;
+    }
+    .product{
+      padding:24px;border-radius:22px;background:rgba(255,255,255,.03);
+      border:1px solid var(--line);display:flex;flex-direction:column;gap:10px;
+    }
+    .product h3{margin:0;font-size:19px;font-weight:700}
+    .product .status{
+      align-self:flex-start;padding:3px 10px;border-radius:999px;font-size:11px;
+      letter-spacing:.14em;text-transform:uppercase;font-weight:700;
+    }
+    .status.today{background:rgba(114,244,209,.16);color:var(--teal)}
+    .status.preview{background:rgba(255,217,122,.16);color:var(--gold)}
+    .product p{margin:0;color:var(--muted);line-height:1.6;font-size:14px}
+    .product a{color:var(--blue);text-decoration:none;font-size:13px;font-weight:600}
+    .product a:hover{text-decoration:underline}
+    .install{
+      padding:26px 28px;
+    }
+    .install-grid{
+      display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px;
+    }
+    .install-card h3{
+      margin:0 0 8px;font-size:14px;letter-spacing:.08em;text-transform:uppercase;color:var(--teal);
     }
     pre{
       margin:0;background:#07101b;border:1px solid rgba(255,255,255,.08);
-      border-radius:20px;padding:18px 20px;overflow:auto;color:#dff8ef;
-      font:500 15px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;
+      border-radius:16px;padding:16px 18px;overflow:auto;color:#dff8ef;
+      font:500 14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;
     }
     .callouts{
-      display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:28px
+      display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;
     }
     .callout{
       padding:22px;border-radius:22px;background:rgba(255,255,255,.03);border:1px solid var(--line)
     }
-    .callout h3{margin:0 0 10px;font-size:19px}
-    .callout p{margin:0;color:var(--muted);line-height:1.65}
+    .callout h3{margin:0 0 10px;font-size:17px;font-weight:700}
+    .callout p{margin:0;color:var(--muted);line-height:1.65;font-size:14px}
     .footer{
       margin-top:28px;padding:18px 22px;border:1px solid var(--line);border-radius:20px;
-      color:var(--muted);background:rgba(255,255,255,.025)
+      color:var(--muted);background:rgba(255,255,255,.025);font-size:14px;
     }
+    .footer a{color:var(--teal);text-decoration:none}
     code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
     @media (max-width: 920px){
-      .hero,.callouts{grid-template-columns:1fr}
+      .hero,.callouts,.products,.install-grid{grid-template-columns:1fr}
       .hero-copy,.hero-side,.install{padding:24px}
     }
   </style>
@@ -124,16 +214,29 @@
 height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 <!-- End Google Tag Manager (noscript) -->
   <main class="shell">
-    <div class="eyebrow">reflect.o11y.dev · shareable example</div>
+    <div class="eyebrow">reflect.o11y.dev · AI observability</div>
 
     <section class="hero">
       <article class="panel hero-copy">
-        <h1>See the product,<br>not your paths.</h1>
+        <p class="tagline">Observe. Score. Generate. Govern.</p>
+        <h1>Observability for any AI coding agent.</h1>
         <p class="lede">
-          This showcase uses curated sample telemetry so you can share <strong>reflect</strong> publicly
-          without exposing real session content, machine paths, or workspace details. It is the safe
-          example route for demos, launch posts, and GitHub Pages previews.
+          reflect turns local session data and OpenTelemetry GenAI spans into observation scores
+          and operational-excellence signals, then generates helper tools from what it sees.
+          Live-session policies to control and mutate agent runs are on the roadmap.
         </p>
+        <p class="proof">
+          Vendor-neutral by design. Built on OpenTelemetry GenAI semantic conventions.
+          Works today with:
+        </p>
+        <div class="chips">
+          <span class="chip">Antigravity</span>
+          <span class="chip">Claude Code</span>
+          <span class="chip">Copilot</span>
+          <span class="chip">Cursor</span>
+          <span class="chip">Gemini CLI</span>
+          <span class="chip">OpenCode</span>
+        </div>
         <div class="cta-row">
           <a class="cta" href="./?report=reports/showcase.json">Open the live demo dashboard</a>
           <a class="ghost" href="https://github.com/o11y-dev/reflect">View the repository</a>
@@ -143,66 +246,112 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
       <aside class="panel hero-side">
         <div class="metric-grid">
           <div class="metric">
-            <div class="k">Surface</div>
-            <div class="v">Compare</div>
-            <div class="s">Agent cohorts, tool ratios, and workflow shape</div>
+            <div class="k">Observe</div>
+            <div class="v">Every agent</div>
+            <div class="s">Sessions, tool usage, token spend, failures — one dashboard.</div>
           </div>
           <div class="metric">
-            <div class="k">Privacy</div>
-            <div class="v">Safe</div>
-            <div class="s">Curated sample data with shareable defaults</div>
+            <div class="k">Score</div>
+            <div class="v">Every session</div>
+            <div class="s">Quality and operational-excellence scores from telemetry.</div>
           </div>
           <div class="metric">
-            <div class="k">Mode</div>
-            <div class="v">Local-first</div>
-            <div class="s">No cloud upload required to understand agent behavior</div>
+            <div class="k">Generate</div>
+            <div class="v">From real work</div>
+            <div class="s">Skills and subagents derived from how your agents actually run.</div>
           </div>
           <div class="metric">
-            <div class="k">Format</div>
-            <div class="v">Static</div>
-            <div class="s">GitHub Pages-friendly JSON artifact + dashboard shell</div>
+            <div class="k">Govern</div>
+            <div class="v">v0.12 preview</div>
+            <div class="s">Policies that inspect and mutate live agent sessions.</div>
           </div>
         </div>
       </aside>
     </section>
 
-    <section class="panel install">
-      <p class="section-title">Easy install</p>
-      <pre><code>pipx install o11y-reflect
+    <section class="section">
+      <div class="section-head">
+        <h2 class="section-title">One platform, three surfaces</h2>
+      </div>
+      <div class="products">
+        <article class="product">
+          <span class="status today">Today</span>
+          <h3>reflect</h3>
+          <p>Hosted reports, observation scores, and skill/agent generation driven by telemetry. Reads OTLP and local session stores; runs in your terminal or browser.</p>
+          <a href="https://github.com/o11y-dev/reflect">o11y-dev/reflect →</a>
+        </article>
+        <article class="product">
+          <span class="status today">Today</span>
+          <h3>opentelemetry-hooks</h3>
+          <p>The OpenTelemetry instrumentation layer that captures AI coding agent activity and emits OTLP. The data foundation underneath reflect — bring any OTLP-compatible backend.</p>
+          <a href="https://github.com/o11y-dev/opentelemetry-hooks">o11y-dev/opentelemetry-hooks →</a>
+        </article>
+        <article class="product">
+          <span class="status preview">v0.12 preview</span>
+          <h3>Policies</h3>
+          <p>Rule evaluation at the hook boundary with per-IDE translation of deny / ask / mutate decisions. Extends opentelemetry-hooks to control live agent sessions. Coming soon.</p>
+          <a href="https://github.com/o11y-dev/opentelemetry-hooks/blob/main/SPEC-policy-engine.md">Read the spec →</a>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel install section">
+      <div class="section-head">
+        <h2 class="section-title">Install</h2>
+      </div>
+      <p class="proof" style="margin:0 0 12px">
+        Skills are one distribution channel, not the identity. Install as a Claude skill, via pipx, or from source — all three produce the same reflect.
+      </p>
+      <div class="install-grid">
+        <div class="install-card">
+          <h3>reflect (reports &amp; scores)</h3>
+          <pre><code>pipx install o11y-reflect
 reflect setup
 reflect
 
 # no telemetry yet?
 reflect --demo</code></pre>
+        </div>
+        <div class="install-card">
+          <h3>opentelemetry-hooks (capture only)</h3>
+          <pre><code>pipx install opentelemetry-hooks
+opentelemetry-hooks install</code></pre>
+        </div>
+      </div>
     </section>
 
-    <section class="callouts">
-      <article class="callout">
-        <h3>What this page is for</h3>
-        <p>
-          A clean, stable URL you can drop into launch notes, README links, tweets,
-          or internal docs when you want people to understand <em>reflect</em> fast.
-        </p>
-      </article>
-      <article class="callout">
-        <h3>What viewers will see</h3>
-        <p>
-          A real dashboard shell running against a curated artifact at
-          <code>reports/showcase.json</code>, not a mock screenshot or a dead static image.
-        </p>
-      </article>
-      <article class="callout">
-        <h3>What stays private</h3>
-        <p>
-          No local filesystem paths, usernames, or live transcript content from your machine.
-          Use this route for public sharing; keep real telemetry on local/private artifacts.
-        </p>
-      </article>
+    <section class="section">
+      <div class="section-head">
+        <h2 class="section-title">About this page</h2>
+      </div>
+      <div class="callouts">
+        <article class="callout">
+          <h3>A stable URL to share</h3>
+          <p>
+            Drop this link into launch notes, README headers, tweets, or internal docs when you want
+            someone to understand reflect in 30 seconds without installing anything.
+          </p>
+        </article>
+        <article class="callout">
+          <h3>A real dashboard, not a screenshot</h3>
+          <p>
+            The "live demo" button opens the actual reflect dashboard running against a curated
+            artifact at <code>reports/showcase.json</code>. Every chart, table, and score is real.
+          </p>
+        </article>
+        <article class="callout">
+          <h3>Safe to share</h3>
+          <p>
+            No local filesystem paths, usernames, or live transcript content from your machine appear here.
+            Use this route for public sharing; keep real telemetry on local or private artifacts.
+          </p>
+        </article>
+      </div>
     </section>
 
     <div class="footer">
-      Direct dashboard URL:
-      <a href="./?report=reports/showcase.json" style="color:var(--teal);text-decoration:none">reflect.o11y.dev</a>
+      Built on OpenTelemetry GenAI semantic conventions. Vendor-neutral. Open source (Apache 2.0).
+      Direct dashboard URL: <a href="./?report=reports/showcase.json">reflect.o11y.dev</a>
     </div>
   </main>
 </body>
