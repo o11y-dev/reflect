@@ -2621,7 +2621,7 @@ function fmtInlineMarkdown(s){
   return escHtml(s || '')
     .replace(/`([^`\n]+)`/g,'<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
-    .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?:;]|$)/g,'$1<em>$2</em>');
+    .replace(/(^|[\s(])\*([^*\n]+)\*([)\].,!?:;]|\s|$)/g, (_, lead, body, tail) => `${lead}<em>${body}</em>${tail}`);
 }
 
 function fmtMarkdown(s){
@@ -2630,7 +2630,8 @@ function fmtMarkdown(s){
   const segments = source.split(/```/);
   return segments.map((segment, index) => {
     if (!segment) return '';
-    if (index % 2 === 1) {
+    const isCodeBlock = index % 2 === 1;
+    if (isCodeBlock) {
       return `<span class="md-code-block">${escHtml(segment).replace(/\n/g,'<br/>')}</span>`;
     }
     return segment.split('\n').map(line => {
