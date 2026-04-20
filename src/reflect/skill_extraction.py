@@ -330,20 +330,20 @@ def _build_skill_evidence_bundle(stats: TelemetryStats) -> dict:
         }
 
     def _score(session_id: str) -> float:
-        p = per_session[session_id]
+        session_metrics = per_session[session_id]
         recovered = int(stats.session_recovered_failures.get(session_id, 0) or 0)
         quality = float(stats.session_quality_scores.get(session_id, 0.0) or 0.0)
         total_tokens = _total_tokens(stats.session_tokens.get(session_id, {}))
         completed = bool(stats.session_goal_completed.get(session_id, False))
-        opportunities = len(p["targets"])
+        opportunities = len(session_metrics["targets"])
         high_token_penalty = 8 if total_tokens >= 50_000 else 0
         quality_pressure = 10 if quality <= 50 else 6 if quality >= 85 else 0
         completion_pressure = 8 if not completed else 0
         event_weight = min(int(stats.session_events.get(session_id, 0) or 0), 200) / 20
         return (
             opportunities * 10
-            + p["failures"] * 6
-            + p["loops"] * 4
+            + session_metrics["failures"] * 6
+            + session_metrics["loops"] * 4
             + recovered * 5
             + high_token_penalty
             + quality_pressure
@@ -377,9 +377,9 @@ def _build_skill_evidence_bundle(stats: TelemetryStats) -> dict:
     target_values: dict[str, list[str]] = {}
 
     for rank, session_id in enumerate(ranked_session_ids, start=1):
-        p = per_session[session_id]
-        spans = p["spans"]
-        targets = p["targets"]
+        session_metrics = per_session[session_id]
+        spans = session_metrics["spans"]
+        targets = session_metrics["targets"]
         conversation = stats.session_conversation.get(session_id, [])
         tokens = stats.session_tokens.get(session_id, {})
         tool_flow = _session_tool_flow(stats, session_id)
@@ -418,8 +418,8 @@ def _build_skill_evidence_bundle(stats: TelemetryStats) -> dict:
             },
             "score_signals": {
                 "tool_uses": _tool_use_count(spans),
-                "tool_failures": p["failures"],
-                "tool_loops": p["loops"],
+                "tool_failures": session_metrics["failures"],
+                "tool_loops": session_metrics["loops"],
             },
             "tool_flow": tool_flow,
             "shell_cmds": shell_cmds,
