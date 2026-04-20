@@ -43,7 +43,6 @@ import platform
 import re
 import shutil
 import subprocess
-import tomllib
 import zipfile
 from datetime import UTC, datetime
 from importlib import metadata as importlib_metadata
@@ -113,18 +112,26 @@ from reflect.instrumentation import (  # noqa: F401
     _configure_gemini_native_otel,
     _copilot_cli_native_otel_env,
     _copilot_native_otel_settings,
-    _copy_config_snapshot as _instrumentation_copy_config_snapshot,
     _gemini_native_otel_settings,
     _hook_otlp_endpoint,
     _hook_otlp_protocol,
     _missing_desired_keys,
     _native_otel_target,
-    _reflect_agent_dir as _instrumentation_reflect_agent_dir,
     _render_codex_native_otel_block,
     _render_native_otel_panel,
-    _run_setup as _instrumentation_run_setup,
-    _snapshot_detected_agent_configs as _instrumentation_snapshot_detected_agent_configs,
     _upsert_toml_section,
+)
+from reflect.instrumentation import (
+    _copy_config_snapshot as _instrumentation_copy_config_snapshot,
+)
+from reflect.instrumentation import (
+    _reflect_agent_dir as _instrumentation_reflect_agent_dir,
+)
+from reflect.instrumentation import (
+    _run_setup as _instrumentation_run_setup,
+)
+from reflect.instrumentation import (
+    _snapshot_detected_agent_configs as _instrumentation_snapshot_detected_agent_configs,
 )
 from reflect.models import AgentStats, TelemetryStats  # noqa: F401
 from reflect.parsing import (  # noqa: F401
