@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 (unreleased)
+## 0.6.0 (2026-04-20)
 
 ### Added
 - **Distribution-aware insights engine** — observations, recommendations, strengths, and examples now use IQR-based outlier detection against the user's own baseline instead of hardcoded magic-number thresholds
