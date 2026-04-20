@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.0 (unreleased)
+
+### Fixed
+- Increased the default hosted/local dashboard font sizing baseline so tabs, metadata, and supporting UI text render at more readable sizes.
+
 ## 0.5.0 (2026-04-18)
 
 ### Fixed
