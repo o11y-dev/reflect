@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import tomllib
 from datetime import datetime
 from unittest.mock import patch
 
@@ -699,6 +700,48 @@ class TestDoctor:
         # Without otel-hook, OTLP logs should show "missing" not "waiting"
         assert "waiting" not in result.output
 
+    def test_doctor_shows_native_agent_telemetry_status(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        home_dir = tmp_path / "home"
+        claude_settings = home_dir / ".claude" / "settings.json"
+        claude_settings.parent.mkdir(parents=True)
+        claude_settings.write_text(json.dumps({
+            "env": {
+                "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+                "OTEL_METRICS_EXPORTER": "otlp",
+                "OTEL_LOGS_EXPORTER": "otlp",
+                "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
+            }
+        }))
+        (reflect_home / "state").mkdir(parents=True)
+        hook_home.mkdir(parents=True)
+        (hook_home / "otel_config.json").write_text(json.dumps({
+            "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
+            "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+        }))
+        advisor = {
+            "release": {
+                "current_version": "1.0.0",
+                "latest_version": None,
+                "checked_at": None,
+                "update_available": False,
+                "source": "unknown",
+            },
+            "local_issues": [],
+        }
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core._collect_update_advisor", return_value=advisor), \
+             patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
+            result = runner.invoke(main, ["doctor"])
+
+        assert result.exit_code == 0
+        assert "Native agent telemetry" in result.output
+        assert "Claude Code" in result.output
+        assert "incomplete" in result.output
+
 
 class TestSetup:
     def test_setup_surfaces_detected_agent_guidance(self, runner, tmp_path):
@@ -959,10 +1002,16 @@ class TestNativeOtelConfig:
         with patch("reflect.core.Path.home", return_value=tmp_path):
             core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
 
-        config = (tmp_path / ".codex" / "config.toml").read_text()
+        config_path = tmp_path / ".codex" / "config.toml"
+        config = config_path.read_text()
+        parsed = tomllib.loads(config)
         assert "[otel]" in config
-        assert "localhost:4317" in config
-        assert "log_user_prompt = false" in config
+        assert parsed["otel"]["exporter"]["otlp-grpc"]["endpoint"] == "http://localhost:4317"
+        assert parsed["otel"]["traces_exporter"] == "otlp"
+        assert parsed["otel"]["traces_endpoint"] == "http://localhost:4317"
+        assert parsed["otel"]["logs_exporter"] == "otlp"
+        assert parsed["otel"]["logs_endpoint"] == "http://localhost:4317"
+        assert parsed["otel"]["log_user_prompt"] is False
 
     def test_codex_native_otel_appends_to_existing_config(self, tmp_path):
         codex_dir = tmp_path / ".codex"
@@ -975,6 +1024,8 @@ class TestNativeOtelConfig:
         config = (codex_dir / "config.toml").read_text()
         assert "[model]" in config  # existing section preserved
         assert "[otel]" in config
+        assert 'traces_exporter = "otlp"' in config
+        assert 'logs_exporter = "otlp"' in config
         assert "log_user_prompt = false" in config
 
     def test_codex_native_otel_already_configured(self, tmp_path):
@@ -982,6 +1033,10 @@ class TestNativeOtelConfig:
         codex_dir.mkdir()
         config_text = (
             '[otel]\nexporter = {otlp-grpc = {endpoint = "http://localhost:4317"}}\n'
+            'traces_exporter = "otlp"\n'
+            'traces_endpoint = "http://localhost:4317"\n'
+            'logs_exporter = "otlp"\n'
+            'logs_endpoint = "http://localhost:4317"\n'
             "log_user_prompt = false\n"
         )
         (codex_dir / "config.toml").write_text(config_text)
@@ -992,6 +1047,40 @@ class TestNativeOtelConfig:
 
         assert (codex_dir / "config.toml").read_text() == content_before
 
+    def test_codex_native_otel_replaces_incomplete_section(self, tmp_path):
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "config.toml").write_text(
+            "[model]\nname = \"o3\"\n\n[otel]\ntraces_exporter = \"otlp\"\n"
+        )
+
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
+
+        parsed = tomllib.loads((codex_dir / "config.toml").read_text())
+        assert parsed["model"]["name"] == "o3"
+        assert parsed["otel"]["logs_exporter"] == "otlp"
+        assert parsed["otel"]["logs_endpoint"] == "http://localhost:4317"
+
+    def test_codex_native_otel_replaces_mid_file_section_without_clobbering_following_sections(self, tmp_path):
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "config.toml").write_text(
+            "[model]\nname = \"o3\"\n\n"
+            "[otel]\ntraces_exporter = \"console\"\n\n"
+            "[projects]\n\"/tmp/demo\" = {trust_level = \"trusted\"}\n"
+        )
+
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
+
+        updated = (codex_dir / "config.toml").read_text()
+        parsed = tomllib.loads(updated)
+        assert parsed["otel"]["traces_exporter"] == "otlp"
+        assert parsed["otel"]["logs_exporter"] == "otlp"
+        assert parsed["projects"]["/tmp/demo"]["trust_level"] == "trusted"
+        assert "\n\n[projects]\n" in updated
+
     def test_codex_native_otel_read_error(self, tmp_path):
         codex_dir = tmp_path / ".codex"
         codex_dir.mkdir()
@@ -1000,3 +1089,43 @@ class TestNativeOtelConfig:
         with patch("reflect.core.Path.home", return_value=tmp_path):
             # Should not raise
             core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
+
+    def test_native_otel_status_reports_incomplete_claude_config(self, tmp_path):
+        settings_file = tmp_path / ".claude" / "settings.json"
+        settings_file.parent.mkdir(parents=True)
+        settings_file.write_text(json.dumps({
+            "env": {
+                "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+                "OTEL_METRICS_EXPORTER": "otlp",
+                "OTEL_LOGS_EXPORTER": "otlp",
+                "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
+            }
+        }))
+
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            statuses = core._collect_native_otel_statuses(self.HOOK_CFG)
+
+        claude = next(status for status in statuses if status["agent"] == "Claude Code")
+        assert claude["status"] == "incomplete"
+        assert "OTEL_EXPORTER_OTLP_PROTOCOL" in claude["details"]
+
+    def test_native_otel_status_reports_ready_codex_config(self, tmp_path):
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
+            statuses = core._collect_native_otel_statuses(self.HOOK_CFG)
+
+        codex = next(status for status in statuses if status["agent"] == "OpenAI Codex CLI")
+        assert codex["status"] == "ready"
+        assert "trace/log OTLP exporters" in codex["details"]
+
+    def test_native_otel_status_reports_unreadable_codex_config(self, tmp_path):
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "config.toml").write_text("[[[[invalid toml")
+
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            statuses = core._collect_native_otel_statuses(self.HOOK_CFG)
+
+        codex = next(status for status in statuses if status["agent"] == "OpenAI Codex CLI")
+        assert codex["status"] == "unreadable"
+        assert "Failed to read config.toml" in codex["details"]
