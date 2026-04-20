@@ -100,8 +100,8 @@ body{
   background:var(--bg);
   color:var(--text);
   font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text','Helvetica Neue',system-ui,sans-serif;
-  font-size:15px;
-  line-height:1.5;
+  font-size:16px;
+  line-height:1.6;
   min-height:100vh;
   display:flex;
   flex-direction:column;
@@ -153,12 +153,12 @@ header{
   background:rgba(94,92,230,.15);
   border-radius:var(--radius-xs);
   padding:2px 8px;
-  font-size:10px;
+  font-size:11px;
   font-weight:600;
   color:var(--indigo);
   letter-spacing:.4px;
 }
-.header-meta{display:flex;flex-direction:column;justify-content:center;text-align:right;font-size:12px;color:var(--text-3);line-height:1.6}
+.header-meta{display:flex;flex-direction:column;justify-content:center;text-align:right;font-size:13px;color:var(--text-3);line-height:1.6}
 
 /* ── Tabs ────────────────────────────────────────────────── */
 nav{
@@ -207,7 +207,7 @@ nav::after{
 .tab{
   appearance:none;
   padding:14px 14px 11px;
-  font-size:13px;
+  font-size:14px;
   font-weight:500;
   color:var(--text-3);
   cursor:pointer;
@@ -294,7 +294,7 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   box-shadow:0 4px 24px rgba(0,0,0,.4), 0 0 1px rgba(255,255,255,.08);
 }
 .panel-title{
-  font-size:13px;
+  font-size:14px;
   font-weight:600;
   color:var(--text-2);
   margin-bottom:14px;
@@ -303,7 +303,7 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   gap:8px;
   letter-spacing:-.1px;
 }
-.panel-title-count{font-size:12px;color:var(--text-3);font-weight:400}
+.panel-title-count{font-size:13px;color:var(--text-3);font-weight:400}
 .panel-no-hover:hover{transform:none;box-shadow:var(--panel-shadow)}
 
 /* ── Stat cards ──────────────────────────────────────────── */
@@ -326,9 +326,9 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 }
 .stat:hover{transform:translateY(-2px)}
 .stat::after{content:'';position:absolute;bottom:0;left:0;right:0;height:3px;background:var(--c,var(--blue));opacity:.5;border-radius:0 0 var(--radius) var(--radius)}
-.stat-label{font-size:12px;font-weight:500;color:var(--text-3);margin-bottom:10px;letter-spacing:-.1px}
+.stat-label{font-size:13px;font-weight:500;color:var(--text-3);margin-bottom:10px;letter-spacing:-.1px}
 .stat-value{font-size:clamp(34px,3.2vw,44px);font-weight:700;line-height:.94;color:var(--c,var(--blue));letter-spacing:-1.8px}
-.stat-sub{font-size:12px;color:var(--text-3);margin-top:auto;padding-top:14px;line-height:1.35;max-width:18ch}
+.stat-sub{font-size:13px;color:var(--text-3);margin-top:auto;padding-top:14px;line-height:1.35;max-width:18ch}
 @media(max-width:720px){.stat{min-height:124px}}
 
 /* ── Metric tiles ────────────────────────────────────────── */
@@ -343,9 +343,9 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   transition:background .15s ease;
 }
 .metric:hover{background:var(--surface3)}
-.metric-label{font-size:11px;font-weight:500;color:var(--text-3);margin-bottom:6px}
+.metric-label{font-size:12px;font-weight:500;color:var(--text-3);margin-bottom:6px}
 .metric-value{font-size:20px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.5px}
-.metric-sub{font-size:11px;color:var(--text-3);margin-top:4px}
+.metric-sub{font-size:12px;color:var(--text-3);margin-top:4px}
 
 /* ── Carousel ────────────────────────────────────────────── */
 .carousel-outer{overflow:hidden;position:relative;mask-image:linear-gradient(to right,transparent 0,black 48px,black calc(100% - 48px),transparent 100%);-webkit-mask-image:linear-gradient(to right,transparent 0,black 48px,black calc(100% - 48px),transparent 100%)}
@@ -363,7 +363,7 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   background:var(--surface2);
   border:1px solid var(--glass-border);
   border-radius:var(--radius-sm);
-  font-size:13px;
+  font-size:14px;
   line-height:1.55;
 }
 .insight-icon{font-size:20px;flex-shrink:0;margin-top:1px}
@@ -382,8 +382,8 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   white-space:nowrap;
 }
 .badge-icon{font-size:22px;line-height:1}
-.badge-name{font-size:13px;font-weight:600;color:var(--text)}
-.badge-sub{font-size:11px;color:var(--text-3);margin-top:2px}
+.badge-name{font-size:14px;font-weight:600;color:var(--text)}
+.badge-sub{font-size:12px;color:var(--text-3);margin-top:2px}
 
 /* ── Observations tab ──────────────────────────────────────── */
 .obs-hero-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-bottom:16px}
@@ -406,9 +406,9 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   background:radial-gradient(circle, rgba(100,210,255,.15), transparent 70%);
   pointer-events:none;
 }
-.obs-hero-kicker{font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--text-3);margin-bottom:10px}
+.obs-hero-kicker{font-size:12px;text-transform:uppercase;letter-spacing:.14em;color:var(--text-3);margin-bottom:10px}
 .obs-hero-value{font-size:34px;font-weight:700;letter-spacing:-1.2px;line-height:1;color:var(--text)}
-.obs-hero-copy{margin-top:12px;font-size:13px;line-height:1.6;color:var(--text-2)}
+.obs-hero-copy{margin-top:12px;font-size:14px;line-height:1.6;color:var(--text-2)}
 .obs-stack{display:flex;flex-direction:column;gap:12px}
 .obs-item{
   padding:14px 16px;
@@ -419,8 +419,8 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 .obs-item[data-tone="strength"]{border-left:3px solid rgba(48,209,88,.85)}
 .obs-item[data-tone="observation"]{border-left:3px solid rgba(255,214,10,.85)}
 .obs-item[data-tone="recommendation"]{border-left:3px solid rgba(10,132,255,.85)}
-.obs-item-label{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--text-3);margin-bottom:8px}
-.obs-item-body{font-size:13px;line-height:1.65;color:var(--text-2)}
+.obs-item-label{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--text-3);margin-bottom:8px}
+.obs-item-body{font-size:14px;line-height:1.65;color:var(--text-2)}
 .obs-item-body strong{color:var(--text)}
 .badge-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .badge-grid .badge{white-space:normal;align-items:flex-start;height:100%}
@@ -432,10 +432,10 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   padding:16px;
 }
 .obs-playbook-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px}
-.obs-playbook-title{font-size:14px;font-weight:600;color:var(--text)}
+.obs-playbook-title{font-size:15px;font-weight:600;color:var(--text)}
 .obs-playbook-tag{
   flex-shrink:0;
-  font-size:10px;
+  font-size:11px;
   text-transform:uppercase;
   letter-spacing:.12em;
   padding:4px 8px;
@@ -443,11 +443,11 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   border:1px solid rgba(255,255,255,.08);
   color:var(--text-3);
 }
-.obs-playbook-copy{font-size:13px;line-height:1.6;color:var(--text-2)}
-.obs-example-title{font-size:14px;font-weight:600;color:var(--text);margin-bottom:10px}
-.obs-example-label{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:var(--text-3);margin-bottom:6px}
+.obs-playbook-copy{font-size:14px;line-height:1.6;color:var(--text-2)}
+.obs-example-title{font-size:15px;font-weight:600;color:var(--text);margin-bottom:10px}
+.obs-example-label{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--text-3);margin-bottom:6px}
 .obs-example-box{
-  font-size:12px;
+  font-size:13px;
   line-height:1.55;
   color:var(--text-2);
   background:rgba(0,0,0,.18);
@@ -470,15 +470,15 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 .heatmap-wrap{overflow-x:auto;padding-bottom:4px}
 .heatmap-outer{display:flex;gap:8px;width:100%}
 .hm-wd{display:flex;flex-direction:column;gap:3px;padding-top:18px;flex-shrink:0}
-.hm-wd-label{font-size:10px;color:var(--text-3);text-align:right;display:flex;align-items:center;justify-content:flex-end}
+.hm-wd-label{font-size:11px;color:var(--text-3);text-align:right;display:flex;align-items:center;justify-content:flex-end}
 .hm-right{flex:1;min-width:0}
 .hm-months{display:flex;margin-bottom:4px}
-.hm-month{font-size:11px;color:var(--text-3);flex-shrink:0;overflow:hidden}
+.hm-month{font-size:12px;color:var(--text-3);flex-shrink:0;overflow:hidden}
 .hm-grid{display:flex}
 .hm-week{display:flex;flex-direction:column;flex-shrink:0}
 .hm-cell{border-radius:3px;cursor:default;transition:opacity .15s ease, transform .15s ease, outline-color .15s ease}
 .hm-cell:hover{opacity:.75;outline:1px solid rgba(255,255,255,.15);transform:scale(1.1)}
-.hm-legend{display:flex;align-items:center;gap:6px;margin-top:12px;font-size:11px;color:var(--text-3)}
+.hm-legend{display:flex;align-items:center;gap:6px;margin-top:12px;font-size:12px;color:var(--text-3)}
 .hm-legend-sw{display:flex;gap:3px}
 .hm-legend-sw div{width:12px;height:12px;border-radius:3px}
 
@@ -493,17 +493,17 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 /* ── Bar list ────────────────────────────────────────────── */
 .bar-list{display:flex;flex-direction:column;gap:10px}
 .bar-item{display:flex;align-items:center;gap:12px}
-.bar-lbl{flex:0 1 240px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:'SF Mono',ui-monospace,monospace;font-size:12px;color:var(--text-2)}
+.bar-lbl{flex:0 1 240px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:'SF Mono',ui-monospace,monospace;font-size:13px;color:var(--text-2)}
 .bar-track{flex:1;background:var(--surface3);border-radius:4px;height:6px;overflow:hidden}
 .bar-fill{height:100%;border-radius:4px;transition:width .3s ease}
-.bar-cnt{flex:0 0 44px;text-align:right;font-size:12px;color:var(--text-3);font-weight:600}
+.bar-cnt{flex:0 0 44px;text-align:right;font-size:13px;color:var(--text-3);font-weight:600}
 
 /* ── Tables ──────────────────────────────────────────────── */
 .tbl,.data-table{width:100%;border-collapse:collapse;font-size:13px}
 .tbl th,.data-table th{
   text-align:left;
   padding:10px 14px;
-  font-size:11px;
+  font-size:12px;
   font-weight:600;
   color:var(--text-3);
   border-bottom:1px solid rgba(255,255,255,.06);
@@ -532,7 +532,7 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   border:1px solid rgba(255,255,255,.08);
   border-radius:var(--radius-xs);
   padding:2px 8px;
-  font-size:11px;
+  font-size:12px;
   font-family:'SF Mono',ui-monospace,monospace;
 }
 .chip-indigo{color:var(--indigo);background:rgba(94,92,230,.12)}
@@ -544,7 +544,7 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   border:1px solid rgba(255,214,10,.2);
   border-radius:var(--radius-xs);
   padding:3px 10px;
-  font-size:11px;
+  font-size:12px;
   font-weight:600;
   color:var(--yellow);
 }
@@ -602,7 +602,7 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 }
 .session-filter-launcher-meta{
   min-width:0;
-  font-size:12px;
+  font-size:13px;
   color:var(--text-2);
   white-space:nowrap;
   overflow:hidden;
@@ -626,13 +626,13 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   margin-bottom:8px;
 }
 .global-filter-title{
-  font-size:11px;
+  font-size:12px;
   font-weight:700;
   letter-spacing:.1em;
   text-transform:uppercase;
   color:var(--text-3);
 }
-.global-filter-meta{font-size:11px;color:var(--text-2);margin-top:2px}
+.global-filter-meta{font-size:12px;color:var(--text-2);margin-top:2px}
 .global-filter-actions{
   display:flex;
   align-items:center;
@@ -648,7 +648,7 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 }
 .filter-field{display:flex;flex-direction:column;gap:4px}
 .filter-label{
-  font-size:10px;
+  font-size:11px;
   font-weight:600;
   letter-spacing:.04em;
   color:var(--text-3);
@@ -660,7 +660,7 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   border:1px solid var(--glass-border);
   border-radius:var(--radius-xs);
   padding:7px 10px;
-  font-size:12px;
+  font-size:13px;
   color:var(--text);
 }
 .filter-select:focus-visible{
@@ -686,7 +686,7 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   background:rgba(10,132,255,.12);
   border:1px solid rgba(10,132,255,.24);
   color:rgba(255,255,255,.88);
-  font-size:11px;
+  font-size:12px;
 }
 .filter-chip button{
   appearance:none;
@@ -694,7 +694,7 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   background:transparent;
   color:var(--text-2);
   cursor:pointer;
-  font-size:12px;
+  font-size:13px;
   line-height:1;
 }
 .filter-compact-toggle,
@@ -704,7 +704,7 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   border:1px solid rgba(255,255,255,.12);
   background:rgba(255,255,255,.03);
   color:var(--text-2);
-  font-size:11px;
+  font-size:12px;
   font-weight:600;
   border-radius:10px;
   padding:6px 9px;
@@ -723,19 +723,19 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   border:none;
   background:transparent;
   color:var(--text-2);
-  font-size:11px;
+  font-size:12px;
   font-weight:600;
   cursor:pointer;
 }
 .filter-clear:hover{color:var(--text)}
-.sb-list-head{padding:8px 10px 0;font-size:11px;color:var(--text-3)}
+.sb-list-head{padding:8px 10px 0;font-size:12px;color:var(--text-3)}
 .sb-search{
   width:100%;
   background:var(--surface2);
   border:1px solid var(--glass-border);
   border-radius:var(--radius-xs);
   padding:7px 10px;
-  font-size:12px;
+  font-size:13px;
   color:var(--text);
   transition:border-color .15s;
 }
@@ -754,7 +754,7 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 .sb-pill{
   appearance:none;
   padding:4px 9px;
-  font-size:10px;
+  font-size:11px;
   font-weight:600;
   border-radius:20px;
   border:1px solid var(--glass-border);
@@ -845,10 +845,10 @@ body.filter-sheet-open{overflow:hidden}
 }
 .sb-card-header{display:flex;align-items:center;gap:6px;margin-bottom:4px}
 .sb-agent-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.sb-card-agent{font-size:11px;font-weight:600;color:var(--text)}
-.sb-card-time{font-size:10px;color:var(--text-3);margin-left:auto;flex-shrink:0}
+.sb-card-agent{font-size:12px;font-weight:600;color:var(--text)}
+.sb-card-time{font-size:11px;color:var(--text-3);margin-left:auto;flex-shrink:0}
 .sb-card-prompt{
-  font-size:11px;
+  font-size:12px;
   font-style:italic;
   color:var(--text-3);
   overflow:hidden;
@@ -900,7 +900,7 @@ body.filter-sheet-open{overflow:hidden}
 .sb-detail-header-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}
 .sb-detail-sid{
   font-family:'SF Mono',ui-monospace,monospace;
-  font-size:13px;
+  font-size:14px;
   color:var(--text-2);
   overflow:hidden;
   text-overflow:ellipsis;
@@ -908,19 +908,19 @@ body.filter-sheet-open{overflow:hidden}
 .sb-detail-agent-badge{
   padding:3px 10px;
   border-radius:var(--radius-xs);
-  font-size:11px;
+  font-size:12px;
   font-weight:700;
   color:#fff;
 }
 .sb-detail-model{
-  font-size:12px;
+  font-size:13px;
   color:var(--text-3);
 }
 .sb-detail-stats{
   display:flex;
   gap:16px;
   flex-wrap:wrap;
-  font-size:12px;
+  font-size:13px;
   color:var(--text-3);
 }
 .sb-detail-stats span{display:flex;align-items:center;gap:4px}
@@ -945,7 +945,7 @@ body.filter-sheet-open{overflow:hidden}
   justify-content:center;
   height:100%;
   color:var(--text-3);
-  font-size:14px;
+  font-size:15px;
   gap:12px;
 }
 .sb-empty-icon{font-size:40px;opacity:.3}
@@ -960,7 +960,7 @@ body.filter-sheet-open{overflow:hidden}
   flex-wrap:wrap;
 }
 .conversation-eyebrow{
-  font-size:11px;
+  font-size:12px;
   font-weight:700;
   text-transform:uppercase;
   letter-spacing:.14em;
@@ -975,7 +975,7 @@ body.filter-sheet-open{overflow:hidden}
 }
 .conversation-sub{
   margin-top:4px;
-  font-size:13px;
+  font-size:14px;
   color:var(--text-2);
   max-width:64ch;
 }
@@ -994,7 +994,7 @@ body.filter-sheet-open{overflow:hidden}
     rgba(255,255,255,.03);
 }
 .conversation-stat-label{
-  font-size:10px;
+  font-size:11px;
   font-weight:700;
   letter-spacing:.12em;
   text-transform:uppercase;
@@ -1009,7 +1009,7 @@ body.filter-sheet-open{overflow:hidden}
 }
 .conversation-stat-sub{
   margin-top:4px;
-  font-size:12px;
+  font-size:13px;
   color:var(--text-2);
 }
 .ev-timeline{
@@ -1045,7 +1045,7 @@ body.filter-sheet-open{overflow:hidden}
   justify-content:flex-end;
   width:100%;
   font-family:'SF Mono',ui-monospace,monospace;
-  font-size:11px;
+  font-size:12px;
   line-height:1;
   color:var(--text-3);
   letter-spacing:.02em;
@@ -1100,13 +1100,13 @@ body.filter-sheet-open{overflow:hidden}
   gap:4px;
   padding:5px 10px;
   border-radius:999px;
-  font-size:11px;
+  font-size:12px;
   font-weight:700;
   color:#fff;
   box-shadow:inset 0 -1px 0 rgba(255,255,255,.15);
 }
 .ev-meta{
-  font-size:11px;
+  font-size:12px;
   color:var(--text-2);
   margin-left:auto;
   flex-shrink:0;
@@ -1116,7 +1116,7 @@ body.filter-sheet-open{overflow:hidden}
 .ev-body-label{
   margin-top:10px;
   margin-bottom:6px;
-  font-size:10px;
+  font-size:11px;
   font-weight:700;
   letter-spacing:.14em;
   text-transform:uppercase;
@@ -1125,7 +1125,7 @@ body.filter-sheet-open{overflow:hidden}
 .ev-preview{
   display:block;
   margin:0;
-  font-size:13px;
+  font-size:14px;
   color:rgba(255,255,255,.9);
   line-height:1.68;
   white-space:pre-wrap;
@@ -1150,7 +1150,7 @@ body.filter-sheet-open{overflow:hidden}
 .ev-preview.full-content{max-height:12.8em}
 .ev-preview-hint{
   margin-top:8px;
-  font-size:11px;
+  font-size:12px;
   color:var(--text-3);
 }
 
@@ -1165,10 +1165,10 @@ body.filter-sheet-open{overflow:hidden}
 .chat-bubble{border-radius:14px;border:1px solid rgba(255,255,255,.08);overflow:hidden;transition:border-color .18s}
 .chat-bubble:hover{border-color:rgba(255,255,255,.13)}
 .chat-header{display:flex;align-items:center;gap:8px;padding:7px 12px 6px;border-bottom:1px solid rgba(255,255,255,.06)}
-.chat-who{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--node-color)}
-.chat-header-meta{font-size:11px;color:var(--text-3);margin-left:auto;text-align:right;max-width:32ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-who{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--node-color)}
+.chat-header-meta{font-size:12px;color:var(--text-3);margin-left:auto;text-align:right;max-width:32ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chat-content{padding:10px 12px}
-.chat-content .ev-preview{border-radius:8px;font-size:13px;padding:10px 12px}
+.chat-content .ev-preview{border-radius:8px;font-size:14px;padding:10px 12px}
 .chat-content .ev-preview-hint{margin-top:6px}
 .chat-msg.is-user .chat-bubble{
   background:linear-gradient(180deg,rgba(10,132,255,.07),rgba(10,132,255,.02)),rgba(14,14,16,.8);
@@ -1190,16 +1190,16 @@ body.filter-sheet-open{overflow:hidden}
   padding:5px 10px;border-radius:8px;
   border:1px solid rgba(255,255,255,.06);
   background:rgba(255,255,255,.025);
-  font-size:12px;min-width:0;overflow:hidden;
+  font-size:13px;min-width:0;overflow:hidden;
   transition:background .15s,border-color .15s;
 }
 .chat-activity-chip:hover{background:rgba(255,255,255,.045);border-color:rgba(255,255,255,.1)}
-.chip-icon{font-size:11px;flex-shrink:0;color:var(--node-color);font-style:normal}
+.chip-icon{font-size:12px;flex-shrink:0;color:var(--node-color);font-style:normal}
 .chip-name{font-weight:600;color:rgba(255,255,255,.8);white-space:nowrap;flex-shrink:0}
 .chip-meta{color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1;padding-left:2px}
-.chip-dur{font-family:'SF Mono',ui-monospace,monospace;font-size:10px;color:var(--text-3);white-space:nowrap;flex-shrink:0;margin-left:auto;padding-left:8px}
-.chip-ok{color:var(--green);font-size:11px;flex-shrink:0}
-.chip-fail{color:var(--red);font-size:11px;flex-shrink:0}
+.chip-dur{font-family:'SF Mono',ui-monospace,monospace;font-size:11px;color:var(--text-3);white-space:nowrap;flex-shrink:0;margin-left:auto;padding-left:8px}
+.chip-ok{color:var(--green);font-size:12px;flex-shrink:0}
+.chip-fail{color:var(--red);font-size:12px;flex-shrink:0}
 
 /* Session/subagent divider */
 .chat-divider{display:grid;grid-template-columns:52px minmax(0,1fr);gap:10px;align-items:center;padding:6px 0}
@@ -1207,14 +1207,14 @@ body.filter-sheet-open{overflow:hidden}
 .chat-divider .ev-rail::after{display:none}
 .chat-divider-inner{display:flex;align-items:center;gap:8px}
 .chat-divider-line{flex:1;height:1px;background:rgba(255,255,255,.06)}
-.chat-divider-label{font-size:10px;color:var(--text-3);letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
+.chat-divider-label{font-size:11px;color:var(--text-3);letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
 
 /* Compact stats bar (replaces 4-card grid) */
 .conv-stats-bar{
   display:flex;align-items:center;gap:4px;flex-wrap:wrap;
   padding:7px 12px;border-radius:10px;
   background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);
-  font-size:12px;color:var(--text-2);
+  font-size:13px;color:var(--text-2);
 }
 .conv-stat-item{display:flex;align-items:center;gap:4px}
 .conv-stat-num{font-weight:700;color:var(--text);font-size:13px}
@@ -1250,7 +1250,7 @@ body.filter-sheet-open{overflow:hidden}
     max-width:none;
   }
   .sb-detail-header{padding:10px 12px}
-  .sb-detail-sid{font-size:12px;max-width:100%}
+  .sb-detail-sid{font-size:13px;max-width:100%}
   .sb-detail-stats{
     display:grid;
     grid-template-columns:repeat(2,minmax(0,1fr));
@@ -1267,7 +1267,7 @@ body.filter-sheet-open{overflow:hidden}
   .sb-detail-tab{
     flex:0 0 auto;
     padding:7px 10px;
-    font-size:11px;
+    font-size:12px;
   }
   .sb-detail-body{padding:8px 12px 12px}
 }
@@ -1283,7 +1283,7 @@ body.filter-sheet-open{overflow:hidden}
   border:1px solid rgba(10,132,255,.3);
   border-radius:var(--radius-xs);
   color:var(--blue);
-  font-size:12px;
+  font-size:13px;
   font-weight:600;
   cursor:pointer;
   transition:background-color .15s ease, color .15s ease, border-color .15s ease;
@@ -1310,7 +1310,7 @@ body.filter-sheet-open{overflow:hidden}
   color:var(--text-3);
   padding:8px 12px;
   border-radius:10px 10px 0 0;
-  font-size:12px;
+  font-size:13px;
   font-weight:700;
   letter-spacing:.01em;
   cursor:pointer;
@@ -1351,7 +1351,7 @@ body.filter-sheet-open{overflow:hidden}
 }
 .telemetry-stat-sub{
   margin-top:2px;
-  font-size:10px;
+  font-size:11px;
   color:var(--text-3);
 }
 .telemetry-beat-row{
@@ -1493,14 +1493,14 @@ body.filter-sheet-open{overflow:hidden}
   transform:translateX(-50%) translateY(0);
 }
 .telemetry-observation-label{
-  font-size:10px;
+  font-size:11px;
   font-weight:700;
   color:var(--text);
   line-height:1.2;
 }
 .telemetry-observation-sub{
   margin-top:3px;
-  font-size:10px;
+  font-size:11px;
   color:var(--text-3);
   line-height:1.3;
 }
@@ -1537,7 +1537,7 @@ body.filter-sheet-open{overflow:hidden}
   padding:8px 9px;
   border-bottom:1px solid rgba(205,214,226,.12);
   background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.018));
-  font-size:10px;
+  font-size:11px;
   font-weight:700;
   color:var(--text);
   letter-spacing:.04em;
@@ -1728,7 +1728,7 @@ body.filter-sheet-open{overflow:hidden}
   background:rgba(205,214,226,.16);
 }
 .telemetry-span-title{
-  font-size:10px;
+  font-size:11px;
   font-weight:600;
   color:var(--text);
   white-space:nowrap;
@@ -1855,15 +1855,15 @@ body.filter-sheet-open{overflow:hidden}
 .telemetry-log-severity[data-severity="TRACE"]{background:rgba(142,142,147,.16);color:#c7c7cc}
 .telemetry-log-time{
   font-family:'SF Mono',ui-monospace,monospace;
-  font-size:10px;
+  font-size:11px;
   color:var(--text-3);
 }
 .telemetry-log-meta{
-  font-size:10px;
+  font-size:11px;
   color:var(--text-3);
 }
 .telemetry-log-body{
-  font-size:11px;
+  font-size:12px;
   color:var(--text);
   line-height:1.45;
   white-space:pre-wrap;
@@ -1952,7 +1952,7 @@ body.filter-sheet-open{overflow:hidden}
   border:1px solid rgba(255,255,255,.1);
   border-radius:8px;
   padding:8px 10px;
-  font-size:13px;
+  font-size:14px;
 }
 .compare-clear{
   width:auto;
@@ -1979,18 +1979,18 @@ body.filter-sheet-open{overflow:hidden}
 .dep-link{stroke:rgba(255,255,255,.12);stroke-width:1.5;fill:none}
 .dep-node circle{transition:r .2s,opacity .2s}
 .dep-node:hover circle{opacity:.85}
-.dep-node text{pointer-events:none;font-size:11px;fill:rgba(255,255,255,.7)}
+.dep-node text{pointer-events:none;font-size:12px;fill:rgba(255,255,255,.7)}
 /* Co-occurrence matrix */
 .matrix-wrap{overflow-x:auto}
 .matrix-table{border-collapse:collapse;margin:0 auto}
-.matrix-table td,.matrix-table th{width:36px;height:36px;text-align:center;font-size:10px;padding:0}
-.matrix-table th{font-size:10px;font-weight:500;color:var(--text-3);white-space:nowrap;max-width:36px;overflow:hidden;text-overflow:ellipsis}
+.matrix-table td,.matrix-table th{width:36px;height:36px;text-align:center;font-size:11px;padding:0}
+.matrix-table th{font-size:11px;font-weight:500;color:var(--text-3);white-space:nowrap;max-width:36px;overflow:hidden;text-overflow:ellipsis}
 .matrix-cell{border-radius:4px;cursor:default;transition:opacity .15s}
 .matrix-cell:hover{opacity:.75}
 /* Session timeline */
 .timeline-wrap{overflow-x:auto}
 .timeline-lane{display:flex;align-items:center;gap:10px;margin-bottom:10px;min-width:0}
-.timeline-sid{flex:0 0 90px;font-size:11px;color:var(--text-3);font-family:'SF Mono',ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis}
+.timeline-sid{flex:0 0 90px;font-size:12px;color:var(--text-3);font-family:'SF Mono',ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis}
 .timeline-track{flex:1;position:relative;height:24px;background:rgba(255,255,255,.04);border-radius:4px;overflow:hidden;min-width:400px}
 .timeline-span{position:absolute;top:3px;height:18px;border-radius:3px;cursor:default;transition:opacity .15s;min-width:2px}
 .timeline-span:hover{opacity:.7}
@@ -1998,7 +1998,7 @@ body.filter-sheet-open{overflow:hidden}
 .hist-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
 @media(max-width:800px){.hist-grid{grid-template-columns:1fr}}
 .hist-item{}
-.hist-label{font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:8px;font-family:'SF Mono',ui-monospace,monospace}
+.hist-label{font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:8px;font-family:'SF Mono',ui-monospace,monospace}
 .hist-bars{display:flex;gap:4px;align-items:flex-end;height:80px}
 .hist-bar{flex:1;border-radius:3px 3px 0 0;min-height:2px;cursor:default;transition:opacity .15s}
 .hist-bar:hover{opacity:.7}
@@ -2006,11 +2006,11 @@ body.filter-sheet-open{overflow:hidden}
 .hist-bLabel{flex:1;text-align:center;font-size:9px;color:var(--text-3)}
 /* Graph legend */
 .graph-legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px}
-.graph-legend-item{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-3)}
+.graph-legend-item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-3)}
 .graph-legend-dot{width:10px;height:10px;border-radius:50%}
 
 /* ── Footer ──────────────────────────────────────────────── */
-footer{text-align:center;padding:14px 24px;font-size:12px;color:var(--text-3);border-top:1px solid var(--glass-border)}
+footer{text-align:center;padding:14px 24px;font-size:13px;color:var(--text-3);border-top:1px solid var(--glass-border)}
 footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 @media (prefers-reduced-motion: reduce){
   .carousel-track{animation:none}
@@ -2197,19 +2197,19 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
       <div class="panel-title">Token Stats</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px 0">
         <div style="background:var(--surface2);border-radius:10px;padding:14px 16px">
-          <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Input Tokens</div>
+          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Input Tokens</div>
           <div style="font-size:22px;font-weight:700;margin-top:4px" id="stat-input-tok"></div>
         </div>
         <div style="background:var(--surface2);border-radius:10px;padding:14px 16px">
-          <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Output Tokens</div>
+          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Output Tokens</div>
           <div style="font-size:22px;font-weight:700;margin-top:4px" id="stat-output-tok"></div>
         </div>
         <div style="background:var(--surface2);border-radius:10px;padding:14px 16px">
-          <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Cache Read Tokens</div>
+          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Cache Read Tokens</div>
           <div style="font-size:22px;font-weight:700;margin-top:4px" id="stat-cache-tok"></div>
         </div>
         <div style="background:var(--surface2);border-radius:10px;padding:14px 16px">
-          <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Out / In Ratio</div>
+          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Out / In Ratio</div>
           <div style="font-size:22px;font-weight:700;margin-top:4px" id="stat-tok-ratio"></div>
         </div>
       </div>
@@ -2240,13 +2240,13 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
     <div class="panel-title">Compare Sessions <span style="color:var(--text-3);font-weight:400;font-size:11px">— select A then B</span></div>
       <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:flex-end">
         <div style="flex:1;min-width:200px">
-        <label for="cmp-a" style="display:block;font-size:11px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Session A</label>
+        <label for="cmp-a" style="display:block;font-size:12px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Session A</label>
         <select id="cmp-a" class="compare-select" name="compare-session-a" autocomplete="off">
           <option value="">— select —</option>
         </select>
       </div>
       <div style="flex:1;min-width:200px">
-        <label for="cmp-b" style="display:block;font-size:11px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Session B</label>
+        <label for="cmp-b" style="display:block;font-size:12px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Session B</label>
         <select id="cmp-b" class="compare-select" name="compare-session-b" autocomplete="off">
           <option value="">— select —</option>
         </select>
@@ -2405,7 +2405,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
   <div class="panel">
     <div class="panel-title">Agent Tool Network <span class="panel-title-count">(top live tool relationships)</span></div>
     <svg id="dep-svg" class="graph-svg" style="height:440px"></svg>
-    <div id="dep-note" style="margin-top:12px;font-size:12px;color:var(--text-3)"></div>
+    <div id="dep-note" style="margin-top:12px;font-size:13px;color:var(--text-3)"></div>
     <div class="graph-legend">
       <div class="graph-legend-item"><div class="graph-legend-dot" style="background:var(--purple)"></div>Agent</div>
       <div class="graph-legend-item"><div class="graph-legend-dot" style="background:var(--blue)"></div>Tool</div>
@@ -2445,8 +2445,8 @@ function renderDashboardError(kind, message){
   if (kind === 'no-data') {
     document.body.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:24px;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:rgba(255,255,255,.9)">'
       + '<h1 style="font-size:42px;font-weight:700;background:linear-gradient(135deg,#0a84ff,#bf5af2);-webkit-background-clip:text;-webkit-text-fill-color:transparent">reflect.o11y.dev</h1>'
-      + '<p style="color:rgba(255,255,255,.5);font-size:15px;max-width:420px;text-align:center;line-height:1.7">AI usage telemetry dashboard.<br>Run <code style="background:rgba(255,255,255,.08);padding:2px 8px;border-radius:4px">reflect --dashboard-artifact docs/reports/latest.json --publish</code> to open your report here.</p>'
-      + '<a href="https://github.com/o11ydev/reflect" style="color:#0a84ff;font-size:13px;text-decoration:none">github.com/o11ydev/reflect</a>'
+      + '<p style="color:rgba(255,255,255,.5);font-size:16px;max-width:420px;text-align:center;line-height:1.7">AI usage telemetry dashboard.<br>Run <code style="background:rgba(255,255,255,.08);padding:2px 8px;border-radius:4px">reflect --dashboard-artifact docs/reports/latest.json --publish</code> to open your report here.</p>'
+      + '<a href="https://github.com/o11ydev/reflect" style="color:#0a84ff;font-size:14px;text-decoration:none">github.com/o11ydev/reflect</a>'
       + '</div>';
     return;
   }
@@ -2454,7 +2454,7 @@ function renderDashboardError(kind, message){
     document.body.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;background:#000;color:#edf3ff;font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;text-align:center;padding:40px">
       <div style="font-size:48px;font-weight:800;letter-spacing:-.04em;margin-bottom:16px">reflect</div>
       <div style="color:rgba(255,255,255,.55);font-size:18px;max-width:480px;line-height:1.65;margin-bottom:32px">Local-first telemetry for AI coding agents.<br>See why your agents fail, stall, or burn budget.</div>
-      <pre style="background:#07101b;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:20px 28px;font-size:15px;color:#72f4d1;text-align:left;margin-bottom:32px">pipx install o11y-reflect
+      <pre style="background:#07101b;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:20px 28px;font-size:16px;color:#72f4d1;text-align:left;margin-bottom:32px">pipx install o11y-reflect
 reflect setup
 reflect --publish</pre>
       <div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center">
@@ -3046,7 +3046,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
           const isUser = ev.type === 'prompt';
           const who = isUser ? 'User' : (ev.model ? ev.model.replace(/^claude-/,'').replace(/-\d{8}$/,'') : 'Agent');
           const meta = getEventMeta(ev);
-          timelineHtml += `<div class="chat-msg ${isUser ? 'is-user' : 'is-agent'}" data-kind="${escHtml(eventKind)}" style="--node-color:${nodeColor}">${rail}<div class="chat-bubble"><div class="chat-header"><span class="chat-who">${escHtml(who)}</span>${meta ? `<span class="chat-header-meta">${escHtml(meta)}</span>` : ''}</div>${preview ? `<div class="chat-content"><button type="button" class="ev-preview${session._fullLoaded ? ' full-content' : ''}${isLong ? ' expandable' : ''}" data-eidx="${i}" aria-expanded="false">${preview}</button>${isLong ? `<div class="ev-preview-hint">Tap to expand</div>` : ''}</div>` : `<div class="chat-content" style="color:var(--text-3);font-size:12px;font-style:italic">No content captured</div>`}</div></div>`;
+          timelineHtml += `<div class="chat-msg ${isUser ? 'is-user' : 'is-agent'}" data-kind="${escHtml(eventKind)}" style="--node-color:${nodeColor}">${rail}<div class="chat-bubble"><div class="chat-header"><span class="chat-who">${escHtml(who)}</span>${meta ? `<span class="chat-header-meta">${escHtml(meta)}</span>` : ''}</div>${preview ? `<div class="chat-content"><button type="button" class="ev-preview${session._fullLoaded ? ' full-content' : ''}${isLong ? ' expandable' : ''}" data-eidx="${i}" aria-expanded="false">${preview}</button>${isLong ? `<div class="ev-preview-hint">Tap to expand</div>` : ''}</div>` : `<div class="chat-content" style="color:var(--text-3);font-size:13px;font-style:italic">No content captured</div>`}</div></div>`;
 
         } else if (isActivityType(ev.type)) {
           let icon = '→', name = '', meta2 = '', statusHtml = '';
@@ -3640,7 +3640,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     const summary = telemetry?.summary || {};
     if (!telemetry || (!(summary.spans || 0) && !(summary.logs || 0))) {
       return `<div class="telemetry-empty">
-        <div style="font-size:15px;color:var(--text);font-weight:700;margin-bottom:8px">Telemetry cockpit</div>
+        <div style="font-size:16px;color:var(--text);font-weight:700;margin-bottom:8px">Telemetry cockpit</div>
         <div style="margin-bottom:14px;line-height:1.6">Load the selected session’s OTLP traces and logs to see a synchronized trace waterfall, live log stream, and correlated session moments.</div>
         ${session.full_id ? `<button class="sb-load-btn" id="sb-load-full" data-sid="${escHtml(session.full_id)}">Load telemetry</button>` : ''}
       </div>`;
@@ -3953,7 +3953,7 @@ function renderOverviewComparisonSummary(){
     body.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
         <div>
-          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Primary cohort</div>
+          <div style="font-size:13px;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Primary cohort</div>
           <div style="font-size:24px;font-weight:700">${escHtml(primary.label)}</div>
           <div style="color:var(--text-2);margin-top:4px">${fmt(primary.sessions)} sessions, ${fmt(primary.tool_calls)} tool calls, ${primary.avg_quality.toFixed(1)}% avg quality</div>
         </div>
@@ -3961,17 +3961,17 @@ function renderOverviewComparisonSummary(){
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:16px">
         <div style="background:var(--surface2);border-radius:12px;padding:14px 16px">
-          <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Vs baseline</div>
+          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Vs baseline</div>
           <div style="font-size:18px;font-weight:700;margin-top:6px">${escHtml(baseline.label)}</div>
           <div style="color:var(--text-2);margin-top:4px">${fmt(baseline.sessions)} sessions</div>
         </div>
         <div style="background:var(--surface2);border-radius:12px;padding:14px 16px">
-          <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Quality delta</div>
+          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Quality delta</div>
           <div style="font-size:22px;font-weight:700;margin-top:6px;color:${(deltas.avg_quality?.absolute || 0) >= 0 ? 'var(--green)' : 'var(--red)'}">${formatSignedDelta(deltas.avg_quality?.absolute || 0, ' pts')}</div>
           <div style="color:var(--text-2);margin-top:4px">${primary.avg_quality.toFixed(1)}% vs ${baseline.avg_quality.toFixed(1)}%</div>
         </div>
         <div style="background:var(--surface2);border-radius:12px;padding:14px 16px">
-          <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Failure rate delta</div>
+          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Failure rate delta</div>
           <div style="font-size:22px;font-weight:700;margin-top:6px;color:${(deltas.failure_rate_pct?.absolute || 0) <= 0 ? 'var(--green)' : 'var(--red)'}">${formatSignedDelta(deltas.failure_rate_pct?.absolute || 0, ' pts')}</div>
           <div style="color:var(--text-2);margin-top:4px">${primary.failure_rate_pct.toFixed(1)}% vs ${baseline.failure_rate_pct.toFixed(1)}%</div>
         </div>
@@ -3999,7 +3999,7 @@ function renderOverviewComparisonSummary(){
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:16px">
       ${ranking.slice(0, 3).map(agent => `
         <div style="background:var(--surface2);border-radius:12px;padding:14px 16px">
-          <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">${escHtml(agent.name)}</div>
+          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">${escHtml(agent.name)}</div>
           <div style="font-size:22px;font-weight:700;margin-top:6px">${fmt(agent.sessions)} sessions</div>
           <div style="color:var(--text-2);margin-top:4px">${fmt(agent.tools)} tools, ${Number(agent.avg_quality || 0).toFixed(1)}% quality</div>
         </div>
@@ -4035,17 +4035,17 @@ function buildCompareTab(){
     summaryEl.innerHTML = `
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px">
         <div style="background:var(--surface2);border-radius:14px;padding:16px 18px">
-          <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Primary cohort</div>
+          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Primary cohort</div>
           <div style="font-size:24px;font-weight:700;margin-top:6px">${escHtml(primary.label)}</div>
           <div style="color:var(--text-2);margin-top:6px">${fmt(primary.sessions)} sessions across ${fmt(primary.agents.length)} agent type${primary.agents.length === 1 ? '' : 's'}</div>
         </div>
         <div style="background:var(--surface2);border-radius:14px;padding:16px 18px">
-          <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Baseline</div>
+          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Baseline</div>
           <div style="font-size:24px;font-weight:700;margin-top:6px">${escHtml(baseline.label)}</div>
           <div style="color:var(--text-2);margin-top:6px">${fmt(baseline.sessions)} sessions across ${fmt(baseline.agents.length)} agent type${baseline.agents.length === 1 ? '' : 's'}</div>
         </div>
         <div style="background:var(--surface2);border-radius:14px;padding:16px 18px">
-          <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Headline</div>
+          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Headline</div>
           <div style="font-size:24px;font-weight:700;margin-top:6px;color:${(deltas.avg_quality?.absolute || 0) >= 0 ? 'var(--green)' : 'var(--red)'}">${formatSignedDelta(deltas.avg_quality?.absolute || 0, ' pts')}</div>
           <div style="color:var(--text-2);margin-top:6px">quality delta, ${formatSignedDelta(deltas.failure_rate_pct?.absolute || 0, ' pts')} failure-rate delta</div>
         </div>
@@ -4083,7 +4083,7 @@ function buildCompareTab(){
         <div style="font-size:24px;font-weight:700">Cross-agent comparison</div>
         <div style="color:var(--text-2);margin-top:4px">Filter to one agent to compare that cohort against all other agents still in scope.</div>
       </div>
-      <div style="font-size:12px;color:var(--text-3)">Current ranking is based on the sessions visible in this report.</div>
+      <div style="font-size:13px;color:var(--text-3)">Current ranking is based on the sessions visible in this report.</div>
     </div>
   `;
   detailsEl.innerHTML = ranking.length
@@ -4389,7 +4389,7 @@ document.getElementById('stat-tok-ratio').textContent = D.total_input_tokens ? (
   const stops = D.subagent_stops_by_type || {};
   const types = Object.keys(launches);
   if (!types.length) {
-    el.innerHTML = '<p style="color:var(--text-3);font-size:13px;text-align:center;padding:40px 0">No subagent data yet</p>';
+    el.innerHTML = '<p style="color:var(--text-3);font-size:14px;text-align:center;padding:40px 0">No subagent data yet</p>';
     return;
   }
   const totalLaunches = D.subagent_total_starts || Object.values(launches).reduce((a,b)=>a+b,0);
@@ -4684,18 +4684,18 @@ document.getElementById('cmd-tbody').innerHTML=D.top_commands.map((c,i)=>`
     const color = better ? 'var(--green)' : 'var(--red)';
     const sign = diff > 0 ? '+' : '';
     const label = pctV !== null ? `${sign}${pctV}%` : (diff > 0 ? 'UP' : 'DOWN');
-    return `<span style="color:${color};font-size:11px;font-weight:600">${label}</span>`;
+    return `<span style="color:${color};font-size:12px;font-weight:600">${label}</span>`;
   }
 
   function cmpTbl(headers, rows){
-    const ths = headers.map((h,i) => `<th style="text-align:${i===0?'left':'right'};padding:7px 10px;font-size:11px;color:var(--text-3);font-weight:500;border-bottom:1px solid rgba(255,255,255,.07)">${h}</th>`).join('');
-    const trs = rows.map(cells => `<tr>${cells.map((c,i)=>`<td style="text-align:${i===0?'left':'right'};padding:6px 10px;font-size:12px;border-bottom:1px solid rgba(255,255,255,.04);white-space:nowrap">${c}</td>`).join('')}</tr>`).join('');
+    const ths = headers.map((h,i) => `<th style="text-align:${i===0?'left':'right'};padding:7px 10px;font-size:12px;color:var(--text-3);font-weight:500;border-bottom:1px solid rgba(255,255,255,.07)">${h}</th>`).join('');
+    const trs = rows.map(cells => `<tr>${cells.map((c,i)=>`<td style="text-align:${i===0?'left':'right'};padding:6px 10px;font-size:13px;border-bottom:1px solid rgba(255,255,255,.04);white-space:nowrap">${c}</td>`).join('')}</tr>`).join('');
     return `<table style="width:100%;border-collapse:collapse"><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
   }
 
   function section(title, content){
     return `<div style="margin-bottom:20px">
-      <div style="font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;font-weight:600">${title}</div>
+      <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;font-weight:600">${title}</div>
       ${content}
     </div>`;
   }
@@ -4709,12 +4709,12 @@ document.getElementById('cmd-tbody').innerHTML=D.top_commands.map((c,i)=>`
       const fvB = fmt2 ? fmt2(vB) : (typeof vB==='number' ? fmt(vB) : (vB||'--'));
       const chip = (typeof vA==='number' && typeof vB==='number') ? deltaChip(vA,vB,lowerIsBetter) : '';
       return `<div style="background:var(--surface2);border-radius:10px;padding:12px 14px;flex:1;min-width:100px">
-        <div style="font-size:10px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">${label}</div>
+        <div style="font-size:11px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">${label}</div>
         <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px">
-          <span style="font-size:13px;font-weight:600;color:${cA}">${fvA}</span>
+          <span style="font-size:14px;font-weight:600;color:${cA}">${fvA}</span>
           ${chip}
         </div>
-        <div style="font-size:13px;font-weight:600;color:${cB}">${fvB}</div>
+        <div style="font-size:14px;font-weight:600;color:${cB}">${fvB}</div>
       </div>`;
     }
     const inA = a.input_tokens||0, inB = b.input_tokens||0;
@@ -5152,7 +5152,7 @@ function initGraphs() {
     html += `<tr><th style="text-align:right;padding-right:6px;font-weight:500;color:var(--text-2)">${tools[i].slice(0,10)}</th>`;
     for (let j = 0; j < n; j++) {
       const v = matrix[i][j];
-      html += `<td><div class="matrix-cell" style="width:30px;height:30px;background:${cellBg(i,j)};margin:auto;line-height:30px;font-size:10px;color:rgba(255,255,255,.5)" title="${tools[i]} <-> ${tools[j]}: ${v} sessions">${v > 0 ? v : ''}</div></td>`;
+      html += `<td><div class="matrix-cell" style="width:30px;height:30px;background:${cellBg(i,j)};margin:auto;line-height:30px;font-size:11px;color:rgba(255,255,255,.5)" title="${tools[i]} <-> ${tools[j]}: ${v} sessions">${v > 0 ? v : ''}</div></td>`;
     }
     html += '</tr>';
   }

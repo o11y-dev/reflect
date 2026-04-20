@@ -1,6 +1,7 @@
 # Changelog
 
-## 0.5.0 (unreleased)
+## 0.5.1 (unreleased)
+
 
 ### Added
 - `reflect doctor` now distinguishes missing, incomplete, unreadable, and ready native OTel agent configs for Claude Code, Copilot, Gemini CLI, and OpenAI Codex CLI
@@ -14,6 +15,10 @@
 - Native OTel config generation now derives agent-specific desired settings from shared local endpoint/protocol helpers instead of hand-rolling each agent writer
 - README native-telemetry docs now spell out the exact config surfaces and privacy-sensitive defaults
 - README now also documents that the local `reflect` gateway persists traces and logs, but not OTLP metrics
+
+### Fixed
+- Increased the default hosted/local dashboard font sizing baseline so tabs, metadata, and supporting UI text render at more readable sizes.
+
 
 ## 0.5.0 (2026-04-18)
 
