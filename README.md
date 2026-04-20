@@ -104,13 +104,13 @@ Running `reflect` for the first time is usually surprising:
 
 - **Hooks** (Claude Code today) — scripts that fire at key lifecycle moments (session start, tool call, prompt, stop). `reflect setup` installs a small [opentelemetry-hooks](https://github.com/o11y-dev/opentelemetry-hooks) instrumentation layer into the agent's config file where that path is verified.
 - **Native OpenTelemetry** (Claude Code, GitHub Copilot, Gemini CLI, OpenAI Codex CLI) — the agent has built-in OTLP export that just needs to be pointed at the local collector. `reflect setup` writes the relevant settings for each:
-  - Claude Code: `env` block in `~/.claude/settings.json` (metrics + logs only, not traces)
+  - Claude Code: `env` block in `~/.claude/settings.json` (logs locally; traces still come from hooks/session stores)
   - GitHub Copilot VS Code: `github.copilot.chat.otel.*` keys in VS Code `settings.json`
   - GitHub Copilot CLI: `COPILOT_OTEL_ENABLED` / `COPILOT_OTEL_OTLP_ENDPOINT` env vars
   - Gemini CLI: `telemetry.*` keys in `~/.gemini/settings.json` (e.g. `telemetry.enabled`, `telemetry.otlpEndpoint`)
-  - OpenAI Codex CLI: `[otel]` section in `~/.codex/config.toml` (interactive mode only)
+  - OpenAI Codex CLI: `[otel]` section in `~/.codex/config.toml` with explicit trace/log exporters (interactive mode only)
 
-Either way, every tool call, token usage event, and session boundary is recorded as an **OTLP span** and written locally to `~/.reflect/state/`.
+`reflect` records whichever verified local signal path is available. Hook-based flows emit OTLP spans for tool calls, token usage events, and session boundaries; native OTel flows write traces and/or logs depending on the agent.
 
 When you run `reflect`, it:
 
@@ -168,17 +168,32 @@ reflect update
 
 `reflect doctor` checks that your installation is healthy, shows which integrations are implemented vs still planned, and reports whether hooks are wired correctly, the OTLP gateway is running, the installed package matches the latest release, and skill files are up to date. `reflect update --apply` upgrades the pipx package when a newer release is available.
 
+### Native OTel details by agent
+
+- **Claude Code** — `reflect setup` writes a `settings.json` `env` block with `CLAUDE_CODE_ENABLE_TELEMETRY=1`, OTLP endpoint/protocol keys, and `OTEL_LOGS_EXPORTER=otlp`. Claude's native path does not currently give `reflect` local traces, so hook spans or local session stores still provide tool-call/session coverage.
+- **GitHub Copilot VS Code** — `reflect setup` writes `github.copilot.chat.otel.enabled`, `github.copilot.chat.otel.otlpEndpoint`, `github.copilot.chat.otel.exporterType`, and `github.copilot.chat.otel.captureContent=false` in VS Code `settings.json`. The local gateway target is HTTP (`127.0.0.1:4318`) for Copilot.
+- **GitHub Copilot CLI** — `reflect setup` also writes `COPILOT_OTEL_ENABLED=true` and `COPILOT_OTEL_OTLP_ENDPOINT=http://localhost:4318` into the same VS Code `env` block used by the CLI.
+- **Gemini CLI** — `reflect setup` writes `telemetry.enabled`, `telemetry.target=local`, `telemetry.useCollector=true`, `telemetry.otlpEndpoint`, `telemetry.otlpProtocol`, and `telemetry.logPrompts=false`. If `~/.gemini/settings.json` does not exist yet, `reflect` leaves guidance only and `reflect doctor` will report the native path as missing.
+- **OpenAI Codex CLI** — `reflect setup` writes a full `[otel]` section in `~/.codex/config.toml` with explicit `traces_exporter`, `traces_endpoint`, `logs_exporter`, `logs_endpoint`, and `log_user_prompt=false`, while preserving unrelated TOML sections.
+
+### Why this differs from vendor OTLP guides
+
+- `reflect` always points agents at a **local collector first**, not directly at a SaaS endpoint.
+- The local setup path does **not** add auth headers or vendor-specific routing attributes.
+- `reflect`'s bundled gateway currently persists **traces and logs only**. Even if an agent can emit OTLP metrics, metrics are not yet written into the local OTLP JSON cache.
+- `reflect doctor` distinguishes between a native config that is absent, incomplete, unreadable, or ready so you can repair only the missing part.
+
 ## Agent instrumentation landscape
 
 reflect's mission is to make every AI coding agent observable with zero manual instrumentation. Today, though, only a subset of integrations have verified telemetry collection. `reflect setup` detects agent homes for guidance, but it only starts collection where wiring and parsing are implemented.
 
 | Agent | Instrumentation | What you get | Confidence |
 |---|---|---|---|
-| Claude Code | Native OTel + hooks | Metrics, logs, tool calls, sessions | High |
-| GitHub Copilot VS Code | Native OTel | Traces, metrics, logs | High |
-| GitHub Copilot CLI | Native OTel + hooks | Traces, metrics, logs | High |
-| Gemini CLI | Native OTel + hooks | Traces, metrics, logs | High |
-| OpenAI Codex CLI | Native OTel (interactive) | Traces (interactive mode only) | Medium |
+| Claude Code | Native OTel + hooks | Native logs plus hook/session-based traces, tool calls, and sessions | High |
+| GitHub Copilot VS Code | Native OTel | Traces + logs to the local gateway with content capture disabled | High |
+| GitHub Copilot CLI | Native OTel + hooks | Traces + logs via native OTel, plus hook coverage where available | High |
+| Gemini CLI | Native OTel + hooks | Traces + logs via native OTel, with prompt logging disabled by default | High |
+| OpenAI Codex CLI | Native OTel (interactive) | Traces + logs in interactive mode only | Medium |
 | Cursor | Session/log adapters | Tool calls, sessions, rough token estimates when exact usage is missing (`len(text) / 4`) | Medium |
 | Windsurf, Trae, Cline, Roo Code, Goose, OpenHands, Amp, Continue, iFlow, Pi, OpenClaw | Not implemented yet | Detection, config snapshots, and skill distribution only | Planned |
 

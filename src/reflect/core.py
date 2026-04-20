@@ -1686,6 +1686,332 @@ def _agent_config_candidates(agent: dict) -> list[Path]:
     return [path for path in _agent_config_paths(agent) if path.exists()]
 
 
+def _hook_otlp_endpoint(hook_config: dict[str, str]) -> str:
+    return hook_config.get(_HOOK_CFG_ENDPOINT_KEY, _HOOK_CFG_ENDPOINT_DEFAULT)
+
+
+def _hook_otlp_protocol(hook_config: dict[str, str]) -> str:
+    return hook_config.get(_HOOK_CFG_PROTOCOL_KEY, _HOOK_CFG_PROTOCOL_DEFAULT)
+
+
+def _copilot_otlp_endpoint(endpoint: str) -> str:
+    return endpoint.replace(":4317", ":4318") if endpoint.endswith(":4317") else endpoint
+
+
+def _gemini_otlp_protocol(protocol: str) -> str:
+    return "http" if protocol.startswith("http") else "grpc"
+
+
+def _native_otel_target(hook_config: dict[str, str], agent_name: str) -> dict[str, object]:
+    grpc_endpoint = _hook_otlp_endpoint(hook_config)
+    hook_protocol = _hook_otlp_protocol(hook_config)
+    targets = {
+        "Claude Code": {
+            "endpoint": grpc_endpoint,
+            "protocol": hook_protocol,
+            "emit_logs": True,
+            "emit_traces": False,
+            "prompt_capture": False,
+        },
+        "GitHub Copilot": {
+            "endpoint": _copilot_otlp_endpoint(grpc_endpoint),
+            "protocol": "otlp-http",
+            "emit_logs": True,
+            "emit_traces": True,
+            "prompt_capture": False,
+        },
+        "GitHub Copilot CLI": {
+            "endpoint": _copilot_otlp_endpoint(grpc_endpoint),
+            "protocol": "otlp-http",
+            "emit_logs": True,
+            "emit_traces": True,
+            "prompt_capture": False,
+        },
+        "Gemini CLI": {
+            "endpoint": grpc_endpoint,
+            "protocol": _gemini_otlp_protocol(hook_protocol),
+            "emit_logs": True,
+            "emit_traces": True,
+            "prompt_capture": False,
+        },
+        "OpenAI Codex CLI": {
+            "endpoint": grpc_endpoint,
+            "protocol": hook_protocol,
+            "emit_logs": True,
+            "emit_traces": True,
+            "prompt_capture": False,
+        },
+    }
+    return targets[agent_name]
+
+
+def _claude_native_otel_env(hook_config: dict[str, str]) -> dict[str, object]:
+    target = _native_otel_target(hook_config, "Claude Code")
+    return {
+        "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+        "OTEL_METRICS_EXPORTER": "otlp",
+        "OTEL_LOGS_EXPORTER": "otlp",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": target["protocol"],
+        "OTEL_EXPORTER_OTLP_ENDPOINT": target["endpoint"],
+        "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": "cumulative",
+    }
+
+
+def _copilot_native_otel_settings(hook_config: dict[str, str]) -> dict[str, object]:
+    target = _native_otel_target(hook_config, "GitHub Copilot")
+    return {
+        "github.copilot.chat.otel.enabled": True,
+        "github.copilot.chat.otel.otlpEndpoint": target["endpoint"],
+        "github.copilot.chat.otel.exporterType": target["protocol"],
+        "github.copilot.chat.otel.captureContent": target["prompt_capture"],
+    }
+
+
+def _copilot_cli_native_otel_env(hook_config: dict[str, str]) -> dict[str, object]:
+    target = _native_otel_target(hook_config, "GitHub Copilot CLI")
+    return {
+        "COPILOT_OTEL_ENABLED": "true",
+        "COPILOT_OTEL_OTLP_ENDPOINT": target["endpoint"],
+    }
+
+
+def _gemini_native_otel_settings(hook_config: dict[str, str]) -> dict[str, object]:
+    target = _native_otel_target(hook_config, "Gemini CLI")
+    return {
+        "enabled": True,
+        "target": "local",
+        "useCollector": True,
+        "otlpEndpoint": target["endpoint"],
+        "otlpProtocol": target["protocol"],
+        "logPrompts": target["prompt_capture"],
+    }
+
+
+def _codex_native_otel_settings(hook_config: dict[str, str]) -> dict[str, object]:
+    target = _native_otel_target(hook_config, "OpenAI Codex CLI")
+    endpoint = target["endpoint"]
+    return {
+        "exporter": {"otlp-grpc": {"endpoint": endpoint}},
+        "traces_exporter": "otlp",
+        "traces_endpoint": endpoint,
+        "logs_exporter": "otlp",
+        "logs_endpoint": endpoint,
+        "log_user_prompt": target["prompt_capture"],
+    }
+
+
+def _codex_native_otel_complete(otel: object, desired: dict[str, object]) -> bool:
+    if not isinstance(otel, dict):
+        return False
+    return all(otel.get(key) == value for key, value in desired.items())
+
+
+def _render_codex_native_otel_block(hook_config: dict[str, str]) -> str:
+    desired = _codex_native_otel_settings(hook_config)
+    endpoint = desired["traces_endpoint"]
+    return (
+        "[otel]\n"
+        f'exporter = {{otlp-grpc = {{endpoint = "{endpoint}"}}}}\n'
+        'traces_exporter = "otlp"\n'
+        f'traces_endpoint = "{endpoint}"\n'
+        'logs_exporter = "otlp"\n'
+        f'logs_endpoint = "{endpoint}"\n'
+        "log_user_prompt = false\n"
+    )
+
+
+def _missing_desired_keys(actual: object, desired: dict[str, object]) -> list[str]:
+    if not isinstance(actual, dict):
+        return list(desired)
+    return [key for key, value in desired.items() if actual.get(key) != value]
+
+
+def _collect_native_otel_statuses(hook_config: dict[str, str]) -> list[dict[str, str]]:
+    statuses: list[dict[str, str]] = []
+
+    claude_path = Path.home() / ".claude" / "settings.json"
+    claude_desired = _claude_native_otel_env(hook_config)
+    if not claude_path.exists():
+        statuses.append({
+            "agent": "Claude Code",
+            "status": "missing",
+            "details": "No settings.json found yet.",
+            "path": str(claude_path),
+        })
+    else:
+        try:
+            claude_settings = _json_loads(claude_path.read_text())
+        except Exception as exc:
+            statuses.append({
+                "agent": "Claude Code",
+                "status": "unreadable",
+                "details": f"Failed to read settings.json: {exc}",
+                "path": str(claude_path),
+            })
+        else:
+            issues = _missing_desired_keys(claude_settings.get("env"), claude_desired)
+            statuses.append({
+                "agent": "Claude Code",
+                "status": "ready" if not issues else "incomplete",
+                "details": (
+                    "Native metrics/log export is configured; traces still rely on hooks or local session stores."
+                    if not issues
+                    else "Missing or incorrect env keys: " + ", ".join(issues)
+                ),
+                "path": str(claude_path),
+            })
+
+    copilot_paths = _agent_config_paths({"name": "GitHub Copilot"})
+    existing_copilot_paths = [path for path in copilot_paths if path.exists()]
+    copilot_desired = _copilot_native_otel_settings(hook_config)
+    copilot_cli_desired = _copilot_cli_native_otel_env(hook_config)
+    if not existing_copilot_paths:
+        searched = "\n".join(str(path) for path in copilot_paths)
+        statuses.extend([
+            {
+                "agent": "GitHub Copilot VS Code",
+                "status": "missing",
+                "details": "No VS Code settings.json file was found.",
+                "path": searched,
+            },
+            {
+                "agent": "GitHub Copilot CLI",
+                "status": "missing",
+                "details": "No VS Code settings.json file was found for the CLI env block.",
+                "path": searched,
+            },
+        ])
+    else:
+        copilot_ready: Path | None = None
+        copilot_issues: list[str] = []
+        copilot_unreadable: list[str] = []
+        copilot_cli_ready: Path | None = None
+        copilot_cli_issues: list[str] = []
+        copilot_cli_unreadable: list[str] = []
+        for settings_path in existing_copilot_paths:
+            try:
+                settings = _json_loads(settings_path.read_text())
+            except Exception as exc:
+                copilot_unreadable.append(f"{settings_path.name}: {exc}")
+                copilot_cli_unreadable.append(f"{settings_path.name}: {exc}")
+                continue
+            issues = _missing_desired_keys(settings, copilot_desired)
+            if not issues and copilot_ready is None:
+                copilot_ready = settings_path
+            elif issues:
+                copilot_issues.append(f"{settings_path.name}: {', '.join(issues)}")
+
+            env_issues = _missing_desired_keys(settings.get("env"), copilot_cli_desired)
+            if not env_issues and copilot_cli_ready is None:
+                copilot_cli_ready = settings_path
+            elif env_issues:
+                copilot_cli_issues.append(f"{settings_path.name}: {', '.join(env_issues)}")
+
+        statuses.append({
+            "agent": "GitHub Copilot VS Code",
+            "status": (
+                "ready" if copilot_ready else "unreadable" if copilot_unreadable and not copilot_issues else "incomplete"
+            ),
+            "details": (
+                "Native OTLP HTTP export is configured and content capture stays disabled."
+                if copilot_ready
+                else "Failed to read settings: " + "; ".join(copilot_unreadable)
+                if copilot_unreadable and not copilot_issues
+                else "Missing or incorrect settings: " + "; ".join(copilot_issues)
+            ),
+            "path": str(copilot_ready) if copilot_ready else "\n".join(str(path) for path in existing_copilot_paths),
+        })
+        statuses.append({
+            "agent": "GitHub Copilot CLI",
+            "status": (
+                "ready"
+                if copilot_cli_ready
+                else "unreadable"
+                if copilot_cli_unreadable and not copilot_cli_issues
+                else "incomplete"
+            ),
+            "details": (
+                "CLI env vars point the built-in exporter at the local OTLP HTTP gateway."
+                if copilot_cli_ready
+                else "Failed to read settings: " + "; ".join(copilot_cli_unreadable)
+                if copilot_cli_unreadable and not copilot_cli_issues
+                else "Missing or incorrect env keys: " + "; ".join(copilot_cli_issues)
+            ),
+            "path": (
+                str(copilot_cli_ready)
+                if copilot_cli_ready
+                else "\n".join(str(path) for path in existing_copilot_paths)
+            ),
+        })
+
+    gemini_path = Path.home() / ".gemini" / "settings.json"
+    gemini_desired = _gemini_native_otel_settings(hook_config)
+    if not gemini_path.exists():
+        statuses.append({
+            "agent": "Gemini CLI",
+            "status": "missing",
+            "details": "No settings.json found yet; reflect can only print env guidance until Gemini creates one.",
+            "path": str(gemini_path),
+        })
+    else:
+        try:
+            gemini_settings = _json_loads(gemini_path.read_text())
+        except Exception as exc:
+            statuses.append({
+                "agent": "Gemini CLI",
+                "status": "unreadable",
+                "details": f"Failed to read settings.json: {exc}",
+                "path": str(gemini_path),
+            })
+        else:
+            issues = _missing_desired_keys(gemini_settings.get("telemetry"), gemini_desired)
+            statuses.append({
+                "agent": "Gemini CLI",
+                "status": "ready" if not issues else "incomplete",
+                "details": (
+                    "Local collector mode is enabled and prompt logging stays disabled."
+                    if not issues
+                    else "Missing or incorrect telemetry keys: " + ", ".join(issues)
+                ),
+                "path": str(gemini_path),
+            })
+
+    codex_path = Path.home() / ".codex" / "config.toml"
+    codex_desired = _codex_native_otel_settings(hook_config)
+    if not codex_path.exists():
+        statuses.append({
+            "agent": "OpenAI Codex CLI",
+            "status": "missing",
+            "details": "No config.toml found yet.",
+            "path": str(codex_path),
+        })
+    else:
+        try:
+            codex_settings = tomllib.loads(codex_path.read_text())
+        except Exception as exc:
+            statuses.append({
+                "agent": "OpenAI Codex CLI",
+                "status": "unreadable",
+                "details": f"Failed to read config.toml: {exc}",
+                "path": str(codex_path),
+            })
+        else:
+            otel = codex_settings.get("otel")
+            issues = _missing_desired_keys(otel, codex_desired)
+            statuses.append({
+                "agent": "OpenAI Codex CLI",
+                "status": "ready" if not issues else "incomplete",
+                "details": (
+                    "Explicit trace/log OTLP exporters are configured and prompt logging stays disabled."
+                    if not issues
+                    else "Missing or incorrect [otel] keys: " + ", ".join(issues)
+                ),
+                "path": str(codex_path),
+            })
+
+    return statuses
+
+
 def _snapshot_detected_agent_configs(console, agents: list[dict]) -> None:
     for agent in agents:
         snapshots = []
@@ -1700,17 +2026,7 @@ def _snapshot_detected_agent_configs(console, agents: list[dict]) -> None:
 
 def _configure_claude_native_otel(console, hook_config: dict[str, str]) -> None:
     settings_path = Path.home() / ".claude" / "settings.json"
-    endpoint = hook_config.get(_HOOK_CFG_ENDPOINT_KEY, _HOOK_CFG_ENDPOINT_DEFAULT)
-    protocol = hook_config.get(_HOOK_CFG_PROTOCOL_KEY, _HOOK_CFG_PROTOCOL_DEFAULT)
-
-    desired_env = {
-        "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
-        "OTEL_METRICS_EXPORTER": "otlp",
-        "OTEL_LOGS_EXPORTER": "otlp",
-        "OTEL_EXPORTER_OTLP_PROTOCOL": protocol,
-        "OTEL_EXPORTER_OTLP_ENDPOINT": endpoint,
-        "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": "cumulative",
-    }
+    desired_env = _claude_native_otel_env(hook_config)
 
     if settings_path.exists():
         try:
@@ -1722,8 +2038,11 @@ def _configure_claude_native_otel(console, hook_config: dict[str, str]) -> None:
         settings_path.parent.mkdir(parents=True, exist_ok=True)
         settings = {}
 
-    env = settings.setdefault("env", {})
-    changed = False
+    env = settings.get("env")
+    changed = not isinstance(env, dict)
+    if not isinstance(env, dict):
+        env = {}
+        settings["env"] = env
     for key, value in desired_env.items():
         if env.get(key) != value:
             env[key] = value
@@ -1737,14 +2056,7 @@ def _configure_claude_native_otel(console, hook_config: dict[str, str]) -> None:
 
 
 def _configure_copilot_native_otel(console, hook_config: dict[str, str]) -> None:
-    endpoint = hook_config.get(_HOOK_CFG_ENDPOINT_KEY, _HOOK_CFG_ENDPOINT_DEFAULT)
-    copilot_endpoint = endpoint.replace(":4317", ":4318") if endpoint.endswith(":4317") else endpoint
-    desired = {
-        "github.copilot.chat.otel.enabled": True,
-        "github.copilot.chat.otel.otlpEndpoint": copilot_endpoint,
-        "github.copilot.chat.otel.exporterType": "otlp-http",
-        "github.copilot.chat.otel.captureContent": False,
-    }
+    desired = _copilot_native_otel_settings(hook_config)
 
     searched_paths = _agent_config_paths({"name": "GitHub Copilot"})
     updated_any = False
@@ -1781,27 +2093,19 @@ def _configure_gemini_native_otel(console, hook_config: dict[str, str]) -> None:
         console.print("  [dim]\u2022[/] No Gemini CLI settings file detected; kept env guidance only.")
         return
 
-    endpoint = hook_config.get(_HOOK_CFG_ENDPOINT_KEY, _HOOK_CFG_ENDPOINT_DEFAULT)
-    protocol = hook_config.get(_HOOK_CFG_PROTOCOL_KEY, _HOOK_CFG_PROTOCOL_DEFAULT)
-    gemini_protocol = "http" if protocol.startswith("http") else "grpc"
-
     try:
         settings = _json_loads(settings_path.read_text())
     except Exception as exc:
         console.print(f"  [red]\u2717[/] Failed to read Gemini CLI settings {settings_path}: {exc}")
         return
 
-    telemetry = settings.setdefault("telemetry", {})
-    desired = {
-        "enabled": True,
-        "target": "local",
-        "useCollector": True,
-        "otlpEndpoint": endpoint,
-        "otlpProtocol": gemini_protocol,
-        "logPrompts": False,
-    }
+    telemetry = settings.get("telemetry")
+    changed = not isinstance(telemetry, dict)
+    if not isinstance(telemetry, dict):
+        telemetry = {}
+        settings["telemetry"] = telemetry
+    desired = _gemini_native_otel_settings(hook_config)
 
-    changed = False
     for key, value in desired.items():
         if telemetry.get(key) != value:
             telemetry[key] = value
@@ -1820,13 +2124,7 @@ def _configure_gemini_native_otel(console, hook_config: dict[str, str]) -> None:
 
 def _configure_copilot_cli_native_otel(console, hook_config: dict[str, str]) -> None:
     """Set Copilot CLI OTel env vars in VS Code settings.json env block."""
-    endpoint = hook_config.get(_HOOK_CFG_ENDPOINT_KEY, _HOOK_CFG_ENDPOINT_DEFAULT)
-    copilot_endpoint = endpoint.replace(":4317", ":4318") if endpoint.endswith(":4317") else endpoint
-
-    desired_env = {
-        "COPILOT_OTEL_ENABLED": "true",
-        "COPILOT_OTEL_OTLP_ENDPOINT": copilot_endpoint,
-    }
+    desired_env = _copilot_cli_native_otel_env(hook_config)
 
     searched_paths = _agent_config_paths({"name": "GitHub Copilot"})
     updated_any = False
@@ -1837,8 +2135,11 @@ def _configure_copilot_cli_native_otel(console, hook_config: dict[str, str]) -> 
             console.print(f"  [red]\u2717[/] Failed to read Copilot settings {settings_path}: {exc}")
             continue
 
-        env = settings.setdefault("env", {})
-        changed = False
+        env = settings.get("env")
+        changed = not isinstance(env, dict)
+        if not isinstance(env, dict):
+            env = {}
+            settings["env"] = env
         for key, value in desired_env.items():
             if env.get(key) != value:
                 env[key] = value
@@ -1860,7 +2161,7 @@ def _configure_copilot_cli_native_otel(console, hook_config: dict[str, str]) -> 
 def _configure_codex_native_otel(console, hook_config: dict[str, str]) -> None:
     """Write [otel] section to ~/.codex/config.toml (interactive mode only)."""
     config_path = Path.home() / ".codex" / "config.toml"
-    endpoint = hook_config.get(_HOOK_CFG_ENDPOINT_KEY, _HOOK_CFG_ENDPOINT_DEFAULT)
+    desired_otel = _codex_native_otel_settings(hook_config)
 
     if config_path.exists():
         try:
@@ -1868,12 +2169,8 @@ def _configure_codex_native_otel(console, hook_config: dict[str, str]) -> None:
         except Exception as exc:
             console.print(f"  [red]\u2717[/] Failed to read Codex config {config_path}: {exc}")
             return
-        existing_otel = existing.get("otel", {})
-        already_set = (
-            existing_otel.get("log_user_prompt") is False
-            and "otlp-grpc" in str(existing_otel.get("exporter", ""))
-        )
-        if already_set:
+        existing_otel = existing.get("otel")
+        if _codex_native_otel_complete(existing_otel, desired_otel):
             console.print(f"  [green]\u2713[/] Native Codex OTel already enabled in {config_path}")
             return
     else:
@@ -1881,20 +2178,16 @@ def _configure_codex_native_otel(console, hook_config: dict[str, str]) -> None:
 
     # Append or replace [otel] section — read original text to preserve other sections
     original = config_path.read_text() if config_path.exists() else ""
-    otel_block = (
-        "\n[otel]\n"
-        f'exporter = {{otlp-grpc = {{endpoint = "{endpoint}"}}}}\n'
-        "log_user_prompt = false\n"
-    )
+    otel_block = _render_codex_native_otel_block(hook_config)
 
     if re.search(r"^\[otel\]", original, re.MULTILINE):
         # Replace existing [otel] section (up to next section or end of file)
         updated = re.sub(
-            r"\[otel\].*?(?=\n\[|\Z)", otel_block.strip() + "\n", original,
+            r"\[otel\].*?(?=\n\[|\Z)", otel_block.rstrip("\n") + "\n", original,
             flags=re.DOTALL,
         )
     else:
-        updated = original.rstrip("\n") + otel_block
+        updated = f"{original.rstrip()}\n\n{otel_block}" if original.strip() else otel_block
 
     config_path.write_text(updated)
     console.print(f"  [green]\u2713[/] Enabled native Codex OTel in {config_path}")
@@ -2080,9 +2373,24 @@ def doctor() -> None:
     span_files = _count_glob(spans_dir, "*.jsonl")
     session_files = _count_glob(sessions_dir, "*.json")
     update_advisor = _collect_update_advisor(allow_remote=True)
+    hook_runtime_config: dict[str, str] = {}
+    if hook_config.exists():
+        try:
+            loaded_hook_config = _json_loads(hook_config.read_text())
+        except Exception:
+            loaded_hook_config = {}
+        if isinstance(loaded_hook_config, dict):
+            hook_runtime_config = loaded_hook_config
 
     def _status_markup(ok: bool, present: str = "present", missing: str = "missing") -> str:
         return f"[green]{present}[/]" if ok else f"[red]{missing}[/]"
+
+    def _native_status_markup(status: str) -> str:
+        if status == "ready":
+            return "[green]ready[/]"
+        if status == "incomplete":
+            return "[yellow]incomplete[/]"
+        return "[red]missing[/]" if status == "missing" else "[red]unreadable[/]"
 
     console.print()
     console.print(
@@ -2156,6 +2464,20 @@ def doctor() -> None:
         str(sessions_dir),
     )
     console.print(Panel(exports, title="Telemetry files", border_style="magenta"))
+
+    native_otel = Table(box=box.SIMPLE_HEAVY, expand=True)
+    native_otel.add_column("Agent", style="bold cyan")
+    native_otel.add_column("Status", no_wrap=True)
+    native_otel.add_column("Details")
+    native_otel.add_column("Path", overflow="fold")
+    for status in _collect_native_otel_statuses(hook_runtime_config):
+        native_otel.add_row(
+            status["agent"],
+            _native_status_markup(status["status"]),
+            status["details"],
+            status["path"],
+        )
+    console.print(Panel(native_otel, title="Native agent telemetry", border_style="cyan"))
 
     if detected_agents:
         detected_table = Table(box=box.SIMPLE_HEAVY, expand=True)

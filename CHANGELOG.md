@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 (unreleased)
+
+### Fixed
+- `reflect setup` now writes a fuller OpenAI Codex CLI `[otel]` block with explicit trace and log exporter settings while preserving unrelated TOML sections and keeping prompt logging disabled by default
+- `reflect doctor` now distinguishes missing, incomplete, unreadable, and ready native OTel agent configs for Claude Code, Copilot, Gemini CLI, and OpenAI Codex CLI
+
+### Changed
+- Native OTel config generation now derives agent-specific desired settings from shared local endpoint/protocol helpers instead of hand-rolling each agent writer
+- README native-telemetry docs now spell out the exact config surfaces, privacy-sensitive defaults, and the local-gateway constraint that `reflect` persists traces and logs but not OTLP metrics
+
 ## 0.5.0 (2026-04-18)
 
 ### Fixed
