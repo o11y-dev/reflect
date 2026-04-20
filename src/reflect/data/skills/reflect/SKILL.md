@@ -43,7 +43,7 @@ Always follow this order:
     - Remember the current CLI behavior:
       - default: terminal dashboard
       - `--no-terminal`: markdown report
-      - `report`: open hosted/local dashboard URL in browser
+      - `reflect report` (or `python3 -m reflect.core report`): open the local dashboard in a browser
    - If local traces are unavailable, fall back to legacy local state such as Cursor hook directories when present.
 
 2. **Explain what local telemetry can prove**
