@@ -27,6 +27,28 @@ def _strip_json_fences(text: str) -> str:
     return stripped
 
 
+def _load_extracted_skills(text: str) -> list[dict]:
+    """Parse extracted skill JSON, tolerating trailing non-JSON text."""
+    cleaned = _strip_json_fences(text)
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError as original_exc:
+        decoder = json.JSONDecoder()
+        for index, char in enumerate(cleaned):
+            if char not in "[{":
+                continue
+            try:
+                parsed, _end = decoder.raw_decode(cleaned[index:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, list):
+                return parsed
+        raise original_exc
+    if not isinstance(parsed, list):
+        raise json.JSONDecodeError("Expected JSON array", cleaned, 0)
+    return parsed
+
+
 def _compress_tool_sequence(tools: list[str]) -> list[str]:
     """Collapse consecutive identical tool calls into Tool×N notation."""
     if not tools:

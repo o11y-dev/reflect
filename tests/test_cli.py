@@ -336,9 +336,24 @@ class TestSkillsSubcommand:
         assert result.exit_code == 0
         assert (skill_dest / "debug-loop" / "SKILL.md").exists()
 
+    def test_skills_accepts_trailing_text_after_json(self, runner, otlp_file, tmp_path):
+        """Valid JSON followed by trailing prose should still parse."""
+        skill_dest = tmp_path / "skills"
+        noisy_output = json.dumps([_FAKE_SKILLS[0]]) + "\n\nI found one strong candidate skill."
+        with patch("subprocess.run", return_value=_R(0, noisy_output)), \
+             patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
+            result = runner.invoke(main, [
+                "skills", "--yes", "--agent", "claude",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        assert result.exit_code == 0
+        assert (skill_dest / "debug-loop" / "SKILL.md").exists()
+
 
 def test_strip_json_fences_variants():
-    from reflect.core import _strip_json_fences
+    from reflect.core import _load_extracted_skills, _strip_json_fences
 
     raw = '[{"name": "x"}]'
 
@@ -361,6 +376,10 @@ def test_strip_json_fences_variants():
     with_backticks = '[{"name": "x", "content": "```python\\nprint()\\n```"}]'
     fenced = f'```json\n{with_backticks}\n```'
     assert _strip_json_fences(fenced) == with_backticks
+
+    # Valid JSON with trailing prose still parses
+    parsed = _load_extracted_skills(raw + "\nDone.")
+    assert parsed == [{"name": "x"}]
 
 
 class TestNoDataNoCrash:

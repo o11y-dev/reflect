@@ -156,6 +156,7 @@ from reflect.skill_extraction import (  # noqa: F401
     _build_skills_extraction_prompt,
     _compress_tool_sequence,
     _extract_recovery_chains,
+    _load_extracted_skills,
     _serialize_sessions_for_skills,
     _strip_json_fences,
 )
@@ -1381,9 +1382,8 @@ def skills(
         click.echo(f"Agent exited with code {result.returncode}:\n{result.stderr}", err=True)
         raise SystemExit(1)
 
-    raw_output = _strip_json_fences(result.stdout)
     try:
-        skill_defs = _json.loads(raw_output)
+        skill_defs = _load_extracted_skills(result.stdout)
     except _json.JSONDecodeError as exc:
         click.echo(
             f"Could not parse agent output as JSON: {exc}\n\nOutput:\n{result.stdout[:500]}",

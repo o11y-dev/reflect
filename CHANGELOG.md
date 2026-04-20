@@ -11,6 +11,9 @@
 - `reflect skills` now passes both a compact evidence summary and authoritative JSON bundle to the extraction agent
 - Skill extraction docs now describe the evidence-driven workflow instead of a thin predefined prompt
 
+### Fixed
+- `reflect skills` now accepts agent output where a valid JSON array is followed by trailing prose instead of failing with `Could not parse agent output as JSON: Extra data`
+
 ## 0.6.0 (2026-04-20)
 
 ### Added
