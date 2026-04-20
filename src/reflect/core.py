@@ -62,7 +62,7 @@ HOOK_HOME = Path(os.environ.get("IDE_OTEL_HOOK_HOME",
                                  Path.home() / ".local" / "share" / "opentelemetry-hooks"))
 
 # ---------------------------------------------------------------------------
-# Re-exports from split modules — keeps backward compatibility for serve.py,
+# Re-exports from split modules — keeps backward compatibility for legacy serve.py,
 # tests, and any external consumers that import from reflect.core.
 # ---------------------------------------------------------------------------
 

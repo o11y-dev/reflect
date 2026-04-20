@@ -2478,7 +2478,7 @@ function renderDashboardError(kind, message){
   if (kind === 'no-data') {
     document.body.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:24px;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:rgba(255,255,255,.9)">'
       + '<h1 style="font-size:42px;font-weight:700;background:linear-gradient(135deg,#0a84ff,#bf5af2);-webkit-background-clip:text;-webkit-text-fill-color:transparent">reflect.o11y.dev</h1>'
-      + '<p style="color:rgba(255,255,255,.5);font-size:16px;max-width:420px;text-align:center;line-height:1.7">AI usage telemetry dashboard.<br>Run <code style="background:rgba(255,255,255,.08);padding:2px 8px;border-radius:4px">reflect --dashboard-artifact docs/reports/latest.json --publish</code> to open your report here.</p>'
+      + '<p style="color:rgba(255,255,255,.5);font-size:16px;max-width:420px;text-align:center;line-height:1.7">AI usage telemetry dashboard.<br>Run <code style="background:rgba(255,255,255,.08);padding:2px 8px;border-radius:4px">reflect report --dashboard-artifact docs/reports/latest.json</code> to open your report here.</p>'
       + '<a href="https://github.com/o11ydev/reflect" style="color:#0a84ff;font-size:14px;text-decoration:none">github.com/o11ydev/reflect</a>'
       + '</div>';
     return;

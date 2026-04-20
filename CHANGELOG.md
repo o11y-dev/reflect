@@ -10,6 +10,8 @@
 - Moved skill-extraction helpers into `src/reflect/skill_extraction.py` and kept `reflect.core` re-exports for backward compatibility
 - `reflect skills` now passes both a compact evidence summary and authoritative JSON bundle to the extraction agent
 - Skill extraction docs now describe the evidence-driven workflow instead of a thin predefined prompt
+### Changed
+- Deprecated `python serve.py` and legacy `reflect --publish` references in docs/UI copy; use `reflect report` (or `python3 -m reflect.core report`) to open the local dashboard.
 
 ## 0.6.0 (2026-04-20)
 

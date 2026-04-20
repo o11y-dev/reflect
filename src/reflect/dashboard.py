@@ -1418,7 +1418,7 @@ def _start_publish_server(stats: TelemetryStats) -> None:
 
 
 def _start_publish_server_inline(stats: TelemetryStats, port: int, docs_dir: Path) -> None:
-    """Inline FastAPI server for reflect --publish."""
+    """Inline FastAPI server for `reflect report`."""
     import threading
     import webbrowser
 
