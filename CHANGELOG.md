@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.1 (unreleased)
+## 0.6.1 (2026-04-20)
 
 ### Added
 - `reflect skills` now builds a deterministic evidence bundle from session quality scores, workflow fingerprints, shell commands, recovery chains, and bounded deep session context before invoking the extraction agent
