@@ -700,7 +700,7 @@ class TestDoctor:
         # Without otel-hook, OTLP logs should show "missing" not "waiting"
         assert "waiting" not in result.output
 
-    def test_doctor_renders_native_agent_telemetry_panel(self, runner, tmp_path):
+    def test_doctor_shows_native_agent_telemetry_status(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
         hook_home = tmp_path / ".otel-hook-home"
         home_dir = tmp_path / "home"
@@ -1061,6 +1061,25 @@ class TestNativeOtelConfig:
         assert parsed["model"]["name"] == "o3"
         assert parsed["otel"]["logs_exporter"] == "otlp"
         assert parsed["otel"]["logs_endpoint"] == "http://localhost:4317"
+
+    def test_codex_native_otel_replaces_mid_file_section_without_clobbering_following_sections(self, tmp_path):
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "config.toml").write_text(
+            "[model]\nname = \"o3\"\n\n"
+            "[otel]\ntraces_exporter = \"console\"\n\n"
+            "[projects]\n\"/tmp/demo\" = {trust_level = \"trusted\"}\n"
+        )
+
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
+
+        updated = (codex_dir / "config.toml").read_text()
+        parsed = tomllib.loads(updated)
+        assert parsed["otel"]["traces_exporter"] == "otlp"
+        assert parsed["otel"]["logs_exporter"] == "otlp"
+        assert parsed["projects"]["/tmp/demo"]["trust_level"] == "trusted"
+        assert "\n\n[projects]\n" in updated
 
     def test_codex_native_otel_read_error(self, tmp_path):
         codex_dir = tmp_path / ".codex"

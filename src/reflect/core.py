@@ -1800,7 +1800,7 @@ def _codex_native_otel_settings(hook_config: dict[str, str]) -> dict[str, object
     }
 
 
-def _codex_native_otel_complete(otel: object, desired: dict[str, object]) -> bool:
+def _codex_native_otel_matches_desired(otel: object, desired: dict[str, object]) -> bool:
     if not isinstance(otel, dict):
         return False
     return all(otel.get(key) == value for key, value in desired.items())
@@ -1818,6 +1818,18 @@ def _render_codex_native_otel_block(hook_config: dict[str, str]) -> str:
         f'logs_endpoint = "{endpoint}"\n'
         "log_user_prompt = false\n"
     )
+
+
+def _upsert_toml_section(original: str, section_name: str, block: str) -> str:
+    normalized_block = block.strip() + "\n"
+    pattern = rf"^\[{re.escape(section_name)}\]\n.*?(?=^\[|\Z)"
+    flags = re.MULTILINE | re.DOTALL
+    if re.search(pattern, original, flags=flags):
+        updated = re.sub(pattern, block.strip() + "\n\n", original, flags=flags)
+        return re.sub(r"\n{3,}", "\n\n", updated).rstrip() + "\n"
+    if not original.strip():
+        return normalized_block
+    return original.rstrip() + "\n\n" + normalized_block
 
 
 def _missing_desired_keys(actual: object, desired: dict[str, object]) -> list[str]:
@@ -2170,7 +2182,7 @@ def _configure_codex_native_otel(console, hook_config: dict[str, str]) -> None:
             console.print(f"  [red]\u2717[/] Failed to read Codex config {config_path}: {exc}")
             return
         existing_otel = existing.get("otel")
-        if _codex_native_otel_complete(existing_otel, desired_otel):
+        if _codex_native_otel_matches_desired(existing_otel, desired_otel):
             console.print(f"  [green]\u2713[/] Native Codex OTel already enabled in {config_path}")
             return
     else:
@@ -2179,15 +2191,7 @@ def _configure_codex_native_otel(console, hook_config: dict[str, str]) -> None:
     # Append or replace [otel] section — read original text to preserve other sections
     original = config_path.read_text() if config_path.exists() else ""
     otel_block = _render_codex_native_otel_block(hook_config)
-
-    if re.search(r"^\[otel\]", original, re.MULTILINE):
-        # Replace existing [otel] section (up to next section or end of file)
-        updated = re.sub(
-            r"\[otel\].*?(?=\n\[|\Z)", otel_block.rstrip("\n") + "\n", original,
-            flags=re.DOTALL,
-        )
-    else:
-        updated = f"{original.rstrip()}\n\n{otel_block}" if original.strip() else otel_block
+    updated = _upsert_toml_section(original, "otel", otel_block)
 
     config_path.write_text(updated)
     console.print(f"  [green]\u2713[/] Enabled native Codex OTel in {config_path}")
