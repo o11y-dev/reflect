@@ -3384,7 +3384,37 @@ let filteredDashboardSessions = (D.sessions || []).slice();
   }
 
   function buildSessionObservations(session){
-    const MAX_SESSION_OBSERVATIONS = 8;
+    const MAX_SESSION_OBSERVATIONS = 10;
+
+    /* ── Backend insights (distribution-aware) ─────────────── */
+    if (Array.isArray(session.insights) && session.insights.length > 0) {
+      const observations = session.insights.map(i => ({
+        tone: i.kind === 'strength' ? 'strength'
+            : i.kind === 'recommendation' ? 'recommendation'
+            : i.severity >= 3 ? 'recommendation'
+            : 'observation',
+        label: i.title,
+        text: i.body,
+      }));
+      /* Append telemetry marker observations from spans/logs */
+      const conversation = Array.isArray(session.conversation) ? session.conversation : [];
+      const telemetry = session.telemetry || {};
+      const summary = telemetry.summary || {};
+      const spans = Array.isArray(telemetry.spans) ? telemetry.spans : [];
+      const logs = Array.isArray(telemetry.logs) ? telemetry.logs : [];
+      const sessionStartTs = conversation[0]?.ts || 0;
+      const anchorMs = Number(summary.anchor_ns || 0) / 1e6;
+      buildSessionObservationMarkers(session, spans, logs, anchorMs, sessionStartTs).forEach(marker => {
+        observations.push({
+          tone: marker.tone === 'success' ? 'strength' : marker.tone === 'error' ? 'recommendation' : 'observation',
+          label: marker.label,
+          text: marker.sub || `Observed at ${fmtRelTime(marker.rel)}.`,
+        });
+      });
+      return observations.slice(0, MAX_SESSION_OBSERVATIONS);
+    }
+
+    /* ── Fallback: legacy JS logic for sessions without backend insights ─ */
     const conversation = Array.isArray(session.conversation) ? session.conversation : [];
     const telemetry = session.telemetry || {};
     const summary = telemetry.summary || {};

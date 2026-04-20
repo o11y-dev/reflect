@@ -1,24 +1,35 @@
 # Changelog
 
-## 0.5.1 (unreleased)
-
+## 0.5.0 (unreleased)
 
 ### Added
+- **Distribution-aware insights engine** — observations, recommendations, strengths, and examples now use IQR-based outlier detection against the user's own baseline instead of hardcoded magic-number thresholds
+- **Per-session insights** — each session is compared against the user's distribution (token usage, failure rate, duration, tool loops, cache utilization) and assigned structured `Insight` objects with severity, confidence, and evidence
+- **Structured `Insight` type** with kind, title, body, category, severity (LOW/MEDIUM/HIGH/CRITICAL), confidence (0.0–1.0), and evidence dict — replaces raw strings internally while preserving backward-compatible API
+- **`DataProfile`** — statistical summary computed once per analysis run, caching per-session distributions (tokens, tools, prompts, failures, duration) for adaptive thresholds
+- **Cold-start fallback** — sparse data (< 5 sessions) falls back to conservative absolute thresholds instead of producing noisy results
+- Session insights rendered in dashboard session cards and session detail API
+- Achievement badge "High Leverage" now uses distribution-aware threshold (p95) instead of arbitrary 10:1
 - `reflect doctor` now distinguishes missing, incomplete, unreadable, and ready native OTel agent configs for Claude Code, Copilot, Gemini CLI, and OpenAI Codex CLI
 
+### Changed
+- `src/reflect/insights.py` refactored into `src/reflect/insights/` package with modular signals, types, profile, scoring, and renderers
+- Session quality scoring now uses 8-factor weighted model (completion, efficiency, reliability, loops, duration, recovery, diversity, productivity) with distribution-aware thresholds
+- Signals only fire when data warrants it — no more always-fire noise for balanced/healthy usage
+- Prompt examples are now domain-agnostic (removed hardcoded GitLab, Coralogix, ISR- references)
+- `buildSessionObservations()` in the frontend now consumes backend-computed insights when available
+
 ### Fixed
+- Balanced usage data no longer produces spurious "Context gathering looks controlled" observations
 - `reflect setup` now writes explicit trace and log exporter settings into the OpenAI Codex CLI `[otel]` block
 - OpenAI Codex CLI native OTel updates now preserve unrelated TOML sections when refreshing the `[otel]` block
 - OpenAI Codex CLI native OTel setup now keeps prompt logging disabled by default
+- Increased the default hosted/local dashboard font sizing baseline so tabs, metadata, and supporting UI text render at more readable sizes.
 
 ### Changed
 - Native OTel config generation now derives agent-specific desired settings from shared local endpoint/protocol helpers instead of hand-rolling each agent writer
 - README native-telemetry docs now spell out the exact config surfaces and privacy-sensitive defaults
 - README now also documents that the local `reflect` gateway persists traces and logs, but not OTLP metrics
-
-### Fixed
-- Increased the default hosted/local dashboard font sizing baseline so tabs, metadata, and supporting UI text render at more readable sizes.
-
 
 ## 0.5.0 (2026-04-18)
 
