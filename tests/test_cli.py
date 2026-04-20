@@ -1117,3 +1117,15 @@ class TestNativeOtelConfig:
         codex = next(status for status in statuses if status["agent"] == "OpenAI Codex CLI")
         assert codex["status"] == "ready"
         assert "trace/log OTLP exporters" in codex["details"]
+
+    def test_native_otel_status_reports_unreadable_codex_config(self, tmp_path):
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "config.toml").write_text("[[[[invalid toml")
+
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            statuses = core._collect_native_otel_statuses(self.HOOK_CFG)
+
+        codex = next(status for status in statuses if status["agent"] == "OpenAI Codex CLI")
+        assert codex["status"] == "unreadable"
+        assert "Failed to read config.toml" in codex["details"]

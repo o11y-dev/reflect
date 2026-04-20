@@ -428,10 +428,12 @@ def _configure_claude_native_otel(console, hook_config: dict[str, str]) -> None:
         settings = {}
 
     env = settings.get("env")
-    changed = not isinstance(env, dict)
     if not isinstance(env, dict):
         env = {}
         settings["env"] = env
+        changed = True
+    else:
+        changed = False
     for key, value in desired_env.items():
         if env.get(key) != value:
             env[key] = value
