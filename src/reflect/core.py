@@ -151,6 +151,14 @@ from reflect.parsing import (  # noqa: F401
 )
 from reflect.processing import _process_span, analyze_telemetry  # noqa: F401
 from reflect.report import render_report  # noqa: F401
+from reflect.skill_extraction import (  # noqa: F401
+    _build_skill_evidence_bundle,
+    _build_skills_extraction_prompt,
+    _compress_tool_sequence,
+    _extract_recovery_chains,
+    _serialize_sessions_for_skills,
+    _strip_json_fences,
+)
 from reflect.terminal import _render_terminal  # noqa: F401
 from reflect.utils import (  # noqa: F401
     _bar,
@@ -1043,63 +1051,6 @@ _SKILL_AGENT_SPECS: list[tuple[str, list[str]]] = [
 _SKILL_AGENT_NAMES = ", ".join(name for name, _ in _SKILL_AGENT_SPECS)
 
 
-def _strip_json_fences(text: str) -> str:
-    """Remove markdown code fences wrapping JSON output, if present."""
-    stripped = text.strip()
-    match = re.search(r"```(?:json)?\s*\n(.*?)\n```", stripped, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return stripped
-
-
-def _compress_tool_sequence(tools: list[str]) -> list[str]:
-    """Collapse consecutive identical tool calls into Tool×N notation."""
-    if not tools:
-        return []
-    result: list[str] = []
-    cur, count = tools[0], 1
-    for t in tools[1:]:
-        if t == cur:
-            count += 1
-        else:
-            result.append(f"{cur}×{count}" if count > 1 else cur)
-            cur, count = t, 1
-    result.append(f"{cur}×{count}" if count > 1 else cur)
-    return result
-
-
-_ACTIONABLE_RECOVERY_EVENTS = {"PreToolUse", "BeforeShellExecution", "BeforeMCPExecution"}
-
-
-def _extract_recovery_chains(spans: list[dict]) -> list[str]:
-    """Return failed-tool→next-actionable-tool pairs as error-recovery signals.
-
-    Spans are sorted chronologically by ``t`` first so ingestion order does not
-    produce misleading pairs.  Only actionable span types (PreToolUse /
-    BeforeShellExecution / BeforeMCPExecution) are considered as recovery steps,
-    skipping Stop/SessionEnd and other bookkeeping events.
-    """
-    chains: list[str] = []
-    ordered = sorted(
-        spans,
-        key=lambda s: (0, s["t"]) if s.get("t") is not None else (1, 0),
-    )
-    for i, span in enumerate(ordered):
-        if span.get("ok", True):
-            continue
-        failed = span.get("tool")
-        if not failed:
-            continue
-        for next_span in ordered[i + 1:]:
-            if next_span.get("event") not in _ACTIONABLE_RECOVERY_EVENTS:
-                continue
-            recovered = next_span.get("tool")
-            if recovered:
-                chains.append(f"{failed}✗→{recovered}")
-            break
-    return chains
-
-
 def _interactive_pick(
     items: list[str],
     *,
@@ -1325,68 +1276,6 @@ def _select_skills(
         raise SystemExit(0)
     return [skill_defs[i] for i in indices]
 
-
-def _serialize_sessions_for_skills(stats: TelemetryStats) -> str:
-    """Serialize top sessions to compact workflow fingerprints for skill extraction.
-
-    Each session is encoded as structured trace-derived signals rather than raw
-    conversation text: ordered tool flows, shell commands, prompt topic snippets,
-    and error-recovery chains.  This gives the extraction AI real behavioral
-    patterns to reason about at ~200 tokens/session instead of tens of thousands.
-    """
-    session_ids = sorted(
-        stats.sessions_seen,
-        key=lambda sid: stats.session_events.get(sid, 0),
-        reverse=True,
-    )[:20]
-
-    lines: list[str] = []
-    for sid in session_ids:
-        event_count = stats.session_events.get(sid, 0)
-        models = stats.session_models.get(sid)
-        model_str = next(iter(models), "unknown") if models else "unknown"
-        tok = stats.session_tokens.get(sid, {})
-        total_tokens = tok.get("input", 0) + tok.get("output", 0)
-
-        lines.append(f"Session {sid[:8]}:")
-        lines.append(f"  model={model_str} events={event_count} tokens={total_tokens}")
-
-        # Ordered tool flow — sorted by timestamp, consecutive repeats collapsed,
-        # capped at 20 steps.  E.g. "Read×3 → Grep → Edit → Bash".
-        tool_seq = stats.session_tool_seq.get(sid, [])
-        if tool_seq:
-            sorted_seq = sorted(tool_seq, key=lambda item: item[0])
-            compressed = _compress_tool_sequence([t for _, t, _ in sorted_seq])
-            lines.append(f"  tool_flow={' → '.join(compressed[:20])}")
-
-        # Top shell commands reveal domain (git, pytest, docker, npm …).
-        shell_cmds = stats.session_shell_commands.get(sid)
-        if shell_cmds:
-            top_cmds = [cmd for cmd, _ in shell_cmds.most_common(5)]
-            lines.append(f"  shell_cmds={' | '.join(top_cmds)}")
-
-        # First 80 chars of each user prompt normalized to a single line.
-        # Raw previews may contain newlines that would break the line-oriented format.
-        conv = stats.session_conversation.get(sid, [])
-        prompt_snippets = []
-        for e in conv:
-            if e.get("type") == "prompt" and e.get("preview"):
-                snippet = " ".join(e["preview"].split())[:80]
-                if snippet:
-                    prompt_snippets.append(snippet)
-        if prompt_snippets:
-            joined = " / ".join(prompt_snippets[:3])
-            lines.append(f"  prompts=[{joined}]")
-
-        # Error-recovery chains: failed tool → next tool shows debugging patterns.
-        spans = stats.session_span_details.get(sid, [])
-        recoveries = _extract_recovery_chains(spans)
-        if recoveries:
-            lines.append(f"  error_recovery={' | '.join(recoveries[:3])}")
-
-    return "\n".join(lines)
-
-
 # Strict kebab-case: lowercase letters, digits, and hyphens only; 1-64 chars.
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$")
 
@@ -1472,7 +1361,6 @@ def skills(
         time_range=time_range,
     )
 
-    session_summaries = _serialize_sessions_for_skills(stats)
     try:
         prompt_pkg = importlib_resources.files("reflect") / "data" / "skills-extraction-prompt.md"
         prompt_text = prompt_pkg.read_text(encoding="utf-8")
@@ -1482,7 +1370,7 @@ def skills(
             err=True,
         )
         raise SystemExit(1) from exc
-    prompt = prompt_text + "\n" + session_summaries
+    prompt = _build_skills_extraction_prompt(prompt_text, stats)
 
     with console.status(
         f"[bold]Extracting skills with {agent_bin}...[/bold]",

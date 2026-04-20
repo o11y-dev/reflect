@@ -22,10 +22,11 @@ reflect skills --demo            # run with bundled sample data
 ## What it does
 
 1. Loads your local telemetry (same data as `reflect`)
-2. Invokes the specified agent CLI with a predefined extraction prompt
-3. Shows you the extracted skills for review
-4. Asks for confirmation before writing
-5. Distributes confirmed skills to all detected agent directories (`~/.claude/skills/`, `~/.cursor/skills/`, etc.)
+2. Builds a deterministic evidence bundle from session quality scores, span/log-derived workflow signals, prompt snippets, recovery chains, and selected deep session context
+3. Invokes the specified agent CLI with an evidence-driven extraction prompt
+4. Shows you the extracted skills for review
+5. Asks for confirmation before writing
+6. Distributes confirmed skills to all detected agent directories (`~/.claude/skills/`, `~/.cursor/skills/`, etc.)
 
 Extracted skills are immediately available via `/skill-name` in Claude Code.
 

@@ -2,6 +2,14 @@
 
 ## 0.6.1 (unreleased)
 
+### Added
+- `reflect skills` now builds a deterministic evidence bundle from session quality scores, workflow fingerprints, shell commands, recovery chains, and bounded deep session context before invoking the extraction agent
+- Skill extraction prompts now ask for evidence-backed improvement rationale and provenance metadata per candidate skill instead of relying on pattern frequency alone
+
+### Changed
+- Moved skill-extraction helpers into `src/reflect/skill_extraction.py` and kept `reflect.core` re-exports for backward compatibility
+- `reflect skills` now passes both a compact evidence summary and authoritative JSON bundle to the extraction agent
+- Skill extraction docs now describe the evidence-driven workflow instead of a thin predefined prompt
 ### Changed
 - Deprecated `python serve.py` and legacy `reflect --publish` references in docs/UI copy; use `reflect report` (or `python3 -m reflect.core report`) to open the local dashboard.
 

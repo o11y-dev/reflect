@@ -159,6 +159,24 @@ class TestSkillsSubcommand:
         assert (skill_dest / "debug-loop" / "SKILL.md").exists()
         assert "name: debug-loop" in (skill_dest / "debug-loop" / "SKILL.md").read_text()
 
+    def test_skills_passes_evidence_bundle_to_agent(self, runner, otlp_file, tmp_path):
+        fake_output = json.dumps([_FAKE_SKILLS[0]])
+        with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
+             patch("reflect.core._detect_agents", return_value=[]):
+            result = runner.invoke(main, [
+                "skills", "--yes", "--agent", "claude",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+
+        assert result.exit_code == 0
+        prompt = mock_run.call_args[0][0][-1]
+        assert "Evidence JSON (authoritative):" in prompt
+        assert '"schema_version": 1' in prompt
+        assert '"selection_policy"' in prompt
+        assert '"sessions"' in prompt
+
     def test_skills_partial_selection(self, runner, otlp_file, tmp_path):
         """User selects only skill #1 from a list of 3."""
         skill_dest = tmp_path / "skills"
