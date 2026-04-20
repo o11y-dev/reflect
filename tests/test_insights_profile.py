@@ -2,14 +2,12 @@
 
 from collections import Counter
 
+from reflect.insights.profile import build_data_profile
 from reflect.insights.types import (
-    DataProfile,
     DistributionStats,
     compute_distribution,
     confidence_for,
-    _EMPTY_DIST,
 )
-from reflect.insights.profile import build_data_profile
 from reflect.models import TelemetryStats
 
 

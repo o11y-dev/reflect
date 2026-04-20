@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0 (unreleased)
+## 0.5.0 (unreleased)
 
 ### Added
 - **Distribution-aware insights engine** — observations, recommendations, strengths, and examples now use IQR-based outlier detection against the user's own baseline instead of hardcoded magic-number thresholds
@@ -10,6 +10,7 @@
 - **Cold-start fallback** — sparse data (< 5 sessions) falls back to conservative absolute thresholds instead of producing noisy results
 - Session insights rendered in dashboard session cards and session detail API
 - Achievement badge "High Leverage" now uses distribution-aware threshold (p95) instead of arbitrary 10:1
+- `reflect doctor` now distinguishes missing, incomplete, unreadable, and ready native OTel agent configs for Claude Code, Copilot, Gemini CLI, and OpenAI Codex CLI
 
 ### Changed
 - `src/reflect/insights.py` refactored into `src/reflect/insights/` package with modular signals, types, profile, scoring, and renderers
@@ -20,13 +21,6 @@
 
 ### Fixed
 - Balanced usage data no longer produces spurious "Context gathering looks controlled" observations
-
-## 0.5.1 (unreleased)
-
-### Added
-- `reflect doctor` now distinguishes missing, incomplete, unreadable, and ready native OTel agent configs for Claude Code, Copilot, Gemini CLI, and OpenAI Codex CLI
-
-### Fixed
 - `reflect setup` now writes explicit trace and log exporter settings into the OpenAI Codex CLI `[otel]` block
 - OpenAI Codex CLI native OTel updates now preserve unrelated TOML sections when refreshing the `[otel]` block
 - OpenAI Codex CLI native OTel setup now keeps prompt logging disabled by default

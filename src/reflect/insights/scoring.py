@@ -144,7 +144,7 @@ def compute_session_quality(
     # else: failures with no recovery → 0
 
     # ── 7. Tool Diversity (5 pts) ───────────────────────────────
-    distinct_tools = len(set(s["tool"] for s in spans if s.get("tool")))
+    distinct_tools = len({s["tool"] for s in spans if s.get("tool")})
     if distinct_tools >= 5:
         score += 5.0
     elif distinct_tools >= 3:

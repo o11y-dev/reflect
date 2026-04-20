@@ -2,10 +2,14 @@
 
 from collections import Counter
 
-from reflect.insights import build_all_insights, build_strengths, build_observations, build_recommendations
+from reflect.insights import (
+    build_all_insights,
+    build_observations,
+    build_recommendations,
+    build_strengths,
+)
 from reflect.insights.profile import build_data_profile
 from reflect.insights.signals import run_signals
-from reflect.insights.types import DataProfile, Insight
 from reflect.models import TelemetryStats
 
 
@@ -64,7 +68,7 @@ class TestNoAlwaysFire:
         profile = build_data_profile(stats)
         obs = run_signals(stats, profile, "observation")
         # Should not fire noise for normal data
-        assert isinstance(obs, list)
+        assert obs == []
 
 
 class TestNoDomainReferences:
@@ -243,4 +247,4 @@ class TestRecommendationSignals:
         )
         recs = build_recommendations(stats)
         # With this setup, some recs should fire (failures, high tokens)
-        assert isinstance(recs, list)
+        assert recs != []

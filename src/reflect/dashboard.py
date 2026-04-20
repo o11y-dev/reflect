@@ -18,7 +18,6 @@ from reflect.graph import (
 from reflect.insights import (
     build_all_insights,
     build_session_insights,
-    compute_token_economy,
     compute_tool_percentiles,
 )
 from reflect.insights.renderers import insights_to_example_tuples, insights_to_strings

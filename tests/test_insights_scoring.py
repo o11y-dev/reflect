@@ -14,28 +14,28 @@ def _dist(count=10, mean=50.0, median=50.0, p25=30.0, p75=70.0, p90=80.0,
 
 
 def _make_profile(**overrides):
-    defaults = dict(
-        session_total_tokens=_dist(),
-        session_input_tokens=_dist(),
-        session_output_tokens=_dist(),
-        session_tool_count=_dist(mean=10, median=10, p25=5, p75=15, p90=20, p95=25),
-        session_prompt_count=_dist(mean=3, median=3, p25=2, p75=5, p90=7, p95=9),
-        session_failure_count=_dist(mean=1, median=1, p25=0, p75=2, p90=3, p95=4, min_val=0),
-        session_duration_ms=_dist(mean=300000, median=300000, p25=120000, p75=600000,
-                                  p90=900000, p95=1200000, min_val=30000, max_val=1800000),
-        session_quality_scores=_dist(),
-        tokens_per_tool=_dist(mean=5000, median=5000, p25=3000, p75=8000, p90=12000,
-                              p95=15000, min_val=1000, max_val=25000),
-        tools_per_prompt=_dist(mean=3, median=3, p25=2, p75=5, p90=7, p95=10),
-        reads_per_prompt=_dist(mean=2, median=2, p25=1, p75=3, p90=5, p95=7),
-        session_token_share=_dist(),
-        total_sessions=10,
-        total_prompts=30,
-        total_tool_calls=90,
-        total_failures=5,
-        cache_reuse_ratio=0.15,
-        heavy_model_share=30.0,
-    )
+    defaults = {
+        "session_total_tokens": _dist(),
+        "session_input_tokens": _dist(),
+        "session_output_tokens": _dist(),
+        "session_tool_count": _dist(mean=10, median=10, p25=5, p75=15, p90=20, p95=25),
+        "session_prompt_count": _dist(mean=3, median=3, p25=2, p75=5, p90=7, p95=9),
+        "session_failure_count": _dist(mean=1, median=1, p25=0, p75=2, p90=3, p95=4, min_val=0),
+        "session_duration_ms": _dist(mean=300000, median=300000, p25=120000, p75=600000,
+                                     p90=900000, p95=1200000, min_val=30000, max_val=1800000),
+        "session_quality_scores": _dist(),
+        "tokens_per_tool": _dist(mean=5000, median=5000, p25=3000, p75=8000, p90=12000,
+                                 p95=15000, min_val=1000, max_val=25000),
+        "tools_per_prompt": _dist(mean=3, median=3, p25=2, p75=5, p90=7, p95=10),
+        "reads_per_prompt": _dist(mean=2, median=2, p25=1, p75=3, p90=5, p95=7),
+        "session_token_share": _dist(),
+        "total_sessions": 10,
+        "total_prompts": 30,
+        "total_tool_calls": 90,
+        "total_failures": 5,
+        "cache_reuse_ratio": 0.15,
+        "heavy_model_share": 30.0,
+    }
     defaults.update(overrides)
     return DataProfile(**defaults)
 

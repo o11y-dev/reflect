@@ -6,8 +6,6 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any
 
-from reflect.utils import _safe_ratio
-
 
 class Severity(IntEnum):
     """Ordinal severity. Higher = more important."""

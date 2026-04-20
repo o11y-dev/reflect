@@ -13,10 +13,7 @@ def build_achievement_badges(
     profile: DataProfile | None = None,
 ) -> list[dict[str, str]]:
     """Build achievement badges. Uses profile for adaptive thresholds when available."""
-    if profile is not None:
-        economy = profile.token_economy
-    else:
-        economy = compute_token_economy(stats)
+    economy = profile.token_economy if profile is not None else compute_token_economy(stats)
 
     prompts = stats.events_by_type.get("UserPromptSubmit", 0)
     pre_tool = stats.events_by_type.get("PreToolUse", 0)

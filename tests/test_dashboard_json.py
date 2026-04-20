@@ -382,7 +382,7 @@ class TestBuildDashboardJson:
 
         assert data["prompt_submits"] == 0
         # Zero-prompt, minimal data correctly produces no noise observations
-        assert isinstance(data["observations"], list)
+        assert data["observations"] == []
 
     def test_load_session_telemetry_filters_traces_and_logs(self, tmp_path):
         session_id = "sess-telemetry-1"

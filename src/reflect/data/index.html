@@ -3390,6 +3390,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     if (Array.isArray(session.insights) && session.insights.length > 0) {
       const observations = session.insights.map(i => ({
         tone: i.kind === 'strength' ? 'strength'
+            : i.kind === 'recommendation' ? 'recommendation'
             : i.severity >= 3 ? 'recommendation'
             : 'observation',
         label: i.title,

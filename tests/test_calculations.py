@@ -158,7 +158,7 @@ class TestBuildObservations:
         )
         obs = build_observations(stats)
         # Balanced data = no signal fires = empty list (not noise)
-        assert isinstance(obs, list)
+        assert obs == []
 
     def test_failures_reported(self):
         stats = _make_stats(

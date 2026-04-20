@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+# --- New modules --------------------------------------------------------
+from .badges import build_achievement_badges  # noqa: F401
+
 # --- Moved unchanged ---------------------------------------------------
 from .economy import compute_token_economy  # noqa: F401
 from .percentiles import _percentile, compute_tool_percentiles  # noqa: F401
-
-# --- New modules --------------------------------------------------------
-from .badges import build_achievement_badges  # noqa: F401
 from .profile import build_data_profile  # noqa: F401
 from .renderers import insights_to_example_tuples, insights_to_strings  # noqa: F401
 from .scoring import compute_session_quality  # noqa: F401
@@ -23,8 +23,8 @@ from .types import (  # noqa: F401
     DistributionStats,
     Insight,
     Severity,
-    confidence_for,
     compute_distribution,
+    confidence_for,
 )
 
 if TYPE_CHECKING:
