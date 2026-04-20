@@ -143,6 +143,8 @@ reflect skills                 # extract reusable skills from your sessions
 reflect --demo                 # instant demo with sample data
 ```
 
+`reflect skills` now feeds the extraction agent a deterministic evidence bundle built from session scores, recurring tool flows, shell commands, recovery chains, and bounded deep context from selected high-signal sessions, so proposed skills are tied to concrete improvement opportunities instead of loose pattern matching.
+
 ## Local OTLP gateway
 
 `reflect setup` automatically starts a lightweight OTLP gateway that listens for telemetry from all agents:

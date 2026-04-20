@@ -1,15 +1,12 @@
-"""Unit tests for skill-extraction helper functions.
-
-Covers _compress_tool_sequence, _extract_recovery_chains, and
-_serialize_sessions_for_skills to prevent regressions in the
-trace-fingerprint serialization format.
-"""
+"""Unit tests for skill-extraction helper functions."""
 
 from __future__ import annotations
 
 from collections import Counter
 
 from reflect.core import (
+    _build_skill_evidence_bundle,
+    _build_skills_extraction_prompt,
     _compress_tool_sequence,
     _extract_recovery_chains,
     _serialize_sessions_for_skills,
@@ -161,6 +158,9 @@ def _make_stats(
     events: int = 10,
     tokens_in: int = 500,
     tokens_out: int = 200,
+    quality: float = 72.0,
+    completed: bool = True,
+    recovered: int = 0,
 ) -> TelemetryStats:
     """Build a minimal TelemetryStats for serialization tests."""
     sid = session_id
@@ -179,6 +179,10 @@ def _make_stats(
     stats.session_shell_commands = {sid: shell_cmds} if shell_cmds else {}
     stats.session_conversation = {sid: conv or []}
     stats.session_span_details = {sid: spans or []}
+    stats.session_quality_scores = {sid: quality}
+    stats.session_goal_completed = {sid: completed}
+    stats.session_recovered_failures = {sid: recovered} if recovered else {}
+    stats.sessions_with_telemetry = {sid}
     return stats
 
 
@@ -257,8 +261,8 @@ class TestSerializeSessionsForSkills:
         output = _serialize_sessions_for_skills(stats)
         assert "tool_flow" not in output
 
-    def test_top_20_sessions_only(self):
-        """Only up to 20 sessions should appear in the output."""
+    def test_top_12_sessions_only(self):
+        """Only up to the bounded skill-session limit should appear."""
         stats = TelemetryStats(
             session_files=1, span_files=0, total_events=25,
             events_by_type=Counter(), events_by_file={},
@@ -272,6 +276,96 @@ class TestSerializeSessionsForSkills:
         stats.session_shell_commands = {}
         stats.session_conversation = {}
         stats.session_span_details = {}
+        stats.session_quality_scores = dict.fromkeys(sids, 50.0)
+        stats.session_goal_completed = dict.fromkeys(sids, True)
         output = _serialize_sessions_for_skills(stats)
         session_lines = [ln for ln in output.splitlines() if ln.startswith("Session ")]
-        assert len(session_lines) == 20
+        assert len(session_lines) == 12
+
+
+class TestBuildSkillEvidenceBundle:
+    def test_bundle_includes_scores_and_targets(self):
+        spans = [
+            {"tool": "Read", "ok": True, "event": "PreToolUse", "t": 1},
+            {"tool": "Read", "ok": True, "event": "PreToolUse", "t": 2},
+            {"tool": "Bash", "ok": False, "event": "PostToolUseFailure", "t": 3},
+            {"tool": "Read", "ok": True, "event": "PreToolUse", "t": 4},
+        ]
+        stats = _make_stats(
+            tool_seq=[(1, "Read", True), (2, "Read", True), (3, "Bash", False), (4, "Read", True)],
+            conv=[{"type": "prompt", "preview": "Fix the flaky CLI flow"}],
+            spans=spans,
+            quality=41.0,
+            completed=False,
+            recovered=1,
+        )
+
+        bundle = _build_skill_evidence_bundle(stats)
+
+        assert bundle["schema_version"] == 1
+        assert bundle["sessions"][0]["quality_score"] == 41.0
+        assert bundle["sessions"][0]["goal_completed"] is False
+        assert bundle["sessions"][0]["score_signals"]["tool_failures"] == 1
+        assert any(
+            target["kind"] == "reliability"
+            for target in bundle["sessions"][0]["improvement_targets"]
+        )
+
+    def test_bundle_adds_deep_context_for_selected_session(self):
+        spans = [
+            {"tool": "Read", "ok": True, "event": "PreToolUse", "t": 1, "dur": 10.0},
+            {"tool": "Bash", "ok": False, "event": "PostToolUseFailure", "t": 2, "dur": 20.0},
+        ]
+        stats = _make_stats(
+            conv=[
+                {"type": "prompt", "preview": "Investigate auth timeouts"},
+                {"type": "tool_call", "preview": "cat auth.py", "tool_name": "Read"},
+                {"type": "response", "preview": "I found the bug", "model": "claude-4.5"},
+            ],
+            spans=spans,
+            quality=35.0,
+            completed=False,
+        )
+
+        bundle = _build_skill_evidence_bundle(stats)
+
+        deep_context = bundle["sessions"][0]["deep_context"]
+        assert deep_context["conversation"][0]["type"] == "prompt"
+        assert deep_context["spans"][0]["event"] == "PreToolUse"
+
+    def test_bundle_tracks_recurring_patterns_across_sessions(self):
+        stats = TelemetryStats(
+            session_files=1,
+            span_files=0,
+            total_events=4,
+            events_by_type=Counter(),
+            events_by_file={},
+        )
+        for sid in ("sess-a", "sess-b"):
+            stats.sessions_seen.add(sid)
+            stats.session_events[sid] = 20
+            stats.session_models[sid] = Counter({"claude": 1})
+            stats.session_tokens[sid] = {"input": 100, "output": 50}
+            stats.session_tool_seq[sid] = [(1, "Read", True), (2, "Grep", True)]
+            stats.session_shell_commands[sid] = Counter({"pytest tests/": 1})
+            stats.session_conversation[sid] = [{"type": "prompt", "preview": "Fix tests"}]
+            stats.session_span_details[sid] = [{"tool": "Read", "ok": True, "event": "PreToolUse", "t": 1}]
+            stats.session_quality_scores[sid] = 80.0
+            stats.session_goal_completed[sid] = True
+
+        bundle = _build_skill_evidence_bundle(stats)
+
+        assert bundle["summary"]["recurring_tool_flows"][0]["count"] == 2
+        assert bundle["summary"]["recurring_shell_commands"][0]["value"] == "pytest tests/"
+
+
+class TestBuildSkillsExtractionPrompt:
+    def test_prompt_contains_authoritative_json_bundle(self):
+        stats = _make_stats(conv=[{"type": "prompt", "preview": "Fix the CLI"}])
+
+        prompt = _build_skills_extraction_prompt("Base prompt", stats)
+
+        assert "Evidence summary:" in prompt
+        assert "Evidence JSON (authoritative):" in prompt
+        assert '"schema_version": 1' in prompt
+        assert "session://test-session-abc" in prompt
