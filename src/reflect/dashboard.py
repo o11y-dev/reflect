@@ -16,14 +16,12 @@ from reflect.graph import (
     _compute_weekly_trends,
 )
 from reflect.insights import (
-    build_achievement_badges,
-    build_observations,
-    build_practical_examples,
-    build_recommendations,
-    build_strengths,
+    build_all_insights,
+    build_session_insights,
     compute_token_economy,
     compute_tool_percentiles,
 )
+from reflect.insights.renderers import insights_to_example_tuples, insights_to_strings
 from reflect.models import AgentStats, TelemetryStats
 from reflect.utils import (
     _json_dumps,
@@ -832,6 +830,10 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
     peak_hour = max(range(24), key=lambda h: stats.activity_by_hour.get(h, 0)) if stats.activity_by_hour else -1
     peak_hour_count = stats.activity_by_hour.get(peak_hour, 0) if peak_hour >= 0 else 0
 
+    # Compute insights once (profile needed for per-session insights inside the loop)
+    all_insights = build_all_insights(stats)
+    _profile = all_insights["profile"]
+
     # Sessions with event counts and primary model
     sessions_list = []
     session_agents: dict[str, str] = {}
@@ -965,6 +967,17 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
             "first_prompt": first_prompt,
             "conversation": conv_events,
             "has_telemetry": sid in stats.sessions_with_telemetry,
+            "insights": [
+                {
+                    "kind": i.kind,
+                    "title": i.title,
+                    "body": i.body,
+                    "severity": int(i.severity),
+                    "confidence": i.confidence,
+                    "category": i.category,
+                }
+                for i in build_session_insights(sid, stats, _profile)
+            ],
         })
 
     # Top commands
@@ -980,12 +993,15 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
     sig_cmd = display_shell_commands.most_common(1)
 
     pctl_data = compute_tool_percentiles(display_tool_durations_ms)
-    token_economy = compute_token_economy(stats)
-    strengths = build_strengths(stats)
-    observations = build_observations(stats)
-    practical_examples = build_practical_examples(stats)
-    recommendations = build_recommendations(stats)
-    achievements = build_achievement_badges(stats)
+    token_economy = _profile.token_economy
+    strengths = insights_to_strings(all_insights["strengths"])
+    if not strengths:
+        strengths = ["**Active usage** — Generating telemetry data across multiple sessions "
+                     "is a good foundation for continuous improvement."]
+    observations = insights_to_strings(all_insights["observations"])
+    practical_examples = insights_to_example_tuples(all_insights["examples"])
+    recommendations = insights_to_strings(all_insights["recommendations"])
+    achievements = all_insights["badges"]
 
     avg_quality = (
         sum(float(stats.session_quality_scores.get(sid, 0.0)) for sid in session_ids) / discovered_session_count
@@ -1058,6 +1074,15 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
         "recommendations": recommendations,
         "practical_examples": practical_examples,
         "achievements": achievements,
+        "insights_structured": [
+            {
+                "kind": i.kind, "title": i.title, "body": i.body,
+                "category": i.category, "severity": int(i.severity),
+                "confidence": i.confidence,
+            }
+            for category in ("strengths", "observations", "recommendations")
+            for i in all_insights[category]
+        ],
         # Weekly trends
         "weekly_trends": _compute_weekly_trends(stats.activity_by_day),
         # MCP server availability
@@ -1371,6 +1396,14 @@ def _load_session_detail(session_id: str, stats: TelemetryStats) -> dict | None:
         }
     detail.setdefault("warnings", [])
     detail["telemetry"] = telemetry
+    detail["insights"] = [
+        {
+            "kind": i.kind, "title": i.title, "body": i.body,
+            "severity": int(i.severity), "confidence": i.confidence,
+            "category": i.category,
+        }
+        for i in build_session_insights(session_id, stats)
+    ]
     return detail
 
 

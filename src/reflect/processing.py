@@ -574,7 +574,7 @@ def analyze_telemetry(
         if recovered:
             session_recovered_failures[sid] = recovered
 
-    # Compute quality scores
+    # Cold-start quality scores (no profile yet — will be recomputed below)
     session_quality_scores: dict[str, float] = {}
     session_goal_completed: dict[str, bool] = {}
     for sid in sessions_seen:
@@ -583,20 +583,10 @@ def analyze_telemetry(
         score = compute_session_quality(sid, spans, tokens)
         session_quality_scores[sid] = score
         session_goal_completed[sid] = any(
-            s["event"] in ("Stop", "SubagentStop", "SessionEnd") for s in spans
+            s.get("event") in ("Stop", "SubagentStop", "SessionEnd") for s in spans
         )
 
-    # Aggregate quality back to agents
-    for _agent_name, ag in agents.items():
-        for sid in ag.sessions_seen:
-            if sid in session_quality_scores:
-                ag.total_quality_score += session_quality_scores[sid]
-                if session_goal_completed.get(sid):
-                    ag.completed_sessions += 1
-                if sid in session_recovered_failures:
-                    ag.recovered_failures += session_recovered_failures[sid]
-
-    return TelemetryStats(
+    result = TelemetryStats(
         session_files=len(session_files),
         span_files=len(span_files),
         total_events=total_events,
@@ -640,3 +630,9 @@ def analyze_telemetry(
         session_source=session_source,
         sessions_with_telemetry=sessions_with_telemetry,
     )
+
+    # Recompute quality scores with distribution awareness and update agent aggregates
+    from reflect.insights import recompute_quality_scores
+    recompute_quality_scores(result)
+
+    return result
