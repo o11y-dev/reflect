@@ -412,7 +412,7 @@ def render_report(
         "## Next Step",
         "",
         "Re-run this report weekly and compare event ratios (tool calls, failures, and prompt turns) "
-        "to track improvement. Use `--publish` to open the hosted dashboard view for the same dataset.",
+        "to track improvement. Use `reflect report` to open the hosted dashboard view for the same dataset.",
         "",
     ])
 
