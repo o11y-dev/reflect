@@ -868,6 +868,28 @@ class TestSetup:
         assert copilot_backup_dir.exists()
         assert any(copilot_backup_dir.iterdir())
 
+    def test_distribute_skills_skips_builtin_skills_helper(self, tmp_path):
+        from rich.console import Console
+
+        console = Console(file=io.StringIO())
+        global_skill_dir = tmp_path / "global-skills"
+        agent = {
+            "name": "Claude Code",
+            "detected": True,
+            "global_path": str(global_skill_dir),
+            "skill_path": ".claude/skills/",
+        }
+
+        with patch("reflect.core._detect_agents", return_value=[agent]), \
+             patch("reflect.core._fetch_opentelemetry_skill", return_value=None), \
+             patch("reflect.core.Path.cwd", return_value=tmp_path):
+            core._distribute_skills(console)
+
+        assert (global_skill_dir / "reflect" / "SKILL.md").exists()
+        assert not (global_skill_dir / "skills").exists()
+        assert (tmp_path / ".claude" / "skills" / "reflect" / "SKILL.md").exists()
+        assert not (tmp_path / ".claude" / "skills" / "skills").exists()
+
 
     def test_setup_seeds_config_from_example_on_fresh_install(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"

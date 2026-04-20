@@ -13,6 +13,7 @@
 
 ### Fixed
 - `reflect skills` now accepts agent output where a valid JSON array is followed by trailing prose instead of failing with `Could not parse agent output as JSON: Extra data`
+- `reflect setup` no longer auto-installs the bundled `skills` helper into every detected agent's skills directory
 
 ## 0.6.0 (2026-04-20)
 

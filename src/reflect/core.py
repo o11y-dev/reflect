@@ -1512,8 +1512,10 @@ def _fetch_opentelemetry_skill(console) -> Path | None:
 
 
 def _distribute_skills(console) -> None:
-    """Distribute reflect, skills, and opentelemetry-skill to detected agents."""
-    # reflect and skills skills are bundled with the package
+    """Distribute the reflect and opentelemetry skills to detected agents."""
+    # Only the reflect skill is bundled for automatic setup distribution.
+    # The `skills` helper documents the extraction command itself and should
+    # not be auto-installed into every agent skill directory.
     bundled_skills_dir = Path(__file__).parent / "data" / "skills"
 
     available_skills: dict[str, Path] = {}
@@ -1521,10 +1523,6 @@ def _distribute_skills(console) -> None:
     reflect_skill = bundled_skills_dir / "reflect"
     if (reflect_skill / "SKILL.md").exists():
         available_skills["reflect"] = reflect_skill
-
-    skills_skill = bundled_skills_dir / "skills"
-    if (skills_skill / "SKILL.md").exists():
-        available_skills["skills"] = skills_skill
 
     otel_skill = _fetch_opentelemetry_skill(console)
     if otel_skill:
