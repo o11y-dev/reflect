@@ -315,10 +315,46 @@ def _aggregate_recurring_values(
 
 
 def _build_skill_evidence_bundle(stats: TelemetryStats) -> dict:
+    # Precompute per-session derived metrics once to avoid redundant span scans.
+    per_session: dict[str, dict] = {}
+    for session_id in stats.sessions_seen:
+        spans = stats.session_span_details.get(session_id, [])
+        failures = _tool_failure_count(spans)
+        loops = _loop_count(spans)
+        targets = _session_improvement_targets(stats, session_id)
+        per_session[session_id] = {
+            "spans": spans,
+            "failures": failures,
+            "loops": loops,
+            "targets": targets,
+        }
+
+    def _score(session_id: str) -> float:
+        p = per_session[session_id]
+        recovered = int(stats.session_recovered_failures.get(session_id, 0) or 0)
+        quality = float(stats.session_quality_scores.get(session_id, 0.0) or 0.0)
+        total_tokens = _total_tokens(stats.session_tokens.get(session_id, {}))
+        completed = bool(stats.session_goal_completed.get(session_id, False))
+        opportunities = len(p["targets"])
+        high_token_penalty = 8 if total_tokens >= 50_000 else 0
+        quality_pressure = 10 if quality <= 50 else 6 if quality >= 85 else 0
+        completion_pressure = 8 if not completed else 0
+        event_weight = min(int(stats.session_events.get(session_id, 0) or 0), 200) / 20
+        return (
+            opportunities * 10
+            + p["failures"] * 6
+            + p["loops"] * 4
+            + recovered * 5
+            + high_token_penalty
+            + quality_pressure
+            + completion_pressure
+            + event_weight
+        )
+
     ranked_session_ids = sorted(
         stats.sessions_seen,
         key=lambda session_id: (
-            -_session_signal_score(stats, session_id),
+            -_score(session_id),
             -int(stats.session_events.get(session_id, 0) or 0),
             session_id,
         ),
@@ -327,7 +363,7 @@ def _build_skill_evidence_bundle(stats: TelemetryStats) -> dict:
         sorted(
             ranked_session_ids,
             key=lambda session_id: (
-                -_session_signal_score(stats, session_id),
+                -_score(session_id),
                 float(stats.session_quality_scores.get(session_id, 0.0) or 0.0),
                 session_id,
             ),
@@ -341,7 +377,9 @@ def _build_skill_evidence_bundle(stats: TelemetryStats) -> dict:
     target_values: dict[str, list[str]] = {}
 
     for rank, session_id in enumerate(ranked_session_ids, start=1):
-        spans = stats.session_span_details.get(session_id, [])
+        p = per_session[session_id]
+        spans = p["spans"]
+        targets = p["targets"]
         conversation = stats.session_conversation.get(session_id, [])
         tokens = stats.session_tokens.get(session_id, {})
         tool_flow = _session_tool_flow(stats, session_id)
@@ -353,7 +391,6 @@ def _build_skill_evidence_bundle(stats: TelemetryStats) -> dict:
         ]
         prompts = _session_prompt_snippets(conversation)
         recoveries = _extract_recovery_chains(spans)[:_SKILL_RECOVERY_LIMIT]
-        targets = _session_improvement_targets(stats, session_id)
         tool_flow_values[session_id] = [" → ".join(tool_flow)] if tool_flow else []
         shell_command_values[session_id] = shell_cmds
         recovery_values[session_id] = recoveries
@@ -363,7 +400,7 @@ def _build_skill_evidence_bundle(stats: TelemetryStats) -> dict:
             "id": session_id,
             "short_id": session_id[:8],
             "rank": rank,
-            "signal_score": round(_session_signal_score(stats, session_id), 1),
+            "signal_score": round(_score(session_id), 1),
             "refs": {
                 "session": f"session://{session_id}",
                 "telemetry": f"telemetry://{session_id}",
@@ -381,8 +418,8 @@ def _build_skill_evidence_bundle(stats: TelemetryStats) -> dict:
             },
             "score_signals": {
                 "tool_uses": _tool_use_count(spans),
-                "tool_failures": _tool_failure_count(spans),
-                "tool_loops": _loop_count(spans),
+                "tool_failures": p["failures"],
+                "tool_loops": p["loops"],
             },
             "tool_flow": tool_flow,
             "shell_cmds": shell_cmds,
@@ -427,9 +464,10 @@ def _build_skill_evidence_bundle(stats: TelemetryStats) -> dict:
     }
 
 
-def _serialize_sessions_for_skills(stats: TelemetryStats) -> str:
+def _serialize_sessions_for_skills(stats: TelemetryStats, bundle: dict | None = None) -> str:
     """Serialize ranked sessions into a compact, human-readable extraction summary."""
-    bundle = _build_skill_evidence_bundle(stats)
+    if bundle is None:
+        bundle = _build_skill_evidence_bundle(stats)
     lines = [
         "Selection policy:",
         (
@@ -491,8 +529,8 @@ def _serialize_sessions_for_skills(stats: TelemetryStats) -> str:
 
 def _build_skills_extraction_prompt(prompt_text: str, stats: TelemetryStats) -> str:
     """Build the full prompt passed to the extraction agent."""
-    summary = _serialize_sessions_for_skills(stats)
     bundle = _build_skill_evidence_bundle(stats)
+    summary = _serialize_sessions_for_skills(stats, bundle)
     bundle_json = json.dumps(bundle, indent=2, sort_keys=True)
     return (
         prompt_text.rstrip()
