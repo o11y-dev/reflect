@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.1 (unreleased)
+
+### Changed
+- Deprecated `python serve.py` and legacy `reflect --publish` references in docs/UI copy; use `reflect report` (or `python3 -m reflect.core report`) to open the local dashboard.
+
 ## 0.6.0 (2026-04-20)
 
 ### Added

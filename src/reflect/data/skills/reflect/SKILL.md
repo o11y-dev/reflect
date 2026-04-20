@@ -40,10 +40,10 @@ Always follow this order:
 1. **Baseline from local telemetry**
    - Prefer OTLP JSON traces such as `~/.reflect/state/otlp/otel-traces.json`.
    - Use the existing `reflect` CLI or `python3 src/reflect/core.py`.
-   - Remember the current CLI behavior:
-     - default: terminal dashboard
-     - `--no-terminal`: markdown report
-     - `--publish`: hosted dashboard URL
+    - Remember the current CLI behavior:
+      - default: terminal dashboard
+      - `--no-terminal`: markdown report
+      - `reflect report` (or `python3 -m reflect.core report`): open the local dashboard in a browser
    - If local traces are unavailable, fall back to legacy local state such as Cursor hook directories when present.
 
 2. **Explain what local telemetry can prove**

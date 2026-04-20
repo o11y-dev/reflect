@@ -3,8 +3,8 @@
 Local FastAPI server for the reflect web dashboard.
 
 Usage:
-    reflect --publish          # starts this automatically
-    python serve.py [--otlp-traces PATH] [--port 8765]
+    reflect report             # preferred command
+    python serve.py [--otlp-traces PATH] [--port 8765]  # deprecated wrapper
 
 Serves docs/index.html with dashboard data via /api/data and session
 detail via /api/session/{id}.
@@ -15,6 +15,7 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
+import warnings
 
 REPO_ROOT = Path(__file__).parent
 DOCS_DIR = REPO_ROOT / "docs"
@@ -214,7 +215,7 @@ def _load_detail_from_native(session_id: str, agent: str, file_path: Path) -> di
 
 
 def create_app(stats=None, docs_dir: Path | None = None):
-    """Create the FastAPI app. Can be called from core.py for --publish."""
+    """Create the FastAPI app. Can be called from core.py for `reflect report`."""
     from fastapi import FastAPI
     from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
     from fastapi.staticfiles import StaticFiles
@@ -277,6 +278,11 @@ def start_server(stats, port: int = 8765, open_browser: bool = True, docs_dir: P
 
 
 def main():
+    warnings.warn(
+        "python serve.py is deprecated and will be removed in a future release; use `reflect report` instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     parser = argparse.ArgumentParser(description="Serve reflect dashboard locally")
     parser.add_argument("--otlp-traces", type=Path, default=None,
                         help="Path to OTLP traces file (default: synthetic test data)")
