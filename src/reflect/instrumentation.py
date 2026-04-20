@@ -202,7 +202,7 @@ def _upsert_toml_section(original: str, section_name: str, block: str) -> str:
     pattern = rf"^\[{re.escape(section_name)}\]\n.*?(?=^\[|\Z)"
     flags = re.MULTILINE | re.DOTALL
     if re.search(pattern, original, flags=flags):
-        updated = re.sub(pattern, block.strip() + "\n\n", original, flags=flags)
+        updated = re.sub(pattern, normalized_block + "\n", original, flags=flags)
         return re.sub(r"\n{3,}", "\n\n", updated).rstrip() + "\n"
     if not original.strip():
         return normalized_block
