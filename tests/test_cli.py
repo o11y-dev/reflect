@@ -657,8 +657,6 @@ class TestDoctor:
     def test_doctor_support_matrix_marks_planned_agents(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
         hook_home = tmp_path / ".otel-hook-home"
-        windsurf_home = tmp_path / ".codeium" / "windsurf"
-        windsurf_home.mkdir(parents=True)
         (reflect_home / "state").mkdir(parents=True)
         hook_home.mkdir(parents=True)
         advisor = {
@@ -679,7 +677,9 @@ class TestDoctor:
             result = runner.invoke(main, ["doctor"])
 
         assert result.exit_code == 0
-        assert "Windsurf" in result.output
+        assert "Antigravity" in result.output
+        assert "OpenClaw" in result.output
+        assert "Windsurf" not in result.output
         assert "Planned" in result.output
 
     def test_doctor_otlp_logs_waiting_when_otel_hook_installed(self, runner, tmp_path):
@@ -777,6 +777,9 @@ class TestDoctor:
         assert result.exit_code == 0
         assert "Native agent telemetry" in result.output
         assert "Claude Code" in result.output
+        assert "Native OTel" in result.output
+        assert "Traces" in result.output
+        assert "Status details" in result.output
         assert "incomplete" in result.output
 
 

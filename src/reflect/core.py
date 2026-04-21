@@ -385,6 +385,7 @@ _IMPLEMENTED_AGENT_SUPPORT: dict[str, tuple[str, str]] = {
     "OpenAI Codex CLI": ("Native OTel config", "Medium"),
     "OpenCode": ("opencode run + export", "Medium"),
 }
+_DOCTOR_MATRIX_PLANNED = {"Antigravity", "OpenClaw"}
 
 
 def _agent_support_summary(name: str) -> dict[str, str]:
@@ -1740,7 +1741,12 @@ def doctor() -> None:
     integrations.add_column("Status", no_wrap=True)
     integrations.add_column("Telemetry path")
     integrations.add_column("Confidence", no_wrap=True)
-    for agent in agents:
+    matrix_agents = [
+        agent
+        for agent in agents
+        if agent["support_status"] == "Implemented" or agent["name"] in _DOCTOR_MATRIX_PLANNED
+    ]
+    for agent in matrix_agents:
         integrations.add_row(
             agent["name"],
             agent["env"],
