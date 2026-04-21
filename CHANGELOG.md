@@ -16,6 +16,11 @@
 - `reflect setup` no longer auto-installs the bundled `skills` helper into every detected agent's skills directory
 - `reflect doctor` now trims the support matrix to implemented agents plus the planned OpenClaw and Antigravity rows, and the native telemetry panel now renders a more capability-oriented matrix (native OTel, traces, metrics, logs, config surface, protocol, status)
 
+## 0.6.1 (2026-04-20)
+
+### Changed
+- Deprecated `python serve.py` and legacy `reflect --publish` references in docs/UI copy; use `reflect report` (or `python3 -m reflect.core report`) to open the local dashboard.
+
 ## 0.6.0 (2026-04-20)
 
 ### Added
