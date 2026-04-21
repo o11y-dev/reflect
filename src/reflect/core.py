@@ -1756,10 +1756,7 @@ def doctor() -> None:
         )
     console.print(Panel(integrations, title="Support matrix", border_style="green"))
 
-    if otlp_traces and otlp_traces.exists():
-        action_line = f"[bold]Try now:[/] [cyan]reflect --otlp-traces {otlp_traces}[/]"
-    else:
-        action_line = "[bold]Next:[/] run [cyan]reflect setup[/] or enable native telemetry on a supported agent."
+    action_line = "[bold]Next:[/] run [cyan]reflect setup[/] or enable native telemetry on a supported agent."
 
     next_steps_lines = [
         "- [bold]Use native telemetry first[/] where the agent supports it well.",
