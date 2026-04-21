@@ -10,16 +10,12 @@
 - Moved skill-extraction helpers into `src/reflect/skill_extraction.py` and kept `reflect.core` re-exports for backward compatibility
 - `reflect skills` now passes both a compact evidence summary and authoritative JSON bundle to the extraction agent
 - Skill extraction docs now describe the evidence-driven workflow instead of a thin predefined prompt
+- Deprecated `python serve.py` and legacy `reflect --publish` references in docs/UI copy; use `reflect report` (or `python3 -m reflect.core report`) to open the local dashboard.
 
 ### Fixed
 - `reflect skills` now accepts agent output where a valid JSON array is followed by trailing prose instead of failing with `Could not parse agent output as JSON: Extra data`
 - `reflect setup` no longer auto-installs the bundled `skills` helper into every detected agent's skills directory
 - `reflect doctor` now trims the support matrix to implemented agents plus the planned OpenClaw and Antigravity rows, and the native telemetry panel now renders a more capability-oriented matrix (native OTel, traces, metrics, logs, config surface, protocol, status)
-
-## 0.6.1 (2026-04-20)
-
-### Changed
-- Deprecated `python serve.py` and legacy `reflect --publish` references in docs/UI copy; use `reflect report` (or `python3 -m reflect.core report`) to open the local dashboard.
 
 ## 0.6.0 (2026-04-20)
 
