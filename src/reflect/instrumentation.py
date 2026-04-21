@@ -583,24 +583,107 @@ def _native_status_markup(status: str) -> str:
     return "[red]missing[/]" if status == "missing" else "[red]unreadable[/]"
 
 
+_NATIVE_OTEL_CAPABILITIES: dict[str, dict[str, str]] = {
+    "Claude Code": {
+        "native_otel": "Partial",
+        "traces": "—",
+        "metrics": "Yes",
+        "logs": "Yes",
+        "config_surface": "~/.claude/settings.json or OTEL_* env",
+        "protocol": "OTLP gRPC/HTTP",
+    },
+    "GitHub Copilot VS Code": {
+        "native_otel": "Full",
+        "traces": "Yes",
+        "metrics": "Yes",
+        "logs": "Yes",
+        "config_surface": "VS Code settings.json",
+        "protocol": "OTLP HTTP",
+    },
+    "GitHub Copilot CLI": {
+        "native_otel": "Full",
+        "traces": "Yes",
+        "metrics": "Yes",
+        "logs": "Yes",
+        "config_surface": "VS Code settings env block",
+        "protocol": "OTLP HTTP",
+    },
+    "Gemini CLI": {
+        "native_otel": "Full",
+        "traces": "Yes",
+        "metrics": "Yes",
+        "logs": "Yes",
+        "config_surface": "~/.gemini/settings.json",
+        "protocol": "OTLP gRPC",
+    },
+    "OpenAI Codex CLI": {
+        "native_otel": "Partial",
+        "traces": "Interactive",
+        "metrics": "Interactive",
+        "logs": "Yes",
+        "config_surface": "~/.codex/config.toml [otel]",
+        "protocol": "OTLP gRPC",
+    },
+}
+
+
+def _native_otel_capability(agent: str) -> dict[str, str]:
+    return _NATIVE_OTEL_CAPABILITIES.get(
+        agent,
+        {
+            "native_otel": "Unknown",
+            "traces": "—",
+            "metrics": "—",
+            "logs": "—",
+            "config_surface": "n/a",
+            "protocol": "n/a",
+        },
+    )
+
+
 def _render_native_otel_panel(console, hook_runtime_config: dict[str, str]) -> None:
     from rich import box
+    from rich.console import Group
     from rich.panel import Panel
     from rich.table import Table
 
     native_otel = Table(box=box.SIMPLE_HEAVY, expand=True)
     native_otel.add_column("Agent", style="bold cyan")
+    native_otel.add_column("Native OTel", no_wrap=True)
+    native_otel.add_column("Traces", no_wrap=True)
+    native_otel.add_column("Metrics", no_wrap=True)
+    native_otel.add_column("Logs", no_wrap=True)
+    native_otel.add_column("Config surface", overflow="fold")
+    native_otel.add_column("Protocol", no_wrap=True)
     native_otel.add_column("Status", no_wrap=True)
-    native_otel.add_column("Details")
-    native_otel.add_column("Path", overflow="fold")
-    for status in _collect_native_otel_statuses(hook_runtime_config):
+    statuses = _collect_native_otel_statuses(hook_runtime_config)
+    for status in statuses:
+        capability = _native_otel_capability(status["agent"])
         native_otel.add_row(
             status["agent"],
+            capability["native_otel"],
+            capability["traces"],
+            capability["metrics"],
+            capability["logs"],
+            capability["config_surface"],
+            capability["protocol"],
             _native_status_markup(status["status"]),
-            status["details"],
-            status["path"],
         )
-    console.print(Panel(native_otel, title="Native agent telemetry", border_style="cyan"))
+    details_lines = []
+    for status in statuses:
+        details_lines.append(
+            f"[bold]{status['agent']}[/] — {_native_status_markup(status['status'])} · {status['details']}\n"
+            f"[dim]{status['path']}[/]"
+        )
+    body = native_otel
+    if details_lines:
+        body = Group(
+            native_otel,
+            "\n",
+            "[bold]Status details[/]",
+            "\n\n".join(details_lines),
+        )
+    console.print(Panel(body, title="Native agent telemetry", border_style="cyan"))
 
 
 def _run_setup(

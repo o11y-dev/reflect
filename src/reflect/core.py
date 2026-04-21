@@ -156,6 +156,7 @@ from reflect.skill_extraction import (  # noqa: F401
     _build_skills_extraction_prompt,
     _compress_tool_sequence,
     _extract_recovery_chains,
+    _load_extracted_skills,
     _serialize_sessions_for_skills,
     _strip_json_fences,
 )
@@ -384,6 +385,7 @@ _IMPLEMENTED_AGENT_SUPPORT: dict[str, tuple[str, str]] = {
     "OpenAI Codex CLI": ("Native OTel config", "Medium"),
     "OpenCode": ("opencode run + export", "Medium"),
 }
+_DOCTOR_MATRIX_PLANNED = {"Antigravity", "OpenClaw"}
 
 
 def _agent_support_summary(name: str) -> dict[str, str]:
@@ -1381,9 +1383,8 @@ def skills(
         click.echo(f"Agent exited with code {result.returncode}:\n{result.stderr}", err=True)
         raise SystemExit(1)
 
-    raw_output = _strip_json_fences(result.stdout)
     try:
-        skill_defs = _json.loads(raw_output)
+        skill_defs = _load_extracted_skills(result.stdout)
     except _json.JSONDecodeError as exc:
         click.echo(
             f"Could not parse agent output as JSON: {exc}\n\nOutput:\n{result.stdout[:500]}",
@@ -1512,8 +1513,10 @@ def _fetch_opentelemetry_skill(console) -> Path | None:
 
 
 def _distribute_skills(console) -> None:
-    """Distribute reflect, skills, and opentelemetry-skill to detected agents."""
-    # reflect and skills skills are bundled with the package
+    """Distribute the reflect and opentelemetry skills to detected agents."""
+    # Only the reflect skill is bundled for automatic setup distribution.
+    # The `skills` helper documents the extraction command itself and should
+    # not be auto-installed into every agent skill directory.
     bundled_skills_dir = Path(__file__).parent / "data" / "skills"
 
     available_skills: dict[str, Path] = {}
@@ -1521,10 +1524,6 @@ def _distribute_skills(console) -> None:
     reflect_skill = bundled_skills_dir / "reflect"
     if (reflect_skill / "SKILL.md").exists():
         available_skills["reflect"] = reflect_skill
-
-    skills_skill = bundled_skills_dir / "skills"
-    if (skills_skill / "SKILL.md").exists():
-        available_skills["skills"] = skills_skill
 
     otel_skill = _fetch_opentelemetry_skill(console)
     if otel_skill:
@@ -1742,7 +1741,12 @@ def doctor() -> None:
     integrations.add_column("Status", no_wrap=True)
     integrations.add_column("Telemetry path")
     integrations.add_column("Confidence", no_wrap=True)
-    for agent in agents:
+    matrix_agents = [
+        agent
+        for agent in agents
+        if agent["support_status"] == "Implemented" or agent["name"] in _DOCTOR_MATRIX_PLANNED
+    ]
+    for agent in matrix_agents:
         integrations.add_row(
             agent["name"],
             agent["env"],
@@ -1752,10 +1756,7 @@ def doctor() -> None:
         )
     console.print(Panel(integrations, title="Support matrix", border_style="green"))
 
-    if otlp_traces and otlp_traces.exists():
-        action_line = f"[bold]Try now:[/] [cyan]reflect --otlp-traces {otlp_traces}[/]"
-    else:
-        action_line = "[bold]Next:[/] run [cyan]reflect setup[/] or enable native telemetry on a supported agent."
+    action_line = "[bold]Next:[/] run [cyan]reflect setup[/] or enable native telemetry on a supported agent."
 
     next_steps_lines = [
         "- [bold]Use native telemetry first[/] where the agent supports it well.",

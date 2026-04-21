@@ -336,9 +336,24 @@ class TestSkillsSubcommand:
         assert result.exit_code == 0
         assert (skill_dest / "debug-loop" / "SKILL.md").exists()
 
+    def test_skills_accepts_trailing_text_after_json(self, runner, otlp_file, tmp_path):
+        """Valid JSON followed by trailing prose should still parse."""
+        skill_dest = tmp_path / "skills"
+        noisy_output = json.dumps([_FAKE_SKILLS[0]]) + "\n\nI found one strong candidate skill."
+        with patch("subprocess.run", return_value=_R(0, noisy_output)), \
+             patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
+            result = runner.invoke(main, [
+                "skills", "--yes", "--agent", "claude",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        assert result.exit_code == 0
+        assert (skill_dest / "debug-loop" / "SKILL.md").exists()
+
 
 def test_strip_json_fences_variants():
-    from reflect.core import _strip_json_fences
+    from reflect.core import _load_extracted_skills, _strip_json_fences
 
     raw = '[{"name": "x"}]'
 
@@ -361,6 +376,10 @@ def test_strip_json_fences_variants():
     with_backticks = '[{"name": "x", "content": "```python\\nprint()\\n```"}]'
     fenced = f'```json\n{with_backticks}\n```'
     assert _strip_json_fences(fenced) == with_backticks
+
+    # Valid JSON with trailing prose still parses
+    parsed = _load_extracted_skills(raw + "\nDone.")
+    assert parsed == [{"name": "x"}]
 
 
 class TestNoDataNoCrash:
@@ -638,8 +657,6 @@ class TestDoctor:
     def test_doctor_support_matrix_marks_planned_agents(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
         hook_home = tmp_path / ".otel-hook-home"
-        windsurf_home = tmp_path / ".codeium" / "windsurf"
-        windsurf_home.mkdir(parents=True)
         (reflect_home / "state").mkdir(parents=True)
         hook_home.mkdir(parents=True)
         advisor = {
@@ -660,7 +677,9 @@ class TestDoctor:
             result = runner.invoke(main, ["doctor"])
 
         assert result.exit_code == 0
-        assert "Windsurf" in result.output
+        assert "Antigravity" in result.output
+        assert "OpenClaw" in result.output
+        assert "Windsurf" not in result.output
         assert "Planned" in result.output
 
     def test_doctor_otlp_logs_waiting_when_otel_hook_installed(self, runner, tmp_path):
@@ -758,6 +777,9 @@ class TestDoctor:
         assert result.exit_code == 0
         assert "Native agent telemetry" in result.output
         assert "Claude Code" in result.output
+        assert "Native OTel" in result.output
+        assert "Traces" in result.output
+        assert "Status details" in result.output
         assert "incomplete" in result.output
 
 
@@ -848,6 +870,28 @@ class TestSetup:
         assert any(gemini_backup_dir.iterdir())
         assert copilot_backup_dir.exists()
         assert any(copilot_backup_dir.iterdir())
+
+    def test_distribute_skills_skips_builtin_skills_helper(self, tmp_path):
+        from rich.console import Console
+
+        console = Console(file=io.StringIO())
+        global_skill_dir = tmp_path / "global-skills"
+        agent = {
+            "name": "Claude Code",
+            "detected": True,
+            "global_path": str(global_skill_dir),
+            "skill_path": ".claude/skills/",
+        }
+
+        with patch("reflect.core._detect_agents", return_value=[agent]), \
+             patch("reflect.core._fetch_opentelemetry_skill", return_value=None), \
+             patch("reflect.core.Path.cwd", return_value=tmp_path):
+            core._distribute_skills(console)
+
+        assert (global_skill_dir / "reflect" / "SKILL.md").exists()
+        assert not (global_skill_dir / "skills").exists()
+        assert (tmp_path / ".claude" / "skills" / "reflect" / "SKILL.md").exists()
+        assert not (tmp_path / ".claude" / "skills" / "skills").exists()
 
 
     def test_setup_seeds_config_from_example_on_fresh_install(self, runner, tmp_path):
