@@ -45,6 +45,31 @@ class TestBuildDashboardJson:
         data = json.loads(_build_dashboard_json(rich_stats))
         assert isinstance(data["sessions"], list)
         assert len(data["sessions"]) == 6
+        assert "pricing_unit" in data["sessions"][0]
+        assert "total_cost" in data["sessions"][0]
+        assert "total_cost_usd" in data["sessions"][0]
+        assert "cache_creation_cost_usd" in data["sessions"][0]
+        assert "cache_read_cost_usd" in data["sessions"][0]
+
+    def test_includes_cost_summary_fields(self, rich_stats):
+        data = json.loads(_build_dashboard_json(rich_stats))
+        for key in [
+            "total_cost_usd",
+            "total_cost",
+            "input_cost_usd",
+            "input_cost",
+            "output_cost_usd",
+            "output_cost",
+            "cache_creation_cost_usd",
+            "cache_creation_cost",
+            "cache_read_cost_usd",
+            "cache_read_cost",
+            "pricing_unit",
+            "model_costs",
+            "model_costs_usd",
+            "pricing_source",
+        ]:
+            assert key in data
 
     def test_activity_by_hour_24_entries(self, rich_stats):
         data = json.loads(_build_dashboard_json(rich_stats))

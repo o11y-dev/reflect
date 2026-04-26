@@ -203,6 +203,48 @@ def signal_rec_subagent_format(stats: TelemetryStats, profile: DataProfile) -> I
     )
 
 
+def signal_rec_high_total_cost(stats: TelemetryStats, profile: DataProfile) -> Insight | None:
+    total_cost = float(getattr(stats, "total_cost", 0.0) or 0.0)
+    if total_cost < 25:
+        return None
+    return Insight(
+        kind="recommendation",
+        title="Review high total model spend",
+        body="Estimated spend is elevated; route easier turns to lower-cost models and reserve heavy models for planning or hard analysis.",
+        category="cost",
+        severity=Severity.MEDIUM,
+        confidence=0.75,
+        evidence={"total_cost": round(total_cost, 2), "pricing_unit": getattr(stats, "pricing_unit", "usd")},
+    )
+
+
+def signal_rec_model_cost_concentration(stats: TelemetryStats, profile: DataProfile) -> Insight | None:
+    model_costs = getattr(stats, "model_costs", None) or {}
+    if not model_costs:
+        return None
+    total = sum(float(v) for v in model_costs.values())
+    if total <= 0:
+        return None
+    top_model, top_cost = max(model_costs.items(), key=lambda item: float(item[1]))
+    share = 100 * _safe_ratio(float(top_cost), total)
+    if share < 70:
+        return None
+    return Insight(
+        kind="recommendation",
+        title="Reduce single-model cost concentration",
+        body="One model dominates estimated spend. Split workload by phase so lower-cost models handle routine implementation turns.",
+        category="cost",
+        severity=Severity.MEDIUM,
+        confidence=0.8,
+        evidence={
+            "top_model": str(top_model),
+            "share_pct": round(share, 1),
+            "top_model_cost": round(float(top_cost), 2),
+            "pricing_unit": getattr(stats, "pricing_unit", "usd"),
+        },
+    )
+
+
 SIGNALS = [
     signal_rec_prompt_contract,
     signal_rec_pin_files,
@@ -215,4 +257,6 @@ SIGNALS = [
     signal_rec_reduce_reads,
     signal_rec_mcp_discipline,
     signal_rec_subagent_format,
+    signal_rec_high_total_cost,
+    signal_rec_model_cost_concentration,
 ]
