@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "o11y-reflect"
-version = "0.6.1"
+version = "0.7.0"
 description = "See why your AI coding agents fail, stall, or burn budget — local-first telemetry for Claude, Copilot, Gemini, and Cursor"
 requires-python = ">=3.11"
 readme = "README.md"
