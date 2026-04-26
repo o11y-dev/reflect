@@ -305,6 +305,7 @@ def analyze_telemetry(
     since: datetime | None = None,
 ) -> TelemetryStats:
     from reflect.insights import compute_session_quality
+    from reflect.pricing import calculate_cost, load_pricing_table
     from reflect.parsing import (
         _canonical_otlp_traces_path,
         _enrich_missing_session_models_from_logs,
@@ -630,6 +631,40 @@ def analyze_telemetry(
         session_source=session_source,
         sessions_with_telemetry=sessions_with_telemetry,
     )
+
+    # Cost derivation (best-effort): derive per-session/model/agent USD estimates
+    # from token usage + resolved session model routing.
+    pricing_table = load_pricing_table()
+    result.pricing_source = pricing_table.source
+    for sid in result.sessions_seen:
+        token_row = result.session_tokens.get(sid, {})
+        model_counter = result.session_models.get(sid, Counter())
+        primary_model = model_counter.most_common(1)[0][0] if model_counter else ""
+        breakdown = calculate_cost(token_row, primary_model, pricing_table)
+        result.session_costs[sid] = {
+            "model": primary_model,
+            "input_cost_usd": breakdown.input_cost_usd,
+            "output_cost_usd": breakdown.output_cost_usd,
+            "cache_creation_cost_usd": breakdown.cache_creation_cost_usd,
+            "cache_read_cost_usd": breakdown.cache_read_cost_usd,
+            "total_cost_usd": breakdown.total_cost_usd,
+            "pricing_source": breakdown.resolution.source,
+            "pricing_model_key": breakdown.resolution.matched_model_key,
+            "pricing_confidence": breakdown.resolution.confidence,
+        }
+        result.total_cost_usd += breakdown.total_cost_usd
+        result.input_cost_usd += breakdown.input_cost_usd
+        result.output_cost_usd += breakdown.output_cost_usd
+        result.cache_creation_cost_usd += breakdown.cache_creation_cost_usd
+        result.cache_read_cost_usd += breakdown.cache_read_cost_usd
+        if primary_model:
+            result.model_costs_usd[primary_model] += breakdown.total_cost_usd
+
+    for agent in result.agents.values():
+        cost_total = 0.0
+        for sid in agent.sessions_seen:
+            cost_total += float((result.session_costs.get(sid) or {}).get("total_cost_usd") or 0.0)
+        agent.total_cost_usd = cost_total
 
     # Recompute quality scores with distribution awareness and update agent aggregates
     from reflect.insights import recompute_quality_scores

@@ -266,10 +266,12 @@ def _build_filtered_stats(stats: TelemetryStats, sessions: list[dict]) -> Teleme
         agent_stats.sessions_seen.add(sid)
         agent_stats.total_events += session_events.get(sid, 0)
         token_row = session_tokens.get(sid, {})
+        cost_row = stats.session_costs.get(sid, {})
         agent_stats.total_input_tokens += int(token_row.get("input", session.get("input_tokens") or 0))
         agent_stats.total_output_tokens += int(token_row.get("output", session.get("output_tokens") or 0))
         agent_stats.total_cache_creation_tokens += int(token_row.get("cache_creation", session.get("cache_creation_tokens") or 0))
         agent_stats.total_cache_read_tokens += int(token_row.get("cache_read", session.get("cache_read_tokens") or 0))
+        agent_stats.total_cost_usd += float(cost_row.get("total_cost_usd") or 0.0)
         agent_stats.total_quality_score += session_quality_scores.get(sid, 0.0)
         if session_goal_completed.get(sid):
             agent_stats.completed_sessions += 1
@@ -364,6 +366,21 @@ def _build_filtered_stats(stats: TelemetryStats, sessions: list[dict]) -> Teleme
     total_output_tokens = sum(int((session_tokens.get(sid) or {}).get("output", 0)) for sid in selected_ids)
     total_cache_creation_tokens = sum(int((session_tokens.get(sid) or {}).get("cache_creation", 0)) for sid in selected_ids)
     total_cache_read_tokens = sum(int((session_tokens.get(sid) or {}).get("cache_read", 0)) for sid in selected_ids)
+    session_costs = {
+        sid: dict(stats.session_costs.get(sid, {}))
+        for sid in selected_ids
+        if sid in stats.session_costs
+    }
+    model_costs_usd: Counter[str] = Counter()
+    for sid, row in session_costs.items():
+        model_name = str(row.get("model") or "")
+        if model_name:
+            model_costs_usd[model_name] += float(row.get("total_cost_usd") or 0.0)
+    total_cost_usd = sum(float((session_costs.get(sid) or {}).get("total_cost_usd") or 0.0) for sid in selected_ids)
+    input_cost_usd = sum(float((session_costs.get(sid) or {}).get("input_cost_usd") or 0.0) for sid in selected_ids)
+    output_cost_usd = sum(float((session_costs.get(sid) or {}).get("output_cost_usd") or 0.0) for sid in selected_ids)
+    cache_creation_cost_usd = sum(float((session_costs.get(sid) or {}).get("cache_creation_cost_usd") or 0.0) for sid in selected_ids)
+    cache_read_cost_usd = sum(float((session_costs.get(sid) or {}).get("cache_read_cost_usd") or 0.0) for sid in selected_ids)
     if not any([total_input_tokens, total_output_tokens, total_cache_creation_tokens, total_cache_read_tokens]):
         total_input_tokens = sum(int(session_rows.get(sid, {}).get("input_tokens") or 0) for sid in selected_ids)
         total_output_tokens = sum(int(session_rows.get(sid, {}).get("output_tokens") or 0) for sid in selected_ids)
@@ -427,6 +444,14 @@ def _build_filtered_stats(stats: TelemetryStats, sessions: list[dict]) -> Teleme
         session_conversation=session_conversation,
         session_source=session_source,
         sessions_with_telemetry=sessions_with_telemetry,
+        total_cost_usd=total_cost_usd,
+        input_cost_usd=input_cost_usd,
+        output_cost_usd=output_cost_usd,
+        cache_creation_cost_usd=cache_creation_cost_usd,
+        cache_read_cost_usd=cache_read_cost_usd,
+        session_costs=session_costs,
+        model_costs_usd=model_costs_usd,
+        pricing_source=stats.pricing_source,
     )
 
 
@@ -957,6 +982,10 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
             "output_tokens": tok.get("output", 0),
             "cache_creation_tokens": tok.get("cache_creation", 0),
             "cache_read_tokens": tok.get("cache_read", 0),
+            "total_cost_usd": float((stats.session_costs.get(sid) or {}).get("total_cost_usd") or 0.0),
+            "input_cost_usd": float((stats.session_costs.get(sid) or {}).get("input_cost_usd") or 0.0),
+            "output_cost_usd": float((stats.session_costs.get(sid) or {}).get("output_cost_usd") or 0.0),
+            "pricing_source": str((stats.session_costs.get(sid) or {}).get("pricing_source") or stats.pricing_source or ""),
             "token_source": token_source,
             "token_note": token_note,
             "quality_score": quality_score,
@@ -1061,6 +1090,13 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
         "total_output_tokens": stats.total_output_tokens,
         "total_cache_creation_tokens": stats.total_cache_creation_tokens,
         "total_cache_read_tokens": stats.total_cache_read_tokens,
+        "total_cost_usd": stats.total_cost_usd,
+        "input_cost_usd": stats.input_cost_usd,
+        "output_cost_usd": stats.output_cost_usd,
+        "cache_creation_cost_usd": stats.cache_creation_cost_usd,
+        "cache_read_cost_usd": stats.cache_read_cost_usd,
+        "model_costs_usd": dict(stats.model_costs_usd),
+        "pricing_source": stats.pricing_source,
         "tool_to_prompt_ratio": round(_safe_ratio(pre_tool, prompts), 1),
         "failure_rate_pct": round(100 * _safe_ratio(failures, pre_tool), 1),
         "reads_per_prompt": round(
@@ -1132,6 +1168,7 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
                 "output_tokens": ag.total_output_tokens,
                 "cache_creation_tokens": ag.total_cache_creation_tokens,
                 "cache_read_tokens": ag.total_cache_read_tokens,
+                "total_cost_usd": ag.total_cost_usd,
                 "top_model": ag.models_by_count.most_common(1)[0][0] if ag.models_by_count else "",
                 "top_tools": dict(ag.tools_by_count.most_common(10)),
                 "top_skills": dict(skills_by_agent.get(name, Counter()).most_common(10)),

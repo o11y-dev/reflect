@@ -5,12 +5,20 @@
 ### Added
 - `reflect skills` now builds a deterministic evidence bundle from session quality scores, workflow fingerprints, shell commands, recovery chains, and bounded deep session context before invoking the extraction agent
 - Skill extraction prompts now ask for evidence-backed improvement rationale and provenance metadata per candidate skill instead of relying on pattern frequency alone
+- Added `reflect.config` as a centralized runtime config module for resolving reflect home/config/cache/state paths and loading model alias mappings from `~/.reflect/config/model-aliases.json`
+- Added LiteLLM runtime config loading (`~/.reflect/config/litellm.json`) with env-var overrides so you can point reflect pricing to your own LiteLLM endpoint / model-prices URL
+- Added `reflect.pricing` foundation module with LiteLLM model-pricing table loading (live, cache, fallback), model canonicalization, and token-to-cost breakdown helpers
+- Added estimated cost aggregation fields to telemetry (`total_cost_usd`, per-session costs, model cost totals, per-agent cost totals) derived from token usage + pricing table resolution
 
 ### Changed
 - Moved skill-extraction helpers into `src/reflect/skill_extraction.py` and kept `reflect.core` re-exports for backward compatibility
 - `reflect skills` now passes both a compact evidence summary and authoritative JSON bundle to the extraction agent
 - Skill extraction docs now describe the evidence-driven workflow instead of a thin predefined prompt
 - Deprecated `python serve.py` and legacy `reflect --publish` references in docs/UI copy; use `reflect report` (or `python3 -m reflect.core report`) to open the local dashboard.
+- Pricing/recommendations spec now documents a dedicated central config layer for runtime config and alias loading, and removes external repository references in favor of direct LiteLLM-oriented assumptions
+- Dashboard/report/terminal renderers now expose estimated cost signals and pricing provenance (`pricing_source`) alongside token usage
+- Recommendations now include cost-focused signals for high total spend and single-model cost concentration
+- README and hosted showcase copy now call out estimated cost analytics and document custom LiteLLM pricing endpoint configuration
 
 ### Fixed
 - `reflect skills` now accepts agent output where a valid JSON array is followed by trailing prose instead of failing with `Could not parse agent output as JSON: Extra data`
