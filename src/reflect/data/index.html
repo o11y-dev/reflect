@@ -2096,10 +2096,10 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 
 <!-- ── Nav tabs ── -->
 <nav id="tabs" role="tablist" aria-label="Dashboard sections">
-  <button class="tab active" id="tab-button-sessions" type="button" role="tab" aria-selected="true" aria-controls="tab-sessions" tabindex="0" data-tab="sessions">Sessions</button>
+  <button class="tab active" id="tab-button-observations" type="button" role="tab" aria-selected="true" aria-controls="tab-observations" tabindex="0" data-tab="observations">Observations</button>
+  <button class="tab" id="tab-button-sessions" type="button" role="tab" aria-selected="false" aria-controls="tab-sessions" tabindex="-1" data-tab="sessions">Sessions</button>
   <button class="tab" id="tab-button-overview" type="button" role="tab" aria-selected="false" aria-controls="tab-overview" tabindex="-1" data-tab="overview">Overview</button>
   <button class="tab" id="tab-button-compare" type="button" role="tab" aria-selected="false" aria-controls="tab-compare" tabindex="-1" data-tab="compare">Compare</button>
-  <button class="tab" id="tab-button-observations" type="button" role="tab" aria-selected="false" aria-controls="tab-observations" tabindex="-1" data-tab="observations">Observations</button>
   <button class="tab" id="tab-button-activity" type="button" role="tab" aria-selected="false" aria-controls="tab-activity" tabindex="-1" data-tab="activity">Activity</button>
   <button class="tab" id="tab-button-tools" type="button" role="tab" aria-selected="false" aria-controls="tab-tools" tabindex="-1" data-tab="tools">Tools</button>
   <button class="tab" id="tab-button-graphs" type="button" role="tab" aria-selected="false" aria-controls="tab-graphs" tabindex="-1" data-tab="graphs">Graphs</button>
@@ -2175,7 +2175,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 <div class="global-filter-backdrop" id="filter-sheet-backdrop" hidden></div>
 
 <!-- ════════════════════ SESSIONS BROWSER ════════════════════ -->
-<div class="tab-panel active" id="tab-sessions" role="tabpanel" aria-labelledby="tab-button-sessions">
+<div class="tab-panel" id="tab-sessions" role="tabpanel" aria-labelledby="tab-button-sessions" hidden>
   <div class="session-browser">
     <!-- Left: session list -->
     <div class="sb-left">
@@ -2291,7 +2291,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 </div>
 
 <!-- ════════════════════ OBSERVATIONS ════════════════════ -->
-<div class="tab-panel" id="tab-observations" role="tabpanel" aria-labelledby="tab-button-observations" hidden>
+<div class="tab-panel active" id="tab-observations" role="tabpanel" aria-labelledby="tab-button-observations">
   <div class="obs-hero-grid" id="obs-hero-grid"></div>
 
   <div class="cols-2">
@@ -2719,7 +2719,7 @@ tabButtons.forEach((button, index) => {
 });
 window.addEventListener('resize', () => updateTabIndicator(document.querySelector('.tab.active')));
 
-activateTab(currentParams().get('tab') || 'sessions', {updateUrl: false});
+activateTab(currentParams().get('tab') || 'observations', {updateUrl: false});
 
 /* ── Header ── */
 document.getElementById('hdr-range').textContent = D.first_event_ts + ' — ' + D.last_event_ts;

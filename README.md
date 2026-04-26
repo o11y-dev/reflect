@@ -124,6 +124,7 @@ Nothing leaves your machine. There's no cloud backend, no account, no API key.
 ## What you get
 
 - **Token economy** — input, output, cache hits, largest-session concentration
+- **Estimated cost analytics** — per-session/model/agent USD estimates, model cost concentration, pricing-source provenance
 - **Tool efficiency** — failure rates, latency percentiles (p50/p90/p95/p99), tool-to-prompt ratio
 - **Agent comparison** — side-by-side across Claude, Copilot, Gemini, Cursor
 - **Model breakdown** — which models you're actually using and how much
@@ -142,6 +143,26 @@ reflect report                 # open local dashboard in browser
 reflect skills                 # extract reusable skills from your sessions
 reflect --demo                 # instant demo with sample data
 ```
+
+### Configure your own LiteLLM pricing source
+
+By default, reflect uses LiteLLM's public model pricing map. You can point reflect at your own LiteLLM deployment (or mirrored pricing endpoint) with `~/.reflect/config/litellm.json`:
+
+```json
+{
+  "base_url": "https://litellm.internal",
+  "model_prices_url": "https://litellm.internal/model_prices_and_context_window.json",
+  "api_key_env": "LITELLM_INTERNAL_API_KEY",
+  "timeout_seconds": 10
+}
+```
+
+Environment overrides are also supported for CI/ephemeral runs:
+
+- `REFLECT_LITELLM_BASE_URL`
+- `REFLECT_LITELLM_MODEL_PRICES_URL`
+- `REFLECT_LITELLM_API_KEY_ENV`
+- `REFLECT_LITELLM_TIMEOUT_SECONDS`
 
 `reflect skills` now feeds the extraction agent a deterministic evidence bundle built from session scores, recurring tool flows, shell commands, recovery chains, and bounded deep context from selected high-signal sessions, so proposed skills are tied to concrete improvement opportunities instead of loose pattern matching.
 
