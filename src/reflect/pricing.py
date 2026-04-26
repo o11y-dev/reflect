@@ -60,6 +60,7 @@ class PricingTable:
     prices: dict[str, ModelPricing]
     source: str
     fetched_at_unix: int
+    pricing_unit: str = "usd"
 
 
 
@@ -153,7 +154,12 @@ def load_pricing_table(cache_ttl_hours: int = 24) -> PricingTable:
             prices_payload = cache_payload.get("prices") or {}
             prices = _parse_pricing_map(prices_payload)
             if prices and fetched > 0 and (now - fetched) <= ttl_seconds:
-                return PricingTable(prices=prices, source="cache", fetched_at_unix=fetched)
+                return PricingTable(
+                    prices=prices,
+                    source="cache",
+                    fetched_at_unix=fetched,
+                    pricing_unit=lite.pricing_unit,
+                )
         except Exception as exc:  # pragma: no cover - defensive fallback
             logger.debug("LiteLLM pricing cache read failed: %s", exc)
 
@@ -166,7 +172,7 @@ def load_pricing_table(cache_ttl_hours: int = 24) -> PricingTable:
         live_prices = _parse_pricing_map(live_payload)
         if live_prices:
             cache_path.write_text(_json_dumps({"fetched_at_unix": now, "prices": live_payload}), encoding="utf-8")
-            return PricingTable(prices=live_prices, source="live", fetched_at_unix=now)
+            return PricingTable(prices=live_prices, source="live", fetched_at_unix=now, pricing_unit=lite.pricing_unit)
     except Exception as exc:  # pragma: no cover - network-dependent branch
         logger.debug("LiteLLM live pricing fetch failed: %s", exc)
 
@@ -175,7 +181,7 @@ def load_pricing_table(cache_ttl_hours: int = 24) -> PricingTable:
         key: _coerce_model_pricing(key, row)
         for key, row in _DEFAULT_FALLBACK_PRICES.items()
     }
-    return PricingTable(prices=fallback_prices, source="fallback", fetched_at_unix=now)
+    return PricingTable(prices=fallback_prices, source="fallback", fetched_at_unix=now, pricing_unit=lite.pricing_unit)
 
 
 

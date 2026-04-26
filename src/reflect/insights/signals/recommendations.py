@@ -204,7 +204,7 @@ def signal_rec_subagent_format(stats: TelemetryStats, profile: DataProfile) -> I
 
 
 def signal_rec_high_total_cost(stats: TelemetryStats, profile: DataProfile) -> Insight | None:
-    total_cost = float(getattr(stats, "total_cost_usd", 0.0) or 0.0)
+    total_cost = float(getattr(stats, "total_cost", 0.0) or 0.0)
     if total_cost < 25:
         return None
     return Insight(
@@ -214,12 +214,12 @@ def signal_rec_high_total_cost(stats: TelemetryStats, profile: DataProfile) -> I
         category="cost",
         severity=Severity.MEDIUM,
         confidence=0.75,
-        evidence={"total_cost_usd": round(total_cost, 2)},
+        evidence={"total_cost": round(total_cost, 2), "pricing_unit": getattr(stats, "pricing_unit", "usd")},
     )
 
 
 def signal_rec_model_cost_concentration(stats: TelemetryStats, profile: DataProfile) -> Insight | None:
-    model_costs = getattr(stats, "model_costs_usd", None) or {}
+    model_costs = getattr(stats, "model_costs", None) or {}
     if not model_costs:
         return None
     total = sum(float(v) for v in model_costs.values())
@@ -236,7 +236,12 @@ def signal_rec_model_cost_concentration(stats: TelemetryStats, profile: DataProf
         category="cost",
         severity=Severity.MEDIUM,
         confidence=0.8,
-        evidence={"top_model": str(top_model), "share_pct": round(share, 1), "top_model_cost_usd": round(float(top_cost), 2)},
+        evidence={
+            "top_model": str(top_model),
+            "share_pct": round(share, 1),
+            "top_model_cost": round(float(top_cost), 2),
+            "pricing_unit": getattr(stats, "pricing_unit", "usd"),
+        },
     )
 
 

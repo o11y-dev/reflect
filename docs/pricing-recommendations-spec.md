@@ -82,7 +82,7 @@ Create `src/reflect/pricing.py` with:
   - built-in aliases for common provider-specific names.
   - optional user alias file (`~/.reflect/config/model-aliases.json`) overriding built-ins.
 - LiteLLM endpoint config:
-  - user-configurable `base_url`, `model_prices_url`, `api_key_env`, and `timeout_seconds` via `~/.reflect/config/litellm.json`
+  - user-configurable `base_url`, `model_prices_url`, `api_key_env`, `timeout_seconds`, and `pricing_unit` via `~/.reflect/config/litellm.json`
   - env-var overrides for CI / ephemeral runs (`REFLECT_LITELLM_BASE_URL`, `REFLECT_LITELLM_MODEL_PRICES_URL`, etc.)
 - `calculate_cost(tokens, model, speed='standard') -> CostBreakdown`
   - input/output/cache-create/cache-read + optional web-search request cost.

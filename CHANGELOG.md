@@ -9,6 +9,7 @@
 - Added LiteLLM runtime config loading (`~/.reflect/config/litellm.json`) with env-var overrides so you can point reflect pricing to your own LiteLLM endpoint / model-prices URL
 - Added `reflect.pricing` foundation module with LiteLLM model-pricing table loading (live, cache, fallback), model canonicalization, and token-to-cost breakdown helpers
 - Added estimated cost aggregation fields to telemetry (`total_cost_usd`, per-session costs, model cost totals, per-agent cost totals) derived from token usage + pricing table resolution
+- Added `pricing_unit` support (for example `usd`, `coins`, `credits`) so cost analytics can be displayed without forcing USD-only naming
 
 ### Changed
 - Moved skill-extraction helpers into `src/reflect/skill_extraction.py` and kept `reflect.core` re-exports for backward compatibility

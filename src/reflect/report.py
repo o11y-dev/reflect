@@ -54,7 +54,8 @@ def render_report(
     top_tools = stats.tools_by_count.most_common(10)
     top_models = stats.models_by_count.most_common()
     top_subagents = stats.subagent_types.most_common()
-    top_model_costs = stats.model_costs_usd.most_common(10)
+    top_model_costs = stats.model_costs.most_common(10)
+    pricing_unit = (stats.pricing_unit or "usd").upper()
 
     # Compute derived metrics
     prompts = stats.events_by_type.get("UserPromptSubmit", 0)
@@ -338,21 +339,21 @@ def render_report(
         f"| MCP calls / prompt | {economy['mcp_per_prompt']:.1f} | Tool metadata and large responses can add hidden context cost. |",
         f"| Heavy-model event share | {economy['heavy_model_share']:.1f}% | Heavy models are best saved for planning and hard analysis. |",
         "",
-        "### Estimated Cost (USD)",
+        f"### Estimated Cost ({pricing_unit})",
         "",
         "| Metric | Value |",
         "|--------|-------|",
-        f"| Total cost | ${stats.total_cost_usd:,.2f} |",
-        f"| Input cost | ${stats.input_cost_usd:,.2f} |",
-        f"| Output cost | ${stats.output_cost_usd:,.2f} |",
-        f"| Cache creation cost | ${stats.cache_creation_cost_usd:,.2f} |",
-        f"| Cache read cost | ${stats.cache_read_cost_usd:,.2f} |",
+        f"| Total cost | {stats.total_cost:,.2f} |",
+        f"| Input cost | {stats.input_cost:,.2f} |",
+        f"| Output cost | {stats.output_cost:,.2f} |",
+        f"| Cache creation cost | {stats.cache_creation_cost:,.2f} |",
+        f"| Cache read cost | {stats.cache_read_cost:,.2f} |",
         f"| Pricing source | {stats.pricing_source or 'unknown'} |",
         "",
         "### Model Cost Share",
         "",
-        *(["| Model | Estimated cost (USD) |", "|-------|----------------------|"]
-          + [f"| `{model}` | ${cost:,.2f} |" for model, cost in top_model_costs]
+        *(["| Model | Estimated cost |", "|-------|----------------|"]
+          + [f"| `{model}` | {cost:,.2f} |" for model, cost in top_model_costs]
           if top_model_costs else ["*No model cost data available yet.*"]),
         "",
         "## Agent Comparison",

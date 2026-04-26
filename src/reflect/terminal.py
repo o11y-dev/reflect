@@ -177,11 +177,12 @@ def _render_terminal(  # noqa: C901
             _stat_panel("Heavy-Model Share", f"{economy['heavy_model_share']:.0f}%", "white"),
         ], equal=True))
         console.print()
-        if stats.total_cost_usd > 0:
+        if stats.total_cost > 0:
+            unit = (stats.pricing_unit or "usd").upper()
             console.print(Columns([
-                _stat_panel("Est. Total Cost", f"${stats.total_cost_usd:,.2f}", "green"),
-                _stat_panel("Input Cost", f"${stats.input_cost_usd:,.2f}", "cyan"),
-                _stat_panel("Output Cost", f"${stats.output_cost_usd:,.2f}", "yellow"),
+                _stat_panel(f"Est. Total Cost ({unit})", f"{stats.total_cost:,.2f}", "green"),
+                _stat_panel("Input Cost", f"{stats.input_cost:,.2f}", "cyan"),
+                _stat_panel("Output Cost", f"{stats.output_cost:,.2f}", "yellow"),
                 _stat_panel("Pricing Source", stats.pricing_source or "unknown", "blue"),
             ], equal=True))
             console.print()

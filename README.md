@@ -153,7 +153,8 @@ By default, reflect uses LiteLLM's public model pricing map. You can point refle
   "base_url": "https://litellm.internal",
   "model_prices_url": "https://litellm.internal/model_prices_and_context_window.json",
   "api_key_env": "LITELLM_INTERNAL_API_KEY",
-  "timeout_seconds": 10
+  "timeout_seconds": 10,
+  "pricing_unit": "coins"
 }
 ```
 
@@ -163,6 +164,7 @@ Environment overrides are also supported for CI/ephemeral runs:
 - `REFLECT_LITELLM_MODEL_PRICES_URL`
 - `REFLECT_LITELLM_API_KEY_ENV`
 - `REFLECT_LITELLM_TIMEOUT_SECONDS`
+- `REFLECT_PRICING_UNIT`
 
 `reflect skills` now feeds the extraction agent a deterministic evidence bundle built from session scores, recurring tool flows, shell commands, recovery chains, and bounded deep context from selected high-signal sessions, so proposed skills are tied to concrete improvement opportunities instead of loose pattern matching.
 

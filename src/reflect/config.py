@@ -27,6 +27,7 @@ class LiteLLMConfig:
     model_prices_url: str
     api_key_env: str
     timeout_seconds: float
+    pricing_unit: str
 
 
 
@@ -114,6 +115,7 @@ def load_litellm_config(path: Path | None = None) -> LiteLLMConfig:
       - REFLECT_LITELLM_MODEL_PRICES_URL
       - REFLECT_LITELLM_API_KEY_ENV
       - REFLECT_LITELLM_TIMEOUT_SECONDS
+      - REFLECT_PRICING_UNIT
     """
 
     cfg = resolve_config()
@@ -135,6 +137,7 @@ def load_litellm_config(path: Path | None = None) -> LiteLLMConfig:
     else:
         model_prices_url = f"{base_url.rstrip('/')}/model_prices_and_context_window.json"
     api_key_env = str(payload.get("api_key_env") or "LITELLM_API_KEY")
+    pricing_unit = str(payload.get("pricing_unit") or "usd").strip().lower() or "usd"
     timeout_raw = payload.get("timeout_seconds", 10.0)
     try:
         timeout_seconds = float(timeout_raw)
@@ -148,6 +151,7 @@ def load_litellm_config(path: Path | None = None) -> LiteLLMConfig:
         os.environ.get("REFLECT_LITELLM_MODEL_PRICES_URL", model_prices_url).strip() or model_prices_url
     )
     api_key_env = os.environ.get("REFLECT_LITELLM_API_KEY_ENV", api_key_env).strip() or api_key_env
+    pricing_unit = os.environ.get("REFLECT_PRICING_UNIT", pricing_unit).strip().lower() or pricing_unit
     env_timeout = os.environ.get("REFLECT_LITELLM_TIMEOUT_SECONDS")
     if env_timeout:
         try:
@@ -160,4 +164,5 @@ def load_litellm_config(path: Path | None = None) -> LiteLLMConfig:
         model_prices_url=model_prices_url,
         api_key_env=api_key_env,
         timeout_seconds=timeout_seconds,
+        pricing_unit=pricing_unit,
     )

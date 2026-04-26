@@ -76,6 +76,7 @@ class TestLoadLiteLLMConfig:
         assert cfg.model_prices_url.endswith("model_prices_and_context_window.json")
         assert cfg.api_key_env == "LITELLM_API_KEY"
         assert cfg.timeout_seconds == 10.0
+        assert cfg.pricing_unit == "usd"
 
     def test_file_values(self, tmp_path):
         path = tmp_path / "litellm.json"
@@ -86,6 +87,7 @@ class TestLoadLiteLLMConfig:
                     "model_prices_url": "https://litellm.internal/prices.json",
                     "api_key_env": "INTERNAL_LITELLM_KEY",
                     "timeout_seconds": 3.5,
+                    "pricing_unit": "coins",
                 }
             )
         )
@@ -95,6 +97,7 @@ class TestLoadLiteLLMConfig:
         assert cfg.model_prices_url == "https://litellm.internal/prices.json"
         assert cfg.api_key_env == "INTERNAL_LITELLM_KEY"
         assert cfg.timeout_seconds == 3.5
+        assert cfg.pricing_unit == "coins"
 
     def test_default_model_prices_url_derived_from_base_url(self, tmp_path):
         path = tmp_path / "litellm.json"
@@ -111,6 +114,7 @@ class TestLoadLiteLLMConfig:
         monkeypatch.setenv("REFLECT_LITELLM_MODEL_PRICES_URL", "https://from-env/prices.json")
         monkeypatch.setenv("REFLECT_LITELLM_API_KEY_ENV", "ENV_KEY")
         monkeypatch.setenv("REFLECT_LITELLM_TIMEOUT_SECONDS", "22")
+        monkeypatch.setenv("REFLECT_PRICING_UNIT", "credits")
 
         cfg = load_litellm_config(path)
 
@@ -118,3 +122,4 @@ class TestLoadLiteLLMConfig:
         assert cfg.model_prices_url == "https://from-env/prices.json"
         assert cfg.api_key_env == "ENV_KEY"
         assert cfg.timeout_seconds == 22.0
+        assert cfg.pricing_unit == "credits"

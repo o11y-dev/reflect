@@ -639,6 +639,7 @@ def analyze_telemetry(
         aliases = load_model_aliases()
         pricing_table = load_pricing_table()
         result.pricing_source = pricing_table.source
+        result.pricing_unit = pricing_table.pricing_unit
         for sid in result.sessions_seen:
             token_row = result.session_tokens.get(sid, {})
             model_counter = result.session_models.get(sid, Counter())
@@ -654,19 +655,27 @@ def analyze_telemetry(
                 "pricing_source": breakdown.resolution.source,
                 "pricing_model_key": breakdown.resolution.matched_model_key,
                 "pricing_confidence": breakdown.resolution.confidence,
+                "pricing_unit": pricing_table.pricing_unit,
             }
+            result.total_cost += breakdown.total_cost_usd
+            result.input_cost += breakdown.input_cost_usd
+            result.output_cost += breakdown.output_cost_usd
+            result.cache_creation_cost += breakdown.cache_creation_cost_usd
+            result.cache_read_cost += breakdown.cache_read_cost_usd
             result.total_cost_usd += breakdown.total_cost_usd
             result.input_cost_usd += breakdown.input_cost_usd
             result.output_cost_usd += breakdown.output_cost_usd
             result.cache_creation_cost_usd += breakdown.cache_creation_cost_usd
             result.cache_read_cost_usd += breakdown.cache_read_cost_usd
             if primary_model:
+                result.model_costs[primary_model] += breakdown.total_cost_usd
                 result.model_costs_usd[primary_model] += breakdown.total_cost_usd
 
     for agent in result.agents.values():
         cost_total = 0.0
         for sid in agent.sessions_seen:
             cost_total += float((result.session_costs.get(sid) or {}).get("total_cost_usd") or 0.0)
+        agent.total_cost = cost_total
         agent.total_cost_usd = cost_total
 
     # Recompute quality scores with distribution awareness and update agent aggregates
