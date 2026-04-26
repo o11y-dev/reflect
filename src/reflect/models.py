@@ -20,6 +20,7 @@ class AgentStats:
     total_output_tokens: int = 0
     total_cache_creation_tokens: int = 0
     total_cache_read_tokens: int = 0
+    total_cost_usd: float = 0.0
     # Evaluation metrics
     total_quality_score: float = 0.0
     completed_sessions: int = 0
@@ -79,3 +80,12 @@ class TelemetryStats:
     # Map session_id → (agent_name, source_file_path) for lazy detail loading
     session_source: dict[str, tuple[str, str]] = field(default_factory=dict)
     sessions_with_telemetry: set[str] = field(default_factory=set)
+    # Cost usage
+    total_cost_usd: float = 0.0
+    input_cost_usd: float = 0.0
+    output_cost_usd: float = 0.0
+    cache_creation_cost_usd: float = 0.0
+    cache_read_cost_usd: float = 0.0
+    session_costs: dict[str, dict] = field(default_factory=dict)
+    model_costs_usd: Counter[str] = field(default_factory=Counter)
+    pricing_source: str = ""
