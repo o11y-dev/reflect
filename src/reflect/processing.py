@@ -305,7 +305,6 @@ def analyze_telemetry(
     since: datetime | None = None,
 ) -> TelemetryStats:
     from reflect.insights import compute_session_quality
-    from reflect.pricing import calculate_cost, load_pricing_table
     from reflect.parsing import (
         _canonical_otlp_traces_path,
         _enrich_missing_session_models_from_logs,
@@ -318,6 +317,7 @@ def analyze_telemetry(
         _load_session_model_hints,
         _materialize_local_otlp_traces,
     )
+    from reflect.pricing import calculate_cost, load_pricing_table
 
     session_files = sorted(sessions_dir.glob("*.json")) if sessions_dir.exists() else []
     span_files = sorted(spans_dir.glob("*.jsonl")) if spans_dir.exists() else []

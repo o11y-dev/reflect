@@ -372,7 +372,7 @@ def _build_filtered_stats(stats: TelemetryStats, sessions: list[dict]) -> Teleme
         if sid in stats.session_costs
     }
     model_costs_usd: Counter[str] = Counter()
-    for sid, row in session_costs.items():
+    for _sid, row in session_costs.items():
         model_name = str(row.get("model") or "")
         if model_name:
             model_costs_usd[model_name] += float(row.get("total_cost_usd") or 0.0)

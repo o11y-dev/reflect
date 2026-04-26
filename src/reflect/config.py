@@ -64,7 +64,7 @@ def load_model_aliases(path: Path | None = None) -> dict[str, str]:
         "foo": "bar"
       }
     }
-   
+
     For convenience, a flat object is also accepted:
     {
       "provider/model-a": "canonical-model"
