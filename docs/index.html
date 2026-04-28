@@ -44,13 +44,14 @@
   ]
 }
 </script>
-<!-- Google Tag Manager -->
-<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
-new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
-j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
-'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
-})(window,document,'script','dataLayer','GTM-MDT7FMNC');</script>
-<!-- End Google Tag Manager -->
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-WBE682BQVP"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-WBE682BQVP');
+</script>
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin/>
 <link rel="preconnect" href="https://www.googletagmanager.com" crossorigin/>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
@@ -305,7 +306,6 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 }
 .panel-title-count{font-size:13px;color:var(--text-3);font-weight:400}
 .panel-no-hover:hover{transform:none;box-shadow:var(--panel-shadow)}
-
 /* ── Stat cards ──────────────────────────────────────────── */
 .stat-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:16px;align-items:stretch}
 @media(max-width:900px){.stat-row{grid-template-columns:repeat(2,1fr)}}
@@ -2043,8 +2043,6 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 </head>
 <body>
 <!-- Google Tag Manager (noscript) -->
-<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-MDT7FMNC"
-height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 <!-- End Google Tag Manager (noscript) -->
 
 <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -2127,6 +2125,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         <option value="recent">Most recent</option>
         <option value="quality">Highest quality</option>
         <option value="tokens">Most tokens</option>
+        <option value="cost">Most cost</option>
         <option value="duration">Longest sessions</option>
         <option value="events">Most events</option>
       </select>
@@ -2213,6 +2212,18 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
           <div style="font-size:22px;font-weight:700;margin-top:4px" id="stat-tok-ratio"></div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Row 6: Cost Usage -->
+  <div class="cols-2">
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Estimated Cost</div>
+      <div id="cost-stats" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px 0"></div>
+    </div>
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Model Cost Share</div>
+      <div id="model-cost-share" style="padding:8px 0"></div>
     </div>
   </div>
 
@@ -2568,6 +2579,11 @@ function fmtTokenShort(n){
   return String(Math.round(value));
 }
 
+function fmtCost(n){
+  const value = Number(n) || 0;
+  return value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
 function escHtml(s){
   if(!s) return '';
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -2920,6 +2936,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       recent: (a,b) => sessionTimeMs(b) - sessionTimeMs(a),
       quality: (a,b) => Number(b.quality_score || 0) - Number(a.quality_score || 0),
       tokens: (a,b) => (Number(b.input_tokens || 0) + Number(b.output_tokens || 0)) - (Number(a.input_tokens || 0) + Number(a.output_tokens || 0)),
+      cost: (a,b) => Number(b.total_cost_usd || b.total_cost || 0) - Number(a.total_cost_usd || a.total_cost || 0),
       duration: (a,b) => Number(b.duration_ms || 0) - Number(a.duration_ms || 0),
       events: (a,b) => Number(b.event_count || 0) - Number(a.event_count || 0),
     };
@@ -2958,6 +2975,8 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       const isActive = s._idx === selectedIdx;
       const estimatedTokens = getEstimatedSessionTokens(s);
       const tokens = (estimatedTokens?.input ?? s.input_tokens ?? 0) + (estimatedTokens?.output ?? s.output_tokens ?? 0);
+      const cost = Number(s.total_cost_usd || s.total_cost || 0);
+      const unit = String(s.pricing_unit || D.pricing_unit || 'usd').toUpperCase();
       return `<button type="button" class="sb-card${isActive ? ' active' : ''}" data-idx="${s._idx}" aria-pressed="${isActive ? 'true' : 'false'}">
         <div class="sb-card-header">
           <div class="sb-agent-dot" style="background:${agentColor}"></div>
@@ -2968,6 +2987,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
         <div class="sb-card-badges">
           <div class="sb-card-badge">${fmt(s.event_count || 0)} events</div>
           ${tokens > 0 ? `<div class="sb-card-badge">${estimatedTokens ? '~' : ''}${fmtTokenShort(tokens)} tok</div>` : ''}
+          ${cost > 0 ? `<div class="sb-card-badge">${fmtCost(cost)} ${escHtml(unit)}</div>` : ''}
           ${s.quality_score ? `<div class="sb-card-badge" style="color:${s.quality_score > 70 ? 'var(--green)' : 'var(--yellow)'}">${s.quality_score.toFixed(0)}%</div>` : ''}
         </div>
       </button>`;
@@ -2995,6 +3015,8 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     const inTok = estimatedTokens?.input ?? session.input_tokens ?? 0;
     const outTok = estimatedTokens?.output ?? session.output_tokens ?? 0;
     const cacheTok = session.cache_read_tokens || 0;
+    const sessionCost = Number(session.total_cost_usd || session.total_cost || 0);
+    const sessionUnit = String(session.pricing_unit || D.pricing_unit || 'usd').toUpperCase();
     const tokenMeta = estimatedTokens
       ? (session._fullLoaded ? 'Estimated from full Cursor transcript content.' : 'Estimated from available Cursor transcript preview.')
       : (session.token_note || '');
@@ -3017,6 +3039,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
         <span title="${tokenMeta}">In: <strong>${estimatedTokens ? '~' : ''}${fmtTokenShort(inTok)}</strong></span>
         <span title="${tokenMeta}">Out: <strong>${estimatedTokens ? '~' : ''}${fmtTokenShort(outTok)}</strong></span>
         ${cacheTok > 0 ? `<span>Cache: <strong>${fmtTokenShort(cacheTok)}</strong></span>` : ''}
+        <span title="Pricing source: ${escHtml(session.pricing_source || D.pricing_source || 'unknown')}">Cost: <strong>${fmtCost(sessionCost)} ${escHtml(sessionUnit)}</strong></span>
         ${session.failure_count > 0 ? `<span style="color:var(--red)">Failures: <strong>${session.failure_count}</strong></span>` : ''}
       </div>
       ${tokenNote ? `<div class="sb-detail-model" style="margin-top:8px">${escHtml(tokenNote)}</div>` : ''}
@@ -3933,6 +3956,8 @@ document.getElementById('stat-row').innerHTML = statDefs.map(s=>`
     <div class="stat-sub">${s.sub}</div>
   </div>`).join('');
 
+const costUnit = String(D.pricing_unit || 'usd').toUpperCase();
+
 function formatSignedDelta(delta, suffix = ''){
   const value = Number(delta || 0);
   const sign = value > 0 ? '+' : '';
@@ -4062,12 +4087,13 @@ function buildCompareTab(){
       `).join('')
     }</tbody></table>`;
     baselineEl.innerHTML = (comparison.baseline_agents || []).length
-      ? `<table class="data-table"><thead><tr><th>Agent</th><th style="text-align:right">Sessions</th><th style="text-align:right">Tools</th><th style="text-align:right">Quality</th></tr></thead><tbody>${
+      ? `<table class="data-table"><thead><tr><th>Agent</th><th style="text-align:right">Sessions</th><th style="text-align:right">Tools</th><th style="text-align:right">Cost</th><th style="text-align:right">Quality</th></tr></thead><tbody>${
           comparison.baseline_agents.map(agent => `
             <tr>
               <td style="font-weight:600">${escHtml(agent.name || 'unknown')}</td>
               <td style="text-align:right">${fmt(agent.sessions || 0)}</td>
               <td style="text-align:right">${fmt(agent.tools || 0)}</td>
+              <td style="text-align:right">${fmtCost(agent.total_cost_usd || agent.total_cost || 0)} ${escHtml(costUnit)}</td>
               <td style="text-align:right">${Number(agent.avg_quality || 0).toFixed(1)}%</td>
             </tr>
           `).join('')
@@ -4087,13 +4113,14 @@ function buildCompareTab(){
     </div>
   `;
   detailsEl.innerHTML = ranking.length
-    ? `<table class="tbl"><thead><tr><th>Agent</th><th style="text-align:right">Sessions</th><th style="text-align:right">Prompts</th><th style="text-align:right">Tools</th><th style="text-align:right">Failures</th><th style="text-align:right">Quality</th></tr></thead><tbody>${
+    ? `<table class="tbl"><thead><tr><th>Agent</th><th style="text-align:right">Sessions</th><th style="text-align:right">Prompts</th><th style="text-align:right">Tools</th><th style="text-align:right">Cost</th><th style="text-align:right">Failures</th><th style="text-align:right">Quality</th></tr></thead><tbody>${
         ranking.map(agent => `
           <tr>
             <td style="font-weight:600">${escHtml(agent.name || 'unknown')}</td>
             <td style="text-align:right">${fmt(agent.sessions || 0)}</td>
             <td style="text-align:right">${fmt(agent.prompts || 0)}</td>
             <td style="text-align:right">${fmt(agent.tools || 0)}</td>
+            <td style="text-align:right">${fmtCost(agent.total_cost_usd || agent.total_cost || 0)} ${escHtml(costUnit)}</td>
             <td style="text-align:right">${fmt(agent.failures || 0)}</td>
             <td style="text-align:right">${Number(agent.avg_quality || 0).toFixed(1)}%</td>
           </tr>
@@ -4151,6 +4178,37 @@ document.getElementById('stat-input-tok').textContent = fmt(D.total_input_tokens
 document.getElementById('stat-output-tok').textContent = fmt(D.total_output_tokens||0);
 document.getElementById('stat-cache-tok').textContent = fmt(D.total_cache_read_tokens||0);
 document.getElementById('stat-tok-ratio').textContent = D.total_input_tokens ? (D.total_output_tokens / D.total_input_tokens).toFixed(2) : '--';
+
+const costStats = [
+  ['Total Cost', fmtCost(D.total_cost_usd || D.total_cost || 0), costUnit],
+  ['Input Cost', fmtCost(D.input_cost_usd || D.input_cost || 0), costUnit],
+  ['Output Cost', fmtCost(D.output_cost_usd || D.output_cost || 0), costUnit],
+  ['Cache Cost', fmtCost((D.cache_creation_cost_usd || D.cache_creation_cost || 0) + (D.cache_read_cost_usd || D.cache_read_cost || 0)), costUnit],
+  ['Pricing Source', escHtml(D.pricing_source || 'unknown'), `${Object.keys(D.model_costs || {}).length} priced model(s)`],
+];
+const costStatsEl = document.getElementById('cost-stats');
+if (costStatsEl) {
+  costStatsEl.innerHTML = costStats.map(([label, value, sub]) => `
+    <div style="background:var(--surface2);border-radius:10px;padding:14px 16px">
+      <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">${label}</div>
+      <div style="font-size:22px;font-weight:700;margin-top:4px">${value}</div>
+      <div style="font-size:12px;color:var(--text-3);margin-top:4px">${sub}</div>
+    </div>
+  `).join('');
+}
+const modelCostRows = Object.entries(D.model_costs || {})
+  .sort((a,b) => Number(b[1] || 0) - Number(a[1] || 0))
+  .slice(0, 8);
+const modelCostEl = document.getElementById('model-cost-share');
+if (modelCostEl) {
+  modelCostEl.innerHTML = modelCostRows.length
+    ? `<table class="tbl"><thead><tr><th>Model</th><th style="text-align:right">Estimated cost</th></tr></thead><tbody>${
+        modelCostRows.map(([model, cost]) => `
+          <tr><td style="font-weight:600">${escHtml(model)}</td><td style="text-align:right">${fmtCost(cost)} ${escHtml(costUnit)}</td></tr>
+        `).join('')
+      }</tbody></table>`
+    : `<div style="color:var(--text-3);padding:12px 0">No model cost data available. Run reflect doctor to inspect pricing status.</div>`;
+}
 
 /* Insights */
 /* Observations */

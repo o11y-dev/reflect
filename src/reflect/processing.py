@@ -198,8 +198,12 @@ def _process_span(
 
     input_tok = _int_attr("gen_ai.usage.input_tokens")
     output_tok = _int_attr("gen_ai.usage.output_tokens")
-    cache_create_tok = _int_attr("gen_ai.usage.cache_creation.input_tokens")
-    cache_read_tok = _int_attr("gen_ai.usage.cache_read.input_tokens")
+    cache_create_tok = _int_attr("gen_ai.usage.cache_creation.input_tokens") or _int_attr(
+        "gen_ai.usage.cache_creation_input_tokens"
+    )
+    cache_read_tok = _int_attr("gen_ai.usage.cache_read.input_tokens") or _int_attr(
+        "gen_ai.usage.cache_read_input_tokens"
+    )
 
     if token_totals is not None and (input_tok or output_tok or cache_create_tok or cache_read_tok):
         token_totals["input"] += input_tok

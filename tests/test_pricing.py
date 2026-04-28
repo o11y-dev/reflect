@@ -6,6 +6,7 @@ from reflect.pricing import (
     PricingTable,
     calculate_cost,
     canonicalize_model_name,
+    load_pricing_status,
     load_pricing_table,
 )
 
@@ -17,6 +18,9 @@ class TestCanonicalizeModelName:
 
     def test_strips_provider_and_revision(self):
         assert canonicalize_model_name("openai/gpt-4o-mini@2024-07-18") == "gpt-4o-mini"
+
+    def test_strips_single_date_suffix(self):
+        assert canonicalize_model_name("claude-sonnet-4-20250514") == "claude-sonnet-4"
 
 
 class TestLoadPricingTable:
@@ -72,6 +76,45 @@ class TestLoadPricingTable:
 
         assert table.source in {"fallback", "cache"}
         assert len(table.prices) > 0
+
+    def test_pricing_status_reports_live_sync(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("REFLECT_HOME", str(tmp_path / ".reflect"))
+        monkeypatch.setenv("REFLECT_LITELLM_MODEL_PRICES_URL", "https://example.invalid/prices.json")
+
+        from reflect import pricing as pricing_mod
+
+        def _fake_fetch(_url: str, _timeout: float, api_key: str = ""):
+            return {
+                "gpt-4o": {
+                    "input_cost_per_token": 1.0,
+                    "output_cost_per_token": 2.0,
+                }
+            }
+
+        monkeypatch.setattr(pricing_mod, "_fetch_json_url", _fake_fetch)
+
+        status = load_pricing_status()
+
+        assert status.pricing_table.source == "live"
+        assert status.cache_fresh is True
+        assert status.cache_path.exists()
+        assert "gpt-4o" in status.pricing_table.prices
+
+    def test_pricing_status_reports_fallback_reason(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("REFLECT_HOME", str(tmp_path / ".reflect"))
+
+        from reflect import pricing as pricing_mod
+
+        def _raise(*_args, **_kwargs):
+            raise RuntimeError("network down")
+
+        monkeypatch.setattr(pricing_mod, "_fetch_json_url", _raise)
+
+        status = load_pricing_status()
+
+        assert status.pricing_table.source == "fallback"
+        assert "network down" in status.error
+        assert status.cache_fresh is False
 
 
 class TestCalculateCost:

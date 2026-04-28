@@ -72,6 +72,18 @@ $ reflect --demo
 - Python 3.11+
 - [pipx](https://pipx.pypa.io/stable/installation/) (recommended) or pip
 
+## Development
+
+Source development uses Poetry:
+
+```bash
+poetry install --extras test
+poetry run reflect --demo
+poetry run reflect doctor
+poetry run pytest tests/test_dashboard_json.py -q
+poetry run pytest -q
+```
+
 ## Quickstart
 
 ```bash
@@ -146,7 +158,7 @@ reflect --demo                 # instant demo with sample data
 
 ### Configure your own LiteLLM pricing source
 
-By default, reflect uses LiteLLM's public model pricing map. You can point reflect at your own LiteLLM deployment (or mirrored pricing endpoint) with `~/.reflect/config/litellm.json`:
+By default, reflect uses LiteLLM's public model pricing map from `https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json`. You can point reflect at your own LiteLLM deployment (or mirrored pricing endpoint) with `~/.reflect/config/litellm.json`:
 
 ```json
 {
@@ -155,6 +167,17 @@ By default, reflect uses LiteLLM's public model pricing map. You can point refle
   "api_key_env": "LITELLM_INTERNAL_API_KEY",
   "timeout_seconds": 10,
   "pricing_unit": "coins"
+}
+```
+
+If your live model names include suffixes or provider-specific variants that do not appear in the pricing map, add aliases in `~/.reflect/config/model-aliases.json`. Reflect uses those aliases to map your recorded model strings to the canonical LiteLLM keys that have pricing data, which is what lets cost show up in reports instead of staying at `0.00`.
+
+```json
+{
+  "aliases": {
+    "gpt-5.4-high": "gpt-5.4",
+    "claude-4.6-opus-high": "claude-opus-4-5"
+  }
 }
 ```
 
@@ -191,7 +214,7 @@ reflect doctor
 reflect update
 ```
 
-`reflect doctor` checks that your installation is healthy, shows which integrations are implemented vs still planned, and reports whether hooks are wired correctly, the OTLP gateway is running, the installed package matches the latest release, and skill files are up to date. `reflect update --apply` upgrades the pipx package when a newer release is available.
+`reflect doctor` checks that your installation is healthy, shows which integrations are implemented vs still planned, and reports whether hooks are wired correctly, the OTLP gateway is running, LiteLLM pricing metadata is available for cost estimates, the installed package matches the latest release, and skill files are up to date. `reflect update --apply` upgrades the pipx package when a newer release is available.
 
 ### Native OTel details by agent
 

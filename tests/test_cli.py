@@ -28,6 +28,16 @@ def otlp_file(tmp_path):
     return p
 
 
+@pytest.fixture(autouse=True)
+def _disable_pricing_network(monkeypatch):
+    from reflect import pricing as pricing_mod
+
+    def _raise(*_args, **_kwargs):
+        raise RuntimeError("pricing network disabled in tests")
+
+    monkeypatch.setattr(pricing_mod, "_fetch_json_url", _raise)
+
+
 class TestHelp:
     def test_help(self, runner):
         result = runner.invoke(main, ["--help"])
@@ -435,6 +445,45 @@ class TestUpdateAdvisor:
         assert "update available" in result.output
         assert "1.1.0" in result.output
         assert "workspace root" in result.output
+
+    def test_doctor_reports_pricing_status(self, runner, tmp_path, monkeypatch):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        (reflect_home / "state").mkdir(parents=True)
+        hook_home.mkdir(parents=True)
+        advisor = {
+            "release": {
+                "current_version": "1.0.0",
+                "latest_version": None,
+                "checked_at": None,
+                "update_available": False,
+                "source": "unknown",
+            },
+            "local_issues": [],
+        }
+
+        from reflect import pricing as pricing_mod
+
+        def _fake_fetch(_url: str, _timeout: float, api_key: str = ""):
+            return {
+                "gpt-4o": {
+                    "input_cost_per_token": 1.0,
+                    "output_cost_per_token": 2.0,
+                }
+            }
+
+        monkeypatch.setattr(pricing_mod, "_fetch_json_url", _fake_fetch)
+
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core._collect_update_advisor", return_value=advisor), \
+             patch.dict(os.environ, {"REFLECT_HOME": str(reflect_home)}, clear=False):
+            result = runner.invoke(main, ["doctor"])
+
+        assert result.exit_code == 0
+        assert "Pricing" in result.output
+        assert "live" in result.output
+        assert "gpt-4o" in result.output
 
     def test_update_apply_uses_pipx_upgrade(self, runner):
         advisor = {
