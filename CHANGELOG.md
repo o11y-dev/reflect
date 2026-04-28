@@ -3,6 +3,8 @@
 ## 0.7.1 (unreleased)
 
 ### Added
+- **OpenCode local session support**: `reflect` now reads OpenCode sessions directly from `~/.local/share/opencode/opencode.db` (SQLite). Sessions, user messages, assistant turns (with token breakdowns), and tool call lifecycle (PreToolUse / PostToolUse / PostToolUseFailure) are synthesized as hook-style spans so all existing quality scoring, insights, and timeline views work for OpenCode out of the box.
+- **otel-hook batch file analysis**: `reflect` now reads unforwarded hook events from `~/.local/share/opentelemetry-hooks/.state/batches/*_session.jsonl`. These files accumulate when no OTLP gateway is running, enabling full hooks analysis (tool use, session lifecycle, file edits) for OpenCode and any other agent instrumented via `otel-hook` even without a running collector.
 - `reflect doctor` now reports LiteLLM pricing status, cache freshness, model count, and fallback details for cost-estimate troubleshooting
 - Dashboard cost surfaces now show total/input/output/cache cost, model cost share, per-session cost badges, agent cost, and cost-based session sorting
 

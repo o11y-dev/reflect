@@ -4,6 +4,7 @@ import hashlib
 import json as _json_stdlib
 import os
 import re
+import sqlite3
 from collections import Counter
 from collections.abc import Iterable
 from datetime import datetime
@@ -197,6 +198,18 @@ def _discover_rich_session_files() -> list[tuple[str, Path]]:
     candidates.extend(("cursor", p) for p in sorted((home / ".cursor" / "projects").glob("**/agent-transcripts/**/*.jsonl")))
     candidates.extend(("claude", p) for p in sorted((home / ".claude" / "projects").glob("**/*.jsonl")))
     candidates.extend(("gemini", p) for p in sorted((home / ".gemini" / "tmp").glob("**/chats/session-*.json")))
+    # OpenCode: primary SQLite database
+    opencode_db = home / ".local" / "share" / "opencode" / "opencode.db"
+    if opencode_db.exists():
+        candidates.append(("opencode", opencode_db))
+    # otel-hook batch files: unforwarded hook events for any agent (OpenCode, Cursor, etc.)
+    # Only add *_session.jsonl files which contain the full per-session event log.
+    hook_batches_dir = HOOK_HOME / ".state" / "batches"
+    if hook_batches_dir.is_dir():
+        candidates.extend(
+            ("hook-batch", p)
+            for p in sorted(hook_batches_dir.glob("*_session.jsonl"))
+        )
     return candidates
 
 
@@ -513,6 +526,329 @@ def _iter_gemini_session_spans(file_path: Path) -> Iterable[dict]:
         }, trace_id, "synthetic:session.end")
 
 
+def _iter_opencode_session_spans(db_path: Path) -> Iterable[dict]:
+    """Read OpenCode sessions from its SQLite database and synthesize hook-style spans.
+
+    OpenCode stores sessions in ~/.local/share/opencode/opencode.db with tables:
+    - session: id, title, directory, time_created, time_updated (timestamps in ms)
+    - message: session_id, time_created, time_updated, data (JSON)
+    - part: message_id, session_id, time_created, time_updated, data (JSON)
+
+    message.data fields of interest:
+      role: "user" | "assistant"
+      modelID, providerID, tokens.{input,output,reasoning,cache.{read,write}}
+      time.{created,completed} (ms)
+
+    part.data types of interest:
+      type="tool": tool, callID, state.{status,input,output}
+      type="step-finish": tokens.{total,input,output,cache.{read,write}}, reason
+    """
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.OperationalError as exc:
+        logger.warning("Cannot open OpenCode DB %s: %s", db_path, exc)
+        return
+    try:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        # Load all sessions
+        cur.execute(
+            "SELECT id, title, directory, time_created, time_updated FROM session"
+            " ORDER BY time_created ASC"
+        )
+        sessions = cur.fetchall()
+        if not sessions:
+            return
+
+        # Load all messages indexed by session_id
+        cur.execute(
+            "SELECT id, session_id, time_created, time_updated, data FROM message"
+            " ORDER BY time_created ASC"
+        )
+        messages_by_session: dict[str, list[sqlite3.Row]] = {}
+        msg_by_id: dict[str, sqlite3.Row] = {}
+        for row in cur.fetchall():
+            messages_by_session.setdefault(row["session_id"], []).append(row)
+            msg_by_id[row["id"]] = row
+
+        # Load all parts indexed by session_id (for tool call details)
+        cur.execute(
+            "SELECT id, message_id, session_id, time_created, time_updated, data FROM part"
+            " ORDER BY time_created ASC"
+        )
+        parts_by_session: dict[str, list[sqlite3.Row]] = {}
+        for row in cur.fetchall():
+            parts_by_session.setdefault(row["session_id"], []).append(row)
+
+    except Exception as exc:
+        logger.warning("Error reading OpenCode DB %s: %s", db_path, exc)
+        conn.close()
+        return
+    conn.close()
+
+    for session_row in sessions:
+        session_id: str = session_row["id"]
+        directory: str = session_row["directory"] or ""
+        # OpenCode timestamps are in milliseconds
+        session_created_ms: int = int(session_row["time_created"] or 0)
+        session_updated_ms: int = int(session_row["time_updated"] or 0)
+        first_ts = session_created_ms * 1_000_000 if session_created_ms else 0
+        last_ts = session_updated_ms * 1_000_000 if session_updated_ms else first_ts
+
+        trace_id = _stable_hex_id("opencode", session_id, length=32)
+        base_attrs = {
+            "gen_ai.client.name": "opencode",
+            "gen_ai.provider.name": "opencode",
+            "gen_ai.client.session_id": session_id,
+            "session.id": session_id,
+        }
+        if directory:
+            base_attrs["code.workspace.root"] = directory
+
+        # SessionStart
+        if first_ts:
+            yield _make_flat_span(
+                "gen_ai.client.hook.SessionStart",
+                first_ts, first_ts,
+                {**base_attrs, "gen_ai.client.hook.event": "SessionStart"},
+                trace_id, "synthetic:session.start",
+            )
+
+        # Build active tool map from parts for duration tracking
+        active_tools: dict[str, int] = {}  # callID -> start_ns
+
+        for index, msg_row in enumerate(messages_by_session.get(session_id, [])):
+            try:
+                msg_data = _json_loads(msg_row["data"]) if msg_row["data"] else {}
+            except Exception:
+                continue
+            if not isinstance(msg_data, dict):
+                continue
+
+            role = msg_data.get("role", "")
+            msg_time_ms = int(msg_data.get("time", {}).get("created", 0) or msg_row["time_created"] or 0)
+            msg_end_ms = int(msg_data.get("time", {}).get("completed", 0) or msg_time_ms or 0)
+            ts_ns = msg_time_ms * 1_000_000
+            end_ns = msg_end_ms * 1_000_000 if msg_end_ms else ts_ns
+            if ts_ns:
+                last_ts = max(last_ts, end_ns or ts_ns)
+
+            if role == "user":
+                yield _make_flat_span(
+                    "gen_ai.client.hook.UserPromptSubmit",
+                    ts_ns, ts_ns,
+                    {**base_attrs, "gen_ai.client.hook.event": "UserPromptSubmit"},
+                    trace_id, f"{index}:user",
+                )
+            elif role == "assistant":
+                tokens = msg_data.get("tokens") or {}
+                cache = tokens.get("cache") or {}
+                model_id = msg_data.get("modelID") or msg_data.get("providerID") or ""
+                stop_attrs = {
+                    **base_attrs,
+                    "gen_ai.client.hook.event": "Stop",
+                }
+                if model_id:
+                    stop_attrs["gen_ai.request.model"] = model_id
+                input_tokens = int(tokens.get("input", 0) or 0)
+                output_tokens = int(tokens.get("output", 0) or 0)
+                cache_read = int(cache.get("read", 0) or 0)
+                cache_write = int(cache.get("write", 0) or 0)
+                if input_tokens:
+                    stop_attrs["gen_ai.usage.input_tokens"] = input_tokens
+                if output_tokens:
+                    stop_attrs["gen_ai.usage.output_tokens"] = output_tokens
+                if cache_read:
+                    stop_attrs["gen_ai.usage.cache_read.input_tokens"] = cache_read
+                if cache_write:
+                    stop_attrs["gen_ai.usage.cache_creation.input_tokens"] = cache_write
+                yield _make_flat_span(
+                    "gen_ai.client.hook.Stop",
+                    ts_ns, end_ns,
+                    stop_attrs,
+                    trace_id, f"{index}:assistant",
+                )
+
+        # Synthesize tool spans from parts
+        for part_idx, part_row in enumerate(parts_by_session.get(session_id, [])):
+            try:
+                part_data = _json_loads(part_row["data"]) if part_row["data"] else {}
+            except Exception:
+                continue
+            if not isinstance(part_data, dict):
+                continue
+            part_type = part_data.get("type", "")
+            part_ts_ns = int(part_row["time_created"] or 0) * 1_000_000
+
+            if part_type == "tool":
+                state = part_data.get("state") or {}
+                status = state.get("status", "")
+                call_id = part_data.get("callID", f"part-{part_idx}")
+                tool_name = part_data.get("tool", "")
+                tool_input = state.get("input")
+
+                if status == "running":
+                    # PreToolUse — record start time for duration
+                    active_tools[call_id] = part_ts_ns
+                    yield _make_flat_span(
+                        "gen_ai.client.hook.PreToolUse",
+                        part_ts_ns, part_ts_ns,
+                        {
+                            **base_attrs,
+                            "gen_ai.client.hook.event": "PreToolUse",
+                            "gen_ai.client.tool_name": tool_name,
+                            "gen_ai.client.tool.input": _json_dumps(tool_input) if tool_input else "",
+                        },
+                        trace_id, f"{part_idx}:tool:pre:{call_id}",
+                    )
+                elif status in ("completed", "error"):
+                    start_ns = active_tools.pop(call_id, part_ts_ns)
+                    hook_event = "PostToolUse" if status == "completed" else "PostToolUseFailure"
+                    post_attrs = {
+                        **base_attrs,
+                        "gen_ai.client.hook.event": hook_event,
+                        "gen_ai.client.tool_name": tool_name,
+                    }
+                    meta = state.get("metadata") or {}
+                    exit_code = meta.get("exit")
+                    if exit_code is not None and exit_code != 0:
+                        post_attrs["gen_ai.client.exit_code"] = exit_code
+                        hook_event = "PostToolUseFailure"
+                        post_attrs["gen_ai.client.hook.event"] = hook_event
+                    yield _make_flat_span(
+                        f"gen_ai.client.hook.{hook_event}",
+                        start_ns, part_ts_ns,
+                        post_attrs,
+                        trace_id, f"{part_idx}:tool:post:{call_id}",
+                    )
+
+        # SessionEnd
+        if last_ts:
+            yield _make_flat_span(
+                "gen_ai.client.hook.SessionEnd",
+                last_ts, last_ts,
+                {**base_attrs, "gen_ai.client.hook.event": "SessionEnd"},
+                trace_id, "synthetic:session.end",
+            )
+
+
+def _iter_hook_batch_spans(file_path: Path) -> Iterable[dict]:
+    """Read otel-hook batch JSONL files and synthesize flat hook spans.
+
+    otel-hook writes *_session.jsonl files under
+    ~/.local/share/opentelemetry-hooks/.state/batches/
+    each line is: {"event": "PreToolUse", "timestamp_ns": 123, "data": {...}}
+
+    These files contain unforwarded hook events when no OTLP gateway is running.
+    This lets reflect analyse OpenCode (and other) sessions even without a collector.
+    """
+    events = list(_load_json_lines(file_path))
+    if not events:
+        return
+
+    # Derive session_id from file stem (strip _session suffix)
+    stem = file_path.stem
+    if stem.endswith("_session"):
+        session_id = stem[: -len("_session")]
+    else:
+        session_id = stem
+
+    trace_id = _stable_hex_id("hook-batch", session_id, length=32)
+    first_ts = 0
+    last_ts = 0
+    active_tools: dict[str, int] = {}  # tool_id -> start_ns
+
+    for index, record in enumerate(events):
+        event_name: str = record.get("event", "")
+        ts_ns: int = int(record.get("timestamp_ns", 0) or 0)
+        data: dict = record.get("data") or {}
+        if not event_name:
+            continue
+        if ts_ns:
+            first_ts = ts_ns if not first_ts else min(first_ts, ts_ns)
+            last_ts = max(last_ts, ts_ns)
+
+        # Derive agent name from data fields
+        ide = data.get("ide_name") or data.get("source_app") or data.get("ide") or ""
+        agent_name = str(ide).lower().replace(" ", "") or "opencode"
+        if agent_name == "opencode":
+            provider_name = "opencode"
+        else:
+            provider_name = agent_name
+
+        raw_session_id = (
+            data.get("session_id")
+            or data.get("conversation_id")
+            or data.get("sessionId")
+            or session_id
+        )
+
+        attrs: dict = {
+            "gen_ai.client.name": agent_name,
+            "gen_ai.provider.name": provider_name,
+            "gen_ai.client.session_id": raw_session_id,
+            "session.id": raw_session_id,
+            "gen_ai.client.hook.event": event_name,
+        }
+        if data.get("cwd"):
+            attrs["code.workspace.root"] = data["cwd"]
+        if data.get("model"):
+            attrs["gen_ai.request.model"] = data["model"]
+
+        # Tool lifecycle — track durations
+        tool_name = data.get("tool_name") or data.get("tool") or ""
+        tool_id = data.get("tool_id") or data.get("call_id") or data.get("callID") or f"{index}"
+        if tool_name:
+            attrs["gen_ai.client.tool_name"] = tool_name
+
+        if event_name in ("PreToolUse",):
+            active_tools[tool_id] = ts_ns
+            if data.get("tool_input"):
+                attrs["gen_ai.client.tool.input"] = _json_dumps(data["tool_input"])
+        elif event_name in ("PostToolUse", "PostToolUseFailure"):
+            start_ns = active_tools.pop(tool_id, ts_ns)
+        else:
+            start_ns = ts_ns
+
+        end_ns = ts_ns
+
+        if event_name in ("PostToolUse", "PostToolUseFailure"):
+            span_start = start_ns
+        else:
+            span_start = ts_ns
+
+        if data.get("prompt"):
+            attrs["gen_ai.client.prompt"] = data["prompt"]
+        if data.get("file_path"):
+            attrs["gen_ai.client.file_path"] = data["file_path"]
+
+        yield _make_flat_span(
+            f"gen_ai.client.hook.{event_name}",
+            span_start, end_ns,
+            attrs,
+            trace_id, f"{index}:{event_name}",
+        )
+
+    # Ensure a SessionEnd is present even when the hook batch didn't capture one
+    last_session_id = session_id
+    if first_ts and not any(
+        r.get("event") in ("SessionEnd",) for r in events
+    ):
+        yield _make_flat_span(
+            "gen_ai.client.hook.SessionEnd",
+            last_ts, last_ts,
+            {
+                "gen_ai.client.name": "opencode",
+                "gen_ai.provider.name": "opencode",
+                "gen_ai.client.session_id": last_session_id,
+                "session.id": last_session_id,
+                "gen_ai.client.hook.event": "SessionEnd",
+            },
+            trace_id, "synthetic:session.end",
+        )
+
+
 def _load_rich_session_spans() -> tuple[list[dict], dict[str, int], dict[str, tuple[str, str]]]:
     """Load spans from native session stores.
 
@@ -531,6 +867,10 @@ def _load_rich_session_spans() -> tuple[list[dict], dict[str, int], dict[str, tu
             derived = list(_iter_claude_session_spans(file_path))
         elif source == "gemini":
             derived = list(_iter_gemini_session_spans(file_path))
+        elif source == "opencode":
+            derived = list(_iter_opencode_session_spans(file_path))
+        elif source == "hook-batch":
+            derived = list(_iter_hook_batch_spans(file_path))
         else:
             derived = []
         if derived:
