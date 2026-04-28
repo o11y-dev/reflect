@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.1 (unreleased)
+## 0.7.1 (2026-04-28)
 
 ### Added
 - `reflect doctor` now reports LiteLLM pricing status, cache freshness, model count, and fallback details for cost-estimate troubleshooting
