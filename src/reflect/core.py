@@ -1693,12 +1693,7 @@ def doctor() -> None:
     pricing_details.add_row("sample models", sample_models)
     if pricing_status.error:
         pricing_details.add_row("last error", f"[yellow]{pricing_status.error}[/]")
-    if pricing_fallback:
-        panel_border = "yellow"
-    elif pricing_ok:
-        panel_border = "green"
-    else:
-        panel_border = "yellow"
+    panel_border = "green" if pricing_live else "yellow"
     console.print(Panel(pricing_details, title="Pricing", border_style=panel_border))
 
     exports = Table(box=box.SIMPLE_HEAVY, expand=True)
