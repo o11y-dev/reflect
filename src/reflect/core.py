@@ -1660,18 +1660,21 @@ def doctor() -> None:
     from reflect.pricing import load_pricing_status
     pricing_status = load_pricing_status(reflect_home=REFLECT_HOME)
     pricing_table = pricing_status.pricing_table
-    pricing_ok = pricing_table.source in {"live", "cache"} or bool(pricing_table.prices)
+    pricing_live = pricing_table.source in {"live", "cache"}
+    pricing_fallback = not pricing_live and bool(pricing_table.prices)
+    pricing_ok = pricing_live or pricing_fallback
     pricing_details = Table.grid(padding=(0, 2))
     pricing_details.add_column(style="bold")
     pricing_details.add_column()
-    pricing_details.add_row(
-        "source",
-        _status_markup(
+    if pricing_fallback:
+        source_markup = f"[yellow]{pricing_table.source} ({len(pricing_table.prices)} model(s)) — sync failed, using bundled fallback[/]"
+    else:
+        source_markup = _status_markup(
             pricing_ok,
             present=f"{pricing_table.source} ({len(pricing_table.prices)} model(s))",
             missing="missing",
-        ),
-    )
+        )
+    pricing_details.add_row("source", source_markup)
     pricing_details.add_row("pricing unit", pricing_table.pricing_unit)
     pricing_details.add_row("LiteLLM URL", pricing_status.model_prices_url)
     pricing_details.add_row(
@@ -1690,7 +1693,13 @@ def doctor() -> None:
     pricing_details.add_row("sample models", sample_models)
     if pricing_status.error:
         pricing_details.add_row("last error", f"[yellow]{pricing_status.error}[/]")
-    console.print(Panel(pricing_details, title="Pricing", border_style="green" if pricing_ok else "yellow"))
+    if pricing_fallback:
+        panel_border = "yellow"
+    elif pricing_ok:
+        panel_border = "green"
+    else:
+        panel_border = "yellow"
+    console.print(Panel(pricing_details, title="Pricing", border_style=panel_border))
 
     exports = Table(box=box.SIMPLE_HEAVY, expand=True)
     exports.add_column("Signal", style="bold cyan")

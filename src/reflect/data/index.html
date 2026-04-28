@@ -2511,6 +2511,27 @@ function updateUrlParams(mutator){
   window.history.replaceState({}, '', `${url.pathname}${query ? `?${query}` : ''}${url.hash}`);
 }
 
+function reportSupportsServerFiltering(){
+  const report = new URLSearchParams(window.location.search).get('report') || '/api/data';
+  try {
+    const url = new URL(report, window.location.href);
+    return url.pathname === '/api/data';
+  } catch {
+    return report === '/api/data' || report.endsWith('/api/data');
+  }
+}
+
+function reportUrlWithCurrentFilters(){
+  const params = new URLSearchParams(window.location.search);
+  const report = params.get('report') || '/api/data';
+  const url = new URL(report, window.location.href);
+  ['q','agents','agent','model','status','range'].forEach(key => {
+    const value = params.get(key);
+    if (value) url.searchParams.set(key, value);
+  });
+  return url.toString();
+}
+
 async function initApp(){
   D = await loadDashboardData();
   if (!D) return;
