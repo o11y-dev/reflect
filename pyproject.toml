@@ -79,3 +79,7 @@ reflect = [
     "data/skills/reflect/SKILL.md",
     "data/skills/skills/SKILL.md",
 ]
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.15.12"
+

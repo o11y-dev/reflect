@@ -130,7 +130,7 @@ def load_litellm_config(path: Path | None = None) -> LiteLLMConfig:
         except Exception as exc:  # pragma: no cover - defensive fallback
             logger.warning("Failed to read LiteLLM config from %s: %s", config_path, exc)
 
-    base_url = str(payload.get("base_url") or "https://litellm.ai")
+    base_url = str(payload.get("base_url") or "https://raw.githubusercontent.com/BerriAI/litellm/main")
     model_prices_url_value = payload.get("model_prices_url")
     if model_prices_url_value:
         model_prices_url = str(model_prices_url_value)

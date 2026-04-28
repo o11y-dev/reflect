@@ -2,6 +2,7 @@
 
 import json
 from collections import Counter
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -70,6 +71,26 @@ class TestBuildDashboardJson:
             "pricing_source",
         ]:
             assert key in data
+
+    def test_demo_data_includes_nonzero_costs(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("REFLECT_HOME", str(tmp_path / ".reflect"))
+
+        from reflect import pricing as pricing_mod
+
+        def _raise(*_args, **_kwargs):
+            raise RuntimeError("force fallback pricing")
+
+        monkeypatch.setattr(pricing_mod, "_fetch_json_url", _raise)
+
+        demo_path = Path(__file__).resolve().parents[1] / "src" / "reflect" / "data" / "demo-traces.json"
+        stats = analyze_telemetry(tmp_path / "s", tmp_path / "sp", demo_path)
+        data = json.loads(_build_dashboard_json(stats))
+
+        assert stats.total_input_tokens > 0
+        assert stats.total_cost > 0
+        assert stats.model_costs
+        assert data["total_cost"] > 0
+        assert any(session["total_cost"] > 0 for session in data["sessions"])
 
     def test_activity_by_hour_24_entries(self, rich_stats):
         data = json.loads(_build_dashboard_json(rich_stats))

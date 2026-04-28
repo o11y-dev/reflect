@@ -4,7 +4,46 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <meta name="theme-color" content="#000000"/>
-<title>reflect.o11y.dev</title>
+<title>reflect — AI observability for every coding agent</title>
+<meta name="description" content="reflect is the vendor-neutral observability layer for AI coding agents. Turn local session data and OpenTelemetry GenAI spans into observation scores, helper-tool generation, and (coming) live-session policies. Works with Claude Code, Cursor, Copilot, Gemini CLI, OpenCode, and Antigravity."/>
+<link rel="canonical" href="https://reflect.o11y.dev/"/>
+<link rel="icon" type="image/svg+xml" href="favicon.svg"/>
+<meta property="og:type" content="website"/>
+<meta property="og:site_name" content="reflect.o11y.dev"/>
+<meta property="og:title" content="reflect — AI observability for every coding agent"/>
+<meta property="og:description" content="Vendor-neutral observability for AI coding agents. Observation scores, helper-tool generation, and (coming) live-session policies. Built on OpenTelemetry GenAI semantic conventions."/>
+<meta property="og:url" content="https://reflect.o11y.dev/"/>
+<meta property="og:image" content="https://reflect.o11y.dev/og-image.png"/>
+<meta property="og:image:width" content="1200"/>
+<meta property="og:image:height" content="630"/>
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:title" content="reflect — AI observability for every coding agent"/>
+<meta name="twitter:description" content="Vendor-neutral observability for AI coding agents. Built on OpenTelemetry GenAI semantic conventions."/>
+<meta name="twitter:image" content="https://reflect.o11y.dev/og-image.png"/>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "reflect",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "macOS, Linux, Windows",
+      "description": "Observability for any AI coding agent. Turns local session data and OpenTelemetry GenAI spans into observation scores, helper-tool generation, and (coming) live-session policies.",
+      "url": "https://reflect.o11y.dev/",
+      "downloadUrl": "https://pypi.org/project/o11y-reflect/",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "license": "https://www.apache.org/licenses/LICENSE-2.0"
+    },
+    {
+      "@type": "Organization",
+      "name": "o11y.dev",
+      "url": "https://reflect.o11y.dev/",
+      "sameAs": ["https://github.com/o11y-dev"]
+    }
+  ]
+}
+</script>
 <!-- Google Tag Manager -->
 <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
 new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
@@ -266,7 +305,6 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 }
 .panel-title-count{font-size:13px;color:var(--text-3);font-weight:400}
 .panel-no-hover:hover{transform:none;box-shadow:var(--panel-shadow)}
-
 /* ── Stat cards ──────────────────────────────────────────── */
 .stat-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:16px;align-items:stretch}
 @media(max-width:900px){.stat-row{grid-template-columns:repeat(2,1fr)}}
@@ -827,11 +865,6 @@ body.filter-sheet-open{overflow:hidden}
   background:rgba(255,255,255,.06);
   color:var(--text-2);
 }
-.sb-card-badge-telemetry{
-  background:rgba(100,210,255,.1);
-  color:var(--teal);
-  border:1px solid rgba(100,210,255,.2);
-}
 
 /* Right panel — session detail */
 .sb-right{
@@ -1094,7 +1127,7 @@ body.filter-sheet-open{overflow:hidden}
   font-size:14px;
   color:rgba(255,255,255,.9);
   line-height:1.68;
-   white-space:normal;
+  white-space:pre-wrap;
   word-break:break-word;
   max-height:7.2em;
   overflow:hidden;
@@ -1114,40 +1147,6 @@ body.filter-sheet-open{overflow:hidden}
   outline-offset:2px;
 }
 .ev-preview.full-content{max-height:12.8em}
-.ev-preview strong{color:#fff;font-weight:700}
-.ev-preview em{font-style:italic}
-.ev-preview code{
-  display:inline-block;
-  padding:1px 5px;
-  border-radius:6px;
-  background:rgba(255,255,255,.08);
-  color:#fff;
-  font-family:'SF Mono',ui-monospace,monospace;
-  font-size:.92em;
-}
-.ev-preview .md-code-block{
-  display:block;
-  margin:8px 0;
-  padding:10px 12px;
-  border-radius:10px;
-  background:rgba(0,0,0,.22);
-  border:1px solid rgba(255,255,255,.06);
-  color:rgba(255,255,255,.92);
-  font-family:'SF Mono',ui-monospace,monospace;
-  font-size:13px;
-  line-height:1.6;
-}
-.ev-preview .md-heading{
-  display:block;
-  margin:2px 0 6px;
-  color:#fff;
-  font-weight:700;
-}
-.ev-preview .md-bullet{
-  display:block;
-  padding-left:12px;
-  text-indent:-12px;
-}
 .ev-preview-hint{
   margin-top:8px;
   font-size:12px;
@@ -1323,39 +1322,6 @@ body.filter-sheet-open{overflow:hidden}
   outline:2px solid rgba(100,210,255,.9);
   outline-offset:2px;
 }
-.session-observation-shell{display:flex;flex-direction:column;gap:12px}
-.session-observation-summary{
-  display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
-  gap:10px;
-}
-.session-observation-card{
-  padding:12px 14px;
-  border-radius:12px;
-  border:1px solid rgba(255,255,255,.08);
-  background:rgba(255,255,255,.03);
-}
-.session-observation-card-label{
-  font-size:11px;
-  font-weight:700;
-  letter-spacing:.12em;
-  text-transform:uppercase;
-  color:var(--text-3);
-  margin-bottom:7px;
-}
-.session-observation-card-value{
-  font-size:18px;
-  font-weight:700;
-  color:var(--text);
-  letter-spacing:-.03em;
-}
-.session-observation-card-sub{
-  margin-top:4px;
-  font-size:13px;
-  color:var(--text-2);
-  line-height:1.6;
-}
-.session-observation-list{display:flex;flex-direction:column;gap:10px}
 .telemetry-shell{display:flex;flex-direction:column;gap:8px}
 .telemetry-summary{
   display:grid;
@@ -2086,7 +2052,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 <header>
   <div class="brand">
     <h1>reflect.<em>o11y</em>.dev</h1>
-    <span class="brand-badge">LOCAL</span>
+    <span class="brand-badge">DEMO</span>
   </div>
   <div class="header-meta">
     <div id="hdr-range"></div>
@@ -2096,10 +2062,10 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 
 <!-- ── Nav tabs ── -->
 <nav id="tabs" role="tablist" aria-label="Dashboard sections">
-  <button class="tab active" id="tab-button-observations" type="button" role="tab" aria-selected="true" aria-controls="tab-observations" tabindex="0" data-tab="observations">Observations</button>
-  <button class="tab" id="tab-button-sessions" type="button" role="tab" aria-selected="false" aria-controls="tab-sessions" tabindex="-1" data-tab="sessions">Sessions</button>
+  <button class="tab active" id="tab-button-sessions" type="button" role="tab" aria-selected="true" aria-controls="tab-sessions" tabindex="0" data-tab="sessions">Sessions</button>
   <button class="tab" id="tab-button-overview" type="button" role="tab" aria-selected="false" aria-controls="tab-overview" tabindex="-1" data-tab="overview">Overview</button>
   <button class="tab" id="tab-button-compare" type="button" role="tab" aria-selected="false" aria-controls="tab-compare" tabindex="-1" data-tab="compare">Compare</button>
+  <button class="tab" id="tab-button-observations" type="button" role="tab" aria-selected="false" aria-controls="tab-observations" tabindex="-1" data-tab="observations">Observations</button>
   <button class="tab" id="tab-button-activity" type="button" role="tab" aria-selected="false" aria-controls="tab-activity" tabindex="-1" data-tab="activity">Activity</button>
   <button class="tab" id="tab-button-tools" type="button" role="tab" aria-selected="false" aria-controls="tab-tools" tabindex="-1" data-tab="tools">Tools</button>
   <button class="tab" id="tab-button-graphs" type="button" role="tab" aria-selected="false" aria-controls="tab-graphs" tabindex="-1" data-tab="graphs">Graphs</button>
@@ -2160,6 +2126,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         <option value="recent">Most recent</option>
         <option value="quality">Highest quality</option>
         <option value="tokens">Most tokens</option>
+        <option value="cost">Most cost</option>
         <option value="duration">Longest sessions</option>
         <option value="events">Most events</option>
       </select>
@@ -2175,7 +2142,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 <div class="global-filter-backdrop" id="filter-sheet-backdrop" hidden></div>
 
 <!-- ════════════════════ SESSIONS BROWSER ════════════════════ -->
-<div class="tab-panel" id="tab-sessions" role="tabpanel" aria-labelledby="tab-button-sessions" hidden>
+<div class="tab-panel active" id="tab-sessions" role="tabpanel" aria-labelledby="tab-button-sessions">
   <div class="session-browser">
     <!-- Left: session list -->
     <div class="sb-left">
@@ -2249,6 +2216,18 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
     </div>
   </div>
 
+  <!-- Row 6: Cost Usage -->
+  <div class="cols-2">
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Estimated Cost</div>
+      <div id="cost-stats" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px 0"></div>
+    </div>
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Model Cost Share</div>
+      <div id="model-cost-share" style="padding:8px 0"></div>
+    </div>
+  </div>
+
 </div>
 
 <!-- ════════════════════ COMPARE ════════════════════ -->
@@ -2291,7 +2270,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 </div>
 
 <!-- ════════════════════ OBSERVATIONS ════════════════════ -->
-<div class="tab-panel active" id="tab-observations" role="tabpanel" aria-labelledby="tab-button-observations">
+<div class="tab-panel" id="tab-observations" role="tabpanel" aria-labelledby="tab-button-observations" hidden>
   <div class="obs-hero-grid" id="obs-hero-grid"></div>
 
   <div class="cols-2">
@@ -2484,7 +2463,17 @@ function renderDashboardError(kind, message){
     return;
   }
   if (kind === 'report-fetch-failed') {
-    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;color:#ff453a;font-family:monospace">Error loading report artifact. Check the ?report= path and same-origin hosting.</div>';
+    document.body.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;background:#000;color:#edf3ff;font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;text-align:center;padding:40px">
+      <div style="font-size:48px;font-weight:800;letter-spacing:-.04em;margin-bottom:16px">reflect</div>
+      <div style="color:rgba(255,255,255,.55);font-size:18px;max-width:480px;line-height:1.65;margin-bottom:32px">Local-first telemetry for AI coding agents.<br>See why your agents fail, stall, or burn budget.</div>
+      <pre style="background:#07101b;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:20px 28px;font-size:16px;color:#72f4d1;text-align:left;margin-bottom:32px">pipx install o11y-reflect
+reflect setup
+reflect report</pre>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center">
+        <a href="https://github.com/o11y-dev/reflect" style="padding:12px 20px;background:linear-gradient(135deg,#72f4d1,#7ab6ff);color:#04111d;border-radius:12px;text-decoration:none;font-weight:700">View on GitHub</a>
+        <a href="showcase.html" style="padding:12px 20px;border:1px solid rgba(255,255,255,.12);color:#edf3ff;border-radius:12px;text-decoration:none;font-weight:700">View showcase</a>
+      </div>
+    </div>`;
     return;
   }
   document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;color:#ff453a;font-family:monospace">Error decoding data: ' + message + '</div>';
@@ -2492,10 +2481,14 @@ function renderDashboardError(kind, message){
 
 async function loadDashboardData(){
   const params = new URLSearchParams(window.location.search);
-  const report = params.get('report') || '/api/data';
+  const report = params.get('report');
+  if (!report && !params.get('data')) {
+    window.location.replace('showcase.html');
+    return null;
+  }
   try {
     if (report) {
-      const response = await fetch(reportSupportsServerFiltering() ? reportUrlWithCurrentFilters() : report, {headers: {Accept: 'application/json'}});
+      const response = await fetch(report, {headers: {Accept: 'application/json'}});
       if (!response.ok) throw new Error('report-fetch-failed');
       return await response.json();
     }
@@ -2518,29 +2511,9 @@ function updateUrlParams(mutator){
   window.history.replaceState({}, '', `${url.pathname}${query ? `?${query}` : ''}${url.hash}`);
 }
 
-function reportSupportsServerFiltering(){
-  const report = new URLSearchParams(window.location.search).get('report') || '/api/data';
-  try {
-    const url = new URL(report, window.location.href);
-    return url.pathname === '/api/data';
-  } catch {
-    return report === '/api/data' || report.endsWith('/api/data');
-  }
-}
-
-function reportUrlWithCurrentFilters(){
-  const params = new URLSearchParams(window.location.search);
-  const report = params.get('report') || '/api/data';
-  const url = new URL(report, window.location.href);
-  ['q','agents','agent','model','status','range'].forEach(key => {
-    const value = params.get(key);
-    if (value) url.searchParams.set(key, value);
-  });
-  return url.toString();
-}
-
 async function initApp(){
   D = await loadDashboardData();
+  if (!D) return;
 
 /* ── Palette — Apple system colors ── */
 const P = {
@@ -2607,51 +2580,20 @@ function fmtTokenShort(n){
   return String(Math.round(value));
 }
 
+function fmtCost(n){
+  const value = Number(n) || 0;
+  return value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
 function escHtml(s){
   if(!s) return '';
-  return String(s)
-    .replace(/&/g,'&amp;')
-    .replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;')
-    .replace(/'/g,'&#39;');
-}
-
-function fmtInlineMarkdown(s){
-  return escHtml(s || '')
-    .replace(/`([^`\n]+)`/g,'<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
-    // Only treat single asterisks as emphasis when they are bounded like prose,
-    // so `*italic*` works without colliding with `**bold**` markers.
-    .replace(/(^|[\s(])\*([^*\n]+)\*([)\].,!?:;]|\s|$)/g, (_, lead, body, tail) => `${lead}<em>${body}</em>${tail}`);
-}
-
-function fmtMarkdown(s){
-  const source = String(s || '').replace(/\r\n?/g,'\n');
-  if (!source) return '';
-  const segments = source.split(/```/);
-  return segments.map((segment, index) => {
-    if (!segment) return '';
-    // Splitting on ``` yields alternating prose/code segments when fences are balanced.
-    const isCodeBlock = index % 2 === 1;
-    if (isCodeBlock) {
-      return `<span class="md-code-block">${escHtml(segment).replace(/\n/g,'<br/>')}</span>`;
-    }
-    return segment.split('\n').map(line => {
-      if (!line.trim()) return '<br/>';
-      const heading = line.match(/^\s*#{1,6}\s+(.+)$/);
-      if (heading) return `<span class="md-heading">${fmtInlineMarkdown(heading[1])}</span>`;
-      const bullet = line.match(/^\s*[-*]\s+(.+)$/);
-      if (bullet) return `<span class="md-bullet">• ${fmtInlineMarkdown(bullet[1])}</span>`;
-      const ordered = line.match(/^\s*(\d+)\.\s+(.+)$/);
-      if (ordered) return `<span class="md-bullet">${ordered[1]}. ${fmtInlineMarkdown(ordered[2])}</span>`;
-      return fmtInlineMarkdown(line);
-    }).join('<br/>');
-  }).join('');
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 function fmtNarrative(s){
-  return fmtMarkdown(s);
+  return escHtml(s || '')
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/\n/g,'<br/>');
 }
 
 /* ── Tabs ── */
@@ -2719,7 +2661,7 @@ tabButtons.forEach((button, index) => {
 });
 window.addEventListener('resize', () => updateTabIndicator(document.querySelector('.tab.active')));
 
-activateTab(currentParams().get('tab') || 'observations', {updateUrl: false});
+activateTab(currentParams().get('tab') || 'sessions', {updateUrl: false});
 
 /* ── Header ── */
 document.getElementById('hdr-range').textContent = D.first_event_ts + ' — ' + D.last_event_ts;
@@ -2995,6 +2937,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       recent: (a,b) => sessionTimeMs(b) - sessionTimeMs(a),
       quality: (a,b) => Number(b.quality_score || 0) - Number(a.quality_score || 0),
       tokens: (a,b) => (Number(b.input_tokens || 0) + Number(b.output_tokens || 0)) - (Number(a.input_tokens || 0) + Number(a.output_tokens || 0)),
+      cost: (a,b) => Number(b.total_cost_usd || b.total_cost || 0) - Number(a.total_cost_usd || a.total_cost || 0),
       duration: (a,b) => Number(b.duration_ms || 0) - Number(a.duration_ms || 0),
       events: (a,b) => Number(b.event_count || 0) - Number(a.event_count || 0),
     };
@@ -3033,6 +2976,8 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       const isActive = s._idx === selectedIdx;
       const estimatedTokens = getEstimatedSessionTokens(s);
       const tokens = (estimatedTokens?.input ?? s.input_tokens ?? 0) + (estimatedTokens?.output ?? s.output_tokens ?? 0);
+      const cost = Number(s.total_cost_usd || s.total_cost || 0);
+      const unit = String(s.pricing_unit || D.pricing_unit || 'usd').toUpperCase();
       return `<button type="button" class="sb-card${isActive ? ' active' : ''}" data-idx="${s._idx}" aria-pressed="${isActive ? 'true' : 'false'}">
         <div class="sb-card-header">
           <div class="sb-agent-dot" style="background:${agentColor}"></div>
@@ -3042,8 +2987,8 @@ let filteredDashboardSessions = (D.sessions || []).slice();
         <div class="sb-card-prompt">${prompt}</div>
         <div class="sb-card-badges">
           <div class="sb-card-badge">${fmt(s.event_count || 0)} events</div>
-          ${s.has_telemetry ? '<div class="sb-card-badge sb-card-badge-telemetry" title="OTLP telemetry available">OTLP</div>' : ''}
           ${tokens > 0 ? `<div class="sb-card-badge">${estimatedTokens ? '~' : ''}${fmtTokenShort(tokens)} tok</div>` : ''}
+          ${cost > 0 ? `<div class="sb-card-badge">${fmtCost(cost)} ${escHtml(unit)}</div>` : ''}
           ${s.quality_score ? `<div class="sb-card-badge" style="color:${s.quality_score > 70 ? 'var(--green)' : 'var(--yellow)'}">${s.quality_score.toFixed(0)}%</div>` : ''}
         </div>
       </button>`;
@@ -3071,15 +3016,16 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     const inTok = estimatedTokens?.input ?? session.input_tokens ?? 0;
     const outTok = estimatedTokens?.output ?? session.output_tokens ?? 0;
     const cacheTok = session.cache_read_tokens || 0;
+    const sessionCost = Number(session.total_cost_usd || session.total_cost || 0);
+    const sessionUnit = String(session.pricing_unit || D.pricing_unit || 'usd').toUpperCase();
     const tokenMeta = estimatedTokens
       ? (session._fullLoaded ? 'Estimated from full Cursor transcript content.' : 'Estimated from available Cursor transcript preview.')
       : (session.token_note || '');
     const tokenNote = estimatedTokens
       ? (session._fullLoaded
-        ? 'Token counts are estimated from Cursor transcript text with a rough len(text)/4 heuristic because exact per-session usage is not present in local telemetry.'
-        : 'Token counts are estimated from the available Cursor transcript preview with a rough len(text)/4 heuristic because exact per-session usage is not present in local telemetry. Load the full transcript to refine this estimate.')
+        ? 'Token counts are estimated from Cursor transcript text because exact per-session usage is not present in local telemetry.'
+        : 'Token counts are estimated from the available Cursor transcript preview because exact per-session usage is not present in local telemetry. Load the full transcript to refine this estimate.')
       : (session.token_note || '');
-    const detailWarnings = Array.isArray(session._detailWarnings) ? session._detailWarnings : [];
     const activeDetailTab = session._detailTab || 'conversation';
 
     let headerHtml = `<div class="sb-detail-header">
@@ -3091,14 +3037,13 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       <div class="sb-detail-stats">
         <span>Duration: <strong>${fmtDur(session.duration_ms)}</strong></span>
         <span>Events: <strong>${fmt(session.event_count || 0)}</strong></span>
-        <span title="${session.has_telemetry ? 'OTLP traces or logs are available for this session.' : 'Loaded from local session storage only.'}">Telemetry: <strong>${session.has_telemetry ? 'OTLP' : 'Local only'}</strong></span>
         <span title="${tokenMeta}">In: <strong>${estimatedTokens ? '~' : ''}${fmtTokenShort(inTok)}</strong></span>
         <span title="${tokenMeta}">Out: <strong>${estimatedTokens ? '~' : ''}${fmtTokenShort(outTok)}</strong></span>
         ${cacheTok > 0 ? `<span>Cache: <strong>${fmtTokenShort(cacheTok)}</strong></span>` : ''}
+        <span title="Pricing source: ${escHtml(session.pricing_source || D.pricing_source || 'unknown')}">Cost: <strong>${fmtCost(sessionCost)} ${escHtml(sessionUnit)}</strong></span>
         ${session.failure_count > 0 ? `<span style="color:var(--red)">Failures: <strong>${session.failure_count}</strong></span>` : ''}
       </div>
       ${tokenNote ? `<div class="sb-detail-model" style="margin-top:8px">${escHtml(tokenNote)}</div>` : ''}
-      ${detailWarnings.length ? `<div class="sb-detail-model" style="margin-top:8px;color:var(--yellow)">${detailWarnings.map(w => escHtml(w)).join(' · ')}</div>` : ''}
     </div>`;
 
     const conversation = session.conversation || [];
@@ -3117,7 +3062,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
         const eventKind = `${ev.type || 'event'}${ev.type === 'tool_result' && ev.success === false ? ' fail' : ''}`;
         const previewLimit = session._fullLoaded ? 5000 : 280;
         const rawPreview = ev.preview ? ev.preview.slice(0, previewLimit) : '';
-        const preview = rawPreview ? fmtMarkdown(rawPreview) : '';
+        const preview = rawPreview ? escHtml(rawPreview) : '';
         const isLong = ev.preview && ev.preview.length > 280;
         const rail = `<div class="ev-rail"><span class="ev-ts">${relTime}</span><span class="ev-dot" aria-hidden="true"></span></div>`;
 
@@ -3164,68 +3109,25 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       timelineHtml = '<div style="color:var(--text-3);text-align:center;padding:40px">No conversation data for this session</div>';
     }
 
-    const detailTabs = [
-      { id: 'conversation', label: 'Conversation' },
-      { id: 'telemetry', label: 'Telemetry' },
-      { id: 'observations', label: 'Observations' },
-    ];
-    const activeDetailTabId = `sb-detail-tab-${activeDetailTab}`;
-    const activateSessionDetailTab = (tabId, {focusAfterRender = false} = {}) => {
-      session._detailTab = tabId || 'conversation';
-      renderSessionDetail(session);
-      if (
-        (session._detailTab === 'telemetry' || session._detailTab === 'observations')
-        && session.full_id
-        && !session.telemetry
-        && !session._loadingDetail
-      ) {
-        tryLoadFullDetail(session.full_id || session.id, null);
-      }
-      if (focusAfterRender) {
-        requestAnimationFrame(() => {
-          document.getElementById(`sb-detail-tab-${session._detailTab}`)?.focus();
-        });
-      }
-    };
-    const detailTabsHtml = `<div class="sb-detail-tabs" role="tablist" aria-label="Session detail tabs">
-      ${detailTabs.map(tab => `<button
-        type="button"
-        id="sb-detail-tab-${tab.id}"
-        role="tab"
-        aria-selected="${activeDetailTab === tab.id ? 'true' : 'false'}"
-        aria-controls="sb-detail-body-panel"
-        tabindex="${activeDetailTab === tab.id ? '0' : '-1'}"
-        class="sb-detail-tab${activeDetailTab === tab.id ? ' active' : ''}"
-        data-tab="${tab.id}"
-      >${tab.label}</button>`).join('')}
+    const detailTabsHtml = `<div class="sb-detail-tabs">
+      <button type="button" class="sb-detail-tab${activeDetailTab === 'conversation' ? ' active' : ''}" data-tab="conversation">Conversation</button>
+      <button type="button" class="sb-detail-tab${activeDetailTab === 'telemetry' ? ' active' : ''}" data-tab="telemetry">Telemetry</button>
     </div>`;
     const bodyHtml = activeDetailTab === 'telemetry'
       ? renderTelemetryCockpit(session)
-      : activeDetailTab === 'observations'
-        ? renderSessionObservations(session)
-        : renderConversationCasefile(session, conversation, loadBtnHtml, timelineHtml);
+      : renderConversationCasefile(session, conversation, loadBtnHtml, timelineHtml);
 
     detailEl.innerHTML = headerHtml
       + detailTabsHtml
-      + `<div class="sb-detail-body" id="sb-detail-body-panel" role="tabpanel" aria-labelledby="${activeDetailTabId}">${bodyHtml}</div>`;
+      + `<div class="sb-detail-body">${bodyHtml}</div>`;
 
-    const detailTabEls = [...detailEl.querySelectorAll('.sb-detail-tab')];
-    const getNextDetailTabIndex = (index, key) => {
-      if (key === 'ArrowRight') return (index + 1) % detailTabEls.length;
-      if (key === 'ArrowLeft') return (index - 1 + detailTabEls.length) % detailTabEls.length;
-      if (key === 'Home') return 0;
-      if (key === 'End') return detailTabEls.length - 1;
-      return -1;
-    };
-    detailTabEls.forEach((tab, index) => {
+    detailEl.querySelectorAll('.sb-detail-tab').forEach(tab => {
       tab.addEventListener('click', () => {
-        activateSessionDetailTab(tab.dataset.tab || 'conversation');
-      });
-      tab.addEventListener('keydown', evt => {
-        const nextIndex = getNextDetailTabIndex(index, evt.key);
-        if (nextIndex < 0) return;
-        evt.preventDefault();
-        activateSessionDetailTab(detailTabEls[nextIndex].dataset.tab || 'conversation', { focusAfterRender: true });
+        session._detailTab = tab.dataset.tab || 'conversation';
+        renderSessionDetail(session);
+        if (session._detailTab === 'telemetry' && session.full_id && !session.telemetry && !session._loadingDetail) {
+          tryLoadFullDetail(session.full_id || session.id, null);
+        }
       });
     });
 
@@ -3370,157 +3272,6 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       ${failPart}
     </div>`;
     return `<div class="conversation-shell">${statsBar}${timelineHtml}</div>`;
-  }
-
-  function sessionTelemetrySummary(session){
-    const summary = session.telemetry?.summary || {};
-    if (session.has_telemetry) {
-      if ((summary.spans || 0) || (summary.logs || 0)) {
-        return `OTLP telemetry is linked to this session with ${fmt(summary.spans || 0)} spans and ${fmt(summary.logs || 0)} logs loaded.`;
-      }
-      return 'OTLP telemetry is available for this session. Open the Telemetry tab to inspect the trace and log detail.';
-    }
-    return 'This session is loaded from the local session store only. No OTLP telemetry was found.';
-  }
-
-  function buildSessionObservations(session){
-    const MAX_SESSION_OBSERVATIONS = 10;
-
-    /* ── Backend insights (distribution-aware) ─────────────── */
-    if (Array.isArray(session.insights) && session.insights.length > 0) {
-      const observations = session.insights.map(i => ({
-        tone: i.kind === 'strength' ? 'strength'
-            : i.kind === 'recommendation' ? 'recommendation'
-            : i.severity >= 3 ? 'recommendation'
-            : 'observation',
-        label: i.title,
-        text: i.body,
-      }));
-      /* Append telemetry marker observations from spans/logs */
-      const conversation = Array.isArray(session.conversation) ? session.conversation : [];
-      const telemetry = session.telemetry || {};
-      const summary = telemetry.summary || {};
-      const spans = Array.isArray(telemetry.spans) ? telemetry.spans : [];
-      const logs = Array.isArray(telemetry.logs) ? telemetry.logs : [];
-      const sessionStartTs = conversation[0]?.ts || 0;
-      const anchorMs = Number(summary.anchor_ns || 0) / 1e6;
-      buildSessionObservationMarkers(session, spans, logs, anchorMs, sessionStartTs).forEach(marker => {
-        observations.push({
-          tone: marker.tone === 'success' ? 'strength' : marker.tone === 'error' ? 'recommendation' : 'observation',
-          label: marker.label,
-          text: marker.sub || `Observed at ${fmtRelTime(marker.rel)}.`,
-        });
-      });
-      return observations.slice(0, MAX_SESSION_OBSERVATIONS);
-    }
-
-    /* ── Fallback: legacy JS logic for sessions without backend insights ─ */
-    const conversation = Array.isArray(session.conversation) ? session.conversation : [];
-    const telemetry = session.telemetry || {};
-    const summary = telemetry.summary || {};
-    const spans = Array.isArray(telemetry.spans) ? telemetry.spans : [];
-    const logs = Array.isArray(telemetry.logs) ? telemetry.logs : [];
-    const sessionStartTs = conversation[0]?.ts || 0;
-    const anchorMs = Number(summary.anchor_ns || 0) / 1e6;
-    const promptCount = conversation.filter(ev => ev.type === 'prompt').length;
-    const responseCount = conversation.filter(ev => ev.type === 'response').length;
-    const toolCount = conversation.filter(ev => ev.type === 'tool_call' || ev.type === 'mcp_call').length;
-    const topTool = Object.entries(session.tools || {}).sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))[0];
-    const observations = [{
-      tone: session.has_telemetry ? 'recommendation' : 'observation',
-      label: 'Telemetry',
-      text: sessionTelemetrySummary(session),
-    }];
-
-    if (promptCount || responseCount || toolCount) {
-      observations.push({
-        tone: 'observation',
-        label: 'Flow',
-        text: `${fmt(promptCount)} prompts, ${fmt(responseCount)} responses, and ${fmt(toolCount)} tool or MCP actions were captured in this session.`,
-      });
-    }
-
-    if (session.failure_count > 0) {
-      const recovered = Number(session.recovered_failures || 0);
-      observations.push({
-        tone: recovered > 0 ? 'observation' : 'recommendation',
-        label: 'Reliability',
-        text: recovered > 0
-          ? `${fmt(session.failure_count)} failures were seen, and ${fmt(recovered)} recovered before the session ended.`
-          : `${fmt(session.failure_count)} failures were captured with no recovery signal in the local timeline.`,
-      });
-    } else if (toolCount > 0) {
-      observations.push({
-        tone: 'strength',
-        label: 'Reliability',
-        text: 'No tool failures were captured in this session timeline.',
-      });
-    }
-
-    if (session.quality_score) {
-      observations.push({
-        tone: session.quality_score >= 70 ? 'strength' : 'observation',
-        label: 'Quality score',
-        text: `Session quality scored ${session.quality_score.toFixed(0)}% based on completion, efficiency, reliability, and loop signals.`,
-      });
-    }
-
-    if (topTool) {
-      observations.push({
-        tone: 'observation',
-        label: 'Tooling',
-        text: `${topTool[0]} was the busiest tool in this session with ${fmt(Number(topTool[1] || 0))} calls.`,
-      });
-    }
-
-    buildSessionObservationMarkers(session, spans, logs, anchorMs, sessionStartTs).forEach(marker => {
-      observations.push({
-        tone: marker.tone === 'success' ? 'strength' : marker.tone === 'error' ? 'recommendation' : 'observation',
-        label: marker.label,
-        text: marker.sub || `Observed at ${fmtRelTime(marker.rel)}.`,
-      });
-    });
-
-    return observations.slice(0, MAX_SESSION_OBSERVATIONS);
-  }
-
-  function renderSessionObservations(session){
-    const conversation = Array.isArray(session.conversation) ? session.conversation : [];
-    const promptCount = conversation.filter(ev => ev.type === 'prompt').length;
-    const responseCount = conversation.filter(ev => ev.type === 'response').length;
-    const toolCount = conversation.filter(ev => ev.type === 'tool_call' || ev.type === 'mcp_call').length;
-    const summaryCards = [
-      {
-        label: 'Session source',
-        value: session.has_telemetry ? 'Local + OTLP' : 'Local only',
-        sub: session.has_telemetry ? 'Telemetry can be opened in the cockpit tab.' : 'Transcript is available even without telemetry.',
-      },
-      {
-        label: 'Captured flow',
-        value: `${fmt(promptCount)} / ${fmt(responseCount)}`,
-        sub: 'Prompts / responses in the visible session timeline.',
-      },
-      {
-        label: 'Execution',
-        value: fmt(toolCount),
-        sub: `${fmt(session.failure_count || 0)} failures across tool and MCP activity.`,
-      },
-    ];
-    return `<div class="session-observation-shell">
-      <div class="session-observation-summary">
-        ${summaryCards.map(card => `<div class="session-observation-card">
-          <div class="session-observation-card-label">${escHtml(card.label)}</div>
-          <div class="session-observation-card-value">${escHtml(card.value)}</div>
-          <div class="session-observation-card-sub">${escHtml(card.sub)}</div>
-        </div>`).join('')}
-      </div>
-      <div class="session-observation-list">
-        ${buildSessionObservations(session).map(item => `<div class="obs-item" data-tone="${escHtml(item.tone)}">
-          <div class="obs-item-label">${escHtml(item.label)}</div>
-          <div class="obs-item-body">${escHtml(item.text)}</div>
-        </div>`).join('')}
-      </div>
-    </div>`;
   }
 
   function telemetryBeatLabel(ev){
@@ -3911,7 +3662,6 @@ let filteredDashboardSessions = (D.sessions || []).slice();
   function renderTelemetryCockpit(session){
     const telemetry = session.telemetry;
     const summary = telemetry?.summary || {};
-    const telemetryWarnings = Array.isArray(telemetry?.warnings) ? telemetry.warnings : [];
     if (!telemetry || (!(summary.spans || 0) && !(summary.logs || 0))) {
       return `<div class="telemetry-empty">
         <div style="font-size:16px;color:var(--text);font-weight:700;margin-bottom:8px">Telemetry cockpit</div>
@@ -3983,9 +3733,6 @@ let filteredDashboardSessions = (D.sessions || []).slice();
             </div>
           `).join('')}
         </div>
-        ${telemetryWarnings.length ? `<div class="telemetry-chip-row">${telemetryWarnings.map(warning => `
-          <span class="telemetry-chip" title="${escHtml(warning)}">${escHtml(warning)}</span>
-        `).join('')}</div>` : ''}
         ${beats.length ? `<div class="telemetry-beat-row">
           <div class="telemetry-beat-scale">
             <span>Session timeline${observationMarkers.length ? ` · ${fmt(observationMarkers.length)} observations` : ''}</span>
@@ -4157,10 +3904,6 @@ let filteredDashboardSessions = (D.sessions || []).slice();
           const conv = normalizeLoadedConversation(events, sessions[idx].conversation);
           if (conv.length > 0) sessions[idx].conversation = conv;
           if (telemetry) sessions[idx].telemetry = telemetry;
-          sessions[idx]._detailWarnings = Array.from(new Set([
-            ...(data.warnings || []),
-            ...((telemetry && telemetry.warnings) || []),
-          ].filter(Boolean)));
           sessions[idx]._fullLoaded = true;
           sessions[idx]._loadingDetail = false;
           const estimated = getEstimatedSessionTokens(sessions[idx]);
@@ -4169,7 +3912,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
             sessions[idx].output_tokens = estimated.output;
             sessions[idx]._estimatedTokens = true;
             sessions[idx].token_source = 'estimated_cursor_transcript';
-            sessions[idx].token_note = 'Token counts are estimated from Cursor transcript text with a rough len(text)/4 heuristic because exact per-session usage is not present in local telemetry.';
+            sessions[idx].token_note = 'Token counts are estimated from Cursor transcript text because exact per-session usage is not present in local telemetry.';
           }
           renderSessionDetail(sessions[idx]);
         } else if (btn) {
@@ -4213,6 +3956,8 @@ document.getElementById('stat-row').innerHTML = statDefs.map(s=>`
     <div class="stat-value">${s.value}</div>
     <div class="stat-sub">${s.sub}</div>
   </div>`).join('');
+
+const costUnit = String(D.pricing_unit || 'usd').toUpperCase();
 
 function formatSignedDelta(delta, suffix = ''){
   const value = Number(delta || 0);
@@ -4343,12 +4088,13 @@ function buildCompareTab(){
       `).join('')
     }</tbody></table>`;
     baselineEl.innerHTML = (comparison.baseline_agents || []).length
-      ? `<table class="data-table"><thead><tr><th>Agent</th><th style="text-align:right">Sessions</th><th style="text-align:right">Tools</th><th style="text-align:right">Quality</th></tr></thead><tbody>${
+      ? `<table class="data-table"><thead><tr><th>Agent</th><th style="text-align:right">Sessions</th><th style="text-align:right">Tools</th><th style="text-align:right">Cost</th><th style="text-align:right">Quality</th></tr></thead><tbody>${
           comparison.baseline_agents.map(agent => `
             <tr>
               <td style="font-weight:600">${escHtml(agent.name || 'unknown')}</td>
               <td style="text-align:right">${fmt(agent.sessions || 0)}</td>
               <td style="text-align:right">${fmt(agent.tools || 0)}</td>
+              <td style="text-align:right">${fmtCost(agent.total_cost_usd || agent.total_cost || 0)} ${escHtml(costUnit)}</td>
               <td style="text-align:right">${Number(agent.avg_quality || 0).toFixed(1)}%</td>
             </tr>
           `).join('')
@@ -4368,13 +4114,14 @@ function buildCompareTab(){
     </div>
   `;
   detailsEl.innerHTML = ranking.length
-    ? `<table class="tbl"><thead><tr><th>Agent</th><th style="text-align:right">Sessions</th><th style="text-align:right">Prompts</th><th style="text-align:right">Tools</th><th style="text-align:right">Failures</th><th style="text-align:right">Quality</th></tr></thead><tbody>${
+    ? `<table class="tbl"><thead><tr><th>Agent</th><th style="text-align:right">Sessions</th><th style="text-align:right">Prompts</th><th style="text-align:right">Tools</th><th style="text-align:right">Cost</th><th style="text-align:right">Failures</th><th style="text-align:right">Quality</th></tr></thead><tbody>${
         ranking.map(agent => `
           <tr>
             <td style="font-weight:600">${escHtml(agent.name || 'unknown')}</td>
             <td style="text-align:right">${fmt(agent.sessions || 0)}</td>
             <td style="text-align:right">${fmt(agent.prompts || 0)}</td>
             <td style="text-align:right">${fmt(agent.tools || 0)}</td>
+            <td style="text-align:right">${fmtCost(agent.total_cost_usd || agent.total_cost || 0)} ${escHtml(costUnit)}</td>
             <td style="text-align:right">${fmt(agent.failures || 0)}</td>
             <td style="text-align:right">${Number(agent.avg_quality || 0).toFixed(1)}%</td>
           </tr>
@@ -4432,6 +4179,37 @@ document.getElementById('stat-input-tok').textContent = fmt(D.total_input_tokens
 document.getElementById('stat-output-tok').textContent = fmt(D.total_output_tokens||0);
 document.getElementById('stat-cache-tok').textContent = fmt(D.total_cache_read_tokens||0);
 document.getElementById('stat-tok-ratio').textContent = D.total_input_tokens ? (D.total_output_tokens / D.total_input_tokens).toFixed(2) : '--';
+
+const costStats = [
+  ['Total Cost', fmtCost(D.total_cost_usd || D.total_cost || 0), costUnit],
+  ['Input Cost', fmtCost(D.input_cost_usd || D.input_cost || 0), costUnit],
+  ['Output Cost', fmtCost(D.output_cost_usd || D.output_cost || 0), costUnit],
+  ['Cache Cost', fmtCost((D.cache_creation_cost_usd || D.cache_creation_cost || 0) + (D.cache_read_cost_usd || D.cache_read_cost || 0)), costUnit],
+  ['Pricing Source', escHtml(D.pricing_source || 'unknown'), `${Object.keys(D.model_costs || {}).length} priced model(s)`],
+];
+const costStatsEl = document.getElementById('cost-stats');
+if (costStatsEl) {
+  costStatsEl.innerHTML = costStats.map(([label, value, sub]) => `
+    <div style="background:var(--surface2);border-radius:10px;padding:14px 16px">
+      <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">${label}</div>
+      <div style="font-size:22px;font-weight:700;margin-top:4px">${value}</div>
+      <div style="font-size:12px;color:var(--text-3);margin-top:4px">${sub}</div>
+    </div>
+  `).join('');
+}
+const modelCostRows = Object.entries(D.model_costs || {})
+  .sort((a,b) => Number(b[1] || 0) - Number(a[1] || 0))
+  .slice(0, 8);
+const modelCostEl = document.getElementById('model-cost-share');
+if (modelCostEl) {
+  modelCostEl.innerHTML = modelCostRows.length
+    ? `<table class="tbl"><thead><tr><th>Model</th><th style="text-align:right">Estimated cost</th></tr></thead><tbody>${
+        modelCostRows.map(([model, cost]) => `
+          <tr><td style="font-weight:600">${escHtml(model)}</td><td style="text-align:right">${fmtCost(cost)} ${escHtml(costUnit)}</td></tr>
+        `).join('')
+      }</tbody></table>`
+    : `<div style="color:var(--text-3);padding:12px 0">No model cost data available. Run reflect doctor to inspect pricing status.</div>`;
+}
 
 /* Insights */
 /* Observations */
@@ -4725,7 +4503,7 @@ function buildBarList(elId, obj, color){
 buildBarList('tools-list', D.tools_by_count, P.blue);
 buildBarList('skills-list', D.skills_by_count || D.subagent_types_by_count || {}, P.purple);
 
-/* MCP observed completion table */
+/* MCP availability table */
 (function buildMcpPanel(){
   const before = D.mcp_server_before || {};
   const after  = D.mcp_server_after  || {};
@@ -4738,13 +4516,13 @@ buildBarList('skills-list', D.skills_by_count || D.subagent_types_by_count || {}
   const rows = servers.map(s => {
     const calls = before[s] || 0;
     const done  = after[s]  || 0;
-    const completion = calls > 0 ? Math.round(done / calls * 100) : 0;
-    const color = completion >= 95 ? 'var(--green)' : completion >= 80 ? 'var(--yellow)' : 'var(--red)';
+    const avail = calls > 0 ? Math.round(done / calls * 100) : 0;
+    const color = avail >= 95 ? 'var(--green)' : avail >= 80 ? 'var(--yellow)' : 'var(--red)';
     return `<tr>
       <td title="${s}">${s}</td>
       <td style="text-align:right">${calls.toLocaleString()}</td>
       <td style="text-align:right">${done.toLocaleString()}</td>
-      <td style="text-align:right"><span style="color:${color};font-weight:600">${completion}%</span></td>
+      <td style="text-align:right"><span style="color:${color};font-weight:600">${avail}%</span></td>
     </tr>`;
   }).join('');
   document.getElementById('mcp-list').innerHTML = `<table class="data-table">
@@ -4752,7 +4530,7 @@ buildBarList('skills-list', D.skills_by_count || D.subagent_types_by_count || {}
       <th>Server</th>
       <th style="text-align:right">Calls</th>
       <th style="text-align:right">Completed</th>
-      <th style="text-align:right">Completion</th>
+      <th style="text-align:right">Avail</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;

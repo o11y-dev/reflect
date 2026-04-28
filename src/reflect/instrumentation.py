@@ -809,7 +809,12 @@ def _run_setup(
     from reflect.gateway import _is_running as _gateway_is_running
     from reflect.gateway import daemon_start as _gateway_daemon_start
 
-    if _gateway_is_running():
+    try:
+        gateway_running = bool(_gateway_is_running())
+    except PermissionError:
+        gateway_running = False
+
+    if gateway_running:
         console.print("  [green]✓[/] Gateway already running")
     else:
         try:

@@ -4,6 +4,7 @@ import os
 import time
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlparse
 
 from reflect.config import load_litellm_config, load_model_aliases, resolve_config
@@ -15,9 +16,39 @@ _DEFAULT_FALLBACK_PRICES: dict[str, dict[str, float]] = {
         "input_cost_per_token": 0.00000015,
         "output_cost_per_token": 0.00000060,
     },
+    "gpt-4o": {
+        "input_cost_per_token": 0.0000025,
+        "output_cost_per_token": 0.000010,
+    },
     "claude-3-5-sonnet": {
         "input_cost_per_token": 0.000003,
         "output_cost_per_token": 0.000015,
+    },
+    "claude-sonnet-4": {
+        "input_cost_per_token": 0.000003,
+        "output_cost_per_token": 0.000015,
+        "cache_creation_input_token_cost": 0.00000375,
+        "cache_read_input_token_cost": 0.00000030,
+    },
+    "claude-sonnet-4-5": {
+        "input_cost_per_token": 0.000003,
+        "output_cost_per_token": 0.000015,
+        "cache_creation_input_token_cost": 0.00000375,
+        "cache_read_input_token_cost": 0.00000030,
+    },
+    "claude-opus-4-5": {
+        "input_cost_per_token": 0.000015,
+        "output_cost_per_token": 0.000075,
+        "cache_creation_input_token_cost": 0.00001875,
+        "cache_read_input_token_cost": 0.00000150,
+    },
+    "gemini-2.0-flash": {
+        "input_cost_per_token": 0.00000010,
+        "output_cost_per_token": 0.00000040,
+    },
+    "gemini-2.5-pro": {
+        "input_cost_per_token": 0.00000125,
+        "output_cost_per_token": 0.000010,
     },
 }
 
@@ -63,6 +94,16 @@ class PricingTable:
     pricing_unit: str = "usd"
 
 
+@dataclass(frozen=True)
+class PricingStatus:
+    pricing_table: PricingTable
+    model_prices_url: str
+    cache_path: Path
+    cache_exists: bool
+    cache_age_seconds: int | None = None
+    cache_fresh: bool = False
+    error: str = ""
+
 
 def canonicalize_model_name(model: str, aliases: dict[str, str] | None = None) -> str:
     value = (model or "").strip().lower()
@@ -83,6 +124,8 @@ def canonicalize_model_name(model: str, aliases: dict[str, str] | None = None) -
     parts = value.split("-")
     if len(parts) >= 4 and parts[-1].isdigit() and len(parts[-1]) == 2 and parts[-2].isdigit():
         value = "-".join(parts[:-3])
+    elif len(parts) >= 4 and parts[-1].isdigit() and len(parts[-1]) == 8:
+        value = "-".join(parts[:-1])
 
     return value
 
@@ -137,31 +180,64 @@ def _parse_pricing_map(payload: dict) -> dict[str, ModelPricing]:
 
 
 
-def load_pricing_table(cache_ttl_hours: int = 24) -> PricingTable:
+def _fallback_pricing_table(now: int, pricing_unit: str) -> PricingTable:
+    fallback_prices = {
+        key: _coerce_model_pricing(key, row)
+        for key, row in _DEFAULT_FALLBACK_PRICES.items()
+    }
+    return PricingTable(prices=fallback_prices, source="fallback", fetched_at_unix=now, pricing_unit=pricing_unit)
+
+
+def load_pricing_status(cache_ttl_hours: int = 24, reflect_home: Path | None = None) -> PricingStatus:
     cfg = resolve_config()
-    lite = load_litellm_config()
+    if reflect_home is not None:
+        home = Path(reflect_home).expanduser()
+        cfg = type(cfg)(
+            reflect_home=home,
+            config_dir=home / "config",
+            cache_dir=home / "cache",
+            state_dir=home / "state",
+            model_aliases_path=home / "config" / "model-aliases.json",
+            litellm_config_path=home / "config" / "litellm.json",
+        )
+    lite = load_litellm_config(cfg.litellm_config_path)
     cache_path = cfg.cache_dir / "litellm-pricing.json"
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     now = int(time.time())
     ttl_seconds = max(1, int(cache_ttl_hours * 3600))
+    cache_exists = cache_path.exists()
+    cache_age_seconds: int | None = None
+    last_error = ""
 
     # 1) use fresh cache first
     if cache_path.exists():
         try:
             cache_payload = _json_loads(cache_path.read_text(encoding="utf-8"))
             fetched = int(cache_payload.get("fetched_at_unix") or 0)
+            if fetched > 0:
+                cache_age_seconds = max(0, now - fetched)
             prices_payload = cache_payload.get("prices") or {}
             prices = _parse_pricing_map(prices_payload)
             if prices and fetched > 0 and (now - fetched) <= ttl_seconds:
-                return PricingTable(
-                    prices=prices,
-                    source="cache",
-                    fetched_at_unix=fetched,
-                    pricing_unit=lite.pricing_unit,
+                return PricingStatus(
+                    pricing_table=PricingTable(
+                        prices=prices,
+                        source="cache",
+                        fetched_at_unix=fetched,
+                        pricing_unit=lite.pricing_unit,
+                    ),
+                    model_prices_url=lite.model_prices_url,
+                    cache_path=cache_path,
+                    cache_exists=True,
+                    cache_age_seconds=cache_age_seconds,
+                    cache_fresh=True,
                 )
+            if not prices:
+                last_error = "cached pricing payload did not contain usable model prices"
         except Exception as exc:  # pragma: no cover - defensive fallback
             logger.debug("LiteLLM pricing cache read failed: %s", exc)
+            last_error = f"cache read failed: {exc}"
 
     # 2) try live fetch when cache is missing/stale
     try:
@@ -172,16 +248,38 @@ def load_pricing_table(cache_ttl_hours: int = 24) -> PricingTable:
         live_prices = _parse_pricing_map(live_payload)
         if live_prices:
             cache_path.write_text(_json_dumps({"fetched_at_unix": now, "prices": live_payload}), encoding="utf-8")
-            return PricingTable(prices=live_prices, source="live", fetched_at_unix=now, pricing_unit=lite.pricing_unit)
+            return PricingStatus(
+                pricing_table=PricingTable(
+                    prices=live_prices,
+                    source="live",
+                    fetched_at_unix=now,
+                    pricing_unit=lite.pricing_unit,
+                ),
+                model_prices_url=lite.model_prices_url,
+                cache_path=cache_path,
+                cache_exists=True,
+                cache_age_seconds=0,
+                cache_fresh=True,
+            )
+        last_error = "live pricing payload did not contain usable model prices"
     except Exception as exc:  # pragma: no cover - network-dependent branch
         logger.debug("LiteLLM live pricing fetch failed: %s", exc)
+        last_error = f"live fetch failed: {exc}"
 
     # 3) static fallback
-    fallback_prices = {
-        key: _coerce_model_pricing(key, row)
-        for key, row in _DEFAULT_FALLBACK_PRICES.items()
-    }
-    return PricingTable(prices=fallback_prices, source="fallback", fetched_at_unix=now, pricing_unit=lite.pricing_unit)
+    return PricingStatus(
+        pricing_table=_fallback_pricing_table(now, lite.pricing_unit),
+        model_prices_url=lite.model_prices_url,
+        cache_path=cache_path,
+        cache_exists=cache_exists,
+        cache_age_seconds=cache_age_seconds,
+        cache_fresh=False,
+        error=last_error,
+    )
+
+
+def load_pricing_table(cache_ttl_hours: int = 24) -> PricingTable:
+    return load_pricing_status(cache_ttl_hours=cache_ttl_hours).pricing_table
 
 
 

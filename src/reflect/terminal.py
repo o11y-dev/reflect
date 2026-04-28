@@ -39,6 +39,11 @@ def _render_terminal(  # noqa: C901
 
     if console is None:
         console = Console(force_terminal=True)
+    unit = (stats.pricing_unit or "usd").upper()
+    session_costs = stats.session_costs or {}
+
+    def _fmt_cost(value: float) -> str:
+        return f"{float(value or 0.0):,.2f}"
 
     # ── header ───────────────────────────────────────────────────────────────
     console.print()
@@ -100,6 +105,7 @@ def _render_terminal(  # noqa: C901
         avg_quality = sum(stats.session_quality_scores.values()) / len(stats.sessions_seen)
 
     console.print(Columns([
+        _stat_panel("Events",        f"{stats.total_events:,}",     "cyan"),
         _stat_panel("Quality Score", f"{avg_quality:.1f}%",        "bold green" if avg_quality > 70 else "yellow"),
         _stat_panel("Sessions",     f"{len(stats.sessions_seen)}", "blue"),
         _stat_panel("Active Days",  f"{stats.days_active}",        "green"),
@@ -122,6 +128,7 @@ def _render_terminal(  # noqa: C901
         agent_tbl.add_column("Top Tools", style="dim")
         agent_tbl.add_column("In Tok",   justify="right", style="cyan")
         agent_tbl.add_column("Out Tok",  justify="right", style="green")
+        agent_tbl.add_column("Cost",     justify="right", style="yellow")
         agent_tbl.add_column("Fail %",   justify="right", style="red")
 
         for ag_name, ag in sorted(stats.agents.items()):
@@ -132,6 +139,7 @@ def _render_terminal(  # noqa: C901
             ag_tool_calls = ag.events_by_type.get("PreToolUse", 0)
             ag_failures = ag.events_by_type.get("PostToolUseFailure", 0)
             ag_fail_pct = round(100 * ag_failures / ag_tool_calls, 1) if ag_tool_calls else 0
+            ag_cost = sum(float((session_costs.get(sid) or {}).get("total_cost_usd") or 0.0) for sid in ag.sessions_seen)
 
             q_filled = round(avg_q / 100 * 5)
             q_label = "High" if avg_q > 70 else "Med" if avg_q > 40 else "Low"
@@ -146,6 +154,7 @@ def _render_terminal(  # noqa: C901
                 ag_top_tools or "—",
                 _fmt_tokens(ag.total_input_tokens),
                 _fmt_tokens(ag.total_output_tokens),
+                _fmt_cost(ag_cost),
                 f"{ag_fail_pct}%",
             )
 
@@ -177,15 +186,21 @@ def _render_terminal(  # noqa: C901
             _stat_panel("Heavy-Model Share", f"{economy['heavy_model_share']:.0f}%", "white"),
         ], equal=True))
         console.print()
-        if stats.total_cost > 0:
-            unit = (stats.pricing_unit or "usd").upper()
-            console.print(Columns([
-                _stat_panel(f"Est. Total Cost ({unit})", f"{stats.total_cost:,.2f}", "green"),
-                _stat_panel("Input Cost", f"{stats.input_cost:,.2f}", "cyan"),
-                _stat_panel("Output Cost", f"{stats.output_cost:,.2f}", "yellow"),
-                _stat_panel("Pricing Source", stats.pricing_source or "unknown", "blue"),
-            ], equal=True))
-            console.print()
+        unit = (stats.pricing_unit or "usd").upper()
+        console.print(Columns([
+            _stat_panel(f"Est. Total Cost ({unit})", f"{stats.total_cost:,.2f}", "green"),
+            _stat_panel("Input Cost", f"{stats.input_cost:,.2f}", "cyan"),
+            _stat_panel("Output Cost", f"{stats.output_cost:,.2f}", "yellow"),
+            _stat_panel("Pricing Source", stats.pricing_source or "unknown", "blue"),
+        ], equal=True))
+        if stats.total_cost <= 0 and any(
+            row.get("pricing_source") == "missing" for row in stats.session_costs.values()
+        ):
+            console.print(
+                "[yellow]Cost is zero because token-bearing sessions have no resolved model pricing. "
+                "Run `reflect doctor` to inspect LiteLLM pricing status.[/]"
+            )
+        console.print()
 
     # ── Activity heatmap / day breakdown ────────────────────────────────────
     from datetime import date as _date
@@ -341,6 +356,13 @@ def _render_terminal(  # noqa: C901
         tool_tbl.add_column("",       no_wrap=True,    min_width=12)
         tool_tbl.add_column("#",      style="dim",     justify="right")
         tool_tbl.add_column("p50",    style="dim",     justify="right")
+        tool_tbl.add_column("Cost",   style="yellow",  justify="right")
+        tool_costs: Counter[str] = Counter()
+        for sid, seq in stats.session_tool_seq.items():
+            row_cost = float((session_costs.get(sid) or {}).get("total_cost_usd") or 0.0)
+            present_tools = {tool for _, tool, _ in seq if tool}
+            for tool in present_tools:
+                tool_costs[tool] += row_cost
         for tool, cnt in top_tools:
             filled = round(cnt / max_t * 12)
             durations = stats.tool_durations_ms.get(tool, [])
@@ -348,7 +370,7 @@ def _render_terminal(  # noqa: C901
             if durations:
                 s = sorted(durations)
                 p50 = f"{s[len(s)//2]:.0f}"
-            tool_tbl.add_row(tool, _bar(filled, 12, "blue"), str(cnt), p50)
+            tool_tbl.add_row(tool, _bar(filled, 12, "blue"), str(cnt), p50, _fmt_cost(tool_costs.get(tool, 0.0)))
         tool_panel = Panel(tool_tbl, title="[bold]Top Tools[/]", border_style="dim")
 
     mod_panel = None
@@ -359,9 +381,10 @@ def _render_terminal(  # noqa: C901
         mod_tbl.add_column("Model", style="magenta", no_wrap=True, max_width=20)
         mod_tbl.add_column("",      no_wrap=True,    min_width=12)
         mod_tbl.add_column("#",     style="dim",     justify="right")
+        mod_tbl.add_column("Cost",  style="yellow",  justify="right")
         for m, cnt in top_models:
             filled = round(cnt / max_mod * 12)
-            mod_tbl.add_row(_fmt_model(m), _bar(filled, 12, "magenta"), str(cnt))
+            mod_tbl.add_row(_fmt_model(m), _bar(filled, 12, "magenta"), str(cnt), _fmt_cost(stats.model_costs.get(m, 0.0)))
         mod_panel = Panel(mod_tbl, title="[bold]Models[/]", border_style="dim")
 
     if tool_panel and mod_panel:
@@ -508,6 +531,7 @@ def _render_terminal(  # noqa: C901
     sess_tbl.add_column("Started (UTC)", style="dim",     no_wrap=True, min_width=16)
     sess_tbl.add_column("Score",         justify="right", style="bold green", min_width=5)
     sess_tbl.add_column("In Tok",        justify="right", style="cyan", min_width=6)
+    sess_tbl.add_column("Cost",          justify="right", style="yellow", min_width=8)
 
     for sid in sorted(stats.sessions_seen, key=lambda s: stats.session_events.get(s, 0), reverse=True):
         # Derive session name from first prompt preview
@@ -541,6 +565,7 @@ def _render_terminal(  # noqa: C901
 
         score = stats.session_quality_scores.get(sid, 0.0)
         score_color = "green" if score > 70 else "yellow" if score > 40 else "red"
+        row_cost = float((session_costs.get(sid) or {}).get("total_cost_usd") or 0.0)
 
         row = [session_name]
         if multi_agent:
@@ -549,6 +574,7 @@ def _render_terminal(  # noqa: C901
             created or "—",
             f"[{score_color}]{score:.0f}[/]",
             in_tok,
+            _fmt_cost(row_cost),
         ])
         sess_tbl.add_row(*row)
 

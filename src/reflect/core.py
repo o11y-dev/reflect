@@ -1646,13 +1646,51 @@ def doctor() -> None:
     summary.add_row("local spans", f"[bold]{span_files}[/] file(s)")
     summary.add_row("local sessions", f"[bold]{session_files}[/] file(s)")
     from reflect.gateway import _is_running as _gw_running
-    gw_pid = _gw_running()
+    try:
+        gw_pid = _gw_running()
+    except PermissionError:
+        gw_pid = None
     summary.add_row(
         "otlp gateway",
         _status_markup(gw_pid is not None, present=f"running (PID {gw_pid})", missing="stopped"),
     )
     console.print(Panel(summary, title="Overview", border_style="blue"))
     _render_update_advisor_panel(console, update_advisor)
+
+    from reflect.pricing import load_pricing_status
+    pricing_status = load_pricing_status(reflect_home=REFLECT_HOME)
+    pricing_table = pricing_status.pricing_table
+    pricing_ok = pricing_table.source in {"live", "cache"} or bool(pricing_table.prices)
+    pricing_details = Table.grid(padding=(0, 2))
+    pricing_details.add_column(style="bold")
+    pricing_details.add_column()
+    pricing_details.add_row(
+        "source",
+        _status_markup(
+            pricing_ok,
+            present=f"{pricing_table.source} ({len(pricing_table.prices)} model(s))",
+            missing="missing",
+        ),
+    )
+    pricing_details.add_row("pricing unit", pricing_table.pricing_unit)
+    pricing_details.add_row("LiteLLM URL", pricing_status.model_prices_url)
+    pricing_details.add_row(
+        "cache",
+        (
+            f"{'fresh' if pricing_status.cache_fresh else 'stale/missing'}"
+            + (
+                f", age {pricing_status.cache_age_seconds // 3600}h"
+                if pricing_status.cache_age_seconds is not None
+                else ""
+            )
+        ),
+    )
+    pricing_details.add_row("cache path", str(pricing_status.cache_path))
+    sample_models = ", ".join(sorted(pricing_table.prices.keys())[:5]) or "none"
+    pricing_details.add_row("sample models", sample_models)
+    if pricing_status.error:
+        pricing_details.add_row("last error", f"[yellow]{pricing_status.error}[/]")
+    console.print(Panel(pricing_details, title="Pricing", border_style="green" if pricing_ok else "yellow"))
 
     exports = Table(box=box.SIMPLE_HEAVY, expand=True)
     exports.add_column("Signal", style="bold cyan")

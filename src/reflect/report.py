@@ -56,6 +56,23 @@ def render_report(
     top_subagents = stats.subagent_types.most_common()
     top_model_costs = stats.model_costs.most_common(10)
     pricing_unit = (stats.pricing_unit or "usd").upper()
+    total_tokens = (
+        stats.total_input_tokens
+        + stats.total_output_tokens
+        + stats.total_cache_creation_tokens
+        + stats.total_cache_read_tokens
+    )
+    cost_note = ""
+    if total_tokens and stats.total_cost <= 0:
+        missing_models = [
+            sid for sid, row in stats.session_costs.items()
+            if row.get("pricing_source") == "missing"
+        ]
+        if missing_models:
+            cost_note = (
+                "Cost is zero because one or more sessions have token usage but no resolved "
+                "model pricing. Run `reflect doctor` to inspect LiteLLM pricing status."
+            )
 
     # Compute derived metrics
     prompts = stats.events_by_type.get("UserPromptSubmit", 0)
@@ -350,6 +367,7 @@ def render_report(
         f"| Cache read cost | {stats.cache_read_cost:,.2f} |",
         f"| Pricing source | {stats.pricing_source or 'unknown'} |",
         "",
+        *([f"> {cost_note}", ""] if cost_note else []),
         "### Model Cost Share",
         "",
         *(["| Model | Estimated cost |", "|-------|----------------|"]

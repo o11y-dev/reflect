@@ -1070,6 +1070,8 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
             "tools": sum(ag.tools_by_count.values()),
             "failures": ag.events_by_type.get("PostToolUseFailure", 0),
             "tokens": ag.total_input_tokens + ag.total_output_tokens,
+            "total_cost": ag.total_cost,
+            "total_cost_usd": ag.total_cost_usd,
         })
 
     data = {

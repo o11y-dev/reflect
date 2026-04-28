@@ -88,6 +88,11 @@ class TestTokenCards:
         output = render_to_string(rich_stats)
         assert "Cache Hit" in output
 
+    def test_cost_cards_present_when_tokens_exist(self, rich_stats):
+        output = render_to_string(rich_stats)
+        assert "Est. Total Cost" in output
+        assert "Pricing Source" in output
+
 
 class TestActivitySection:
     def test_heatmap_present(self, rich_stats):
@@ -103,6 +108,11 @@ class TestToolsSection:
     def test_tools_table_present(self, rich_stats):
         output = render_to_string(rich_stats)
         assert "Read" in output or "Edit" in output or "Grep" in output
+
+    def test_tools_table_has_cost_column_and_attribution(self, rich_stats):
+        output = render_to_string(rich_stats)
+        assert "Top Tools" in output
+        assert "Cost" in output
 
 
 class TestMcpSection:
@@ -126,6 +136,10 @@ class TestSessionsSection:
     def test_sessions_table_present(self, rich_stats):
         output = render_to_string(rich_stats)
         assert "sess-claude" in output or "sess-copilot" in output or "Sessions" in output
+
+    def test_sessions_table_has_cost_column_and_attribution(self, rich_stats):
+        output = render_to_string(rich_stats)
+        assert "Cost" in output
 
 
 class TestPublishUrl:

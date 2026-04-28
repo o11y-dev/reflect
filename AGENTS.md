@@ -7,22 +7,26 @@ Guidance for AI agents working in this repository.
 **reflect** is a local-first CLI for AI agent telemetry. It reads OTLP traces plus local session stores for Claude, Copilot, Gemini, and Cursor, then renders terminal views, markdown reports, dashboard JSON, and the hosted publish view.
 
 CLI entry point: `reflect.core:main`
-Installed as: `reflect` (via `pipx install .` or `pip install -e .`)
+Installed as: `reflect` for releases via `pipx install .`; source development uses Poetry.
 
 ## Running it
 
 ```bash
-# Install editable package for source-based development
-pip install -e .[test]
+# Install dependencies for source-based development
+poetry install --extras test
 
 # Terminal dashboard (default)
-python3 -m reflect.core --otlp-traces ~/.reflect/state/otlp/otel-traces.json
+poetry run reflect --otlp-traces ~/.reflect/state/otlp/otel-traces.json
 
 # Markdown report
-python3 -m reflect.core --otlp-traces ~/.reflect/state/otlp/otel-traces.json --no-terminal --output reports/my-report.md
+poetry run reflect --otlp-traces ~/.reflect/state/otlp/otel-traces.json --no-terminal --output reports/my-report.md
 
 # Open local dashboard server
-python3 -m reflect.core report --otlp-traces ~/.reflect/state/otlp/otel-traces.json
+poetry run reflect report --otlp-traces ~/.reflect/state/otlp/otel-traces.json
+
+# Demo and health checks
+poetry run reflect --demo
+poetry run reflect doctor
 ```
 
 ## Key files
@@ -65,13 +69,13 @@ python3 -m reflect.core report --otlp-traces ~/.reflect/state/otlp/otel-traces.j
 
 ```bash
 # Fast targeted validation
-python3 -m pytest tests/test_dashboard_json.py -q
+poetry run pytest tests/test_dashboard_json.py -q
 
 # Full suite
-python3 -m pytest -q
+poetry run pytest -q
 
 # Cheap syntax check for dashboard server code
-python3 -m py_compile src/reflect/dashboard.py
+poetry run python -m py_compile src/reflect/dashboard.py
 ```
 
 ## Data flow for new metrics

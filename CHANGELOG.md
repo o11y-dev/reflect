@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.1 (unreleased)
+
+### Added
+- `reflect doctor` now reports LiteLLM pricing status, cache freshness, model count, and fallback details for cost-estimate troubleshooting
+- Dashboard cost surfaces now show total/input/output/cache cost, model cost share, per-session cost badges, agent cost, and cost-based session sorting
+
+### Changed
+- Source development docs now use Poetry commands for install, CLI smoke tests, and pytest validation
+- Demo traces now include model metadata so `reflect --demo` can show nonzero estimated cost
+
+### Fixed
+- Cost diagnostics now remain visible when token data exists but model pricing cannot be resolved
+- Pricing fallback and model canonicalization now cover the demo model families used by current reflect fixtures
+- Default LiteLLM pricing sync now uses the raw repository-hosted pricing JSON instead of the broken `litellm.ai` URL
+
 ## 0.7.0 (2026-04-26)
 
 ### Added

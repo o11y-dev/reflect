@@ -72,8 +72,11 @@ class TestLoadLiteLLMConfig:
     def test_defaults_when_missing(self, tmp_path):
         cfg = load_litellm_config(tmp_path / "missing.json")
 
-        assert cfg.base_url == "https://litellm.ai"
-        assert cfg.model_prices_url.endswith("model_prices_and_context_window.json")
+        assert cfg.base_url == "https://raw.githubusercontent.com/BerriAI/litellm/main"
+        assert cfg.model_prices_url == (
+            "https://raw.githubusercontent.com/BerriAI/litellm/main/"
+            "model_prices_and_context_window.json"
+        )
         assert cfg.api_key_env == "LITELLM_API_KEY"
         assert cfg.timeout_seconds == 10.0
         assert cfg.pricing_unit == "usd"
