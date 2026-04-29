@@ -815,11 +815,7 @@ def _iter_hook_batch_spans(file_path: Path) -> Iterable[dict]:
             start_ns = ts_ns
 
         end_ns = ts_ns
-
-        if event_name in ("PostToolUse", "PostToolUseFailure"):
-            span_start = start_ns
-        else:
-            span_start = ts_ns
+        span_start = start_ns if event_name in ("PostToolUse", "PostToolUseFailure") else ts_ns
 
         if data.get("prompt"):
             attrs["gen_ai.client.prompt"] = data["prompt"]
