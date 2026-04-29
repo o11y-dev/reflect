@@ -3,25 +3,25 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>reflect showcase — AI observability in action</title>
-  <meta name="description" content="A live reflect dashboard on curated sample telemetry. Observability for any AI coding agent — built on OpenTelemetry GenAI semantic conventions. See observation scores, helper-tool generation, and agent comparison, safely shareable.">
+  <title>reflect showcase - human + AI workflow observability</title>
+  <meta name="description" content="See why AI workflows fail, stall, or burn budget. reflect turns local coding-agent sessions and OpenTelemetry GenAI spans into evidence, scores, and workflow insight.">
   <link rel="canonical" href="https://reflect.o11y.dev/showcase.html">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#0a0e16">
+  <meta name="theme-color" content="#050505">
 
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="reflect.o11y.dev">
-  <meta property="og:title" content="reflect showcase — AI observability in action">
-  <meta property="og:description" content="Live dashboard on curated sample telemetry. Observability for any AI coding agent, built on OpenTelemetry GenAI semantic conventions.">
+  <meta property="og:title" content="reflect showcase - human + AI workflow observability">
+  <meta property="og:description" content="See why AI workflows fail, stall, or burn budget with local session telemetry and OpenTelemetry GenAI spans.">
   <meta property="og:url" content="https://reflect.o11y.dev/showcase.html">
   <meta property="og:image" content="https://reflect.o11y.dev/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="reflect showcase — AI observability in action">
-  <meta name="twitter:description" content="Live dashboard on curated sample telemetry. Observability for any AI coding agent, built on OpenTelemetry GenAI semantic conventions.">
+  <meta name="twitter:title" content="reflect showcase - human + AI workflow observability">
+  <meta name="twitter:description" content="See why AI workflows fail, stall, or burn budget with local session telemetry and OpenTelemetry GenAI spans.">
   <meta name="twitter:image" content="https://reflect.o11y.dev/og-image.png">
 
   <script type="application/ld+json">
@@ -33,7 +33,7 @@
         "name": "reflect",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "macOS, Linux, Windows",
-        "description": "Observability for any AI coding agent. Turns local session data and OTLP telemetry into observation scores and helper-tool generation.",
+        "description": "Observability for human and AI workflows. Turns local coding-agent session data and OpenTelemetry GenAI spans into evidence, scores, and workflow insight.",
         "url": "https://reflect.o11y.dev/",
         "downloadUrl": "https://pypi.org/project/o11y-reflect/",
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
@@ -58,153 +58,96 @@
   <!-- End Google Tag Manager -->
   <style>
     :root{
-      --bg:#0a0e16;
-      --panel:rgba(16,24,38,.84);
-      --panel-strong:rgba(17,27,43,.96);
-      --line:rgba(151,173,210,.18);
-      --text:#edf3ff;
-      --muted:#92a4c6;
-      --teal:#72f4d1;
-      --blue:#7ab6ff;
-      --gold:#ffd97a;
-      --shadow:0 28px 90px rgba(0,0,0,.42);
+      --bg:#050505;
+      --ink:#f5f2ea;
+      --muted:#a7a197;
+      --line:rgba(245,242,234,.16);
+      --panel:#10100f;
+      --signal:#f28a1a;
+      --signal-2:#ffb156;
+      --shadow:0 28px 90px rgba(0,0,0,.52);
     }
     *{box-sizing:border-box}
-    html,body{margin:0;min-height:100%;background:
-      radial-gradient(circle at top left, rgba(114,244,209,.16), transparent 34%),
-      radial-gradient(circle at 85% 15%, rgba(122,182,255,.17), transparent 28%),
-      linear-gradient(180deg, #0c1120 0%, var(--bg) 100%);
-      color:var(--text)}
+    html,body{margin:0;min-height:100%;background:var(--bg);color:var(--ink)}
+    html{scroll-behavior:smooth}
     body{
-      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      padding:32px 20px 64px;
+      font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      padding:28px 20px 64px;
+      background:
+        linear-gradient(90deg, rgba(245,242,234,.04) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(245,242,234,.035) 1px, transparent 1px),
+        radial-gradient(circle at 72% 12%, rgba(242,138,26,.22), transparent 30%),
+        linear-gradient(180deg, #080807 0%, #050505 60%);
+      background-size:48px 48px,48px 48px,100% 100%,100% 100%;
     }
-    .shell{max-width:1120px;margin:0 auto}
-    .eyebrow{
-      display:inline-flex;align-items:center;gap:10px;
-      padding:8px 14px;border:1px solid var(--line);border-radius:999px;
-      color:var(--muted);font-size:12px;letter-spacing:.18em;text-transform:uppercase;
-      background:rgba(255,255,255,.03);backdrop-filter:blur(14px);
-    }
-    .eyebrow::before{
-      content:"";
-      width:8px;height:8px;border-radius:999px;background:var(--teal);
-      box-shadow:0 0 18px rgba(114,244,209,.95);
-    }
-    .hero{
-      display:grid;grid-template-columns:1.15fr .85fr;gap:28px;
-      margin-top:26px;align-items:stretch;
-    }
-    .panel{
-      background:var(--panel);border:1px solid var(--line);border-radius:28px;
-      box-shadow:var(--shadow);backdrop-filter:blur(18px);
-    }
-    .hero-copy{padding:34px}
-    h1{
-      margin:0 0 14px;font-size:clamp(2.4rem,5.2vw,4.6rem);line-height:.96;
-      letter-spacing:-.045em;font-weight:800;
-    }
-    .tagline{
-      margin:0 0 18px;color:var(--teal);
-      font-size:15px;letter-spacing:.22em;text-transform:uppercase;font-weight:700;
-    }
-    .lede{
-      margin:0;max-width:48rem;color:#d3def4;font-size:17px;line-height:1.65;
-    }
-    .proof{
-      margin:18px 0 0;color:var(--muted);font-size:14px;line-height:1.6;
-    }
-    .chips{
-      display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;
-    }
-    .chip{
-      padding:6px 12px;border:1px solid var(--line);border-radius:999px;
-      font-size:12px;color:var(--text);background:rgba(255,255,255,.04);
-      letter-spacing:.02em;
-    }
-    .cta-row{display:flex;flex-wrap:wrap;gap:14px;margin-top:26px}
-    .cta,.ghost{
-      display:inline-flex;align-items:center;justify-content:center;gap:10px;
-      padding:15px 20px;border-radius:16px;text-decoration:none;font-weight:700;
-      transition:transform .18s ease, border-color .18s ease, background .18s ease;
-    }
-    .cta{
-      background:linear-gradient(135deg, var(--teal), var(--blue));color:#04111d;
-      box-shadow:0 18px 36px rgba(114,244,209,.18);
-    }
-    .ghost{
-      border:1px solid var(--line);color:var(--text);background:rgba(255,255,255,.03);
-    }
-    .cta:hover,.ghost:hover{transform:translateY(-1px)}
-    .hero-side{
-      padding:24px;display:grid;gap:18px;background:var(--panel-strong);
-    }
-    .metric-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
-    .metric{
-      padding:18px;border-radius:20px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);
-    }
-    .metric .k{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
-    .metric .v{margin-top:10px;font-size:26px;font-weight:800;letter-spacing:-.04em}
-    .metric .s{margin-top:6px;color:var(--muted);font-size:13px;line-height:1.5}
-    h2{
-      margin:0 0 14px;font-size:22px;font-weight:700;letter-spacing:-.02em;
-    }
-    .section{margin-top:28px}
-    .section-head{
-      display:flex;align-items:baseline;justify-content:space-between;gap:16px;
-      margin-bottom:14px;
-    }
-    .section-title{
-      margin:0;font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--gold)
-    }
-    .products{
-      display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;
-    }
-    .product{
-      padding:24px;border-radius:22px;background:rgba(255,255,255,.03);
-      border:1px solid var(--line);display:flex;flex-direction:column;gap:10px;
-    }
-    .product h3{margin:0;font-size:19px;font-weight:700}
-    .product .status{
-      align-self:flex-start;padding:3px 10px;border-radius:999px;font-size:11px;
-      letter-spacing:.14em;text-transform:uppercase;font-weight:700;
-    }
-    .status.today{background:rgba(114,244,209,.16);color:var(--teal)}
-    .status.preview{background:rgba(255,217,122,.16);color:var(--gold)}
-    .product p{margin:0;color:var(--muted);line-height:1.6;font-size:14px}
-    .product a{color:var(--blue);text-decoration:none;font-size:13px;font-weight:600}
-    .product a:hover{text-decoration:underline}
-    .install{
-      padding:26px 28px;
-    }
-    .install-grid{
-      display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px;
-    }
-    .install-card h3{
-      margin:0 0 8px;font-size:14px;letter-spacing:.08em;text-transform:uppercase;color:var(--teal);
-    }
-    pre{
-      margin:0;background:#07101b;border:1px solid rgba(255,255,255,.08);
-      border-radius:16px;padding:16px 18px;overflow:auto;color:#dff8ef;
-      font:500 14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;
-    }
-    .callouts{
-      display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;
-    }
-    .callout{
-      padding:22px;border-radius:22px;background:rgba(255,255,255,.03);border:1px solid var(--line)
-    }
-    .callout h3{margin:0 0 10px;font-size:17px;font-weight:700}
-    .callout p{margin:0;color:var(--muted);line-height:1.65;font-size:14px}
-    .footer{
-      margin-top:28px;padding:18px 22px;border:1px solid var(--line);border-radius:20px;
-      color:var(--muted);background:rgba(255,255,255,.025);font-size:14px;
-    }
-    .footer a{color:var(--teal);text-decoration:none}
+    a{color:inherit}
+    .shell{max-width:1180px;margin:0 auto}
+    .nav{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:28px}
+    .brand{display:flex;align-items:center;gap:12px;text-decoration:none}
+    .mark{width:42px;height:42px;position:relative;display:grid;place-items:center;filter:drop-shadow(0 0 18px rgba(242,138,26,.28))}
+    .mark::before{content:"";position:absolute;inset:-1px -2px 0;clip-path:polygon(50% 0,100% 92%,0 92%);background:var(--ink)}
+    .mark::after{content:"";position:absolute;left:50%;top:60%;transform:translate(-50%,-50%);width:14px;height:14px;border:5px solid var(--signal);border-radius:999px;background:#050505;z-index:1;box-shadow:0 0 22px rgba(242,138,26,.55)}
+    .brand span{font-size:15px;font-weight:800;letter-spacing:.03em}
+    .nav-links{display:flex;flex-wrap:wrap;gap:12px;color:var(--muted);font-size:13px}
+    .nav-links a{text-decoration:none}
+    .nav-links a:hover{color:var(--ink)}
+    .hero{display:grid;grid-template-columns:minmax(0,1.04fr) minmax(360px,.96fr);gap:24px;align-items:stretch}
+    .panel{border:1px solid var(--line);background:linear-gradient(180deg, rgba(23,22,19,.96), rgba(12,12,11,.94));box-shadow:var(--shadow)}
+    .hero-copy{padding:38px;border-radius:8px;position:relative;overflow:hidden}
+    .hero-copy::after{content:"";position:absolute;right:-140px;bottom:-180px;width:420px;height:420px;border:1px solid rgba(242,138,26,.18);border-radius:999px;box-shadow:inset 0 0 90px rgba(242,138,26,.06);pointer-events:none}
+    .eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:22px;color:var(--signal-2);font-size:12px;letter-spacing:.18em;text-transform:uppercase;font-weight:800}
+    .eyebrow::before{content:"";width:9px;height:9px;border-radius:999px;background:var(--signal);box-shadow:0 0 22px rgba(242,138,26,.9)}
+    h1{margin:0 0 18px;max-width:880px;font-size:clamp(2.8rem,6vw,5.9rem);line-height:.9;letter-spacing:-.045em;font-weight:900;text-wrap:balance}
+    .lede{margin:0;max-width:690px;color:#ddd6ca;font-size:18px;line-height:1.62}
+    .pain-strip{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}
+    .pain{border:1px solid rgba(245,242,234,.14);background:rgba(245,242,234,.045);padding:8px 11px;border-radius:4px;color:#d5cec2;font-size:13px}
+    .cta-row{display:flex;flex-wrap:wrap;gap:12px;margin-top:30px}
+    .cta,.ghost,.star{display:inline-flex;align-items:center;justify-content:center;gap:9px;min-height:48px;padding:13px 17px;border-radius:6px;text-decoration:none;font-weight:800;transition:transform .16s ease,border-color .16s ease,background .16s ease}
+    .cta{background:var(--signal);color:#100903;box-shadow:0 16px 40px rgba(242,138,26,.24)}
+    .ghost{border:1px solid var(--line);color:var(--ink);background:rgba(245,242,234,.035)}
+    .star{border:1px solid rgba(242,138,26,.45);color:var(--signal-2);background:rgba(242,138,26,.09)}
+    .star::before{content:"\2605";font-size:14px}
+    .cta:hover,.ghost:hover,.star:hover{transform:translateY(-1px)}
+    .autopsy{border-radius:8px;padding:22px;display:flex;flex-direction:column;gap:16px}
+    .autopsy-head{display:flex;justify-content:space-between;gap:16px;align-items:start}
+    .label{margin:0;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.14em;font-weight:800}
+    .score{font-size:44px;line-height:1;font-weight:900;color:var(--signal)}
+    .score small{display:block;margin-top:6px;color:var(--muted);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+    .trace-card{border:1px solid rgba(245,242,234,.12);background:#0b0b0a;border-radius:6px;padding:14px}
+    .trace-card h2{margin:0 0 10px;font-size:18px;letter-spacing:-.01em}
+    .rows{display:grid;gap:8px}
+    .row{display:grid;grid-template-columns:106px minmax(0,1fr) auto;gap:10px;align-items:center;color:#d8d1c6;font-size:13px}
+    .bar{height:9px;background:#26231f;border-radius:999px;overflow:hidden}
+    .bar span{display:block;height:100%;background:linear-gradient(90deg,var(--signal),var(--signal-2))}
+    .row strong{font-variant-numeric:tabular-nums;color:var(--ink)}
+    .finding-list{display:grid;gap:10px}
+    .finding{display:grid;grid-template-columns:10px minmax(0,1fr);gap:10px;align-items:start;color:#d8d1c6;font-size:14px;line-height:1.5}
+    .finding::before{content:"";width:9px;height:9px;margin-top:6px;background:var(--signal)}
+    .section{margin-top:24px}
+    .section-title{margin:0 0 12px;color:var(--signal-2);font-size:13px;letter-spacing:.17em;text-transform:uppercase;font-weight:900}
+    .grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+    .card{border:1px solid var(--line);background:rgba(16,16,15,.88);border-radius:8px;padding:20px}
+    .card h3{margin:0 0 8px;font-size:18px}
+    .card p{margin:0;color:var(--muted);font-size:14px;line-height:1.62}
+    .badge{display:inline-flex;margin-bottom:12px;padding:4px 8px;border-radius:4px;background:rgba(242,138,26,.12);color:var(--signal-2);font-size:11px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}
+    .install{padding:24px;border-radius:8px}
+    .install p{margin:0 0 14px;color:#d8d1c6;line-height:1.6}
+    pre{margin:0;border:1px solid rgba(245,242,234,.14);background:#080807;border-radius:6px;padding:18px;overflow:auto;color:#f8e7d0;font:500 14px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace}
+    .footer{margin-top:24px;border:1px solid var(--line);border-radius:8px;padding:18px 20px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:14px;background:rgba(16,16,15,.72)}
+    .footer a{color:var(--signal-2);text-decoration:none}
     code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-    @media (max-width: 920px){
-      .hero,.callouts,.products,.install-grid{grid-template-columns:1fr}
-      .hero-copy,.hero-side,.install{padding:24px}
+    @media (max-width:940px){
+      body{padding:20px 14px 48px}
+      .hero,.grid-3{grid-template-columns:1fr}
+      .hero-copy{padding:28px}
+      .autopsy{padding:18px}
+      .nav{align-items:flex-start;flex-direction:column}
+    }
+    @media (max-width:560px){
+      h1{font-size:3rem}
+      .row{grid-template-columns:1fr;gap:5px}
+      .score{font-size:36px}
+      .cta,.ghost,.star{width:100%}
     }
   </style>
 </head>
@@ -214,144 +157,132 @@
 height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 <!-- End Google Tag Manager (noscript) -->
   <main class="shell">
-    <div class="eyebrow">reflect.o11y.dev · AI observability</div>
+    <nav class="nav" aria-label="Primary">
+      <a class="brand" href="./showcase.html" aria-label="reflect showcase">
+        <span class="mark" aria-hidden="true"></span>
+        <span>reflect.o11y.dev</span>
+      </a>
+      <div class="nav-links">
+        <a href="./?report=reports/showcase.json">Live Demo</a>
+        <a href="https://github.com/o11y-dev/reflect">GitHub</a>
+        <a href="#install">Install</a>
+      </div>
+    </nav>
 
     <section class="hero">
       <article class="panel hero-copy">
-        <p class="tagline">Observe. Score. Generate. Govern.</p>
-        <h1>Observability for any AI coding agent.</h1>
+        <p class="eyebrow">Human + AI workflow observability</p>
+        <h1>See why your AI workflows fail, stall, or burn budget.</h1>
         <p class="lede">
-          reflect turns local session data and OpenTelemetry GenAI spans into observation scores
-          and operational-excellence signals, and estimated cost analytics, then generates helper tools from what it sees.
-          Live-session policies to control and mutate agent runs are on the roadmap.
+          reflect turns local coding-agent sessions and OpenTelemetry GenAI spans into evidence:
+          where time went, which tools looped, which agent burned tokens, and what context or skill
+          should improve the next run.
         </p>
-        <p class="proof">
-          Vendor-neutral by design. Built on OpenTelemetry GenAI semantic conventions.
-          Works today with:
-        </p>
-        <div class="chips">
-          <span class="chip">Antigravity</span>
-          <span class="chip">Claude Code</span>
-          <span class="chip">Copilot</span>
-          <span class="chip">Cursor</span>
-          <span class="chip">Gemini CLI</span>
-          <span class="chip">OpenCode</span>
+        <div class="pain-strip" aria-label="Common AI workflow failure modes">
+          <span class="pain">message limits</span>
+          <span class="pain">overloaded sessions</span>
+          <span class="pain">runaway tool loops</span>
+          <span class="pain">unclear token burn</span>
+          <span class="pain">bad context handoff</span>
         </div>
         <div class="cta-row">
-          <a class="cta" href="./?report=reports/showcase.json">Open the live demo dashboard</a>
-          <a class="ghost" href="https://github.com/o11y-dev/reflect">View the repository</a>
+          <a class="cta" href="./?report=reports/showcase.json">Open Live Demo</a>
+          <a class="star" href="https://github.com/o11y-dev/reflect" aria-label="Star reflect on GitHub">Star on GitHub</a>
+          <a class="ghost" href="#install">Install Locally</a>
         </div>
       </article>
 
-      <aside class="panel hero-side">
-        <div class="metric-grid">
-          <div class="metric">
-            <div class="k">Observe</div>
-            <div class="v">Every agent</div>
-            <div class="s">Sessions, tool usage, token spend, estimated cost, failures — one dashboard.</div>
+      <aside class="panel autopsy" aria-label="Showcase session autopsy">
+        <div class="autopsy-head">
+          <div>
+            <p class="label">Showcase Dataset</p>
+            <h2 style="margin:6px 0 0;font-size:24px">183 sessions across 4 agents</h2>
           </div>
-          <div class="metric">
-            <div class="k">Score</div>
-            <div class="v">Every session</div>
-            <div class="s">Quality and operational-excellence scores from telemetry.</div>
+          <div class="score">64.7<small>avg score</small></div>
+        </div>
+
+        <div class="trace-card">
+          <h2>Agent Load</h2>
+          <div class="rows">
+            <div class="row"><span>Cursor</span><div class="bar"><span style="width:100%"></span></div><strong>23,131 events</strong></div>
+            <div class="row"><span>Claude</span><div class="bar"><span style="width:70%"></span></div><strong>16,120 events</strong></div>
+            <div class="row"><span>Copilot</span><div class="bar"><span style="width:39%"></span></div><strong>9,060 events</strong></div>
+            <div class="row"><span>Gemini</span><div class="bar"><span style="width:4%"></span></div><strong>783 events</strong></div>
           </div>
-          <div class="metric">
-            <div class="k">Generate</div>
-            <div class="v">From real work</div>
-            <div class="s">Skills and subagents derived from how your agents actually run.</div>
-          </div>
-          <div class="metric">
-            <div class="k">Govern</div>
-            <div class="v">Coming soon</div>
-            <div class="s">Policies that inspect and mutate live agent sessions.</div>
+        </div>
+
+        <div class="trace-card">
+          <h2>What reflect flags</h2>
+          <div class="finding-list">
+            <div class="finding">16,007 tool calls and 691 tool failures show where agent work turned into operational drag.</div>
+            <div class="finding">1,554 MCP calls expose hidden backend dependency and context-fetch cost.</div>
+            <div class="finding">227 subagent launches show delegation patterns that should become reusable guidance.</div>
           </div>
         </div>
       </aside>
     </section>
 
     <section class="section">
-      <div class="section-head">
-        <h2 class="section-title">One platform, three surfaces</h2>
-      </div>
-      <div class="products">
-        <article class="product">
-          <span class="status today">Today</span>
-          <h3>reflect</h3>
-          <p>Hosted reports, observation scores, and skill/agent generation driven by telemetry. Reads OTLP and local session stores; runs in your terminal or browser.</p>
-          <a href="https://github.com/o11y-dev/reflect">o11y-dev/reflect →</a>
+      <h2 class="section-title">What You Get</h2>
+      <div class="grid-3">
+        <article class="card">
+          <span class="badge">Observe</span>
+          <h3>One view across agents</h3>
+          <p>Compare sessions, tool usage, failures, model mix, token volume, MCP calls, and estimated cost across Claude Code, Cursor, Copilot, Gemini CLI, OpenCode, and Antigravity.</p>
         </article>
-        <article class="product">
-          <span class="status today">Today</span>
-          <h3>opentelemetry-hooks</h3>
-          <p>The OpenTelemetry instrumentation layer that captures AI coding agent activity and emits OTLP. The data foundation underneath reflect — bring any OTLP-compatible backend.</p>
-          <a href="https://github.com/o11y-dev/opentelemetry-hooks">o11y-dev/opentelemetry-hooks →</a>
+        <article class="card">
+          <span class="badge">Understand</span>
+          <h3>Session autopsies</h3>
+          <p>Move from "the agent got stuck" to the specific sequence: retries, broad scans, shell failures, context churn, quota pressure, or tool loops.</p>
         </article>
-        <article class="product">
-          <span class="status preview">Coming soon</span>
-          <h3>Policies</h3>
-          <p>Rule evaluation at the hook boundary with per-IDE translation of deny / ask / mutate decisions. Extends opentelemetry-hooks to control live agent sessions.</p>
+        <article class="card">
+          <span class="badge">Improve</span>
+          <h3>Better future runs</h3>
+          <p>Use real workflow behavior to shape context, skills, helper tools, and operational guidance instead of guessing what would have helped.</p>
         </article>
       </div>
     </section>
 
-    <section class="panel install section">
-      <div class="section-head">
-        <h2 class="section-title">Install</h2>
-      </div>
-      <p class="proof" style="margin:0 0 12px">
-        Skills are one distribution channel, not the identity. Install as a Claude skill, via pipx, or from source — all three produce the same reflect.
+    <section class="panel install section" id="install">
+      <h2 class="section-title">60-Second Local Path</h2>
+      <p>
+        Start with reflect. It wires supported agents, reads local telemetry, and opens the same dashboard used by this showcase.
+        Use opentelemetry-hooks directly only when you want capture without the report workflow.
       </p>
-      <div class="install-grid">
-        <div class="install-card">
-          <h3>reflect (reports &amp; scores)</h3>
-          <pre><code>pipx install o11y-reflect
-reflect setup   # wires supported agents + installs skill packages
+      <pre><code>pipx install o11y-reflect
+reflect setup
 reflect
 
 # no telemetry yet?
 reflect --demo</code></pre>
-        </div>
-        <div class="install-card">
-          <h3>opentelemetry-hooks (capture only)</h3>
-          <pre><code>pipx install opentelemetry-hooks
-otel-hook setup</code></pre>
-        </div>
-      </div>
     </section>
 
     <section class="section">
-      <div class="section-head">
-        <h2 class="section-title">About this page</h2>
-      </div>
-      <div class="callouts">
-        <article class="callout">
-          <h3>A stable URL to share</h3>
-          <p>
-            Drop this link into launch notes, README headers, tweets, or internal docs when you want
-            someone to understand reflect in 30 seconds without installing anything.
-          </p>
+      <h2 class="section-title">Mission</h2>
+      <div class="grid-3">
+        <article class="card">
+          <h3>Agent Agnostic</h3>
+          <p>Observe the workflow across Claude Code, Cursor, Copilot, Gemini CLI, OpenCode, Antigravity, and future agents without tying the product story to one vendor.</p>
         </article>
-        <article class="callout">
-          <h3>A real dashboard, not a screenshot</h3>
-          <p>
-            The "live demo" button opens the actual reflect dashboard running against a curated
-            artifact at <code>reports/showcase.json</code>. Every chart, table, score, and cost estimate is real.
-          </p>
+        <article class="card">
+          <h3>Governance at the Edge</h3>
+          <p>Keep control close to the hook boundary, where sessions can be inspected, denied, asked about, or mutated before waste and risk compound.</p>
         </article>
-        <article class="callout">
-          <h3>Safe to share</h3>
-          <p>
-            No local filesystem paths, usernames, or live transcript content from your machine appear here.
-            Use this route for public sharing; keep real telemetry on local or private artifacts.
-          </p>
+        <article class="card">
+          <h3>Vendor Neutral</h3>
+          <p>Build on OpenTelemetry GenAI conventions and local session data so teams can bring their own backend, dashboard, and retention model.</p>
+        </article>
+        <article class="card">
+          <h3>Agent Benchmarking</h3>
+          <p>Compare agents by real workflow outcomes: completion, retries, tool loops, failure rate, token burn, MCP dependency, and operational quality.</p>
         </article>
       </div>
     </section>
 
-    <div class="footer">
-      Built on OpenTelemetry GenAI semantic conventions. Vendor-neutral. Open source (Apache 2.0).
-      Direct dashboard URL: <a href="./?report=reports/showcase.json">reflect.o11y.dev</a>
-    </div>
+    <footer class="footer">
+      <span>Built on OpenTelemetry GenAI semantic conventions. Vendor-neutral. Open source (Apache 2.0).</span>
+      <span><a href="./?report=reports/showcase.json">Live dashboard</a> &middot; <a href="https://github.com/o11y-dev/reflect">GitHub</a></span>
+    </footer>
   </main>
 </body>
 </html>
