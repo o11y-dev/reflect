@@ -548,6 +548,9 @@ def _iter_opencode_session_spans(db_path: Path) -> Iterable[dict]:
     except sqlite3.OperationalError as exc:
         logger.warning("Cannot open OpenCode DB %s: %s", db_path, exc)
         return
+    sessions: list[sqlite3.Row] = []
+    messages_by_session: dict[str, list[sqlite3.Row]] = {}
+    parts_by_session: dict[str, list[sqlite3.Row]] = {}
     try:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
@@ -566,26 +569,22 @@ def _iter_opencode_session_spans(db_path: Path) -> Iterable[dict]:
             "SELECT id, session_id, time_created, time_updated, data FROM message"
             " ORDER BY time_created ASC"
         )
-        messages_by_session: dict[str, list[sqlite3.Row]] = {}
-        msg_by_id: dict[str, sqlite3.Row] = {}
         for row in cur.fetchall():
             messages_by_session.setdefault(row["session_id"], []).append(row)
-            msg_by_id[row["id"]] = row
 
         # Load all parts indexed by session_id (for tool call details)
         cur.execute(
             "SELECT id, message_id, session_id, time_created, time_updated, data FROM part"
             " ORDER BY time_created ASC"
         )
-        parts_by_session: dict[str, list[sqlite3.Row]] = {}
         for row in cur.fetchall():
             parts_by_session.setdefault(row["session_id"], []).append(row)
 
     except Exception as exc:
         logger.warning("Error reading OpenCode DB %s: %s", db_path, exc)
-        conn.close()
         return
-    conn.close()
+    finally:
+        conn.close()
 
     for session_row in sessions:
         session_id: str = session_row["id"]
@@ -749,15 +748,17 @@ def _iter_hook_batch_spans(file_path: Path) -> Iterable[dict]:
 
     # Derive session_id from file stem (strip _session suffix)
     stem = file_path.stem
-    if stem.endswith("_session"):
-        session_id = stem[: -len("_session")]
-    else:
-        session_id = stem
+    session_id = stem[: -len("_session")] if stem.endswith("_session") else stem
 
     trace_id = _stable_hex_id("hook-batch", session_id, length=32)
     first_ts = 0
     last_ts = 0
     active_tools: dict[str, int] = {}  # tool_id -> start_ns
+
+    # Track last seen values for the synthetic SessionEnd
+    last_agent_name = "opencode"
+    last_provider_name = "opencode"
+    last_raw_session_id = session_id
 
     for index, record in enumerate(events):
         event_name: str = record.get("event", "")
@@ -772,10 +773,7 @@ def _iter_hook_batch_spans(file_path: Path) -> Iterable[dict]:
         # Derive agent name from data fields
         ide = data.get("ide_name") or data.get("source_app") or data.get("ide") or ""
         agent_name = str(ide).lower().replace(" ", "") or "opencode"
-        if agent_name == "opencode":
-            provider_name = "opencode"
-        else:
-            provider_name = agent_name
+        provider_name = "opencode" if agent_name == "opencode" else agent_name
 
         raw_session_id = (
             data.get("session_id")
@@ -783,6 +781,11 @@ def _iter_hook_batch_spans(file_path: Path) -> Iterable[dict]:
             or data.get("sessionId")
             or session_id
         )
+
+        # Track last seen values for use in synthetic SessionEnd
+        last_agent_name = agent_name
+        last_provider_name = provider_name
+        last_raw_session_id = raw_session_id
 
         attrs: dict = {
             "gen_ai.client.name": agent_name,
@@ -831,7 +834,6 @@ def _iter_hook_batch_spans(file_path: Path) -> Iterable[dict]:
         )
 
     # Ensure a SessionEnd is present even when the hook batch didn't capture one
-    last_session_id = session_id
     if first_ts and not any(
         r.get("event") in ("SessionEnd",) for r in events
     ):
@@ -839,10 +841,10 @@ def _iter_hook_batch_spans(file_path: Path) -> Iterable[dict]:
             "gen_ai.client.hook.SessionEnd",
             last_ts, last_ts,
             {
-                "gen_ai.client.name": "opencode",
-                "gen_ai.provider.name": "opencode",
-                "gen_ai.client.session_id": last_session_id,
-                "session.id": last_session_id,
+                "gen_ai.client.name": last_agent_name,
+                "gen_ai.provider.name": last_provider_name,
+                "gen_ai.client.session_id": last_raw_session_id,
+                "session.id": last_raw_session_id,
                 "gen_ai.client.hook.event": "SessionEnd",
             },
             trace_id, "synthetic:session.end",
