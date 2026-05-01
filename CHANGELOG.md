@@ -3,6 +3,9 @@
 ## 0.7.2 (unreleased)
 
 ### Added
+- Added `reflect db migrate` to apply bundled SQLite SQL migrations and bootstrap runtime tables from migration files.
+- Added `reflect schema export --output <path>` to emit JSON Schema for the core Pydantic event model.
+- Added initial `reflect.schema` + `reflect.store.migrate` foundations and regression tests for migration idempotency and schema validation behavior.
 - Added initial SQLite runtime store scaffolding with a connection helper that enforces Reflect runtime pragmas (`foreign_keys`, WAL, synchronous mode, checkpoint, busy timeout) and an `optimize` helper.
 - Added initial SQL migration (`001_initial.sql`) that creates `schema_migrations`, `raw_events`, and the core raw-event indexes including source/hash dedupe.
 - Added regression tests that assert SQLite runtime pragma defaults and strict-durability behavior.

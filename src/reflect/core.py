@@ -1939,5 +1939,46 @@ def gateway_status() -> None:
     console.print(f"  log:    {status['log_file']}")
 
 
+@main.group()
+def db() -> None:
+    """SQLite store management commands."""
+
+
+@db.command("migrate")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+def db_migrate(db_path: Path) -> None:
+    """Apply pending SQLite migrations."""
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    try:
+        applied = migrate(conn)
+    finally:
+        conn.close()
+
+    if not applied:
+        click.echo(f"No pending migrations for {db_path}")
+        return
+    click.echo(f"Applied migrations to {db_path}: {', '.join(str(v) for v in applied)}")
+
+
+@main.group()
+def schema() -> None:
+    """Schema and model tooling."""
+
+
+@schema.command("export")
+@click.option("--output", type=click.Path(path_type=Path), required=True)
+def schema_export(output: Path) -> None:
+    """Export Pydantic JSON Schema for core models."""
+    from reflect.schema.events import RawEvent
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"$schema": "https://json-schema.org/draft/2020-12/schema", "definitions": {"RawEvent": RawEvent.model_json_schema()}}
+    output.write_text(_json_stdlib.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    click.echo(f"Wrote schema to {output}")
+
+
 if __name__ == "__main__":
     main()
