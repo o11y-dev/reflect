@@ -2,6 +2,14 @@
 
 ## 0.x.x (unreleased)
 
+### Added
+- Added `reflect db migrate` to apply bundled SQLite SQL migrations and bootstrap runtime tables from migration files.
+- Added `reflect schema export --output <path>` to emit JSON Schema for the core Pydantic event model.
+- Added initial `reflect.schema` + `reflect.store.migrate` foundations and regression tests for migration idempotency and schema validation behavior.
+- Added initial SQLite runtime store scaffolding with a connection helper that enforces Reflect runtime pragmas (`foreign_keys`, WAL, synchronous mode, checkpoint, busy timeout) and an `optimize` helper.
+- Added initial SQL migration (`001_initial.sql`) that creates `schema_migrations`, `raw_events`, and the core raw-event indexes including source/hash dedupe.
+- Added regression tests that assert SQLite runtime pragma defaults and strict-durability behavior.
+
 ### Changed
 - Promote the showcase page to the root landing page at `reflect.o11y.dev/`; the telemetry dashboard HTML moves to `docs/report.html`, and the deprecated `showcase.html` page is removed
 
@@ -10,6 +18,7 @@
 - Hide the `DEMO` badge for local `?report=api/data` dashboards
 - Derive session agent filters, labels, and colors from report data without a fixed agent allowlist, including safe escaping for report-provided agent names
 - Add Codex to the public showcase dashboard artifact and restore spacing between Tools summary widgets and Event Distribution
+- Made top-level `reflect` package exports lazy so focused module tests can import `reflect.store.*` without importing runtime modules that require newer Python datetime APIs at import time.
 
 ## 0.7.2 (2026-05-04)
 
