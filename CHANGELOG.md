@@ -7,6 +7,9 @@
 - Added initial SQL migration (`001_initial.sql`) that creates `schema_migrations`, `raw_events`, and the core raw-event indexes including source/hash dedupe.
 - Added regression tests that assert SQLite runtime pragma defaults and strict-durability behavior.
 
+### Fixed
+- Made top-level `reflect` package exports lazy so focused module tests can import `reflect.store.*` without importing runtime modules that require newer Python datetime APIs at import time.
+
 ## 0.7.1 (2026-04-28)
 
 ### Added
