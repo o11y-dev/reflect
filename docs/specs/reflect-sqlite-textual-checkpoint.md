@@ -27,9 +27,10 @@ Completed foundations now exist for:
   - migration runner present
   - missing DB doctor checks and richer migration set (`002_rollups.sql`, `003_graph.sql`)
 
-- 🚧 **Phase 3 — raw_events ingestion**: **Not started in runtime path**
+- 🚧 **Phase 3 — raw_events ingestion**: **In progress**
   - table exists
-  - no production ingest pipeline writing all source events to DB yet
+  - `reflect db ingest-otlp` now ingests OTLP traces JSON into `raw_events` with `source_id + content_hash` dedupe
+  - full multi-source ingestion path is still pending
 
 - 🚧 **Phase 4 — normalization**: **Not started**
   - no `raw_events -> canonical tables/memory/graph/privacy` normalization pipeline yet

@@ -3,6 +3,8 @@
 ## 0.7.2 (unreleased)
 
 ### Added
+- Added `reflect db ingest-otlp --otlp-traces <file>` to ingest OTLP traces JSON into `raw_events` with `source_id + content_hash` deduplication.
+- Added `reflect.store.ingest` ingestion helper plus regression coverage for duplicate ingest behavior.
 - Added `reflect db migrate` to apply bundled SQLite SQL migrations and bootstrap runtime tables from migration files.
 - Added `reflect schema export --output <path>` to emit JSON Schema for the core Pydantic event model.
 - Added initial `reflect.schema` + `reflect.store.migrate` foundations and regression tests for migration idempotency and schema validation behavior.
