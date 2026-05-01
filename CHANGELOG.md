@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.2 (unreleased)
+
+### Added
+- Added initial SQLite runtime store scaffolding with a connection helper that enforces Reflect runtime pragmas (`foreign_keys`, WAL, synchronous mode, checkpoint, busy timeout) and an `optimize` helper.
+- Added initial SQL migration (`001_initial.sql`) that creates `schema_migrations`, `raw_events`, and the core raw-event indexes including source/hash dedupe.
+- Added regression tests that assert SQLite runtime pragma defaults and strict-durability behavior.
+
 ## 0.7.1 (2026-04-28)
 
 ### Added
