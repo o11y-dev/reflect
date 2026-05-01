@@ -1,15 +1,18 @@
 # Reflect Spec. SQLite, Pydantic, Graph Tables, Textual, DB-backed Reporting
 
-## Decision
+Status: implementation brief for Codex
+Target repo: `o11y-dev/reflect`
 
-Reflect should move to a local-first SQLite architecture with Pydantic logical models, SQL migrations as the physical schema, SQLite graph tables for relationships, and Textual as the live UI.
+## 1. Executive decision
+
+Reflect will move from report JSON and in-memory dashboard state to a local-first SQLite architecture.
 
 ```text
-OpenTelemetry hooks / local telemetry
+OpenTelemetry hooks / local agent telemetry
   -> raw_events
   -> Pydantic validation and normalization
   -> canonical SQLite tables
-  -> rollups / SQL views
+  -> rollup tables / SQL views
   -> graph_nodes / graph_edges
   -> Textual TUI and browser-served report
   -> optional static HTML / JSON export
@@ -17,7 +20,7 @@ OpenTelemetry hooks / local telemetry
 
 Runtime reporting must not load dashboard JSON files into memory. JSON files are input or output artifacts only. SQLite is the runtime state.
 
-## CLI behavior
+Primary command contract:
 
 ```bash
 reflect
@@ -36,22 +39,24 @@ reflect export --format html --output report.html
 reflect export --format json --output report.json
 ```
 
-Creates offline export artifacts from SQLite. Export does not power the live report.
+Creates offline artifacts from SQLite. Export does not power the live report.
 
-Compatibility with the old command behavior is not required because the project is still early.
+Backward compatibility with the old command behavior is not required because the project is still early.
 
-## Goals
+## 2. Goals
 
 - Use SQLite as the only live reporting store.
-- Use Textual for the terminal UI and browser-served live report.
+- Use Textual for terminal UI and browser-served live report.
 - Stop loading report JSON files into memory for live dashboards.
 - Preserve raw OpenTelemetry attributes for reprocessing.
 - Promote stable fields into canonical typed tables.
 - Support memory attributes from OpenTelemetry hooks.
 - Support specs, requirements, evidence, memory, privacy, cost, tokens, tools, MCP, models, repos, files, and graph relationships.
 - Keep privacy and redaction enforced before data is stored or exported.
+- Keep all reporting data queryable from SQLite.
+- Keep schema evolution cheap by landing unknown attributes in `raw_events.attrs_json` first.
 
-## Non-goals
+## 3. Non-goals
 
 - No Kuzu.
 - No Neo4j.
@@ -59,8 +64,11 @@ Compatibility with the old command behavior is not required because the project 
 - No hosted backend.
 - No full prompt / response / tool payload storage by default.
 - No live dashboard backed by JSON artifacts.
+- No in-memory full report object as the runtime UI data model.
 
-## Storage layers
+## 4. Storage layers
+
+The database has five layers:
 
 ```text
 1. raw_events
@@ -76,12 +84,23 @@ Compatibility with the old command behavior is not required because the project 
    Local relationship traversal.
 
 5. metadata tables
-   Migrations, sources, normalization runs, semantic convention versions.
+   Migrations, ingest sources, normalization runs, semantic convention versions.
 ```
 
-This is intentionally expandable. New OpenTelemetry fields land first in `raw_events.attrs_json`. Stable fields can later be promoted to typed columns through migrations.
+Expansion rule:
 
-## Pydantic design
+```text
+new telemetry field
+  -> raw_events.attrs_json
+  -> normalize if useful
+  -> promote to Pydantic model field
+  -> add nullable DB column through migration
+  -> backfill from raw_events
+  -> add index only when query patterns require it
+  -> expose in Textual view model
+```
+
+## 5. Pydantic design
 
 Pydantic owns the logical schema. SQL migrations own the physical schema.
 
@@ -128,18 +147,22 @@ src/reflect/store/migrations/002_rollups.sql
 src/reflect/store/migrations/003_graph.sql
 
 src/reflect/views/overview.py
+src/reflect/views/activity.py
 src/reflect/views/sessions.py
+src/reflect/views/session_detail.py
 src/reflect/views/agents.py
 src/reflect/views/models.py
 src/reflect/views/tools.py
 src/reflect/views/mcp.py
 src/reflect/views/costs.py
+src/reflect/views/graphs.py
 src/reflect/views/specs.py
 src/reflect/views/memory.py
 src/reflect/views/privacy.py
 
 src/reflect/tui/app.py
 src/reflect/tui/screens/
+src/reflect/tui/widgets/
 ```
 
 Base model pattern:
@@ -172,7 +195,7 @@ Canonical models use extra="forbid".
 Raw OpenTelemetry attribute containers use extra="allow".
 ```
 
-## SQLite defaults
+## 6. SQLite defaults
 
 Every SQLite connection must apply:
 
@@ -202,9 +225,7 @@ When enabled:
 PRAGMA synchronous = FULL;
 ```
 
-## Core schema
-
-### raw_events
+## 7. Raw event store
 
 `raw_events` is required. It prevents schema mistakes from becoming data loss.
 
@@ -241,7 +262,31 @@ CREATE INDEX idx_raw_events_trace_span
 ON raw_events(trace_id, span_id);
 ```
 
-### agents, repos, files
+Pydantic model:
+
+```python
+class RawEvent(ReflectModel):
+    id: str
+    source_id: str
+    source_type: Literal["otlp_span", "otlp_log", "hook", "legacy_import"]
+    event_type: str
+    trace_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
+    session_id: str | None = None
+    observed_at: datetime
+    received_at: datetime
+    attrs: dict[str, Any] = Field(default_factory=dict)
+    body: dict[str, Any] = Field(default_factory=dict)
+    normalized_status: Literal["pending", "ok", "failed", "ignored"] = "pending"
+    normalization_error: str | None = None
+    content_hash: str
+    created_at: datetime
+```
+
+## 8. Canonical schema
+
+### 8.1 agents, repos, files
 
 ```sql
 CREATE TABLE agents (
@@ -291,7 +336,7 @@ CREATE INDEX idx_files_repo_path ON files(repo_id, path);
 CREATE INDEX idx_files_repo_language ON files(repo_id, language);
 ```
 
-### sessions
+### 8.2 sessions
 
 ```sql
 CREATE TABLE sessions (
@@ -324,7 +369,36 @@ CREATE INDEX idx_sessions_repo_started ON sessions(repo_id, started_at DESC);
 CREATE INDEX idx_sessions_status_started ON sessions(status, started_at DESC);
 ```
 
-### steps
+Pydantic model:
+
+```python
+class SessionRecord(ReflectModel):
+    id: str
+    agent_id: str | None = None
+    repo_id: str | None = None
+    started_at: datetime
+    ended_at: datetime | None = None
+    status: Literal["running", "completed", "failed", "unknown"] = "unknown"
+    title: str | None = None
+    quality_score: float | None = Field(default=None, ge=0, le=100)
+    failure_count: int = Field(default=0, ge=0)
+    recovered_failure_count: int = Field(default=0, ge=0)
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    cache_creation_tokens: int = Field(default=0, ge=0)
+    cache_read_tokens: int = Field(default=0, ge=0)
+    reasoning_tokens: int = Field(default=0, ge=0)
+    estimated_cost_usd: float = Field(default=0, ge=0)
+    privacy_mode: Literal["metadata_only", "redacted_preview", "full_local", "full_encrypted"] = "metadata_only"
+    source_kind: str | None = None
+    source_ref: str | None = None
+    created_at: datetime
+    updated_at: datetime
+```
+
+### 8.3 steps
+
+Every session is represented as ordered steps.
 
 ```sql
 CREATE TABLE steps (
@@ -349,9 +423,30 @@ CREATE INDEX idx_steps_type_time ON steps(type, started_at DESC);
 CREATE INDEX idx_steps_parent ON steps(parent_step_id);
 ```
 
-## LLM, tools, MCP
+Pydantic model:
 
-### llm_calls
+```python
+class StepRecord(ReflectModel):
+    id: str
+    session_id: str
+    parent_step_id: str | None = None
+    seq: int = Field(ge=0)
+    type: Literal[
+        "llm_call", "tool_call", "mcp_call", "shell_command",
+        "file_read", "file_write", "memory_event", "spec_event",
+        "error", "unknown",
+    ]
+    started_at: datetime
+    ended_at: datetime | None = None
+    duration_ms: int | None = Field(default=None, ge=0)
+    status: Literal["ok", "error", "skipped", "unknown"] = "unknown"
+    summary: str | None = None
+    raw_attrs: dict[str, Any] = Field(default_factory=dict)
+```
+
+## 9. LLM, tools, MCP
+
+### 9.1 llm_calls
 
 ```sql
 CREATE TABLE llm_calls (
@@ -384,7 +479,7 @@ CREATE INDEX idx_llm_calls_model_cost ON llm_calls(response_model, estimated_cos
 CREATE INDEX idx_llm_calls_provider_model ON llm_calls(provider, response_model);
 ```
 
-### tool_calls
+### 9.2 tool_calls
 
 ```sql
 CREATE TABLE tool_calls (
@@ -412,7 +507,7 @@ CREATE INDEX idx_tool_calls_tool_status ON tool_calls(tool_name, status);
 CREATE INDEX idx_tool_calls_duration ON tool_calls(tool_name, duration_ms DESC);
 ```
 
-### mcp_calls
+### 9.3 mcp_calls
 
 ```sql
 CREATE TABLE mcp_calls (
@@ -435,7 +530,7 @@ CREATE INDEX idx_mcp_calls_session_server ON mcp_calls(session_id, server_name);
 CREATE INDEX idx_mcp_calls_server_status ON mcp_calls(server_name, status);
 ```
 
-## Specs, requirements, evidence
+## 10. Specs, requirements, evidence
 
 ```sql
 CREATE TABLE specs (
@@ -483,7 +578,23 @@ CREATE INDEX idx_evidence_requirement ON evidence(requirement_id);
 CREATE INDEX idx_evidence_session ON evidence(session_id);
 ```
 
-## Memory
+Pydantic requirement model:
+
+```python
+class RequirementRecord(ReflectModel):
+    id: str
+    spec_id: str
+    title: str
+    description: str | None = None
+    status: Literal["planned", "in_progress", "partial", "implemented", "validated", "blocked", "dropped"] = "planned"
+    priority: Literal["low", "medium", "high", "critical"] = "medium"
+    evidence_status: Literal["missing", "partial", "present", "validated"] = "missing"
+    confidence: float = Field(default=0, ge=0, le=1)
+    created_at: datetime
+    updated_at: datetime
+```
+
+## 11. Memory
 
 Memory is first-class. OpenTelemetry hook attributes matching `gen_ai.memory.*` should be preserved in `raw_events.attrs_json`, promoted into `memories`, linked to sessions, steps, repos, files, specs, and evidence, and connected through graph edges.
 
@@ -515,40 +626,56 @@ CREATE INDEX idx_memories_session ON memories(session_id);
 CREATE INDEX idx_live_memories ON memories(repo_id, type, last_seen_at DESC) WHERE expires_at IS NULL;
 ```
 
-Pydantic type list for memory scope:
+Pydantic memory model:
 
-```text
-global
-workspace
-repo
-directory
-file
-spec
-agent
-user
-team
+```python
+class MemoryRecord(ReflectModel):
+    id: str
+    scope: Literal["global", "workspace", "repo", "directory", "file", "spec", "agent", "user", "team"]
+    type: Literal[
+        "repo_convention", "validation_command", "test_command", "build_command",
+        "known_failure", "successful_fix", "architecture_note", "style_preference",
+        "unsafe_pattern", "tool_preference", "spec_decision", "deployment_rule",
+        "ownership_hint", "unknown",
+    ]
+    repo_id: str | None = None
+    file_id: str | None = None
+    session_id: str | None = None
+    step_id: str | None = None
+    spec_id: str | None = None
+    content_hash: str | None = None
+    content_preview_redacted: str | None = Field(default=None, max_length=512)
+    confidence: float = Field(default=0.5, ge=0, le=1)
+    sensitivity: Literal["low", "medium", "high", "secret", "unknown"] = "unknown"
+    source: Literal["opentelemetry_hook", "derived", "manual", "legacy_import"]
+    expires_at: datetime | None = None
+    last_seen_at: datetime | None = None
+    raw_attrs: dict[str, Any] = Field(default_factory=dict)
 ```
 
-Pydantic type list for memory type:
+Supported `gen_ai.memory.*` attributes:
 
 ```text
-repo_convention
-validation_command
-test_command
-build_command
-known_failure
-successful_fix
-architecture_note
-style_preference
-unsafe_pattern
-tool_preference
-spec_decision
-deployment_rule
-ownership_hint
-unknown
+gen_ai.memory.id
+gen_ai.memory.scope
+gen_ai.memory.type
+gen_ai.memory.content_hash
+gen_ai.memory.content_preview
+gen_ai.memory.confidence
+gen_ai.memory.sensitivity
+gen_ai.memory.source
+gen_ai.memory.evidence.session_id
+gen_ai.memory.evidence.step_id
+gen_ai.memory.evidence.file_path
+gen_ai.memory.evidence.repo
+gen_ai.memory.evidence.command
+gen_ai.memory.expires_at
+gen_ai.memory.last_seen_at
 ```
 
-## Privacy
+## 12. Privacy and redaction
+
+Storage enforcement comes before UI rendering.
 
 Default storage mode is `metadata_only`.
 
@@ -580,7 +707,7 @@ CREATE INDEX idx_privacy_type_severity ON privacy_findings(finding_type, severit
 
 Static HTML and JSON exports exclude raw prompts, responses, tool inputs, tool outputs, and file contents by default.
 
-## Graph tables
+## 13. Graph tables
 
 Graph is local and SQLite-backed.
 
@@ -660,7 +787,40 @@ FOLLOWED_BY
 CO_OCCURRED_WITH
 ```
 
-## Rollups
+Pydantic graph models:
+
+```python
+class GraphNodeRecord(ReflectModel):
+    id: str
+    type: Literal[
+        "Session", "Step", "Agent", "Model", "Tool", "MCPServer", "Repo", "File",
+        "Command", "Error", "Spec", "Requirement", "Evidence", "Memory",
+        "PrivacyFinding", "CostBucket", "TokenBucket",
+    ]
+    label: str
+    properties: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class GraphEdgeRecord(ReflectModel):
+    id: str
+    from_node_id: str
+    to_node_id: str
+    type: Literal[
+        "HAS_STEP", "USED_AGENT", "USED_MODEL", "CALLED_TOOL", "CALLED_MCP_SERVER",
+        "IN_REPO", "TOUCHED_FILE", "READ_FILE", "WROTE_FILE", "RAN_COMMAND",
+        "FAILED_WITH", "HAS_COST", "HAS_TOKENS", "WORKED_ON_SPEC",
+        "IMPLEMENTS_REQUIREMENT", "VALIDATED_BY", "SUPPORTED_BY", "HAS_MEMORY",
+        "MENTIONS_FILE", "MENTIONS_COMMAND", "HAS_PRIVACY_FINDING", "FOLLOWED_BY",
+        "CO_OCCURRED_WITH",
+    ]
+    properties: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+```
+
+## 14. Rollups
 
 Textual must not scan all raw events for every screen.
 
@@ -716,7 +876,7 @@ Rollups can be rebuilt with:
 reflect db rebuild-rollups
 ```
 
-## Metadata tables
+## 15. Metadata tables
 
 ```sql
 CREATE TABLE schema_migrations (
@@ -756,7 +916,38 @@ CREATE TABLE semantic_convention_versions (
 );
 ```
 
-## Textual screens
+## 16. Textual UI
+
+Required command behavior:
+
+```bash
+reflect
+```
+
+Starts terminal Textual UI.
+
+```bash
+reflect report
+```
+
+Starts browser-served Textual UI.
+
+```bash
+reflect export --format html --output report.html
+reflect export --format json --output report.json
+```
+
+Creates static artifacts from SQLite.
+
+```bash
+reflect db migrate
+reflect db rebuild
+reflect db rebuild-rollups
+reflect db vacuum
+reflect doctor
+```
+
+DB maintenance and validation.
 
 Required screens:
 
@@ -790,7 +981,193 @@ Textual screen
 
 Textual screens must not read raw JSON files. Textual screens must not build metrics from in-memory dashboard artifacts.
 
-## Migration plan
+### 16.1 Screen behavior
+
+Overview:
+
+```text
+Show session count, agent count, model count, token totals, estimated cost, failure count, recovered failures, top sessions, top models, top tools.
+Read from rollups first, then canonical tables for drilldown.
+```
+
+Activity:
+
+```text
+Show daily and hourly activity from daily_rollups and sessions.
+Do not scan raw_events.
+```
+
+Sessions:
+
+```text
+Paginated DataTable of sessions.
+Filter by agent, repo, model, status, date range, cost range, failure count.
+Selecting a row opens Session Detail.
+```
+
+Session Detail:
+
+```text
+Timeline from steps.
+LLM calls from llm_calls.
+Tools from tool_calls.
+MCP from mcp_calls.
+Files from graph edges.
+Privacy from privacy_findings.
+Memory and specs from graph edges and canonical tables.
+```
+
+Agents:
+
+```text
+Compare sessions, tokens, cost, failures, models, tools, MCP usage by agent.
+```
+
+Models:
+
+```text
+Compare calls, tokens, cache usage, reasoning tokens, cost, latency, agents, sessions.
+```
+
+Tools:
+
+```text
+Show call count, error count, error rate, average duration, p95 duration, top sessions, top agents.
+Use tool_rollups where possible.
+```
+
+MCP:
+
+```text
+Show server names, transport, protocol version, tool names, call count, error rate, latency.
+```
+
+Costs:
+
+```text
+Show cost by session, model, agent, repo, day.
+Separate input, output, cache creation, cache read, and reasoning token costs when available.
+```
+
+Graphs:
+
+```text
+Show local graph neighborhoods from graph_nodes and graph_edges.
+Start with tables and tree views, not D3 parity.
+```
+
+Observations:
+
+```text
+Show generated insights backed by SQL queries and evidence links.
+No insight should require loading JSON report artifacts.
+```
+
+Specs:
+
+```text
+Show specs, requirements, status, evidence, drift, missing validation, and related sessions/files.
+```
+
+Memory:
+
+```text
+Show memories by scope, type, repo, file, spec, confidence, last seen, expiration, sensitivity.
+Support low-confidence and stale memory filters.
+```
+
+Privacy:
+
+```text
+Show capture mode, redaction findings, sensitive fields, export safety, and blocked raw fields.
+```
+
+Exports:
+
+```text
+Show export options and confirm whether raw content is excluded.
+```
+
+## 17. View models
+
+Suggested view model files:
+
+```text
+src/reflect/views/overview.py
+src/reflect/views/activity.py
+src/reflect/views/sessions.py
+src/reflect/views/session_detail.py
+src/reflect/views/agents.py
+src/reflect/views/models.py
+src/reflect/views/tools.py
+src/reflect/views/mcp.py
+src/reflect/views/costs.py
+src/reflect/views/graphs.py
+src/reflect/views/specs.py
+src/reflect/views/memory.py
+src/reflect/views/privacy.py
+```
+
+Example model:
+
+```python
+class OverviewViewModel(ReflectModel):
+    session_count: int
+    agent_count: int
+    model_count: int
+    tool_call_count: int
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: float
+    failure_count: int
+    recovered_failure_count: int
+    top_sessions: list[dict]
+    top_models: list[dict]
+    top_tools: list[dict]
+```
+
+View model rule:
+
+```text
+View models may aggregate SQL results.
+View models must not load report JSON files.
+View models must be small enough for screen rendering.
+Large tables must be paginated.
+Long queries must run through Textual workers.
+```
+
+## 18. Static HTML export
+
+Static HTML remains useful, but it is not the live dashboard.
+
+```bash
+reflect export --format html --output report.html
+```
+
+The static HTML export must query SQLite directly. It may serialize a report artifact internally as part of the export process, but this artifact must not become the live reporting runtime.
+
+Static export tabs should preserve parity with the existing demo experience:
+
+```text
+Overview
+Activity
+Sessions
+Agents / Compare
+Models
+Tools
+MCP
+Costs
+Graphs
+Observations
+Specs
+Memory
+Privacy
+Exports
+```
+
+Default static export must exclude raw prompts, responses, tool inputs, tool outputs, and file contents.
+
+## 19. Migration plan
 
 ### Phase 1. Add schema package
 
@@ -831,6 +1208,8 @@ raw_events -> memories
 raw_events -> graph tables
 raw_events -> privacy findings
 ```
+
+Normalization must be idempotent. It must be safe to rerun.
 
 ### Phase 5. Add rollups
 
@@ -875,7 +1254,42 @@ static exporter
 tests
 ```
 
-## Success criteria
+## 20. Codex implementation guidance
+
+Implement in small PRs. Do not try to port the full UI and full schema in one change.
+
+Recommended PR order:
+
+```text
+PR 1. Add Pydantic schema package and model tests.
+PR 2. Add SQLite store, migrations, DB connection wrapper, doctor command.
+PR 3. Add raw_events ingestion and dedupe.
+PR 4. Add normalization into sessions, steps, llm_calls, tool_calls, mcp_calls.
+PR 5. Add graph_nodes, graph_edges, memories, privacy_findings.
+PR 6. Add rollups and rebuild command.
+PR 7. Add Textual shell and Overview screen from SQLite.
+PR 8. Add Sessions and Session Detail screens.
+PR 9. Add Agents, Models, Tools, MCP, Costs screens.
+PR 10. Add Specs, Memory, Privacy screens.
+PR 11. Change `reflect` and `reflect report` command behavior.
+PR 12. Add static export from SQLite and remove live JSON dashboard path.
+```
+
+Quality rules for Codex:
+
+```text
+Prefer explicit migrations over implicit table creation.
+Add tests for every migration.
+Add tests for every Pydantic model that maps to a DB table.
+Do not read dashboard JSON in Textual code.
+Do not load all sessions into memory for paginated screens.
+Do not store raw prompts, responses, tool inputs, or tool outputs by default.
+Keep imports lazy where they improve CLI startup time.
+Use deterministic IDs for graph nodes and graph edges so rebuilds are idempotent.
+Use SQL queries and rollups for reporting, not Python loops over all rows.
+```
+
+## 21. Success criteria
 
 ### Runtime
 
@@ -967,7 +1381,7 @@ Long queries run in Textual workers and do not block UI input.
 - After import, UI reads SQLite only.
 - Old JSON files are no longer required for report viewing.
 
-## Final implementation rule
+## 22. Final implementation rule
 
 ```text
 JSON files are input or output artifacts only.
