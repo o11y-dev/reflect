@@ -1,5 +1,3 @@
-import sqlite3
-
 from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite
 

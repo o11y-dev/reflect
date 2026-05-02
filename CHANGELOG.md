@@ -17,6 +17,7 @@
 - Added a living SQLite/Textual execution checkpoint document (`docs/specs/reflect-sqlite-textual-checkpoint.md`) that tracks completed phases, remaining scope, and immediate next tasks toward full spec fulfillment.
 
 ### Fixed
+- Aligned new SQLite ingest/migration modules with Ruff rules (`datetime.UTC`, tighter exception assertions, and unused-import cleanup) so lint checks pass cleanly.
 - Made top-level `reflect` package exports lazy so focused module tests can import `reflect.store.*` without importing runtime modules that require newer Python datetime APIs at import time.
 
 ## 0.7.1 (2026-04-28)

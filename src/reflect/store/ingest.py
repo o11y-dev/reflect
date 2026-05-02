@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from reflect.parsing import _load_otlp_traces
@@ -10,8 +10,8 @@ from reflect.parsing import _load_otlp_traces
 
 def _iso8601_from_ns(value_ns: int) -> str:
     if value_ns <= 0:
-        return datetime.now(tz=timezone.utc).isoformat()
-    return datetime.fromtimestamp(value_ns / 1_000_000_000, tz=timezone.utc).isoformat()
+        return datetime.now(tz=UTC).isoformat()
+    return datetime.fromtimestamp(value_ns / 1_000_000_000, tz=UTC).isoformat()
 
 
 def _event_hash(span: dict) -> str:
@@ -25,7 +25,7 @@ def _event_hash(span: dict) -> str:
         "attributes": span.get("attributes", {}),
     }
     canon = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+    return hashlib.sha256(canon.encode()).hexdigest()
 
 
 def ingest_otlp_traces_file(db_conn, *, file_path: Path, source_id: str | None = None) -> dict[str, int]:
@@ -44,9 +44,9 @@ def ingest_otlp_traces_file(db_conn, *, file_path: Path, source_id: str | None =
 
         observed_at = _iso8601_from_ns(int(span.get("start_time_ns", 0) or 0))
         received_at = _iso8601_from_ns(int(span.get("end_time_ns", 0) or 0))
-        created_at = datetime.now(tz=timezone.utc).isoformat()
+        created_at = datetime.now(tz=UTC).isoformat()
         content_hash = _event_hash(span)
-        event_id = hashlib.sha1(f"{source}:{content_hash}".encode("utf-8")).hexdigest()
+        event_id = hashlib.sha1(f"{source}:{content_hash}".encode()).hexdigest()
 
         cursor = db_conn.execute(
             """

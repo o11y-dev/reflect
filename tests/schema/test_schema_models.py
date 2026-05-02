@@ -16,7 +16,7 @@ def test_raw_event_allows_unknown_attrs_but_not_unknown_fields():
     )
     assert evt.attrs.model_dump()["unknown"] == 1
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         RawEvent(
             id="e2",
             source_id="src",
