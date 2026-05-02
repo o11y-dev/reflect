@@ -1240,3 +1240,4 @@ class TestNativeOtelConfig:
         codex = next(status for status in statuses if status["agent"] == "OpenAI Codex CLI")
         assert codex["status"] == "unreadable"
         assert "Failed to read config.toml" in codex["details"]
+

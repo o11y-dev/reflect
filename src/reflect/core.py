@@ -1939,5 +1939,80 @@ def gateway_status() -> None:
     console.print(f"  log:    {status['log_file']}")
 
 
+@main.group()
+def db() -> None:
+    """SQLite store management commands."""
+
+
+def _ingest_otlp_into_db(*, db_path: Path, otlp_traces: Path) -> dict[str, int]:
+    from reflect.store.ingest import ingest_otlp_traces_file
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
+    finally:
+        conn.close()
+    return result
+
+
+@main.command("ingest")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+@click.option("--otlp", "otlp_traces", type=click.Path(path_type=Path), required=True, help="Path to OTLP traces JSONL export file.")
+def ingest(db_path: Path, otlp_traces: Path) -> None:
+    """Ingest OTLP traces into raw_events."""
+    result = _ingest_otlp_into_db(db_path=db_path, otlp_traces=otlp_traces)
+    click.echo(
+        f"Ingested {otlp_traces} -> {db_path} (inserted={result['inserted']}, skipped={result['skipped']})"
+    )
+
+
+@db.command("ingest-otlp")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+@click.option("--otlp-traces", type=click.Path(path_type=Path), required=True, help="Path to OTLP traces JSONL export file.")
+def db_ingest(db_path: Path, otlp_traces: Path) -> None:
+    """Ingest OTLP traces JSONL into raw_events with source/hash dedupe (legacy alias)."""
+    result = _ingest_otlp_into_db(db_path=db_path, otlp_traces=otlp_traces)
+    click.echo(
+        f"Ingested {otlp_traces} -> {db_path} (inserted={result['inserted']}, skipped={result['skipped']})"
+    )
+@db.command("migrate")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+def db_migrate(db_path: Path) -> None:
+    """Apply pending SQLite migrations."""
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    try:
+        applied = migrate(conn)
+    finally:
+        conn.close()
+
+    if not applied:
+        click.echo(f"No pending migrations for {db_path}")
+        return
+    click.echo(f"Applied migrations to {db_path}: {', '.join(str(v) for v in applied)}")
+
+
+@main.group()
+def schema() -> None:
+    """Schema and model tooling."""
+
+
+@schema.command("export")
+@click.option("--output", type=click.Path(path_type=Path), required=True)
+def schema_export(output: Path) -> None:
+    """Export Pydantic JSON Schema for core models."""
+    from reflect.schema.events import RawEvent
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"$schema": "https://json-schema.org/draft/2020-12/schema", "definitions": {"RawEvent": RawEvent.model_json_schema()}}
+    output.write_text(_json_stdlib.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    click.echo(f"Wrote schema to {output}")
+
+
 if __name__ == "__main__":
     main()

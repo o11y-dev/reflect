@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.7.2 (unreleased)
+
+### Added
+- Added `reflect db ingest-otlp --otlp-traces <file>` to ingest OTLP traces JSON into `raw_events` with `source_id + content_hash` deduplication.
+- Added `reflect.store.ingest` ingestion helper plus regression coverage for duplicate ingest behavior.
+- Added `reflect db migrate` to apply bundled SQLite SQL migrations and bootstrap runtime tables from migration files.
+- Added `reflect schema export --output <path>` to emit JSON Schema for the core Pydantic event model.
+- Added initial `reflect.schema` + `reflect.store.migrate` foundations and regression tests for migration idempotency and schema validation behavior.
+- Added initial SQLite runtime store scaffolding with a connection helper that enforces Reflect runtime pragmas (`foreign_keys`, WAL, synchronous mode, checkpoint, busy timeout) and an `optimize` helper.
+- Added initial SQL migration (`001_initial.sql`) that creates `schema_migrations`, `raw_events`, and the core raw-event indexes including source/hash dedupe.
+- Added regression tests that assert SQLite runtime pragma defaults and strict-durability behavior.
+
+### Changed
+- Added shorter ingest UX: `reflect ingest --otlp <file>` (kept `reflect db ingest-otlp --otlp-traces` as a legacy alias).
+- Added a living SQLite/Textual execution checkpoint document (`docs/specs/reflect-sqlite-textual-checkpoint.md`) that tracks completed phases, remaining scope, and immediate next tasks toward full spec fulfillment.
+
+### Fixed
+- Aligned new SQLite ingest/migration modules with Ruff rules (`datetime.UTC`, tighter exception assertions, and unused-import cleanup) so lint checks pass cleanly.
+- Made top-level `reflect` package exports lazy so focused module tests can import `reflect.store.*` without importing runtime modules that require newer Python datetime APIs at import time.
+
 ## 0.7.1 (2026-04-28)
 
 ### Added
