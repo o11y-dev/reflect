@@ -14,6 +14,7 @@
 
 ### Changed
 - Promote the showcase page to the root landing page at `reflect.o11y.dev/`; the telemetry dashboard HTML moves to `docs/report.html`, and the deprecated `showcase.html` page is removed
+- Added shorter ingest UX: `reflect ingest --otlp <file>` (kept `reflect db ingest-otlp --otlp-traces` as a legacy alias).
 - Added a living SQLite/Textual execution checkpoint document (`docs/specs/reflect-sqlite-textual-checkpoint.md`) that tracks completed phases, remaining scope, and immediate next tasks toward full spec fulfillment.
 
 ### Fixed
