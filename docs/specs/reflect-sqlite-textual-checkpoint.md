@@ -29,7 +29,7 @@ Completed foundations now exist for:
 
 - 🚧 **Phase 3 — raw_events ingestion**: **In progress**
   - table exists
-  - `reflect db ingest-otlp` now ingests OTLP traces JSON into `raw_events` with `source_id + content_hash` dedupe
+  - `reflect ingest --otlp` now ingests OTLP traces JSON into `raw_events` with `source_id + content_hash` dedupe (`db ingest-otlp` kept as legacy alias)
   - full multi-source ingestion path is still pending
 
 - 🚧 **Phase 4 — normalization**: **Not started**

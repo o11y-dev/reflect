@@ -13,6 +13,7 @@
 - Added regression tests that assert SQLite runtime pragma defaults and strict-durability behavior.
 
 ### Changed
+- Added shorter ingest UX: `reflect ingest --otlp <file>` (kept `reflect db ingest-otlp --otlp-traces` as a legacy alias).
 - Added a living SQLite/Textual execution checkpoint document (`docs/specs/reflect-sqlite-textual-checkpoint.md`) that tracks completed phases, remaining scope, and immediate next tasks toward full spec fulfillment.
 
 ### Fixed
