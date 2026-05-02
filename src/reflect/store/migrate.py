@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from importlib import resources
 
 
@@ -47,7 +47,7 @@ def migrate(conn: sqlite3.Connection) -> list[int]:
         conn.executescript(migration.sql)
         conn.execute(
             "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
-            (migration.version, migration.name, datetime.now(timezone.utc).isoformat()),
+            (migration.version, migration.name, datetime.now(UTC).isoformat()),
         )
         applied_now.append(migration.version)
     conn.commit()

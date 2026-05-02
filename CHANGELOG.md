@@ -22,6 +22,7 @@
 - Hide the `DEMO` badge for local `?report=api/data` dashboards
 - Derive session agent filters, labels, and colors from report data without a fixed agent allowlist, including safe escaping for report-provided agent names
 - Add Codex to the public showcase dashboard artifact and restore spacing between Tools summary widgets and Event Distribution
+- Aligned new SQLite ingest/migration modules with Ruff rules (`datetime.UTC`, tighter exception assertions, and unused-import cleanup) so lint checks pass cleanly.
 - Made top-level `reflect` package exports lazy so focused module tests can import `reflect.store.*` without importing runtime modules that require newer Python datetime APIs at import time.
 
 ## 0.7.2 (2026-05-04)
