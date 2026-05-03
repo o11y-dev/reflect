@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.2 (unreleased)
+
+### Fixed
+- Tuned `docs/showcase.html` typography and panel rendering to match the production reflect.o11y.dev visual baseline and improve font clarity
+- Rebalanced showcase contrast ratios (navigation, body copy, cards, footer) and interactive states so tab-like navigation links are clearer and more accessible
+
 ## 0.7.1 (2026-04-28)
 
 ### Added
