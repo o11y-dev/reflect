@@ -435,8 +435,9 @@ def analyze_telemetry(
         if otlp_from_external_source:
             otlp_logs_file = _infer_otlp_logs_file(otlp_traces_file)
             if otlp_logs_file and otlp_logs_file.exists():
+                loaded_log_records = list(_load_otlp_logs(otlp_logs_file))
                 codex_events = 0
-                for span in _iter_codex_log_spans(otlp_logs_file, since_ns=since_ns):
+                for span in _iter_codex_log_spans(loaded_log_records, since_ns=since_ns):
                     sid = _extract_session_id(span.get("attributes") or {})
                     if sid:
                         sessions_with_telemetry.add(sid)
@@ -446,7 +447,7 @@ def analyze_telemetry(
                     events_by_file[f"{otlp_logs_file.name}:codex"] = codex_events
                     total_events += codex_events
 
-                for record in _load_otlp_logs(otlp_logs_file):
+                for record in loaded_log_records:
                     ts_ns = int(record.get("time_ns", 0) or record.get("observed_time_ns", 0) or 0)
                     if since_ns and ts_ns and ts_ns < since_ns:
                         continue

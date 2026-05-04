@@ -159,10 +159,10 @@ def _coerce_int(value) -> int:
         return 0
 
 
-def _iter_codex_log_spans(file_path: Path, since_ns: int = 0) -> Iterable[dict]:
+def _iter_codex_log_spans(records: Iterable[dict], since_ns: int = 0) -> Iterable[dict]:
     """Normalize native Codex OTLP log records into Reflect hook-like spans."""
     active_tools: dict[tuple[str, str], dict] = {}
-    for index, record in enumerate(_load_otlp_logs(file_path)):
+    for index, record in enumerate(records):
         attrs = record.get("attributes") or {}
         service = str(attrs.get("service.name") or "")
         if service not in {"codex_cli_rs", "codex-app-server"}:
@@ -248,7 +248,7 @@ def _iter_codex_log_spans(file_path: Path, since_ns: int = 0) -> Iterable[dict]:
         elif event_name == "codex.tool_result":
             tool_name = str(attrs.get("tool_name") or "")
             call_id = str(attrs.get("call_id") or f"{index}")
-            start_info = active_tools.get((session_id, call_id), {})
+            start_info = active_tools.pop((session_id, call_id), {})
             duration_ms = _coerce_int(attrs.get("duration_ms"))
             start_ns = max(ts_ns - duration_ms * 1_000_000, 0) if duration_ms else int(
                 start_info.get("start_ns") or ts_ns

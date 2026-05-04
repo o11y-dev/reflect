@@ -8,6 +8,7 @@ from reflect.core import (
     _flatten_otlp_attributes,
     _iter_codex_log_spans,
     _load_json_lines,
+    _load_otlp_logs,
     _load_otlp_traces,
 )
 
@@ -196,7 +197,7 @@ class TestCodexOtlpLogs:
             }),
         ])
 
-        spans = list(_iter_codex_log_spans(p))
+        spans = list(_iter_codex_log_spans(_load_otlp_logs(p)))
 
         assert [s["attributes"]["gen_ai.client.hook.event"] for s in spans] == [
             "SessionStart",
@@ -241,7 +242,7 @@ class TestCodexOtlpLogs:
             }),
         ])
 
-        spans = list(_iter_codex_log_spans(p))
+        spans = list(_iter_codex_log_spans(_load_otlp_logs(p)))
 
         assert [s["attributes"]["gen_ai.client.hook.event"] for s in spans] == [
             "PreToolUse",
