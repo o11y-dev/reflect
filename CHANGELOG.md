@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.2 (unreleased)
+## 0.7.2 (2026-05-04)
 
 ### Added
 - Native OpenAI Codex CLI OTLP telemetry is now a first-class agent in reflect: Codex session, prompt, tool lifecycle, and token events from `otel-logs.json` are normalized into Reflect's hook-like span model and displayed alongside Claude, Copilot, Cursor, and Gemini
