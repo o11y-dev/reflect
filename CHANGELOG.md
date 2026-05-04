@@ -2,6 +2,11 @@
 
 ## 0.7.2 (unreleased)
 
+### Added
+- Native OpenAI Codex CLI OTLP telemetry is now a first-class agent in reflect: Codex session, prompt, tool lifecycle, and token events from `otel-logs.json` are normalized into Reflect's hook-like span model and displayed alongside Claude, Copilot, Cursor, and Gemini
+- Demo data now includes Codex OTLP log fixtures so `reflect --demo` shows Codex sessions with models, tool usage, and token counts out of the box
+- Low-level Codex Rust/runtime transport spans are filtered from `otel-traces.json` to keep agent analytics clean
+
 ### Fixed
 - Tuned `docs/showcase.html` typography and panel rendering to match the production reflect.o11y.dev visual baseline and improve font clarity
 - Rebalanced showcase contrast ratios (navigation, body copy, cards, footer) and interactive states so tab-like navigation links are clearer and more accessible

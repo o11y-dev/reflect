@@ -315,6 +315,7 @@ def analyze_telemetry(
         _enrich_missing_session_models_from_logs,
         _extract_session_id,
         _infer_otlp_logs_file,
+        _iter_codex_log_spans,
         _load_json_lines,
         _load_otlp_logs,
         _load_otlp_traces,
@@ -434,7 +435,19 @@ def analyze_telemetry(
         if otlp_from_external_source:
             otlp_logs_file = _infer_otlp_logs_file(otlp_traces_file)
             if otlp_logs_file and otlp_logs_file.exists():
-                for record in _load_otlp_logs(otlp_logs_file):
+                loaded_log_records = list(_load_otlp_logs(otlp_logs_file))
+                codex_events = 0
+                for span in _iter_codex_log_spans(loaded_log_records, since_ns=since_ns):
+                    sid = _extract_session_id(span.get("attributes") or {})
+                    if sid:
+                        sessions_with_telemetry.add(sid)
+                    _process_span(span, *proc_args, **proc_kwargs)
+                    codex_events += 1
+                if codex_events:
+                    events_by_file[f"{otlp_logs_file.name}:codex"] = codex_events
+                    total_events += codex_events
+
+                for record in loaded_log_records:
                     ts_ns = int(record.get("time_ns", 0) or record.get("observed_time_ns", 0) or 0)
                     if since_ns and ts_ns and ts_ns < since_ns:
                         continue

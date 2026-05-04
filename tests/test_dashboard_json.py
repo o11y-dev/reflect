@@ -92,6 +92,23 @@ class TestBuildDashboardJson:
         assert data["total_cost"] > 0
         assert any(session["total_cost"] > 0 for session in data["sessions"])
 
+    def test_demo_data_includes_codex_native_otel_logs(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("REFLECT_HOME", str(tmp_path / ".reflect"))
+
+        demo_path = Path(__file__).resolve().parents[1] / "src" / "reflect" / "data" / "demo-traces.json"
+        stats = analyze_telemetry(tmp_path / "s", tmp_path / "sp", demo_path)
+        data = json.loads(_build_dashboard_json(stats))
+
+        assert "codex" in stats.agents
+        assert stats.agents["codex"].sessions_seen == {"codex-support-otel"}
+        assert stats.agents["codex"].models_by_count["gpt-5.5"] > 0
+        assert stats.agents["codex"].tools_by_count["exec_command"] == 2
+        assert stats.agents["codex"].tools_by_count["apply_patch"] == 2
+        assert stats.agents["codex"].total_input_tokens == 15000
+        assert stats.agents["codex"].total_cache_read_tokens == 9000
+        assert data["agents"]["codex"]["top_model"] == "gpt-5.5"
+        assert any(session["agent"] == "codex" for session in data["sessions"])
+
     def test_activity_by_hour_24_entries(self, rich_stats):
         data = json.loads(_build_dashboard_json(rich_stats))
         hours = data["activity_by_hour"]
