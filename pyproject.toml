@@ -74,6 +74,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 reflect = [
     "data/demo-traces.json",
+    "data/otel-logs.json",
     "data/index.html",
     "data/skills-extraction-prompt.md",
     "data/skills/reflect/SKILL.md",
@@ -82,4 +83,3 @@ reflect = [
 
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.15.12"
-
