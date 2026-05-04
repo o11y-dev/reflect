@@ -5,6 +5,7 @@
 ### Fixed
 - Tuned `docs/showcase.html` typography and panel rendering to match the production reflect.o11y.dev visual baseline and improve font clarity
 - Rebalanced showcase contrast ratios (navigation, body copy, cards, footer) and interactive states so tab-like navigation links are clearer and more accessible
+- Rethemed the dashboard/report HTML to use the same warm reflect showcase brand palette, sharper panels, and clearer active/filter states
 
 ## 0.7.1 (2026-04-28)
 
