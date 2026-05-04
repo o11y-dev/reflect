@@ -4,7 +4,12 @@ import json
 import pytest
 from conftest import DAY1, HOUR, make_span, wrap_otlp
 
-from reflect.core import _flatten_otlp_attributes, _load_json_lines, _load_otlp_traces
+from reflect.core import (
+    _flatten_otlp_attributes,
+    _iter_codex_log_spans,
+    _load_json_lines,
+    _load_otlp_traces,
+)
 
 
 class TestFlattenOtlpAttributes:
@@ -105,6 +110,32 @@ class TestLoadOtlpTraces:
         result = list(_load_otlp_traces(p))
         assert result[0]["attributes"].get("service.name") == "ide-agent"
 
+    def test_low_level_codex_runtime_spans_skipped(self, tmp_path):
+        payload = {
+            "resourceSpans": [{
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "codex_cli_rs"}},
+                    ],
+                },
+                "scopeSpans": [{
+                    "spans": [{
+                        "traceId": "a" * 32,
+                        "spanId": "b" * 16,
+                        "name": "FramedRead::poll_next",
+                        "startTimeUnixNano": str(DAY1),
+                        "endTimeUnixNano": str(DAY1 + 1),
+                        "attributes": [
+                            {"key": "code.module.name", "value": {"stringValue": "h2::codec"}},
+                        ],
+                    }],
+                }],
+            }],
+        }
+        p = tmp_path / "traces.json"
+        p.write_text(json.dumps(payload) + "\n")
+        assert list(_load_otlp_traces(p)) == []
+
     def test_start_end_time_ns(self, tmp_path):
         span = make_span("UserPromptSubmit", start_ns=DAY1 + 5*HOUR, duration_ms=100)
         p = tmp_path / "traces.json"
@@ -117,6 +148,111 @@ class TestLoadOtlpTraces:
         p = tmp_path / "empty.json"
         p.write_text("")
         assert list(_load_otlp_traces(p)) == []
+
+
+class TestCodexOtlpLogs:
+    def _write_logs(self, tmp_path, records):
+        p = tmp_path / "otel-logs.json"
+        p.write_text(json.dumps({
+            "resourceLogs": [{
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "codex_cli_rs"}},
+                    ],
+                },
+                "scopeLogs": [{
+                    "logRecords": records,
+                }],
+            }],
+        }) + "\n")
+        return p
+
+    def _record(self, attrs):
+        return {
+            "timeUnixNano": str(DAY1),
+            "attributes": [
+                {"key": key, "value": {"boolValue": value}}
+                if isinstance(value, bool)
+                else {"key": key, "value": {"stringValue": str(value)}}
+                for key, value in attrs.items()
+            ],
+        }
+
+    def test_codex_log_events_normalize_to_agent_spans(self, tmp_path):
+        p = self._write_logs(tmp_path, [
+            self._record({
+                "event.name": "codex.conversation_starts",
+                "event.timestamp": "2026-03-24T10:00:00Z",
+                "conversation.id": "codex-session-1",
+                "model": "gpt-5.5",
+                "slug": "gpt-5.5",
+            }),
+            self._record({
+                "event.name": "codex.user_prompt",
+                "event.timestamp": "2026-03-24T10:00:01Z",
+                "conversation.id": "codex-session-1",
+                "model": "gpt-5.5",
+                "prompt": "[REDACTED]",
+            }),
+        ])
+
+        spans = list(_iter_codex_log_spans(p))
+
+        assert [s["attributes"]["gen_ai.client.hook.event"] for s in spans] == [
+            "SessionStart",
+            "UserPromptSubmit",
+        ]
+        assert {s["attributes"]["gen_ai.client.name"] for s in spans} == {"codex"}
+        assert spans[0]["attributes"]["gen_ai.client.session_id"] == "codex-session-1"
+        assert spans[0]["attributes"]["gen_ai.request.model"] == "gpt-5.5"
+
+    def test_codex_log_tool_and_token_events_normalize(self, tmp_path):
+        p = self._write_logs(tmp_path, [
+            self._record({
+                "event.name": "codex.tool_decision",
+                "event.timestamp": "2026-03-24T10:00:02Z",
+                "conversation.id": "codex-session-1",
+                "model": "gpt-5.5",
+                "tool_name": "exec_command",
+                "call_id": "call-1",
+                "decision": "approved",
+                "source": "Config",
+            }),
+            self._record({
+                "event.name": "codex.tool_result",
+                "event.timestamp": "2026-03-24T10:00:03Z",
+                "conversation.id": "codex-session-1",
+                "model": "gpt-5.5",
+                "tool_name": "exec_command",
+                "call_id": "call-1",
+                "duration_ms": "200",
+                "success": "true",
+                "arguments": "{\"cmd\":\"git status\"}",
+            }),
+            self._record({
+                "event.name": "codex.sse_event",
+                "event.kind": "response.completed",
+                "event.timestamp": "2026-03-24T10:00:04Z",
+                "conversation.id": "codex-session-1",
+                "model": "gpt-5.5",
+                "input_token_count": "1000",
+                "cached_token_count": "250",
+                "output_token_count": "80",
+            }),
+        ])
+
+        spans = list(_iter_codex_log_spans(p))
+
+        assert [s["attributes"]["gen_ai.client.hook.event"] for s in spans] == [
+            "PreToolUse",
+            "PostToolUse",
+            "Stop",
+        ]
+        assert spans[0]["attributes"]["gen_ai.client.tool_name"] == "exec_command"
+        assert spans[1]["end_time_ns"] - spans[1]["start_time_ns"] == 200_000_000
+        assert spans[2]["attributes"]["gen_ai.usage.input_tokens"] == 750
+        assert spans[2]["attributes"]["gen_ai.usage.cache_read.input_tokens"] == 250
+        assert spans[2]["attributes"]["gen_ai.usage.output_tokens"] == 80
 
 
 class TestLoadJsonLines:

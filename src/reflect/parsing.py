@@ -80,7 +80,31 @@ def _load_otlp_traces(file_path: Path, since_ns: int = 0) -> Iterable[dict]:
                                 **_flatten_otlp_attributes(span.get("attributes", [])),
                             },
                         }
+                        if _is_low_level_codex_span(flat_span):
+                            continue
                         yield flat_span
+
+
+def _is_low_level_codex_span(span: dict) -> bool:
+    """Return true for noisy native Codex runtime spans.
+
+    Codex emits useful session/model/tool records as OTLP logs today. Its trace
+    stream is dominated by Rust HTTP/runtime internals (`h2`, `hyper`, etc.)
+    under `codex_cli_rs` / `codex-app-server`, which would otherwise swamp the
+    agent dashboard with transport spans.
+    """
+    attrs = span.get("attributes") or {}
+    service = str(attrs.get("service.name") or "").lower()
+    if service not in {"codex_cli_rs", "codex-app-server"}:
+        return False
+    useful_keys = {
+        "gen_ai.client.hook.event",
+        "gen_ai.client.session_id",
+        "session.id",
+        "conversation.id",
+        "event.name",
+    }
+    return not any(attrs.get(key) for key in useful_keys)
 
 
 def _load_otlp_logs(file_path: Path) -> Iterable[dict]:
@@ -118,6 +142,152 @@ def _load_otlp_logs(file_path: Path) -> Iterable[dict]:
                                 **_flatten_otlp_attributes(record.get("attributes", [])),
                             },
                         }
+
+
+def _coerce_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(value)
+
+
+def _coerce_int(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _iter_codex_log_spans(file_path: Path, since_ns: int = 0) -> Iterable[dict]:
+    """Normalize native Codex OTLP log records into Reflect hook-like spans."""
+    active_tools: dict[tuple[str, str], dict] = {}
+    for index, record in enumerate(_load_otlp_logs(file_path)):
+        attrs = record.get("attributes") or {}
+        service = str(attrs.get("service.name") or "")
+        if service not in {"codex_cli_rs", "codex-app-server"}:
+            continue
+
+        event_name = str(attrs.get("event.name") or "")
+        if not event_name.startswith("codex."):
+            continue
+
+        session_id = str(attrs.get("conversation.id") or "").strip()
+        if not session_id:
+            continue
+
+        ts_ns = _parse_timestamp_to_ns(attrs.get("event.timestamp")) or int(
+            record.get("time_ns", 0) or record.get("observed_time_ns", 0) or 0
+        )
+        if since_ns and ts_ns and ts_ns < since_ns:
+            continue
+
+        trace_id = _stable_hex_id("codex", session_id, length=32)
+        base_attrs = {
+            "gen_ai.client.name": "codex",
+            "gen_ai.provider.name": "openai",
+            "gen_ai.client.session_id": session_id,
+            "session.id": session_id,
+            "service.name": service,
+        }
+        model = str(attrs.get("slug") or attrs.get("model") or "").strip()
+        if model:
+            base_attrs["gen_ai.request.model"] = model
+
+        if event_name == "codex.conversation_starts":
+            yield _make_flat_span(
+                "gen_ai.client.hook.SessionStart",
+                ts_ns,
+                ts_ns,
+                {
+                    **base_attrs,
+                    "gen_ai.client.hook.event": "SessionStart",
+                },
+                trace_id,
+                f"{index}:conversation_starts",
+            )
+        elif event_name == "codex.user_prompt":
+            yield _make_flat_span(
+                "gen_ai.client.hook.UserPromptSubmit",
+                ts_ns,
+                ts_ns,
+                {
+                    **base_attrs,
+                    "gen_ai.client.hook.event": "UserPromptSubmit",
+                    "gen_ai.client.prompt": str(attrs.get("prompt") or ""),
+                },
+                trace_id,
+                f"{index}:user_prompt",
+            )
+        elif event_name == "codex.tool_decision":
+            tool_name = str(attrs.get("tool_name") or "")
+            call_id = str(attrs.get("call_id") or f"{index}")
+            active_tools[(session_id, call_id)] = {
+                "start_ns": ts_ns,
+                "tool_name": tool_name,
+            }
+            yield _make_flat_span(
+                "gen_ai.client.hook.PreToolUse",
+                ts_ns,
+                ts_ns,
+                {
+                    **base_attrs,
+                    "gen_ai.client.hook.event": "PreToolUse",
+                    "gen_ai.client.tool_name": tool_name,
+                    "gen_ai.client.tool_use_id": call_id,
+                    "gen_ai.client.tool.input": _json_dumps(
+                        {
+                            "decision": attrs.get("decision", ""),
+                            "source": attrs.get("source", ""),
+                        }
+                    ),
+                },
+                trace_id,
+                f"{index}:tool_decision:{call_id}",
+            )
+        elif event_name == "codex.tool_result":
+            tool_name = str(attrs.get("tool_name") or "")
+            call_id = str(attrs.get("call_id") or f"{index}")
+            start_info = active_tools.get((session_id, call_id), {})
+            duration_ms = _coerce_int(attrs.get("duration_ms"))
+            start_ns = max(ts_ns - duration_ms * 1_000_000, 0) if duration_ms else int(
+                start_info.get("start_ns") or ts_ns
+            )
+            end_ns = max(ts_ns, start_ns)
+            success = _coerce_bool(attrs.get("success"))
+            hook_event = "PostToolUse" if success else "PostToolUseFailure"
+            yield _make_flat_span(
+                f"gen_ai.client.hook.{hook_event}",
+                start_ns,
+                end_ns,
+                {
+                    **base_attrs,
+                    "gen_ai.client.hook.event": hook_event,
+                    "gen_ai.client.tool_name": tool_name or str(start_info.get("tool_name") or ""),
+                    "gen_ai.client.tool_use_id": call_id,
+                    "gen_ai.client.tool.input": str(attrs.get("arguments") or ""),
+                },
+                trace_id,
+                f"{index}:tool_result:{call_id}",
+            )
+        elif event_name == "codex.sse_event" and attrs.get("event.kind") == "response.completed":
+            input_tokens = _coerce_int(attrs.get("input_token_count"))
+            cached_tokens = _coerce_int(attrs.get("cached_token_count"))
+            output_tokens = _coerce_int(attrs.get("output_token_count"))
+            yield _make_flat_span(
+                "gen_ai.client.hook.Stop",
+                ts_ns,
+                ts_ns,
+                {
+                    **base_attrs,
+                    "gen_ai.client.hook.event": "Stop",
+                    "gen_ai.usage.input_tokens": max(input_tokens - cached_tokens, 0),
+                    "gen_ai.usage.output_tokens": output_tokens,
+                    "gen_ai.usage.cache_read.input_tokens": cached_tokens,
+                },
+                trace_id,
+                f"{index}:sse_response_completed",
+            )
 
 
 def _load_json_lines(file_path: Path) -> Iterable[dict]:

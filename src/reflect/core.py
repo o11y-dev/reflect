@@ -142,6 +142,7 @@ from reflect.parsing import (  # noqa: F401
     _flatten_text_content,
     _infer_otlp_logs_file,
     _iter_claude_session_spans,
+    _iter_codex_log_spans,
     _iter_copilot_session_spans,
     _iter_cursor_session_spans,
     _iter_gemini_session_spans,
