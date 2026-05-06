@@ -1551,7 +1551,10 @@ def _start_publish_server_inline(stats: TelemetryStats, port: int, docs_dir: Pat
 
     @app.get("/")
     def index():
-        return FileResponse(docs_dir / "index.html", media_type="text/html")
+        html_file = docs_dir / "report.html"
+        if not html_file.exists():
+            html_file = docs_dir / "index.html"
+        return FileResponse(html_file, media_type="text/html")
 
     if docs_dir.exists():
         app.mount("/", StaticFiles(directory=str(docs_dir)), name="static")

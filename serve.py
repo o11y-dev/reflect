@@ -6,7 +6,7 @@ Usage:
     reflect report             # preferred command
     python serve.py [--otlp-traces PATH] [--port 8765]  # deprecated wrapper
 
-Serves docs/index.html with dashboard data via /api/data and session
+Serves docs/report.html with dashboard data via /api/data and session
 detail via /api/session/{id}.
 """
 import argparse
@@ -246,10 +246,11 @@ def create_app(stats=None, docs_dir: Path | None = None):
 
     @app.get("/")
     def index():
-        index_path = _docs / "index.html"
-        if index_path.exists():
-            return FileResponse(index_path, media_type="text/html")
-        return HTMLResponse("<h1>reflect dashboard</h1><p>docs/index.html not found</p>", status_code=404)
+        for name in ("report.html", "index.html"):
+            html_path = _docs / name
+            if html_path.exists():
+                return FileResponse(html_path, media_type="text/html")
+        return HTMLResponse("<h1>reflect dashboard</h1><p>docs/report.html not found</p>", status_code=404)
 
     # Serve static files from docs/ (JS, CSS, etc.)
     if _docs.exists():

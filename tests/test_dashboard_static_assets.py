@@ -9,7 +9,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DASHBOARD_HTML_FILES = (
     REPO_ROOT / "src/reflect/data/index.html",
-    REPO_ROOT / "docs/index.html",
+    REPO_ROOT / "docs/report.html",
 )
 
 
