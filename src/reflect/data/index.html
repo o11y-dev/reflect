@@ -539,6 +539,7 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 
 /* ── Bar list ────────────────────────────────────────────── */
 .bar-list{display:flex;flex-direction:column;gap:10px}
+.tools-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;margin-bottom:18px}
 .bar-item{display:flex;align-items:center;gap:12px}
 .bar-lbl{flex:0 1 240px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:'SF Mono',ui-monospace,monospace;font-size:13px;color:var(--text-2)}
 .bar-track{flex:1;background:var(--surface3);border-radius:4px;height:6px;overflow:hidden}
@@ -2155,7 +2156,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
       <span class="brand-mark" aria-hidden="true"></span>
       <h1>reflect.<em>o11y</em>.dev</h1>
     </a>
-    <span class="brand-badge">DEMO</span>
+    <span class="brand-badge" id="demo-badge">DEMO</span>
   </div>
   <div class="header-meta">
     <div id="hdr-range"></div>
@@ -2455,7 +2456,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <!-- ════════════════════ TOOLS (merged with Latency) ════════════════════ -->
 <div class="tab-panel" id="tab-tools" role="tabpanel" aria-labelledby="tab-button-tools" hidden>
 
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px">
+  <div class="tools-summary-grid">
     <div class="panel" style="margin-bottom:0">
       <div class="panel-title">Top Tools by Call Count</div>
       <div class="bar-list" id="tools-list"></div>
@@ -2574,7 +2575,7 @@ reflect setup
 reflect report</pre>
       <div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center">
         <a href="https://github.com/o11y-dev/reflect" style="padding:12px 20px;background:linear-gradient(135deg,#ffb156,#f28a1a);color:#100903;border-radius:8px;text-decoration:none;font-weight:700">View on GitHub</a>
-        <a href="showcase.html" style="padding:12px 20px;border:1px solid rgba(255,255,255,.12);color:#f5f2ea;border-radius:8px;text-decoration:none;font-weight:700">View showcase</a>
+        <a href="https://reflect.o11y.dev/" style="padding:12px 20px;border:1px solid rgba(255,255,255,.12);color:#f5f2ea;border-radius:8px;text-decoration:none;font-weight:700">reflect.o11y.dev</a>
       </div>
     </div>`;
     return;
@@ -2586,7 +2587,13 @@ async function loadDashboardData(){
   const params = new URLSearchParams(window.location.search);
   const report = params.get('report');
   if (!report && !params.get('data')) {
-    window.location.replace('showcase.html');
+    const publicHome = 'https://reflect.o11y.dev/';
+    const currentPublicUrl = `${window.location.origin}${window.location.pathname}`;
+    if (currentPublicUrl !== publicHome) {
+      window.location.replace(publicHome);
+      return null;
+    }
+    renderDashboardError('no-data', 'no-data');
     return null;
   }
   try {
@@ -2638,6 +2645,11 @@ function reportUrlWithCurrentFilters(){
 async function initApp(){
   D = await loadDashboardData();
   if (!D) return;
+  const demoBadge = document.getElementById('demo-badge');
+  const reportParam = new URLSearchParams(window.location.search).get('report') || '';
+  const isLocalApiReport = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
+    && reportParam.replace(/^\//, '') === 'api/data';
+  if (demoBadge && isLocalApiReport) demoBadge.hidden = true;
 
 /* ── Palette — reflect showcase colors ── */
 const P = {
@@ -2653,13 +2665,6 @@ const P = {
   mint:    '#66d4cf',
 };
 const COLORS = Object.values(P);
-
-const AGENT_COLORS = {
-  claude:  '#f28a1a',
-  copilot: '#30d158',
-  gemini:  '#ff9f0a',
-  cursor:  '#d7d1c6',
-};
 
 const EVENT_COLORS = {
   prompt:           '#f28a1a',
@@ -2707,6 +2712,22 @@ function fmtTokenShort(n){
 function fmtCost(n){
   const value = Number(n) || 0;
   return value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
+function colorForAgent(agent){
+  const name = String(agent || '');
+  if (!name) return 'var(--text-3)';
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
+  }
+  return COLORS[Math.abs(hash) % COLORS.length] || 'var(--text-3)';
+}
+
+function formatAgentLabel(agent){
+  const name = String(agent || '').trim();
+  if (!name) return 'Unknown';
+  return name.split('-').filter(Boolean).map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
 }
 
 function escHtml(s){
@@ -2832,7 +2853,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
   const sortSelect = document.getElementById('filter-sort');
   let reloadTimer = null;
   let filterExpanded = false;
-  const agentNames = ['claude','copilot','gemini','cursor'].filter(a => agentSet.has(a));
+  const agentNames = [...agentSet].sort((a,b) => a.localeCompare(b));
   const modelNames = [...new Set(sessions.map(s => s.primary_model).filter(Boolean))].sort((a,b) => a.localeCompare(b));
   modelNames.forEach(model => {
     const opt = document.createElement('option');
@@ -2845,7 +2866,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     pill.type = 'button';
     pill.className = 'sb-pill';
     pill.dataset.agent = a;
-    pill.textContent = a.charAt(0).toUpperCase() + a.slice(1);
+    pill.textContent = formatAgentLabel(a);
     pillContainer.appendChild(pill);
   });
 
@@ -3094,8 +3115,8 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       return;
     }
     listEl.innerHTML = filtered.map(s => {
-      const agentColor = AGENT_COLORS[s.agent] || 'var(--text-3)';
-      const agentName = s.agent ? (s.agent.charAt(0).toUpperCase() + s.agent.slice(1)) : 'Unknown';
+      const agentColor = colorForAgent(s.agent);
+      const agentName = formatAgentLabel(s.agent);
       const prompt = s.first_prompt ? escHtml(s.first_prompt.slice(0, 80)) + (s.first_prompt.length > 80 ? '…' : '') : 'No prompt data';
       const isActive = s._idx === selectedIdx;
       const estimatedTokens = getEstimatedSessionTokens(s);
@@ -3105,7 +3126,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       return `<button type="button" class="sb-card${isActive ? ' active' : ''}" data-idx="${s._idx}" aria-pressed="${isActive ? 'true' : 'false'}">
         <div class="sb-card-header">
           <div class="sb-agent-dot" style="background:${agentColor}"></div>
-          <div class="sb-card-agent">${agentName}</div>
+          <div class="sb-card-agent">${escHtml(agentName)}</div>
           <div class="sb-card-time">${s.created_at || '—'}</div>
         </div>
         <div class="sb-card-prompt">${prompt}</div>
@@ -3134,8 +3155,8 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       return;
     }
 
-    const agentColor = AGENT_COLORS[session.agent] || 'var(--text-3)';
-    const agentName = session.agent ? (session.agent.charAt(0).toUpperCase() + session.agent.slice(1)) : 'Unknown';
+    const agentColor = colorForAgent(session.agent);
+    const agentName = formatAgentLabel(session.agent);
     const estimatedTokens = getEstimatedSessionTokens(session);
     const inTok = estimatedTokens?.input ?? session.input_tokens ?? 0;
     const outTok = estimatedTokens?.output ?? session.output_tokens ?? 0;
@@ -3155,7 +3176,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     let headerHtml = `<div class="sb-detail-header">
       <div class="sb-detail-header-row">
         <div class="sb-detail-sid" title="${escHtml(session.full_id || session.id)}">${escHtml(session.full_id || session.id)}</div>
-        <div class="sb-detail-agent-badge" style="background:${agentColor}">${agentName}</div>
+        <div class="sb-detail-agent-badge" style="background:${agentColor}">${escHtml(agentName)}</div>
         ${session.primary_model ? `<div class="sb-detail-model">${escHtml(session.primary_model)}</div>` : ''}
       </div>
       <div class="sb-detail-stats">
