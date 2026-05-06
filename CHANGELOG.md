@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.x.x (unreleased)
+
+### Fixed
+- Point dashboard missing-report and failed-report fallbacks at `reflect.o11y.dev` instead of the showcase page
+- Hide the `DEMO` badge for local `?report=api/data` dashboards
+- Derive session agent filters, labels, and colors from report data without a fixed agent allowlist, including safe escaping for report-provided agent names
+- Add Codex to the public showcase dashboard artifact and restore spacing between Tools summary widgets and Event Distribution
+
 ## 0.7.2 (2026-05-04)
 
 ### Added
