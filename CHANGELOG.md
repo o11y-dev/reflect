@@ -2,6 +2,9 @@
 
 ## 0.x.x (unreleased)
 
+### Changed
+- Promote the showcase page to the root landing page at `reflect.o11y.dev/`; the telemetry dashboard HTML moves to `docs/report.html`, and the deprecated `showcase.html` page is removed
+
 ### Fixed
 - Point dashboard missing-report and failed-report fallbacks at `reflect.o11y.dev` instead of the showcase page
 - Hide the `DEMO` badge for local `?report=api/data` dashboards

@@ -294,7 +294,7 @@ reflect --dashboard-artifact docs/reports/latest.json
 
 For a safe public example, this repo also ships a curated GitHub Pages demo:
 
-- `https://reflect.o11y.dev/showcase.html`
+- `https://reflect.o11y.dev/`
 
 ### All options
 
