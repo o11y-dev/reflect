@@ -250,7 +250,7 @@ def create_app(stats=None, docs_dir: Path | None = None):
             html_path = _docs / name
             if html_path.exists():
                 return FileResponse(html_path, media_type="text/html")
-        return HTMLResponse("<h1>reflect dashboard</h1><p>docs/report.html not found</p>", status_code=404)
+        return HTMLResponse("<h1>reflect dashboard</h1><p>Dashboard not found (expected report.html or index.html in docs/)</p>", status_code=404)
 
     # Serve static files from docs/ (JS, CSS, etc.)
     if _docs.exists():
