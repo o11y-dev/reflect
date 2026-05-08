@@ -5,7 +5,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from reflect.parsing import _load_otlp_traces
+from reflect.parsing import _load_json_lines, _load_otlp_traces
 
 
 def _iso8601_from_ns(value_ns: int) -> str:
@@ -28,57 +28,101 @@ def _event_hash(span: dict) -> str:
     return hashlib.sha256(canon.encode()).hexdigest()
 
 
-def ingest_otlp_traces_file(db_conn, *, file_path: Path, source_id: str | None = None) -> dict[str, int]:
-    source = source_id or str(file_path)
+def _session_id(attrs: dict) -> str | None:
+    return (
+        attrs.get("session.id")
+        or attrs.get("gen_ai.session.id")
+        or attrs.get("gen_ai.client.session_id")
+        or attrs.get("session_id")
+        or None
+    )
+
+
+def _insert_raw_span(
+    db_conn,
+    *,
+    span: dict,
+    source: str,
+    source_type: str,
+    created_at: str,
+) -> bool:
+    attrs = span.get("attributes", {}) or {}
+    observed_at = _iso8601_from_ns(int(span.get("start_time_ns", 0) or 0))
+    received_at = _iso8601_from_ns(int(span.get("end_time_ns", 0) or 0))
+    content_hash = _event_hash(span)
+    event_id = hashlib.sha1(f"{source}:{content_hash}".encode()).hexdigest()
+
+    cursor = db_conn.execute(
+        """
+        INSERT OR IGNORE INTO raw_events(
+          id, source_id, source_type, event_type, trace_id, span_id, parent_span_id,
+          session_id, observed_at, received_at, attrs_json, body_json,
+          normalized_status, normalization_error, content_hash, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event_id,
+            source,
+            source_type,
+            span.get("name", "unknown"),
+            span.get("traceId", ""),
+            span.get("spanId", ""),
+            span.get("parentSpanId", ""),
+            _session_id(attrs),
+            observed_at,
+            received_at,
+            json.dumps(attrs, sort_keys=True),
+            json.dumps(span.get("body", {}) or {}, sort_keys=True),
+            "pending",
+            None,
+            content_hash,
+            created_at,
+        ),
+    )
+    return cursor.rowcount != 0
+
+
+def _ingest_spans(
+    db_conn,
+    *,
+    spans,
+    source: str,
+    source_type: str,
+) -> dict[str, int]:
     inserted = 0
     skipped = 0
-
-    for span in _load_otlp_traces(file_path):
-        attrs = span.get("attributes", {}) or {}
-        session_id = (
-            attrs.get("session.id")
-            or attrs.get("gen_ai.session.id")
-            or attrs.get("session_id")
-            or None
-        )
-
-        observed_at = _iso8601_from_ns(int(span.get("start_time_ns", 0) or 0))
-        received_at = _iso8601_from_ns(int(span.get("end_time_ns", 0) or 0))
-        created_at = datetime.now(tz=UTC).isoformat()
-        content_hash = _event_hash(span)
-        event_id = hashlib.sha1(f"{source}:{content_hash}".encode()).hexdigest()
-
-        cursor = db_conn.execute(
-            """
-            INSERT OR IGNORE INTO raw_events(
-              id, source_id, source_type, event_type, trace_id, span_id, parent_span_id,
-              session_id, observed_at, received_at, attrs_json, body_json,
-              normalized_status, normalization_error, content_hash, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                event_id,
-                source,
-                "otlp_traces_json",
-                span.get("name", "unknown"),
-                span.get("traceId", ""),
-                span.get("spanId", ""),
-                span.get("parentSpanId", ""),
-                session_id,
-                observed_at,
-                received_at,
-                json.dumps(attrs, sort_keys=True),
-                "{}",
-                "pending",
-                None,
-                content_hash,
-                created_at,
-            ),
-        )
-        if cursor.rowcount == 0:
-            skipped += 1
-        else:
+    created_at = datetime.now(tz=UTC).isoformat()
+    for span in spans:
+        if _insert_raw_span(
+            db_conn,
+            span=span,
+            source=source,
+            source_type=source_type,
+            created_at=created_at,
+        ):
             inserted += 1
+        else:
+            skipped += 1
 
     db_conn.commit()
     return {"inserted": inserted, "skipped": skipped}
+
+
+def ingest_otlp_traces_file(db_conn, *, file_path: Path, source_id: str | None = None) -> dict[str, int]:
+    source = source_id or str(file_path)
+    return _ingest_spans(
+        db_conn,
+        spans=_load_otlp_traces(file_path),
+        source=source,
+        source_type="otlp_traces_json",
+    )
+
+
+def ingest_local_spans_file(db_conn, *, file_path: Path, source_id: str | None = None) -> dict[str, int]:
+    source = source_id or str(file_path)
+    return _ingest_spans(
+        db_conn,
+        spans=_load_json_lines(file_path),
+        source=source,
+        source_type="local_spans_jsonl",
+    )

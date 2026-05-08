@@ -35,7 +35,8 @@ Completed foundations now exist for:
 - 🚧 **Phase 3 — raw_events ingestion**: **In progress**
   - table exists
   - `reflect ingest --otlp` now ingests OTLP traces JSON into `raw_events` with `source_id + content_hash` dedupe (`db ingest-otlp` kept as legacy alias)
-  - full multi-source ingestion path is still pending
+  - local hook spans JSONL can be ingested into `raw_events` with the same dedupe path
+  - richer native/session-store ingestion adapters are still pending
 
 - 🚧 **Phase 4 — normalization**: **Not started**
   - canonical target tables exist
@@ -56,8 +57,8 @@ Completed foundations now exist for:
 
 ## Immediate next execution backlog
 
-1. Generalize ingestion adapters beyond OTLP traces JSON while preserving `source_id + content_hash` dedupe.
-2. Add normalization pipeline from `raw_events` into canonical tables.
+1. Add normalization pipeline from `raw_events` into canonical tables.
+2. Add richer native/session-store ingestion adapters while preserving `source_id + content_hash` dedupe.
 3. Add rollup rebuild jobs for `session_rollups`, `daily_rollups`, and `tool_rollups`.
 4. Start SQL-backed view models for at least Overview/Sessions and wire to Textual migration plan.
 

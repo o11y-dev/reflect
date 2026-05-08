@@ -1,6 +1,6 @@
 import json
 
-from reflect.store.ingest import ingest_otlp_traces_file
+from reflect.store.ingest import ingest_local_spans_file, ingest_otlp_traces_file
 from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite
 
@@ -31,6 +31,22 @@ def _write_otlp_file(path):
     path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
 
+def _write_spans_file(path):
+    payload = {
+        "name": "PreToolUse",
+        "traceId": "t2",
+        "spanId": "s2",
+        "parentSpanId": "",
+        "start_time_ns": 300,
+        "end_time_ns": 400,
+        "attributes": {
+            "gen_ai.client.session_id": "sess-2",
+            "gen_ai.client.tool_name": "Read",
+        },
+    }
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
 def test_ingest_otlp_traces_dedupes(tmp_path):
     db = tmp_path / "reflect.db"
     otlp = tmp_path / "traces.json"
@@ -47,5 +63,28 @@ def test_ingest_otlp_traces_dedupes(tmp_path):
 
         row = conn.execute("SELECT source_type, event_type, session_id FROM raw_events").fetchone()
         assert row == ("otlp_traces_json", "UserPromptSubmit", "sess-1")
+    finally:
+        conn.close()
+
+
+def test_ingest_local_spans_dedupes(tmp_path):
+    db = tmp_path / "reflect.db"
+    spans = tmp_path / "spans.jsonl"
+    _write_spans_file(spans)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        first = ingest_local_spans_file(conn, file_path=spans)
+        second = ingest_local_spans_file(conn, file_path=spans)
+
+        assert first == {"inserted": 1, "skipped": 0}
+        assert second == {"inserted": 0, "skipped": 1}
+
+        row = conn.execute(
+            "SELECT source_type, event_type, session_id, attrs_json FROM raw_events"
+        ).fetchone()
+        assert row[:3] == ("local_spans_jsonl", "PreToolUse", "sess-2")
+        assert json.loads(row[3])["gen_ai.client.tool_name"] == "Read"
     finally:
         conn.close()

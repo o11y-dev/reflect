@@ -94,6 +94,56 @@ class TestHelp:
         assert "Pending migrations: 1, 2, 3, 4" in result.output
         assert "SQLite store health: needs attention" in result.output
 
+    def test_ingest_requires_one_source(self, runner, tmp_path):
+        db_path = tmp_path / "reflect.db"
+
+        result = runner.invoke(main, ["ingest", "--db-path", str(db_path)])
+
+        assert result.exit_code != 0
+        assert "Pass exactly one of --otlp or --spans-file" in result.output
+
+    def test_ingest_spans_file(self, runner, tmp_path):
+        db_path = tmp_path / "reflect.db"
+        spans_file = tmp_path / "spans.jsonl"
+        spans_file.write_text(json.dumps({
+            "name": "PreToolUse",
+            "traceId": "trace-1",
+            "spanId": "span-1",
+            "start_time_ns": 100,
+            "end_time_ns": 200,
+            "attributes": {"gen_ai.client.session_id": "sess-cli"},
+        }) + "\n")
+
+        result = runner.invoke(main, [
+            "ingest",
+            "--db-path", str(db_path),
+            "--spans-file", str(spans_file),
+        ])
+
+        assert result.exit_code == 0
+        assert "inserted=1" in result.output
+
+    def test_db_ingest_spans_alias(self, runner, tmp_path):
+        db_path = tmp_path / "reflect.db"
+        spans_file = tmp_path / "spans.jsonl"
+        spans_file.write_text(json.dumps({
+            "name": "SessionStart",
+            "traceId": "trace-2",
+            "spanId": "span-2",
+            "start_time_ns": 100,
+            "end_time_ns": 200,
+            "attributes": {"session.id": "sess-db-cli"},
+        }) + "\n")
+
+        result = runner.invoke(main, [
+            "db", "ingest-spans",
+            "--db-path", str(db_path),
+            "--spans-file", str(spans_file),
+        ])
+
+        assert result.exit_code == 0
+        assert "inserted=1" in result.output
+
 
 class TestTerminalMode:
     def test_default_terminal_mode(self, runner, otlp_file, tmp_path):

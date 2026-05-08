@@ -1945,15 +1945,26 @@ def db() -> None:
     """SQLite store management commands."""
 
 
-def _ingest_otlp_into_db(*, db_path: Path, otlp_traces: Path) -> dict[str, int]:
-    from reflect.store.ingest import ingest_otlp_traces_file
+def _ingest_into_db(
+    *,
+    db_path: Path,
+    otlp_traces: Path | None = None,
+    spans_file: Path | None = None,
+) -> dict[str, int]:
+    from reflect.store.ingest import ingest_local_spans_file, ingest_otlp_traces_file
     from reflect.store.migrate import migrate
     from reflect.store.sqlite import connect_sqlite
+
+    if (otlp_traces is None) == (spans_file is None):
+        raise click.ClickException("Pass exactly one of --otlp or --spans-file")
 
     conn = connect_sqlite(db_path)
     try:
         migrate(conn)
-        result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
+        if otlp_traces is not None:
+            result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
+        else:
+            result = ingest_local_spans_file(conn, file_path=spans_file)
     finally:
         conn.close()
     return result
@@ -1961,12 +1972,14 @@ def _ingest_otlp_into_db(*, db_path: Path, otlp_traces: Path) -> dict[str, int]:
 
 @main.command("ingest")
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
-@click.option("--otlp", "otlp_traces", type=click.Path(path_type=Path), required=True, help="Path to OTLP traces JSONL export file.")
-def ingest(db_path: Path, otlp_traces: Path) -> None:
-    """Ingest OTLP traces into raw_events."""
-    result = _ingest_otlp_into_db(db_path=db_path, otlp_traces=otlp_traces)
+@click.option("--otlp", "otlp_traces", type=click.Path(path_type=Path), default=None, help="Path to OTLP traces JSONL export file.")
+@click.option("--spans-file", type=click.Path(path_type=Path), default=None, help="Path to local hook spans JSONL file.")
+def ingest(db_path: Path, otlp_traces: Path | None, spans_file: Path | None) -> None:
+    """Ingest telemetry records into raw_events."""
+    source_path = otlp_traces or spans_file
+    result = _ingest_into_db(db_path=db_path, otlp_traces=otlp_traces, spans_file=spans_file)
     click.echo(
-        f"Ingested {otlp_traces} -> {db_path} (inserted={result['inserted']}, skipped={result['skipped']})"
+        f"Ingested {source_path} -> {db_path} (inserted={result['inserted']}, skipped={result['skipped']})"
     )
 
 
@@ -1975,10 +1988,23 @@ def ingest(db_path: Path, otlp_traces: Path) -> None:
 @click.option("--otlp-traces", type=click.Path(path_type=Path), required=True, help="Path to OTLP traces JSONL export file.")
 def db_ingest(db_path: Path, otlp_traces: Path) -> None:
     """Ingest OTLP traces JSONL into raw_events with source/hash dedupe (legacy alias)."""
-    result = _ingest_otlp_into_db(db_path=db_path, otlp_traces=otlp_traces)
+    result = _ingest_into_db(db_path=db_path, otlp_traces=otlp_traces)
     click.echo(
         f"Ingested {otlp_traces} -> {db_path} (inserted={result['inserted']}, skipped={result['skipped']})"
     )
+
+
+@db.command("ingest-spans")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+@click.option("--spans-file", type=click.Path(path_type=Path), required=True, help="Path to local hook spans JSONL file.")
+def db_ingest_spans(db_path: Path, spans_file: Path) -> None:
+    """Ingest local hook spans JSONL into raw_events with source/hash dedupe."""
+    result = _ingest_into_db(db_path=db_path, spans_file=spans_file)
+    click.echo(
+        f"Ingested {spans_file} -> {db_path} (inserted={result['inserted']}, skipped={result['skipped']})"
+    )
+
+
 @db.command("migrate")
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def db_migrate(db_path: Path) -> None:
