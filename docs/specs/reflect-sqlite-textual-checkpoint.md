@@ -13,6 +13,7 @@ Completed foundations now exist for:
 - rollup and graph migration files (`002_rollups.sql`, `003_graph.sql`)
 - canonical table migration file (`004_canonical.sql`)
 - `reflect db migrate` CLI entrypoint
+- `reflect db doctor` migration/foreign-key/pragma health check
 - initial Pydantic base/event models and schema export command
 - regression tests for SQLite runtime pragmas, migration idempotency, and Pydantic allow/forbid behavior
 
@@ -29,7 +30,7 @@ Completed foundations now exist for:
   - migration runner present
   - rollup and graph migrations present
   - canonical table migration present
-  - missing DB doctor checks
+  - DB doctor checks present
 
 - 🚧 **Phase 3 — raw_events ingestion**: **In progress**
   - table exists
@@ -57,9 +58,8 @@ Completed foundations now exist for:
 
 1. Generalize ingestion adapters beyond OTLP traces JSON while preserving `source_id + content_hash` dedupe.
 2. Add normalization pipeline from `raw_events` into canonical tables.
-3. Add DB doctor command (`foreign_key_check`, migration health, pragma sanity).
-4. Add rollup rebuild jobs for `session_rollups`, `daily_rollups`, and `tool_rollups`.
-5. Start SQL-backed view models for at least Overview/Sessions and wire to Textual migration plan.
+3. Add rollup rebuild jobs for `session_rollups`, `daily_rollups`, and `tool_rollups`.
+4. Start SQL-backed view models for at least Overview/Sessions and wire to Textual migration plan.
 
 ## Definition of done reminder
 

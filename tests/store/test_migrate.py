@@ -114,3 +114,33 @@ def test_migrate_creates_canonical_foreign_keys(tmp_path):
         assert ("files", "file_id", "id") in evidence_foreign_keys
     finally:
         conn.close()
+
+
+def test_database_doctor_reports_healthy_migrated_store(tmp_path):
+    from reflect.store.doctor import inspect_database
+
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        status = inspect_database(conn)
+    finally:
+        conn.close()
+
+    assert status["ok"] is True
+    assert status["pending_migrations"] == []
+    assert status["foreign_key_issues"] == []
+    assert status["pragma_ok"] is True
+
+
+def test_database_doctor_reports_pending_migrations(tmp_path):
+    from reflect.store.doctor import inspect_database
+
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        status = inspect_database(conn)
+    finally:
+        conn.close()
+
+    assert status["ok"] is False
+    assert status["applied_migrations"] == []
+    assert status["pending_migrations"] == [1, 2, 3, 4]

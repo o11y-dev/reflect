@@ -69,6 +69,31 @@ class TestHelp:
         assert result.exit_code == 0
         assert "Usage" in result.output
 
+    def test_db_doctor_help(self, runner):
+        result = runner.invoke(main, ["db", "doctor", "--help"])
+        assert result.exit_code == 0
+        assert "doctor" in result.output.lower() or "Usage" in result.output
+
+    def test_db_doctor_reports_healthy_store(self, runner, tmp_path):
+        db_path = tmp_path / "reflect.db"
+        migrate_result = runner.invoke(main, ["db", "migrate", "--db-path", str(db_path)])
+        assert migrate_result.exit_code == 0
+
+        result = runner.invoke(main, ["db", "doctor", "--db-path", str(db_path)])
+
+        assert result.exit_code == 0
+        assert "SQLite store health: ok" in result.output
+        assert "Foreign keys: ok" in result.output
+
+    def test_db_doctor_fails_for_pending_migrations(self, runner, tmp_path):
+        db_path = tmp_path / "reflect.db"
+
+        result = runner.invoke(main, ["db", "doctor", "--db-path", str(db_path)])
+
+        assert result.exit_code != 0
+        assert "Pending migrations: 1, 2, 3, 4" in result.output
+        assert "SQLite store health: needs attention" in result.output
+
 
 class TestTerminalMode:
     def test_default_terminal_mode(self, runner, otlp_file, tmp_path):
@@ -1240,4 +1265,3 @@ class TestNativeOtelConfig:
         codex = next(status for status in statuses if status["agent"] == "OpenAI Codex CLI")
         assert codex["status"] == "unreadable"
         assert "Failed to read config.toml" in codex["details"]
-

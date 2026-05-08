@@ -1998,6 +1998,53 @@ def db_migrate(db_path: Path) -> None:
     click.echo(f"Applied migrations to {db_path}: {', '.join(str(v) for v in applied)}")
 
 
+@db.command("doctor")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+def db_doctor(db_path: Path) -> None:
+    """Inspect SQLite store migration, pragma, and foreign-key health."""
+    from reflect.store.doctor import inspect_database
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    try:
+        status = inspect_database(conn)
+    finally:
+        conn.close()
+
+    click.echo(f"SQLite DB: {db_path}")
+    applied = ", ".join(str(version) for version in status["applied_migrations"]) or "none"
+    expected = ", ".join(str(version) for version in status["expected_migrations"]) or "none"
+    click.echo(f"Migrations: applied={applied}; expected={expected}")
+    if status["pending_migrations"]:
+        pending = ", ".join(str(version) for version in status["pending_migrations"])
+        click.echo(f"Pending migrations: {pending}")
+    if status["unknown_migrations"]:
+        unknown = ", ".join(str(version) for version in status["unknown_migrations"])
+        click.echo(f"Unknown migrations: {unknown}")
+
+    foreign_key_issues = status["foreign_key_issues"]
+    if foreign_key_issues:
+        click.echo(f"Foreign keys: {len(foreign_key_issues)} issue(s)")
+    else:
+        click.echo("Foreign keys: ok")
+
+    pragmas = status["pragmas"]
+    click.echo(
+        "Pragmas: "
+        f"foreign_keys={pragmas['foreign_keys']}, "
+        f"journal_mode={pragmas['journal_mode']}, "
+        f"synchronous={pragmas['synchronous']}, "
+        f"wal_autocheckpoint={pragmas['wal_autocheckpoint']}, "
+        f"busy_timeout={pragmas['busy_timeout']}"
+    )
+    if status["ok"]:
+        click.echo("SQLite store health: ok")
+        return
+
+    click.echo("SQLite store health: needs attention")
+    raise click.ClickException("SQLite store health checks failed")
+
+
 @main.group()
 def schema() -> None:
     """Schema and model tooling."""
