@@ -2005,6 +2005,27 @@ def db_ingest_spans(db_path: Path, spans_file: Path) -> None:
     )
 
 
+@db.command("normalize")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+@click.option("--limit", type=int, default=None, help="Maximum pending raw_events to normalize.")
+def db_normalize(db_path: Path, limit: int | None) -> None:
+    """Normalize pending raw_events into canonical SQLite tables."""
+    from reflect.store.migrate import migrate
+    from reflect.store.normalize import normalize_pending_raw_events
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        result = normalize_pending_raw_events(conn, limit=limit)
+    finally:
+        conn.close()
+    click.echo(
+        "Normalized raw_events "
+        f"(processed={result['processed']}, failed={result['failed']}, skipped={result['skipped']})"
+    )
+
+
 @db.command("migrate")
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def db_migrate(db_path: Path) -> None:

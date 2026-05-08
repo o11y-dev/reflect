@@ -3,6 +3,7 @@
 ## 0.x.x (unreleased)
 
 ### Added
+- Added `reflect db normalize` to promote pending `raw_events` into canonical sessions, steps, and LLM/tool/MCP/memory/privacy tables.
 - Added local hook span JSONL ingestion via `reflect ingest --spans-file <file>` and `reflect db ingest-spans`.
 - Added `reflect db doctor` to report SQLite migration drift, foreign-key violations, and runtime pragma health.
 - Added SQLite canonical table migration (`004_canonical.sql`) for agents, repos, files, sessions, steps, LLM/tool/MCP calls, specs, evidence, memories, and privacy findings.

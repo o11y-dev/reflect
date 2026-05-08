@@ -40,7 +40,8 @@ Completed foundations now exist for:
 
 - 🚧 **Phase 4 — normalization**: **Not started**
   - canonical target tables exist
-  - no `raw_events -> canonical tables/memory/graph/privacy` normalization pipeline yet
+  - `reflect db normalize` promotes pending raw events into sessions, steps, LLM/tool/MCP call rows, memories, and privacy findings
+  - graph normalization is still pending
 
 - 🚧 **Phase 5 — rollups**: **Partially complete**
   - rollup tables/migrations exist
@@ -57,7 +58,7 @@ Completed foundations now exist for:
 
 ## Immediate next execution backlog
 
-1. Add normalization pipeline from `raw_events` into canonical tables.
+1. Add graph normalization from canonical sessions/steps/tools/memory into `graph_nodes` and `graph_edges`.
 2. Add richer native/session-store ingestion adapters while preserving `source_id + content_hash` dedupe.
 3. Add rollup rebuild jobs for `session_rollups`, `daily_rollups`, and `tool_rollups`.
 4. Start SQL-backed view models for at least Overview/Sessions and wire to Textual migration plan.
