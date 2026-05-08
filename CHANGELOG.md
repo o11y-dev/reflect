@@ -3,6 +3,7 @@
 ## 0.x.x (unreleased)
 
 ### Added
+- Added SQLite canonical table migration (`004_canonical.sql`) for agents, repos, files, sessions, steps, LLM/tool/MCP calls, specs, evidence, memories, and privacy findings.
 - Added SQLite rollup and graph migrations (`002_rollups.sql`, `003_graph.sql`) for session/day/tool aggregates plus graph nodes and edges.
 - Added `reflect db ingest-otlp --otlp-traces <file>` to ingest OTLP traces JSON into `raw_events` with `source_id + content_hash` deduplication.
 - Added `reflect.store.ingest` ingestion helper plus regression coverage for duplicate ingest behavior.

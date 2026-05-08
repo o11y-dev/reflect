@@ -11,6 +11,7 @@ Completed foundations now exist for:
 - SQLite connection defaults (`foreign_keys`, WAL, `synchronous`, checkpoint, busy timeout)
 - initial SQL migration file (`001_initial.sql`) and migration runner
 - rollup and graph migration files (`002_rollups.sql`, `003_graph.sql`)
+- canonical table migration file (`004_canonical.sql`)
 - `reflect db migrate` CLI entrypoint
 - initial Pydantic base/event models and schema export command
 - regression tests for SQLite runtime pragmas, migration idempotency, and Pydantic allow/forbid behavior
@@ -27,7 +28,8 @@ Completed foundations now exist for:
   - connection wrapper + pragmas present
   - migration runner present
   - rollup and graph migrations present
-  - missing DB doctor checks and canonical table migrations
+  - canonical table migration present
+  - missing DB doctor checks
 
 - 🚧 **Phase 3 — raw_events ingestion**: **In progress**
   - table exists
@@ -35,10 +37,12 @@ Completed foundations now exist for:
   - full multi-source ingestion path is still pending
 
 - 🚧 **Phase 4 — normalization**: **Not started**
+  - canonical target tables exist
   - no `raw_events -> canonical tables/memory/graph/privacy` normalization pipeline yet
 
-- 🚧 **Phase 5 — rollups**: **Not started**
-  - no rollup tables/migrations/jobs yet
+- 🚧 **Phase 5 — rollups**: **Partially complete**
+  - rollup tables/migrations exist
+  - no rollup rebuild jobs yet
 
 - 🚧 **Phase 6 — Port Textual UI to SQL**: **Not started**
   - current runtime still uses existing terminal/dashboard code path
@@ -51,10 +55,10 @@ Completed foundations now exist for:
 
 ## Immediate next execution backlog
 
-1. Add canonical table migrations for sessions/steps/llm/tool/mcp/spec/memory/privacy entities.
-2. Implement ingestion adapter that writes source records into `raw_events` with source/hash dedupe.
-3. Add normalization pipeline from `raw_events` into canonical tables.
-4. Add DB doctor command (`foreign_key_check`, migration health, pragma sanity).
+1. Generalize ingestion adapters beyond OTLP traces JSON while preserving `source_id + content_hash` dedupe.
+2. Add normalization pipeline from `raw_events` into canonical tables.
+3. Add DB doctor command (`foreign_key_check`, migration health, pragma sanity).
+4. Add rollup rebuild jobs for `session_rollups`, `daily_rollups`, and `tool_rollups`.
 5. Start SQL-backed view models for at least Overview/Sessions and wire to Textual migration plan.
 
 ## Definition of done reminder
