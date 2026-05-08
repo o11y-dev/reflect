@@ -10,6 +10,7 @@ Completed foundations now exist for:
 
 - SQLite connection defaults (`foreign_keys`, WAL, `synchronous`, checkpoint, busy timeout)
 - initial SQL migration file (`001_initial.sql`) and migration runner
+- rollup and graph migration files (`002_rollups.sql`, `003_graph.sql`)
 - `reflect db migrate` CLI entrypoint
 - initial Pydantic base/event models and schema export command
 - regression tests for SQLite runtime pragmas, migration idempotency, and Pydantic allow/forbid behavior
@@ -25,7 +26,8 @@ Completed foundations now exist for:
 - ✅ **Phase 2 — Add SQLite store**: **Partially complete**
   - connection wrapper + pragmas present
   - migration runner present
-  - missing DB doctor checks and richer migration set (`002_rollups.sql`, `003_graph.sql`)
+  - rollup and graph migrations present
+  - missing DB doctor checks and canonical table migrations
 
 - 🚧 **Phase 3 — raw_events ingestion**: **In progress**
   - table exists
@@ -49,13 +51,11 @@ Completed foundations now exist for:
 
 ## Immediate next execution backlog
 
-1. Add migration `002_rollups.sql` with `session_rollups`, `daily_rollups`, `tool_rollups`.
-2. Add migration `003_graph.sql` with `graph_nodes` and `graph_edges`.
-3. Add canonical table migrations for sessions/steps/llm/tool/mcp/spec/memory/privacy entities.
-4. Implement ingestion adapter that writes source records into `raw_events` with source/hash dedupe.
-5. Add normalization pipeline from `raw_events` into canonical tables.
-6. Add DB doctor command (`foreign_key_check`, migration health, pragma sanity).
-7. Start SQL-backed view models for at least Overview/Sessions and wire to Textual migration plan.
+1. Add canonical table migrations for sessions/steps/llm/tool/mcp/spec/memory/privacy entities.
+2. Implement ingestion adapter that writes source records into `raw_events` with source/hash dedupe.
+3. Add normalization pipeline from `raw_events` into canonical tables.
+4. Add DB doctor command (`foreign_key_check`, migration health, pragma sanity).
+5. Start SQL-backed view models for at least Overview/Sessions and wire to Textual migration plan.
 
 ## Definition of done reminder
 

@@ -3,6 +3,7 @@
 ## 0.x.x (unreleased)
 
 ### Added
+- Added SQLite rollup and graph migrations (`002_rollups.sql`, `003_graph.sql`) for session/day/tool aggregates plus graph nodes and edges.
 - Added `reflect db ingest-otlp --otlp-traces <file>` to ingest OTLP traces JSON into `raw_events` with `source_id + content_hash` deduplication.
 - Added `reflect.store.ingest` ingestion helper plus regression coverage for duplicate ingest behavior.
 - Added `reflect db migrate` to apply bundled SQLite SQL migrations and bootstrap runtime tables from migration files.
