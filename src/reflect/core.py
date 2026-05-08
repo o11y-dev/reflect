@@ -2026,6 +2026,23 @@ def db_normalize(db_path: Path, limit: int | None) -> None:
     )
 
 
+@db.command("rebuild-graph")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+def db_rebuild_graph(db_path: Path) -> None:
+    """Rebuild graph_nodes and graph_edges from canonical SQLite tables."""
+    from reflect.store.graph_normalize import rebuild_graph
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        result = rebuild_graph(conn)
+    finally:
+        conn.close()
+    click.echo(f"Rebuilt graph (nodes={result['nodes']}, edges={result['edges']})")
+
+
 @db.command("migrate")
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def db_migrate(db_path: Path) -> None:
