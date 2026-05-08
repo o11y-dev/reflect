@@ -45,7 +45,7 @@ Completed foundations now exist for:
 
 - 🚧 **Phase 5 — rollups**: **Partially complete**
   - rollup tables/migrations exist
-  - no rollup rebuild jobs yet
+  - `reflect db rebuild-rollups` refreshes session, daily, and tool aggregate tables from canonical data
 
 - 🚧 **Phase 6 — Port Textual UI to SQL**: **Not started**
   - current runtime still uses existing terminal/dashboard code path
@@ -59,8 +59,7 @@ Completed foundations now exist for:
 ## Immediate next execution backlog
 
 1. Add richer native/session-store ingestion adapters while preserving `source_id + content_hash` dedupe.
-2. Add rollup rebuild jobs for `session_rollups`, `daily_rollups`, and `tool_rollups`.
-3. Start SQL-backed view models for at least Overview/Sessions and wire to Textual migration plan.
+2. Start SQL-backed view models for at least Overview/Sessions and wire to Textual migration plan.
 
 ## Definition of done reminder
 

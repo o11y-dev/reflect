@@ -2043,6 +2043,26 @@ def db_rebuild_graph(db_path: Path) -> None:
     click.echo(f"Rebuilt graph (nodes={result['nodes']}, edges={result['edges']})")
 
 
+@db.command("rebuild-rollups")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+def db_rebuild_rollups(db_path: Path) -> None:
+    """Rebuild aggregate rollup tables from canonical SQLite tables."""
+    from reflect.store.migrate import migrate
+    from reflect.store.rollups import rebuild_rollups
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        result = rebuild_rollups(conn)
+    finally:
+        conn.close()
+    click.echo(
+        "Rebuilt rollups "
+        f"(sessions={result['session_rollups']}, days={result['daily_rollups']}, tools={result['tool_rollups']})"
+    )
+
+
 @db.command("migrate")
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def db_migrate(db_path: Path) -> None:

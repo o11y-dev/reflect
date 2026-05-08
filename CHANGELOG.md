@@ -3,6 +3,7 @@
 ## 0.x.x (unreleased)
 
 ### Added
+- Added `reflect db rebuild-rollups` to refresh session, daily, and tool aggregate tables from canonical SQLite data.
 - Added `reflect db rebuild-graph` to populate SQLite graph nodes and edges from canonical sessions, steps, tools, MCP calls, and memories.
 - Added `reflect db normalize` to promote pending `raw_events` into canonical sessions, steps, and LLM/tool/MCP/memory/privacy tables.
 - Added local hook span JSONL ingestion via `reflect ingest --spans-file <file>` and `reflect db ingest-spans`.

@@ -199,6 +199,34 @@ class TestHelp:
         assert "Rebuilt graph" in result.output
         assert "nodes=" in result.output
 
+    def test_db_rebuild_rollups(self, runner, tmp_path):
+        db_path = tmp_path / "reflect.db"
+        spans_file = tmp_path / "spans.jsonl"
+        spans_file.write_text(json.dumps({
+            "name": "PreToolUse",
+            "traceId": "trace-5",
+            "spanId": "span-5",
+            "start_time_ns": 100,
+            "end_time_ns": 200,
+            "attributes": {
+                "gen_ai.client.name": "claude",
+                "gen_ai.client.session_id": "sess-rollup-cli",
+                "gen_ai.client.tool_name": "Read",
+            },
+        }) + "\n")
+        assert runner.invoke(main, [
+            "ingest",
+            "--db-path", str(db_path),
+            "--spans-file", str(spans_file),
+        ]).exit_code == 0
+        assert runner.invoke(main, ["db", "normalize", "--db-path", str(db_path)]).exit_code == 0
+
+        result = runner.invoke(main, ["db", "rebuild-rollups", "--db-path", str(db_path)])
+
+        assert result.exit_code == 0
+        assert "Rebuilt rollups" in result.output
+        assert "sessions=1" in result.output
+
 
 class TestTerminalMode:
     def test_default_terminal_mode(self, runner, otlp_file, tmp_path):

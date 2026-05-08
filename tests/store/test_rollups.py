@@ -1,0 +1,71 @@
+import json
+
+from reflect.store.ingest import ingest_local_spans_file
+from reflect.store.migrate import migrate
+from reflect.store.normalize import normalize_pending_raw_events
+from reflect.store.rollups import rebuild_rollups
+from reflect.store.sqlite import connect_sqlite
+
+
+def _write_spans(path):
+    spans = [
+        {
+            "name": "UserPromptSubmit",
+            "traceId": "trace-1",
+            "spanId": "span-1",
+            "start_time_ns": 1_700_000_000_000_000_000,
+            "end_time_ns": 1_700_000_000_100_000_000,
+            "attributes": {
+                "gen_ai.client.name": "claude",
+                "gen_ai.client.session_id": "sess-rollup",
+                "gen_ai.request.model": "claude-4.6-opus",
+                "gen_ai.usage.input_tokens": 100,
+                "gen_ai.usage.output_tokens": 50,
+            },
+        },
+        {
+            "name": "PreToolUse",
+            "traceId": "trace-1",
+            "spanId": "span-2",
+            "start_time_ns": 1_700_000_001_000_000_000,
+            "end_time_ns": 1_700_000_001_250_000_000,
+            "attributes": {
+                "gen_ai.client.name": "claude",
+                "gen_ai.client.session_id": "sess-rollup",
+                "gen_ai.client.tool_name": "Read",
+            },
+        },
+    ]
+    path.write_text("\n".join(json.dumps(span) for span in spans) + "\n", encoding="utf-8")
+
+
+def test_rebuild_rollups_from_canonical_tables(tmp_path):
+    db = tmp_path / "reflect.db"
+    spans = tmp_path / "spans.jsonl"
+    _write_spans(spans)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        ingest_local_spans_file(conn, file_path=spans)
+        normalize_pending_raw_events(conn)
+
+        result = rebuild_rollups(conn)
+        second = rebuild_rollups(conn)
+
+        assert result == {"session_rollups": 1, "daily_rollups": 1, "tool_rollups": 1}
+        assert second == result
+        session = conn.execute(
+            """
+            SELECT agent, prompt_count, tool_call_count, input_tokens, output_tokens
+            FROM session_rollups
+            WHERE session_id = 'sess-rollup'
+            """
+        ).fetchone()
+        assert session == ("claude", 1, 1, 100, 50)
+        day = conn.execute("SELECT session_count, prompt_count, tool_call_count FROM daily_rollups").fetchone()
+        assert day == (1, 1, 1)
+        tool = conn.execute("SELECT tool_name, call_count, total_duration_ms FROM tool_rollups").fetchone()
+        assert tool == ("Read", 1, 250)
+    finally:
+        conn.close()
