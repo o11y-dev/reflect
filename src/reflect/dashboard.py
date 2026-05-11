@@ -1602,6 +1602,14 @@ def _sql_dashboard_compat_payload(db_path: Path) -> dict[str, object]:
             ORDER BY sessions DESC, tools DESC, name ASC
             """
         ))
+        cache_totals = conn.execute(
+            """
+            SELECT
+              COALESCE(SUM(cache_write_tokens), 0) AS cache_creation_tokens,
+              COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens
+            FROM session_rollups
+            """
+        ).fetchone()
         mcp_rows = _dict_rows(conn.execute(
             """
             SELECT server_name, COUNT(*) AS call_count
@@ -1818,6 +1826,8 @@ def _sql_dashboard_compat_payload(db_path: Path) -> dict[str, object]:
         "unique_models": len(model_counts),
         "model_costs": model_costs,
         "model_costs_usd": model_costs,
+        "total_cache_creation_tokens": int(cache_totals[0] or 0),
+        "total_cache_read_tokens": int(cache_totals[1] or 0),
         "tools_by_count": tools_by_count,
         "tool_percentiles": tool_percentiles,
         "agent_comparison": agent_comparison,
@@ -1858,7 +1868,11 @@ def _sql_insight_payload(
     sessions: list[dict[str, object]],
     compat: dict[str, object],
 ) -> dict[str, object]:
-    total_tokens = int(overview["input_tokens"] or 0) + int(overview["output_tokens"] or 0)
+    input_tokens = int(overview["input_tokens"] or 0)
+    output_tokens = int(overview["output_tokens"] or 0)
+    cache_creation_tokens = int(compat["total_cache_creation_tokens"] or 0)
+    cache_read_tokens = int(compat["total_cache_read_tokens"] or 0)
+    total_tokens = input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens
     prompt_count = sum(int(session["prompt_count"] or 0) for session in sessions)
     session_tokens = [int(session["total_tokens"] or 0) for session in sessions]
     top_session_share = (max(session_tokens) / total_tokens * 100) if total_tokens else 0.0
@@ -1869,13 +1883,14 @@ def _sql_insight_payload(
     subagents = int(compat["subagent_total_starts"] or 0)
     economy = {
         "total_tokens": total_tokens,
-        "avg_input_per_prompt": (int(overview["input_tokens"] or 0) / prompt_count) if prompt_count else 0,
+        "avg_input_per_prompt": (input_tokens / prompt_count) if prompt_count else 0,
+        "avg_output_per_prompt": (output_tokens / prompt_count) if prompt_count else 0,
         "top_session_share": top_session_share,
         "high_context_sessions": high_context_sessions,
         "reads_per_prompt": 0,
         "mcp_per_prompt": (mcp_calls / prompt_count) if prompt_count else 0,
-        "cache_reuse_ratio": 0,
-        "cache_hit_pct": 0,
+        "cache_reuse_ratio": (cache_read_tokens / input_tokens) if input_tokens else 0,
+        "cache_hit_pct": 100 * min((cache_read_tokens / input_tokens) if input_tokens else 0, 1.0),
         "heavy_model_share": 0,
     }
     strengths = [
@@ -1947,7 +1962,14 @@ def _sql_only_dashboard_payload(
             "recovered_failures": 0,
             "input_tokens": row["input_tokens"],
             "output_tokens": row["output_tokens"],
-            "total_tokens": row["input_tokens"] + row["output_tokens"],
+            "cache_creation_tokens": row["cache_creation_tokens"],
+            "cache_read_tokens": row["cache_read_tokens"],
+            "total_tokens": (
+                row["input_tokens"]
+                + row["output_tokens"]
+                + row["cache_creation_tokens"]
+                + row["cache_read_tokens"]
+            ),
             "total_cost": row["estimated_cost_usd"],
             "total_cost_usd": row["estimated_cost_usd"],
             "pricing_unit": "usd",
@@ -1986,8 +2008,14 @@ def _sql_only_dashboard_payload(
         "file_edits": 0,
         "total_input_tokens": overview["input_tokens"],
         "total_output_tokens": overview["output_tokens"],
-        "total_cache_read_tokens": 0,
-        "total_tokens": overview["input_tokens"] + overview["output_tokens"],
+        "total_cache_creation_tokens": compat["total_cache_creation_tokens"],
+        "total_cache_read_tokens": compat["total_cache_read_tokens"],
+        "total_tokens": (
+            overview["input_tokens"]
+            + overview["output_tokens"]
+            + compat["total_cache_creation_tokens"]
+            + compat["total_cache_read_tokens"]
+        ),
         "total_cost": overview["estimated_cost_usd"],
         "total_cost_usd": overview["estimated_cost_usd"],
         "input_cost": 0,

@@ -19,6 +19,8 @@ class SessionRow(ReflectModel):
     failure_count: int
     input_tokens: int
     output_tokens: int
+    cache_creation_tokens: int
+    cache_read_tokens: int
     estimated_cost_usd: float
 
 
@@ -85,6 +87,8 @@ def list_sessions(
           COALESCE(sr.error_count, s.failure_count, 0) AS failure_count,
           COALESCE(sr.input_tokens, s.input_tokens, 0) AS input_tokens,
           COALESCE(sr.output_tokens, s.output_tokens, 0) AS output_tokens,
+          COALESCE(sr.cache_write_tokens, s.cache_creation_tokens, 0) AS cache_creation_tokens,
+          COALESCE(sr.cache_read_tokens, s.cache_read_tokens, 0) AS cache_read_tokens,
           COALESCE(sr.total_cost, s.estimated_cost_usd, 0) AS estimated_cost_usd
         FROM sessions s
         LEFT JOIN agents a ON a.id = s.agent_id

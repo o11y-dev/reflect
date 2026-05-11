@@ -70,9 +70,10 @@ def _seed_sql_report_db(db_path):
             """
             INSERT INTO llm_calls(
               id, step_id, session_id, provider, request_model, response_model,
-              input_tokens, output_tokens, estimated_cost_usd, created_at, updated_at
+              input_tokens, output_tokens, cache_creation_input_tokens,
+              cache_read_input_tokens, estimated_cost_usd, created_at, updated_at
             )
-            VALUES ('llm-sql', 'step-sql', 'sess-sql', 'openai', 'gpt-5.4', 'gpt-5.4', 120, 30, 0.42, ?, ?)
+            VALUES ('llm-sql', 'step-sql', 'sess-sql', 'openai', 'gpt-5.4', 'gpt-5.4', 120, 30, 10, 90, 0.42, ?, ?)
             """,
             (now, now),
         )
@@ -86,7 +87,7 @@ def _seed_sql_report_db(db_path):
             VALUES (
               'sess-sql', 'codex', '2026-05-01T10:00:00+00:00',
               '2026-05-01T10:02:00+00:00', 120000, 1, 2, 0,
-              120, 30, 0, 0, 0.42, ?
+              120, 30, 90, 10, 0.42, ?
             )
             """,
             (now,),
@@ -159,7 +160,10 @@ def test_sql_only_dashboard_api_does_not_build_legacy_json(tmp_path, monkeypatch
     assert payload["observations"]
     assert payload["practical_examples"]
     assert payload["achievements"]
-    assert payload["token_economy"]["total_tokens"] == 150
+    assert payload["total_cache_creation_tokens"] == 10
+    assert payload["total_cache_read_tokens"] == 90
+    assert payload["token_economy"]["total_tokens"] == 250
+    assert payload["token_economy"]["cache_hit_pct"] == 75
     assert payload["graph_dep"]["nodes"]
     assert payload["graph_session_timeline"][0]["spans"][0]["tool"] == "exec_command"
 
