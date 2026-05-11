@@ -1488,7 +1488,104 @@ def _sql_report_payload(db_path: Path, *, limit: int = 50, offset: int = 0) -> d
         conn.close()
 
 
-def _start_publish_server(stats: TelemetryStats, *, db_path: Path | None = None) -> None:
+def _sql_only_dashboard_payload(
+    db_path: Path,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, object]:
+    sqlite_payload = _sql_report_payload(db_path, limit=limit, offset=offset)
+    overview = sqlite_payload["overview"]
+    sessions_page = sqlite_payload["sessions"]
+    session_rows = sessions_page["rows"]
+    sessions = [
+        {
+            "id": row["session_id"],
+            "full_id": row["session_id"],
+            "agent": row.get("agent") or "unknown",
+            "status": row["status"],
+            "title": row.get("title"),
+            "started_at": row["started_at"],
+            "ended_at": row.get("ended_at"),
+            "event_count": row["prompt_count"] + row["tool_call_count"],
+            "prompt_count": row["prompt_count"],
+            "tool_calls": row["tool_call_count"],
+            "failures": row["failure_count"],
+            "input_tokens": row["input_tokens"],
+            "output_tokens": row["output_tokens"],
+            "total_tokens": row["input_tokens"] + row["output_tokens"],
+            "total_cost": row["estimated_cost_usd"],
+            "total_cost_usd": row["estimated_cost_usd"],
+            "pricing_unit": "usd",
+            "primary_model": "",
+            "models": {},
+            "tools": {},
+            "skills": {},
+            "conversation": [],
+            "telemetry": [],
+        }
+        for row in session_rows
+    ]
+    first_event_ts = ""
+    if session_rows:
+        first_event_ts = min(row["started_at"] for row in session_rows if row.get("started_at"))
+    prompt_count = sum(row["prompt_count"] for row in session_rows)
+    return {
+        "sql_only": True,
+        "sqlite": sqlite_payload,
+        "comparison": None,
+        "sessions": sessions,
+        "unique_sessions": overview["session_count"],
+        "first_event_ts": first_event_ts,
+        "last_event_ts": max((row["started_at"] for row in session_rows if row.get("started_at")), default=""),
+        "avg_quality_score": 0,
+        "prompt_submits": prompt_count,
+        "tool_calls": overview["tool_call_count"],
+        "tool_to_prompt_ratio": f"{overview['tool_call_count'] / prompt_count:.1f}" if prompt_count else "0.0",
+        "total_input_tokens": overview["input_tokens"],
+        "total_output_tokens": overview["output_tokens"],
+        "total_tokens": overview["input_tokens"] + overview["output_tokens"],
+        "total_cost": overview["estimated_cost_usd"],
+        "total_cost_usd": overview["estimated_cost_usd"],
+        "input_cost": 0,
+        "input_cost_usd": 0,
+        "output_cost": 0,
+        "output_cost_usd": 0,
+        "cache_creation_cost": 0,
+        "cache_creation_cost_usd": 0,
+        "cache_read_cost": 0,
+        "cache_read_cost_usd": 0,
+        "pricing_unit": "usd",
+        "pricing_source": "sqlite",
+        "tools_by_count": {row["tool_name"]: row["call_count"] for row in overview["top_tools"]},
+        "models_by_count": {row["model"]: row["call_count"] for row in overview["top_models"]},
+        "skills_by_count": {},
+        "activity_by_day": {},
+        "activity_by_hour": {},
+        "graph_tool_transitions": [],
+        "graph_cooccurrence": {"tools": [], "matrix": []},
+        "graph_latency_histograms": {},
+        "graph_dep": {"nodes": [], "edges": []},
+        "graph_session_timeline": [],
+        "agents": {},
+        "agent_comparison": [],
+        "model_costs": {},
+        "model_costs_usd": {},
+        "strengths": [],
+        "observations": [],
+        "recommendations": [],
+        "practical_examples": [],
+        "achievements": [],
+        "token_economy": {},
+    }
+
+
+def _start_publish_server(
+    stats: TelemetryStats,
+    *,
+    db_path: Path | None = None,
+    sql_only: bool = False,
+) -> None:
     """Start a local FastAPI server and open the dashboard in a browser.
 
     Blocks until Ctrl-C. Uses ``?report=api/data`` so the dashboard
@@ -1496,10 +1593,16 @@ def _start_publish_server(stats: TelemetryStats, *, db_path: Path | None = None)
     """
     port = int(os.environ.get("REFLECT_PORT", "8765"))
     docs_dir = _dashboard_docs_dir()
-    _start_publish_server_inline(stats, port, docs_dir, db_path=db_path)
+    _start_publish_server_inline(stats, port, docs_dir, db_path=db_path, sql_only=sql_only)
 
 
-def _build_dashboard_app(stats: TelemetryStats, *, docs_dir: Path, db_path: Path | None = None):
+def _build_dashboard_app(
+    stats: TelemetryStats,
+    *,
+    docs_dir: Path,
+    db_path: Path | None = None,
+    sql_only: bool = False,
+):
     from fastapi import FastAPI, Request
     from fastapi.responses import FileResponse, JSONResponse
     from fastapi.staticfiles import StaticFiles
@@ -1508,8 +1611,13 @@ def _build_dashboard_app(stats: TelemetryStats, *, docs_dir: Path, db_path: Path
 
     import json as _json
     app = FastAPI(title="reflect dashboard", docs_url=None, redoc_url=None)
-    _cached = _json.loads(_build_dashboard_json(stats))
-    _cached["comparison"] = None
+    if sql_only:
+        if db_path is None:
+            raise ValueError("sql_only requires db_path")
+        _cached = _sql_only_dashboard_payload(db_path, limit=50, offset=0)
+    else:
+        _cached = _json.loads(_build_dashboard_json(stats))
+        _cached["comparison"] = None
     if db_path is not None:
         try:
             _cached["sqlite"] = _sql_report_payload(db_path, limit=50, offset=0)
@@ -1527,6 +1635,8 @@ def _build_dashboard_app(stats: TelemetryStats, *, docs_dir: Path, db_path: Path
         model = params.get("model") or "all"
         status = params.get("status") or "all"
         range_name = params.get("range") or "all"
+        if sql_only:
+            return JSONResponse(_cached)
         if not any([q, agents, model != "all", status != "all", range_name != "all"]):
             return JSONResponse(_cached)
         filtered_sessions = _filter_dashboard_sessions(
@@ -1629,6 +1739,7 @@ def _start_publish_server_inline(
     docs_dir: Path,
     *,
     db_path: Path | None = None,
+    sql_only: bool = False,
 ) -> None:
     """Inline FastAPI server for `reflect report`."""
     import threading
@@ -1641,11 +1752,14 @@ def _start_publish_server_inline(
         logger.warning("FastAPI/uvicorn not installed. Install with: pip install fastapi uvicorn")
         logger.warning("Falling back to writing artifact file...")
         artifact = docs_dir / "_reflect_data.json"
-        artifact.write_text(_build_dashboard_json(stats), encoding="utf-8")
+        if sql_only and db_path is not None:
+            artifact.write_text(json.dumps(_sql_only_dashboard_payload(db_path)), encoding="utf-8")
+        else:
+            artifact.write_text(_build_dashboard_json(stats), encoding="utf-8")
         print(f"Wrote: {artifact}")
         return
 
-    app = _build_dashboard_app(stats, docs_dir=docs_dir, db_path=db_path)
+    app = _build_dashboard_app(stats, docs_dir=docs_dir, db_path=db_path, sql_only=sql_only)
     url = f"http://127.0.0.1:{port}/?report=api/data"
     threading.Timer(0.5, webbrowser.open, args=[url]).start()
     print(f"\n  Serving at: {url}")

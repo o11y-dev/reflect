@@ -1017,6 +1017,11 @@ def main(
     default=REFLECT_HOME / "state" / "reflect.db",
     help="SQLite store used for SQL-backed browser report endpoints.",
 )
+@click.option(
+    "--sql-only",
+    is_flag=True,
+    help="Serve report data from SQLite only; temporary migration guard for removing legacy dashboard JSON.",
+)
 def report(
     otlp_traces: Path | None,
     sessions_dir: Path | None,
@@ -1026,21 +1031,43 @@ def report(
     dashboard_artifact: Path | None,
     output: Path | None,
     db_path: Path,
+    sql_only: bool,
 ) -> None:
     """Open the AI usage dashboard in a browser via a local server."""
-    stats, _, sessions_dir, spans_dir, _, _ = _resolve_and_analyze(
-        otlp_traces=otlp_traces,
-        sessions_dir=sessions_dir,
-        spans_dir=spans_dir,
-        demo=demo,
-        time_range=time_range,
-    )
-    if dashboard_artifact is not None:
+    if sql_only:
+        from collections import Counter
+
+        from reflect.dashboard import _sql_only_dashboard_payload
+
+        stats = TelemetryStats(
+            session_files=0,
+            span_files=0,
+            total_events=0,
+            events_by_type=Counter(),
+            events_by_file={},
+        )
+        if output is not None:
+            raise click.ClickException("--sql-only does not support legacy markdown report output")
+        if dashboard_artifact is not None:
+            dashboard_artifact.parent.mkdir(parents=True, exist_ok=True)
+            dashboard_artifact.write_text(
+                _json_stdlib.dumps(_sql_only_dashboard_payload(db_path)),
+                encoding="utf-8",
+            )
+    else:
+        stats, _, sessions_dir, spans_dir, _, _ = _resolve_and_analyze(
+            otlp_traces=otlp_traces,
+            sessions_dir=sessions_dir,
+            spans_dir=spans_dir,
+            demo=demo,
+            time_range=time_range,
+        )
+    if dashboard_artifact is not None and not sql_only:
         _write_dashboard_artifact(stats, dashboard_artifact)
-    if output is not None:
+    if output is not None and not sql_only:
         render_report(stats, sessions_dir, spans_dir, output)
         print(f"Report saved to: {output}")
-    _start_publish_server(stats, db_path=db_path)
+    _start_publish_server(stats, db_path=db_path, sql_only=sql_only)
 
 
 # ---------------------------------------------------------------------------

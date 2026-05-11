@@ -112,6 +112,25 @@ def test_dashboard_api_embeds_sql_view_models(tmp_path):
     assert sqlite_payload["sessions"]["rows"][0]["session_id"] == "sess-sql"
 
 
+def test_sql_only_dashboard_api_does_not_build_legacy_json(tmp_path, monkeypatch):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+
+    def _raise_legacy_json(_stats):
+        raise AssertionError("legacy dashboard JSON should not be built")
+
+    monkeypatch.setattr("reflect.dashboard._build_dashboard_json", _raise_legacy_json)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path, sql_only=True)
+
+    response = TestClient(app).get("/api/data")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["sql_only"] is True
+    assert payload["sqlite"]["overview"]["session_count"] == 1
+    assert payload["sessions"][0]["id"] == "sess-sql"
+
+
 def test_dashboard_sql_sessions_endpoint_filters_from_sql(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)

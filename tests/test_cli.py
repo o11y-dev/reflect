@@ -267,6 +267,23 @@ class TestReportSubcommand:
             ])
         assert result.exit_code == 0
         assert mock_server.call_args.kwargs["db_path"] == db_path
+        assert mock_server.call_args.kwargs["sql_only"] is False
+
+    def test_report_sql_only_passes_migration_guard(self, runner, otlp_file, tmp_path):
+        with patch("reflect.core._start_publish_server") as mock_server, \
+             patch("reflect.core._resolve_and_analyze", side_effect=AssertionError("legacy analysis")):
+            db_path = tmp_path / "reflect.db"
+            result = runner.invoke(main, [
+                "report",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+                "--db-path", str(db_path),
+                "--sql-only",
+            ])
+        assert result.exit_code == 0
+        assert mock_server.call_args.kwargs["db_path"] == db_path
+        assert mock_server.call_args.kwargs["sql_only"] is True
 
     def test_report_with_output_saves_markdown(self, runner, otlp_file, tmp_path):
         with patch("reflect.core._start_publish_server"), \
