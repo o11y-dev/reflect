@@ -289,6 +289,7 @@ class TestReportSubcommand:
         conn = sqlite3.connect(db_path)
         try:
             assert conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0] > 0
+            assert conn.execute("SELECT COALESCE(SUM(total_cost), 0) FROM session_rollups").fetchone()[0] > 0
         finally:
             conn.close()
 

@@ -2034,6 +2034,7 @@ def _prepare_sql_report_db(db_path: Path, *, otlp_traces: Path | None) -> dict[s
         if otlp_traces is not None and otlp_traces.exists():
             ingest_result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
         normalize_result = normalize_pending_raw_events(conn)
+        _reprice_sql_store(conn)
         graph_result = rebuild_graph(conn)
         rollup_result = rebuild_rollups(conn)
     finally:
@@ -2045,6 +2046,63 @@ def _prepare_sql_report_db(db_path: Path, *, otlp_traces: Path | None) -> dict[s
         "graph": graph_result,
         "rollups": rollup_result,
     }
+
+
+def _reprice_sql_store(conn) -> None:
+    from reflect.config import load_model_aliases
+    from reflect.pricing import calculate_cost, load_pricing_table
+
+    pricing_table = load_pricing_table()
+    aliases = load_model_aliases()
+    previous_row_factory = conn.row_factory
+    conn.row_factory = __import__("sqlite3").Row
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+              id,
+              session_id,
+              COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) AS model,
+              input_tokens,
+              output_tokens,
+              cache_creation_input_tokens,
+              cache_read_input_tokens
+            FROM llm_calls
+            """
+        ).fetchall()
+        session_costs: dict[str, float] = {}
+        for row in rows:
+            breakdown = calculate_cost(
+                {
+                    "input": row["input_tokens"],
+                    "output": row["output_tokens"],
+                    "cache_creation": row["cache_creation_input_tokens"],
+                    "cache_read": row["cache_read_input_tokens"],
+                },
+                row["model"] or "",
+                pricing_table,
+                aliases=aliases,
+            )
+            conn.execute(
+                """
+                UPDATE llm_calls
+                SET estimated_cost_usd = ?
+                WHERE id = ?
+                """,
+                (
+                    breakdown.total_cost_usd,
+                    row["id"],
+                ),
+            )
+            session_costs[row["session_id"]] = session_costs.get(row["session_id"], 0.0) + breakdown.total_cost_usd
+        for session_id, total_cost in session_costs.items():
+            conn.execute(
+                "UPDATE sessions SET estimated_cost_usd = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (total_cost, session_id),
+            )
+        conn.commit()
+    finally:
+        conn.row_factory = previous_row_factory
 
 
 @main.command("ingest")
