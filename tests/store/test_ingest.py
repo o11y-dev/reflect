@@ -1,6 +1,10 @@
 import json
 
-from reflect.store.ingest import ingest_local_spans_file, ingest_otlp_traces_file
+from reflect.store.ingest import (
+    ingest_local_spans_file,
+    ingest_otlp_logs_file,
+    ingest_otlp_traces_file,
+)
 from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite
 
@@ -47,6 +51,35 @@ def _write_spans_file(path):
     path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
 
+def _write_codex_logs_file(path):
+    payload = {
+        "resourceLogs": [
+            {
+                "resource": {
+                    "attributes": [{"key": "service.name", "value": {"stringValue": "codex_cli_rs"}}]
+                },
+                "scopeLogs": [
+                    {
+                        "logRecords": [
+                            {
+                                "timeUnixNano": "1000",
+                                "attributes": [
+                                    {"key": "event.name", "value": {"stringValue": "codex.user_prompt"}},
+                                    {"key": "event.timestamp", "value": {"stringValue": "2026-03-24T10:00:01Z"}},
+                                    {"key": "conversation.id", "value": {"stringValue": "codex-sess-1"}},
+                                    {"key": "model", "value": {"stringValue": "gpt-5.5"}},
+                                    {"key": "prompt", "value": {"stringValue": "[REDACTED]"}},
+                                ],
+                            }
+                        ]
+                    }
+                ],
+            }
+        ]
+    }
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
 def test_ingest_otlp_traces_dedupes(tmp_path):
     db = tmp_path / "reflect.db"
     otlp = tmp_path / "traces.json"
@@ -63,6 +96,31 @@ def test_ingest_otlp_traces_dedupes(tmp_path):
 
         row = conn.execute("SELECT source_type, event_type, session_id FROM raw_events").fetchone()
         assert row == ("otlp_traces_json", "UserPromptSubmit", "sess-1")
+    finally:
+        conn.close()
+
+
+def test_ingest_otlp_logs_normalizes_codex_records(tmp_path):
+    db = tmp_path / "reflect.db"
+    logs = tmp_path / "otel-logs.json"
+    _write_codex_logs_file(logs)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        first = ingest_otlp_logs_file(conn, file_path=logs)
+        second = ingest_otlp_logs_file(conn, file_path=logs)
+
+        assert first == {"inserted": 1, "skipped": 0}
+        assert second == {"inserted": 0, "skipped": 1}
+
+        row = conn.execute(
+            "SELECT source_type, event_type, session_id, attrs_json FROM raw_events"
+        ).fetchone()
+        attrs = json.loads(row[3])
+        assert row[:3] == ("otlp_logs_json", "gen_ai.client.hook.UserPromptSubmit", "codex-sess-1")
+        assert attrs["gen_ai.client.name"] == "codex"
+        assert attrs["gen_ai.request.model"] == "gpt-5.5"
     finally:
         conn.close()
 

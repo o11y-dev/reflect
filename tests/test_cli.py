@@ -293,6 +293,56 @@ class TestReportSubcommand:
         finally:
             conn.close()
 
+    def test_report_sql_only_ingests_inferred_otlp_logs(self, runner, tmp_path):
+        otlp_file = tmp_path / "otel-traces.json"
+        otlp_file.write_text(json.dumps({"resourceSpans": []}) + "\n", encoding="utf-8")
+        (tmp_path / "otel-logs.json").write_text(json.dumps({
+            "resourceLogs": [{
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "codex_cli_rs"}},
+                    ],
+                },
+                "scopeLogs": [{
+                    "logRecords": [{
+                        "timeUnixNano": "1000",
+                        "attributes": [
+                            {"key": "event.name", "value": {"stringValue": "codex.user_prompt"}},
+                            {"key": "event.timestamp", "value": {"stringValue": "2026-03-24T10:00:01Z"}},
+                            {"key": "conversation.id", "value": {"stringValue": "codex-sql-log-session"}},
+                            {"key": "model", "value": {"stringValue": "gpt-5.5"}},
+                            {"key": "prompt", "value": {"stringValue": "[REDACTED]"}},
+                        ],
+                    }],
+                }],
+            }],
+        }) + "\n", encoding="utf-8")
+
+        with patch("reflect.core._start_publish_server"):
+            db_path = tmp_path / "reflect.db"
+            result = runner.invoke(main, [
+                "report",
+                "--otlp-traces", str(otlp_file),
+                "--db-path", str(db_path),
+                "--sql-only",
+            ])
+
+        assert result.exit_code == 0
+        assert "SQL ingest sources: otlp_traces: inserted=0 skipped=0; otlp_logs: inserted=1 skipped=0" in result.output
+        conn = sqlite3.connect(db_path)
+        try:
+            row = conn.execute(
+                """
+                SELECT a.name, s.id, sr.prompt_count
+                FROM sessions s
+                JOIN agents a ON a.id = s.agent_id
+                JOIN session_rollups sr ON sr.session_id = s.id
+                """
+            ).fetchone()
+            assert row == ("codex", "codex-sql-log-session", 1)
+        finally:
+            conn.close()
+
     def test_report_with_output_saves_markdown(self, runner, otlp_file, tmp_path):
         with patch("reflect.core._start_publish_server"), \
              patch("reflect.core.render_report") as mock_report:

@@ -15,6 +15,7 @@ Completed foundations now exist for:
 - `reflect db migrate` CLI entrypoint
 - `reflect db doctor` migration/foreign-key/pragma health check
 - initial Pydantic base/event models and schema export command
+- SQL ingestion now supports OTLP traces plus inferred sibling OTLP logs, including Codex native log events normalized into hook-like spans
 - SQL-backed Overview and Sessions view models for the future Textual/report runtime
 - `reflect report` browser server exposes SQL-backed Overview/Sessions APIs from the configured SQLite store
 - temporary `reflect report --sql-only` guard materializes the SQLite store and serves from SQLite without building legacy dashboard JSON
@@ -40,6 +41,7 @@ Completed foundations now exist for:
 - 🚧 **Phase 3 — raw_events ingestion**: **In progress**
   - table exists
   - `reflect ingest --otlp` now ingests OTLP traces JSON into `raw_events` with `source_id + content_hash` dedupe (`db ingest-otlp` kept as legacy alias)
+  - SQL report preparation ingests inferred OTLP log files beside the selected trace file and reports per-source inserted/skipped counts
   - local hook spans JSONL can be ingested into `raw_events` with the same dedupe path
   - richer native/session-store ingestion adapters are still pending
 

@@ -4,6 +4,7 @@
 
 ### Added
 - Added temporary `reflect report --sql-only` migration guard to materialize the SQLite store and serve browser report data from SQLite without building legacy dashboard JSON.
+- Added SQL ingest support for inferred OTLP log files so Codex native log events are normalized into the SQLite report store alongside OTLP traces.
 - Added SQL-only session detail loading plus SQL-derived report data for quality scores, costs, skills, subagents, MCP servers, observations, examples, badges, and token-economy widgets.
 - Expanded the SQL-only browser payload to populate shared dashboard widgets from SQLite, including activity, events, agents, models, tools, costs, MCP counts, and basic graph/timeline data.
 - Wired SQL-backed Overview and Sessions view models into `reflect report` through `/api/sql/overview`, `/api/sql/sessions`, and an embedded `sqlite` payload in `/api/data`.

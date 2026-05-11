@@ -1054,6 +1054,13 @@ def report(
             f"normalized={preparation['normalize']['processed']}, "
             f"sessions={preparation['rollups']['session_rollups']})"
         )
+        ingest_sources = preparation.get("ingest_sources") or {}
+        if ingest_sources:
+            source_parts = [
+                f"{name}: inserted={result['inserted']} skipped={result['skipped']}"
+                for name, result in ingest_sources.items()
+            ]
+            click.echo("SQL ingest sources: " + "; ".join(source_parts))
         stats = TelemetryStats(
             session_files=0,
             span_files=0,
@@ -2021,7 +2028,7 @@ def _ingest_into_db(
 
 def _prepare_sql_report_db(db_path: Path, *, otlp_traces: Path | None) -> dict[str, object]:
     from reflect.store.graph_normalize import rebuild_graph
-    from reflect.store.ingest import ingest_otlp_traces_file
+    from reflect.store.ingest import ingest_otlp_logs_file, ingest_otlp_traces_file
     from reflect.store.migrate import migrate
     from reflect.store.normalize import normalize_pending_raw_events
     from reflect.store.rollups import rebuild_rollups
@@ -2031,8 +2038,18 @@ def _prepare_sql_report_db(db_path: Path, *, otlp_traces: Path | None) -> dict[s
     try:
         applied = migrate(conn)
         ingest_result = {"inserted": 0, "skipped": 0}
+        ingest_sources: dict[str, dict[str, int]] = {}
         if otlp_traces is not None and otlp_traces.exists():
-            ingest_result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
+            traces_result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
+            ingest_sources["otlp_traces"] = traces_result
+            ingest_result["inserted"] += traces_result["inserted"]
+            ingest_result["skipped"] += traces_result["skipped"]
+            otlp_logs = _infer_otlp_logs_file(otlp_traces)
+            if otlp_logs is not None and otlp_logs.exists():
+                logs_result = ingest_otlp_logs_file(conn, file_path=otlp_logs)
+                ingest_sources["otlp_logs"] = logs_result
+                ingest_result["inserted"] += logs_result["inserted"]
+                ingest_result["skipped"] += logs_result["skipped"]
         normalize_result = normalize_pending_raw_events(conn)
         _reprice_sql_store(conn)
         graph_result = rebuild_graph(conn)
@@ -2042,6 +2059,7 @@ def _prepare_sql_report_db(db_path: Path, *, otlp_traces: Path | None) -> dict[s
     return {
         "applied_migrations": applied,
         "ingest": ingest_result,
+        "ingest_sources": ingest_sources,
         "normalize": normalize_result,
         "graph": graph_result,
         "rollups": rollup_result,

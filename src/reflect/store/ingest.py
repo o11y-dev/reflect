@@ -5,7 +5,12 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from reflect.parsing import _load_json_lines, _load_otlp_traces
+from reflect.parsing import (
+    _iter_codex_log_spans,
+    _load_json_lines,
+    _load_otlp_logs,
+    _load_otlp_traces,
+)
 
 
 def _iso8601_from_ns(value_ns: int) -> str:
@@ -115,6 +120,16 @@ def ingest_otlp_traces_file(db_conn, *, file_path: Path, source_id: str | None =
         spans=_load_otlp_traces(file_path),
         source=source,
         source_type="otlp_traces_json",
+    )
+
+
+def ingest_otlp_logs_file(db_conn, *, file_path: Path, source_id: str | None = None) -> dict[str, int]:
+    source = source_id or str(file_path)
+    return _ingest_spans(
+        db_conn,
+        spans=_iter_codex_log_spans(_load_otlp_logs(file_path)),
+        source=source,
+        source_type="otlp_logs_json",
     )
 
 
