@@ -153,6 +153,10 @@ def test_sql_only_dashboard_api_does_not_build_legacy_json(tmp_path, monkeypatch
     assert payload["events_by_type"] == {"llm_call": 1, "tool_call": 1}
     assert payload["models_by_count"] == {"gpt-5.4": 1}
     assert payload["model_costs"]["gpt-5.4"] == 0.42
+    assert payload["total_cost_usd"] == 0.42
+    assert payload["input_cost_usd"] > 0
+    assert payload["output_cost_usd"] > 0
+    assert payload["cache_read_cost_usd"] > 0
     assert payload["tools_by_count"] == {"exec_command": 2}
     assert payload["tool_percentiles"][0]["tool"] == "exec_command"
     assert payload["agent_comparison"][0]["name"] == "codex"

@@ -1532,6 +1532,39 @@ def _sql_session_quality(status: str, failures: int, recovered: int) -> float:
     return max(0.0, min(100.0, base - failures * 12 + recovered * 4))
 
 
+def _sql_cost_breakdown(rows: list[dict[str, object]]) -> dict[str, float]:
+    from reflect.config import load_model_aliases
+    from reflect.pricing import calculate_cost, load_pricing_table
+
+    pricing_table = load_pricing_table()
+    aliases = load_model_aliases()
+    totals = {
+        "total_cost_usd": 0.0,
+        "input_cost_usd": 0.0,
+        "output_cost_usd": 0.0,
+        "cache_creation_cost_usd": 0.0,
+        "cache_read_cost_usd": 0.0,
+    }
+    for row in rows:
+        breakdown = calculate_cost(
+            {
+                "input": row["input_tokens"],
+                "output": row["output_tokens"],
+                "cache_creation": row["cache_creation_input_tokens"],
+                "cache_read": row["cache_read_input_tokens"],
+            },
+            str(row["model"] or ""),
+            pricing_table,
+            aliases=aliases,
+        )
+        totals["total_cost_usd"] += breakdown.total_cost_usd
+        totals["input_cost_usd"] += breakdown.input_cost_usd
+        totals["output_cost_usd"] += breakdown.output_cost_usd
+        totals["cache_creation_cost_usd"] += breakdown.cache_creation_cost_usd
+        totals["cache_read_cost_usd"] += breakdown.cache_read_cost_usd
+    return totals
+
+
 def _sql_dashboard_compat_payload(db_path: Path) -> dict[str, object]:
     from reflect.store.migrate import migrate
     from reflect.store.sqlite import connect_sqlite
@@ -1585,6 +1618,18 @@ def _sql_dashboard_compat_payload(db_path: Path) -> dict[str, object]:
             WHERE COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) IS NOT NULL
             GROUP BY model
             ORDER BY call_count DESC, model ASC
+            """
+        ))
+        llm_cost_rows = _dict_rows(conn.execute(
+            """
+            SELECT
+              COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) AS model,
+              input_tokens,
+              output_tokens,
+              cache_creation_input_tokens,
+              cache_read_input_tokens
+            FROM llm_calls
+            WHERE COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) IS NOT NULL
             """
         ))
         agent_rows = _dict_rows(conn.execute(
@@ -1789,6 +1834,7 @@ def _sql_dashboard_compat_payload(db_path: Path) -> dict[str, object]:
     peak_hour_count = activity_by_hour.get(str(peak_hour), 0) if peak_hour >= 0 else 0
     model_counts = _counter_from_rows(model_rows, "model", "call_count")
     model_costs = {str(row["model"]): float(row["total_cost"] or 0) for row in model_rows}
+    cost_breakdown = _sql_cost_breakdown(llm_cost_rows)
     tools_by_count = _counter_from_rows(tool_rows, "tool_name", "call_count")
     mcp_counts = _counter_from_rows(mcp_rows, "server_name", "call_count")
     for server, count in raw_mcp_counts.items():
@@ -1826,6 +1872,7 @@ def _sql_dashboard_compat_payload(db_path: Path) -> dict[str, object]:
         "unique_models": len(model_counts),
         "model_costs": model_costs,
         "model_costs_usd": model_costs,
+        "cost_breakdown": cost_breakdown,
         "total_cache_creation_tokens": int(cache_totals[0] or 0),
         "total_cache_read_tokens": int(cache_totals[1] or 0),
         "tools_by_count": tools_by_count,
@@ -1988,6 +2035,8 @@ def _sql_only_dashboard_payload(
     prompt_count = sum(row["prompt_count"] for row in session_rows)
     compat = _sql_dashboard_compat_payload(db_path)
     insight_payload = _sql_insight_payload(overview, sessions, compat)
+    cost_breakdown = compat["cost_breakdown"]
+    total_cost_usd = float(overview["estimated_cost_usd"] or cost_breakdown["total_cost_usd"] or 0)
     payload = {
         "sql_only": True,
         "sqlite": sqlite_payload,
@@ -2016,16 +2065,16 @@ def _sql_only_dashboard_payload(
             + compat["total_cache_creation_tokens"]
             + compat["total_cache_read_tokens"]
         ),
-        "total_cost": overview["estimated_cost_usd"],
-        "total_cost_usd": overview["estimated_cost_usd"],
-        "input_cost": 0,
-        "input_cost_usd": 0,
-        "output_cost": 0,
-        "output_cost_usd": 0,
-        "cache_creation_cost": 0,
-        "cache_creation_cost_usd": 0,
-        "cache_read_cost": 0,
-        "cache_read_cost_usd": 0,
+        "total_cost": total_cost_usd,
+        "total_cost_usd": total_cost_usd,
+        "input_cost": cost_breakdown["input_cost_usd"],
+        "input_cost_usd": cost_breakdown["input_cost_usd"],
+        "output_cost": cost_breakdown["output_cost_usd"],
+        "output_cost_usd": cost_breakdown["output_cost_usd"],
+        "cache_creation_cost": cost_breakdown["cache_creation_cost_usd"],
+        "cache_creation_cost_usd": cost_breakdown["cache_creation_cost_usd"],
+        "cache_read_cost": cost_breakdown["cache_read_cost_usd"],
+        "cache_read_cost_usd": cost_breakdown["cache_read_cost_usd"],
         "pricing_unit": "usd",
         "pricing_source": "sqlite",
         "tools_by_count": compat["tools_by_count"],

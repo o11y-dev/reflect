@@ -69,7 +69,7 @@ Completed foundations now exist for:
 
 ## Immediate next execution backlog
 
-1. Add richer native/session-store ingestion adapters while preserving `source_id + content_hash` dedupe.
+1. Add richer native/session-store ingestion adapters while preserving `source_id + content_hash` dedupe; first target is Copilot `~/.copilot/session-state/*/events.jsonl`, which normal Reflect already reads but SQL-only does not yet ingest.
 2. Expand `--sql-only` coverage surface-by-surface until every current browser tab renders from SQLite.
 3. Add the remaining dedicated SQL-backed view models for Activity, Agents, Models, Tools, MCP, Costs, Graphs, Specs, Memory, Privacy, and Exports.
 
