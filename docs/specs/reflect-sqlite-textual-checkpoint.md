@@ -15,6 +15,7 @@ Completed foundations now exist for:
 - `reflect db migrate` CLI entrypoint
 - `reflect db doctor` migration/foreign-key/pragma health check
 - initial Pydantic base/event models and schema export command
+- SQL-backed Overview and Sessions view models for the future Textual/report runtime
 - regression tests for SQLite runtime pragmas, migration idempotency, and Pydantic allow/forbid behavior
 
 ## Phase-by-phase checkpoint
@@ -38,7 +39,7 @@ Completed foundations now exist for:
   - local hook spans JSONL can be ingested into `raw_events` with the same dedupe path
   - richer native/session-store ingestion adapters are still pending
 
-- 🚧 **Phase 4 — normalization**: **Not started**
+- 🚧 **Phase 4 — normalization**: **Partially complete**
   - canonical target tables exist
   - `reflect db normalize` promotes pending raw events into sessions, steps, LLM/tool/MCP call rows, memories, and privacy findings
   - `reflect db rebuild-graph` populates graph nodes and edges from canonical sessions, steps, tools, MCP calls, and memories
@@ -47,7 +48,8 @@ Completed foundations now exist for:
   - rollup tables/migrations exist
   - `reflect db rebuild-rollups` refreshes session, daily, and tool aggregate tables from canonical data
 
-- 🚧 **Phase 6 — Port Textual UI to SQL**: **Not started**
+- 🚧 **Phase 6 — Port Textual UI to SQL**: **In progress**
+  - SQL-backed view models exist for Overview and paginated Sessions
   - current runtime still uses existing terminal/dashboard code path
 
 - 🚧 **Phase 7 — Replace `reflect report` with browser-served Textual**: **Not started**
@@ -59,7 +61,8 @@ Completed foundations now exist for:
 ## Immediate next execution backlog
 
 1. Add richer native/session-store ingestion adapters while preserving `source_id + content_hash` dedupe.
-2. Start SQL-backed view models for at least Overview/Sessions and wire to Textual migration plan.
+2. Wire the SQL-backed Overview/Sessions view models into the Textual/browser report surfaces.
+3. Add the remaining SQL-backed view models for Activity, Session Detail, Agents, Models, Tools, MCP, Costs, Graphs, Specs, Memory, Privacy, and Exports.
 
 ## Definition of done reminder
 
