@@ -257,14 +257,16 @@ class TestTerminalMode:
 class TestReportSubcommand:
     def test_report_starts_server(self, runner, otlp_file, tmp_path):
         with patch("reflect.core._start_publish_server") as mock_server:
+            db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "report",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
+                "--db-path", str(db_path),
             ])
         assert result.exit_code == 0
-        mock_server.assert_called_once()
+        assert mock_server.call_args.kwargs["db_path"] == db_path
 
     def test_report_with_output_saves_markdown(self, runner, otlp_file, tmp_path):
         with patch("reflect.core._start_publish_server"), \

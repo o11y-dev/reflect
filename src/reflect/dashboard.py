@@ -1470,7 +1470,25 @@ def _load_session_detail(session_id: str, stats: TelemetryStats) -> dict | None:
     return detail
 
 
-def _start_publish_server(stats: TelemetryStats) -> None:
+def _sql_report_payload(db_path: Path, *, limit: int = 50, offset: int = 0) -> dict[str, object]:
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+    from reflect.views.overview import build_overview
+    from reflect.views.sessions import list_sessions
+
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        return {
+            "db_path": str(db_path),
+            "overview": build_overview(conn).model_dump(),
+            "sessions": list_sessions(conn, limit=limit, offset=offset).model_dump(),
+        }
+    finally:
+        conn.close()
+
+
+def _start_publish_server(stats: TelemetryStats, *, db_path: Path | None = None) -> None:
     """Start a local FastAPI server and open the dashboard in a browser.
 
     Blocks until Ctrl-C. Uses ``?report=api/data`` so the dashboard
@@ -1478,26 +1496,13 @@ def _start_publish_server(stats: TelemetryStats) -> None:
     """
     port = int(os.environ.get("REFLECT_PORT", "8765"))
     docs_dir = _dashboard_docs_dir()
-    _start_publish_server_inline(stats, port, docs_dir)
+    _start_publish_server_inline(stats, port, docs_dir, db_path=db_path)
 
 
-def _start_publish_server_inline(stats: TelemetryStats, port: int, docs_dir: Path) -> None:
-    """Inline FastAPI server for `reflect report`."""
-    import threading
-    import webbrowser
-
-    try:
-        import uvicorn
-        from fastapi import FastAPI, Request
-        from fastapi.responses import FileResponse, JSONResponse
-        from fastapi.staticfiles import StaticFiles
-    except ImportError:
-        logger.warning("FastAPI/uvicorn not installed. Install with: pip install fastapi uvicorn")
-        logger.warning("Falling back to writing artifact file...")
-        artifact = docs_dir / "_reflect_data.json"
-        artifact.write_text(_build_dashboard_json(stats), encoding="utf-8")
-        print(f"Wrote: {artifact}")
-        return
+def _build_dashboard_app(stats: TelemetryStats, *, docs_dir: Path, db_path: Path | None = None):
+    from fastapi import FastAPI, Request
+    from fastapi.responses import FileResponse, JSONResponse
+    from fastapi.staticfiles import StaticFiles
 
     globals()["Request"] = Request
 
@@ -1505,6 +1510,11 @@ def _start_publish_server_inline(stats: TelemetryStats, port: int, docs_dir: Pat
     app = FastAPI(title="reflect dashboard", docs_url=None, redoc_url=None)
     _cached = _json.loads(_build_dashboard_json(stats))
     _cached["comparison"] = None
+    if db_path is not None:
+        try:
+            _cached["sqlite"] = _sql_report_payload(db_path, limit=50, offset=0)
+        except Exception as exc:
+            _cached["sqlite"] = {"db_path": str(db_path), "error": str(exc)}
 
     @app.get("/api/data")
     def api_data(request: Request):
@@ -1540,7 +1550,50 @@ def _start_publish_server_inline(stats: TelemetryStats, port: int, docs_dir: Pat
             primary_stats=filtered_stats,
             primary_data=payload,
         )
+        if db_path is not None:
+            payload["sqlite"] = _cached.get("sqlite")
         return JSONResponse(payload)
+
+    @app.get("/api/sql/overview")
+    def api_sql_overview():
+        if db_path is None:
+            return JSONResponse({"error": "SQLite report view is not configured"}, status_code=404)
+        try:
+            return JSONResponse(_sql_report_payload(db_path, limit=0, offset=0)["overview"])
+        except Exception as exc:
+            return JSONResponse({"error": str(exc), "db_path": str(db_path)}, status_code=500)
+
+    @app.get("/api/sql/sessions")
+    def api_sql_sessions(request: Request):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite report view is not configured"}, status_code=404)
+        params = request.query_params
+        from reflect.store.migrate import migrate
+        from reflect.store.sqlite import connect_sqlite
+        from reflect.views.sessions import list_sessions
+
+        conn = connect_sqlite(db_path)
+        try:
+            migrate(conn)
+            page = list_sessions(
+                conn,
+                limit=int(params.get("limit") or 50),
+                offset=int(params.get("offset") or 0),
+                agent=params.get("agent") or None,
+                repo=params.get("repo") or None,
+                model=params.get("model") or None,
+                status=params.get("status") or None,
+                date_from=params.get("date_from") or None,
+                date_to=params.get("date_to") or None,
+                min_cost=_optional_float(params.get("min_cost")),
+                max_cost=_optional_float(params.get("max_cost")),
+                min_failures=_optional_int(params.get("min_failures")),
+            )
+        except Exception as exc:
+            return JSONResponse({"error": str(exc), "db_path": str(db_path)}, status_code=500)
+        finally:
+            conn.close()
+        return JSONResponse(page.model_dump())
 
     @app.get("/api/session/{session_id:path}")
     def api_session(session_id: str):
@@ -1559,6 +1612,40 @@ def _start_publish_server_inline(stats: TelemetryStats, port: int, docs_dir: Pat
     if docs_dir.exists():
         app.mount("/", StaticFiles(directory=str(docs_dir)), name="static")
 
+    return app
+
+
+def _optional_float(value: str | None) -> float | None:
+    return None if value in (None, "") else float(value)
+
+
+def _optional_int(value: str | None) -> int | None:
+    return None if value in (None, "") else int(value)
+
+
+def _start_publish_server_inline(
+    stats: TelemetryStats,
+    port: int,
+    docs_dir: Path,
+    *,
+    db_path: Path | None = None,
+) -> None:
+    """Inline FastAPI server for `reflect report`."""
+    import threading
+    import webbrowser
+
+    try:
+        import uvicorn
+        __import__("fastapi")
+    except ImportError:
+        logger.warning("FastAPI/uvicorn not installed. Install with: pip install fastapi uvicorn")
+        logger.warning("Falling back to writing artifact file...")
+        artifact = docs_dir / "_reflect_data.json"
+        artifact.write_text(_build_dashboard_json(stats), encoding="utf-8")
+        print(f"Wrote: {artifact}")
+        return
+
+    app = _build_dashboard_app(stats, docs_dir=docs_dir, db_path=db_path)
     url = f"http://127.0.0.1:{port}/?report=api/data"
     threading.Timer(0.5, webbrowser.open, args=[url]).start()
     print(f"\n  Serving at: {url}")

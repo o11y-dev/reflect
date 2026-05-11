@@ -2270,16 +2270,22 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   <!-- Row 1: 4 headline stats -->
   <div class="stat-row" id="stat-row"></div>
 
-  <!-- Row 2: Comparison summary -->
+  <!-- Row 2: SQLite store summary -->
+  <div class="panel" id="sqlite-panel" style="display:none">
+    <div class="panel-title">SQLite Store</div>
+    <div id="sqlite-summary"></div>
+  </div>
+
+  <!-- Row 3: Comparison summary -->
   <div class="panel" id="agent-panel" style="display:none">
     <div class="panel-title">Comparison Snapshot</div>
     <div id="agent-summary"></div>
   </div>
 
-  <!-- Row 3: 8 metric tiles -->
+  <!-- Row 4: 8 metric tiles -->
   <div class="metric-row" id="metric-row"></div>
 
-  <!-- Row 4: charts side by side -->
+  <!-- Row 5: charts side by side -->
   <div class="cols-2">
     <div class="panel" style="margin-bottom:0">
       <div class="panel-title">Model Usage</div>
@@ -2291,7 +2297,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
     </div>
   </div>
 
-  <!-- Row 5: Token Usage -->
+  <!-- Row 6: Token Usage -->
   <div class="cols-2">
     <div class="panel" style="margin-bottom:0">
       <div class="panel-title">Token Usage</div>
@@ -4101,6 +4107,57 @@ document.getElementById('stat-row').innerHTML = statDefs.map(s=>`
     <div class="stat-value">${s.value}</div>
     <div class="stat-sub">${s.sub}</div>
   </div>`).join('');
+
+function renderSqliteSummary(){
+  const panel = document.getElementById('sqlite-panel');
+  const body = document.getElementById('sqlite-summary');
+  const sqlite = D.sqlite || null;
+  if (!panel || !body || !sqlite || sqlite.error || !sqlite.overview) return;
+  const overview = sqlite.overview || {};
+  const sessions = sqlite.sessions || {};
+  const topTools = (overview.top_tools || []).slice(0, 3);
+  const topModels = (overview.top_models || []).slice(0, 3);
+  const latestSessions = (sessions.rows || []).slice(0, 3);
+  panel.style.display = '';
+  body.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px">
+      <div class="stat" style="--c:var(--orange)">
+        <div class="stat-label">SQL Sessions</div>
+        <div class="stat-value">${fmt(overview.session_count || 0)}</div>
+        <div class="stat-sub">${fmt(overview.agent_count || 0)} agents, ${fmt(overview.model_count || 0)} models</div>
+      </div>
+      <div class="stat" style="--c:var(--teal)">
+        <div class="stat-label">SQL Tokens</div>
+        <div class="stat-value">${fmtTokenShort((overview.input_tokens || 0) + (overview.output_tokens || 0))}</div>
+        <div class="stat-sub">${fmtTokenShort(overview.input_tokens || 0)} in / ${fmtTokenShort(overview.output_tokens || 0)} out</div>
+      </div>
+      <div class="stat" style="--c:var(--green)">
+        <div class="stat-label">SQL Cost</div>
+        <div class="stat-value">${fmtCost(overview.estimated_cost_usd || 0)}</div>
+        <div class="stat-sub">${fmt(overview.tool_call_count || 0)} tool calls</div>
+      </div>
+      <div class="stat" style="--c:var(--red)">
+        <div class="stat-label">SQL Failures</div>
+        <div class="stat-value">${fmt(overview.failure_count || 0)}</div>
+        <div class="stat-sub">${fmt(overview.recovered_failure_count || 0)} recovered</div>
+      </div>
+    </div>
+    <div class="cols-3" style="margin-bottom:0">
+      <div>
+        <div class="panel-title" style="margin-bottom:8px">Top SQL Tools</div>
+        ${(topTools.length ? topTools.map(t => `<div class="chip" style="margin:0 6px 6px 0">${escHtml(t.tool_name || 'unknown')} · ${fmt(t.call_count || 0)}</div>`).join('') : '<div class="muted">No tools in SQLite rollups</div>')}
+      </div>
+      <div>
+        <div class="panel-title" style="margin-bottom:8px">Top SQL Models</div>
+        ${(topModels.length ? topModels.map(m => `<div class="chip" style="margin:0 6px 6px 0">${escHtml(m.model || 'unknown')} · ${fmt(m.call_count || 0)}</div>`).join('') : '<div class="muted">No model calls in SQLite</div>')}
+      </div>
+      <div>
+        <div class="panel-title" style="margin-bottom:8px">Latest SQL Sessions</div>
+        ${(latestSessions.length ? latestSessions.map(s => `<div style="font-size:13px;color:var(--text-2);margin-bottom:6px">${escHtml(s.session_id || '')} · ${escHtml(s.agent || 'unknown')}</div>`).join('') : '<div class="muted">No sessions in SQLite</div>')}
+      </div>
+    </div>`;
+}
+renderSqliteSummary();
 
 const costUnit = String(D.pricing_unit || 'usd').toUpperCase();
 

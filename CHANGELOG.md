@@ -3,6 +3,7 @@
 ## 0.x.x (unreleased)
 
 ### Added
+- Wired SQL-backed Overview and Sessions view models into `reflect report` through `/api/sql/overview`, `/api/sql/sessions`, and an embedded `sqlite` payload in `/api/data`.
 - Added SQL-backed Overview and Sessions view models for the upcoming Textual/report migration path, including paginated session filters over canonical SQLite tables and rollups.
 - Added `reflect db rebuild-rollups` to refresh session, daily, and tool aggregate tables from canonical SQLite data.
 - Added `reflect db rebuild-graph` to populate SQLite graph nodes and edges from canonical sessions, steps, tools, MCP calls, and memories.

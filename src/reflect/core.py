@@ -1011,6 +1011,12 @@ def main(
     default=None,
     help="Also save a markdown report to this file.",
 )
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+    help="SQLite store used for SQL-backed browser report endpoints.",
+)
 def report(
     otlp_traces: Path | None,
     sessions_dir: Path | None,
@@ -1019,6 +1025,7 @@ def report(
     demo: bool,
     dashboard_artifact: Path | None,
     output: Path | None,
+    db_path: Path,
 ) -> None:
     """Open the AI usage dashboard in a browser via a local server."""
     stats, _, sessions_dir, spans_dir, _, _ = _resolve_and_analyze(
@@ -1033,7 +1040,7 @@ def report(
     if output is not None:
         render_report(stats, sessions_dir, spans_dir, output)
         print(f"Report saved to: {output}")
-    _start_publish_server(stats)
+    _start_publish_server(stats, db_path=db_path)
 
 
 # ---------------------------------------------------------------------------
