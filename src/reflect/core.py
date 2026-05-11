@@ -1039,6 +1039,21 @@ def report(
 
         from reflect.dashboard import _sql_only_dashboard_payload
 
+        if demo:
+            demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
+            if not demo_traces.exists():
+                demo_traces = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
+            otlp_traces = demo_traces if demo_traces.exists() else otlp_traces
+        elif otlp_traces is None:
+            otlp_traces = _default_otlp_traces()
+        preparation = _prepare_sql_report_db(db_path, otlp_traces=otlp_traces)
+        click.echo(
+            "Prepared SQLite report store "
+            f"(inserted={preparation['ingest']['inserted']}, "
+            f"skipped={preparation['ingest']['skipped']}, "
+            f"normalized={preparation['normalize']['processed']}, "
+            f"sessions={preparation['rollups']['session_rollups']})"
+        )
         stats = TelemetryStats(
             session_files=0,
             span_files=0,
@@ -2002,6 +2017,34 @@ def _ingest_into_db(
     finally:
         conn.close()
     return result
+
+
+def _prepare_sql_report_db(db_path: Path, *, otlp_traces: Path | None) -> dict[str, object]:
+    from reflect.store.graph_normalize import rebuild_graph
+    from reflect.store.ingest import ingest_otlp_traces_file
+    from reflect.store.migrate import migrate
+    from reflect.store.normalize import normalize_pending_raw_events
+    from reflect.store.rollups import rebuild_rollups
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    try:
+        applied = migrate(conn)
+        ingest_result = {"inserted": 0, "skipped": 0}
+        if otlp_traces is not None and otlp_traces.exists():
+            ingest_result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
+        normalize_result = normalize_pending_raw_events(conn)
+        graph_result = rebuild_graph(conn)
+        rollup_result = rebuild_rollups(conn)
+    finally:
+        conn.close()
+    return {
+        "applied_migrations": applied,
+        "ingest": ingest_result,
+        "normalize": normalize_result,
+        "graph": graph_result,
+        "rollups": rollup_result,
+    }
 
 
 @main.command("ingest")

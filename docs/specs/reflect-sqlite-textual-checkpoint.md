@@ -17,7 +17,7 @@ Completed foundations now exist for:
 - initial Pydantic base/event models and schema export command
 - SQL-backed Overview and Sessions view models for the future Textual/report runtime
 - `reflect report` browser server exposes SQL-backed Overview/Sessions APIs from the configured SQLite store
-- temporary `reflect report --sql-only` guard serves from SQLite without building legacy dashboard JSON
+- temporary `reflect report --sql-only` guard materializes the SQLite store and serves from SQLite without building legacy dashboard JSON
 - regression tests for SQLite runtime pragmas, migration idempotency, and Pydantic allow/forbid behavior
 
 ## Phase-by-phase checkpoint
@@ -53,7 +53,7 @@ Completed foundations now exist for:
 - 🚧 **Phase 6 — Port Textual UI to SQL**: **In progress**
   - SQL-backed view models exist for Overview and paginated Sessions
   - browser report server exposes those view models via `/api/sql/overview`, `/api/sql/sessions`, and `/api/data.sqlite`
-  - `reflect report --sql-only` provides a temporary migration guard to prove SQL-backed serving without legacy dashboard JSON
+  - `reflect report --sql-only` materializes the SQLite store from selected/default OTLP traces before serving, then proves SQL-backed serving without legacy dashboard JSON
   - current runtime still uses existing terminal/dashboard code path
 
 - 🚧 **Phase 7 — Replace `reflect report` with browser-served Textual**: **Not started**

@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import sqlite3
 import tomllib
 from datetime import datetime
 from unittest.mock import patch
@@ -282,8 +283,14 @@ class TestReportSubcommand:
                 "--sql-only",
             ])
         assert result.exit_code == 0
+        assert "Prepared SQLite report store" in result.output
         assert mock_server.call_args.kwargs["db_path"] == db_path
         assert mock_server.call_args.kwargs["sql_only"] is True
+        conn = sqlite3.connect(db_path)
+        try:
+            assert conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0] > 0
+        finally:
+            conn.close()
 
     def test_report_with_output_saves_markdown(self, runner, otlp_file, tmp_path):
         with patch("reflect.core._start_publish_server"), \
