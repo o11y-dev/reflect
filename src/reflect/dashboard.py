@@ -1488,6 +1488,300 @@ def _sql_report_payload(db_path: Path, *, limit: int = 50, offset: int = 0) -> d
         conn.close()
 
 
+def _dict_rows(cursor) -> list[dict[str, object]]:
+    columns = [column[0] for column in cursor.description]
+    return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+
+
+def _counter_from_rows(rows: list[dict[str, object]], key: str, value: str) -> dict[str, int]:
+    return {
+        str(row[key]): int(row[value] or 0)
+        for row in rows
+        if row.get(key) not in (None, "")
+    }
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, round((len(ordered) - 1) * pct)))
+    return float(ordered[index])
+
+
+def _sql_dashboard_compat_payload(db_path: Path) -> dict[str, object]:
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        daily_rows = _dict_rows(conn.execute(
+            """
+            SELECT
+              substr(started_at, 1, 10) AS day,
+              COALESCE(SUM(prompt_count + tool_call_count + error_count), 0) AS event_count
+            FROM session_rollups
+            WHERE started_at IS NOT NULL AND started_at <> ''
+            GROUP BY substr(started_at, 1, 10)
+            ORDER BY day
+            """
+        ))
+        hour_rows = _dict_rows(conn.execute(
+            """
+            SELECT CAST(strftime('%H', started_at) AS INTEGER) AS hour, COUNT(*) AS event_count
+            FROM steps
+            GROUP BY hour
+            ORDER BY hour
+            """
+        ))
+        event_rows = _dict_rows(conn.execute(
+            """
+            SELECT type, COUNT(*) AS event_count
+            FROM steps
+            GROUP BY type
+            ORDER BY event_count DESC, type ASC
+            """
+        ))
+        tool_rows = _dict_rows(conn.execute(
+            """
+            SELECT tool_name, COALESCE(SUM(call_count), 0) AS call_count
+            FROM tool_rollups
+            GROUP BY tool_name
+            ORDER BY call_count DESC, tool_name ASC
+            LIMIT 25
+            """
+        ))
+        model_rows = _dict_rows(conn.execute(
+            """
+            SELECT
+              COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) AS model,
+              COUNT(*) AS call_count,
+              COALESCE(SUM(estimated_cost_usd), 0) AS total_cost
+            FROM llm_calls
+            WHERE COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) IS NOT NULL
+            GROUP BY model
+            ORDER BY call_count DESC, model ASC
+            """
+        ))
+        agent_rows = _dict_rows(conn.execute(
+            """
+            SELECT
+              COALESCE(NULLIF(sr.agent, ''), 'unknown') AS name,
+              COUNT(*) AS sessions,
+              COALESCE(SUM(sr.prompt_count), 0) AS prompts,
+              COALESCE(SUM(sr.tool_call_count), 0) AS tools,
+              COALESCE(SUM(sr.error_count), 0) AS failures,
+              COALESCE(SUM(sr.input_tokens + sr.output_tokens), 0) AS tokens,
+              COALESCE(SUM(sr.total_cost), 0) AS total_cost
+            FROM session_rollups sr
+            GROUP BY COALESCE(NULLIF(sr.agent, ''), 'unknown')
+            ORDER BY sessions DESC, tools DESC, name ASC
+            """
+        ))
+        mcp_rows = _dict_rows(conn.execute(
+            """
+            SELECT server_name, COUNT(*) AS call_count
+            FROM mcp_calls
+            WHERE server_name IS NOT NULL AND server_name <> ''
+            GROUP BY server_name
+            ORDER BY call_count DESC, server_name ASC
+            """
+        ))
+        shell_rows = _dict_rows(conn.execute(
+            """
+            SELECT summary AS command, COUNT(*) AS call_count
+            FROM steps
+            WHERE type = 'shell_command' AND summary IS NOT NULL AND summary <> ''
+            GROUP BY summary
+            ORDER BY call_count DESC, summary ASC
+            LIMIT 25
+            """
+        ))
+        tool_duration_rows = _dict_rows(conn.execute(
+            """
+            SELECT tool_name, duration_ms
+            FROM tool_calls
+            WHERE duration_ms IS NOT NULL
+            """
+        ))
+        tool_durations: dict[str, list[float]] = {}
+        for row in tool_duration_rows:
+            tool_durations.setdefault(str(row["tool_name"]), []).append(float(row["duration_ms"] or 0))
+        tool_percentiles = [
+            {
+                "tool": tool,
+                "count": len(values),
+                "p50": _percentile(values, 0.50),
+                "p90": _percentile(values, 0.90),
+                "p95": _percentile(values, 0.95),
+                "p99": _percentile(values, 0.99),
+            }
+            for tool, values in sorted(tool_durations.items(), key=lambda item: len(item[1]), reverse=True)
+        ][:10]
+        transition_rows = _dict_rows(conn.execute(
+            """
+            WITH ordered AS (
+              SELECT
+                tc.session_id,
+                tc.tool_name,
+                LEAD(tc.tool_name) OVER (PARTITION BY tc.session_id ORDER BY st.seq, tc.id) AS next_tool
+              FROM tool_calls tc
+              JOIN steps st ON st.id = tc.step_id
+            )
+            SELECT tool_name AS source, next_tool AS target, COUNT(*) AS count
+            FROM ordered
+            WHERE next_tool IS NOT NULL AND next_tool <> tool_name
+            GROUP BY tool_name, next_tool
+            ORDER BY count DESC, source ASC, target ASC
+            LIMIT 30
+            """
+        ))
+        timeline_sessions = _dict_rows(conn.execute(
+            """
+            SELECT session_id
+            FROM session_rollups
+            ORDER BY tool_call_count DESC, started_at DESC
+            LIMIT 6
+            """
+        ))
+        timeline = []
+        for session in timeline_sessions:
+            spans = _dict_rows(conn.execute(
+                """
+                SELECT tc.tool_name, st.seq, COALESCE(tc.duration_ms, st.duration_ms, 1) AS duration_ms, tc.status
+                FROM tool_calls tc
+                JOIN steps st ON st.id = tc.step_id
+                WHERE tc.session_id = ?
+                ORDER BY st.seq, tc.id
+                """,
+                (session["session_id"],),
+            ))
+            timeline.append({
+                "session": session["session_id"],
+                "spans": [
+                    {
+                        "tool": span["tool_name"],
+                        "t": index * 1000,
+                        "dur": int(span["duration_ms"] or 1),
+                        "ok": span["status"] != "error",
+                    }
+                    for index, span in enumerate(spans)
+                ],
+            })
+        co_tools = [str(row["tool_name"]) for row in tool_rows[:12]]
+        co_matrix = [[0 for _ in co_tools] for _ in co_tools]
+        if co_tools:
+            co_rows = _dict_rows(conn.execute(
+                """
+                SELECT a.tool_name AS tool_a, b.tool_name AS tool_b, COUNT(DISTINCT a.session_id) AS sessions
+                FROM tool_calls a
+                JOIN tool_calls b ON b.session_id = a.session_id AND b.tool_name <> a.tool_name
+                GROUP BY a.tool_name, b.tool_name
+                """
+            ))
+            index = {tool: pos for pos, tool in enumerate(co_tools)}
+            for row in co_rows:
+                if row["tool_a"] in index and row["tool_b"] in index:
+                    co_matrix[index[row["tool_a"]]][index[row["tool_b"]]] = int(row["sessions"] or 0)
+        dep_nodes: dict[str, dict[str, object]] = {}
+        dep_links: Counter[tuple[str, str]] = Counter()
+        dep_rows = _dict_rows(conn.execute(
+            """
+            SELECT COALESCE(NULLIF(a.name, ''), sr.agent, 'unknown') AS agent, tc.tool_name, COUNT(*) AS count
+            FROM tool_calls tc
+            JOIN sessions s ON s.id = tc.session_id
+            LEFT JOIN agents a ON a.id = s.agent_id
+            LEFT JOIN session_rollups sr ON sr.session_id = s.id
+            GROUP BY COALESCE(NULLIF(a.name, ''), sr.agent, 'unknown'), tc.tool_name
+            ORDER BY count DESC
+            """
+        ))
+        for row in dep_rows:
+            agent = str(row["agent"])
+            tool = str(row["tool_name"])
+            dep_nodes.setdefault(agent, {"id": agent, "type": "agent", "size": 0})
+            dep_nodes.setdefault(tool, {"id": tool, "type": "tool", "size": 0})
+            dep_nodes[agent]["size"] = int(dep_nodes[agent]["size"]) + int(row["count"] or 0)
+            dep_nodes[tool]["size"] = int(dep_nodes[tool]["size"]) + int(row["count"] or 0)
+            dep_links[(agent, tool)] += int(row["count"] or 0)
+    finally:
+        conn.close()
+
+    activity_by_day = _counter_from_rows(daily_rows, "day", "event_count")
+    activity_by_hour = {str(hour): 0 for hour in range(24)}
+    activity_by_hour.update({
+        str(row["hour"]): int(row["event_count"] or 0)
+        for row in hour_rows
+        if row.get("hour") is not None
+    })
+    peak_hour = max(range(24), key=lambda hour: activity_by_hour.get(str(hour), 0)) if hour_rows else -1
+    peak_hour_count = activity_by_hour.get(str(peak_hour), 0) if peak_hour >= 0 else 0
+    model_counts = _counter_from_rows(model_rows, "model", "call_count")
+    model_costs = {str(row["model"]): float(row["total_cost"] or 0) for row in model_rows}
+    tools_by_count = _counter_from_rows(tool_rows, "tool_name", "call_count")
+    mcp_counts = _counter_from_rows(mcp_rows, "server_name", "call_count")
+    top_commands = [
+        {"command": str(row["command"]), "count": int(row["call_count"] or 0)}
+        for row in shell_rows
+    ]
+    signature = top_commands[0] if top_commands else {"command": "", "count": 0}
+    agent_comparison = [
+        {
+            "name": row["name"],
+            "events": int(row["prompts"] or 0) + int(row["tools"] or 0),
+            "sessions": int(row["sessions"] or 0),
+            "avg_quality": 0,
+            "completed": 0,
+            "recovered": 0,
+            "prompts": int(row["prompts"] or 0),
+            "tools": int(row["tools"] or 0),
+            "failures": int(row["failures"] or 0),
+            "tokens": int(row["tokens"] or 0),
+            "total_cost": float(row["total_cost"] or 0),
+            "total_cost_usd": float(row["total_cost"] or 0),
+        }
+        for row in agent_rows
+    ]
+    return {
+        "events_by_type": _counter_from_rows(event_rows, "type", "event_count"),
+        "activity_by_day": activity_by_day,
+        "activity_by_hour": activity_by_hour,
+        "peak_hour": peak_hour,
+        "peak_hour_count": peak_hour_count,
+        "models_by_count": model_counts,
+        "unique_models": len(model_counts),
+        "model_costs": model_costs,
+        "model_costs_usd": model_costs,
+        "tools_by_count": tools_by_count,
+        "tool_percentiles": tool_percentiles,
+        "agent_comparison": agent_comparison,
+        "mcp_calls": sum(mcp_counts.values()),
+        "mcp_servers_by_count": mcp_counts,
+        "mcp_server_before": mcp_counts,
+        "mcp_server_after": mcp_counts,
+        "top_commands": top_commands,
+        "unique_commands": len(top_commands),
+        "signature_command": signature["command"],
+        "signature_command_count": signature["count"],
+        "graph_tool_transitions": [
+            {"from": row["source"], "to": row["target"], "count": int(row["count"] or 0)}
+            for row in transition_rows
+        ],
+        "graph_cooccurrence": {"tools": co_tools, "matrix": co_matrix},
+        "graph_dep": {
+            "nodes": list(dep_nodes.values()),
+            "links": [
+                {"source": source, "target": target, "value": count}
+                for (source, target), count in dep_links.items()
+            ],
+            "isolated_agents": [],
+            "top_mcp_servers": [{"id": key, "events": value} for key, value in mcp_counts.items()],
+        },
+        "graph_session_timeline": timeline,
+    }
+
+
 def _sql_only_dashboard_payload(
     db_path: Path,
     *,
@@ -1530,7 +1824,8 @@ def _sql_only_dashboard_payload(
     if session_rows:
         first_event_ts = min(row["started_at"] for row in session_rows if row.get("started_at"))
     prompt_count = sum(row["prompt_count"] for row in session_rows)
-    return {
+    compat = _sql_dashboard_compat_payload(db_path)
+    payload = {
         "sql_only": True,
         "sqlite": sqlite_payload,
         "comparison": None,
@@ -1542,7 +1837,7 @@ def _sql_only_dashboard_payload(
         "prompt_submits": prompt_count,
         "tool_calls": overview["tool_call_count"],
         "tool_to_prompt_ratio": f"{overview['tool_call_count'] / prompt_count:.1f}" if prompt_count else "0.0",
-        "events_by_type": {},
+        "events_by_type": compat["events_by_type"],
         "failure_rate_pct": 0,
         "file_edits": 0,
         "total_input_tokens": overview["input_tokens"],
@@ -1561,37 +1856,38 @@ def _sql_only_dashboard_payload(
         "cache_read_cost_usd": 0,
         "pricing_unit": "usd",
         "pricing_source": "sqlite",
-        "tools_by_count": {row["tool_name"]: row["call_count"] for row in overview["top_tools"]},
-        "models_by_count": {row["model"]: row["call_count"] for row in overview["top_models"]},
-        "unique_models": overview["model_count"],
+        "tools_by_count": compat["tools_by_count"],
+        "models_by_count": compat["models_by_count"],
+        "unique_models": compat["unique_models"],
         "skills_by_count": {},
-        "activity_by_day": {},
-        "activity_by_hour": {},
-        "peak_hour": None,
-        "peak_hour_count": 0,
+        "activity_by_day": compat["activity_by_day"],
+        "activity_by_hour": compat["activity_by_hour"],
+        "peak_hour": compat["peak_hour"],
+        "peak_hour_count": compat["peak_hour_count"],
         "weekly_trends": [],
-        "graph_tool_transitions": [],
-        "graph_cooccurrence": {"tools": [], "matrix": []},
+        "graph_tool_transitions": compat["graph_tool_transitions"],
+        "graph_cooccurrence": compat["graph_cooccurrence"],
         "graph_latency_histograms": {},
-        "graph_dep": {"nodes": [], "edges": []},
-        "graph_session_timeline": [],
+        "graph_dep": compat["graph_dep"],
+        "graph_session_timeline": compat["graph_session_timeline"],
         "agents": {},
-        "agent_comparison": [],
-        "mcp_servers_by_count": {},
-        "mcp_server_before": {},
-        "mcp_server_after": {},
+        "agent_comparison": compat["agent_comparison"],
+        "mcp_calls": compat["mcp_calls"],
+        "mcp_servers_by_count": compat["mcp_servers_by_count"],
+        "mcp_server_before": compat["mcp_server_before"],
+        "mcp_server_after": compat["mcp_server_after"],
         "subagent_types_by_count": {},
         "subagent_stops_by_type": {},
         "subagent_launches": 0,
         "subagent_total_starts": 0,
         "subagent_total_stops": 0,
-        "top_commands": {},
-        "unique_commands": 0,
-        "signature_command": "",
-        "signature_command_count": 0,
-        "tool_percentiles": [],
-        "model_costs": {},
-        "model_costs_usd": {},
+        "top_commands": compat["top_commands"],
+        "unique_commands": compat["unique_commands"],
+        "signature_command": compat["signature_command"],
+        "signature_command_count": compat["signature_command_count"],
+        "tool_percentiles": compat["tool_percentiles"],
+        "model_costs": compat["model_costs"],
+        "model_costs_usd": compat["model_costs_usd"],
         "strengths": [],
         "observations": [],
         "recommendations": [],
@@ -1599,6 +1895,9 @@ def _sql_only_dashboard_payload(
         "achievements": [],
         "token_economy": {},
     }
+    payload["tool_failures"] = int(overview["failure_count"])
+    payload["shell_executions"] = 0
+    return payload
 
 
 def _start_publish_server(

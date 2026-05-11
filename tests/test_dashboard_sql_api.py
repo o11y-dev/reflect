@@ -61,6 +61,13 @@ def _seed_sql_report_db(db_path):
         )
         conn.execute(
             """
+            INSERT INTO steps(id, session_id, seq, type, started_at, duration_ms, status, created_at, updated_at)
+            VALUES ('tool-step-sql', 'sess-sql', 2, 'tool_call', '2026-05-01T10:01:00+00:00', 500, 'ok', ?, ?)
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
             INSERT INTO llm_calls(
               id, step_id, session_id, provider, request_model, response_model,
               input_tokens, output_tokens, estimated_cost_usd, created_at, updated_at
@@ -92,6 +99,15 @@ def _seed_sql_report_db(db_path):
             VALUES ('exec_command', 'codex', 2, 2, 0, 500, ?)
             """,
             (now,),
+        )
+        conn.execute(
+            """
+            INSERT INTO tool_calls(
+              id, step_id, session_id, tool_name, tool_type, status, duration_ms, created_at, updated_at
+            )
+            VALUES ('tool-sql', 'tool-step-sql', 'sess-sql', 'exec_command', 'shell', 'ok', 500, ?, ?)
+            """,
+            (now, now),
         )
         conn.commit()
     finally:
@@ -129,6 +145,16 @@ def test_sql_only_dashboard_api_does_not_build_legacy_json(tmp_path, monkeypatch
     assert payload["sql_only"] is True
     assert payload["sqlite"]["overview"]["session_count"] == 1
     assert payload["sessions"][0]["id"] == "sess-sql"
+    assert payload["activity_by_day"]["2026-05-01"] == 3
+    assert payload["activity_by_hour"]["10"] == 2
+    assert payload["events_by_type"] == {"llm_call": 1, "tool_call": 1}
+    assert payload["models_by_count"] == {"gpt-5.4": 1}
+    assert payload["model_costs"]["gpt-5.4"] == 0.42
+    assert payload["tools_by_count"] == {"exec_command": 2}
+    assert payload["tool_percentiles"][0]["tool"] == "exec_command"
+    assert payload["agent_comparison"][0]["name"] == "codex"
+    assert payload["graph_dep"]["nodes"]
+    assert payload["graph_session_timeline"][0]["spans"][0]["tool"] == "exec_command"
 
 
 def test_dashboard_sql_sessions_endpoint_filters_from_sql(tmp_path):

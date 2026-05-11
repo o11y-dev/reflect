@@ -4,6 +4,7 @@
 
 ### Added
 - Added temporary `reflect report --sql-only` migration guard to materialize the SQLite store and serve browser report data from SQLite without building legacy dashboard JSON.
+- Expanded the SQL-only browser payload to populate shared dashboard widgets from SQLite, including activity, events, agents, models, tools, costs, MCP counts, and basic graph/timeline data.
 - Wired SQL-backed Overview and Sessions view models into `reflect report` through `/api/sql/overview`, `/api/sql/sessions`, and an embedded `sqlite` payload in `/api/data`.
 - Added SQL-backed Overview and Sessions view models for the upcoming Textual/report migration path, including paginated session filters over canonical SQLite tables and rollups.
 - Added `reflect db rebuild-rollups` to refresh session, daily, and tool aggregate tables from canonical SQLite data.
