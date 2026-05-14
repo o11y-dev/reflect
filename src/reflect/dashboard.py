@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 from reflect.graph import (
     _compute_dep_graph,
@@ -117,6 +119,7 @@ def _filter_dashboard_sessions(
     sessions: list[dict],
     *,
     q: str = "",
+    session_id: str = "",
     agents: set[str] | None = None,
     model: str = "all",
     status: str = "all",
@@ -134,6 +137,8 @@ def _filter_dashboard_sessions(
 
     filtered: list[dict] = []
     for session in sessions:
+        if session_id and _session_row_id(session) != session_id:
+            continue
         if selected_agents and (session.get("agent") or "") not in selected_agents:
             continue
         if model != "all" and (session.get("primary_model") or "") != model:
@@ -514,6 +519,7 @@ def _build_filtered_comparison_payload(
     primary_sessions: list[dict],
     *,
     q: str = "",
+    session_id: str = "",
     model: str = "all",
     status: str = "all",
     range_name: str = "all",
@@ -531,6 +537,7 @@ def _build_filtered_comparison_payload(
     scoped_sessions = _filter_dashboard_sessions(
         all_sessions,
         q=q,
+        session_id=session_id,
         model=model,
         status=status,
         range_name=range_name,
@@ -1488,6 +1495,135 @@ def _sql_report_payload(db_path: Path, *, limit: int = 50, offset: int = 0) -> d
         conn.close()
 
 
+def _filter_sql_session_rows(
+    rows: list[dict[str, object]],
+    *,
+    q: str = "",
+    session_id: str = "",
+    agents: set[str] | None = None,
+    model: str = "all",
+    status: str = "all",
+    range_name: str = "all",
+) -> list[dict[str, object]]:
+    search_text = q.lower().strip()
+    agents = agents or set()
+    now = datetime.now(tz=UTC)
+    range_days = {"24h": 1, "7d": 7, "30d": 30}.get(range_name)
+    filtered: list[dict[str, object]] = []
+    for row in rows:
+        if session_id and str(row.get("id") or row.get("session_id") or "") != session_id:
+            continue
+        agent = str(row.get("agent") or "")
+        if agents and agent not in agents:
+            continue
+        if model != "all" and str(row.get("primary_model") or "") != model:
+            continue
+        row_status = str(row.get("status") or "")
+        failures = int(row.get("failure_count") or row.get("failures") or 0)
+        if status == "completed" and row_status not in {"ok", "completed"}:
+            continue
+        if status == "active" and row_status in {"ok", "completed"}:
+            continue
+        if status == "failing" and failures <= 0:
+            continue
+        if status == "recovered":
+            continue
+        if range_days is not None:
+            try:
+                started_at = datetime.fromisoformat(str(row.get("started_at") or row.get("created_at") or ""))
+            except ValueError:
+                continue
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=UTC)
+            if (now - started_at).total_seconds() > range_days * 86400:
+                continue
+        if search_text:
+            haystack = " ".join(
+                str(row.get(key) or "")
+                for key in ("session_id", "id", "title", "agent", "primary_model", "status")
+            ).lower()
+            if search_text not in haystack:
+                continue
+        filtered.append(row)
+    return filtered
+
+
+def _sql_session_primary_models(db_path: Path, session_ids: set[str]) -> dict[str, str]:
+    if not session_ids:
+        return {}
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+
+    ids = sorted(session_ids)
+    placeholders = ", ".join("?" for _ in ids)
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        rows = _dict_rows(conn.execute(
+            f"""
+            SELECT
+              session_id,
+              COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) AS model,
+              COUNT(*) AS count
+            FROM llm_calls
+            WHERE session_id IN ({placeholders})
+              AND COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) IS NOT NULL
+            GROUP BY session_id, model
+            ORDER BY session_id, count DESC, model ASC
+            """,
+            ids,
+        ))
+    finally:
+        conn.close()
+    models: dict[str, str] = {}
+    for row in rows:
+        session_id = str(row["session_id"])
+        if session_id not in models:
+            models[session_id] = str(row["model"] or "")
+    return models
+
+
+def _sql_session_first_prompts(db_path: Path, session_ids: set[str]) -> dict[str, str]:
+    if not session_ids:
+        return {}
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+
+    ids = sorted(session_ids)
+    placeholders = ", ".join("?" for _ in ids)
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        rows = _dict_rows(conn.execute(
+            f"""
+            SELECT session_id, raw_attrs_json
+            FROM steps
+            WHERE session_id IN ({placeholders})
+              AND raw_attrs_json LIKE '%gen_ai.client.prompt%'
+            ORDER BY session_id, seq
+            """,
+            ids,
+        ))
+    finally:
+        conn.close()
+    prompts: dict[str, str] = {}
+    for row in rows:
+        session_id = str(row["session_id"])
+        if session_id in prompts:
+            continue
+        attrs = _load_json_dict(row["raw_attrs_json"])
+        prompt = str(_sql_attr(
+            attrs,
+            "gen_ai.client.prompt",
+            "gen_ai.client.prompt.text",
+            "prompt",
+            "input",
+        ) or "").strip()
+        if prompt:
+            prompts[session_id] = prompt
+    return prompts
+
+
 def _dict_rows(cursor) -> list[dict[str, object]]:
     columns = [column[0] for column in cursor.description]
     return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
@@ -1532,6 +1668,132 @@ def _sql_session_quality(status: str, failures: int, recovered: int) -> float:
     return max(0.0, min(100.0, base - failures * 12 + recovered * 4))
 
 
+def _extract_command_from_sql_attrs(attrs: dict[str, object], preview: object = "") -> str:
+    for key in (
+        "gen_ai.client.command",
+        "ide.command",
+        "command",
+        "shell.command",
+    ):
+        value = attrs.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    preview_text = str(preview or "").strip()
+    if not preview_text:
+        return ""
+    try:
+        payload = json.loads(preview_text)
+    except json.JSONDecodeError:
+        return preview_text if "\n" not in preview_text else preview_text.splitlines()[0].strip()
+    if isinstance(payload, dict):
+        value = payload.get("cmd") or payload.get("command")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _display_mcp_server_name(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if "\n" in text:
+        text = text.splitlines()[0].strip()
+    lowered = text.lower()
+    if lowered.startswith("docker run "):
+        try:
+            parts = shlex.split(text)
+        except ValueError:
+            parts = text.split()
+        skip_next_for = {"-e", "--env", "--env-file", "-v", "--volume", "-p", "--publish", "--name", "--network"}
+        index = 2
+        while index < len(parts):
+            part = parts[index]
+            if part in skip_next_for:
+                index += 2
+                continue
+            if part.startswith("-"):
+                index += 1
+                continue
+            image = part.rsplit("/", 1)[-1].split(":", 1)[0]
+            return image or "docker"
+        return "docker"
+    if lowered.startswith("npx "):
+        try:
+            parts = shlex.split(text)
+        except ValueError:
+            parts = text.split()
+        for part in parts[2:]:
+            parsed = urlparse(part)
+            if parsed.scheme and parsed.netloc:
+                return parsed.netloc
+        return parts[1] if len(parts) > 1 else "npx"
+    return text
+
+
+def _sql_attr_text(attrs: dict[str, object], *keys: str, limit: int = 500) -> str:
+    value = _sql_attr(attrs, *keys)
+    if value in (None, ""):
+        return ""
+    if isinstance(value, (dict, list)):
+        value = json.dumps(value, default=str)
+    return str(value).strip()[:limit]
+
+
+def _iso_to_epoch_ns(value: object) -> int:
+    text = str(value or "").strip()
+    if not text:
+        return 0
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return 0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return int(parsed.timestamp() * 1_000_000_000)
+
+
+def _sql_log_body_text(body: dict[str, object], attrs: dict[str, object], event_type: object) -> str:
+    for key in ("message", "body", "text", "content", "error.message", "exception.message"):
+        value = body.get(key)
+        if value not in (None, ""):
+            return _sql_attr_text(body, key, limit=2000)
+    for key in ("error.message", "exception.message"):
+        value = attrs.get(key)
+        if value not in (None, ""):
+            return _sql_attr_text(attrs, key, limit=2000)
+    event = str(
+        attrs.get("gen_ai.client.hook.event")
+        or event_type
+        or ""
+    ).strip()
+    return event[:2000]
+
+
+def _sql_response_preview(attrs: dict[str, object], call: dict[str, object]) -> str:
+    captured = _sql_attr_text(
+        attrs,
+        "gen_ai.client.output",
+        "gen_ai.response.text",
+        "gen_ai.response.content",
+        "response",
+        "output",
+        limit=2000,
+    )
+    if captured:
+        return captured
+    status = _sql_attr_text(attrs, "gen_ai.client.status", "status", limit=80)
+    input_tokens = int(call.get("input_tokens") or 0)
+    output_tokens = int(call.get("output_tokens") or 0)
+    token_parts = []
+    if input_tokens:
+        token_parts.append(f"{input_tokens:,} input tokens")
+    if output_tokens:
+        token_parts.append(f"{output_tokens:,} output tokens")
+    token_text = " and ".join(token_parts) if token_parts else "token usage metadata"
+    status_text = f" with status {status}" if status else ""
+    return f"Assistant turn completed{status_text}; captured {token_text}."
+
+
 def _sql_cost_breakdown(rows: list[dict[str, object]]) -> dict[str, float]:
     from reflect.config import load_model_aliases
     from reflect.pricing import calculate_cost, load_pricing_table
@@ -1557,6 +1819,19 @@ def _sql_cost_breakdown(rows: list[dict[str, object]]) -> dict[str, float]:
             pricing_table,
             aliases=aliases,
         )
+        estimated_cost = float(row.get("estimated_cost_usd") or 0)
+        if breakdown.total_cost_usd == 0 and estimated_cost > 0:
+            token_weights = {
+                "input_cost_usd": int(row["input_tokens"] or 0),
+                "output_cost_usd": int(row["output_tokens"] or 0),
+                "cache_creation_cost_usd": int(row["cache_creation_input_tokens"] or 0),
+                "cache_read_cost_usd": int(row["cache_read_input_tokens"] or 0),
+            }
+            total_weight = sum(token_weights.values()) or 1
+            for key, weight in token_weights.items():
+                totals[key] += estimated_cost * weight / total_weight
+            totals["total_cost_usd"] += estimated_cost
+            continue
         totals["total_cost_usd"] += breakdown.total_cost_usd
         totals["input_cost_usd"] += breakdown.input_cost_usd
         totals["output_cost_usd"] += breakdown.output_cost_usd
@@ -1565,75 +1840,123 @@ def _sql_cost_breakdown(rows: list[dict[str, object]]) -> dict[str, float]:
     return totals
 
 
-def _sql_dashboard_compat_payload(db_path: Path) -> dict[str, object]:
+def _sql_dashboard_compat_payload(db_path: Path, *, session_ids: set[str] | None = None) -> dict[str, object]:
     from reflect.store.migrate import migrate
     from reflect.store.sqlite import connect_sqlite
+
+    scoped = session_ids is not None
+    scoped_ids = sorted(session_ids or [])
+
+    def _where(column: str, prefix: str = "WHERE") -> tuple[str, list[str]]:
+        if not scoped:
+            return "", []
+        if not scoped_ids:
+            return f"{prefix} 1 = 0", []
+        placeholders = ", ".join("?" for _ in scoped_ids)
+        return f"{prefix} {column} IN ({placeholders})", scoped_ids
+
+    def _manual_where(column: str, prefix: str = "WHERE") -> str:
+        if not scoped:
+            return ""
+        if not scoped_ids:
+            return f"{prefix} 1 = 0"
+        return f"{prefix} {column} IN ({', '.join('?' for _ in scoped_ids)})"
 
     conn = connect_sqlite(db_path)
     try:
         migrate(conn)
+        session_rollup_where, session_rollup_params = _where("session_id", "AND")
+        steps_where, steps_params = _where("session_id")
+        tool_where, tool_params = _where("tc.session_id")
+        llm_where, llm_params = _where("session_id", "AND")
+        mcp_where, mcp_params = _where("session_id", "AND")
+        sessions_where, sessions_params = _where("s.id")
         daily_rows = _dict_rows(conn.execute(
-            """
+            f"""
             SELECT
               substr(started_at, 1, 10) AS day,
               COALESCE(SUM(prompt_count + tool_call_count + error_count), 0) AS event_count
             FROM session_rollups
             WHERE started_at IS NOT NULL AND started_at <> ''
+            {session_rollup_where}
             GROUP BY substr(started_at, 1, 10)
             ORDER BY day
-            """
+            """,
+            session_rollup_params,
         ))
         hour_rows = _dict_rows(conn.execute(
-            """
+            f"""
             SELECT CAST(strftime('%H', started_at) AS INTEGER) AS hour, COUNT(*) AS event_count
             FROM steps
+            {steps_where}
             GROUP BY hour
             ORDER BY hour
-            """
+            """,
+            steps_params,
         ))
         event_rows = _dict_rows(conn.execute(
-            """
+            f"""
             SELECT type, COUNT(*) AS event_count
             FROM steps
+            {steps_where}
             GROUP BY type
             ORDER BY event_count DESC, type ASC
-            """
+            """,
+            steps_params,
         ))
-        tool_rows = _dict_rows(conn.execute(
-            """
-            SELECT tool_name, COALESCE(SUM(call_count), 0) AS call_count
-            FROM tool_rollups
-            GROUP BY tool_name
-            ORDER BY call_count DESC, tool_name ASC
-            LIMIT 25
-            """
-        ))
+        if scoped:
+            tool_rows = _dict_rows(conn.execute(
+                f"""
+                SELECT tc.tool_name, COUNT(*) AS call_count
+                FROM tool_calls tc
+                {tool_where}
+                GROUP BY tool_name
+                ORDER BY call_count DESC, tool_name ASC
+                LIMIT 25
+                """,
+                tool_params,
+            ))
+        else:
+            tool_rows = _dict_rows(conn.execute(
+                """
+                SELECT tool_name, COALESCE(SUM(call_count), 0) AS call_count
+                FROM tool_rollups
+                GROUP BY tool_name
+                ORDER BY call_count DESC, tool_name ASC
+                LIMIT 25
+                """
+            ))
         model_rows = _dict_rows(conn.execute(
-            """
+            f"""
             SELECT
               COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) AS model,
               COUNT(*) AS call_count,
               COALESCE(SUM(estimated_cost_usd), 0) AS total_cost
             FROM llm_calls
             WHERE COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) IS NOT NULL
+            {llm_where}
             GROUP BY model
             ORDER BY call_count DESC, model ASC
-            """
+            """,
+            llm_params,
         ))
         llm_cost_rows = _dict_rows(conn.execute(
-            """
+            f"""
             SELECT
               COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) AS model,
               input_tokens,
               output_tokens,
               cache_creation_input_tokens,
-              cache_read_input_tokens
+              cache_read_input_tokens,
+              estimated_cost_usd
             FROM llm_calls
             WHERE COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) IS NOT NULL
-            """
+            {llm_where}
+            """,
+            llm_params,
         ))
         agent_rows = _dict_rows(conn.execute(
-            """
+            f"""
             SELECT
               COALESCE(NULLIF(sr.agent, ''), 'unknown') AS name,
               COUNT(*) AS sessions,
@@ -1643,56 +1966,124 @@ def _sql_dashboard_compat_payload(db_path: Path) -> dict[str, object]:
               COALESCE(SUM(sr.input_tokens + sr.output_tokens), 0) AS tokens,
               COALESCE(SUM(sr.total_cost), 0) AS total_cost
             FROM session_rollups sr
+            {_manual_where("sr.session_id")}
             GROUP BY COALESCE(NULLIF(sr.agent, ''), 'unknown')
             ORDER BY sessions DESC, tools DESC, name ASC
-            """
+            """,
+            scoped_ids,
+        ))
+        session_agent_rows = _dict_rows(conn.execute(
+            f"""
+            SELECT
+              s.id AS session_id,
+              COALESCE(NULLIF(a.name, ''), NULLIF(sr.agent, ''), 'unknown') AS agent
+            FROM sessions s
+            LEFT JOIN agents a ON a.id = s.agent_id
+            LEFT JOIN session_rollups sr ON sr.session_id = s.id
+            {sessions_where}
+            """,
+            sessions_params,
         ))
         cache_totals = conn.execute(
-            """
+            f"""
             SELECT
               COALESCE(SUM(cache_write_tokens), 0) AS cache_creation_tokens,
               COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens
             FROM session_rollups
-            """
+            {_manual_where("session_id")}
+            """,
+            scoped_ids,
         ).fetchone()
         mcp_rows = _dict_rows(conn.execute(
-            """
+            f"""
             SELECT server_name, COUNT(*) AS call_count
             FROM mcp_calls
             WHERE server_name IS NOT NULL AND server_name <> ''
+            {mcp_where}
             GROUP BY server_name
             ORDER BY call_count DESC, server_name ASC
-            """
+            """,
+            mcp_params,
+        ))
+        mcp_call_rows = _dict_rows(conn.execute(
+            f"""
+            SELECT session_id, tool_name, server_name
+            FROM mcp_calls
+            WHERE server_name IS NOT NULL AND server_name <> ''
+            {mcp_where}
+            """,
+            mcp_params,
         ))
         shell_rows = _dict_rows(conn.execute(
-            """
+            f"""
             SELECT summary AS command, COUNT(*) AS call_count
             FROM steps
             WHERE type = 'shell_command' AND summary IS NOT NULL AND summary <> ''
+            {session_rollup_where}
             GROUP BY summary
             ORDER BY call_count DESC, summary ASC
             LIMIT 25
-            """
+            """,
+            session_rollup_params,
+        ))
+        command_step_rows = _dict_rows(conn.execute(
+            f"""
+            SELECT raw_attrs_json
+            FROM steps
+            WHERE (raw_attrs_json LIKE '%command%' OR type = 'shell_command')
+            {session_rollup_where}
+            """,
+            session_rollup_params,
+        ))
+        command_tool_rows = _dict_rows(conn.execute(
+            f"""
+            SELECT tool_name, input_preview_redacted, raw_attrs_json
+            FROM tool_calls tc
+            WHERE (LOWER(tool_name) IN ('shell', 'bash', 'exec_command')
+               OR raw_attrs_json LIKE '%command%'
+               OR input_preview_redacted LIKE '%"cmd"%')
+            {session_rollup_where.replace("session_id", "tc.session_id")}
+            """,
+            session_rollup_params,
         ))
         tool_duration_rows = _dict_rows(conn.execute(
-            """
+            f"""
             SELECT tool_name, duration_ms
-            FROM tool_calls
+            FROM tool_calls tc
             WHERE duration_ms IS NOT NULL
-            """
+            {session_rollup_where.replace("session_id", "tc.session_id")}
+            """,
+            session_rollup_params,
         ))
         raw_step_rows = _dict_rows(conn.execute(
-            """
-            SELECT type, summary, status, raw_attrs_json
+            f"""
+            SELECT session_id, type, summary, status, raw_attrs_json
             FROM steps
-            """
+            {steps_where}
+            """,
+            steps_params,
         ))
+        session_agents = {
+            str(row["session_id"]): str(row["agent"] or "unknown")
+            for row in session_agent_rows
+            if row.get("session_id")
+        }
         subagent_launches: Counter[str] = Counter()
         subagent_stops: Counter[str] = Counter()
         skills_by_count: Counter[str] = Counter()
+        skills_by_agent: dict[str, Counter[str]] = {}
         raw_mcp_counts: Counter[str] = Counter()
         raw_mcp_after_counts: Counter[str] = Counter()
+        command_patterns: Counter[str] = Counter()
+        file_edits = 0
+        file_reads = 0
+        session_conversation: dict[str, list[dict[str, object]]] = {}
+        agent_tool_counts: dict[str, Counter[str]] = {}
+        agent_mcp_counts: dict[str, Counter[str]] = {}
+        agent_subagent_counts: dict[str, Counter[str]] = {}
         for row in raw_step_rows:
+            session_id = str(row["session_id"] or "")
+            agent_name = session_agents.get(session_id, "unknown")
             attrs = _load_json_dict(row["raw_attrs_json"])
             event = str(_sql_attr(attrs, "gen_ai.client.hook.event") or row["summary"] or "")
             event_lc = event.lower()
@@ -1702,12 +2093,21 @@ def _sql_dashboard_compat_payload(db_path: Path) -> dict[str, object]:
                     subagent_stops[subagent_type] += 1
                 else:
                     subagent_launches[subagent_type] += 1
+                agent_subagent_counts.setdefault(agent_name, Counter())[subagent_type] += 1
             tool_name = str(_sql_attr(attrs, "gen_ai.client.tool_name") or "")
             preview = str(_sql_attr(attrs, "gen_ai.client.tool.input", "tool.input") or "")
             if tool_name == "skill":
                 skill_name = _extract_skill_name_from_preview(preview)
                 if skill_name:
                     skills_by_count[skill_name] += 1
+                    skills_by_agent.setdefault(agent_name, Counter())[skill_name] += 1
+            if tool_name:
+                agent_tool_counts.setdefault(agent_name, Counter())[tool_name] += 1
+            tool_lc = tool_name.lower()
+            if event_lc == "afterfileedit" or tool_lc in {"edit", "write", "apply_patch"}:
+                file_edits += 1
+            if event_lc == "beforereadfile" or tool_lc in {"read", "view"}:
+                file_reads += 1
             mcp_server = str(_sql_attr(
                 attrs,
                 "gen_ai.client.mcp_server",
@@ -1717,9 +2117,31 @@ def _sql_dashboard_compat_payload(db_path: Path) -> dict[str, object]:
                 "server.name",
             ) or "")
             if mcp_server:
+                mcp_server = _display_mcp_server_name(mcp_server)
                 raw_mcp_counts[mcp_server] += 1
                 if event == "AfterMCPExecution" or "after" in event_lc:
                     raw_mcp_after_counts[mcp_server] += 1
+        for row in mcp_call_rows:
+            session_id = str(row["session_id"] or "")
+            server_name = _display_mcp_server_name(row["server_name"])
+            if not session_id or not server_name:
+                continue
+            agent_name = session_agents.get(session_id, "unknown")
+            session_conversation.setdefault(session_id, []).append({
+                "type": "mcp_call",
+                "tool_name": str(row["tool_name"] or ""),
+                "server": server_name,
+            })
+            agent_mcp_counts.setdefault(agent_name, Counter())[server_name] += 1
+        for row in command_step_rows:
+            command = _extract_command_from_sql_attrs(_load_json_dict(row["raw_attrs_json"]))
+            if command:
+                command_patterns[command] += 1
+        for row in command_tool_rows:
+            attrs = _load_json_dict(row["raw_attrs_json"])
+            command = _extract_command_from_sql_attrs(attrs, row["input_preview_redacted"])
+            if command:
+                command_patterns[command] += 1
         tool_durations: dict[str, list[float]] = {}
         for row in tool_duration_rows:
             tool_durations.setdefault(str(row["tool_name"]), []).append(float(row["duration_ms"] or 0))
@@ -1735,7 +2157,7 @@ def _sql_dashboard_compat_payload(db_path: Path) -> dict[str, object]:
             for tool, values in sorted(tool_durations.items(), key=lambda item: len(item[1]), reverse=True)
         ][:10]
         transition_rows = _dict_rows(conn.execute(
-            """
+            f"""
             WITH ordered AS (
               SELECT
                 tc.session_id,
@@ -1743,6 +2165,7 @@ def _sql_dashboard_compat_payload(db_path: Path) -> dict[str, object]:
                 LEAD(tc.tool_name) OVER (PARTITION BY tc.session_id ORDER BY st.seq, tc.id) AS next_tool
               FROM tool_calls tc
               JOIN steps st ON st.id = tc.step_id
+              {tool_where}
             )
             SELECT tool_name AS source, next_tool AS target, COUNT(*) AS count
             FROM ordered
@@ -1750,15 +2173,18 @@ def _sql_dashboard_compat_payload(db_path: Path) -> dict[str, object]:
             GROUP BY tool_name, next_tool
             ORDER BY count DESC, source ASC, target ASC
             LIMIT 30
-            """
+            """,
+            tool_params,
         ))
         timeline_sessions = _dict_rows(conn.execute(
-            """
+            f"""
             SELECT session_id
             FROM session_rollups
+            {_manual_where("session_id")}
             ORDER BY tool_call_count DESC, started_at DESC
             LIMIT 6
-            """
+            """,
+            scoped_ids,
         ))
         timeline = []
         for session in timeline_sessions:
@@ -1769,6 +2195,7 @@ def _sql_dashboard_compat_payload(db_path: Path) -> dict[str, object]:
                 JOIN steps st ON st.id = tc.step_id
                 WHERE tc.session_id = ?
                 ORDER BY st.seq, tc.id
+                LIMIT 500
                 """,
                 (session["session_id"],),
             ))
@@ -1785,41 +2212,123 @@ def _sql_dashboard_compat_payload(db_path: Path) -> dict[str, object]:
                 ],
             })
         co_tools = [str(row["tool_name"]) for row in tool_rows[:12]]
+        tool_counts_for_graph = Counter({
+            str(row["tool_name"]): int(row["call_count"] or 0)
+            for row in tool_rows
+            if row.get("tool_name")
+        })
         co_matrix = [[0 for _ in co_tools] for _ in co_tools]
         if co_tools:
+            co_filters: list[str] = []
+            co_params: list[str] = []
+            if scoped:
+                co_filters.append(f"session_id IN ({', '.join('?' for _ in scoped_ids)})")
+                co_params.extend(scoped_ids)
+            top_tool_placeholders = ", ".join("?" for _ in co_tools)
+            co_filters.append(f"tool_name IN ({top_tool_placeholders})")
+            co_params.extend(co_tools)
+            co_where = f"WHERE {' AND '.join(co_filters)}" if co_filters else ""
             co_rows = _dict_rows(conn.execute(
-                """
-                SELECT a.tool_name AS tool_a, b.tool_name AS tool_b, COUNT(DISTINCT a.session_id) AS sessions
-                FROM tool_calls a
-                JOIN tool_calls b ON b.session_id = a.session_id AND b.tool_name <> a.tool_name
+                f"""
+                WITH session_tools AS (
+                  SELECT DISTINCT session_id, tool_name
+                  FROM tool_calls
+                  {co_where}
+                )
+                SELECT a.tool_name AS tool_a, b.tool_name AS tool_b, COUNT(*) AS sessions
+                FROM session_tools a
+                JOIN session_tools b ON b.session_id = a.session_id AND b.tool_name <> a.tool_name
                 GROUP BY a.tool_name, b.tool_name
-                """
+                """,
+                co_params,
             ))
             index = {tool: pos for pos, tool in enumerate(co_tools)}
             for row in co_rows:
                 if row["tool_a"] in index and row["tool_b"] in index:
                     co_matrix[index[row["tool_a"]]][index[row["tool_b"]]] = int(row["sessions"] or 0)
-        dep_nodes: dict[str, dict[str, object]] = {}
-        dep_links: Counter[tuple[str, str]] = Counter()
         dep_rows = _dict_rows(conn.execute(
-            """
+            f"""
             SELECT COALESCE(NULLIF(a.name, ''), sr.agent, 'unknown') AS agent, tc.tool_name, COUNT(*) AS count
             FROM tool_calls tc
             JOIN sessions s ON s.id = tc.session_id
             LEFT JOIN agents a ON a.id = s.agent_id
             LEFT JOIN session_rollups sr ON sr.session_id = s.id
+            {tool_where}
             GROUP BY COALESCE(NULLIF(a.name, ''), sr.agent, 'unknown'), tc.tool_name
             ORDER BY count DESC
-            """
+            """,
+            tool_params,
         ))
+        agent_rows_by_name = {str(row["name"]): row for row in agent_rows}
+        sql_agents: dict[str, AgentStats] = {}
+        for name, row in agent_rows_by_name.items():
+            agent = sql_agents.setdefault(name, AgentStats(name=name))
+            session_ids = {sid for sid, agent_name in session_agents.items() if agent_name == name}
+            agent.sessions_seen.update(session_ids)
+            agent.total_events = int(row["prompts"] or 0) + int(row["tools"] or 0) + int(row["failures"] or 0)
+            agent.total_input_tokens = int(row["tokens"] or 0)
+            agent.total_output_tokens = 0
+            agent.total_cost = float(row["total_cost"] or 0)
+            agent.total_cost_usd = float(row["total_cost"] or 0)
         for row in dep_rows:
-            agent = str(row["agent"])
-            tool = str(row["tool_name"])
-            dep_nodes.setdefault(agent, {"id": agent, "type": "agent", "size": 0})
-            dep_nodes.setdefault(tool, {"id": tool, "type": "tool", "size": 0})
-            dep_nodes[agent]["size"] = int(dep_nodes[agent]["size"]) + int(row["count"] or 0)
-            dep_nodes[tool]["size"] = int(dep_nodes[tool]["size"]) + int(row["count"] or 0)
-            dep_links[(agent, tool)] += int(row["count"] or 0)
+            agent_name = str(row["agent"] or "unknown")
+            tool_name = str(row["tool_name"] or "")
+            if not tool_name:
+                continue
+            sql_agents.setdefault(agent_name, AgentStats(name=agent_name)).tools_by_count[tool_name] += int(row["count"] or 0)
+        for agent_name, subagents in agent_subagent_counts.items():
+            sql_agents.setdefault(agent_name, AgentStats(name=agent_name)).subagent_types.update(subagents)
+        for agent_name, servers in agent_mcp_counts.items():
+            sql_agents.setdefault(agent_name, AgentStats(name=agent_name)).mcp_servers.update(servers)
+        mcp_counts_for_graph = Counter({
+            _display_mcp_server_name(row["server_name"]): int(row["call_count"] or 0)
+            for row in mcp_rows
+            if _display_mcp_server_name(row["server_name"])
+        })
+        for server, count in raw_mcp_counts.items():
+            mcp_counts_for_graph[server] = mcp_counts_for_graph.get(server, 0) + count
+        graph_dep = _compute_dep_graph(
+            sql_agents,
+            tool_counts_for_graph,
+            mcp_counts_for_graph,
+            session_conversation,
+            session_agents,
+        )
+        agents_payload = {
+            name: {
+                "total_events": agent.total_events,
+                "sessions": len(agent.sessions_seen),
+                "prompts": int((agent_rows_by_name.get(name) or {}).get("prompts") or 0),
+                "tool_calls": int((agent_rows_by_name.get(name) or {}).get("tools") or 0),
+                "tool_ratio": round(
+                    _safe_ratio(
+                        int((agent_rows_by_name.get(name) or {}).get("tools") or 0),
+                        int((agent_rows_by_name.get(name) or {}).get("prompts") or 0),
+                    ),
+                    1,
+                ),
+                "failures": int((agent_rows_by_name.get(name) or {}).get("failures") or 0),
+                "failure_rate": round(
+                    100 * _safe_ratio(
+                        int((agent_rows_by_name.get(name) or {}).get("failures") or 0),
+                        int((agent_rows_by_name.get(name) or {}).get("tools") or 0),
+                    ),
+                    1,
+                ),
+                "mcp_calls": sum(agent.mcp_servers.values()),
+                "subagents": sum(agent.subagent_types.values()),
+                "input_tokens": agent.total_input_tokens,
+                "output_tokens": agent.total_output_tokens,
+                "cache_creation_tokens": agent.total_cache_creation_tokens,
+                "cache_read_tokens": agent.total_cache_read_tokens,
+                "total_cost_usd": agent.total_cost_usd,
+                "top_model": "",
+                "top_tools": dict(agent.tools_by_count.most_common(10)),
+                "top_skills": dict(skills_by_agent.get(name, Counter()).most_common(10)),
+                "percentiles": compute_tool_percentiles(agent.tool_durations_ms)[:8],
+            }
+            for name, agent in sorted(sql_agents.items())
+        }
     finally:
         conn.close()
 
@@ -1836,13 +2345,24 @@ def _sql_dashboard_compat_payload(db_path: Path) -> dict[str, object]:
     model_costs = {str(row["model"]): float(row["total_cost"] or 0) for row in model_rows}
     cost_breakdown = _sql_cost_breakdown(llm_cost_rows)
     tools_by_count = _counter_from_rows(tool_rows, "tool_name", "call_count")
-    mcp_counts = _counter_from_rows(mcp_rows, "server_name", "call_count")
+    mcp_counts: Counter[str] = Counter()
+    for row in mcp_rows:
+        server = _display_mcp_server_name(row["server_name"])
+        if server:
+            mcp_counts[server] += int(row["call_count"] or 0)
     for server, count in raw_mcp_counts.items():
         mcp_counts[server] = mcp_counts.get(server, 0) + count
     mcp_after_counts = dict(raw_mcp_after_counts or raw_mcp_counts)
+    if not command_patterns:
+        command_patterns.update({
+            str(row["command"]): int(row["call_count"] or 0)
+            for row in shell_rows
+            if row["command"]
+        })
+    display_commands = _sanitize_command_counter(command_patterns)
     top_commands = [
-        {"command": str(row["command"]), "count": int(row["call_count"] or 0)}
-        for row in shell_rows
+        {"command": command, "count": count}
+        for command, count in display_commands.most_common(25)
     ]
     signature = top_commands[0] if top_commands else {"command": "", "count": 0}
     agent_comparison = [
@@ -1889,24 +2409,20 @@ def _sql_dashboard_compat_payload(db_path: Path) -> dict[str, object]:
         "subagent_total_starts": sum(subagent_launches.values()),
         "subagent_total_stops": sum(subagent_stops.values()),
         "top_commands": top_commands,
-        "unique_commands": len(top_commands),
+        "unique_commands": len(display_commands),
         "signature_command": signature["command"],
         "signature_command_count": signature["count"],
+        "shell_executions": sum(display_commands.values()),
+        "file_edits": file_edits,
+        "file_reads": file_reads,
         "graph_tool_transitions": [
             {"from": row["source"], "to": row["target"], "count": int(row["count"] or 0)}
             for row in transition_rows
         ],
         "graph_cooccurrence": {"tools": co_tools, "matrix": co_matrix},
-        "graph_dep": {
-            "nodes": list(dep_nodes.values()),
-            "links": [
-                {"source": source, "target": target, "value": count}
-                for (source, target), count in dep_links.items()
-            ],
-            "isolated_agents": [],
-            "top_mcp_servers": [{"id": key, "events": value} for key, value in mcp_counts.items()],
-        },
+        "graph_dep": graph_dep,
         "graph_session_timeline": timeline,
+        "agents": agents_payload,
     }
 
 
@@ -1928,16 +2444,22 @@ def _sql_insight_payload(
     tool_calls = int(overview["tool_call_count"] or 0)
     failures = int(overview["failure_count"] or 0)
     subagents = int(compat["subagent_total_starts"] or 0)
+    file_reads = int(compat.get("file_reads") or 0)
+    estimated_cost = float(overview["estimated_cost_usd"] or 0)
+    tool_to_prompt_ratio = (tool_calls / prompt_count) if prompt_count else 0.0
+    reads_per_prompt = (file_reads / prompt_count) if prompt_count else 0.0
+    mcp_per_prompt = (mcp_calls / prompt_count) if prompt_count else 0.0
+    cache_reuse_ratio = (cache_read_tokens / input_tokens) if input_tokens else 0.0
     economy = {
         "total_tokens": total_tokens,
         "avg_input_per_prompt": (input_tokens / prompt_count) if prompt_count else 0,
         "avg_output_per_prompt": (output_tokens / prompt_count) if prompt_count else 0,
         "top_session_share": top_session_share,
         "high_context_sessions": high_context_sessions,
-        "reads_per_prompt": 0,
-        "mcp_per_prompt": (mcp_calls / prompt_count) if prompt_count else 0,
-        "cache_reuse_ratio": (cache_read_tokens / input_tokens) if input_tokens else 0,
-        "cache_hit_pct": 100 * min((cache_read_tokens / input_tokens) if input_tokens else 0, 1.0),
+        "reads_per_prompt": reads_per_prompt,
+        "mcp_per_prompt": mcp_per_prompt,
+        "cache_reuse_ratio": cache_reuse_ratio,
+        "cache_hit_pct": 100 * min(cache_reuse_ratio, 1.0),
         "heavy_model_share": 0,
     }
     strengths = [
@@ -1950,21 +2472,68 @@ def _sql_insight_payload(
     ]
     if mcp_calls:
         observations.append(f"**MCP activity** - SQLite data contains {mcp_calls:,} MCP calls across {len(compat['mcp_servers_by_count']):,} server(s).")
-    recommendations = [
-        "**Keep expanding SQL view models** - Use dedicated SQL-backed models for the remaining deep-dive tabs before removing `--sql-only`.",
-    ]
+    recommendations: list[str] = []
+    if prompt_count == 0 and (tool_calls or total_tokens):
+        recommendations.append(
+            "**Enable prompt capture for richer session analysis** - SQL has execution metadata, but no prompt submits in this scope. Re-run `reflect setup` and choose metadata, masked, or full text capture based on your local privacy preference."
+        )
+    if failures:
+        recommendations.append(
+            f"**Require schema/path checks before execution** - {failures:,} failed tool call(s) were observed. Make path, MCP schema, and required env checks the first step before mutating state."
+        )
+    if tool_to_prompt_ratio >= 3 or reads_per_prompt >= 3:
+        recommendations.append(
+            f"**Pin relevant files in the first prompt** - This scope averages {tool_to_prompt_ratio:.1f} tools/prompt and {reads_per_prompt:.1f} reads/prompt. Naming exact files, functions, and examples up front should reduce exploration churn."
+        )
+    if mcp_per_prompt >= 0.5:
+        recommendations.append(
+            f"**Reduce MCP context bloat** - This scope averages {mcp_per_prompt:.1f} MCP calls/prompt. Keep only the MCP servers needed for the task and prefer deterministic scripts for repeatable lookups."
+        )
+    if top_session_share >= 25 or high_context_sessions:
+        recommendations.append(
+            f"**Split large tasks into smaller sessions** - The largest session accounts for {top_session_share:.1f}% of observed token volume. Start a fresh session after each milestone to keep context pressure down."
+        )
+    if input_tokens >= 1_000_000 and cache_reuse_ratio < 0.05:
+        recommendations.append(
+            "**Compact context to improve cache reuse** - Input volume is high but cache reuse is low. Summarize at completed milestones instead of carrying a swollen context forward."
+        )
+    if estimated_cost >= 25:
+        recommendations.append(
+            f"**Review high model spend** - Estimated cost is ${estimated_cost:.2f}. Reserve expensive models for planning or hard analysis and route routine implementation to lower-cost models."
+        )
+    if subagents:
+        recommendations.append(
+            "**Specify subagent output format** - Subagents are active in this scope. Ask for a table, JSON, or concise markdown handoff so delegated work returns in a reusable shape."
+        )
+    if not recommendations:
+        recommendations.extend([
+            "**Use a fixed prompt contract for non-trivial requests** - Goal, Context, Constraints, Output, Done-when keeps SQL-observed sessions easier to compare and review.",
+            "**Close tasks with a structured handoff** - End each major task with changes, validations, residual risk, and the next command so future reports can distinguish completed work from drift.",
+        ])
     practical_examples = [
         (
-            "Use SQL session detail for debugging",
-            "Click a session and rely on legacy in-memory JSON for the timeline.",
-            "Click a session and load conversation plus telemetry spans from `/api/session/{session_id}` backed by SQLite.",
+            "Make the next action measurable",
+            "Fix the flaky report.",
+            "Fix the report session filter. Done when `/api/data?agents=claude` returns non-empty sessions and the dashboard shows the same count.",
         )
     ]
     achievements = [
         {"icon": "&#128190;", "name": "SQL Report Store", "sub": f"{len(sessions):,} sessions loaded"},
     ]
+    if total_tokens:
+        achievements.append({"icon": "&#129534;", "name": "Token Ledger", "sub": f"{total_tokens:,} tokens"})
+    if cache_read_tokens:
+        achievements.append({"icon": "&#129534;", "name": "Cache Saver", "sub": f"{economy['cache_reuse_ratio']:.1f}x cached reuse"})
+    if compat["unique_models"]:
+        achievements.append({"icon": "&#9878;", "name": "Model Mixer", "sub": f"{compat['unique_models']:,} models"})
+    if compat["unique_commands"]:
+        achievements.append({"icon": "&#128187;", "name": "Command Runner", "sub": f"{compat['unique_commands']:,} patterns"})
     if tool_calls and failures == 0:
         achievements.append({"icon": "&#9989;", "name": "Zero Failures", "sub": "clean tool execution"})
+    elif tool_calls:
+        achievements.append({"icon": "&#128295;", "name": "Tool Operator", "sub": f"{tool_calls:,} tool calls"})
+    if overview["estimated_cost_usd"]:
+        achievements.append({"icon": "&#128176;", "name": "Cost Visibility", "sub": f"${float(overview['estimated_cost_usd']):.2f} estimated"})
     if subagents:
         achievements.append({"icon": "&#129302;", "name": "Delegator", "sub": f"{subagents:,} subagents"})
     if mcp_calls:
@@ -1984,11 +2553,26 @@ def _sql_only_dashboard_payload(
     *,
     limit: int = 50,
     offset: int = 0,
+    q: str = "",
+    session_id: str = "",
+    agents: set[str] | None = None,
+    model: str = "all",
+    status: str = "all",
+    range_name: str = "all",
 ) -> dict[str, object]:
-    sqlite_payload = _sql_report_payload(db_path, limit=limit, offset=offset)
+    has_scope_filter = bool(q or session_id or agents or model != "all" or status != "all" or range_name != "all")
+    sqlite_payload = _sql_report_payload(db_path, limit=500, offset=0)
     overview = sqlite_payload["overview"]
     sessions_page = sqlite_payload["sessions"]
     session_rows = sessions_page["rows"]
+    primary_models = _sql_session_primary_models(
+        db_path,
+        {str(row["session_id"]) for row in session_rows},
+    )
+    first_prompts = _sql_session_first_prompts(
+        db_path,
+        {str(row["session_id"]) for row in session_rows},
+    )
     sessions = [
         {
             "id": row["session_id"],
@@ -1996,9 +2580,11 @@ def _sql_only_dashboard_payload(
             "agent": row.get("agent") or "unknown",
             "status": row["status"],
             "title": row.get("title"),
+            "first_prompt": first_prompts.get(str(row["session_id"]), "") or row.get("title") or "",
             "started_at": row["started_at"],
             "ended_at": row.get("ended_at"),
             "created_at": row["started_at"],
+            "duration_ms": row.get("duration_ms") or 0,
             "event_count": row["prompt_count"] + row["tool_call_count"],
             "prompt_count": row["prompt_count"],
             "tool_calls": row["tool_call_count"],
@@ -2020,8 +2606,12 @@ def _sql_only_dashboard_payload(
             "total_cost": row["estimated_cost_usd"],
             "total_cost_usd": row["estimated_cost_usd"],
             "pricing_unit": "usd",
-            "primary_model": "",
-            "models": {},
+            "primary_model": primary_models.get(str(row["session_id"]), ""),
+            "models": (
+                {primary_models[str(row["session_id"])]: 1}
+                if primary_models.get(str(row["session_id"]))
+                else {}
+            ),
             "tools": {},
             "skills": {},
             "conversation": [],
@@ -2029,20 +2619,73 @@ def _sql_only_dashboard_payload(
         }
         for row in session_rows
     ]
+    sessions = _filter_sql_session_rows(
+        sessions,
+        q=q,
+        session_id=session_id,
+        agents=agents,
+        model=model,
+        status=status,
+        range_name=range_name,
+    )
+    sessions_page = {
+        **sessions_page,
+        "rows": session_rows,
+        "total": len(sessions),
+        "limit": limit,
+        "offset": offset,
+    }
+    session_rows = [
+        {
+            "session_id": session["id"],
+            "agent": session["agent"],
+            "status": session["status"],
+            "title": session["title"],
+            "first_prompt": session["first_prompt"],
+            "started_at": session["started_at"],
+            "ended_at": session["ended_at"],
+            "duration_ms": session["duration_ms"],
+            "prompt_count": session["prompt_count"],
+            "tool_call_count": session["tool_calls"],
+            "failure_count": session["failure_count"],
+            "input_tokens": session["input_tokens"],
+            "output_tokens": session["output_tokens"],
+            "cache_creation_tokens": session["cache_creation_tokens"],
+            "cache_read_tokens": session["cache_read_tokens"],
+            "estimated_cost_usd": session["total_cost_usd"],
+            "total_tokens": session["total_tokens"],
+        }
+        for session in sessions
+    ]
+    sessions = sessions[offset:offset + limit]
+    sessions_page["rows"] = session_rows[offset:offset + limit]
+    scoped_overview = {
+        **overview,
+        "session_count": len(session_rows),
+        "prompt_count": sum(int(row["prompt_count"] or 0) for row in session_rows),
+        "tool_call_count": sum(int(row["tool_call_count"] or 0) for row in session_rows),
+        "failure_count": sum(int(row["failure_count"] or 0) for row in session_rows),
+        "input_tokens": sum(int(row["input_tokens"] or 0) for row in session_rows),
+        "output_tokens": sum(int(row["output_tokens"] or 0) for row in session_rows),
+        "estimated_cost_usd": sum(float(row["estimated_cost_usd"] or 0) for row in session_rows),
+    }
+    sqlite_payload["overview"] = scoped_overview
+    sqlite_payload["sessions"] = sessions_page
     first_event_ts = ""
     if session_rows:
         first_event_ts = min(row["started_at"] for row in session_rows if row.get("started_at"))
     prompt_count = sum(row["prompt_count"] for row in session_rows)
-    compat = _sql_dashboard_compat_payload(db_path)
-    insight_payload = _sql_insight_payload(overview, sessions, compat)
+    scoped_session_ids = {str(row["session_id"]) for row in session_rows}
+    compat = _sql_dashboard_compat_payload(db_path, session_ids=scoped_session_ids if has_scope_filter else None)
+    insight_payload = _sql_insight_payload(scoped_overview, sessions, compat)
     cost_breakdown = compat["cost_breakdown"]
-    total_cost_usd = float(overview["estimated_cost_usd"] or cost_breakdown["total_cost_usd"] or 0)
+    total_cost_usd = float(scoped_overview["estimated_cost_usd"] or cost_breakdown["total_cost_usd"] or 0)
     payload = {
         "sql_only": True,
         "sqlite": sqlite_payload,
         "comparison": None,
         "sessions": sessions,
-        "unique_sessions": overview["session_count"],
+        "unique_sessions": scoped_overview["session_count"],
         "first_event_ts": first_event_ts,
         "last_event_ts": max((row["started_at"] for row in session_rows if row.get("started_at")), default=""),
         "avg_quality_score": (
@@ -2050,18 +2693,19 @@ def _sql_only_dashboard_payload(
             if session_rows else 0
         ),
         "prompt_submits": prompt_count,
-        "tool_calls": overview["tool_call_count"],
-        "tool_to_prompt_ratio": f"{overview['tool_call_count'] / prompt_count:.1f}" if prompt_count else "0.0",
+        "tool_calls": scoped_overview["tool_call_count"],
+        "tool_to_prompt_ratio": f"{scoped_overview['tool_call_count'] / prompt_count:.1f}" if prompt_count else "0.0",
         "events_by_type": compat["events_by_type"],
         "failure_rate_pct": 0,
-        "file_edits": 0,
-        "total_input_tokens": overview["input_tokens"],
-        "total_output_tokens": overview["output_tokens"],
+        "file_edits": compat["file_edits"],
+        "file_reads": compat["file_reads"],
+        "total_input_tokens": scoped_overview["input_tokens"],
+        "total_output_tokens": scoped_overview["output_tokens"],
         "total_cache_creation_tokens": compat["total_cache_creation_tokens"],
         "total_cache_read_tokens": compat["total_cache_read_tokens"],
         "total_tokens": (
-            overview["input_tokens"]
-            + overview["output_tokens"]
+            scoped_overview["input_tokens"]
+            + scoped_overview["output_tokens"]
             + compat["total_cache_creation_tokens"]
             + compat["total_cache_read_tokens"]
         ),
@@ -2091,7 +2735,7 @@ def _sql_only_dashboard_payload(
         "graph_latency_histograms": {},
         "graph_dep": compat["graph_dep"],
         "graph_session_timeline": compat["graph_session_timeline"],
-        "agents": {},
+        "agents": compat["agents"],
         "agent_comparison": compat["agent_comparison"],
         "mcp_calls": compat["mcp_calls"],
         "mcp_servers_by_count": compat["mcp_servers_by_count"],
@@ -2117,7 +2761,7 @@ def _sql_only_dashboard_payload(
         "token_economy": insight_payload["token_economy"],
     }
     payload["tool_failures"] = int(overview["failure_count"])
-    payload["shell_executions"] = 0
+    payload["shell_executions"] = compat["shell_executions"]
     return payload
 
 
@@ -2170,47 +2814,114 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
             row["step_id"]: row
             for row in _dict_rows(conn.execute("SELECT * FROM mcp_calls WHERE session_id = ?", (session_id,)))
         }
+        raw_log_rows = _dict_rows(conn.execute(
+            """
+            SELECT *
+            FROM raw_events
+            WHERE session_id = ? AND source_type LIKE '%log%'
+            ORDER BY observed_at, id
+            LIMIT 500
+            """,
+            (session_id,),
+        ))
+        raw_log_count = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM raw_events
+            WHERE session_id = ? AND source_type LIKE '%log%'
+            """,
+            (session_id,),
+        ).fetchone()[0]
     finally:
         conn.close()
 
     conversation: list[dict[str, object]] = []
     telemetry_spans: list[dict[str, object]] = []
+    seen_prompts: set[tuple[str, str]] = set()
+    seen_responses: set[tuple[str, str, int, int]] = set()
+    seen_tools: set[tuple[str, str, str]] = set()
     for step in steps:
         attrs = _load_json_dict(step["raw_attrs_json"])
         event_type = str(_sql_attr(attrs, "gen_ai.client.hook.event") or step["summary"] or step["type"])
+        event_lc = event_type.lower()
         base_ts = step["started_at"] or ""
-        if step["id"] in llm_by_step:
-            call = llm_by_step[step["id"]]
-            if "prompt" in event_type.lower() or call["input_tokens"]:
+        generation_id = str(_sql_attr(attrs, "gen_ai.client.generation_id", "gen_ai.generation.id") or "")
+        prompt = _sql_attr_text(
+            attrs,
+            "gen_ai.client.prompt",
+            "gen_ai.client.prompt.text",
+            "prompt",
+            "input",
+            limit=5000,
+        )
+        if "prompt" in event_lc and prompt:
+            prompt_key = (generation_id or str(_sql_attr(attrs, "gen_ai.client.prompt.sha256") or ""), prompt)
+            if prompt_key not in seen_prompts:
+                seen_prompts.add(prompt_key)
                 conversation.append({
                     "type": "prompt",
                     "ts": base_ts,
-                    "preview": str(_sql_attr(attrs, "gen_ai.client.prompt", "prompt") or "")[:500],
+                    "preview": prompt,
+                })
+        if step["id"] in llm_by_step:
+            call = llm_by_step[step["id"]]
+            if call["input_tokens"] and not conversation:
+                conversation.append({
+                    "type": "prompt",
+                    "ts": base_ts,
+                    "preview": "Prompt text was not captured; token metadata is available for this turn.",
                 })
             if call["output_tokens"]:
-                conversation.append({
-                    "type": "response",
-                    "ts": base_ts,
-                    "model": call["response_model"] or call["request_model"] or "",
-                    "input_tokens": call["input_tokens"],
-                    "output_tokens": call["output_tokens"],
-                    "preview": str(_sql_attr(attrs, "gen_ai.client.output", "response") or "")[:500],
-                })
+                model = call["response_model"] or call["request_model"] or ""
+                response_key = (
+                    generation_id,
+                    str(model or ""),
+                    int(call["input_tokens"] or 0),
+                    int(call["output_tokens"] or 0),
+                )
+                if response_key not in seen_responses:
+                    seen_responses.add(response_key)
+                    conversation.append({
+                        "type": "response",
+                        "ts": base_ts,
+                        "model": model,
+                        "input_tokens": call["input_tokens"],
+                        "output_tokens": call["output_tokens"],
+                        "preview": _sql_response_preview(attrs, call),
+                    })
         if step["id"] in tools_by_step:
             tool = tools_by_step[step["id"]]
-            conversation.append({
-                "type": "tool_call",
-                "ts": base_ts,
-                "tool_name": tool["tool_name"],
-                "preview": tool["input_preview_redacted"] or "",
-            })
-            conversation.append({
-                "type": "tool_result",
-                "ts": step["ended_at"] or base_ts,
-                "tool_name": tool["tool_name"],
-                "success": tool["status"] != "error",
-                "duration_ms": tool["duration_ms"] or 0,
-            })
+            tool_use_id = str(_sql_attr(attrs, "gen_ai.client.tool_use_id", "tool.id") or step["id"])
+            tool_key = (tool_use_id, str(tool["tool_name"] or ""), str(tool["status"] or ""))
+            if tool_key not in seen_tools:
+                seen_tools.add(tool_key)
+                conversation.append({
+                    "type": "tool_call",
+                    "ts": base_ts,
+                    "tool_name": tool["tool_name"],
+                    "preview": tool["input_preview_redacted"] or _sql_attr_text(
+                        attrs,
+                        "gen_ai.client.tool.input",
+                        "tool.input",
+                        "input",
+                        limit=2000,
+                    ),
+                })
+                conversation.append({
+                    "type": "tool_result",
+                    "ts": step["ended_at"] or base_ts,
+                    "tool_name": tool["tool_name"],
+                    "success": tool["status"] != "error",
+                    "duration_ms": tool["duration_ms"] or 0,
+                    "preview": tool["output_preview_redacted"] or _sql_attr_text(
+                        attrs,
+                        "gen_ai.client.tool.output",
+                        "tool.output",
+                        "output",
+                        "error.message",
+                        limit=2000,
+                    ),
+                })
         if step["id"] in mcp_by_step:
             mcp = mcp_by_step[step["id"]]
             conversation.append({
@@ -2233,22 +2944,68 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
             "duration_ms": step["duration_ms"] or 0,
             "attrs": attrs,
         })
+    anchor_ns = min(
+        (
+            value
+            for value in [
+                *(_iso_to_epoch_ns(step["started_at"]) for step in steps),
+                *(_iso_to_epoch_ns(row["observed_at"]) for row in raw_log_rows),
+            ]
+            if value > 0
+        ),
+        default=0,
+    )
+    telemetry_logs: list[dict[str, object]] = []
+    for row in raw_log_rows:
+        attrs = _load_json_dict(row["attrs_json"])
+        body = _load_json_dict(row["body_json"])
+        body_text = _sql_log_body_text(body, attrs, row.get("event_type"))
+        observed_ns = _iso_to_epoch_ns(row["observed_at"])
+        telemetry_logs.append({
+            "trace_id": row.get("trace_id") or "",
+            "span_id": row.get("span_id") or "",
+            "service": attrs.get("service.name", ""),
+            "agent": attrs.get("gen_ai.client.name", ""),
+            "event": attrs.get("gen_ai.client.hook.event", row.get("event_type") or ""),
+            "tool_name": attrs.get("gen_ai.client.tool_name", ""),
+            "mcp_tool": attrs.get("gen_ai.client.mcp_tool", ""),
+            "mcp_server": attrs.get("gen_ai.client.mcp_server", ""),
+            "severity": _telemetry_severity("", 0, body_text),
+            "time_ns": observed_ns,
+            "rel_ms": round((observed_ns - anchor_ns) / 1e6, 1) if anchor_ns and observed_ns else 0,
+            "body": body_text[:2000],
+            "attrs": _sanitize_telemetry_attrs(attrs),
+        })
+    services = {
+        service
+        for service in [
+            *(
+                str(span.get("service") or span.get("agent") or "")
+                for span in telemetry_spans
+            ),
+            *(str(log.get("service") or log.get("agent") or "") for log in telemetry_logs),
+        ]
+        if service
+    }
+    errors = sum(1 for step in steps if step["status"] == "error") + sum(
+        1 for log in telemetry_logs if log.get("severity") in {"ERROR", "FATAL"}
+    )
     return {
         "session_id": session_id,
         "conversation": conversation,
         "telemetry": {
             "summary": {
                 "spans": len(telemetry_spans),
-                "logs": 0,
-                "errors": sum(1 for step in steps if step["status"] == "error"),
-                "warnings": 0,
-                "services": 1 if session_row.get("agent") else 0,
+                "logs": int(raw_log_count or 0),
+                "errors": errors,
+                "warnings": sum(1 for log in telemetry_logs if log.get("severity") == "WARN"),
+                "services": len(services),
                 "duration_ms": 0,
                 "truncated_spans": 0,
-                "truncated_logs": 0,
+                "truncated_logs": max(0, int(raw_log_count or 0) - len(telemetry_logs)),
             },
             "spans": telemetry_spans,
-            "logs": [],
+            "logs": telemetry_logs,
             "warnings": [],
         },
         "warnings": [],
@@ -2303,6 +3060,7 @@ def _build_dashboard_app(
     def api_data(request: Request):
         params = request.query_params
         q = (params.get("q") or "").strip()
+        session_id = (params.get("session") or "").strip()
         agents = {agent for agent in (params.get("agents") or "").split(",") if agent}
         legacy_agent = (params.get("agent") or "").strip()
         if legacy_agent and legacy_agent != "all":
@@ -2311,12 +3069,25 @@ def _build_dashboard_app(
         status = params.get("status") or "all"
         range_name = params.get("range") or "all"
         if sql_only:
-            return JSONResponse(_cached)
-        if not any([q, agents, model != "all", status != "all", range_name != "all"]):
+            if not any([q, session_id, agents, model != "all", status != "all", range_name != "all"]):
+                return JSONResponse(_cached)
+            return JSONResponse(_sql_only_dashboard_payload(
+                db_path,
+                limit=50,
+                offset=0,
+                q=q,
+                session_id=session_id,
+                agents=agents,
+                model=model,
+                status=status,
+                range_name=range_name,
+            ))
+        if not any([q, session_id, agents, model != "all", status != "all", range_name != "all"]):
             return JSONResponse(_cached)
         filtered_sessions = _filter_dashboard_sessions(
             _cached.get("sessions") or [],
             q=q,
+            session_id=session_id,
             agents=agents,
             model=model,
             status=status,
@@ -2329,6 +3100,7 @@ def _build_dashboard_app(
             _cached.get("sessions") or [],
             filtered_sessions,
             q=q,
+            session_id=session_id,
             model=model,
             status=status,
             range_name=range_name,

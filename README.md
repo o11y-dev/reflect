@@ -82,6 +82,16 @@ reflect
 
 `reflect setup` starts a local OTLP gateway and wires the supported agents it can find. It edits local agent config files, points native OpenTelemetry exporters at the local gateway, installs hook-based capture where that path is supported, and writes everything under `~/.reflect/state/`.
 
+All `reflect setup` data is local and private to your machine: hook config, local spans, OTLP gateway files, and the SQLite report store live under local paths such as `~/.reflect/state/` and the opentelemetry-hooks state directory. `reflect` does not send this data to a hosted reflect service.
+
+By default, hook spans keep prompt/response text out of telemetry and store metadata such as models, token counts, lengths, and hashes. In an interactive terminal, `reflect setup` offers a short local capture-mode prompt:
+
+- **Metadata only** — no prompt/response text
+- **Masked text** — capture local text with email/token/home-path masking
+- **Full text** — capture local unmasked prompt/response text
+
+For scripted setup, use `reflect setup --text-capture-mode metadata|masked|full`. The lower-level flags `--capture-text`, `--no-capture-text`, `--mask-captured-text`, `--no-mask-captured-text`, and `--text-max-chars` are also available.
+
 Then use your AI tools normally. New sessions will show up in:
 
 - `reflect` for the terminal dashboard

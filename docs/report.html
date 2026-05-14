@@ -206,6 +206,119 @@ header{
 }
 .header-meta{display:flex;flex-direction:column;justify-content:center;text-align:right;font-size:13px;color:var(--text-3);line-height:1.6}
 
+/* ── Report loader ──────────────────────────────────────── */
+.report-loader{
+  position:fixed;
+  inset:0;
+  z-index:10000;
+  display:grid;
+  place-items:center;
+  padding:32px;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(242,138,26,.18), transparent 30%),
+    radial-gradient(circle at 50% 60%, rgba(255,177,86,.10), transparent 34%),
+    rgba(10,10,9,.96);
+  color:var(--text);
+  opacity:1;
+  visibility:visible;
+  transition:opacity .22s ease, visibility .22s ease;
+}
+.report-loader.is-hidden{
+  opacity:0;
+  visibility:hidden;
+  pointer-events:none;
+}
+.report-loader-inner{
+  width:min(320px,100%);
+  display:grid;
+  justify-items:center;
+  gap:12px;
+  text-align:center;
+}
+.loader-mark{
+  width:74px;
+  height:74px;
+  position:relative;
+  filter:drop-shadow(0 0 28px rgba(242,138,26,.34));
+  animation:loader-float 1.8s ease-in-out infinite;
+}
+.loader-mark::before{
+  content:'';
+  position:absolute;
+  inset:2px 0 8px;
+  clip-path:polygon(50% 0,100% 92%,0 92%);
+  background:var(--text);
+}
+.loader-mark::after{
+  content:'';
+  position:absolute;
+  left:50%;
+  top:59%;
+  transform:translate(-50%,-50%);
+  width:22px;
+  height:22px;
+  border:7px solid var(--signal);
+  border-radius:999px;
+  background:var(--bg);
+  box-shadow:0 0 28px rgba(242,138,26,.62);
+}
+.loader-orbit{
+  position:absolute;
+  inset:-10px;
+  border:1px solid rgba(255,177,86,.24);
+  border-radius:999px;
+  animation:loader-spin 1.4s linear infinite;
+}
+.loader-orbit::after{
+  content:'';
+  position:absolute;
+  right:7px;
+  top:10px;
+  width:8px;
+  height:8px;
+  border-radius:999px;
+  background:var(--signal-2);
+  box-shadow:0 0 20px rgba(255,177,86,.75);
+}
+.loader-title{
+  font-size:18px;
+  font-weight:900;
+  letter-spacing:.01em;
+}
+.loader-title em{font-style:normal;color:var(--signal-2)}
+.loader-subtitle{
+  min-height:24px;
+  color:var(--text-3);
+  font-size:14px;
+}
+.loader-bar{
+  width:min(220px,74vw);
+  height:3px;
+  overflow:hidden;
+  border-radius:999px;
+  background:rgba(255,255,255,.08);
+}
+.loader-bar span{
+  display:block;
+  width:42%;
+  height:100%;
+  border-radius:999px;
+  background:linear-gradient(90deg,var(--signal),var(--signal-2));
+  transform:translateX(-110%);
+  animation:loader-bar 1.15s ease-in-out infinite;
+}
+@keyframes loader-float{
+  0%,100%{transform:translateY(0) scale(1)}
+  50%{transform:translateY(-6px) scale(1.02)}
+}
+@keyframes loader-spin{
+  to{transform:rotate(360deg)}
+}
+@keyframes loader-bar{
+  0%{transform:translateX(-110%)}
+  55%,100%{transform:translateX(240%)}
+}
+
 /* ── Tabs ────────────────────────────────────────────────── */
 nav{
   background:rgba(10,10,9,.72);
@@ -809,10 +922,15 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   background:transparent;
   color:var(--text-3);
   cursor:pointer;
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
   transition:background-color .15s ease, color .15s ease, border-color .15s ease;
   user-select:none;
   touch-action:manipulation;
 }
+.sb-agent-icon{width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;color:currentColor}
+.sb-agent-icon svg{width:16px;height:16px;display:block;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .sb-pill:hover{background:rgba(255,255,255,.05);color:var(--text-2)}
 .sb-pill.active{background:var(--blue);border-color:var(--blue);color:#100903}
 .sb-pill:focus-visible{
@@ -893,6 +1011,8 @@ body.filter-sheet-open{overflow:hidden}
 }
 .sb-card-header{display:flex;align-items:center;gap:6px;margin-bottom:4px}
 .sb-agent-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.sb-card-agent-icon{width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--text-2)}
+.sb-card-agent-icon svg{width:16px;height:16px;display:block;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .sb-card-agent{font-size:12px;font-weight:600;color:var(--text)}
 .sb-card-time{font-size:11px;color:var(--text-3);margin-left:auto;flex-shrink:0}
 .sb-card-prompt{
@@ -1207,9 +1327,23 @@ body.filter-sheet-open{overflow:hidden}
 
 /* User prompt + agent response — full bubbles */
 .chat-msg{display:grid;grid-template-columns:52px minmax(0,1fr);gap:10px;align-items:start}
-.chat-msg .ev-rail{padding-top:8px}
-.chat-msg .ev-rail::after{right:8px;top:22px}
-.chat-msg .ev-dot{right:3px;top:6px}
+.chat-msg .ev-rail{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:6px;
+  min-height:30px;
+  padding-top:0;
+}
+.chat-msg .ev-rail::after{right:4px;top:23px;bottom:-14px}
+.chat-msg .ev-dot{
+  position:static;
+  width:9px;
+  height:9px;
+  flex:0 0 auto;
+  box-shadow:0 0 0 3px rgba(255,255,255,.025),0 0 14px color-mix(in srgb, var(--node-color) 30%, transparent);
+}
+.chat-msg .ev-ts{font-size:11px;line-height:1}
 .chat-bubble{border-radius:8px;border:1px solid rgba(255,255,255,.08);overflow:hidden;transition:border-color .18s}
 .chat-bubble:hover{border-color:rgba(255,255,255,.13)}
 .chat-header{display:flex;align-items:center;gap:8px;padding:7px 12px 6px;border-bottom:1px solid rgba(255,255,255,.06)}
@@ -2123,6 +2257,10 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   .sb-pill,
   .sb-card,
   .sb-load-btn,
+  .report-loader,
+  .loader-mark,
+  .loader-orbit,
+  .loader-bar span,
   .tab,
   .sankey-link,
   .sankey-node rect,
@@ -2140,12 +2278,26 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   .stat:hover{
     transform:none;
   }
+  .loader-mark,
+  .loader-orbit,
+  .loader-bar span{
+    animation:none;
+  }
 }
 </style>
 </head>
 <body>
 <!-- Google Tag Manager (noscript) -->
 <!-- End Google Tag Manager (noscript) -->
+
+<div id="report-loader" class="report-loader" role="status" aria-live="polite" aria-label="Loading report">
+  <div class="report-loader-inner">
+    <div class="loader-mark" aria-hidden="true"><span class="loader-orbit"></span></div>
+    <div class="loader-title">reflect.<em>o11y</em>.dev</div>
+    <div class="loader-subtitle" id="report-loader-copy">Preparing report...</div>
+    <div class="loader-bar" aria-hidden="true"><span></span></div>
+  </div>
+</div>
 
 <a class="skip-link" href="#main-content">Skip to main content</a>
 
@@ -2589,7 +2741,29 @@ reflect report</pre>
   document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;color:#ff453a;font-family:monospace">Error decoding data: ' + message + '</div>';
 }
 
+function hasReportScopeFilters(){
+  const params = new URLSearchParams(window.location.search);
+  return Boolean(params.get('q') || params.get('agents') || params.get('agent') || params.get('model') || params.get('status') || params.get('range') || params.get('session'));
+}
+
+function reportLoaderCopy(){
+  return hasReportScopeFilters() ? 'Filtering sessions...' : 'Preparing report...';
+}
+
+function showReportLoader(message){
+  const loader = document.getElementById('report-loader');
+  const copy = document.getElementById('report-loader-copy');
+  if (copy) copy.textContent = message || reportLoaderCopy();
+  if (loader) loader.classList.remove('is-hidden');
+}
+
+function hideReportLoader(){
+  const loader = document.getElementById('report-loader');
+  if (loader) loader.classList.add('is-hidden');
+}
+
 async function loadDashboardData(){
+  showReportLoader();
   const params = new URLSearchParams(window.location.search);
   const report = params.get('report');
   if (!report && !params.get('data')) {
@@ -2604,7 +2778,7 @@ async function loadDashboardData(){
   }
   try {
     if (report) {
-      const response = await fetch(report, {headers: {Accept: 'application/json'}});
+      const response = await fetch(reportUrlWithCurrentFilters(), {headers: {Accept: 'application/json'}});
       if (!response.ok) throw new Error('report-fetch-failed');
       return await response.json();
     }
@@ -2641,16 +2815,21 @@ function reportUrlWithCurrentFilters(){
   const params = new URLSearchParams(window.location.search);
   const report = params.get('report') || '/api/data';
   const url = new URL(report, window.location.href);
+  const hasScopeFilter = Boolean(params.get('q') || params.get('agents') || params.get('agent') || params.get('model') || params.get('status') || params.get('range'));
   ['q','agents','agent','model','status','range'].forEach(key => {
     const value = params.get(key);
     if (value) url.searchParams.set(key, value);
   });
+  if (!hasScopeFilter && params.get('session')) url.searchParams.set('session', params.get('session'));
   return url.toString();
 }
 
 async function initApp(){
   D = await loadDashboardData();
-  if (!D) return;
+  if (!D) {
+    hideReportLoader();
+    return;
+  }
   const demoBadge = document.getElementById('demo-badge');
   const reportParam = new URLSearchParams(window.location.search).get('report') || '';
   const isLocalApiReport = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
@@ -2734,6 +2913,29 @@ function formatAgentLabel(agent){
   const name = String(agent || '').trim();
   if (!name) return 'Unknown';
   return name.split('-').filter(Boolean).map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+}
+
+function agentIconSvg(agent){
+  const name = String(agent || '').toLowerCase();
+  if (name.includes('claude')) {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/></svg>';
+  }
+  if (name.includes('copilot')) {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10.5V8.8a5 5 0 0 1 10 0v1.7"/><path d="M5.5 11.5h13a2 2 0 0 1 2 2v3a4 4 0 0 1-4 4h-9a4 4 0 0 1-4-4v-3a2 2 0 0 1 2-2Z"/><path d="M8.5 16h.01M15.5 16h.01"/></svg>';
+  }
+  if (name.includes('cursor')) {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4.8 7.2v9.6L12 21l7.2-4.2V7.2L12 3Z"/><path d="M12 3v18M4.8 7.2 12 11.4l7.2-4.2"/></svg>';
+  }
+  if (name.includes('codex')) {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a4.5 4.5 0 0 1 4.2 2.9 4.5 4.5 0 0 1 3.1 7.4 4.5 4.5 0 0 1-5.1 6.4 4.5 4.5 0 0 1-6.4-2.6 4.5 4.5 0 0 1-3.1-7.4A4.5 4.5 0 0 1 9.8 3.8"/><path d="M8 9.2 12 7l4 2.2v5.6L12 17l-4-2.2V9.2Z"/></svg>';
+  }
+  if (name.includes('gemini')) {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3c1.2 4.4 3.6 6.8 8 8-4.4 1.2-6.8 3.6-8 8-1.2-4.4-3.6-6.8-8-8 4.4-1.2 6.8-3.6 8-8Z"/></svg>';
+  }
+  if (name.includes('opencode')) {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 8-4 4 4 4M15 8l4 4-4 4M13 5l-2 14"/></svg>';
+  }
+  return '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M9.8 9a2.5 2.5 0 0 1 4.5 1.5c0 1.8-2.3 2-2.3 3.5M12 17h.01"/></svg>';
 }
 
 function escHtml(s){
@@ -2840,7 +3042,11 @@ let filteredDashboardSessions = (D.sessions || []).slice();
   if (!filterState.agents.size && legacyAgent && legacyAgent !== 'all') filterState.agents.add(legacyAgent);
 
   // Detect which agents exist
-  const agentSet = new Set(sessions.map(s => s.agent).filter(Boolean));
+  const agentSet = new Set([
+    ...sessions.map(s => s.agent).filter(Boolean),
+    ...(D.agent_comparison || []).map(a => a.name).filter(Boolean),
+    ...Object.keys(D.agents || {}),
+  ]);
   const pillContainer = document.getElementById('sb-agent-pills');
   const listHead = document.getElementById('sb-list-head');
   const metaEl = document.getElementById('global-filter-meta');
@@ -2860,7 +3066,10 @@ let filteredDashboardSessions = (D.sessions || []).slice();
   let reloadTimer = null;
   let filterExpanded = false;
   const agentNames = [...agentSet].sort((a,b) => a.localeCompare(b));
-  const modelNames = [...new Set(sessions.map(s => s.primary_model).filter(Boolean))].sort((a,b) => a.localeCompare(b));
+  const modelNames = [...new Set([
+    ...sessions.map(s => s.primary_model).filter(Boolean),
+    ...Object.keys(D.models_by_count || {}),
+  ])].sort((a,b) => a.localeCompare(b));
   modelNames.forEach(model => {
     const opt = document.createElement('option');
     opt.value = model;
@@ -2872,7 +3081,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     pill.type = 'button';
     pill.className = 'sb-pill';
     pill.dataset.agent = a;
-    pill.textContent = formatAgentLabel(a);
+    pill.innerHTML = `<span class="sb-agent-icon">${agentIconSvg(a)}</span><span>${escHtml(formatAgentLabel(a))}</span>`;
     pillContainer.appendChild(pill);
   });
 
@@ -2896,12 +3105,14 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       else urlParams.delete('range');
       if (filterState.sort !== 'recent') urlParams.set('sort', filterState.sort);
       else urlParams.delete('sort');
+      urlParams.delete('session');
     });
   }
 
   function scheduleDashboardReload(){
     if (!reportSupportsServerFiltering()) return false;
     if (reloadTimer) window.clearTimeout(reloadTimer);
+    showReportLoader('Filtering sessions...');
     reloadTimer = window.setTimeout(() => window.location.reload(), 120);
     return true;
   }
@@ -3103,9 +3314,10 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     updateAgentPills();
     renderFilterChips();
     const hasFilters = Boolean(filterState.q || filterState.agents.size || filterState.model !== 'all' || filterState.status !== 'all' || filterState.range !== 'all' || filterState.sort !== 'recent');
+    const totalSessions = Number(D.unique_sessions || sessions.length || 0);
     metaEl.textContent = hasFilters
-      ? `Showing ${fmt(filtered.length)} of ${fmt(sessions.length)} sessions`
-      : `Showing all ${fmt(sessions.length)} sessions`;
+      ? `Showing ${fmt(filtered.length)} of ${fmt(totalSessions)} sessions`
+      : `Showing ${fmt(filtered.length)} of ${fmt(totalSessions)} sessions`;
     if (launcherMetaEl) launcherMetaEl.textContent = metaEl.textContent;
     listHead.textContent = `${fmt(filtered.length)} session${filtered.length === 1 ? '' : 's'} in view`;
     document.dispatchEvent(new CustomEvent('dashboard-filters-changed', {
@@ -3120,6 +3332,9 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       renderSessionDetail(selectedIdx === null ? null : sessions[selectedIdx]);
       return;
     }
+    if (selectedIdx === null) {
+      selectedIdx = filtered[0]._idx;
+    }
     listEl.innerHTML = filtered.map(s => {
       const agentColor = colorForAgent(s.agent);
       const agentName = formatAgentLabel(s.agent);
@@ -3131,7 +3346,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       const unit = String(s.pricing_unit || D.pricing_unit || 'usd').toUpperCase();
       return `<button type="button" class="sb-card${isActive ? ' active' : ''}" data-idx="${s._idx}" aria-pressed="${isActive ? 'true' : 'false'}">
         <div class="sb-card-header">
-          <div class="sb-agent-dot" style="background:${agentColor}"></div>
+          <div class="sb-card-agent-icon">${agentIconSvg(s.agent)}</div>
           <div class="sb-card-agent">${escHtml(agentName)}</div>
           <div class="sb-card-time">${s.created_at || '—'}</div>
         </div>
@@ -3152,6 +3367,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
         setSelectedSession(idx);
       });
     });
+    renderSessionDetail(sessions[selectedIdx]);
   }
 
   function renderSessionDetail(session){
@@ -3743,7 +3959,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       const key = span._treeKey;
       const parentId = span.parent_id || '';
       const explicitParent = parentId && byId.has(parentId) ? parentId : '';
-      const traceKey = span.trace_id || '__trace__';
+      const traceKey = span.trace_id || '';
       const stack = traceStacks.get(traceKey) || [];
       const spanStart = Number(span.rel_ms || 0);
       const spanEnd = spanStart + Number(span.duration_ms || 0);
@@ -3754,7 +3970,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
         stack.pop();
       }
       let visualParent = explicitParent;
-      if (!visualParent && stack.length) {
+      if (!visualParent && traceKey && stack.length) {
         const candidate = stack[stack.length - 1];
         const candidateEnd = Number(candidate.rel_ms || 0) + Number(candidate.duration_ms || 0);
         if (candidate._treeKey !== key && candidateEnd >= spanEnd && Number(candidate.duration_ms || 0) >= Number(span.duration_ms || 0)) {
@@ -3767,8 +3983,10 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       } else {
         roots.push(span);
       }
-      stack.push(span);
-      traceStacks.set(traceKey, stack);
+      if (traceKey) {
+        stack.push(span);
+        traceStacks.set(traceKey, stack);
+      }
     });
     const sortChildren = list => list.sort((a, b) => {
       const rel = Number(a.rel_ms || 0) - Number(b.rel_ms || 0);
@@ -4703,7 +4921,10 @@ function buildBarList(elId, obj, color){
     </div>`).join('');
 }
 buildBarList('tools-list', D.tools_by_count, P.blue);
-buildBarList('skills-list', D.skills_by_count || D.subagent_types_by_count || {}, P.purple);
+const skillsOrSubagents = Object.keys(D.skills_by_count || {}).length
+  ? D.skills_by_count
+  : (D.subagent_types_by_count || {});
+buildBarList('skills-list', skillsOrSubagents, P.purple);
 
 /* MCP availability table */
 (function buildMcpPanel(){
@@ -5515,9 +5736,13 @@ function makeHBar(id, labels, values, color){
   });
 }
 
+hideReportLoader();
+
 }
 
-initApp().catch(() => {});
+initApp().catch(() => {
+  hideReportLoader();
+});
 </script>
 </body>
 </html>

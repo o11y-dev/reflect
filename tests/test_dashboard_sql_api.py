@@ -54,15 +54,40 @@ def _seed_sql_report_db(db_path):
         )
         conn.execute(
             """
-            INSERT INTO steps(id, session_id, seq, type, started_at, status, created_at, updated_at)
-            VALUES ('step-sql', 'sess-sql', 1, 'llm_call', '2026-05-01T10:00:00+00:00', 'completed', ?, ?)
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status, summary,
+              raw_attrs_json, created_at, updated_at
+            )
+            VALUES (
+              'step-sql', 'sess-sql', 1, 'llm_call',
+              '2026-05-01T10:00:00+00:00', 'completed',
+              'gen_ai.client.hook.UserPromptSubmit',
+              '{"gen_ai.client.prompt":"Fix the failing SQL dashboard tests","gen_ai.client.generation_id":"gen-1"}',
+              ?, ?
+            )
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status, summary,
+              raw_attrs_json, created_at, updated_at
+            )
+            VALUES (
+              'response-step-sql', 'sess-sql', 2, 'llm_call',
+              '2026-05-01T10:00:30+00:00', 'completed',
+              'gen_ai.client.hook.Stop',
+              '{"gen_ai.client.status":"completed","gen_ai.client.generation_id":"gen-1"}',
+              ?, ?
+            )
             """,
             (now, now),
         )
         conn.execute(
             """
             INSERT INTO steps(id, session_id, seq, type, started_at, duration_ms, status, created_at, updated_at)
-            VALUES ('tool-step-sql', 'sess-sql', 2, 'tool_call', '2026-05-01T10:01:00+00:00', 500, 'ok', ?, ?)
+            VALUES ('tool-step-sql', 'sess-sql', 3, 'tool_call', '2026-05-01T10:01:00+00:00', 500, 'ok', ?, ?)
             """,
             (now, now),
         )
@@ -73,7 +98,7 @@ def _seed_sql_report_db(db_path):
               input_tokens, output_tokens, cache_creation_input_tokens,
               cache_read_input_tokens, estimated_cost_usd, created_at, updated_at
             )
-            VALUES ('llm-sql', 'step-sql', 'sess-sql', 'openai', 'gpt-5.4', 'gpt-5.4', 120, 30, 10, 90, 0.42, ?, ?)
+            VALUES ('llm-sql', 'response-step-sql', 'sess-sql', 'openai', 'gpt-5.4', 'gpt-5.4', 120, 30, 10, 90, 0.42, ?, ?)
             """,
             (now, now),
         )
@@ -104,11 +129,48 @@ def _seed_sql_report_db(db_path):
         conn.execute(
             """
             INSERT INTO tool_calls(
-              id, step_id, session_id, tool_name, tool_type, status, duration_ms, created_at, updated_at
+              id, step_id, session_id, tool_name, tool_type, input_preview_redacted,
+              status, duration_ms, created_at, updated_at
             )
-            VALUES ('tool-sql', 'tool-step-sql', 'sess-sql', 'exec_command', 'shell', 'ok', 500, ?, ?)
+            VALUES (
+              'tool-sql', 'tool-step-sql', 'sess-sql', 'exec_command', 'shell',
+              '{"cmd":"poetry run pytest"}', 'ok', 500, ?, ?
+            )
             """,
             (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO mcp_calls(
+              id, step_id, session_id, server_name, tool_name, status,
+              duration_ms, raw_attrs_json, created_at, updated_at
+            )
+            VALUES (
+              'mcp-sql', 'tool-step-sql', 'sess-sql',
+              'docker run --rm -i -e JIRA_API_TOKEN=secret ghcr.io/sooperset/mcp-atlassian:latest',
+              'jira_search', 'ok', 200, '{}', ?, ?
+            )
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO raw_events(
+              id, source_id, source_type, event_type, trace_id, span_id, parent_span_id,
+              session_id, observed_at, received_at, attrs_json, body_json,
+              normalized_status, content_hash, created_at
+            )
+            VALUES (
+              'raw-log-sql', 'otel-logs.json', 'otlp_logs_json',
+              'gen_ai.client.hook.UserPromptSubmit', '', '', '',
+              'sess-sql', '2026-05-01T10:00:05+00:00',
+              '2026-05-01T10:00:05+00:00',
+              '{"service.name":"claude-code","gen_ai.client.name":"claude","gen_ai.client.hook.event":"UserPromptSubmit"}',
+              '{"message":"User prompt submitted"}',
+              'ok', 'raw-log-sql-hash', ?
+            )
+            """,
+            (now,),
         )
         conn.commit()
     finally:
@@ -146,11 +208,13 @@ def test_sql_only_dashboard_api_does_not_build_legacy_json(tmp_path, monkeypatch
     assert payload["sql_only"] is True
     assert payload["sqlite"]["overview"]["session_count"] == 1
     assert payload["sessions"][0]["id"] == "sess-sql"
+    assert payload["sessions"][0]["first_prompt"] == "Fix the failing SQL dashboard tests"
+    assert payload["sessions"][0]["duration_ms"] == 120000
     assert payload["sessions"][0]["quality_score"] > 0
     assert payload["avg_quality_score"] > 0
     assert payload["activity_by_day"]["2026-05-01"] == 3
-    assert payload["activity_by_hour"]["10"] == 2
-    assert payload["events_by_type"] == {"llm_call": 1, "tool_call": 1}
+    assert payload["activity_by_hour"]["10"] == 3
+    assert payload["events_by_type"] == {"llm_call": 2, "tool_call": 1}
     assert payload["models_by_count"] == {"gpt-5.4": 1}
     assert payload["model_costs"]["gpt-5.4"] == 0.42
     assert payload["total_cost_usd"] == 0.42
@@ -158,23 +222,38 @@ def test_sql_only_dashboard_api_does_not_build_legacy_json(tmp_path, monkeypatch
     assert payload["output_cost_usd"] > 0
     assert payload["cache_read_cost_usd"] > 0
     assert payload["tools_by_count"] == {"exec_command": 2}
+    assert payload["mcp_servers_by_count"] == {"mcp-atlassian": 1}
+    assert "docker run" not in next(iter(payload["mcp_servers_by_count"]))
+    assert payload["top_commands"] == [{"command": "poetry run pytest", "count": 1}]
+    assert payload["unique_commands"] == 1
+    assert payload["shell_executions"] == 1
     assert payload["tool_percentiles"][0]["tool"] == "exec_command"
     assert payload["agent_comparison"][0]["name"] == "codex"
     assert payload["strengths"]
     assert payload["observations"]
+    assert payload["recommendations"]
+    assert any("Reduce MCP context bloat" in rec for rec in payload["recommendations"])
+    assert all("SQL view models" not in rec for rec in payload["recommendations"])
     assert payload["practical_examples"]
-    assert payload["achievements"]
+    assert len(payload["achievements"]) >= 5
     assert payload["total_cache_creation_tokens"] == 10
     assert payload["total_cache_read_tokens"] == 90
     assert payload["token_economy"]["total_tokens"] == 250
     assert payload["token_economy"]["cache_hit_pct"] == 75
     assert payload["graph_dep"]["nodes"]
+    assert {node["type"] for node in payload["graph_dep"]["nodes"]} >= {"agent", "mcp_tool", "mcp_server"}
     assert payload["graph_session_timeline"][0]["spans"][0]["tool"] == "exec_command"
 
     detail = TestClient(app).get("/api/session/sess-sql")
     assert detail.status_code == 200
-    assert detail.json()["conversation"]
-    assert detail.json()["telemetry"]["summary"]["spans"] == 2
+    conversation = detail.json()["conversation"]
+    assert [event["type"] for event in conversation[:2]] == ["prompt", "response"]
+    assert conversation[0]["preview"] == "Fix the failing SQL dashboard tests"
+    assert "Assistant turn completed" in conversation[1]["preview"]
+    assert detail.json()["telemetry"]["summary"]["spans"] == 3
+    assert detail.json()["telemetry"]["summary"]["logs"] == 1
+    assert detail.json()["telemetry"]["logs"][0]["event"] == "UserPromptSubmit"
+    assert "User prompt submitted" in detail.json()["telemetry"]["logs"][0]["body"]
 
 
 def test_dashboard_sql_sessions_endpoint_filters_from_sql(tmp_path):
@@ -190,6 +269,20 @@ def test_dashboard_sql_sessions_endpoint_filters_from_sql(tmp_path):
     assert sessions.status_code == 200
     assert sessions.json()["total"] == 1
     assert sessions.json()["rows"][0]["agent"] == "codex"
+    assert sessions.json()["rows"][0]["duration_ms"] == 120000
+
+
+def test_sql_only_dashboard_api_filters_by_session_param(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path, sql_only=True)
+
+    response = TestClient(app).get("/api/data", params={"session": "sess-sql"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["unique_sessions"] == 1
+    assert [session["id"] for session in payload["sessions"]] == ["sess-sql"]
 
 
 def test_dashboard_sql_endpoints_are_disabled_without_db(tmp_path):

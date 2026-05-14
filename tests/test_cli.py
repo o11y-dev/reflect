@@ -1212,6 +1212,93 @@ class TestSetup:
         assert written["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://localhost:4317"
         # IDE_OTEL_LOCAL_SPANS must be forced to "true"
         assert written["IDE_OTEL_LOCAL_SPANS"] == "true"
+        assert "IDE_OTEL_CAPTURE_TEXT" not in written
+
+    def test_setup_can_opt_into_masked_text_capture(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        home_dir = tmp_path / "home"
+        hook_home.mkdir(parents=True)
+
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call"), \
+             patch("reflect.core._distribute_skills"), \
+             patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
+            result = runner.invoke(main, ["setup", "--capture-text"])
+
+        assert result.exit_code == 0
+        written = json.loads((hook_home / "otel_config.json").read_text())
+        assert written["IDE_OTEL_CAPTURE_TEXT"] == "true"
+        assert written["IDE_OTEL_MASK_PROMPTS"] == "true"
+        assert written["IDE_OTEL_TEXT_MAX_CHARS"] == "4000"
+
+    def test_setup_can_disable_masking_and_set_text_capture_limit(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        home_dir = tmp_path / "home"
+        hook_home.mkdir(parents=True)
+
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call"), \
+             patch("reflect.core._distribute_skills"), \
+             patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
+            result = runner.invoke(main, [
+                "setup",
+                "--capture-text",
+                "--no-mask-captured-text",
+                "--text-max-chars",
+                "1200",
+            ])
+
+        assert result.exit_code == 0
+        written = json.loads((hook_home / "otel_config.json").read_text())
+        assert written["IDE_OTEL_CAPTURE_TEXT"] == "true"
+        assert written["IDE_OTEL_MASK_PROMPTS"] == "false"
+        assert written["IDE_OTEL_TEXT_MAX_CHARS"] == "1200"
+
+    def test_setup_text_capture_mode_masked_is_scriptable(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        home_dir = tmp_path / "home"
+        hook_home.mkdir(parents=True)
+
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call"), \
+             patch("reflect.core._distribute_skills"), \
+             patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
+            result = runner.invoke(main, ["setup", "--text-capture-mode", "masked"])
+
+        assert result.exit_code == 0
+        written = json.loads((hook_home / "otel_config.json").read_text())
+        assert written["IDE_OTEL_CAPTURE_TEXT"] == "true"
+        assert written["IDE_OTEL_MASK_PROMPTS"] == "true"
+
+    def test_setup_can_explicitly_disable_text_capture(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        home_dir = tmp_path / "home"
+        hook_home.mkdir(parents=True)
+        (hook_home / "otel_config.json").write_text(
+            json.dumps({"IDE_OTEL_CAPTURE_TEXT": "true"}) + "\n"
+        )
+
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call"), \
+             patch("reflect.core._distribute_skills"), \
+             patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
+            result = runner.invoke(main, ["setup", "--no-capture-text"])
+
+        assert result.exit_code == 0
+        written = json.loads((hook_home / "otel_config.json").read_text())
+        assert written["IDE_OTEL_CAPTURE_TEXT"] == "false"
 
 
 class TestNativeOtelConfig:

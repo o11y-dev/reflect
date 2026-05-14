@@ -6,7 +6,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from reflect.parsing import (
+    _iter_claude_session_spans,
     _iter_codex_log_spans,
+    _iter_copilot_session_spans,
+    _iter_cursor_session_spans,
+    _iter_gemini_log_spans,
+    _iter_gemini_session_spans,
     _load_json_lines,
     _load_otlp_logs,
     _load_otlp_traces,
@@ -125,9 +130,14 @@ def ingest_otlp_traces_file(db_conn, *, file_path: Path, source_id: str | None =
 
 def ingest_otlp_logs_file(db_conn, *, file_path: Path, source_id: str | None = None) -> dict[str, int]:
     source = source_id or str(file_path)
+
+    def spans():
+        yield from _iter_codex_log_spans(_load_otlp_logs(file_path))
+        yield from _iter_gemini_log_spans(_load_otlp_logs(file_path))
+
     return _ingest_spans(
         db_conn,
-        spans=_iter_codex_log_spans(_load_otlp_logs(file_path)),
+        spans=spans(),
         source=source,
         source_type="otlp_logs_json",
     )
@@ -140,4 +150,46 @@ def ingest_local_spans_file(db_conn, *, file_path: Path, source_id: str | None =
         spans=_load_json_lines(file_path),
         source=source,
         source_type="local_spans_jsonl",
+    )
+
+
+def ingest_native_session_file(
+    db_conn,
+    *,
+    file_path: Path,
+    agent: str,
+    source_id: str | None = None,
+    skip_existing_sessions: bool = False,
+) -> dict[str, int]:
+    source = source_id or f"native_session:{agent}:{file_path}"
+    if agent == "copilot":
+        spans = _iter_copilot_session_spans(file_path)
+    elif agent == "cursor":
+        spans = _iter_cursor_session_spans(file_path)
+    elif agent == "claude":
+        spans = _iter_claude_session_spans(file_path)
+    elif agent == "gemini":
+        spans = _iter_gemini_session_spans(file_path)
+    else:
+        spans = ()
+    if skip_existing_sessions:
+        spans = list(spans)
+        session_ids = sorted({
+            str((span.get("attributes") or {}).get("session.id") or "")
+            for span in spans
+            if (span.get("attributes") or {}).get("session.id")
+        })
+        if session_ids:
+            placeholders = ", ".join("?" for _ in session_ids)
+            existing = db_conn.execute(
+                f"SELECT 1 FROM raw_events WHERE session_id IN ({placeholders}) LIMIT 1",
+                session_ids,
+            ).fetchone()
+            if existing:
+                return {"inserted": 0, "skipped": len(spans)}
+    return _ingest_spans(
+        db_conn,
+        spans=spans,
+        source=source,
+        source_type="native_session",
     )

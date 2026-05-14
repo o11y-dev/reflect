@@ -290,6 +290,115 @@ def _iter_codex_log_spans(records: Iterable[dict], since_ns: int = 0) -> Iterabl
             )
 
 
+def _iter_gemini_log_spans(records: Iterable[dict], since_ns: int = 0) -> Iterable[dict]:
+    """Normalize Gemini CLI OTLP log records into Reflect hook-like spans."""
+    for index, record in enumerate(records):
+        attrs = record.get("attributes") or {}
+        if str(attrs.get("service.name") or "") != "gemini-cli":
+            continue
+
+        session_id = str(attrs.get("session.id") or attrs.get("gen_ai.client.session_id") or "").strip()
+        if not session_id:
+            continue
+
+        ts_ns = _parse_timestamp_to_ns(attrs.get("event.timestamp")) or int(
+            record.get("time_ns", 0) or record.get("observed_time_ns", 0) or 0
+        )
+        if since_ns and ts_ns and ts_ns < since_ns:
+            continue
+
+        event_name = str(attrs.get("event.name") or "")
+        trace_id = _stable_hex_id("gemini", session_id, length=32)
+        base_attrs = {
+            "gen_ai.client.name": "gemini",
+            "gen_ai.system": "google",
+            "gen_ai.provider.name": "google",
+            "gen_ai.client.session_id": session_id,
+            "session.id": session_id,
+            "service.name": "gemini-cli",
+        }
+
+        model = str(
+            attrs.get("gen_ai.request.model")
+            or attrs.get("model")
+            or attrs.get("model_name")
+            or attrs.get("decision_model")
+            or ""
+        ).strip()
+        if model:
+            base_attrs["gen_ai.request.model"] = model
+
+        if event_name == "gemini_cli.hook_call":
+            hook_event = str(attrs.get("hook_event_name") or "").strip()
+            if not hook_event:
+                continue
+            duration_ms = _coerce_int(attrs.get("duration_ms"))
+            start_ns = max(ts_ns - duration_ms * 1_000_000, 0) if duration_ms else ts_ns
+            status = "ok" if _coerce_bool(attrs.get("success")) else "error"
+            span_attrs = {
+                **base_attrs,
+                "gen_ai.client.hook.event": hook_event,
+                "gen_ai.client.status": status,
+            }
+            yield _make_flat_span(
+                f"gen_ai.client.hook.{hook_event}",
+                start_ns,
+                ts_ns,
+                span_attrs,
+                trace_id,
+                f"{index}:hook_call:{hook_event}",
+            )
+        elif event_name == "gemini_cli.user_prompt":
+            yield _make_flat_span(
+                "gen_ai.client.hook.UserPromptSubmit",
+                ts_ns,
+                ts_ns,
+                {
+                    **base_attrs,
+                    "gen_ai.client.hook.event": "UserPromptSubmit",
+                    "gen_ai.client.prompt": "[REDACTED]",
+                },
+                trace_id,
+                f"{index}:user_prompt",
+            )
+        elif event_name == "gemini_cli.api_response":
+            duration_ms = _coerce_int(attrs.get("duration_ms"))
+            start_ns = max(ts_ns - duration_ms * 1_000_000, 0) if duration_ms else ts_ns
+            yield _make_flat_span(
+                "gen_ai.client.hook.Stop",
+                start_ns,
+                ts_ns,
+                {
+                    **base_attrs,
+                    "gen_ai.client.hook.event": "Stop",
+                    "gen_ai.client.status": "ok",
+                    "gen_ai.usage.input_tokens": _coerce_int(attrs.get("input_token_count")),
+                    "gen_ai.usage.output_tokens": _coerce_int(attrs.get("output_token_count")),
+                    "gen_ai.usage.cache_read.input_tokens": _coerce_int(attrs.get("cached_content_token_count")),
+                    "gen_ai.usage.reasoning_output_tokens": _coerce_int(attrs.get("thoughts_token_count")),
+                },
+                trace_id,
+                f"{index}:api_response",
+            )
+        elif event_name == "gemini_cli.api_error":
+            duration_ms = _coerce_int(attrs.get("duration_ms") or attrs.get("duration"))
+            start_ns = max(ts_ns - duration_ms * 1_000_000, 0) if duration_ms else ts_ns
+            yield _make_flat_span(
+                "gen_ai.client.hook.Stop",
+                start_ns,
+                ts_ns,
+                {
+                    **base_attrs,
+                    "gen_ai.client.hook.event": "Stop",
+                    "gen_ai.client.status": "error",
+                    "error.type": str(attrs.get("error.type") or ""),
+                    "error.message": str(attrs.get("error.message") or attrs.get("error") or "")[:500],
+                },
+                trace_id,
+                f"{index}:api_error",
+            )
+
+
 def _load_json_lines(file_path: Path) -> Iterable[dict]:
     with file_path.open("r", encoding="utf-8") as handle:
         for raw_line in handle:

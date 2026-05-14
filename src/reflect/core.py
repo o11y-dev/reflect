@@ -43,6 +43,7 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 import zipfile
 from datetime import UTC, datetime
 from importlib import metadata as importlib_metadata
@@ -1039,6 +1040,7 @@ def report(
 
         from reflect.dashboard import _sql_only_dashboard_payload
 
+        include_native_sessions = False
         if demo:
             demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
             if not demo_traces.exists():
@@ -1046,7 +1048,18 @@ def report(
             otlp_traces = demo_traces if demo_traces.exists() else otlp_traces
         elif otlp_traces is None:
             otlp_traces = _default_otlp_traces()
-        preparation = _prepare_sql_report_db(db_path, otlp_traces=otlp_traces)
+            include_native_sessions = True
+        else:
+            default_otlp = _default_otlp_traces()
+            include_native_sessions = (
+                default_otlp is not None
+                and otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
+            )
+        preparation = _prepare_sql_report_db(
+            db_path,
+            otlp_traces=otlp_traces,
+            include_native_sessions=include_native_sessions,
+        )
         click.echo(
             "Prepared SQLite report store "
             f"(inserted={preparation['ingest']['inserted']}, "
@@ -1635,22 +1648,94 @@ def _snapshot_detected_agent_configs(console, agents: list[dict]) -> None:
     _instrumentation_snapshot_detected_agent_configs(console, agents, reflect_home=REFLECT_HOME)
 
 
-def _run_setup(console) -> None:
+def _run_setup(
+    console,
+    *,
+    capture_text: bool | None = None,
+    mask_captured_text: bool = True,
+    text_max_chars: int | None = None,
+) -> None:
     _instrumentation_run_setup(
         console,
         reflect_home=REFLECT_HOME,
         hook_home=HOOK_HOME,
         detect_agents=_detect_agents,
         distribute_skills=_distribute_skills,
+        capture_text=capture_text,
+        mask_captured_text=mask_captured_text,
+        text_max_chars=text_max_chars,
     )
 
 
 @main.command()
-def setup() -> None:
+@click.option(
+    "--capture-text/--no-capture-text",
+    default=None,
+    help=(
+        "Opt in or out of storing prompt/response text in hook spans. "
+        "Omit to preserve the existing hook setting; default hook behavior is off."
+    ),
+)
+@click.option(
+    "--text-capture-mode",
+    type=click.Choice(["metadata", "masked", "full"], case_sensitive=False),
+    default=None,
+    help=(
+        "Non-interactive setup choice for local/private hook storage: "
+        "metadata=no text, masked=text with redaction, full=unmasked text."
+    ),
+)
+@click.option(
+    "--mask-captured-text/--no-mask-captured-text",
+    default=True,
+    show_default=True,
+    help="Mask emails, tokens, and home paths when --capture-text is enabled.",
+)
+@click.option(
+    "--text-max-chars",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Maximum characters of captured prompt/response text per event.",
+)
+def setup(
+    capture_text: bool | None,
+    text_capture_mode: str | None,
+    mask_captured_text: bool,
+    text_max_chars: int | None,
+) -> None:
     """Install opentelemetry-hooks, configure local data export, and suggest agent enablement."""
     from rich.console import Console
     console = Console(force_terminal=True)
-    _run_setup(console)
+    if text_capture_mode:
+        mode = text_capture_mode.lower()
+        capture_text = mode != "metadata"
+        mask_captured_text = mode == "masked"
+    elif capture_text is None and sys.stdin.isatty():
+        console.print("\n[bold]Prompt/response text capture[/]")
+        console.print("[dim]All reflect setup data is stored locally on this machine; no hosted service receives it.[/]")
+        console.print("  [bold]1[/] Metadata only — tokens, models, lengths, and hashes; no prompt/response text.")
+        console.print("  [bold]2[/] Masked text — local prompt/response text with email/token/home-path masking.")
+        console.print("  [bold]3[/] Full text — local unmasked prompt/response text.")
+        choice = click.prompt(
+            "Choose capture mode",
+            type=click.Choice(["1", "2", "3"]),
+            default="1",
+            show_choices=False,
+        )
+        if choice == "1":
+            capture_text = False
+        elif choice == "2":
+            capture_text = True
+            mask_captured_text = True
+        else:
+            capture_text = True
+            mask_captured_text = False
+    _run_setup(
+        console,
+        capture_text=capture_text,
+        mask_captured_text=mask_captured_text,
+        text_max_chars=text_max_chars,
+    )
 
 
 @main.command()
@@ -2026,9 +2111,18 @@ def _ingest_into_db(
     return result
 
 
-def _prepare_sql_report_db(db_path: Path, *, otlp_traces: Path | None) -> dict[str, object]:
+def _prepare_sql_report_db(
+    db_path: Path,
+    *,
+    otlp_traces: Path | None,
+    include_native_sessions: bool = False,
+) -> dict[str, object]:
     from reflect.store.graph_normalize import rebuild_graph
-    from reflect.store.ingest import ingest_otlp_logs_file, ingest_otlp_traces_file
+    from reflect.store.ingest import (
+        ingest_native_session_file,
+        ingest_otlp_logs_file,
+        ingest_otlp_traces_file,
+    )
     from reflect.store.migrate import migrate
     from reflect.store.normalize import normalize_pending_raw_events
     from reflect.store.rollups import rebuild_rollups
@@ -2050,6 +2144,21 @@ def _prepare_sql_report_db(db_path: Path, *, otlp_traces: Path | None) -> dict[s
                 ingest_sources["otlp_logs"] = logs_result
                 ingest_result["inserted"] += logs_result["inserted"]
                 ingest_result["skipped"] += logs_result["skipped"]
+        if include_native_sessions:
+            native_result = {"inserted": 0, "skipped": 0}
+            for agent, session_file in _discover_rich_session_files():
+                result = ingest_native_session_file(
+                    conn,
+                    file_path=session_file,
+                    agent=agent,
+                    skip_existing_sessions=True,
+                )
+                native_result["inserted"] += result["inserted"]
+                native_result["skipped"] += result["skipped"]
+            if native_result["inserted"] or native_result["skipped"]:
+                ingest_sources["native_sessions"] = native_result
+                ingest_result["inserted"] += native_result["inserted"]
+                ingest_result["skipped"] += native_result["skipped"]
         normalize_result = normalize_pending_raw_events(conn)
         _reprice_sql_store(conn)
         graph_result = rebuild_graph(conn)

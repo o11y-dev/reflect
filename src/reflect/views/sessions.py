@@ -14,6 +14,7 @@ class SessionRow(ReflectModel):
     title: str | None = None
     started_at: str
     ended_at: str | None = None
+    duration_ms: int
     prompt_count: int
     tool_call_count: int
     failure_count: int
@@ -82,6 +83,15 @@ def list_sessions(
           s.title,
           s.started_at,
           s.ended_at,
+          COALESCE(
+            sr.duration_ms,
+            CASE
+              WHEN s.started_at IS NOT NULL AND s.ended_at IS NOT NULL
+              THEN CAST((julianday(s.ended_at) - julianday(s.started_at)) * 86400000 AS INTEGER)
+              ELSE 0
+            END,
+            0
+          ) AS duration_ms,
           COALESCE(sr.prompt_count, 0) AS prompt_count,
           COALESCE(sr.tool_call_count, 0) AS tool_call_count,
           COALESCE(sr.error_count, s.failure_count, 0) AS failure_count,
