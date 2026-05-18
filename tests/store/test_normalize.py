@@ -75,6 +75,20 @@ def test_normalize_pending_raw_events_populates_canonical_tables(tmp_path):
         ).fetchone()
         assert tuple(session) == ("sess-1", 100, 50)
         assert conn.execute("SELECT COUNT(*) FROM steps WHERE session_id = 'sess-1'").fetchone()[0] == 3
+        parent_rows = conn.execute(
+            """
+            SELECT child.summary, parent.summary
+            FROM steps child
+            LEFT JOIN steps parent ON parent.id = child.parent_step_id
+            WHERE child.session_id = 'sess-1'
+            """
+        ).fetchall()
+        parent_by_summary = {row[0]: row[1] for row in parent_rows}
+        assert parent_by_summary == {
+            "UserPromptSubmit": None,
+            "PreToolUse": "UserPromptSubmit",
+            "BeforeMCPExecution": "PreToolUse",
+        }
         assert conn.execute("SELECT COUNT(*) FROM llm_calls").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0] == 1

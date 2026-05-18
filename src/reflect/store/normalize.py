@@ -370,6 +370,47 @@ def _insert_privacy_finding(
     )
 
 
+def _backfill_parent_step_ids(conn: sqlite3.Connection, session_ids: set[str]) -> None:
+    if not session_ids:
+        return
+    for session_id in sorted(session_ids):
+        rows = conn.execute(
+            """
+            SELECT id, span_id, parent_span_id
+            FROM raw_events
+            WHERE session_id = ?
+              AND COALESCE(span_id, '') <> ''
+              AND COALESCE(parent_span_id, '') <> ''
+            """,
+            (session_id,),
+        ).fetchall()
+        span_to_step_id = {
+            str(row["span_id"]): _stable_id("step", row["id"])
+            for row in conn.execute(
+                """
+                SELECT id, span_id
+                FROM raw_events
+                WHERE session_id = ? AND COALESCE(span_id, '') <> ''
+                """,
+                (session_id,),
+            ).fetchall()
+        }
+        for row in rows:
+            step_id = _stable_id("step", row["id"])
+            parent_step_id = span_to_step_id.get(str(row["parent_span_id"] or ""))
+            if not parent_step_id or parent_step_id == step_id:
+                continue
+            conn.execute(
+                """
+                UPDATE steps
+                SET parent_step_id = COALESCE(parent_step_id, ?)
+                WHERE id = ?
+                  AND EXISTS (SELECT 1 FROM steps parent WHERE parent.id = ?)
+                """,
+                (parent_step_id, step_id, parent_step_id),
+            )
+
+
 def normalize_pending_raw_events(conn: sqlite3.Connection, *, limit: int | None = None) -> dict[str, int]:
     previous_row_factory = conn.row_factory
     conn.row_factory = sqlite3.Row
@@ -391,6 +432,7 @@ def normalize_pending_raw_events(conn: sqlite3.Connection, *, limit: int | None 
 
         processed = 0
         failed = 0
+        processed_session_ids: set[str] = set()
         timestamp = _now()
         for row in rows:
             try:
@@ -398,10 +440,12 @@ def normalize_pending_raw_events(conn: sqlite3.Connection, *, limit: int | None 
                 session_id = row["session_id"] or attrs.get("session.id") or attrs.get("gen_ai.client.session_id")
                 if not session_id:
                     session_id = _stable_id("session", row["source_id"])
+                session_id = str(session_id)
+                processed_session_ids.add(session_id)
                 agent_id = _insert_agent(conn, attrs, timestamp)
                 _upsert_session(
                     conn,
-                    session_id=str(session_id),
+                    session_id=session_id,
                     agent_id=agent_id,
                     raw_event=row,
                     attrs=attrs,
@@ -412,7 +456,7 @@ def normalize_pending_raw_events(conn: sqlite3.Connection, *, limit: int | None 
                     conn,
                     raw_event=row,
                     attrs=attrs,
-                    session_id=str(session_id),
+                    session_id=session_id,
                     step_type=step_type,
                     timestamp=timestamp,
                 )
@@ -420,7 +464,7 @@ def normalize_pending_raw_events(conn: sqlite3.Connection, *, limit: int | None 
                     conn,
                     raw_event=row,
                     attrs=attrs,
-                    session_id=str(session_id),
+                    session_id=session_id,
                     step_id=step_id,
                     step_type=step_type,
                     timestamp=timestamp,
@@ -429,7 +473,7 @@ def normalize_pending_raw_events(conn: sqlite3.Connection, *, limit: int | None 
                     conn,
                     raw_event=row,
                     attrs=attrs,
-                    session_id=str(session_id),
+                    session_id=session_id,
                     step_id=step_id,
                     timestamp=timestamp,
                 )
@@ -437,7 +481,7 @@ def normalize_pending_raw_events(conn: sqlite3.Connection, *, limit: int | None 
                     conn,
                     raw_event=row,
                     attrs=attrs,
-                    session_id=str(session_id),
+                    session_id=session_id,
                     step_id=step_id,
                     timestamp=timestamp,
                 )
@@ -452,6 +496,7 @@ def normalize_pending_raw_events(conn: sqlite3.Connection, *, limit: int | None 
                     (str(exc), row["id"]),
                 )
                 failed += 1
+        _backfill_parent_step_ids(conn, processed_session_ids)
         conn.commit()
         return {"processed": processed, "failed": failed, "skipped": 0}
     finally:

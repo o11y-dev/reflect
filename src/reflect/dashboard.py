@@ -2416,7 +2416,9 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
         trace_id = str(raw_span.get("trace_id") or "")
         span_id = str(raw_span.get("span_id") or "")
         parent_span_id = str(raw_span.get("parent_span_id") or "")
-        parent_id = step_id_by_span_id.get(parent_span_id, "") if parent_span_id else ""
+        parent_id = str(step.get("parent_step_id") or "")
+        if not parent_id and parent_span_id:
+            parent_id = step_id_by_span_id.get(parent_span_id, "")
         telemetry_spans.append({
             "id": step["id"],
             "trace_id": trace_id,

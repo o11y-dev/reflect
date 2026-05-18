@@ -23,6 +23,7 @@ Completed foundations now exist for:
 - SQL-only mode loads session detail from SQLite and fills quality, pricing, skills/subagents, MCP server, observations, examples, badges, and token-economy fields from SQLite-derived data
 - SQL-backed tab view models now cover Activity, Agents, Models, Tools, MCP, Costs, Graphs, Specs, Memory, Privacy, and Exports, with the browser compatibility payload consuming those shared view models
 - SQL session detail now preserves trace/span parent metadata for browser telemetry trees, and SQL tool widgets normalize Docker/NPX MCP launch commands before display
+- SQL normalization now persists canonical `steps.parent_step_id` from raw span parent IDs, with session detail using the stored parent relation and falling back to raw span resolution only for older stores
 - SQL skill/subagent widgets now include explicit prompt invocations in addition to structured skill tool calls
 - regression tests for SQLite runtime pragmas, migration idempotency, and Pydantic allow/forbid behavior
 
@@ -64,6 +65,7 @@ Completed foundations now exist for:
   - `reflect report --sql-only` materializes the SQLite store from selected/default OTLP traces before serving, then proves SQL-backed serving without legacy dashboard JSON
   - SQL-only mode supplies shared dashboard widget fields from SQLite for existing tabs, including session detail, costs, quality, MCP, skills/subagents, observations, examples, badges, token economy, specs, memory, privacy, and export readiness
   - session detail carries trace/span identifiers and resolved parent row IDs so corrected hook parent relationships can render in the browser timeline
+  - canonical `steps.parent_step_id` is populated during normalization from `raw_events.span_id` / `parent_span_id`
   - current runtime still uses existing terminal/dashboard code path
 
 - 🚧 **Phase 7 — Replace `reflect report` with browser-served Textual**: **Not started**
@@ -77,7 +79,7 @@ Completed foundations now exist for:
 1. Add richer native/session-store ingestion adapters while preserving `source_id + content_hash` dedupe; first target is Copilot `~/.copilot/session-state/*/events.jsonl`, which normal Reflect already reads but SQL-only does not yet ingest.
 2. Expand `--sql-only` coverage surface-by-surface until every current browser tab renders from SQLite.
 3. Wire Specs, Memory, Privacy, and Exports view models into first-class browser tab surfaces once the UI panels are added.
-4. Persist normalized parent step relationships during ingestion so downstream consumers do not need to resolve raw span parent IDs at read time.
+4. Move Skills/Subagents extraction into canonical SQL rows or rollups so Tools, Agents, and Sessions share the same source.
 
 ## Definition of done reminder
 
