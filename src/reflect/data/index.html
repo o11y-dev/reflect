@@ -2325,6 +2325,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   <button class="tab" id="tab-button-activity" type="button" role="tab" aria-selected="false" aria-controls="tab-activity" tabindex="-1" data-tab="activity">Activity</button>
   <button class="tab" id="tab-button-tools" type="button" role="tab" aria-selected="false" aria-controls="tab-tools" tabindex="-1" data-tab="tools">Tools</button>
   <button class="tab" id="tab-button-graphs" type="button" role="tab" aria-selected="false" aria-controls="tab-graphs" tabindex="-1" data-tab="graphs">Graphs</button>
+  <button class="tab" id="tab-button-data" type="button" role="tab" aria-selected="false" aria-controls="tab-data" tabindex="-1" data-tab="data">Data</button>
 </nav>
 
 <main id="main-content">
@@ -2706,6 +2707,33 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
     <div class="hist-grid" id="hist-grid"></div>
   </div>
 
+</div>
+
+<!-- ════════════════════ DATA ════════════════════ -->
+<div class="tab-panel" id="tab-data" role="tabpanel" aria-labelledby="tab-button-data" hidden>
+  <div class="stat-row" id="data-stat-row"></div>
+
+  <div class="cols-2">
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Specs</div>
+      <div id="sql-specs-panel"></div>
+    </div>
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Memory</div>
+      <div id="sql-memory-panel"></div>
+    </div>
+  </div>
+
+  <div class="cols-2">
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Privacy</div>
+      <div id="sql-privacy-panel"></div>
+    </div>
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Exports</div>
+      <div id="sql-exports-panel"></div>
+    </div>
+  </div>
 </div>
 
 </main>
@@ -4376,6 +4404,80 @@ function renderSqliteSummary(){
     </div>`;
 }
 renderSqliteSummary();
+
+function renderSqlTabPayloads(){
+  const tabs = (D.sqlite && D.sqlite.tabs) || {};
+  const specs = tabs.specs || {};
+  const memory = tabs.memory || {};
+  const privacy = tabs.privacy || {};
+  const exports = tabs.exports || {};
+  const statRow = document.getElementById('data-stat-row');
+  const specsEl = document.getElementById('sql-specs-panel');
+  const memoryEl = document.getElementById('sql-memory-panel');
+  const privacyEl = document.getElementById('sql-privacy-panel');
+  const exportsEl = document.getElementById('sql-exports-panel');
+  if (!statRow || !specsEl || !memoryEl || !privacyEl || !exportsEl) return;
+
+  const rowCounts = exports.row_counts || {};
+  statRow.innerHTML = [
+    {label:'Specs', value:fmt(specs.total_specs || 0), sub:`${fmt(Object.values(specs.requirements_by_status || {}).reduce((a,b)=>a+b,0))} requirements`},
+    {label:'Memory', value:fmt(memory.total_memories || 0), sub:`${fmt(Object.keys(memory.memories_by_type || {}).length)} types`},
+    {label:'Privacy', value:fmt(privacy.total_findings || 0), sub:`${fmt(Object.keys(privacy.findings_by_severity || {}).length)} severities`},
+    {label:'Export Rows', value:fmt(Object.values(rowCounts).reduce((a,b)=>a + Number(b || 0), 0)), sub:(exports.export_ready ? 'SQLite export ready' : 'No SQL rows yet')},
+  ].map(item => `<div class="stat"><div class="stat-label">${item.label}</div><div class="stat-value">${item.value}</div><div class="stat-sub">${item.sub}</div></div>`).join('');
+
+  const empty = label => `<div class="empty-note">No ${label} data in SQLite yet.</div>`;
+  const countTable = (items, label) => {
+    const entries = Object.entries(items || {});
+    if (!entries.length) return empty(label);
+    return `<table class="data-table"><thead><tr><th>${label}</th><th style="text-align:right">Count</th></tr></thead><tbody>${
+      entries.map(([name,count]) => `<tr><td>${escHtml(name)}</td><td style="text-align:right">${fmt(count || 0)}</td></tr>`).join('')
+    }</tbody></table>`;
+  };
+
+  const specRows = (specs.specs || []).slice(0, 8);
+  specsEl.innerHTML = specRows.length
+    ? `<table class="data-table"><thead><tr><th>Spec</th><th>Status</th><th style="text-align:right">Req</th><th style="text-align:right">Evidence</th></tr></thead><tbody>${
+        specRows.map(spec => `<tr>
+          <td><strong>${escHtml(spec.title || spec.id || 'Untitled')}</strong><div style="color:var(--text-3);font-size:12px">${escHtml(spec.source_path || spec.owner || '')}</div></td>
+          <td>${escHtml(spec.status || 'unknown')}</td>
+          <td style="text-align:right">${fmt(spec.requirements || 0)}</td>
+          <td style="text-align:right">${fmt(spec.evidence || 0)}</td>
+        </tr>`).join('')
+      }</tbody></table>`
+    : countTable(specs.requirements_by_status, 'Requirement Status');
+
+  const memoryRows = (memory.recent_memories || []).slice(0, 8);
+  memoryEl.innerHTML = memoryRows.length
+    ? `<table class="data-table"><thead><tr><th>Memory</th><th>Scope</th><th>Type</th><th style="text-align:right">Confidence</th></tr></thead><tbody>${
+        memoryRows.map(item => `<tr>
+          <td><strong>${escHtml(item.preview || item.id || 'Memory')}</strong><div style="color:var(--text-3);font-size:12px">${escHtml(item.source || '')}</div></td>
+          <td>${escHtml(item.scope || '')}</td>
+          <td>${escHtml(item.type || '')}</td>
+          <td style="text-align:right">${Math.round(Number(item.confidence || 0) * 100)}%</td>
+        </tr>`).join('')
+      }</tbody></table>`
+    : countTable(memory.memories_by_type, 'Memory Type');
+
+  const privacyRows = (privacy.recent_findings || []).slice(0, 8);
+  privacyEl.innerHTML = privacyRows.length
+    ? `<table class="data-table"><thead><tr><th>Finding</th><th>Severity</th><th>Action</th><th>Field</th></tr></thead><tbody>${
+        privacyRows.map(item => `<tr>
+          <td>${escHtml(item.type || 'finding')}</td>
+          <td>${escHtml(item.severity || 'unknown')}</td>
+          <td>${escHtml(item.action_taken || '')}</td>
+          <td>${escHtml(item.field_name || '')}</td>
+        </tr>`).join('')
+      }</tbody></table>`
+    : countTable(privacy.findings_by_severity, 'Severity');
+
+  exportsEl.innerHTML = Object.keys(rowCounts).length
+    ? `<table class="data-table"><thead><tr><th>Table</th><th style="text-align:right">Rows</th></tr></thead><tbody>${
+        Object.entries(rowCounts).map(([table,count]) => `<tr><td>${escHtml(table)}</td><td style="text-align:right">${fmt(count || 0)}</td></tr>`).join('')
+      }</tbody></table>`
+    : empty('export');
+}
+renderSqlTabPayloads();
 
 const costUnit = String(D.pricing_unit || 'usd').toUpperCase();
 

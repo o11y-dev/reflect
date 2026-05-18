@@ -25,6 +25,7 @@ Completed foundations now exist for:
 - SQL session detail now preserves trace/span parent metadata for browser telemetry trees, and SQL tool widgets normalize Docker/NPX MCP launch commands before display
 - SQL normalization now persists canonical `steps.parent_step_id` from raw span parent IDs, with session detail using the stored parent relation and falling back to raw span resolution only for older stores
 - SQL tab view models now derive skills/subagents from canonical steps, including explicit prompt invocations and structured skill tool calls, so Tools and Agents share the same SQL source for skill/subagent widgets
+- Browser report now exposes a Data tab that renders SQL-backed Specs, Memory, Privacy, and Export readiness directly from `sqlite.tabs.*`
 - regression tests for SQLite runtime pragmas, migration idempotency, and Pydantic allow/forbid behavior
 
 ## Phase-by-phase checkpoint
@@ -67,6 +68,7 @@ Completed foundations now exist for:
   - session detail carries trace/span identifiers and resolved parent row IDs so corrected hook parent relationships can render in the browser timeline
   - canonical `steps.parent_step_id` is populated during normalization from `raw_events.span_id` / `parent_span_id`
   - Tools and Agents consume shared SQL-derived skill/subagent counts from tab view models instead of dashboard-only compatibility logic
+  - Browser Data tab renders Specs, Memory, Privacy, and Exports from `sqlite.tabs.*`
   - current runtime still uses existing terminal/dashboard code path
 
 - 🚧 **Phase 7 — Replace `reflect report` with browser-served Textual**: **Not started**
@@ -77,10 +79,9 @@ Completed foundations now exist for:
 
 ## Immediate next execution backlog
 
-1. Wire Specs, Memory, Privacy, and Exports view models into first-class browser tab surfaces once the UI panels are added.
-2. Expand `--sql-only` coverage surface-by-surface until every current browser tab renders directly from SQLite tab payloads instead of compatibility fields.
-3. Implement static export from SQLite-backed view models.
-4. Add richer native/session-store ingestion adapters as a postponed follow-up track.
+1. Expand `--sql-only` coverage surface-by-surface until every current browser tab renders directly from SQLite tab payloads instead of compatibility fields.
+2. Implement static export from SQLite-backed view models.
+3. Add richer native/session-store ingestion adapters as a postponed follow-up track.
 
 ## Definition of done reminder
 

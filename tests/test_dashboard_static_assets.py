@@ -113,6 +113,24 @@ def test_dashboard_tools_tab_spaces_event_distribution_from_top_widgets(path: Pa
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_html_wires_sql_data_tab_surfaces(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert 'data-tab="data">Data</button>' in text
+    assert 'id="tab-data"' in text
+    assert 'id="sql-specs-panel"' in text
+    assert 'id="sql-memory-panel"' in text
+    assert 'id="sql-privacy-panel"' in text
+    assert 'id="sql-exports-panel"' in text
+    assert "function renderSqlTabPayloads()" in text
+    assert "const tabs = (D.sqlite && D.sqlite.tabs) || {};" in text
+    assert "tabs.specs" in text
+    assert "tabs.memory" in text
+    assert "tabs.privacy" in text
+    assert "tabs.exports" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_conversation_rail_aligns_prompt_response_markers(path: Path):
     text = path.read_text(encoding="utf-8")
 
