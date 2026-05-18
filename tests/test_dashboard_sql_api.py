@@ -208,6 +208,58 @@ def _seed_sql_report_db(db_path):
             """,
             (now,),
         )
+        conn.execute(
+            """
+            INSERT INTO specs(id, title, status, owner, source_path, created_at, updated_at)
+            VALUES ('spec-sql', 'SQL report parity', 'active', 'team', 'docs/specs/sql.md', ?, ?)
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO requirements(
+              id, spec_id, title, description, status, priority, evidence_status,
+              confidence, created_at, updated_at
+            )
+            VALUES ('req-sql', 'spec-sql', 'Render SQL tabs', '', 'validated', 'high', 'present', 0.9, ?, ?)
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO evidence(
+              id, requirement_id, session_id, kind, summary, confidence,
+              raw_json, created_at, updated_at
+            )
+            VALUES ('ev-sql', 'req-sql', 'sess-sql', 'test', 'SQL view test', 0.8, '{}', ?, ?)
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO memories(
+              id, scope, type, session_id, spec_id, content_hash,
+              content_preview_redacted, confidence, sensitivity, source, last_seen_at,
+              raw_attrs_json, created_at, updated_at
+            )
+            VALUES (
+              'mem-sql', 'repo', 'convention', 'sess-sql', 'spec-sql', 'hash-sql',
+              'Use SQL view models for report tabs', 0.8, 'low', 'test',
+              '2026-05-01T10:01:00+00:00', '{}', ?, ?
+            )
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO privacy_findings(
+              id, session_id, step_id, finding_type, severity, field_name,
+              action_taken, detail_redacted, created_at
+            )
+            VALUES ('privacy-sql', 'sess-sql', 'tool-step-sql', 'token', 'medium', 'tool.input', 'redacted', 'example token', ?)
+            """,
+            (now,),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -225,6 +277,10 @@ def test_dashboard_api_embeds_sql_view_models(tmp_path):
     assert sqlite_payload["overview"]["session_count"] == 1
     assert sqlite_payload["overview"]["top_tools"][0]["tool_name"] == "exec_command"
     assert sqlite_payload["sessions"]["rows"][0]["session_id"] == "sess-sql"
+    assert sqlite_payload["tabs"]["specs"]["total_specs"] == 1
+    assert sqlite_payload["tabs"]["memory"]["total_memories"] == 1
+    assert sqlite_payload["tabs"]["privacy"]["total_findings"] == 1
+    assert sqlite_payload["tabs"]["exports"]["row_counts"]["sessions"] == 1
 
 
 def test_sql_only_dashboard_api_does_not_build_legacy_json(tmp_path, monkeypatch):
@@ -243,6 +299,8 @@ def test_sql_only_dashboard_api_does_not_build_legacy_json(tmp_path, monkeypatch
     payload = response.json()
     assert payload["sql_only"] is True
     assert payload["sqlite"]["overview"]["session_count"] == 1
+    assert payload["sqlite"]["tabs"]["specs"]["requirements_by_status"] == {"validated": 1}
+    assert payload["sqlite"]["tabs"]["exports"]["scoped"] is False
     assert payload["sessions"][0]["id"] == "sess-sql"
     assert payload["sessions"][0]["first_prompt"].startswith("Fix the failing SQL dashboard tests")
     assert payload["sessions"][0]["duration_ms"] == 120000

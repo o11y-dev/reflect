@@ -1515,6 +1515,7 @@ def _sql_report_payload(db_path: Path, *, limit: int = 50, offset: int = 0) -> d
     from reflect.store.migrate import migrate
     from reflect.store.sqlite import connect_sqlite
     from reflect.views.overview import build_overview
+    from reflect.views.report_tabs import build_report_tabs
     from reflect.views.sessions import list_sessions
 
     conn = connect_sqlite(db_path)
@@ -1524,6 +1525,7 @@ def _sql_report_payload(db_path: Path, *, limit: int = 50, offset: int = 0) -> d
             "db_path": str(db_path),
             "overview": build_overview(conn).model_dump(),
             "sessions": list_sessions(conn, limit=limit, offset=offset).model_dump(),
+            "tabs": build_report_tabs(conn).model_dump(),
         }
     finally:
         conn.close()
@@ -1815,6 +1817,10 @@ def _sql_dashboard_compat_payload(db_path: Path, *, session_ids: set[str] | None
     mcp_view = tab_views["mcp"]
     agents_view = tab_views["agents"]
     graphs_view = tab_views["graphs"]
+    specs_view = tab_views["specs"]
+    memory_view = tab_views["memory"]
+    privacy_view = tab_views["privacy"]
+    exports_view = tab_views["exports"]
     return {
         "events_by_type": activity_view["events_by_type"],
         "activity_by_day": activity_view["activity_by_day"],
@@ -1853,6 +1859,10 @@ def _sql_dashboard_compat_payload(db_path: Path, *, session_ids: set[str] | None
         "graph_dep": graphs_view["graph_dep"],
         "graph_session_timeline": graphs_view["graph_session_timeline"],
         "agents": agents_view["agents"],
+        "specs": specs_view,
+        "memory": memory_view,
+        "privacy": privacy_view,
+        "exports": exports_view,
     }
 
 
@@ -2107,6 +2117,13 @@ def _sql_only_dashboard_payload(
     prompt_count = sum(row["prompt_count"] for row in session_rows)
     scoped_session_ids = {str(row["session_id"]) for row in session_rows}
     compat = _sql_dashboard_compat_payload(db_path, session_ids=scoped_session_ids if has_scope_filter else None)
+    sqlite_payload["tabs"] = {
+        **dict(sqlite_payload.get("tabs") or {}),
+        "specs": compat["specs"],
+        "memory": compat["memory"],
+        "privacy": compat["privacy"],
+        "exports": compat["exports"],
+    }
     insight_payload = _sql_insight_payload(scoped_overview, sessions, compat)
     cost_breakdown = compat["cost_breakdown"]
     total_cost_usd = float(scoped_overview["estimated_cost_usd"] or cost_breakdown["total_cost_usd"] or 0)

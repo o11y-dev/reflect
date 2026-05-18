@@ -61,6 +61,38 @@ class GraphsViewModel(ReflectModel):
     graph_session_timeline: list[dict[str, Any]]
 
 
+class SpecsViewModel(ReflectModel):
+    total_specs: int
+    specs_by_status: dict[str, int]
+    requirements_by_status: dict[str, int]
+    evidence_by_kind: dict[str, int]
+    specs: list[dict[str, Any]]
+
+
+class MemoryViewModel(ReflectModel):
+    total_memories: int
+    memories_by_scope: dict[str, int]
+    memories_by_type: dict[str, int]
+    memories_by_sensitivity: dict[str, int]
+    memories_by_source: dict[str, int]
+    recent_memories: list[dict[str, Any]]
+
+
+class PrivacyViewModel(ReflectModel):
+    total_findings: int
+    findings_by_type: dict[str, int]
+    findings_by_severity: dict[str, int]
+    findings_by_action: dict[str, int]
+    recent_findings: list[dict[str, Any]]
+
+
+class ExportsViewModel(ReflectModel):
+    export_ready: bool
+    available_formats: list[str]
+    row_counts: dict[str, int]
+    scoped: bool
+
+
 class ReportTabsViewModel(ReflectModel):
     activity: ActivityViewModel
     models: ModelsViewModel
@@ -69,6 +101,10 @@ class ReportTabsViewModel(ReflectModel):
     mcp: McpViewModel
     agents: AgentsViewModel
     graphs: GraphsViewModel
+    specs: SpecsViewModel
+    memory: MemoryViewModel
+    privacy: PrivacyViewModel
+    exports: ExportsViewModel
 
 
 def build_report_tabs(conn: sqlite3.Connection, *, session_ids: set[str] | None = None) -> ReportTabsViewModel:
@@ -80,6 +116,10 @@ def build_report_tabs(conn: sqlite3.Connection, *, session_ids: set[str] | None 
     mcp = _build_mcp(conn, scoped_ids if session_ids is not None else None)
     agents = _build_agents(conn, scoped_ids if session_ids is not None else None)
     graphs = _build_graphs(conn, scoped_ids if session_ids is not None else None, tools.tools_by_count, mcp.mcp_servers_by_count)
+    specs = _build_specs(conn, scoped_ids if session_ids is not None else None)
+    memory = _build_memory(conn, scoped_ids if session_ids is not None else None)
+    privacy = _build_privacy(conn, scoped_ids if session_ids is not None else None)
+    exports = _build_exports(conn, scoped_ids if session_ids is not None else None)
     return ReportTabsViewModel(
         activity=activity,
         models=models,
@@ -88,6 +128,10 @@ def build_report_tabs(conn: sqlite3.Connection, *, session_ids: set[str] | None 
         mcp=mcp,
         agents=agents,
         graphs=graphs,
+        specs=specs,
+        memory=memory,
+        privacy=privacy,
+        exports=exports,
     )
 
 
@@ -782,3 +826,237 @@ def _dependency_graph(
         "isolated_agents": [],
         "top_mcp_servers": [{"server": server, "count": count} for server, count in mcp_servers_by_count.items()],
     }
+
+
+def _scoped_spec_filter(scoped_ids: list[str] | None) -> tuple[str, list[str]]:
+    if scoped_ids is None:
+        return "", []
+    if not scoped_ids:
+        return "WHERE 1 = 0", []
+    placeholders = ", ".join("?" for _ in scoped_ids)
+    return (
+        f"""
+        WHERE s.id IN (
+          SELECT r.spec_id
+          FROM requirements r
+          JOIN evidence e ON e.requirement_id = r.id
+          WHERE e.session_id IN ({placeholders})
+          UNION
+          SELECT m.spec_id
+          FROM memories m
+          WHERE m.session_id IN ({placeholders}) AND m.spec_id IS NOT NULL
+        )
+        """,
+        [*scoped_ids, *scoped_ids],
+    )
+
+
+def _build_specs(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> SpecsViewModel:
+    spec_where, spec_params = _scoped_spec_filter(scoped_ids)
+    specs = _dict_rows(conn.execute(
+        f"""
+        SELECT
+          s.id,
+          s.title,
+          s.status,
+          s.owner,
+          s.source_path,
+          s.updated_at,
+          COUNT(DISTINCT r.id) AS requirement_count,
+          COUNT(DISTINCT e.id) AS evidence_count,
+          COALESCE(AVG(r.confidence), 0) AS avg_confidence
+        FROM specs s
+        LEFT JOIN requirements r ON r.spec_id = s.id
+        LEFT JOIN evidence e ON e.requirement_id = r.id
+        {spec_where}
+        GROUP BY s.id
+        ORDER BY s.updated_at DESC, s.title ASC
+        LIMIT 100
+        """,
+        spec_params,
+    ))
+    status_rows = _dict_rows(conn.execute(
+        f"""
+        SELECT s.status, COUNT(*) AS count
+        FROM specs s
+        {spec_where}
+        GROUP BY s.status
+        ORDER BY count DESC, s.status ASC
+        """,
+        spec_params,
+    ))
+    req_rows = _dict_rows(conn.execute(
+        f"""
+        SELECT r.status, COUNT(*) AS count
+        FROM requirements r
+        JOIN specs s ON s.id = r.spec_id
+        {spec_where}
+        GROUP BY r.status
+        ORDER BY count DESC, r.status ASC
+        """,
+        spec_params,
+    ))
+    evidence_rows = _dict_rows(conn.execute(
+        f"""
+        SELECT e.kind, COUNT(*) AS count
+        FROM evidence e
+        JOIN requirements r ON r.id = e.requirement_id
+        JOIN specs s ON s.id = r.spec_id
+        {spec_where}
+        GROUP BY e.kind
+        ORDER BY count DESC, e.kind ASC
+        """,
+        spec_params,
+    ))
+    return SpecsViewModel(
+        total_specs=_count_specs(conn, scoped_ids),
+        specs_by_status=_counter(status_rows, "status", "count"),
+        requirements_by_status=_counter(req_rows, "status", "count"),
+        evidence_by_kind=_counter(evidence_rows, "kind", "count"),
+        specs=[
+            {
+                "id": row["id"],
+                "title": row["title"],
+                "status": row["status"],
+                "owner": row["owner"] or "",
+                "source_path": row["source_path"] or "",
+                "updated_at": row["updated_at"],
+                "requirements": int(row["requirement_count"] or 0),
+                "evidence": int(row["evidence_count"] or 0),
+                "avg_confidence": float(row["avg_confidence"] or 0),
+            }
+            for row in specs
+        ],
+    )
+
+
+def _build_memory(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> MemoryViewModel:
+    scope, params = _scope_clause("session_id", scoped_ids)
+    rows = _dict_rows(conn.execute(
+        f"""
+        SELECT id, scope, type, sensitivity, source, confidence, content_preview_redacted, last_seen_at, session_id
+        FROM memories
+        {scope}
+        ORDER BY COALESCE(last_seen_at, updated_at, created_at) DESC, id ASC
+        LIMIT 100
+        """,
+        params,
+    ))
+    return MemoryViewModel(
+        total_memories=_count_rows(conn, "memories", "session_id", scoped_ids),
+        memories_by_scope=_count_by(conn, "memories", "scope", "session_id", scoped_ids),
+        memories_by_type=_count_by(conn, "memories", "type", "session_id", scoped_ids),
+        memories_by_sensitivity=_count_by(conn, "memories", "sensitivity", "session_id", scoped_ids),
+        memories_by_source=_count_by(conn, "memories", "source", "session_id", scoped_ids),
+        recent_memories=[
+            {
+                "id": row["id"],
+                "scope": row["scope"],
+                "type": row["type"],
+                "sensitivity": row["sensitivity"],
+                "source": row["source"],
+                "confidence": float(row["confidence"] or 0),
+                "preview": row["content_preview_redacted"] or "",
+                "last_seen_at": row["last_seen_at"] or "",
+                "session_id": row["session_id"] or "",
+            }
+            for row in rows
+        ],
+    )
+
+
+def _build_privacy(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> PrivacyViewModel:
+    scope, params = _scope_clause("session_id", scoped_ids)
+    rows = _dict_rows(conn.execute(
+        f"""
+        SELECT id, session_id, finding_type, severity, field_name, action_taken, detail_redacted, created_at
+        FROM privacy_findings
+        {scope}
+        ORDER BY created_at DESC, id ASC
+        LIMIT 100
+        """,
+        params,
+    ))
+    return PrivacyViewModel(
+        total_findings=_count_rows(conn, "privacy_findings", "session_id", scoped_ids),
+        findings_by_type=_count_by(conn, "privacy_findings", "finding_type", "session_id", scoped_ids),
+        findings_by_severity=_count_by(conn, "privacy_findings", "severity", "session_id", scoped_ids),
+        findings_by_action=_count_by(conn, "privacy_findings", "action_taken", "session_id", scoped_ids),
+        recent_findings=[
+            {
+                "id": row["id"],
+                "session_id": row["session_id"] or "",
+                "type": row["finding_type"],
+                "severity": row["severity"],
+                "field_name": row["field_name"] or "",
+                "action_taken": row["action_taken"],
+                "detail": row["detail_redacted"] or "",
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ],
+    )
+
+
+def _build_exports(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> ExportsViewModel:
+    scoped = scoped_ids is not None
+    row_counts = {
+        "sessions": _count_rows(conn, "sessions", "id", scoped_ids),
+        "steps": _count_rows(conn, "steps", "session_id", scoped_ids),
+        "llm_calls": _count_rows(conn, "llm_calls", "session_id", scoped_ids),
+        "tool_calls": _count_rows(conn, "tool_calls", "session_id", scoped_ids),
+        "mcp_calls": _count_rows(conn, "mcp_calls", "session_id", scoped_ids),
+        "memories": _count_rows(conn, "memories", "session_id", scoped_ids),
+        "privacy_findings": _count_rows(conn, "privacy_findings", "session_id", scoped_ids),
+        "evidence": _count_evidence(conn, scoped_ids),
+        "specs": _count_specs(conn, scoped_ids),
+    }
+    return ExportsViewModel(
+        export_ready=any(count > 0 for count in row_counts.values()),
+        available_formats=["json"],
+        row_counts=row_counts,
+        scoped=scoped,
+    )
+
+
+def _count_rows(conn: sqlite3.Connection, table: str, scope_column: str, scoped_ids: list[str] | None) -> int:
+    scope, params = _scope_clause(scope_column, scoped_ids)
+    return int(conn.execute(f"SELECT COUNT(*) FROM {table} {scope}", params).fetchone()[0] or 0)
+
+
+def _count_by(
+    conn: sqlite3.Connection,
+    table: str,
+    group_column: str,
+    scope_column: str,
+    scoped_ids: list[str] | None,
+) -> dict[str, int]:
+    scope, params = _scope_clause(scope_column, scoped_ids)
+    rows = _dict_rows(conn.execute(
+        f"""
+        SELECT {group_column} AS name, COUNT(*) AS count
+        FROM {table}
+        {scope}
+        GROUP BY {group_column}
+        ORDER BY count DESC, name ASC
+        """,
+        params,
+    ))
+    return _counter(rows, "name", "count")
+
+
+def _count_specs(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> int:
+    spec_where, spec_params = _scoped_spec_filter(scoped_ids)
+    return int(conn.execute(f"SELECT COUNT(*) FROM specs s {spec_where}", spec_params).fetchone()[0] or 0)
+
+
+def _count_evidence(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> int:
+    if scoped_ids is None:
+        return int(conn.execute("SELECT COUNT(*) FROM evidence").fetchone()[0] or 0)
+    if not scoped_ids:
+        return 0
+    placeholders = ", ".join("?" for _ in scoped_ids)
+    return int(conn.execute(
+        f"SELECT COUNT(*) FROM evidence WHERE session_id IN ({placeholders})",
+        scoped_ids,
+    ).fetchone()[0] or 0)

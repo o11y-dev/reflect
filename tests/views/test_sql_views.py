@@ -181,6 +181,61 @@ def _seed_view_db(conn):
             ),
         ],
     )
+    conn.execute(
+        """
+        INSERT INTO specs(id, repo_id, title, status, owner, source_path, created_at, updated_at)
+        VALUES ('spec-1', 'repo-1', 'SQL report parity', 'active', 'team', 'docs/specs/sql.md', ?, ?)
+        """,
+        (now, now),
+    )
+    conn.executemany(
+        """
+        INSERT INTO requirements(
+          id, spec_id, title, description, status, priority, evidence_status,
+          confidence, created_at, updated_at
+        )
+        VALUES (?, 'spec-1', ?, '', ?, 'high', ?, ?, ?, ?)
+        """,
+        [
+            ("req-1", "Render SQL tabs", "validated", "present", 0.9, now, now),
+            ("req-2", "Export from SQL", "planned", "missing", 0.2, now, now),
+        ],
+    )
+    conn.execute(
+        """
+        INSERT INTO evidence(
+          id, requirement_id, session_id, repo_id, kind, summary, confidence,
+          raw_json, created_at, updated_at
+        )
+        VALUES ('ev-1', 'req-1', 'sess-2', 'repo-1', 'test', 'SQL view test', 0.8, '{}', ?, ?)
+        """,
+        (now, now),
+    )
+    conn.execute(
+        """
+        INSERT INTO memories(
+          id, scope, type, repo_id, session_id, spec_id, content_hash,
+          content_preview_redacted, confidence, sensitivity, source, last_seen_at,
+          raw_attrs_json, created_at, updated_at
+        )
+        VALUES (
+          'mem-1', 'repo', 'convention', 'repo-1', 'sess-2', 'spec-1', 'hash-1',
+          'Use SQL view models for report tabs', 0.8, 'low', 'test',
+          '2026-05-02T11:09:00+00:00', '{}', ?, ?
+        )
+        """,
+        (now, now),
+    )
+    conn.execute(
+        """
+        INSERT INTO privacy_findings(
+          id, session_id, step_id, finding_type, severity, field_name,
+          action_taken, detail_redacted, created_at
+        )
+        VALUES ('privacy-1', 'sess-2', 'step-2', 'token', 'medium', 'tool.input', 'redacted', 'example token', ?)
+        """,
+        (now,),
+    )
     conn.commit()
 
 
@@ -252,6 +307,12 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         assert scoped.tools.tools_by_count == {"Edit": 1}
         assert scoped.tools.top_commands == [{"command": "poetry run pytest", "count": 1}]
         assert scoped.mcp.mcp_servers_by_count == {"metrics.example.test": 1, "mcp-issue-tracker": 1}
+        assert scoped.specs.total_specs == 1
+        assert scoped.specs.requirements_by_status == {"planned": 1, "validated": 1}
+        assert scoped.memory.memories_by_type == {"convention": 1}
+        assert scoped.privacy.findings_by_severity == {"medium": 1}
+        assert scoped.exports.row_counts["memories"] == 1
+        assert scoped.exports.row_counts["privacy_findings"] == 1
         assert {node["type"] for node in scoped.graphs.graph_dep["nodes"]} >= {"agent", "tool", "mcp_tool", "mcp_server"}
         assert {
             (link["source"], link["target"])
