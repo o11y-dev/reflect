@@ -62,7 +62,7 @@ def _seed_sql_report_db(db_path):
               'step-sql', 'sess-sql', 1, 'llm_call',
               '2026-05-01T10:00:00+00:00', 'completed',
               'gen_ai.client.hook.UserPromptSubmit',
-              '{"gen_ai.client.prompt":"Fix the failing SQL dashboard tests","gen_ai.client.generation_id":"gen-1"}',
+              '{"gen_ai.client.prompt":"Fix the failing SQL dashboard tests with /review-skill and the `research-helper` subagent","gen_ai.client.generation_id":"gen-1"}',
               ?, ?
             )
             """,
@@ -147,11 +147,47 @@ def _seed_sql_report_db(db_path):
             )
             VALUES (
               'mcp-sql', 'tool-step-sql', 'sess-sql',
-              'docker run --rm -i -e JIRA_API_TOKEN=secret ghcr.io/sooperset/mcp-atlassian:latest',
+              'docker run --rm -i -e TRACKER_API_TOKEN=secret ghcr.io/example/mcp-issue-tracker:latest',
               'jira_search', 'ok', 200, '{}', ?, ?
             )
             """,
             (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO raw_events(
+              id, source_id, source_type, event_type, trace_id, span_id, parent_span_id,
+              session_id, observed_at, received_at, attrs_json, body_json,
+              normalized_status, content_hash, created_at
+            )
+            VALUES (
+              'raw-trace-prompt-sql', 'otel-traces.json', 'otlp_traces_json',
+              'gen_ai.client.hook.UserPromptSubmit', 'trace-sql', 'span-prompt', '',
+              'sess-sql', '2026-05-01T10:00:00+00:00',
+              '2026-05-01T10:00:00+00:00',
+              '{}', '{}',
+              'ok', 'raw-trace-prompt-sql-hash', ?
+            )
+            """,
+            (now,),
+        )
+        conn.execute(
+            """
+            INSERT INTO raw_events(
+              id, source_id, source_type, event_type, trace_id, span_id, parent_span_id,
+              session_id, observed_at, received_at, attrs_json, body_json,
+              normalized_status, content_hash, created_at
+            )
+            VALUES (
+              'raw-trace-tool-sql', 'otel-traces.json', 'otlp_traces_json',
+              'tool_call', 'trace-sql', 'span-tool', 'span-prompt',
+              'sess-sql', '2026-05-01T10:01:00+00:00',
+              '2026-05-01T10:01:00+00:00',
+              '{}', '{}',
+              'ok', 'raw-trace-tool-sql-hash', ?
+            )
+            """,
+            (now,),
         )
         conn.execute(
             """
@@ -208,7 +244,7 @@ def test_sql_only_dashboard_api_does_not_build_legacy_json(tmp_path, monkeypatch
     assert payload["sql_only"] is True
     assert payload["sqlite"]["overview"]["session_count"] == 1
     assert payload["sessions"][0]["id"] == "sess-sql"
-    assert payload["sessions"][0]["first_prompt"] == "Fix the failing SQL dashboard tests"
+    assert payload["sessions"][0]["first_prompt"].startswith("Fix the failing SQL dashboard tests")
     assert payload["sessions"][0]["duration_ms"] == 120000
     assert payload["sessions"][0]["quality_score"] > 0
     assert payload["avg_quality_score"] > 0
@@ -222,8 +258,10 @@ def test_sql_only_dashboard_api_does_not_build_legacy_json(tmp_path, monkeypatch
     assert payload["output_cost_usd"] > 0
     assert payload["cache_read_cost_usd"] > 0
     assert payload["tools_by_count"] == {"exec_command": 2}
-    assert payload["mcp_servers_by_count"] == {"mcp-atlassian": 1}
+    assert payload["mcp_servers_by_count"] == {"mcp-issue-tracker": 1}
     assert "docker run" not in next(iter(payload["mcp_servers_by_count"]))
+    assert payload["skills_by_count"] == {"review-skill": 1}
+    assert payload["subagent_types_by_count"] == {"research-helper": 1}
     assert payload["top_commands"] == [{"command": "poetry run pytest", "count": 1}]
     assert payload["unique_commands"] == 1
     assert payload["shell_executions"] == 1
@@ -248,9 +286,15 @@ def test_sql_only_dashboard_api_does_not_build_legacy_json(tmp_path, monkeypatch
     assert detail.status_code == 200
     conversation = detail.json()["conversation"]
     assert [event["type"] for event in conversation[:2]] == ["prompt", "response"]
-    assert conversation[0]["preview"] == "Fix the failing SQL dashboard tests"
+    assert conversation[0]["preview"].startswith("Fix the failing SQL dashboard tests")
     assert "Assistant turn completed" in conversation[1]["preview"]
     assert detail.json()["telemetry"]["summary"]["spans"] == 3
+    spans = detail.json()["telemetry"]["spans"]
+    prompt_span = next(span for span in spans if span["id"] == "step-sql")
+    tool_span = next(span for span in spans if span["id"] == "tool-step-sql")
+    assert prompt_span["trace_id"] == "trace-sql"
+    assert tool_span["parent_span_id"] == "span-prompt"
+    assert tool_span["parent_id"] == "step-sql"
     assert detail.json()["telemetry"]["summary"]["logs"] == 1
     assert detail.json()["telemetry"]["logs"][0]["event"] == "UserPromptSubmit"
     assert "User prompt submitted" in detail.json()["telemetry"]["logs"][0]["body"]

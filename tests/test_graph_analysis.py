@@ -140,16 +140,16 @@ class TestDepGraph:
         agents = {
             "claude": self._make_agent("claude",
                                        tools={"Read": 5, "Edit": 3},
-                                       mcp={"mcp-gitlab": 2}),
+                                       mcp={"mcp-code-host": 2}),
         }
         tools_by_count = Counter({"Read": 5, "Edit": 3})
-        mcp_servers = Counter({"mcp-gitlab": 2})
+        mcp_servers = Counter({"mcp-code-host": 2})
         result = _compute_dep_graph(agents, tools_by_count, mcp_servers)
         node_ids = {n["id"] for n in result["nodes"]}
         assert "claude" in node_ids
         assert "Read" in node_ids
         # MCP servers appear in top_mcp_servers, not nodes
-        assert any(s["id"] == "mcp-gitlab" for s in result["top_mcp_servers"])
+        assert any(s["id"] == "mcp-code-host" for s in result["top_mcp_servers"])
 
     def test_empty_agents(self):
         result = _compute_dep_graph({}, Counter(), Counter())
@@ -163,11 +163,11 @@ class TestDepGraph:
         result = _compute_dep_graph(
             agents,
             Counter({"Read": 5}),
-            Counter({"mcp-gitlab": 2}),
+            Counter({"mcp-code-host": 2}),
             session_conversation={
                 "s1": [
-                    {"type": "mcp_call", "tool_name": "get_issue", "server": "mcp-gitlab"},
-                    {"type": "mcp_call", "tool_name": "get_issue", "server": "mcp-gitlab"},
+                    {"type": "mcp_call", "tool_name": "get_issue", "server": "mcp-code-host"},
+                    {"type": "mcp_call", "tool_name": "get_issue", "server": "mcp-code-host"},
                 ]
             },
             session_agents={"s1": "claude"},
@@ -176,9 +176,9 @@ class TestDepGraph:
         links = {(lnk["source"], lnk["target"]) for lnk in result["links"]}
 
         assert "get_issue" in node_ids
-        assert "mcp-gitlab" in node_ids
+        assert "mcp-code-host" in node_ids
         assert ("claude", "get_issue") in links
-        assert ("get_issue", "mcp-gitlab") in links
+        assert ("get_issue", "mcp-code-host") in links
 
 
 class TestSessionTimeline:

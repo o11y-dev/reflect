@@ -23,7 +23,7 @@ def _seed_view_db(conn):
     conn.execute(
         """
         INSERT INTO repos(id, full_name, created_at, updated_at)
-        VALUES ('repo-1', 'o11y-dev/reflect', ?, ?)
+        VALUES ('repo-1', 'example/telemetry-app', ?, ?)
         """,
         (now, now),
     )
@@ -157,18 +157,29 @@ def _seed_view_db(conn):
             ("tool-2", "step-2", "sess-2", "Edit", '{"cmd":"poetry run pytest"}', "error", 250, now, now),
         ],
     )
-    conn.execute(
+    conn.executemany(
         """
         INSERT INTO mcp_calls(
           id, step_id, session_id, server_name, tool_name, status, duration_ms, raw_attrs_json, created_at, updated_at
         )
-        VALUES (
-          'mcp-1', 'step-2', 'sess-2',
-          'docker run --rm -i ghcr.io/sooperset/mcp-atlassian:latest',
-          'jira_search', 'ok', 50, '{}', ?, ?
-        )
+        VALUES (?, 'step-2', 'sess-2', ?, ?, 'ok', 50, '{}', ?, ?)
         """,
-        (now, now),
+        [
+            (
+                "mcp-1",
+                "docker run --rm -i ghcr.io/example/mcp-issue-tracker:latest",
+                "jira_search",
+                now,
+                now,
+            ),
+            (
+                "mcp-2",
+                "npx mcp-remote https://metrics.example.test/mgmt/api/v1/mcp --header Authorization:${MCP_API_KEY} --verbose",
+                "cx_dashboards",
+                now,
+                now,
+            ),
+        ],
     )
     conn.commit()
 
@@ -216,7 +227,7 @@ def test_list_sessions_paginates_and_filters_from_sql(tmp_path):
         assert [row.session_id for row in failed_page.rows] == ["sess-2"]
         assert [row.session_id for row in model_page.rows] == ["sess-1"]
         assert [row.session_id for row in cost_page.rows] == ["sess-2"]
-        assert cost_page.rows[0].repo == "o11y-dev/reflect"
+        assert cost_page.rows[0].repo == "example/telemetry-app"
     finally:
         conn.close()
 
@@ -240,14 +251,16 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
 
         assert scoped.tools.tools_by_count == {"Edit": 1}
         assert scoped.tools.top_commands == [{"command": "poetry run pytest", "count": 1}]
-        assert scoped.mcp.mcp_servers_by_count == {"mcp-atlassian": 1}
+        assert scoped.mcp.mcp_servers_by_count == {"metrics.example.test": 1, "mcp-issue-tracker": 1}
         assert {node["type"] for node in scoped.graphs.graph_dep["nodes"]} >= {"agent", "tool", "mcp_tool", "mcp_server"}
         assert {
             (link["source"], link["target"])
             for link in scoped.graphs.graph_dep["links"]
         } >= {
-            ("agent:codex", "mcp_tool:mcp-atlassian"),
-            ("mcp_tool:mcp-atlassian", "mcp_server:mcp-atlassian"),
+            ("agent:codex", "mcp_tool:mcp-issue-tracker"),
+            ("agent:codex", "mcp_tool:metrics.example.test"),
+            ("mcp_tool:mcp-issue-tracker", "mcp_server:mcp-issue-tracker"),
+            ("mcp_tool:metrics.example.test", "mcp_server:metrics.example.test"),
         }
     finally:
         conn.close()

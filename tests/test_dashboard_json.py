@@ -132,8 +132,8 @@ class TestBuildDashboardJson:
     def test_mcp_servers_present(self, rich_stats):
         data = json.loads(_build_dashboard_json(rich_stats))
         mcp_data = data.get("mcp_servers_by_count") or data.get("mcp_server_before") or {}
-        assert "mcp-gitlab" in mcp_data
-        assert "mcp-coralogix" in mcp_data
+        assert "mcp-code-host" in mcp_data
+        assert "mcp-observability" in mcp_data
 
     def test_cursor_sessions_without_exact_tokens_get_provenance_note(self):
         stats = TelemetryStats(

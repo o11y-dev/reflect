@@ -122,7 +122,7 @@ class TestMcpSection:
 
     def test_mcp_server_names_shown(self, rich_stats):
         output = render_to_string(rich_stats)
-        assert "mcp-gitlab" in output or "gitlab" in output.lower()
+        assert "mcp-code-host" in output or "code_host" in output.lower()
 
 
 class TestModelsSection:

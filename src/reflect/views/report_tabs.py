@@ -4,6 +4,7 @@ import shlex
 import sqlite3
 from collections import Counter
 from typing import Any
+from urllib.parse import urlparse
 
 from reflect.schema.base import ReflectModel
 
@@ -437,6 +438,20 @@ def _display_mcp_server_name(value: object) -> str:
     if "\n" in text:
         text = text.splitlines()[0].strip()
     lowered = text.lower()
+    if lowered.startswith("npx "):
+        try:
+            parts = shlex.split(text)
+        except ValueError:
+            parts = text.split()
+        for part in parts[1:]:
+            parsed = urlparse(part)
+            if parsed.scheme in {"http", "https"} and parsed.netloc:
+                return parsed.netloc
+        for part in parts[1:]:
+            if part.startswith("-"):
+                continue
+            return part.rsplit("/", 1)[-1] or "npx"
+        return "npx"
     if lowered.startswith("docker run "):
         try:
             parts = shlex.split(text)

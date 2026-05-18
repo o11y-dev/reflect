@@ -21,6 +21,9 @@ Completed foundations now exist for:
 - temporary `reflect report --sql-only` guard materializes the SQLite store and serves from SQLite without building legacy dashboard JSON
 - SQL-only browser payload now populates shared dashboard widget data for activity, events, agents, models, tools, costs, MCP counts, and basic graph/timeline views
 - SQL-only mode loads session detail from SQLite and fills quality, pricing, skills/subagents, MCP server, observations, examples, badges, and token-economy fields from SQLite-derived data
+- SQL-backed tab view models now cover Activity, Agents, Models, Tools, MCP, Costs, and Graphs, with the browser compatibility payload consuming those shared view models
+- SQL session detail now preserves trace/span parent metadata for browser telemetry trees, and SQL tool widgets normalize Docker/NPX MCP launch commands before display
+- SQL skill/subagent widgets now include explicit prompt invocations in addition to structured skill tool calls
 - regression tests for SQLite runtime pragmas, migration idempotency, and Pydantic allow/forbid behavior
 
 ## Phase-by-phase checkpoint
@@ -56,9 +59,11 @@ Completed foundations now exist for:
 
 - 🚧 **Phase 6 — Port Textual UI to SQL**: **In progress**
   - SQL-backed view models exist for Overview and paginated Sessions
+  - dedicated SQL-backed view models exist for Activity, Agents, Models, Tools, MCP, Costs, and Graphs
   - browser report server exposes those view models via `/api/sql/overview`, `/api/sql/sessions`, and `/api/data.sqlite`
   - `reflect report --sql-only` materializes the SQLite store from selected/default OTLP traces before serving, then proves SQL-backed serving without legacy dashboard JSON
-  - SQL-only mode supplies shared dashboard widget fields from SQLite for several existing tabs, including session detail, costs, quality, MCP, skills/subagents, observations, examples, badges, and token economy; deeper tab-specific semantics still need dedicated view models
+  - SQL-only mode supplies shared dashboard widget fields from SQLite for several existing tabs, including session detail, costs, quality, MCP, skills/subagents, observations, examples, badges, and token economy; Specs, Memory, Privacy, and Exports still need dedicated SQL view models
+  - session detail carries trace/span identifiers and resolved parent row IDs so corrected hook parent relationships can render in the browser timeline
   - current runtime still uses existing terminal/dashboard code path
 
 - 🚧 **Phase 7 — Replace `reflect report` with browser-served Textual**: **Not started**
@@ -71,7 +76,8 @@ Completed foundations now exist for:
 
 1. Add richer native/session-store ingestion adapters while preserving `source_id + content_hash` dedupe; first target is Copilot `~/.copilot/session-state/*/events.jsonl`, which normal Reflect already reads but SQL-only does not yet ingest.
 2. Expand `--sql-only` coverage surface-by-surface until every current browser tab renders from SQLite.
-3. Add the remaining dedicated SQL-backed view models for Activity, Agents, Models, Tools, MCP, Costs, Graphs, Specs, Memory, Privacy, and Exports.
+3. Add the remaining dedicated SQL-backed view models for Specs, Memory, Privacy, and Exports.
+4. Persist normalized parent step relationships during ingestion so downstream consumers do not need to resolve raw span parent IDs at read time.
 
 ## Definition of done reminder
 
