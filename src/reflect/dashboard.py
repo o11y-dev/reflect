@@ -1843,6 +1843,7 @@ def _sql_cost_breakdown(rows: list[dict[str, object]]) -> dict[str, float]:
 def _sql_dashboard_compat_payload(db_path: Path, *, session_ids: set[str] | None = None) -> dict[str, object]:
     from reflect.store.migrate import migrate
     from reflect.store.sqlite import connect_sqlite
+    from reflect.views.report_tabs import build_report_tabs
 
     scoped = session_ids is not None
     scoped_ids = sorted(session_ids or [])
@@ -1865,6 +1866,7 @@ def _sql_dashboard_compat_payload(db_path: Path, *, session_ids: set[str] | None
     conn = connect_sqlite(db_path)
     try:
         migrate(conn)
+        tab_views = build_report_tabs(conn, session_ids=set(scoped_ids) if scoped else None).model_dump()
         session_rollup_where, session_rollup_params = _where("session_id", "AND")
         steps_where, steps_params = _where("session_id")
         tool_where, tool_params = _where("tc.session_id")
@@ -2382,47 +2384,68 @@ def _sql_dashboard_compat_payload(db_path: Path, *, session_ids: set[str] | None
         }
         for row in agent_rows
     ]
+    _legacy_compat_unused = (
+        event_rows,
+        cache_totals,
+        tool_percentiles,
+        transition_rows,
+        graph_dep,
+        agents_payload,
+        activity_by_day,
+        peak_hour_count,
+        model_counts,
+        model_costs,
+        cost_breakdown,
+        tools_by_count,
+        mcp_after_counts,
+        signature,
+        agent_comparison,
+    )
+    activity_view = tab_views["activity"]
+    models_view = tab_views["models"]
+    costs_view = tab_views["costs"]
+    tools_view = tab_views["tools"]
+    mcp_view = tab_views["mcp"]
+    agents_view = tab_views["agents"]
+    graphs_view = tab_views["graphs"]
     return {
-        "events_by_type": _counter_from_rows(event_rows, "type", "event_count"),
-        "activity_by_day": activity_by_day,
-        "activity_by_hour": activity_by_hour,
-        "peak_hour": peak_hour,
-        "peak_hour_count": peak_hour_count,
-        "models_by_count": model_counts,
-        "unique_models": len(model_counts),
-        "model_costs": model_costs,
-        "model_costs_usd": model_costs,
-        "cost_breakdown": cost_breakdown,
-        "total_cache_creation_tokens": int(cache_totals[0] or 0),
-        "total_cache_read_tokens": int(cache_totals[1] or 0),
-        "tools_by_count": tools_by_count,
-        "tool_percentiles": tool_percentiles,
-        "agent_comparison": agent_comparison,
-        "mcp_calls": sum(mcp_counts.values()),
-        "mcp_servers_by_count": mcp_counts,
-        "mcp_server_before": mcp_counts,
-        "mcp_server_after": mcp_after_counts,
+        "events_by_type": activity_view["events_by_type"],
+        "activity_by_day": activity_view["activity_by_day"],
+        "activity_by_hour": activity_view["activity_by_hour"],
+        "peak_hour": activity_view["peak_hour"],
+        "peak_hour_count": activity_view["peak_hour_count"],
+        "models_by_count": models_view["models_by_count"],
+        "unique_models": models_view["unique_models"],
+        "model_costs": costs_view["model_costs"],
+        "model_costs_usd": costs_view["model_costs_usd"],
+        "cost_breakdown": costs_view["cost_breakdown"],
+        "total_cache_creation_tokens": costs_view["total_cache_creation_tokens"],
+        "total_cache_read_tokens": costs_view["total_cache_read_tokens"],
+        "tools_by_count": tools_view["tools_by_count"],
+        "tool_percentiles": tools_view["tool_percentiles"],
+        "agent_comparison": agents_view["agent_comparison"],
+        "mcp_calls": mcp_view["mcp_calls"],
+        "mcp_servers_by_count": mcp_view["mcp_servers_by_count"],
+        "mcp_server_before": mcp_view["mcp_server_before"],
+        "mcp_server_after": mcp_view["mcp_server_after"],
         "skills_by_count": dict(skills_by_count.most_common()),
         "subagent_types_by_count": dict(subagent_launches.most_common()),
         "subagent_stops_by_type": dict(subagent_stops.most_common()),
         "subagent_launches": sum(subagent_launches.values()),
         "subagent_total_starts": sum(subagent_launches.values()),
         "subagent_total_stops": sum(subagent_stops.values()),
-        "top_commands": top_commands,
-        "unique_commands": len(display_commands),
-        "signature_command": signature["command"],
-        "signature_command_count": signature["count"],
-        "shell_executions": sum(display_commands.values()),
-        "file_edits": file_edits,
-        "file_reads": file_reads,
-        "graph_tool_transitions": [
-            {"from": row["source"], "to": row["target"], "count": int(row["count"] or 0)}
-            for row in transition_rows
-        ],
-        "graph_cooccurrence": {"tools": co_tools, "matrix": co_matrix},
-        "graph_dep": graph_dep,
-        "graph_session_timeline": timeline,
-        "agents": agents_payload,
+        "top_commands": tools_view["top_commands"],
+        "unique_commands": tools_view["unique_commands"],
+        "signature_command": tools_view["signature_command"],
+        "signature_command_count": tools_view["signature_command_count"],
+        "shell_executions": tools_view["shell_executions"],
+        "file_edits": tools_view["file_edits"],
+        "file_reads": tools_view["file_reads"],
+        "graph_tool_transitions": graphs_view["graph_tool_transitions"],
+        "graph_cooccurrence": graphs_view["graph_cooccurrence"],
+        "graph_dep": graphs_view["graph_dep"],
+        "graph_session_timeline": graphs_view["graph_session_timeline"],
+        "agents": agents_view["agents"],
     }
 
 

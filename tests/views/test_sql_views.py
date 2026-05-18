@@ -3,6 +3,7 @@ from __future__ import annotations
 from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite
 from reflect.views.overview import build_overview
+from reflect.views.report_tabs import build_report_tabs
 from reflect.views.sessions import list_sessions
 
 
@@ -143,6 +144,32 @@ def _seed_view_db(conn):
             ("Read", "claude", 1, 1, 0, 100, now),
         ],
     )
+    conn.executemany(
+        """
+        INSERT INTO tool_calls(
+          id, step_id, session_id, tool_name, tool_type, input_preview_redacted,
+          status, duration_ms, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, 'tool', ?, ?, ?, ?, ?)
+        """,
+        [
+            ("tool-1", "step-1", "sess-1", "Read", "{}", "ok", 100, now, now),
+            ("tool-2", "step-2", "sess-2", "Edit", '{"cmd":"poetry run pytest"}', "error", 250, now, now),
+        ],
+    )
+    conn.execute(
+        """
+        INSERT INTO mcp_calls(
+          id, step_id, session_id, server_name, tool_name, status, duration_ms, raw_attrs_json, created_at, updated_at
+        )
+        VALUES (
+          'mcp-1', 'step-2', 'sess-2',
+          'docker run --rm -i ghcr.io/sooperset/mcp-atlassian:latest',
+          'jira_search', 'ok', 50, '{}', ?, ?
+        )
+        """,
+        (now, now),
+    )
     conn.commit()
 
 
@@ -190,5 +217,37 @@ def test_list_sessions_paginates_and_filters_from_sql(tmp_path):
         assert [row.session_id for row in model_page.rows] == ["sess-1"]
         assert [row.session_id for row in cost_page.rows] == ["sess-2"]
         assert cost_page.rows[0].repo == "o11y-dev/reflect"
+    finally:
+        conn.close()
+
+
+def test_build_report_tabs_view_models_from_sql(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        _seed_view_db(conn)
+
+        tabs = build_report_tabs(conn)
+        scoped = build_report_tabs(conn, session_ids={"sess-2"})
+
+        assert tabs.activity.events_by_type == {"llm_call": 2}
+        assert tabs.activity.activity_by_day == {"2026-05-01": 3, "2026-05-02": 5}
+        assert tabs.models.models_by_count == {"claude-4.6-opus": 1, "gpt-5.4": 1}
+        assert tabs.costs.model_costs["gpt-5.4"] == 0.75
+        assert tabs.tools.tools_by_count == {"Edit": 2, "Read": 1}
+        assert tabs.agents.agent_comparison[0]["name"] == "codex"
+        assert tabs.graphs.graph_session_timeline
+
+        assert scoped.tools.tools_by_count == {"Edit": 1}
+        assert scoped.tools.top_commands == [{"command": "poetry run pytest", "count": 1}]
+        assert scoped.mcp.mcp_servers_by_count == {"mcp-atlassian": 1}
+        assert {node["type"] for node in scoped.graphs.graph_dep["nodes"]} >= {"agent", "tool", "mcp_tool", "mcp_server"}
+        assert {
+            (link["source"], link["target"])
+            for link in scoped.graphs.graph_dep["links"]
+        } >= {
+            ("agent:codex", "mcp_tool:mcp-atlassian"),
+            ("mcp_tool:mcp-atlassian", "mcp_server:mcp-atlassian"),
+        }
     finally:
         conn.close()
