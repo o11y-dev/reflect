@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 import shlex
 import sqlite3
 from collections import Counter
@@ -33,6 +35,12 @@ class CostsViewModel(ReflectModel):
 class ToolsViewModel(ReflectModel):
     tools_by_count: dict[str, int]
     tool_percentiles: list[dict[str, Any]]
+    skills_by_count: dict[str, int]
+    subagent_types_by_count: dict[str, int]
+    subagent_stops_by_type: dict[str, int]
+    subagent_launches: int
+    subagent_total_starts: int
+    subagent_total_stops: int
     top_commands: list[dict[str, Any]]
     unique_commands: int
     signature_command: str
@@ -110,16 +118,18 @@ class ReportTabsViewModel(ReflectModel):
 def build_report_tabs(conn: sqlite3.Connection, *, session_ids: set[str] | None = None) -> ReportTabsViewModel:
     """Build SQL-backed view models for browser report tabs beyond Overview/Sessions."""
     scoped_ids = sorted(session_ids or [])
-    activity = _build_activity(conn, scoped_ids if session_ids is not None else None)
-    models, costs = _build_models_and_costs(conn, scoped_ids if session_ids is not None else None)
-    tools = _build_tools(conn, scoped_ids if session_ids is not None else None)
-    mcp = _build_mcp(conn, scoped_ids if session_ids is not None else None)
-    agents = _build_agents(conn, scoped_ids if session_ids is not None else None)
-    graphs = _build_graphs(conn, scoped_ids if session_ids is not None else None, tools.tools_by_count, mcp.mcp_servers_by_count)
-    specs = _build_specs(conn, scoped_ids if session_ids is not None else None)
-    memory = _build_memory(conn, scoped_ids if session_ids is not None else None)
-    privacy = _build_privacy(conn, scoped_ids if session_ids is not None else None)
-    exports = _build_exports(conn, scoped_ids if session_ids is not None else None)
+    scoped = scoped_ids if session_ids is not None else None
+    skill_subagent = _skill_subagent_counts(conn, scoped)
+    activity = _build_activity(conn, scoped)
+    models, costs = _build_models_and_costs(conn, scoped)
+    tools = _build_tools(conn, scoped, skill_subagent)
+    mcp = _build_mcp(conn, scoped)
+    agents = _build_agents(conn, scoped, skill_subagent)
+    graphs = _build_graphs(conn, scoped, tools.tools_by_count, mcp.mcp_servers_by_count)
+    specs = _build_specs(conn, scoped)
+    memory = _build_memory(conn, scoped)
+    privacy = _build_privacy(conn, scoped)
+    exports = _build_exports(conn, scoped)
     return ReportTabsViewModel(
         activity=activity,
         models=models,
@@ -280,7 +290,11 @@ def _token_weighted_cost_breakdown(rows: list[dict[str, Any]]) -> dict[str, floa
     return totals
 
 
-def _build_tools(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> ToolsViewModel:
+def _build_tools(
+    conn: sqlite3.Connection,
+    scoped_ids: list[str] | None,
+    skill_subagent: dict[str, Any],
+) -> ToolsViewModel:
     if scoped_ids is None:
         tool_rows = _dict_rows(conn.execute(
             """
@@ -334,6 +348,12 @@ def _build_tools(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Tool
     return ToolsViewModel(
         tools_by_count=_counter(tool_rows, "tool_name", "call_count"),
         tool_percentiles=percentiles,
+        skills_by_count=dict(skill_subagent["skills"].most_common()),
+        subagent_types_by_count=dict(skill_subagent["subagent_starts"].most_common()),
+        subagent_stops_by_type=dict(skill_subagent["subagent_stops"].most_common()),
+        subagent_launches=sum(skill_subagent["subagent_starts"].values()),
+        subagent_total_starts=sum(skill_subagent["subagent_starts"].values()),
+        subagent_total_stops=sum(skill_subagent["subagent_stops"].values()),
         top_commands=top_commands,
         unique_commands=len(commands),
         signature_command=str(signature["command"]),
@@ -342,6 +362,120 @@ def _build_tools(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Tool
         file_edits=file_counts["edits"],
         file_reads=file_counts["reads"],
     )
+
+
+def _skill_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> dict[str, Any]:
+    scope, params = _scope_clause("st.session_id", scoped_ids)
+    rows = _dict_rows(conn.execute(
+        f"""
+        SELECT
+          st.session_id,
+          COALESCE(NULLIF(sr.agent, ''), 'unknown') AS agent,
+          st.summary,
+          st.raw_attrs_json
+        FROM steps st
+        LEFT JOIN session_rollups sr ON sr.session_id = st.session_id
+        {scope}
+        """,
+        params,
+    ))
+    skills: Counter[str] = Counter()
+    skills_by_agent: dict[str, Counter[str]] = {}
+    subagent_starts: Counter[str] = Counter()
+    subagent_stops: Counter[str] = Counter()
+    subagents_by_agent: dict[str, Counter[str]] = {}
+    for row in rows:
+        try:
+            attrs = json.loads(str(row["raw_attrs_json"] or "{}"))
+        except json.JSONDecodeError:
+            attrs = {}
+        if not isinstance(attrs, dict):
+            continue
+        agent = str(row["agent"] or "unknown")
+        event = str(_attr(attrs, "gen_ai.client.hook.event") or row["summary"] or "")
+        event_lc = event.lower()
+        subagent_type = str(_attr(attrs, "gen_ai.client.subagent_type", "subagent.type") or "")
+        if subagent_type:
+            if event == "SubagentStop" or "stop" in event_lc:
+                subagent_stops[subagent_type] += 1
+            else:
+                subagent_starts[subagent_type] += 1
+                subagents_by_agent.setdefault(agent, Counter())[subagent_type] += 1
+        tool_name = str(_attr(attrs, "gen_ai.client.tool_name") or "")
+        preview = str(_attr(attrs, "gen_ai.client.tool.input", "tool.input") or "")
+        prompt_text = str(_attr(attrs, "gen_ai.client.prompt", "gen_ai.client.prompt.text", "prompt") or "")
+        skill_names = set(_extract_skill_names_from_text(prompt_text))
+        if tool_name == "skill":
+            skill_name = _extract_skill_name_from_preview(preview)
+            if skill_name:
+                skill_names.add(skill_name)
+        skill_names.update(_extract_skill_names_from_text(preview))
+        for skill_name in sorted(skill_names):
+            skills[skill_name] += 1
+            skills_by_agent.setdefault(agent, Counter())[skill_name] += 1
+        for subagent_name in sorted(_extract_subagent_names_from_text(prompt_text)):
+            subagent_starts[subagent_name] += 1
+            subagents_by_agent.setdefault(agent, Counter())[subagent_name] += 1
+    return {
+        "skills": skills,
+        "skills_by_agent": skills_by_agent,
+        "subagent_starts": subagent_starts,
+        "subagent_stops": subagent_stops,
+        "subagents_by_agent": subagents_by_agent,
+    }
+
+
+def _attr(attrs: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = attrs.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _extract_skill_name_from_preview(preview: str) -> str:
+    if not isinstance(preview, str) or not preview.strip():
+        return ""
+    try:
+        payload = json.loads(preview)
+    except json.JSONDecodeError:
+        match = re.search(r'"skill"\s*:\s*"([^"]+)"', preview)
+        return match.group(1).strip() if match else ""
+    if isinstance(payload, dict):
+        skill = payload.get("skill")
+        if isinstance(skill, str):
+            return skill.strip()
+    return ""
+
+
+def _extract_skill_names_from_text(text: str) -> set[str]:
+    if not isinstance(text, str) or not text.strip():
+        return set()
+    names: set[str] = set()
+    for match in re.finditer(r"(?<![:\w.-])/([A-Za-z0-9][A-Za-z0-9_-]{1,60})", text):
+        name = match.group(1).strip().strip(".,;:)")
+        lowered = name.lower()
+        if "-" not in lowered and not lowered.endswith("skill") and lowered not in {"review", "investigate"}:
+            continue
+        names.add(name)
+    for match in re.finditer(r"`([^`/\n]{2,80})`\s+skill\b", text, flags=re.IGNORECASE):
+        names.add(match.group(1).strip())
+    return {name for name in names if name}
+
+
+def _extract_subagent_names_from_text(text: str) -> set[str]:
+    if not isinstance(text, str) or not text.strip():
+        return set()
+    names: set[str] = set()
+    for match in re.finditer(r"`([^`/\n]{2,80})`\s+subagent\b", text, flags=re.IGNORECASE):
+        names.add(match.group(1).strip())
+    for match in re.finditer(
+        r"\b(?:use|run|invoke|launch|call)\s+(?:the\s+)?([A-Za-z0-9][A-Za-z0-9_-]{2,80})\s+subagent\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        names.add(match.group(1).strip())
+    return {name for name in names if name}
 
 
 def _and_scope(column: str, scoped_ids: list[str] | None) -> str:
@@ -553,7 +687,11 @@ def _raw_mcp_counts(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> t
     return counts, after_counts
 
 
-def _build_agents(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> AgentsViewModel:
+def _build_agents(
+    conn: sqlite3.Connection,
+    scoped_ids: list[str] | None,
+    skill_subagent: dict[str, Any],
+) -> AgentsViewModel:
     scope, params = _scope_clause("sr.session_id", scoped_ids)
     rows = _dict_rows(conn.execute(
         f"""
@@ -587,6 +725,17 @@ def _build_agents(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Age
     for row in tool_rows:
         if row.get("tool_name"):
             top_tools.setdefault(str(row["agent"]), Counter())[str(row["tool_name"])] += int(row["count"] or 0)
+    mcp_rows = _dict_rows(conn.execute(
+        f"""
+        SELECT COALESCE(NULLIF(sr.agent, ''), 'unknown') AS agent, COUNT(*) AS count
+        FROM mcp_calls mc
+        LEFT JOIN session_rollups sr ON sr.session_id = mc.session_id
+        {_scope_clause('mc.session_id', scoped_ids)[0]}
+        GROUP BY COALESCE(NULLIF(sr.agent, ''), 'unknown')
+        """,
+        scoped_ids or [],
+    ))
+    mcp_by_agent = {str(row["agent"]): int(row["count"] or 0) for row in mcp_rows}
     comparison = []
     agents: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -617,8 +766,8 @@ def _build_agents(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Age
             "tool_ratio": round((tools / prompts) if prompts else 0, 1),
             "failures": failures,
             "failure_rate": round(100 * failures / tools, 1) if tools else 0,
-            "mcp_calls": 0,
-            "subagents": 0,
+            "mcp_calls": mcp_by_agent.get(name, 0),
+            "subagents": sum(skill_subagent["subagents_by_agent"].get(name, Counter()).values()),
             "input_tokens": int(row["tokens"] or 0),
             "output_tokens": 0,
             "cache_creation_tokens": 0,
@@ -626,7 +775,7 @@ def _build_agents(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Age
             "total_cost_usd": total_cost,
             "top_model": "",
             "top_tools": dict(top_tools.get(name, Counter()).most_common(10)),
-            "top_skills": {},
+            "top_skills": dict(skill_subagent["skills_by_agent"].get(name, Counter()).most_common(10)),
             "percentiles": [],
         }
     return AgentsViewModel(agent_comparison=comparison, agents=agents)

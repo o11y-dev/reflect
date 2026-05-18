@@ -1760,55 +1760,12 @@ def _sql_dashboard_compat_payload(db_path: Path, *, session_ids: set[str] | None
     scoped = session_ids is not None
     scoped_ids = sorted(session_ids or [])
 
-    def _scope(column: str, prefix: str = "WHERE") -> tuple[str, list[str]]:
-        if not scoped:
-            return "", []
-        if not scoped_ids:
-            return f"{prefix} 1 = 0", []
-        return f"{prefix} {column} IN ({', '.join('?' for _ in scoped_ids)})", scoped_ids
-
     conn = connect_sqlite(db_path)
     try:
         migrate(conn)
         tab_views = build_report_tabs(conn, session_ids=set(scoped_ids) if scoped else None).model_dump()
-        steps_where, steps_params = _scope("session_id")
-        raw_step_rows = _dict_rows(conn.execute(
-            f"""
-            SELECT session_id, type, summary, status, raw_attrs_json
-            FROM steps
-            {steps_where}
-            """,
-            steps_params,
-        ))
     finally:
         conn.close()
-
-    subagent_launches: Counter[str] = Counter()
-    subagent_stops: Counter[str] = Counter()
-    skills_by_count: Counter[str] = Counter()
-    for row in raw_step_rows:
-        attrs = _load_json_dict(row["raw_attrs_json"])
-        event = str(_sql_attr(attrs, "gen_ai.client.hook.event") or row["summary"] or "")
-        event_lc = event.lower()
-        subagent_type = str(_sql_attr(attrs, "gen_ai.client.subagent_type", "subagent.type") or "")
-        if subagent_type:
-            if event == "SubagentStop" or "stop" in event_lc:
-                subagent_stops[subagent_type] += 1
-            else:
-                subagent_launches[subagent_type] += 1
-        tool_name = str(_sql_attr(attrs, "gen_ai.client.tool_name") or "")
-        preview = str(_sql_attr(attrs, "gen_ai.client.tool.input", "tool.input") or "")
-        prompt_text = str(_sql_attr(attrs, "gen_ai.client.prompt", "gen_ai.client.prompt.text", "prompt") or "")
-        skill_names = set(_extract_skill_names_from_text(prompt_text))
-        if tool_name == "skill":
-            skill_name = _extract_skill_name_from_preview(preview)
-            if skill_name:
-                skill_names.add(skill_name)
-        skill_names.update(_extract_skill_names_from_text(preview))
-        for skill_name in sorted(skill_names):
-            skills_by_count[skill_name] += 1
-        for subagent_name in sorted(_extract_subagent_names_from_text(prompt_text)):
-            subagent_launches[subagent_name] += 1
 
     activity_view = tab_views["activity"]
     models_view = tab_views["models"]
@@ -1841,12 +1798,12 @@ def _sql_dashboard_compat_payload(db_path: Path, *, session_ids: set[str] | None
         "mcp_servers_by_count": mcp_view["mcp_servers_by_count"],
         "mcp_server_before": mcp_view["mcp_server_before"],
         "mcp_server_after": mcp_view["mcp_server_after"],
-        "skills_by_count": dict(skills_by_count.most_common()),
-        "subagent_types_by_count": dict(subagent_launches.most_common()),
-        "subagent_stops_by_type": dict(subagent_stops.most_common()),
-        "subagent_launches": sum(subagent_launches.values()),
-        "subagent_total_starts": sum(subagent_launches.values()),
-        "subagent_total_stops": sum(subagent_stops.values()),
+        "skills_by_count": tools_view["skills_by_count"],
+        "subagent_types_by_count": tools_view["subagent_types_by_count"],
+        "subagent_stops_by_type": tools_view["subagent_stops_by_type"],
+        "subagent_launches": tools_view["subagent_launches"],
+        "subagent_total_starts": tools_view["subagent_total_starts"],
+        "subagent_total_stops": tools_view["subagent_total_stops"],
         "top_commands": tools_view["top_commands"],
         "unique_commands": tools_view["unique_commands"],
         "signature_command": tools_view["signature_command"],

@@ -301,6 +301,8 @@ def test_sql_only_dashboard_api_does_not_build_legacy_json(tmp_path, monkeypatch
     assert payload["sqlite"]["overview"]["session_count"] == 1
     assert payload["sqlite"]["tabs"]["specs"]["requirements_by_status"] == {"validated": 1}
     assert payload["sqlite"]["tabs"]["exports"]["scoped"] is False
+    assert payload["sqlite"]["tabs"]["tools"]["skills_by_count"] == {"review-skill": 1}
+    assert payload["sqlite"]["tabs"]["agents"]["agents"]["codex"]["top_skills"] == {"review-skill": 1}
     assert payload["sessions"][0]["id"] == "sess-sql"
     assert payload["sessions"][0]["first_prompt"].startswith("Fix the failing SQL dashboard tests")
     assert payload["sessions"][0]["duration_ms"] == 120000

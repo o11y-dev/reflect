@@ -71,12 +71,24 @@ def _seed_view_db(conn):
     )
     conn.executemany(
         """
-        INSERT INTO steps(id, session_id, seq, type, started_at, status, created_at, updated_at)
-        VALUES (?, ?, ?, 'llm_call', ?, 'completed', ?, ?)
+        INSERT INTO steps(
+          id, session_id, seq, type, started_at, status, summary,
+          raw_attrs_json, created_at, updated_at
+        )
+        VALUES (?, ?, ?, 'llm_call', ?, 'completed', ?, ?, ?, ?)
         """,
         [
-            ("step-1", "sess-1", 1, "2026-05-01T10:00:00+00:00", now, now),
-            ("step-2", "sess-2", 1, "2026-05-02T11:00:00+00:00", now, now),
+            ("step-1", "sess-1", 1, "2026-05-01T10:00:00+00:00", "", "{}", now, now),
+            (
+                "step-2",
+                "sess-2",
+                1,
+                "2026-05-02T11:00:00+00:00",
+                "UserPromptSubmit",
+                '{"gen_ai.client.prompt":"Use /review-skill and the `research-helper` subagent"}',
+                now,
+                now,
+            ),
         ],
     )
     conn.executemany(
@@ -305,8 +317,12 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         assert tabs.graphs.graph_session_timeline
 
         assert scoped.tools.tools_by_count == {"Edit": 1}
+        assert scoped.tools.skills_by_count == {"review-skill": 1}
+        assert scoped.tools.subagent_types_by_count == {"research-helper": 1}
         assert scoped.tools.top_commands == [{"command": "poetry run pytest", "count": 1}]
         assert scoped.mcp.mcp_servers_by_count == {"metrics.example.test": 1, "mcp-issue-tracker": 1}
+        assert scoped.agents.agents["codex"]["top_skills"] == {"review-skill": 1}
+        assert scoped.agents.agents["codex"]["subagents"] == 1
         assert scoped.specs.total_specs == 1
         assert scoped.specs.requirements_by_status == {"planned": 1, "validated": 1}
         assert scoped.memory.memories_by_type == {"convention": 1}
