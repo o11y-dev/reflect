@@ -131,6 +131,20 @@ def test_dashboard_html_wires_sql_data_tab_surfaces(path: Path):
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_html_prefers_sql_tab_payloads_for_existing_tabs(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "function sqlTab(name)" in text
+    assert "const activityTab = sqlTab('activity');" in text
+    assert "activityTab.activity_by_day || D.activity_by_day || {}" in text
+    assert "sqlTab('activity').tool_percentiles" not in text
+    assert "toolsTab.tools_by_count || D.tools_by_count || {}" in text
+    assert "mcpTab.mcp_server_before || D.mcp_server_before || {}" in text
+    assert "sqlTab('graphs').graph_tool_transitions || D.graph_tool_transitions || []" in text
+    assert "sqlTab('graphs').graph_dep || D.graph_dep" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_conversation_rail_aligns_prompt_response_markers(path: Path):
     text = path.read_text(encoding="utf-8")
 

@@ -2977,6 +2977,10 @@ function fmtNarrative(s){
     .replace(/\n/g,'<br/>');
 }
 
+function sqlTab(name){
+  return ((D.sqlite && D.sqlite.tabs) || {})[name] || {};
+}
+
 /* ── Tabs ── */
 let _graphsInited = false;
 const tabButtons = Array.from(document.querySelectorAll('.tab'));
@@ -4868,7 +4872,8 @@ if (modelCostEl) {
 (function buildHeatmap(){
   const WD = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const SHOW = [true,false,true,false,true,false,true];
-  const entries = Object.entries(D.activity_by_day);
+  const activityTab = sqlTab('activity');
+  const entries = Object.entries(activityTab.activity_by_day || D.activity_by_day || {});
 
   const activeCounts = entries.map(e=>e[1]).filter(v=>v>0).sort((a,b)=>a-b);
   function quartile(arr, q){ return arr[Math.floor(arr.length*q)]||1; }
@@ -4942,7 +4947,8 @@ if (modelCostEl) {
 
 /* Hour bars */
 (function buildHourBars(){
-  const hours=D.activity_by_hour;
+  const activityTab = sqlTab('activity');
+  const hours=activityTab.activity_by_hour || D.activity_by_hour || {};
   const max=Math.max(...Object.values(hours),1);
   const bEl=document.getElementById('hour-bars');
   const lEl=document.getElementById('hour-labels');
@@ -4952,7 +4958,7 @@ if (modelCostEl) {
     const bar=document.createElement('div');
     bar.className='hour-bar';
     bar.style.height=Math.max((c/max)*100,2)+'%';
-    bar.style.background=(h===D.peak_hour)?'var(--blue)':'rgba(255,255,255,.08)';
+    bar.style.background=(h===(activityTab.peak_hour ?? D.peak_hour))?'var(--blue)':'rgba(255,255,255,.08)';
     bar.title=`${h12(h)}: ${c.toLocaleString()} events`;
     bEl.appendChild(bar);
 
@@ -4966,15 +4972,16 @@ if (modelCostEl) {
 /* Subagent effectiveness table */
 (function buildSubagentEffectiveness(){
   const el = document.getElementById('subagent-effectiveness');
-  const launches = D.subagent_types_by_count || {};
-  const stops = D.subagent_stops_by_type || {};
+  const toolsTab = sqlTab('tools');
+  const launches = toolsTab.subagent_types_by_count || D.subagent_types_by_count || {};
+  const stops = toolsTab.subagent_stops_by_type || D.subagent_stops_by_type || {};
   const types = Object.keys(launches);
   if (!types.length) {
     el.innerHTML = '<p style="color:var(--text-3);font-size:14px;text-align:center;padding:40px 0">No subagent data yet</p>';
     return;
   }
-  const totalLaunches = D.subagent_total_starts || Object.values(launches).reduce((a,b)=>a+b,0);
-  const totalStops = D.subagent_total_stops || Object.values(stops).reduce((a,b)=>a+b,0);
+  const totalLaunches = toolsTab.subagent_total_starts || D.subagent_total_starts || Object.values(launches).reduce((a,b)=>a+b,0);
+  const totalStops = toolsTab.subagent_total_stops || D.subagent_total_stops || Object.values(stops).reduce((a,b)=>a+b,0);
   const rows = types.map(t => {
     const launched = launches[t] || 0;
     const done = Math.min(stops[t] || 0, launched);
@@ -5022,19 +5029,23 @@ function buildBarList(elId, obj, color){
       <div class="bar-cnt">${count.toLocaleString()}</div>
     </div>`).join('');
 }
-buildBarList('tools-list', D.tools_by_count, P.blue);
-const skillsOrSubagents = Object.keys(D.skills_by_count || {}).length
-  ? D.skills_by_count
-  : (D.subagent_types_by_count || {});
+const toolsTab = sqlTab('tools');
+buildBarList('tools-list', toolsTab.tools_by_count || D.tools_by_count || {}, P.blue);
+const sqlSkills = toolsTab.skills_by_count || {};
+const flatSkills = D.skills_by_count || {};
+const skillsOrSubagents = Object.keys(sqlSkills).length
+  ? sqlSkills
+  : (Object.keys(flatSkills).length ? flatSkills : (toolsTab.subagent_types_by_count || D.subagent_types_by_count || {}));
 buildBarList('skills-list', skillsOrSubagents, P.purple);
 
 /* MCP availability table */
 (function buildMcpPanel(){
-  const before = D.mcp_server_before || {};
-  const after  = D.mcp_server_after  || {};
+  const mcpTab = sqlTab('mcp');
+  const before = mcpTab.mcp_server_before || D.mcp_server_before || {};
+  const after  = mcpTab.mcp_server_after  || D.mcp_server_after  || {};
   const servers = Object.keys(before);
   if (!servers.length) {
-    buildBarList('mcp-list', D.mcp_servers_by_count, P.teal);
+    buildBarList('mcp-list', mcpTab.mcp_servers_by_count || D.mcp_servers_by_count || {}, P.teal);
     return;
   }
   servers.sort((a,b) => (before[b]||0) - (before[a]||0));
@@ -5101,7 +5112,8 @@ buildBarList('skills-list', skillsOrSubagents, P.purple);
 
 /* Event distribution */
 (function buildEventBar(){
-  const entries=Object.entries(D.events_by_type);
+  const activityTab = sqlTab('activity');
+  const entries=Object.entries(activityTab.events_by_type || D.events_by_type || {});
   const n=entries.length;
   const barH=28, pad=40;
   document.getElementById('event-bar-box').style.height=(n*barH+pad)+'px';
@@ -5142,7 +5154,7 @@ buildBarList('skills-list', skillsOrSubagents, P.purple);
 
 /* Percentiles table */
 (function buildPercentiles(){
-  const pctl = D.tool_percentiles || [];
+  const pctl = sqlTab('tools').tool_percentiles || D.tool_percentiles || [];
   const tbody = document.getElementById('pctl-tbody');
   if (!pctl.length) {
     tbody.innerHTML = '<tr><td colspan="6" style="color:var(--text-3);text-align:center">No duration data available</td></tr>';
@@ -5169,8 +5181,8 @@ buildBarList('skills-list', skillsOrSubagents, P.purple);
     </tr>`).join('');
 })();
 
-document.getElementById('cmd-unique').textContent='-- '+D.unique_commands+' unique patterns';
-document.getElementById('cmd-tbody').innerHTML=D.top_commands.map((c,i)=>`
+document.getElementById('cmd-unique').textContent='-- '+(sqlTab('tools').unique_commands ?? D.unique_commands ?? 0)+' unique patterns';
+document.getElementById('cmd-tbody').innerHTML=(sqlTab('tools').top_commands || D.top_commands || []).map((c,i)=>`
   <tr>
     <td style="color:var(--text-3);font-weight:600">${i+1}</td>
     <td><span class="mono" style="color:var(--teal)">${c.command}</span></td>
@@ -5377,8 +5389,11 @@ document.getElementById('cmd-tbody').innerHTML=D.top_commands.map((c,i)=>`
 /* Tool color map */
 const TOOL_COLORS = {};
 (function assignToolColors(){
-  const toolList = (D.graph_cooccurrence?.tools || []).concat(
-    (D.graph_dep?.nodes || []).map(n => n.id)
+  const graphsTab = sqlTab('graphs');
+  const co = graphsTab.graph_cooccurrence || D.graph_cooccurrence || {};
+  const dep = graphsTab.graph_dep || D.graph_dep || {};
+  const toolList = (co.tools || []).concat(
+    (dep.nodes || []).map(n => n.id)
   );
   toolList.forEach((t, i) => {
     if (!(t in TOOL_COLORS)) TOOL_COLORS[t] = COLORS[i % COLORS.length];
@@ -5393,7 +5408,7 @@ function initGraphs() {
 
 /* ── 1. Tool Flow — manual arc diagram ── */
 (function buildSankey(){
-  const trans = D.graph_tool_transitions || [];
+  const trans = sqlTab('graphs').graph_tool_transitions || D.graph_tool_transitions || [];
   if (!trans.length) return;
 
   const el = document.getElementById('sankey-svg');
@@ -5482,7 +5497,7 @@ function initGraphs() {
 
 /* ── 2. Dependency Graph (force-directed) ── */
 (function buildDepGraph(){
-  const dep = D.graph_dep;
+  const dep = sqlTab('graphs').graph_dep || D.graph_dep;
   const noteEl = document.getElementById('dep-note');
   if (!dep) return;
 
@@ -5651,7 +5666,7 @@ function initGraphs() {
 
 /* ── 3. Session Timeline ── */
 (function buildTimeline(){
-  const sessions = D.graph_session_timeline || [];
+  const sessions = sqlTab('graphs').graph_session_timeline || D.graph_session_timeline || [];
   if (!sessions.length) {
     document.getElementById('timeline-wrap').innerHTML =
       '<p style="color:var(--text-3);font-size:13px">No timeline data</p>';
@@ -5708,7 +5723,7 @@ function initGraphs() {
 
 /* ── 4. Co-occurrence Matrix ── */
 (function buildMatrix(){
-  const co = D.graph_cooccurrence;
+  const co = sqlTab('graphs').graph_cooccurrence || D.graph_cooccurrence;
   if (!co || !co.tools.length) return;
 
   const tools = co.tools;

@@ -26,6 +26,7 @@ Completed foundations now exist for:
 - SQL normalization now persists canonical `steps.parent_step_id` from raw span parent IDs, with session detail using the stored parent relation and falling back to raw span resolution only for older stores
 - SQL tab view models now derive skills/subagents from canonical steps, including explicit prompt invocations and structured skill tool calls, so Tools and Agents share the same SQL source for skill/subagent widgets
 - Browser report now exposes a Data tab that renders SQL-backed Specs, Memory, Privacy, and Export readiness directly from `sqlite.tabs.*`
+- Browser Activity, Tools/MCP, and Graphs panels now prefer `sqlite.tabs.activity/tools/mcp/graphs` payloads with legacy JSON fallback
 - regression tests for SQLite runtime pragmas, migration idempotency, and Pydantic allow/forbid behavior
 
 ## Phase-by-phase checkpoint
@@ -69,6 +70,7 @@ Completed foundations now exist for:
   - canonical `steps.parent_step_id` is populated during normalization from `raw_events.span_id` / `parent_span_id`
   - Tools and Agents consume shared SQL-derived skill/subagent counts from tab view models instead of dashboard-only compatibility logic
   - Browser Data tab renders Specs, Memory, Privacy, and Exports from `sqlite.tabs.*`
+  - Activity, Tools/MCP, and Graphs browser panels prefer direct SQL tab view-model payloads when present
   - current runtime still uses existing terminal/dashboard code path
 
 - 🚧 **Phase 7 — Replace `reflect report` with browser-served Textual**: **Not started**
@@ -79,7 +81,7 @@ Completed foundations now exist for:
 
 ## Immediate next execution backlog
 
-1. Expand `--sql-only` coverage surface-by-surface until every current browser tab renders directly from SQLite tab payloads instead of compatibility fields.
+1. Finish direct SQL tab payload consumption for Overview, Compare, and Observations surfaces.
 2. Implement static export from SQLite-backed view models.
 3. Add richer native/session-store ingestion adapters as a postponed follow-up track.
 
