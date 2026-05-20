@@ -289,9 +289,10 @@ class TestReportSubcommand:
                 "--sql-only",
             ])
         assert result.exit_code == 0
+        assert "--sql-only is deprecated" in result.output
         assert "Prepared SQLite report store" in result.output
         assert mock_server.call_args.kwargs["db_path"] == db_path
-        assert mock_server.call_args.kwargs["sql_only"] is True
+        assert mock_server.call_args.kwargs["sql_only"] is False
         conn = sqlite3.connect(db_path)
         try:
             assert conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0] > 0
@@ -353,12 +354,13 @@ class TestReportSubcommand:
         with patch("reflect.core._start_publish_server"), \
              patch("reflect.core.render_report") as mock_report:
             mock_report.return_value = "# report"
+            db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "report",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
-                "--db-path", str(tmp_path / "reflect.db"),
+                "--db-path", str(db_path),
                 "--output", str(tmp_path / "report.md"),
             ])
         assert result.exit_code == 0
@@ -367,12 +369,13 @@ class TestReportSubcommand:
     def test_report_with_dashboard_artifact_writes_json(self, runner, otlp_file, tmp_path):
         artifact_path = tmp_path / "docs" / "reports" / "latest.json"
         with patch("reflect.core._start_publish_server"):
+            db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "report",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
-                "--db-path", str(tmp_path / "reflect.db"),
+                "--db-path", str(db_path),
                 "--dashboard-artifact", str(artifact_path),
             ])
         assert result.exit_code == 0

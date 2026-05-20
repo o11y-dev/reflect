@@ -17,10 +17,10 @@ Completed foundations now exist for:
 - initial Pydantic base/event models and schema export command
 - SQL ingestion now supports OTLP traces plus inferred sibling OTLP logs, including Codex native log events normalized into hook-like spans
 - SQL-backed Overview and Sessions view models for the future Textual/report runtime
-- `reflect report` browser server exposes SQL-backed Overview/Sessions APIs from the configured SQLite store
-- temporary `reflect report --sql-only` guard materializes the SQLite store and serves from SQLite without building legacy dashboard JSON
-- SQL-only browser payload now populates shared dashboard widget data for activity, events, agents, models, tools, costs, MCP counts, and basic graph/timeline views
-- SQL-only mode loads session detail from SQLite and fills quality, pricing, skills/subagents, MCP server, observations, examples, badges, and token-economy fields from SQLite-derived data
+- `reflect report` materializes the configured SQLite store by default and serves the browser report from SQL-backed APIs
+- legacy `reflect report --sql-only` is now a deprecated no-op kept for compatibility while SQLite is the default runtime path
+- SQL-backed browser payload now populates shared dashboard widget data for activity, events, agents, models, tools, costs, MCP counts, and basic graph/timeline views
+- SQL-backed session detail loads from SQLite and fills quality, pricing, skills/subagents, MCP server, observations, examples, badges, and token-economy fields from SQLite-derived data
 - SQL-backed tab view models now cover Activity, Agents, Models, Tools, MCP, Costs, Graphs, Specs, Memory, Privacy, and Exports, with the browser compatibility payload consuming those shared view models
 - SQL session detail now preserves trace/span parent metadata for browser telemetry trees, and SQL tool widgets normalize Docker/NPX MCP launch commands before display
 - SQL normalization now persists canonical `steps.parent_step_id` from raw span parent IDs, with session detail using the stored parent relation and falling back to raw span resolution only for older stores
@@ -64,8 +64,8 @@ Completed foundations now exist for:
   - SQL-backed view models exist for Overview and paginated Sessions
   - dedicated SQL-backed view models exist for Activity, Agents, Models, Tools, MCP, Costs, Graphs, Specs, Memory, Privacy, and Exports
   - browser report server exposes those view models via `/api/sql/overview`, `/api/sql/sessions`, and `/api/data.sqlite`
-  - `reflect report --sql-only` materializes the SQLite store from selected/default OTLP traces before serving, then proves SQL-backed serving without legacy dashboard JSON
-  - SQL-only mode supplies shared dashboard widget fields from SQLite for existing tabs, including session detail, costs, quality, MCP, skills/subagents, observations, examples, badges, token economy, specs, memory, privacy, and export readiness
+  - `reflect report` materializes the SQLite store from selected/default OTLP traces before serving, then proves SQL-backed serving without legacy dashboard JSON; `--sql-only` is a deprecated compatibility no-op
+  - SQL-backed report mode supplies shared dashboard widget fields from SQLite for existing tabs, including session detail, costs, quality, MCP, skills/subagents, observations, examples, badges, token economy, specs, memory, privacy, and export readiness
   - session detail carries trace/span identifiers and resolved parent row IDs so corrected hook parent relationships can render in the browser timeline
   - canonical `steps.parent_step_id` is populated during normalization from `raw_events.span_id` / `parent_span_id`
   - Tools and Agents consume shared SQL-derived skill/subagent counts from tab view models instead of dashboard-only compatibility logic
@@ -77,7 +77,9 @@ Completed foundations now exist for:
 
 - 🚧 **Phase 8 — Static export from SQLite**: **Not started**
 
-- 🚧 **Phase 9 — Remove JSON runtime dependency**: **Not started**
+- 🚧 **Phase 9 — Remove JSON runtime dependency**: **In progress**
+  - `reflect report` no longer uses the legacy dashboard JSON as its default runtime source when a SQLite database is configured
+  - remaining legacy dashboard JSON paths are retained for static/export compatibility and non-SQL fallback surfaces
 
 ## Immediate next execution backlog
 

@@ -283,7 +283,7 @@ def test_dashboard_api_embeds_sql_view_models(tmp_path):
     assert sqlite_payload["tabs"]["exports"]["row_counts"]["sessions"] == 1
 
 
-def test_sql_only_dashboard_api_does_not_build_legacy_json(tmp_path, monkeypatch):
+def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
 
@@ -291,13 +291,14 @@ def test_sql_only_dashboard_api_does_not_build_legacy_json(tmp_path, monkeypatch
         raise AssertionError("legacy dashboard JSON should not be built")
 
     monkeypatch.setattr("reflect.dashboard._build_dashboard_json", _raise_legacy_json)
-    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path, sql_only=True)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
 
     response = TestClient(app).get("/api/data")
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["sql_only"] is True
+    assert payload["sql_backed"] is True
+    assert "sql_only" not in payload
     assert payload["sqlite"]["overview"]["session_count"] == 1
     assert payload["sqlite"]["tabs"]["specs"]["requirements_by_status"] == {"validated": 1}
     assert payload["sqlite"]["tabs"]["exports"]["scoped"] is False
@@ -376,10 +377,10 @@ def test_dashboard_sql_sessions_endpoint_filters_from_sql(tmp_path):
     assert sessions.json()["rows"][0]["duration_ms"] == 120000
 
 
-def test_sql_only_dashboard_api_filters_by_session_param(tmp_path):
+def test_dashboard_api_filters_by_session_param_from_sql(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
-    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path, sql_only=True)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
 
     response = TestClient(app).get("/api/data", params={"session": "sess-sql"})
 
@@ -387,6 +388,27 @@ def test_sql_only_dashboard_api_filters_by_session_param(tmp_path):
     payload = response.json()
     assert payload["unique_sessions"] == 1
     assert [session["id"] for session in payload["sessions"]] == ["sess-sql"]
+
+
+def test_dashboard_api_scopes_sql_tab_view_models(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    response = TestClient(app).get("/api/data", params={"agents": "missing-agent"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    tabs = payload["sqlite"]["tabs"]
+    assert payload["unique_sessions"] == 0
+    assert payload["activity_by_day"] == {}
+    assert tabs["activity"]["activity_by_day"] == {}
+    assert tabs["activity"]["events_by_type"] == {}
+    assert payload["graph_dep"]["nodes"] == []
+    assert tabs["graphs"]["graph_dep"]["nodes"] == []
+    assert tabs["graphs"]["graph_tool_transitions"] == []
+    assert tabs["tools"]["tools_by_count"] == {}
+    assert tabs["mcp"]["mcp_servers_by_count"] == {}
 
 
 def test_dashboard_sql_endpoints_are_disabled_without_db(tmp_path):

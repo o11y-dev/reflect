@@ -71,10 +71,67 @@ def test_dashboard_html_shows_branded_loader_during_report_fetch(path: Path):
     assert "function showReportLoader(message)" in text
     assert "function hideReportLoader()" in text
     assert "showReportLoader();" in text
-    assert "showReportLoader('Filtering sessions...');" in text
     assert "hideReportLoader();" in text
     assert "animation:loader-float" in text
     assert "animation:loader-spin" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_html_uses_persistent_session_and_filter_rails(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert 'id="report-shell"' in text
+    assert 'id="session-rail"' in text
+    assert 'id="filter-rail"' in text
+    assert 'id="session-rail-toggle"' in text
+    assert 'id="session-rail-open"' in text
+    assert 'id="filter-sheet-open"' in text
+    assert "body.sessions-rail-collapsed .report-shell" in text
+    assert re.search(r"main\s*\{[^}]*max-width\s*:\s*none\s*;", text), (
+        f"Expected full-width report shell in {path}"
+    )
+    assert ".filter-rail{\n  display:block;" in text
+    assert ".shell-filter-toggle{display:none}" in text
+    assert ".shell-filter-toggle{display:inline-flex}" in text
+    assert ".shell-left-toggle{display:none!important}" in text
+    assert text.index('id="sb-list"') < text.index('id="tab-sessions"')
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_session_filters_reload_sql_reports(path: Path):
+    text = path.read_text(encoding="utf-8")
+    match = re.search(r"function scheduleDashboardReload\(\)\{\s*(.*?)\s*\}", text, re.S)
+
+    assert match is not None
+    assert "if (!reportSupportsServerFiltering()) return false;" in match.group(1)
+    assert "showReportLoader('Filtering sessions...');" in match.group(1)
+    assert "window.location.reload()" in match.group(1)
+    assert "return true;" in match.group(1)
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_session_filters_redraw_tab_aggregates(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "function currentScope()" in text
+    assert "function useLocalFilterAggregates()" in text
+    assert "function renderFilteredDashboardSurfaces()" in text
+    assert "renderStatRow(scope);" in text
+    assert "renderMetricRow(scope);" in text
+    assert "renderCharts(scope);" in text
+    assert "renderCostPanels(scope);" in text
+    assert "renderActivityPanels(scope);" in text
+    assert "renderToolsPanels(scope);" in text
+    assert "renderSubagentPanel(scope);" in text
+    assert "dashboardFilterActive = Boolean(event.detail?.hasFilters || dashboardSelectedSessionId);" in text
+    assert "dashboardFilterActive = urlHasDashboardFilters();" in text
+    assert "if (useLocalFilterAggregates()) renderFilteredDashboardSurfaces();" in text
+    assert "if (!useLocalFilterAggregates()) return null;" in text
+    assert "let dashboardSelectedSessionId = currentParams().get('session') || '';" in text
+    assert "selectedSessionId: dashboardSelectedSessionId" in text
+    assert "event.detail?.hasFilters || dashboardSelectedSessionId" in text
+    assert "(params.get('session') || '').trim()" in text
+    assert "currentScope()?.graph_dep" in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)

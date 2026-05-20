@@ -1021,7 +1021,7 @@ def main(
 @click.option(
     "--sql-only",
     is_flag=True,
-    help="Serve report data from SQLite only; temporary migration guard for removing legacy dashboard JSON.",
+    help="Deprecated no-op; SQLite-backed report data is now the default.",
 )
 def report(
     otlp_traces: Path | None,
@@ -1035,98 +1035,74 @@ def report(
     sql_only: bool,
 ) -> None:
     """Open the AI usage dashboard in a browser via a local server."""
-    requested_otlp_traces = otlp_traces
+    from collections import Counter
+
+    from reflect.dashboard import _sql_dashboard_payload
+
     if sql_only:
-        from collections import Counter
+        click.echo("Note: --sql-only is deprecated; SQLite-backed report data is now the default.")
 
-        from reflect.dashboard import _sql_only_dashboard_payload
-
-        include_native_sessions = False
-        if demo:
-            demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
-            if not demo_traces.exists():
-                demo_traces = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
-            otlp_traces = demo_traces if demo_traces.exists() else otlp_traces
-        elif otlp_traces is None:
-            otlp_traces = _default_otlp_traces()
-            include_native_sessions = True
-        else:
-            default_otlp = _default_otlp_traces()
-            include_native_sessions = (
-                default_otlp is not None
-                and otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
-            )
-        preparation = _prepare_sql_report_db(
-            db_path,
-            otlp_traces=otlp_traces,
-            include_native_sessions=include_native_sessions,
-        )
-        click.echo(
-            "Prepared SQLite report store "
-            f"(inserted={preparation['ingest']['inserted']}, "
-            f"skipped={preparation['ingest']['skipped']}, "
-            f"normalized={preparation['normalize']['processed']}, "
-            f"sessions={preparation['rollups']['session_rollups']})"
-        )
-        ingest_sources = preparation.get("ingest_sources") or {}
-        if ingest_sources:
-            source_parts = [
-                f"{name}: inserted={result['inserted']} skipped={result['skipped']}"
-                for name, result in ingest_sources.items()
-            ]
-            click.echo("SQL ingest sources: " + "; ".join(source_parts))
-        stats = TelemetryStats(
-            session_files=0,
-            span_files=0,
-            total_events=0,
-            events_by_type=Counter(),
-            events_by_file={},
-        )
-        if output is not None:
-            raise click.ClickException("--sql-only does not support legacy markdown report output")
-        if dashboard_artifact is not None:
-            dashboard_artifact.parent.mkdir(parents=True, exist_ok=True)
-            dashboard_artifact.write_text(
-                _json_stdlib.dumps(_sql_only_dashboard_payload(db_path)),
-                encoding="utf-8",
-            )
+    include_native_sessions = False
+    if demo:
+        demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
+        if not demo_traces.exists():
+            demo_traces = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
+        otlp_traces = demo_traces if demo_traces.exists() else otlp_traces
+    elif otlp_traces is None:
+        otlp_traces = _default_otlp_traces()
+        include_native_sessions = True
     else:
-        stats, resolved_otlp_traces, sessions_dir, spans_dir, _, _ = _resolve_and_analyze(
+        default_otlp = _default_otlp_traces()
+        include_native_sessions = (
+            default_otlp is not None
+            and otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
+        )
+    preparation = _prepare_sql_report_db(
+        db_path,
+        otlp_traces=otlp_traces,
+        include_native_sessions=include_native_sessions,
+    )
+    click.echo(
+        "Prepared SQLite report store "
+        f"(inserted={preparation['ingest']['inserted']}, "
+        f"skipped={preparation['ingest']['skipped']}, "
+        f"normalized={preparation['normalize']['processed']}, "
+        f"sessions={preparation['rollups']['session_rollups']})"
+    )
+    ingest_sources = preparation.get("ingest_sources") or {}
+    if ingest_sources:
+        source_parts = [
+            f"{name}: inserted={result['inserted']} skipped={result['skipped']}"
+            for name, result in ingest_sources.items()
+        ]
+        click.echo("SQL ingest sources: " + "; ".join(source_parts))
+
+    stats = TelemetryStats(
+        session_files=0,
+        span_files=0,
+        total_events=0,
+        events_by_type=Counter(),
+        events_by_file={},
+    )
+    sessions_dir = sessions_dir or _default_sessions_dir()
+    spans_dir = spans_dir or _default_spans_dir()
+    if output is not None:
+        stats, _, sessions_dir, spans_dir, _, _ = _resolve_and_analyze(
             otlp_traces=otlp_traces,
             sessions_dir=sessions_dir,
             spans_dir=spans_dir,
             demo=demo,
             time_range=time_range,
         )
-        include_native_sessions = False
-        if not demo:
-            if requested_otlp_traces is None:
-                include_native_sessions = True
-            else:
-                default_otlp = _default_otlp_traces()
-                include_native_sessions = (
-                    default_otlp is not None
-                    and resolved_otlp_traces is not None
-                    and resolved_otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
-                )
-        preparation = _prepare_sql_report_db(
-            db_path,
-            otlp_traces=resolved_otlp_traces,
-            include_native_sessions=include_native_sessions,
-        )
-        click.echo(
-            "Prepared SQLite report store "
-            f"(inserted={preparation['ingest']['inserted']}, "
-            f"skipped={preparation['ingest']['skipped']}, "
-            f"normalized={preparation['normalize']['processed']}, "
-            f"sessions={preparation['rollups']['session_rollups']})"
-        )
-    if dashboard_artifact is not None and not sql_only:
-        _write_dashboard_artifact(stats, dashboard_artifact)
-    if output is not None and not sql_only:
         render_report(stats, sessions_dir, spans_dir, output)
         print(f"Report saved to: {output}")
-    _start_publish_server(stats, db_path=db_path, sql_only=sql_only)
+    if dashboard_artifact is not None:
+        dashboard_artifact.parent.mkdir(parents=True, exist_ok=True)
+        dashboard_artifact.write_text(
+            _json_stdlib.dumps(_sql_dashboard_payload(db_path)),
+            encoding="utf-8",
+        )
+    _start_publish_server(stats, db_path=db_path, sql_only=False)
 
 
 # ---------------------------------------------------------------------------

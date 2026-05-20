@@ -1945,7 +1945,7 @@ def _sql_insight_payload(
     }
 
 
-def _sql_only_dashboard_payload(
+def _sql_dashboard_payload(
     db_path: Path,
     *,
     limit: int = 50,
@@ -2076,6 +2076,57 @@ def _sql_only_dashboard_payload(
     compat = _sql_dashboard_compat_payload(db_path, session_ids=scoped_session_ids if has_scope_filter else None)
     sqlite_payload["tabs"] = {
         **dict(sqlite_payload.get("tabs") or {}),
+        "activity": {
+            "events_by_type": compat["events_by_type"],
+            "activity_by_day": compat["activity_by_day"],
+            "activity_by_hour": compat["activity_by_hour"],
+            "peak_hour": compat["peak_hour"],
+            "peak_hour_count": compat["peak_hour_count"],
+        },
+        "models": {
+            "models_by_count": compat["models_by_count"],
+            "unique_models": compat["unique_models"],
+        },
+        "costs": {
+            "model_costs": compat["model_costs"],
+            "model_costs_usd": compat["model_costs_usd"],
+            "cost_breakdown": compat["cost_breakdown"],
+            "total_cache_creation_tokens": compat["total_cache_creation_tokens"],
+            "total_cache_read_tokens": compat["total_cache_read_tokens"],
+        },
+        "tools": {
+            "tools_by_count": compat["tools_by_count"],
+            "tool_percentiles": compat["tool_percentiles"],
+            "skills_by_count": compat["skills_by_count"],
+            "subagent_types_by_count": compat["subagent_types_by_count"],
+            "subagent_stops_by_type": compat["subagent_stops_by_type"],
+            "subagent_launches": compat["subagent_launches"],
+            "subagent_total_starts": compat["subagent_total_starts"],
+            "subagent_total_stops": compat["subagent_total_stops"],
+            "top_commands": compat["top_commands"],
+            "unique_commands": compat["unique_commands"],
+            "signature_command": compat["signature_command"],
+            "signature_command_count": compat["signature_command_count"],
+            "shell_executions": compat["shell_executions"],
+            "file_edits": compat["file_edits"],
+            "file_reads": compat["file_reads"],
+        },
+        "mcp": {
+            "mcp_calls": compat["mcp_calls"],
+            "mcp_servers_by_count": compat["mcp_servers_by_count"],
+            "mcp_server_before": compat["mcp_server_before"],
+            "mcp_server_after": compat["mcp_server_after"],
+        },
+        "agents": {
+            "agent_comparison": compat["agent_comparison"],
+            "agents": compat["agents"],
+        },
+        "graphs": {
+            "graph_tool_transitions": compat["graph_tool_transitions"],
+            "graph_cooccurrence": compat["graph_cooccurrence"],
+            "graph_dep": compat["graph_dep"],
+            "graph_session_timeline": compat["graph_session_timeline"],
+        },
         "specs": compat["specs"],
         "memory": compat["memory"],
         "privacy": compat["privacy"],
@@ -2085,7 +2136,7 @@ def _sql_only_dashboard_payload(
     cost_breakdown = compat["cost_breakdown"]
     total_cost_usd = float(scoped_overview["estimated_cost_usd"] or cost_breakdown["total_cost_usd"] or 0)
     payload = {
-        "sql_only": True,
+        "sql_backed": True,
         "sqlite": sqlite_payload,
         "comparison": None,
         "sessions": sessions,
@@ -2490,20 +2541,16 @@ def _build_dashboard_app(
 
     globals()["Request"] = Request
 
-    import json as _json
     app = FastAPI(title="reflect dashboard", docs_url=None, redoc_url=None)
-    if sql_only:
-        if db_path is None:
-            raise ValueError("sql_only requires db_path")
-        _cached = _sql_only_dashboard_payload(db_path, limit=50, offset=0)
+    if db_path is not None:
+        _cached = _sql_dashboard_payload(db_path, limit=50, offset=0)
+    elif sql_only:
+        raise ValueError("sql_only requires db_path")
     else:
+        import json as _json
+
         _cached = _json.loads(_build_dashboard_json(stats))
         _cached["comparison"] = None
-    if db_path is not None:
-        try:
-            _cached["sqlite"] = _sql_report_payload(db_path, limit=50, offset=0)
-        except Exception as exc:
-            _cached["sqlite"] = {"db_path": str(db_path), "error": str(exc)}
 
     @app.get("/api/data")
     def api_data(request: Request):
@@ -2517,10 +2564,10 @@ def _build_dashboard_app(
         model = params.get("model") or "all"
         status = params.get("status") or "all"
         range_name = params.get("range") or "all"
-        if sql_only:
+        if db_path is not None:
             if not any([q, session_id, agents, model != "all", status != "all", range_name != "all"]):
                 return JSONResponse(_cached)
-            return JSONResponse(_sql_only_dashboard_payload(
+            return JSONResponse(_sql_dashboard_payload(
                 db_path,
                 limit=50,
                 offset=0,
@@ -2603,7 +2650,7 @@ def _build_dashboard_app(
 
     @app.get("/api/session/{session_id:path}")
     def api_session(session_id: str):
-        if sql_only and db_path is not None:
+        if db_path is not None:
             detail = _load_sql_session_detail(db_path, session_id)
             if detail is None:
                 return JSONResponse({"error": f"Session {session_id} not found"}, status_code=404)
@@ -2653,8 +2700,8 @@ def _start_publish_server_inline(
         logger.warning("FastAPI/uvicorn not installed. Install with: pip install fastapi uvicorn")
         logger.warning("Falling back to writing artifact file...")
         artifact = docs_dir / "_reflect_data.json"
-        if sql_only and db_path is not None:
-            artifact.write_text(json.dumps(_sql_only_dashboard_payload(db_path)), encoding="utf-8")
+        if db_path is not None:
+            artifact.write_text(json.dumps(_sql_dashboard_payload(db_path)), encoding="utf-8")
         else:
             artifact.write_text(_build_dashboard_json(stats), encoding="utf-8")
         print(f"Wrote: {artifact}")
