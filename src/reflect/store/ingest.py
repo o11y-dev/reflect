@@ -130,10 +130,11 @@ def ingest_otlp_traces_file(db_conn, *, file_path: Path, source_id: str | None =
 
 def ingest_otlp_logs_file(db_conn, *, file_path: Path, source_id: str | None = None) -> dict[str, int]:
     source = source_id or str(file_path)
+    records = list(_load_otlp_logs(file_path))
 
     def spans():
-        yield from _iter_codex_log_spans(_load_otlp_logs(file_path))
-        yield from _iter_gemini_log_spans(_load_otlp_logs(file_path))
+        yield from _iter_codex_log_spans(records)
+        yield from _iter_gemini_log_spans(records)
 
     return _ingest_spans(
         db_conn,
