@@ -2,14 +2,42 @@
 
 ## 0.x.x (unreleased)
 
+### Added
+- Added temporary `reflect report --sql-only` migration guard to materialize the SQLite store and serve browser report data from SQLite without building legacy dashboard JSON.
+- Added SQL ingest support for inferred OTLP log files so Codex native log events are normalized into the SQLite report store alongside OTLP traces.
+- Added SQL-only session detail loading plus SQL-derived report data for quality scores, costs, skills, subagents, MCP servers, observations, examples, badges, and token-economy widgets.
+- Filled SQL-only cost widget breakdowns from SQLite LLM calls so input, output, and cache cost cards no longer render as zero when priced token data exists.
+- Expanded the SQL-only browser payload to populate shared dashboard widgets from SQLite, including activity, events, agents, models, tools, costs, MCP counts, and basic graph/timeline data.
+- Wired SQL-backed Overview and Sessions view models into `reflect report` through `/api/sql/overview`, `/api/sql/sessions`, and an embedded `sqlite` payload in `/api/data`.
+- Added SQL-backed Overview and Sessions view models for the upcoming Textual/report migration path, including paginated session filters over canonical SQLite tables and rollups.
+- Added `reflect db rebuild-rollups` to refresh session, daily, and tool aggregate tables from canonical SQLite data.
+- Added `reflect db rebuild-graph` to populate SQLite graph nodes and edges from canonical sessions, steps, tools, MCP calls, and memories.
+- Added `reflect db normalize` to promote pending `raw_events` into canonical sessions, steps, and LLM/tool/MCP/memory/privacy tables.
+- Added local hook span JSONL ingestion via `reflect ingest --spans-file <file>` and `reflect db ingest-spans`.
+- Added `reflect db doctor` to report SQLite migration drift, foreign-key violations, and runtime pragma health.
+- Added SQLite canonical table migration (`004_canonical.sql`) for agents, repos, files, sessions, steps, LLM/tool/MCP calls, specs, evidence, memories, and privacy findings.
+- Added SQLite rollup and graph migrations (`002_rollups.sql`, `003_graph.sql`) for session/day/tool aggregates plus graph nodes and edges.
+- Added `reflect db ingest-otlp --otlp-traces <file>` to ingest OTLP traces JSON into `raw_events` with `source_id + content_hash` deduplication.
+- Added `reflect.store.ingest` ingestion helper plus regression coverage for duplicate ingest behavior.
+- Added `reflect db migrate` to apply bundled SQLite SQL migrations and bootstrap runtime tables from migration files.
+- Added `reflect schema export --output <path>` to emit JSON Schema for the core Pydantic event model.
+- Added initial `reflect.schema` + `reflect.store.migrate` foundations and regression tests for migration idempotency and schema validation behavior.
+- Added initial SQLite runtime store scaffolding with a connection helper that enforces Reflect runtime pragmas (`foreign_keys`, WAL, synchronous mode, checkpoint, busy timeout) and an `optimize` helper.
+- Added initial SQL migration (`001_initial.sql`) that creates `schema_migrations`, `raw_events`, and the core raw-event indexes including source/hash dedupe.
+- Added regression tests that assert SQLite runtime pragma defaults and strict-durability behavior.
+
 ### Changed
 - Promote the showcase page to the root landing page at `reflect.o11y.dev/`; the telemetry dashboard HTML moves to `docs/report.html`, and the deprecated `showcase.html` page is removed
+- Added shorter ingest UX: `reflect ingest --otlp <file>` (kept `reflect db ingest-otlp --otlp-traces` as a legacy alias).
+- Added a living SQLite/Textual execution checkpoint document (`docs/specs/reflect-sqlite-textual-checkpoint.md`) that tracks completed phases, remaining scope, and immediate next tasks toward full spec fulfillment.
 
 ### Fixed
 - Point dashboard missing-report and failed-report fallbacks at `reflect.o11y.dev` instead of the showcase page
 - Hide the `DEMO` badge for local `?report=api/data` dashboards
 - Derive session agent filters, labels, and colors from report data without a fixed agent allowlist, including safe escaping for report-provided agent names
 - Add Codex to the public showcase dashboard artifact and restore spacing between Tools summary widgets and Event Distribution
+- Aligned new SQLite ingest/migration modules with Ruff rules (`datetime.UTC`, tighter exception assertions, and unused-import cleanup) so lint checks pass cleanly.
+- Made top-level `reflect` package exports lazy so focused module tests can import `reflect.store.*` without importing runtime modules that require newer Python datetime APIs at import time.
 
 ## 0.7.2 (2026-05-04)
 

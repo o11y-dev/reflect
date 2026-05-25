@@ -30,12 +30,12 @@ GEMINI  = "gemini-code-assist"
 # MCP server names
 # ---------------------------------------------------------------------------
 
-MCP_GITLAB     = "mcp-gitlab"
-MCP_JIRA       = "mcp-atlassian"
+MCP_CODE_HOST     = "mcp-code-host"
+MCP_ISSUE_TRACKER       = "mcp-issue-tracker"
 MCP_POSTGRES   = "mcp-postgres"
-MCP_CORALOGIX  = "mcp-coralogix"
-MCP_WIZ        = "mcp-wiz"
-MCP_CLOUDFLARE = "mcp-cloudflare"
+MCP_OBSERVABILITY  = "mcp-observability"
+MCP_SECURITY        = "mcp-security"
+MCP_EDGE = "mcp-edge"
 MCP_PLAYWRIGHT = "mcp-playwright"
 
 # ---------------------------------------------------------------------------
@@ -145,7 +145,7 @@ def wrap_otlp(spans: list[dict], agent: str = CLAUDE, service: str = "ide-agent"
 
 # ---------------------------------------------------------------------------
 # Session 1: Claude — feature development (Day 1, morning)
-# MCP: mcp-gitlab + mcp-atlassian + mcp-coralogix
+# MCP: mcp-code-host + mcp-issue-tracker + mcp-observability
 # Events: 2 prompts, 4 edits (1 failure), 1 subagent pair, 1 shell pair
 # ---------------------------------------------------------------------------
 
@@ -160,17 +160,17 @@ SESSION_1_SPANS = [
     make_span("BeforeReadFile", agent=CLAUDE, tool="Read", session=SESS_CLAUDE_1,
               start_ns=DAY1 + 9*HOUR + 1*MIN, duration_ms=45),
     make_span("BeforeMCPExecution", agent=CLAUDE, tool="get_issue", session=SESS_CLAUDE_1,
-              start_ns=DAY1 + 9*HOUR + 2*MIN, duration_ms=1200, mcp_server=MCP_JIRA),
+              start_ns=DAY1 + 9*HOUR + 2*MIN, duration_ms=1200, mcp_server=MCP_ISSUE_TRACKER),
     make_span("AfterMCPExecution", agent=CLAUDE, tool="get_issue", session=SESS_CLAUDE_1,
-              start_ns=DAY1 + 9*HOUR + 2*MIN + int(1.2*SEC), duration_ms=5, mcp_server=MCP_JIRA),
+              start_ns=DAY1 + 9*HOUR + 2*MIN + int(1.2*SEC), duration_ms=5, mcp_server=MCP_ISSUE_TRACKER),
     make_span("BeforeMCPExecution", agent=CLAUDE, tool="list_merge_requests", session=SESS_CLAUDE_1,
-              start_ns=DAY1 + 9*HOUR + 4*MIN, duration_ms=800, mcp_server=MCP_GITLAB),
+              start_ns=DAY1 + 9*HOUR + 4*MIN, duration_ms=800, mcp_server=MCP_CODE_HOST),
     make_span("AfterMCPExecution", agent=CLAUDE, tool="list_merge_requests", session=SESS_CLAUDE_1,
-              start_ns=DAY1 + 9*HOUR + 4*MIN + int(0.8*SEC), duration_ms=3, mcp_server=MCP_GITLAB),
+              start_ns=DAY1 + 9*HOUR + 4*MIN + int(0.8*SEC), duration_ms=3, mcp_server=MCP_CODE_HOST),
     make_span("BeforeMCPExecution", agent=CLAUDE, tool="get_logs", session=SESS_CLAUDE_1,
-              start_ns=DAY1 + 9*HOUR + 4*MIN + 30*SEC, duration_ms=650, mcp_server=MCP_CORALOGIX),
+              start_ns=DAY1 + 9*HOUR + 4*MIN + 30*SEC, duration_ms=650, mcp_server=MCP_OBSERVABILITY),
     make_span("AfterMCPExecution", agent=CLAUDE, tool="get_logs", session=SESS_CLAUDE_1,
-              start_ns=DAY1 + 9*HOUR + 4*MIN + 30*SEC + int(0.65*SEC), duration_ms=4, mcp_server=MCP_CORALOGIX),
+              start_ns=DAY1 + 9*HOUR + 4*MIN + 30*SEC + int(0.65*SEC), duration_ms=4, mcp_server=MCP_OBSERVABILITY),
     make_span("SubagentStart", agent=CLAUDE, session=SESS_CLAUDE_1,
               start_ns=DAY1 + 9*HOUR + 5*MIN, duration_ms=50, subagent_type="explore"),
     make_span("SubagentStop", agent=CLAUDE, session=SESS_CLAUDE_1,
@@ -205,7 +205,7 @@ SESSION_1_SPANS = [
 
 # ---------------------------------------------------------------------------
 # Session 2: Copilot — code review + security (Day 1, afternoon)
-# MCP: mcp-gitlab + mcp-postgres + mcp-wiz + mcp-cloudflare
+# MCP: mcp-code-host + mcp-postgres + mcp-security + mcp-edge
 # ---------------------------------------------------------------------------
 
 SESS_COPILOT_1 = "sess-copilot-review-001"
@@ -222,10 +222,10 @@ SESSION_2_SPANS = [
               start_ns=DAY1 + 14*HOUR + 3*MIN, duration_ms=80),
     make_span("BeforeMCPExecution", agent=COPILOT, model=MODEL_COPILOT, tool="get_merge_request_diff",
               session=SESS_COPILOT_1,
-              start_ns=DAY1 + 14*HOUR + 5*MIN, duration_ms=950, mcp_server=MCP_GITLAB),
+              start_ns=DAY1 + 14*HOUR + 5*MIN, duration_ms=950, mcp_server=MCP_CODE_HOST),
     make_span("AfterMCPExecution", agent=COPILOT, model=MODEL_COPILOT, tool="get_merge_request_diff",
               session=SESS_COPILOT_1,
-              start_ns=DAY1 + 14*HOUR + 5*MIN + SEC, duration_ms=4, mcp_server=MCP_GITLAB),
+              start_ns=DAY1 + 14*HOUR + 5*MIN + SEC, duration_ms=4, mcp_server=MCP_CODE_HOST),
     make_span("BeforeMCPExecution", agent=COPILOT, model=MODEL_COPILOT, tool="query",
               session=SESS_COPILOT_1,
               start_ns=DAY1 + 14*HOUR + 7*MIN, duration_ms=320, mcp_server=MCP_POSTGRES),
@@ -234,23 +234,23 @@ SESSION_2_SPANS = [
               start_ns=DAY1 + 14*HOUR + 7*MIN + int(0.32*SEC), duration_ms=3, mcp_server=MCP_POSTGRES),
     make_span("BeforeMCPExecution", agent=COPILOT, model=MODEL_COPILOT, tool="get_vulnerabilities",
               session=SESS_COPILOT_1,
-              start_ns=DAY1 + 14*HOUR + 8*MIN, duration_ms=1800, mcp_server=MCP_WIZ),
+              start_ns=DAY1 + 14*HOUR + 8*MIN, duration_ms=1800, mcp_server=MCP_SECURITY),
     make_span("AfterMCPExecution", agent=COPILOT, model=MODEL_COPILOT, tool="get_vulnerabilities",
               session=SESS_COPILOT_1,
-              start_ns=DAY1 + 14*HOUR + 8*MIN + int(1.8*SEC), duration_ms=5, mcp_server=MCP_WIZ),
+              start_ns=DAY1 + 14*HOUR + 8*MIN + int(1.8*SEC), duration_ms=5, mcp_server=MCP_SECURITY),
     make_span("BeforeMCPExecution", agent=COPILOT, model=MODEL_COPILOT, tool="list_dns_records",
               session=SESS_COPILOT_1,
-              start_ns=DAY1 + 14*HOUR + 9*MIN, duration_ms=420, mcp_server=MCP_CLOUDFLARE),
+              start_ns=DAY1 + 14*HOUR + 9*MIN, duration_ms=420, mcp_server=MCP_EDGE),
     make_span("AfterMCPExecution", agent=COPILOT, model=MODEL_COPILOT, tool="list_dns_records",
               session=SESS_COPILOT_1,
-              start_ns=DAY1 + 14*HOUR + 9*MIN + int(0.42*SEC), duration_ms=3, mcp_server=MCP_CLOUDFLARE),
+              start_ns=DAY1 + 14*HOUR + 9*MIN + int(0.42*SEC), duration_ms=3, mcp_server=MCP_EDGE),
     make_span("Stop", agent=COPILOT, model=MODEL_COPILOT, session=SESS_COPILOT_1,
               start_ns=DAY1 + 14*HOUR + 12*MIN, duration_ms=4),
 ]
 
 # ---------------------------------------------------------------------------
 # Session 3: Gemini — DB migration + observability (Day 2, morning)
-# MCP: mcp-atlassian + mcp-postgres (x2, one missing after) + mcp-coralogix + mcp-playwright
+# MCP: mcp-issue-tracker + mcp-postgres (x2, one missing after) + mcp-observability + mcp-playwright
 # ---------------------------------------------------------------------------
 
 SESS_GEMINI_1 = "sess-gemini-migration-001"
@@ -261,10 +261,10 @@ SESSION_3_SPANS = [
               input_tokens=2000, output_tokens=900, cache_create_tokens=5000),
     make_span("BeforeMCPExecution", agent=GEMINI, model=MODEL_GEMINI, tool="get_issue",
               session=SESS_GEMINI_1,
-              start_ns=DAY2 + 10*HOUR + 1*MIN, duration_ms=1100, mcp_server=MCP_JIRA),
+              start_ns=DAY2 + 10*HOUR + 1*MIN, duration_ms=1100, mcp_server=MCP_ISSUE_TRACKER),
     make_span("AfterMCPExecution", agent=GEMINI, model=MODEL_GEMINI, tool="get_issue",
               session=SESS_GEMINI_1,
-              start_ns=DAY2 + 10*HOUR + 1*MIN + int(1.1*SEC), duration_ms=4, mcp_server=MCP_JIRA),
+              start_ns=DAY2 + 10*HOUR + 1*MIN + int(1.1*SEC), duration_ms=4, mcp_server=MCP_ISSUE_TRACKER),
     make_span("BeforeMCPExecution", agent=GEMINI, model=MODEL_GEMINI, tool="query",
               session=SESS_GEMINI_1,
               start_ns=DAY2 + 10*HOUR + 3*MIN, duration_ms=250, mcp_server=MCP_POSTGRES),
@@ -286,10 +286,10 @@ SESSION_3_SPANS = [
               start_ns=DAY2 + 10*HOUR + 9*MIN, duration_ms=400, mcp_server=MCP_POSTGRES),
     make_span("BeforeMCPExecution", agent=GEMINI, model=MODEL_GEMINI, tool="get_logs",
               session=SESS_GEMINI_1,
-              start_ns=DAY2 + 10*HOUR + 10*MIN, duration_ms=550, mcp_server=MCP_CORALOGIX),
+              start_ns=DAY2 + 10*HOUR + 10*MIN, duration_ms=550, mcp_server=MCP_OBSERVABILITY),
     make_span("AfterMCPExecution", agent=GEMINI, model=MODEL_GEMINI, tool="get_logs",
               session=SESS_GEMINI_1,
-              start_ns=DAY2 + 10*HOUR + 10*MIN + int(0.55*SEC), duration_ms=4, mcp_server=MCP_CORALOGIX),
+              start_ns=DAY2 + 10*HOUR + 10*MIN + int(0.55*SEC), duration_ms=4, mcp_server=MCP_OBSERVABILITY),
     make_span("BeforeMCPExecution", agent=GEMINI, model=MODEL_GEMINI, tool="browser_navigate",
               session=SESS_GEMINI_1,
               start_ns=DAY2 + 10*HOUR + 11*MIN, duration_ms=2200, mcp_server=MCP_PLAYWRIGHT),
@@ -302,7 +302,7 @@ SESSION_3_SPANS = [
 
 # ---------------------------------------------------------------------------
 # Session 4: Claude — bug fix + security check (Day 2, afternoon)
-# MCP: mcp-wiz
+# MCP: mcp-security
 # Subagents: sprint-daily-review (paired), explore (unpaired = incomplete)
 # ---------------------------------------------------------------------------
 
@@ -317,9 +317,9 @@ SESSION_4_SPANS = [
     make_span("PreToolUse", agent=CLAUDE, tool="Read", session=SESS_CLAUDE_2,
               start_ns=DAY2 + 15*HOUR + 2*MIN, duration_ms=35),
     make_span("BeforeMCPExecution", agent=CLAUDE, tool="get_vulnerabilities", session=SESS_CLAUDE_2,
-              start_ns=DAY2 + 15*HOUR + 2*MIN + 30*SEC, duration_ms=1400, mcp_server=MCP_WIZ),
+              start_ns=DAY2 + 15*HOUR + 2*MIN + 30*SEC, duration_ms=1400, mcp_server=MCP_SECURITY),
     make_span("AfterMCPExecution", agent=CLAUDE, tool="get_vulnerabilities", session=SESS_CLAUDE_2,
-              start_ns=DAY2 + 15*HOUR + 2*MIN + 30*SEC + int(1.4*SEC), duration_ms=4, mcp_server=MCP_WIZ),
+              start_ns=DAY2 + 15*HOUR + 2*MIN + 30*SEC + int(1.4*SEC), duration_ms=4, mcp_server=MCP_SECURITY),
     make_span("SubagentStart", agent=CLAUDE, session=SESS_CLAUDE_2,
               start_ns=DAY2 + 15*HOUR + 3*MIN, duration_ms=40, subagent_type="sprint-daily-review"),
     make_span("SubagentStop", agent=CLAUDE, session=SESS_CLAUDE_2,
@@ -337,8 +337,8 @@ SESSION_4_SPANS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Session 5: Copilot — QA with Playwright + Cloudflare (Day 3, morning)
-# MCP: mcp-playwright (paired) + mcp-cloudflare (missing after = timeout)
+# Session 5: Copilot — QA with Playwright + EdgeProvider (Day 3, morning)
+# MCP: mcp-playwright (paired) + mcp-edge (missing after = timeout)
 # ---------------------------------------------------------------------------
 
 SESS_COPILOT_2 = "sess-copilot-qa-002"
@@ -357,10 +357,10 @@ SESSION_5_SPANS = [
     make_span("AfterMCPExecution", agent=COPILOT, model=MODEL_COPILOT, tool="browser_navigate",
               session=SESS_COPILOT_2,
               start_ns=DAY3 + 8*HOUR + 2*MIN + int(3.1*SEC), duration_ms=5, mcp_server=MCP_PLAYWRIGHT),
-    # Missing AfterMCPExecution — simulates Cloudflare timeout
+    # Missing AfterMCPExecution — simulates EdgeProvider timeout
     make_span("BeforeMCPExecution", agent=COPILOT, model=MODEL_COPILOT, tool="purge_cache",
               session=SESS_COPILOT_2,
-              start_ns=DAY3 + 8*HOUR + 3*MIN, duration_ms=5000, mcp_server=MCP_CLOUDFLARE),
+              start_ns=DAY3 + 8*HOUR + 3*MIN, duration_ms=5000, mcp_server=MCP_EDGE),
     make_span("Stop", agent=COPILOT, model=MODEL_COPILOT, session=SESS_COPILOT_2,
               start_ns=DAY3 + 8*HOUR + 5*MIN, duration_ms=3),
 ]
@@ -377,16 +377,16 @@ SESSION_6_SPANS = [
               input_tokens=2200, output_tokens=1100, cache_create_tokens=6000),
     make_span("BeforeMCPExecution", agent=GEMINI, model=MODEL_GEMINI, tool="create_merge_request",
               session=SESS_GEMINI_2,
-              start_ns=DAY3 + 13*HOUR + 1*MIN, duration_ms=1500, mcp_server=MCP_GITLAB),
+              start_ns=DAY3 + 13*HOUR + 1*MIN, duration_ms=1500, mcp_server=MCP_CODE_HOST),
     make_span("AfterMCPExecution", agent=GEMINI, model=MODEL_GEMINI, tool="create_merge_request",
               session=SESS_GEMINI_2,
-              start_ns=DAY3 + 13*HOUR + 1*MIN + int(1.5*SEC), duration_ms=5, mcp_server=MCP_GITLAB),
+              start_ns=DAY3 + 13*HOUR + 1*MIN + int(1.5*SEC), duration_ms=5, mcp_server=MCP_CODE_HOST),
     make_span("BeforeMCPExecution", agent=GEMINI, model=MODEL_GEMINI, tool="transition_issue",
               session=SESS_GEMINI_2,
-              start_ns=DAY3 + 13*HOUR + 2*MIN, duration_ms=700, mcp_server=MCP_JIRA),
+              start_ns=DAY3 + 13*HOUR + 2*MIN, duration_ms=700, mcp_server=MCP_ISSUE_TRACKER),
     make_span("AfterMCPExecution", agent=GEMINI, model=MODEL_GEMINI, tool="transition_issue",
               session=SESS_GEMINI_2,
-              start_ns=DAY3 + 13*HOUR + 2*MIN + int(0.7*SEC), duration_ms=3, mcp_server=MCP_JIRA),
+              start_ns=DAY3 + 13*HOUR + 2*MIN + int(0.7*SEC), duration_ms=3, mcp_server=MCP_ISSUE_TRACKER),
     make_span("BeforeMCPExecution", agent=GEMINI, model=MODEL_GEMINI, tool="query",
               session=SESS_GEMINI_2,
               start_ns=DAY3 + 13*HOUR + 3*MIN, duration_ms=180, mcp_server=MCP_POSTGRES),
@@ -395,22 +395,22 @@ SESSION_6_SPANS = [
               start_ns=DAY3 + 13*HOUR + 3*MIN + int(0.18*SEC), duration_ms=2, mcp_server=MCP_POSTGRES),
     make_span("BeforeMCPExecution", agent=GEMINI, model=MODEL_GEMINI, tool="get_traces",
               session=SESS_GEMINI_2,
-              start_ns=DAY3 + 13*HOUR + 4*MIN, duration_ms=480, mcp_server=MCP_CORALOGIX),
+              start_ns=DAY3 + 13*HOUR + 4*MIN, duration_ms=480, mcp_server=MCP_OBSERVABILITY),
     make_span("AfterMCPExecution", agent=GEMINI, model=MODEL_GEMINI, tool="get_traces",
               session=SESS_GEMINI_2,
-              start_ns=DAY3 + 13*HOUR + 4*MIN + int(0.48*SEC), duration_ms=3, mcp_server=MCP_CORALOGIX),
+              start_ns=DAY3 + 13*HOUR + 4*MIN + int(0.48*SEC), duration_ms=3, mcp_server=MCP_OBSERVABILITY),
     make_span("BeforeMCPExecution", agent=GEMINI, model=MODEL_GEMINI, tool="list_issues",
               session=SESS_GEMINI_2,
-              start_ns=DAY3 + 13*HOUR + 5*MIN, duration_ms=920, mcp_server=MCP_WIZ),
+              start_ns=DAY3 + 13*HOUR + 5*MIN, duration_ms=920, mcp_server=MCP_SECURITY),
     make_span("AfterMCPExecution", agent=GEMINI, model=MODEL_GEMINI, tool="list_issues",
               session=SESS_GEMINI_2,
-              start_ns=DAY3 + 13*HOUR + 5*MIN + int(0.92*SEC), duration_ms=4, mcp_server=MCP_WIZ),
+              start_ns=DAY3 + 13*HOUR + 5*MIN + int(0.92*SEC), duration_ms=4, mcp_server=MCP_SECURITY),
     make_span("BeforeMCPExecution", agent=GEMINI, model=MODEL_GEMINI, tool="get_zone_settings",
               session=SESS_GEMINI_2,
-              start_ns=DAY3 + 13*HOUR + 6*MIN, duration_ms=350, mcp_server=MCP_CLOUDFLARE),
+              start_ns=DAY3 + 13*HOUR + 6*MIN, duration_ms=350, mcp_server=MCP_EDGE),
     make_span("AfterMCPExecution", agent=GEMINI, model=MODEL_GEMINI, tool="get_zone_settings",
               session=SESS_GEMINI_2,
-              start_ns=DAY3 + 13*HOUR + 6*MIN + int(0.35*SEC), duration_ms=3, mcp_server=MCP_CLOUDFLARE),
+              start_ns=DAY3 + 13*HOUR + 6*MIN + int(0.35*SEC), duration_ms=3, mcp_server=MCP_EDGE),
     make_span("BeforeMCPExecution", agent=GEMINI, model=MODEL_GEMINI, tool="browser_screenshot",
               session=SESS_GEMINI_2,
               start_ns=DAY3 + 13*HOUR + 7*MIN, duration_ms=1800, mcp_server=MCP_PLAYWRIGHT),
@@ -444,16 +444,16 @@ EXPECTED = {
     "PreToolUse": 12,
     "PostToolUseFailure": 1,
     "BeforeMCPExecution": 22,
-    "AfterMCPExecution": 20,  # 2 missing (sess3 postgres, sess5 cloudflare)
+    "AfterMCPExecution": 20,  # 2 missing (sess3 postgres, sess5 edge_provider)
     "SubagentStart": 3,
     "SubagentStop": 2,  # 1 missing (sess4 explore)
     "mcp_servers": {
-        MCP_GITLAB, MCP_JIRA, MCP_POSTGRES,
-        MCP_CORALOGIX, MCP_WIZ, MCP_CLOUDFLARE, MCP_PLAYWRIGHT,
+        MCP_CODE_HOST, MCP_ISSUE_TRACKER, MCP_POSTGRES,
+        MCP_OBSERVABILITY, MCP_SECURITY, MCP_EDGE, MCP_PLAYWRIGHT,
     },
     # Availability gaps
     "mcp_postgres_missing_after": 1,    # sess3
-    "mcp_cloudflare_missing_after": 1,  # sess5
+    "mcp_edge_provider_missing_after": 1,  # sess5
 }
 
 # ---------------------------------------------------------------------------

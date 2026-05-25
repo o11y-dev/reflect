@@ -8,8 +8,8 @@ from conftest import (
     DAY1,
     GEMINI,
     HOUR,
-    MCP_CORALOGIX,
-    MCP_JIRA,
+    MCP_ISSUE_TRACKER,
+    MCP_OBSERVABILITY,
     MODEL_CLAUDE,
     MODEL_COPILOT,
     SEC,
@@ -100,23 +100,23 @@ class TestToolCounting:
 
 class TestMcpTracking:
     def test_mcp_server_counter(self):
-        c = process(make_span("BeforeMCPExecution", tool="get_issue", mcp_server=MCP_JIRA))
-        assert c["mcp_servers"][MCP_JIRA] == 1
+        c = process(make_span("BeforeMCPExecution", tool="get_issue", mcp_server=MCP_ISSUE_TRACKER))
+        assert c["mcp_servers"][MCP_ISSUE_TRACKER] == 1
 
     def test_before_mcp_execution(self):
-        c = process(make_span("BeforeMCPExecution", tool="get_issue", mcp_server=MCP_JIRA))
-        assert c["mcp_server_before"][MCP_JIRA] == 1
-        assert c["mcp_server_after"][MCP_JIRA] == 0
+        c = process(make_span("BeforeMCPExecution", tool="get_issue", mcp_server=MCP_ISSUE_TRACKER))
+        assert c["mcp_server_before"][MCP_ISSUE_TRACKER] == 1
+        assert c["mcp_server_after"][MCP_ISSUE_TRACKER] == 0
 
     def test_after_mcp_execution(self):
-        c = process(make_span("AfterMCPExecution", tool="get_issue", mcp_server=MCP_JIRA))
-        assert c["mcp_server_after"][MCP_JIRA] == 1
-        assert c["mcp_server_before"][MCP_JIRA] == 0
+        c = process(make_span("AfterMCPExecution", tool="get_issue", mcp_server=MCP_ISSUE_TRACKER))
+        assert c["mcp_server_after"][MCP_ISSUE_TRACKER] == 1
+        assert c["mcp_server_before"][MCP_ISSUE_TRACKER] == 0
 
     def test_mcp_server_short_name_unchanged(self):
         # Short server names are stored as-is
-        c = process(make_span("BeforeMCPExecution", mcp_server=MCP_CORALOGIX))
-        assert MCP_CORALOGIX in c["mcp_servers"]
+        c = process(make_span("BeforeMCPExecution", mcp_server=MCP_OBSERVABILITY))
+        assert MCP_OBSERVABILITY in c["mcp_servers"]
 
     def test_mcp_server_path_shortened(self):
         # Path-style names longer than 60 chars have last segment extracted
@@ -128,18 +128,18 @@ class TestMcpTracking:
         assert key == "mcp-server-tool"
 
     def test_mcp_remote_url_is_normalized_without_secrets(self):
-        raw = "npx mcp-remote https://api.coralogix.us/mgmt/api/v1/mcp --header Authorization:${CORALOGIX_API_KEY} --verbose"
+        raw = "npx mcp-remote https://metrics.example.test/mgmt/api/v1/mcp --header Authorization:${MCP_API_KEY} --verbose"
         c = process(make_span("BeforeMCPExecution", mcp_server=raw))
-        assert c["mcp_servers"]["mcp-coralogix-us"] == 1
+        assert c["mcp_servers"]["mcp-metrics"] == 1
         assert raw not in c["mcp_servers"]
 
-    def test_docker_atlassian_command_collapses_to_stable_name(self):
+    def test_docker_issue_tracker_command_collapses_to_stable_name(self):
         raw = (
-            "docker run --rm -i -e JIRA_URL=https://ridewithvia.atlassian.net "
-            "-e JIRA_API_TOKEN=secret ghcr.io/sooperset/mcp-atlassian:latest"
+            "docker run --rm -i -e TRACKER_URL=https://tracker.example.test "
+            "-e TRACKER_API_TOKEN=secret ghcr.io/example/mcp-issue-tracker:latest"
         )
         c = process(make_span("BeforeMCPExecution", mcp_server=raw))
-        assert c["mcp_servers"]["mcp-atlassian"] == 1
+        assert c["mcp_servers"]["mcp-issue-tracker"] == 1
         assert raw not in c["mcp_servers"]
 
 
@@ -268,8 +268,8 @@ class TestAgentStats:
         assert c["agents"][CLAUDE].tools_by_count["Edit"] == 1
 
     def test_agent_mcp_tracked(self):
-        c = process(make_span("BeforeMCPExecution", agent=CLAUDE, mcp_server=MCP_CORALOGIX))
-        assert c["agents"][CLAUDE].mcp_servers[MCP_CORALOGIX] == 1
+        c = process(make_span("BeforeMCPExecution", agent=CLAUDE, mcp_server=MCP_OBSERVABILITY))
+        assert c["agents"][CLAUDE].mcp_servers[MCP_OBSERVABILITY] == 1
 
     def test_agent_tokens_tracked(self):
         c = process(make_span("UserPromptSubmit", agent=GEMINI,

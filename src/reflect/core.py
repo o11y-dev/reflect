@@ -43,6 +43,7 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 import zipfile
 from datetime import UTC, datetime
 from importlib import metadata as importlib_metadata
@@ -1011,6 +1012,17 @@ def main(
     default=None,
     help="Also save a markdown report to this file.",
 )
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+    help="SQLite store used for SQL-backed browser report endpoints.",
+)
+@click.option(
+    "--sql-only",
+    is_flag=True,
+    help="Serve report data from SQLite only; temporary migration guard for removing legacy dashboard JSON.",
+)
 def report(
     otlp_traces: Path | None,
     sessions_dir: Path | None,
@@ -1019,21 +1031,78 @@ def report(
     demo: bool,
     dashboard_artifact: Path | None,
     output: Path | None,
+    db_path: Path,
+    sql_only: bool,
 ) -> None:
     """Open the AI usage dashboard in a browser via a local server."""
-    stats, _, sessions_dir, spans_dir, _, _ = _resolve_and_analyze(
-        otlp_traces=otlp_traces,
-        sessions_dir=sessions_dir,
-        spans_dir=spans_dir,
-        demo=demo,
-        time_range=time_range,
-    )
-    if dashboard_artifact is not None:
+    if sql_only:
+        from collections import Counter
+
+        from reflect.dashboard import _sql_only_dashboard_payload
+
+        include_native_sessions = False
+        if demo:
+            demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
+            if not demo_traces.exists():
+                demo_traces = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
+            otlp_traces = demo_traces if demo_traces.exists() else otlp_traces
+        elif otlp_traces is None:
+            otlp_traces = _default_otlp_traces()
+            include_native_sessions = True
+        else:
+            default_otlp = _default_otlp_traces()
+            include_native_sessions = (
+                default_otlp is not None
+                and otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
+            )
+        preparation = _prepare_sql_report_db(
+            db_path,
+            otlp_traces=otlp_traces,
+            include_native_sessions=include_native_sessions,
+        )
+        click.echo(
+            "Prepared SQLite report store "
+            f"(inserted={preparation['ingest']['inserted']}, "
+            f"skipped={preparation['ingest']['skipped']}, "
+            f"normalized={preparation['normalize']['processed']}, "
+            f"sessions={preparation['rollups']['session_rollups']})"
+        )
+        ingest_sources = preparation.get("ingest_sources") or {}
+        if ingest_sources:
+            source_parts = [
+                f"{name}: inserted={result['inserted']} skipped={result['skipped']}"
+                for name, result in ingest_sources.items()
+            ]
+            click.echo("SQL ingest sources: " + "; ".join(source_parts))
+        stats = TelemetryStats(
+            session_files=0,
+            span_files=0,
+            total_events=0,
+            events_by_type=Counter(),
+            events_by_file={},
+        )
+        if output is not None:
+            raise click.ClickException("--sql-only does not support legacy markdown report output")
+        if dashboard_artifact is not None:
+            dashboard_artifact.parent.mkdir(parents=True, exist_ok=True)
+            dashboard_artifact.write_text(
+                _json_stdlib.dumps(_sql_only_dashboard_payload(db_path)),
+                encoding="utf-8",
+            )
+    else:
+        stats, _, sessions_dir, spans_dir, _, _ = _resolve_and_analyze(
+            otlp_traces=otlp_traces,
+            sessions_dir=sessions_dir,
+            spans_dir=spans_dir,
+            demo=demo,
+            time_range=time_range,
+        )
+    if dashboard_artifact is not None and not sql_only:
         _write_dashboard_artifact(stats, dashboard_artifact)
-    if output is not None:
+    if output is not None and not sql_only:
         render_report(stats, sessions_dir, spans_dir, output)
         print(f"Report saved to: {output}")
-    _start_publish_server(stats)
+    _start_publish_server(stats, db_path=db_path, sql_only=sql_only)
 
 
 # ---------------------------------------------------------------------------
@@ -1579,22 +1648,94 @@ def _snapshot_detected_agent_configs(console, agents: list[dict]) -> None:
     _instrumentation_snapshot_detected_agent_configs(console, agents, reflect_home=REFLECT_HOME)
 
 
-def _run_setup(console) -> None:
+def _run_setup(
+    console,
+    *,
+    capture_text: bool | None = None,
+    mask_captured_text: bool = True,
+    text_max_chars: int | None = None,
+) -> None:
     _instrumentation_run_setup(
         console,
         reflect_home=REFLECT_HOME,
         hook_home=HOOK_HOME,
         detect_agents=_detect_agents,
         distribute_skills=_distribute_skills,
+        capture_text=capture_text,
+        mask_captured_text=mask_captured_text,
+        text_max_chars=text_max_chars,
     )
 
 
 @main.command()
-def setup() -> None:
+@click.option(
+    "--capture-text/--no-capture-text",
+    default=None,
+    help=(
+        "Opt in or out of storing prompt/response text in hook spans. "
+        "Omit to preserve the existing hook setting; default hook behavior is off."
+    ),
+)
+@click.option(
+    "--text-capture-mode",
+    type=click.Choice(["metadata", "masked", "full"], case_sensitive=False),
+    default=None,
+    help=(
+        "Non-interactive setup choice for local/private hook storage: "
+        "metadata=no text, masked=text with redaction, full=unmasked text."
+    ),
+)
+@click.option(
+    "--mask-captured-text/--no-mask-captured-text",
+    default=True,
+    show_default=True,
+    help="Mask emails, tokens, and home paths when --capture-text is enabled.",
+)
+@click.option(
+    "--text-max-chars",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Maximum characters of captured prompt/response text per event.",
+)
+def setup(
+    capture_text: bool | None,
+    text_capture_mode: str | None,
+    mask_captured_text: bool,
+    text_max_chars: int | None,
+) -> None:
     """Install opentelemetry-hooks, configure local data export, and suggest agent enablement."""
     from rich.console import Console
     console = Console(force_terminal=True)
-    _run_setup(console)
+    if text_capture_mode:
+        mode = text_capture_mode.lower()
+        capture_text = mode != "metadata"
+        mask_captured_text = mode == "masked"
+    elif capture_text is None and sys.stdin.isatty():
+        console.print("\n[bold]Prompt/response text capture[/]")
+        console.print("[dim]All reflect setup data is stored locally on this machine; no hosted service receives it.[/]")
+        console.print("  [bold]1[/] Metadata only — tokens, models, lengths, and hashes; no prompt/response text.")
+        console.print("  [bold]2[/] Masked text — local prompt/response text with email/token/home-path masking.")
+        console.print("  [bold]3[/] Full text — local unmasked prompt/response text.")
+        choice = click.prompt(
+            "Choose capture mode",
+            type=click.Choice(["1", "2", "3"]),
+            default="1",
+            show_choices=False,
+        )
+        if choice == "1":
+            capture_text = False
+        elif choice == "2":
+            capture_text = True
+            mask_captured_text = True
+        else:
+            capture_text = True
+            mask_captured_text = False
+    _run_setup(
+        console,
+        capture_text=capture_text,
+        mask_captured_text=mask_captured_text,
+        text_max_chars=text_max_chars,
+    )
 
 
 @main.command()
@@ -1938,6 +2079,336 @@ def gateway_status() -> None:
     console.print(f"  traces: {status['traces_path']} ({_summarize_file(Path(status['traces_path']))})")
     console.print(f"  logs:   {status['logs_path']} ({_summarize_file(Path(status['logs_path']))})")
     console.print(f"  log:    {status['log_file']}")
+
+
+@main.group()
+def db() -> None:
+    """SQLite store management commands."""
+
+
+def _ingest_into_db(
+    *,
+    db_path: Path,
+    otlp_traces: Path | None = None,
+    spans_file: Path | None = None,
+) -> dict[str, int]:
+    from reflect.store.ingest import ingest_local_spans_file, ingest_otlp_traces_file
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+
+    if (otlp_traces is None) == (spans_file is None):
+        raise click.ClickException("Pass exactly one of --otlp or --spans-file")
+
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        if otlp_traces is not None:
+            result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
+        else:
+            result = ingest_local_spans_file(conn, file_path=spans_file)
+    finally:
+        conn.close()
+    return result
+
+
+def _prepare_sql_report_db(
+    db_path: Path,
+    *,
+    otlp_traces: Path | None,
+    include_native_sessions: bool = False,
+) -> dict[str, object]:
+    from reflect.store.graph_normalize import rebuild_graph
+    from reflect.store.ingest import (
+        ingest_native_session_file,
+        ingest_otlp_logs_file,
+        ingest_otlp_traces_file,
+    )
+    from reflect.store.migrate import migrate
+    from reflect.store.normalize import normalize_pending_raw_events
+    from reflect.store.rollups import rebuild_rollups
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    try:
+        applied = migrate(conn)
+        ingest_result = {"inserted": 0, "skipped": 0}
+        ingest_sources: dict[str, dict[str, int]] = {}
+        if otlp_traces is not None and otlp_traces.exists():
+            traces_result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
+            ingest_sources["otlp_traces"] = traces_result
+            ingest_result["inserted"] += traces_result["inserted"]
+            ingest_result["skipped"] += traces_result["skipped"]
+            otlp_logs = _infer_otlp_logs_file(otlp_traces)
+            if otlp_logs is not None and otlp_logs.exists():
+                logs_result = ingest_otlp_logs_file(conn, file_path=otlp_logs)
+                ingest_sources["otlp_logs"] = logs_result
+                ingest_result["inserted"] += logs_result["inserted"]
+                ingest_result["skipped"] += logs_result["skipped"]
+        if include_native_sessions:
+            native_result = {"inserted": 0, "skipped": 0}
+            for agent, session_file in _discover_rich_session_files():
+                result = ingest_native_session_file(
+                    conn,
+                    file_path=session_file,
+                    agent=agent,
+                    skip_existing_sessions=True,
+                )
+                native_result["inserted"] += result["inserted"]
+                native_result["skipped"] += result["skipped"]
+            if native_result["inserted"] or native_result["skipped"]:
+                ingest_sources["native_sessions"] = native_result
+                ingest_result["inserted"] += native_result["inserted"]
+                ingest_result["skipped"] += native_result["skipped"]
+        normalize_result = normalize_pending_raw_events(conn)
+        _reprice_sql_store(conn)
+        graph_result = rebuild_graph(conn)
+        rollup_result = rebuild_rollups(conn)
+    finally:
+        conn.close()
+    return {
+        "applied_migrations": applied,
+        "ingest": ingest_result,
+        "ingest_sources": ingest_sources,
+        "normalize": normalize_result,
+        "graph": graph_result,
+        "rollups": rollup_result,
+    }
+
+
+def _reprice_sql_store(conn) -> None:
+    from reflect.config import load_model_aliases
+    from reflect.pricing import calculate_cost, load_pricing_table
+
+    pricing_table = load_pricing_table()
+    aliases = load_model_aliases()
+    import sqlite3
+
+    previous_row_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+              id,
+              session_id,
+              COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) AS model,
+              input_tokens,
+              output_tokens,
+              cache_creation_input_tokens,
+              cache_read_input_tokens
+            FROM llm_calls
+            """
+        ).fetchall()
+        session_costs: dict[str, float] = {}
+        for row in rows:
+            breakdown = calculate_cost(
+                {
+                    "input": row["input_tokens"],
+                    "output": row["output_tokens"],
+                    "cache_creation": row["cache_creation_input_tokens"],
+                    "cache_read": row["cache_read_input_tokens"],
+                },
+                row["model"] or "",
+                pricing_table,
+                aliases=aliases,
+            )
+            conn.execute(
+                """
+                UPDATE llm_calls
+                SET estimated_cost_usd = ?
+                WHERE id = ?
+                """,
+                (
+                    breakdown.total_cost_usd,
+                    row["id"],
+                ),
+            )
+            session_costs[row["session_id"]] = session_costs.get(row["session_id"], 0.0) + breakdown.total_cost_usd
+        timestamp = datetime.now(tz=UTC).isoformat()
+        for session_id, total_cost in session_costs.items():
+            conn.execute(
+                "UPDATE sessions SET estimated_cost_usd = ?, updated_at = ? WHERE id = ?",
+                (total_cost, timestamp, session_id),
+            )
+        conn.commit()
+    finally:
+        conn.row_factory = previous_row_factory
+
+
+@main.command("ingest")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+@click.option("--otlp", "otlp_traces", type=click.Path(path_type=Path), default=None, help="Path to OTLP traces JSONL export file.")
+@click.option("--spans-file", type=click.Path(path_type=Path), default=None, help="Path to local hook spans JSONL file.")
+def ingest(db_path: Path, otlp_traces: Path | None, spans_file: Path | None) -> None:
+    """Ingest telemetry records into raw_events."""
+    source_path = otlp_traces or spans_file
+    result = _ingest_into_db(db_path=db_path, otlp_traces=otlp_traces, spans_file=spans_file)
+    click.echo(
+        f"Ingested {source_path} -> {db_path} (inserted={result['inserted']}, skipped={result['skipped']})"
+    )
+
+
+@db.command("ingest-otlp")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+@click.option("--otlp-traces", type=click.Path(path_type=Path), required=True, help="Path to OTLP traces JSONL export file.")
+def db_ingest(db_path: Path, otlp_traces: Path) -> None:
+    """Ingest OTLP traces JSONL into raw_events with source/hash dedupe (legacy alias)."""
+    result = _ingest_into_db(db_path=db_path, otlp_traces=otlp_traces)
+    click.echo(
+        f"Ingested {otlp_traces} -> {db_path} (inserted={result['inserted']}, skipped={result['skipped']})"
+    )
+
+
+@db.command("ingest-spans")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+@click.option("--spans-file", type=click.Path(path_type=Path), required=True, help="Path to local hook spans JSONL file.")
+def db_ingest_spans(db_path: Path, spans_file: Path) -> None:
+    """Ingest local hook spans JSONL into raw_events with source/hash dedupe."""
+    result = _ingest_into_db(db_path=db_path, spans_file=spans_file)
+    click.echo(
+        f"Ingested {spans_file} -> {db_path} (inserted={result['inserted']}, skipped={result['skipped']})"
+    )
+
+
+@db.command("normalize")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+@click.option("--limit", type=int, default=None, help="Maximum pending raw_events to normalize.")
+def db_normalize(db_path: Path, limit: int | None) -> None:
+    """Normalize pending raw_events into canonical SQLite tables."""
+    from reflect.store.migrate import migrate
+    from reflect.store.normalize import normalize_pending_raw_events
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        result = normalize_pending_raw_events(conn, limit=limit)
+    finally:
+        conn.close()
+    click.echo(
+        "Normalized raw_events "
+        f"(processed={result['processed']}, failed={result['failed']}, skipped={result['skipped']})"
+    )
+
+
+@db.command("rebuild-graph")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+def db_rebuild_graph(db_path: Path) -> None:
+    """Rebuild graph_nodes and graph_edges from canonical SQLite tables."""
+    from reflect.store.graph_normalize import rebuild_graph
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        result = rebuild_graph(conn)
+    finally:
+        conn.close()
+    click.echo(f"Rebuilt graph (nodes={result['nodes']}, edges={result['edges']})")
+
+
+@db.command("rebuild-rollups")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+def db_rebuild_rollups(db_path: Path) -> None:
+    """Rebuild aggregate rollup tables from canonical SQLite tables."""
+    from reflect.store.migrate import migrate
+    from reflect.store.rollups import rebuild_rollups
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        result = rebuild_rollups(conn)
+    finally:
+        conn.close()
+    click.echo(
+        "Rebuilt rollups "
+        f"(sessions={result['session_rollups']}, days={result['daily_rollups']}, tools={result['tool_rollups']})"
+    )
+
+
+@db.command("migrate")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+def db_migrate(db_path: Path) -> None:
+    """Apply pending SQLite migrations."""
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    try:
+        applied = migrate(conn)
+    finally:
+        conn.close()
+
+    if not applied:
+        click.echo(f"No pending migrations for {db_path}")
+        return
+    click.echo(f"Applied migrations to {db_path}: {', '.join(str(v) for v in applied)}")
+
+
+@db.command("doctor")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+def db_doctor(db_path: Path) -> None:
+    """Inspect SQLite store migration, pragma, and foreign-key health."""
+    from reflect.store.doctor import inspect_database
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    try:
+        status = inspect_database(conn)
+    finally:
+        conn.close()
+
+    click.echo(f"SQLite DB: {db_path}")
+    applied = ", ".join(str(version) for version in status["applied_migrations"]) or "none"
+    expected = ", ".join(str(version) for version in status["expected_migrations"]) or "none"
+    click.echo(f"Migrations: applied={applied}; expected={expected}")
+    if status["pending_migrations"]:
+        pending = ", ".join(str(version) for version in status["pending_migrations"])
+        click.echo(f"Pending migrations: {pending}")
+    if status["unknown_migrations"]:
+        unknown = ", ".join(str(version) for version in status["unknown_migrations"])
+        click.echo(f"Unknown migrations: {unknown}")
+
+    foreign_key_issues = status["foreign_key_issues"]
+    if foreign_key_issues:
+        click.echo(f"Foreign keys: {len(foreign_key_issues)} issue(s)")
+    else:
+        click.echo("Foreign keys: ok")
+
+    pragmas = status["pragmas"]
+    click.echo(
+        "Pragmas: "
+        f"foreign_keys={pragmas['foreign_keys']}, "
+        f"journal_mode={pragmas['journal_mode']}, "
+        f"synchronous={pragmas['synchronous']}, "
+        f"wal_autocheckpoint={pragmas['wal_autocheckpoint']}, "
+        f"busy_timeout={pragmas['busy_timeout']}"
+    )
+    if status["ok"]:
+        click.echo("SQLite store health: ok")
+        return
+
+    click.echo("SQLite store health: needs attention")
+    raise click.ClickException("SQLite store health checks failed")
+
+
+@main.group()
+def schema() -> None:
+    """Schema and model tooling."""
+
+
+@schema.command("export")
+@click.option("--output", type=click.Path(path_type=Path), required=True)
+def schema_export(output: Path) -> None:
+    """Export Pydantic JSON Schema for core models."""
+    from reflect.schema.events import RawEvent
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"$schema": "https://json-schema.org/draft/2020-12/schema", "definitions": {"RawEvent": RawEvent.model_json_schema()}}
+    output.write_text(_json_stdlib.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    click.echo(f"Wrote schema to {output}")
 
 
 if __name__ == "__main__":

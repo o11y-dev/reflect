@@ -62,6 +62,22 @@ def test_dashboard_html_hides_demo_badge_for_local_api_reports(path: Path):
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_html_shows_branded_loader_during_report_fetch(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert 'id="report-loader"' in text
+    assert 'class="loader-mark"' in text
+    assert "loader-orbit" in text
+    assert "function showReportLoader(message)" in text
+    assert "function hideReportLoader()" in text
+    assert "showReportLoader();" in text
+    assert "showReportLoader('Filtering sessions...');" in text
+    assert "hideReportLoader();" in text
+    assert "animation:loader-float" in text
+    assert "animation:loader-spin" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_html_builds_agent_filters_from_data_without_allowlist(path: Path):
     text = path.read_text(encoding="utf-8")
 
@@ -70,7 +86,15 @@ def test_dashboard_html_builds_agent_filters_from_data_without_allowlist(path: P
     assert "AGENT_COLORS" not in text
     assert "function colorForAgent(agent)" in text
     assert "function formatAgentLabel(agent)" in text
-    assert "pill.textContent = formatAgentLabel(a);" in text
+    assert "function agentIconSvg(agent)" in text
+    assert "D.agent_comparison || []" in text
+    assert "Object.keys(D.models_by_count || {})" in text
+    assert "D.unique_sessions || sessions.length" in text
+    assert "fetch(reportUrlWithCurrentFilters()" in text
+    assert "const hasScopeFilter = Boolean" in text
+    assert "urlParams.delete('session');" in text
+    assert "selectedIdx = filtered[0]._idx;" in text
+    assert "pill.innerHTML =" in text
     assert "const agentName = formatAgentLabel(s.agent);" in text
     assert "const agentName = formatAgentLabel(session.agent);" in text
     assert "${escHtml(agentName)}" in text
@@ -86,6 +110,61 @@ def test_dashboard_tools_tab_spaces_event_distribution_from_top_widgets(path: Pa
     assert ".tools-summary-grid{" in text
     assert "margin-bottom:18px" in text
     assert '<div class="tools-summary-grid">' in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_html_wires_sql_data_tab_surfaces(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert 'data-tab="data">Data</button>' in text
+    assert 'id="tab-data"' in text
+    assert 'id="sql-specs-panel"' in text
+    assert 'id="sql-memory-panel"' in text
+    assert 'id="sql-privacy-panel"' in text
+    assert 'id="sql-exports-panel"' in text
+    assert "function renderSqlTabPayloads()" in text
+    assert "const tabs = (D.sqlite && D.sqlite.tabs) || {};" in text
+    assert "tabs.specs" in text
+    assert "tabs.memory" in text
+    assert "tabs.privacy" in text
+    assert "tabs.exports" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_html_prefers_sql_tab_payloads_for_existing_tabs(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "function sqlTab(name)" in text
+    assert "const activityTab = sqlTab('activity');" in text
+    assert "activityTab.activity_by_day || D.activity_by_day || {}" in text
+    assert "sqlTab('activity').tool_percentiles" not in text
+    assert "toolsTab.tools_by_count || D.tools_by_count || {}" in text
+    assert "mcpTab.mcp_server_before || D.mcp_server_before || {}" in text
+    assert "sqlTab('graphs').graph_tool_transitions || D.graph_tool_transitions || []" in text
+    assert "sqlTab('graphs').graph_dep || D.graph_dep" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_conversation_rail_aligns_prompt_response_markers(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert ".chat-msg .ev-rail{" in text
+    assert "display:flex" in text
+    assert "align-items:center" in text
+    assert ".chat-msg .ev-dot{" in text
+    assert "position:static" in text
+    assert "width:9px" in text
+    assert ".chat-msg .ev-ts{font-size:11px;line-height:1}" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_telemetry_tree_only_infers_parents_inside_real_traces(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "const traceKey = span.trace_id || '';" in text
+    assert "if (!visualParent && traceKey && stack.length)" in text
+    assert "if (traceKey) {" in text
+    assert "const traceKey = span.trace_id || '__trace__';" not in text
 
 
 def test_public_showcase_demo_includes_codex_agent():

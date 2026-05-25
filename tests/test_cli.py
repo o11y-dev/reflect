@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import sqlite3
 import tomllib
 from datetime import datetime
 from unittest.mock import patch
@@ -69,6 +70,164 @@ class TestHelp:
         assert result.exit_code == 0
         assert "Usage" in result.output
 
+    def test_db_doctor_help(self, runner):
+        result = runner.invoke(main, ["db", "doctor", "--help"])
+        assert result.exit_code == 0
+        assert "doctor" in result.output.lower() or "Usage" in result.output
+
+    def test_db_doctor_reports_healthy_store(self, runner, tmp_path):
+        db_path = tmp_path / "reflect.db"
+        migrate_result = runner.invoke(main, ["db", "migrate", "--db-path", str(db_path)])
+        assert migrate_result.exit_code == 0
+
+        result = runner.invoke(main, ["db", "doctor", "--db-path", str(db_path)])
+
+        assert result.exit_code == 0
+        assert "SQLite store health: ok" in result.output
+        assert "Foreign keys: ok" in result.output
+
+    def test_db_doctor_fails_for_pending_migrations(self, runner, tmp_path):
+        db_path = tmp_path / "reflect.db"
+
+        result = runner.invoke(main, ["db", "doctor", "--db-path", str(db_path)])
+
+        assert result.exit_code != 0
+        assert "Pending migrations: 1, 2, 3, 4" in result.output
+        assert "SQLite store health: needs attention" in result.output
+
+    def test_ingest_requires_one_source(self, runner, tmp_path):
+        db_path = tmp_path / "reflect.db"
+
+        result = runner.invoke(main, ["ingest", "--db-path", str(db_path)])
+
+        assert result.exit_code != 0
+        assert "Pass exactly one of --otlp or --spans-file" in result.output
+
+    def test_ingest_spans_file(self, runner, tmp_path):
+        db_path = tmp_path / "reflect.db"
+        spans_file = tmp_path / "spans.jsonl"
+        spans_file.write_text(json.dumps({
+            "name": "PreToolUse",
+            "traceId": "trace-1",
+            "spanId": "span-1",
+            "start_time_ns": 100,
+            "end_time_ns": 200,
+            "attributes": {"gen_ai.client.session_id": "sess-cli"},
+        }) + "\n")
+
+        result = runner.invoke(main, [
+            "ingest",
+            "--db-path", str(db_path),
+            "--spans-file", str(spans_file),
+        ])
+
+        assert result.exit_code == 0
+        assert "inserted=1" in result.output
+
+    def test_db_ingest_spans_alias(self, runner, tmp_path):
+        db_path = tmp_path / "reflect.db"
+        spans_file = tmp_path / "spans.jsonl"
+        spans_file.write_text(json.dumps({
+            "name": "SessionStart",
+            "traceId": "trace-2",
+            "spanId": "span-2",
+            "start_time_ns": 100,
+            "end_time_ns": 200,
+            "attributes": {"session.id": "sess-db-cli"},
+        }) + "\n")
+
+        result = runner.invoke(main, [
+            "db", "ingest-spans",
+            "--db-path", str(db_path),
+            "--spans-file", str(spans_file),
+        ])
+
+        assert result.exit_code == 0
+        assert "inserted=1" in result.output
+
+    def test_db_normalize(self, runner, tmp_path):
+        db_path = tmp_path / "reflect.db"
+        spans_file = tmp_path / "spans.jsonl"
+        spans_file.write_text(json.dumps({
+            "name": "UserPromptSubmit",
+            "traceId": "trace-3",
+            "spanId": "span-3",
+            "start_time_ns": 100,
+            "end_time_ns": 200,
+            "attributes": {
+                "gen_ai.client.name": "claude",
+                "gen_ai.client.session_id": "sess-normalize",
+                "gen_ai.request.model": "claude-4.6-opus",
+            },
+        }) + "\n")
+        ingest_result = runner.invoke(main, [
+            "ingest",
+            "--db-path", str(db_path),
+            "--spans-file", str(spans_file),
+        ])
+        assert ingest_result.exit_code == 0
+
+        result = runner.invoke(main, ["db", "normalize", "--db-path", str(db_path)])
+
+        assert result.exit_code == 0
+        assert "processed=1" in result.output
+
+    def test_db_rebuild_graph(self, runner, tmp_path):
+        db_path = tmp_path / "reflect.db"
+        spans_file = tmp_path / "spans.jsonl"
+        spans_file.write_text(json.dumps({
+            "name": "PreToolUse",
+            "traceId": "trace-4",
+            "spanId": "span-4",
+            "start_time_ns": 100,
+            "end_time_ns": 200,
+            "attributes": {
+                "gen_ai.client.name": "claude",
+                "gen_ai.client.session_id": "sess-graph-cli",
+                "gen_ai.client.tool_name": "Read",
+            },
+        }) + "\n")
+        assert runner.invoke(main, [
+            "ingest",
+            "--db-path", str(db_path),
+            "--spans-file", str(spans_file),
+        ]).exit_code == 0
+        assert runner.invoke(main, ["db", "normalize", "--db-path", str(db_path)]).exit_code == 0
+
+        result = runner.invoke(main, ["db", "rebuild-graph", "--db-path", str(db_path)])
+
+        assert result.exit_code == 0
+        assert "Rebuilt graph" in result.output
+        assert "nodes=" in result.output
+
+    def test_db_rebuild_rollups(self, runner, tmp_path):
+        db_path = tmp_path / "reflect.db"
+        spans_file = tmp_path / "spans.jsonl"
+        spans_file.write_text(json.dumps({
+            "name": "PreToolUse",
+            "traceId": "trace-5",
+            "spanId": "span-5",
+            "start_time_ns": 100,
+            "end_time_ns": 200,
+            "attributes": {
+                "gen_ai.client.name": "claude",
+                "gen_ai.client.session_id": "sess-rollup-cli",
+                "gen_ai.client.tool_name": "Read",
+            },
+        }) + "\n")
+        assert runner.invoke(main, [
+            "ingest",
+            "--db-path", str(db_path),
+            "--spans-file", str(spans_file),
+        ]).exit_code == 0
+        assert runner.invoke(main, ["db", "normalize", "--db-path", str(db_path)]).exit_code == 0
+
+        result = runner.invoke(main, ["db", "rebuild-rollups", "--db-path", str(db_path)])
+
+        assert result.exit_code == 0
+        assert "Rebuilt rollups" in result.output
+        assert "sessions=1" in result.output
+
 
 class TestTerminalMode:
     def test_default_terminal_mode(self, runner, otlp_file, tmp_path):
@@ -99,14 +258,90 @@ class TestTerminalMode:
 class TestReportSubcommand:
     def test_report_starts_server(self, runner, otlp_file, tmp_path):
         with patch("reflect.core._start_publish_server") as mock_server:
+            db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "report",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
+                "--db-path", str(db_path),
             ])
         assert result.exit_code == 0
-        mock_server.assert_called_once()
+        assert mock_server.call_args.kwargs["db_path"] == db_path
+        assert mock_server.call_args.kwargs["sql_only"] is False
+
+    def test_report_sql_only_passes_migration_guard(self, runner, otlp_file, tmp_path):
+        with patch("reflect.core._start_publish_server") as mock_server, \
+             patch("reflect.core._resolve_and_analyze", side_effect=AssertionError("legacy analysis")):
+            db_path = tmp_path / "reflect.db"
+            result = runner.invoke(main, [
+                "report",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+                "--db-path", str(db_path),
+                "--sql-only",
+            ])
+        assert result.exit_code == 0
+        assert "Prepared SQLite report store" in result.output
+        assert mock_server.call_args.kwargs["db_path"] == db_path
+        assert mock_server.call_args.kwargs["sql_only"] is True
+        conn = sqlite3.connect(db_path)
+        try:
+            assert conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0] > 0
+            assert conn.execute("SELECT COALESCE(SUM(total_cost), 0) FROM session_rollups").fetchone()[0] > 0
+        finally:
+            conn.close()
+
+    def test_report_sql_only_ingests_inferred_otlp_logs(self, runner, tmp_path):
+        otlp_file = tmp_path / "otel-traces.json"
+        otlp_file.write_text(json.dumps({"resourceSpans": []}) + "\n", encoding="utf-8")
+        (tmp_path / "otel-logs.json").write_text(json.dumps({
+            "resourceLogs": [{
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "codex_cli_rs"}},
+                    ],
+                },
+                "scopeLogs": [{
+                    "logRecords": [{
+                        "timeUnixNano": "1000",
+                        "attributes": [
+                            {"key": "event.name", "value": {"stringValue": "codex.user_prompt"}},
+                            {"key": "event.timestamp", "value": {"stringValue": "2026-03-24T10:00:01Z"}},
+                            {"key": "conversation.id", "value": {"stringValue": "codex-sql-log-session"}},
+                            {"key": "model", "value": {"stringValue": "gpt-5.5"}},
+                            {"key": "prompt", "value": {"stringValue": "[REDACTED]"}},
+                        ],
+                    }],
+                }],
+            }],
+        }) + "\n", encoding="utf-8")
+
+        with patch("reflect.core._start_publish_server"):
+            db_path = tmp_path / "reflect.db"
+            result = runner.invoke(main, [
+                "report",
+                "--otlp-traces", str(otlp_file),
+                "--db-path", str(db_path),
+                "--sql-only",
+            ])
+
+        assert result.exit_code == 0
+        assert "SQL ingest sources: otlp_traces: inserted=0 skipped=0; otlp_logs: inserted=1 skipped=0" in result.output
+        conn = sqlite3.connect(db_path)
+        try:
+            row = conn.execute(
+                """
+                SELECT a.name, s.id, sr.prompt_count
+                FROM sessions s
+                JOIN agents a ON a.id = s.agent_id
+                JOIN session_rollups sr ON sr.session_id = s.id
+                """
+            ).fetchone()
+            assert row == ("codex", "codex-sql-log-session", 1)
+        finally:
+            conn.close()
 
     def test_report_with_output_saves_markdown(self, runner, otlp_file, tmp_path):
         with patch("reflect.core._start_publish_server"), \
@@ -977,6 +1212,93 @@ class TestSetup:
         assert written["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://localhost:4317"
         # IDE_OTEL_LOCAL_SPANS must be forced to "true"
         assert written["IDE_OTEL_LOCAL_SPANS"] == "true"
+        assert "IDE_OTEL_CAPTURE_TEXT" not in written
+
+    def test_setup_can_opt_into_masked_text_capture(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        home_dir = tmp_path / "home"
+        hook_home.mkdir(parents=True)
+
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call"), \
+             patch("reflect.core._distribute_skills"), \
+             patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
+            result = runner.invoke(main, ["setup", "--capture-text"])
+
+        assert result.exit_code == 0
+        written = json.loads((hook_home / "otel_config.json").read_text())
+        assert written["IDE_OTEL_CAPTURE_TEXT"] == "true"
+        assert written["IDE_OTEL_MASK_PROMPTS"] == "true"
+        assert written["IDE_OTEL_TEXT_MAX_CHARS"] == "4000"
+
+    def test_setup_can_disable_masking_and_set_text_capture_limit(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        home_dir = tmp_path / "home"
+        hook_home.mkdir(parents=True)
+
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call"), \
+             patch("reflect.core._distribute_skills"), \
+             patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
+            result = runner.invoke(main, [
+                "setup",
+                "--capture-text",
+                "--no-mask-captured-text",
+                "--text-max-chars",
+                "1200",
+            ])
+
+        assert result.exit_code == 0
+        written = json.loads((hook_home / "otel_config.json").read_text())
+        assert written["IDE_OTEL_CAPTURE_TEXT"] == "true"
+        assert written["IDE_OTEL_MASK_PROMPTS"] == "false"
+        assert written["IDE_OTEL_TEXT_MAX_CHARS"] == "1200"
+
+    def test_setup_text_capture_mode_masked_is_scriptable(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        home_dir = tmp_path / "home"
+        hook_home.mkdir(parents=True)
+
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call"), \
+             patch("reflect.core._distribute_skills"), \
+             patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
+            result = runner.invoke(main, ["setup", "--text-capture-mode", "masked"])
+
+        assert result.exit_code == 0
+        written = json.loads((hook_home / "otel_config.json").read_text())
+        assert written["IDE_OTEL_CAPTURE_TEXT"] == "true"
+        assert written["IDE_OTEL_MASK_PROMPTS"] == "true"
+
+    def test_setup_can_explicitly_disable_text_capture(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        home_dir = tmp_path / "home"
+        hook_home.mkdir(parents=True)
+        (hook_home / "otel_config.json").write_text(
+            json.dumps({"IDE_OTEL_CAPTURE_TEXT": "true"}) + "\n"
+        )
+
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call"), \
+             patch("reflect.core._distribute_skills"), \
+             patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
+            result = runner.invoke(main, ["setup", "--no-capture-text"])
+
+        assert result.exit_code == 0
+        written = json.loads((hook_home / "otel_config.json").read_text())
+        assert written["IDE_OTEL_CAPTURE_TEXT"] == "false"
 
 
 class TestNativeOtelConfig:

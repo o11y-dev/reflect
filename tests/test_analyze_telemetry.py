@@ -7,8 +7,8 @@ from conftest import (
     EXPECTED,
     GEMINI,
     HOUR,
-    MCP_CLOUDFLARE,
-    MCP_GITLAB,
+    MCP_CODE_HOST,
+    MCP_EDGE,
     MCP_POSTGRES,
     MIN,
     MODEL_CLAUDE,
@@ -50,9 +50,9 @@ class TestAnalyzeOtlpTraces:
         # Postgres has more befores than afters
         assert stats.mcp_server_before[MCP_POSTGRES] > stats.mcp_server_after[MCP_POSTGRES]
 
-    def test_mcp_availability_gap_cloudflare(self, otlp_traces_file, tmp_path):
+    def test_mcp_availability_gap_edge_provider(self, otlp_traces_file, tmp_path):
         stats = analyze_telemetry(tmp_path / "s", tmp_path / "sp", otlp_traces_file)
-        assert stats.mcp_server_before[MCP_CLOUDFLARE] > stats.mcp_server_after[MCP_CLOUDFLARE]
+        assert stats.mcp_server_before[MCP_EDGE] > stats.mcp_server_after[MCP_EDGE]
 
     def test_subagent_counts(self, otlp_traces_file, tmp_path):
         stats = analyze_telemetry(tmp_path / "s", tmp_path / "sp", otlp_traces_file)
@@ -154,8 +154,8 @@ class TestAgentBreakdown:
         stats = analyze_telemetry(tmp_path / "s", tmp_path / "sp", otlp_traces_file)
         assert stats.agents[CLAUDE].models_by_count.most_common(1)[0][0] == MODEL_CLAUDE
 
-    def test_mcp_cross_agent_gitlab(self, otlp_traces_file, tmp_path):
-        """GitLab MCP is used by all 3 agents."""
+    def test_mcp_cross_agent_code_host(self, otlp_traces_file, tmp_path):
+        """Code-host MCP is used by all 3 agents."""
         stats = analyze_telemetry(tmp_path / "s", tmp_path / "sp", otlp_traces_file)
         for agent in [CLAUDE, COPILOT, GEMINI]:
-            assert stats.agents[agent].mcp_servers.get(MCP_GITLAB, 0) > 0
+            assert stats.agents[agent].mcp_servers.get(MCP_CODE_HOST, 0) > 0

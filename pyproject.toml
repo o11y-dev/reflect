@@ -79,6 +79,7 @@ reflect = [
     "data/skills-extraction-prompt.md",
     "data/skills/reflect/SKILL.md",
     "data/skills/skills/SKILL.md",
+    "store/migrations/*.sql",
 ]
 
 [tool.poetry.group.dev.dependencies]

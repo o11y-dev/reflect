@@ -693,6 +693,9 @@ def _run_setup(
     hook_home: Path,
     detect_agents: Callable[[], list[dict]],
     distribute_skills: Callable[[object], None],
+    capture_text: bool | None = None,
+    mask_captured_text: bool = True,
+    text_max_chars: int | None = None,
 ) -> None:
     console.print("\n[bold cyan]reflect setup[/]\n")
     console.print("[dim]Prepare local telemetry capture, wire supported agents, and leave clear next steps.[/]")
@@ -744,8 +747,23 @@ def _run_setup(
     config.setdefault("IDE_OTEL_SUBSYSTEM_NAME", "ide-hooks")
     config.setdefault(_HOOK_CFG_ENDPOINT_KEY, _HOOK_CFG_ENDPOINT_DEFAULT)
     config.setdefault(_HOOK_CFG_PROTOCOL_KEY, _HOOK_CFG_PROTOCOL_DEFAULT)
+    if capture_text is not None:
+        config["IDE_OTEL_CAPTURE_TEXT"] = "true" if capture_text else "false"
+        if capture_text:
+            config["IDE_OTEL_MASK_PROMPTS"] = "true" if mask_captured_text else "false"
+            config["IDE_OTEL_TEXT_MAX_CHARS"] = str(text_max_chars or 4000)
+    elif text_max_chars is not None:
+        config["IDE_OTEL_TEXT_MAX_CHARS"] = str(text_max_chars)
     config_path.write_text(_json_stdlib.dumps(config, indent=2) + "\n")
     console.print(f"  [green]✓[/] Hook config updated ({config_path})")
+    if capture_text is True:
+        mask_label = "masked" if mask_captured_text else "unmasked"
+        console.print(
+            "  [yellow]•[/] Prompt/response text capture enabled "
+            f"({mask_label}, local/private, max {text_max_chars or 4000:,} chars)"
+        )
+    elif capture_text is False:
+        console.print("  [green]✓[/] Prompt/response text capture disabled")
 
     hook_spans_dir = hook_home / ".state" / "local_spans"
     reflect_spans_dir = reflect_home / "state" / "local_spans"
