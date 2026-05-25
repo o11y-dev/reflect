@@ -469,14 +469,188 @@ def _flatten_text_content(content) -> str:
     return "\n".join(part for part in parts if part)
 
 
+def _codex_content_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        if isinstance(item.get("text"), str):
+            parts.append(item["text"])
+    return "\n".join(part for part in parts if part)
+
+
+def _codex_record_timestamp_ns(record: dict) -> int:
+    return _parse_timestamp_to_ns(
+        record.get("timestamp")
+        or (record.get("payload") or {}).get("timestamp")
+        or (record.get("payload") or {}).get("created_at")
+    )
+
+
+def _cursor_tool_attrs(tool_name: str, tool_input: object) -> dict:
+    attrs = {
+        "gen_ai.client.tool_name": tool_name,
+        "gen_ai.client.tool.input": tool_input if isinstance(tool_input, str) else _json_dumps(tool_input or {}),
+    }
+    if isinstance(tool_input, dict) and tool_name == "CallMcpTool":
+        server = tool_input.get("server")
+        mcp_tool = tool_input.get("toolName") or tool_input.get("tool")
+        if isinstance(server, str) and server.strip():
+            attrs["gen_ai.client.mcp_server"] = server.strip()
+        if isinstance(mcp_tool, str) and mcp_tool.strip():
+            attrs["gen_ai.client.mcp_tool"] = mcp_tool.strip()
+    return attrs
+
+
 def _discover_rich_session_files() -> list[tuple[str, Path]]:
     home = Path.home()
     candidates: list[tuple[str, Path]] = []
+    candidates.extend(("codex", p) for p in sorted((home / ".codex" / "sessions").glob("**/*.jsonl")))
     candidates.extend(("copilot", p) for p in sorted((home / ".copilot" / "session-state").glob("*/events.jsonl")))
     candidates.extend(("cursor", p) for p in sorted((home / ".cursor" / "projects").glob("**/agent-transcripts/**/*.jsonl")))
     candidates.extend(("claude", p) for p in sorted((home / ".claude" / "projects").glob("**/*.jsonl")))
     candidates.extend(("gemini", p) for p in sorted((home / ".gemini" / "tmp").glob("**/chats/session-*.json")))
     return candidates
+
+
+def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
+    records = list(_load_json_lines(file_path))
+    if not records:
+        return
+
+    meta = next((r.get("payload") or {} for r in records if r.get("type") == "session_meta"), {})
+    session_id = str(meta.get("id") or file_path.stem).removeprefix("rollout-")
+    trace_id = _stable_hex_id("codex", session_id, length=32)
+    base_attrs = {
+        "gen_ai.client.name": "codex",
+        "gen_ai.provider.name": "openai",
+        "gen_ai.client.session_id": session_id,
+        "session.id": session_id,
+        "service.name": "codex",
+    }
+    if meta.get("model"):
+        base_attrs["gen_ai.request.model"] = str(meta["model"])
+    if meta.get("model_provider"):
+        base_attrs["gen_ai.system"] = str(meta["model_provider"])
+    if meta.get("cwd"):
+        base_attrs["code.workspace.root"] = str(meta["cwd"])
+
+    first_ts = 0
+    last_ts = 0
+    active_tools: dict[str, dict] = {}
+
+    for index, record in enumerate(records):
+        ts_ns = _codex_record_timestamp_ns(record)
+        if ts_ns:
+            first_ts = ts_ns if not first_ts else min(first_ts, ts_ns)
+            last_ts = max(last_ts, ts_ns)
+        record_type = record.get("type")
+        payload = record.get("payload") or {}
+
+        if record_type == "response_item":
+            item_type = payload.get("type")
+            if item_type == "message":
+                role = payload.get("role")
+                text = _codex_content_text(payload.get("content"))
+                if role == "user":
+                    if not text or text.lstrip().startswith("<environment_context>"):
+                        continue
+                    yield _make_flat_span(
+                        "gen_ai.client.hook.UserPromptSubmit",
+                        ts_ns,
+                        ts_ns,
+                        {
+                            **base_attrs,
+                            "gen_ai.client.hook.event": "UserPromptSubmit",
+                            "gen_ai.client.prompt": text,
+                        },
+                        trace_id,
+                        f"{index}:user",
+                    )
+                elif role == "assistant":
+                    span_attrs = {
+                        **base_attrs,
+                        "gen_ai.client.hook.event": "Stop",
+                    }
+                    if text:
+                        span_attrs["gen_ai.client.output"] = text
+                    yield _make_flat_span(
+                        "gen_ai.client.hook.Stop",
+                        ts_ns,
+                        ts_ns,
+                        span_attrs,
+                        trace_id,
+                        f"{index}:assistant",
+                    )
+            elif item_type == "function_call":
+                call_id = str(payload.get("call_id") or payload.get("id") or f"{index}")
+                tool_name = str(payload.get("name") or "")
+                arguments = payload.get("arguments")
+                active_tools[call_id] = {
+                    "start_ns": ts_ns,
+                    "tool_name": tool_name,
+                }
+                yield _make_flat_span(
+                    "gen_ai.client.hook.PreToolUse",
+                    ts_ns,
+                    ts_ns,
+                    {
+                        **base_attrs,
+                        "gen_ai.client.hook.event": "PreToolUse",
+                        "gen_ai.client.tool_name": tool_name,
+                        "gen_ai.client.tool_use_id": call_id,
+                        "gen_ai.client.tool.input": arguments if isinstance(arguments, str) else _json_dumps(arguments or {}),
+                    },
+                    trace_id,
+                    f"{index}:function_call:{call_id}",
+                )
+            elif item_type == "function_call_output":
+                call_id = str(payload.get("call_id") or payload.get("id") or f"{index}")
+                start_info = active_tools.pop(call_id, {})
+                output = payload.get("output")
+                yield _make_flat_span(
+                    "gen_ai.client.hook.PostToolUse",
+                    int(start_info.get("start_ns") or ts_ns),
+                    ts_ns,
+                    {
+                        **base_attrs,
+                        "gen_ai.client.hook.event": "PostToolUse",
+                        "gen_ai.client.tool_name": str(start_info.get("tool_name") or payload.get("name") or ""),
+                        "gen_ai.client.tool_use_id": call_id,
+                        "gen_ai.client.tool.output": output if isinstance(output, str) else _json_dumps(output or {}),
+                    },
+                    trace_id,
+                    f"{index}:function_call_output:{call_id}",
+                )
+
+    if first_ts:
+        yield _make_flat_span(
+            "gen_ai.client.hook.SessionStart",
+            first_ts,
+            first_ts,
+            {
+                **base_attrs,
+                "gen_ai.client.hook.event": "SessionStart",
+            },
+            trace_id,
+            "synthetic:session.start",
+        )
+    if last_ts:
+        yield _make_flat_span(
+            "gen_ai.client.hook.SessionEnd",
+            last_ts,
+            last_ts,
+            {
+                **base_attrs,
+                "gen_ai.client.hook.event": "SessionEnd",
+            },
+            trace_id,
+            "synthetic:session.end",
+        )
 
 
 def _iter_copilot_session_spans(file_path: Path) -> Iterable[dict]:
@@ -689,11 +863,31 @@ def _iter_cursor_session_spans(file_path: Path) -> Iterable[dict]:
                 "gen_ai.client.prompt": text,
             }, trace_id, f"{index}:user")
         elif role == "assistant":
+            content = event.get("message", {}).get("content")
             yield _make_flat_span("gen_ai.client.hook.Stop", ts_ns, ts_ns, {
                 **attrs,
                 "gen_ai.client.hook.event": "Stop",
                 "gen_ai.client.output": text,
             }, trace_id, f"{index}:assistant")
+            if not isinstance(content, list):
+                continue
+            for tool_idx, item in enumerate(content):
+                if not isinstance(item, dict) or item.get("type") != "tool_use":
+                    continue
+                tool_name = str(item.get("name") or "")
+                tool_attrs = _cursor_tool_attrs(tool_name, item.get("input"))
+                yield _make_flat_span(
+                    "gen_ai.client.hook.PreToolUse",
+                    ts_ns,
+                    ts_ns,
+                    {
+                        **attrs,
+                        **tool_attrs,
+                        "gen_ai.client.hook.event": "PreToolUse",
+                    },
+                    trace_id,
+                    f"{index}:tool_use:{tool_idx}",
+                )
     if first_ts:
         yield _make_flat_span("gen_ai.client.hook.SessionStart", first_ts, first_ts, {
             "gen_ai.client.name": "cursor",
@@ -802,7 +996,9 @@ def _load_rich_session_spans() -> tuple[list[dict], dict[str, int], dict[str, tu
     counts: dict[str, int] = {}
     source_map: dict[str, tuple[str, str]] = {}
     for source, file_path in _discover_rich_session_files():
-        if source == "copilot":
+        if source == "codex":
+            derived = list(_iter_codex_session_spans(file_path))
+        elif source == "copilot":
             derived = list(_iter_copilot_session_spans(file_path))
         elif source == "cursor":
             derived = list(_iter_cursor_session_spans(file_path))

@@ -265,6 +265,123 @@ def _seed_sql_report_db(db_path):
         conn.close()
 
 
+def _add_sql_baseline_session(db_path):
+    now = "2026-05-01T12:00:00+00:00"
+    conn = connect_sqlite(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO agents(id, name, kind, version, created_at, updated_at)
+            VALUES ('agent-claude', 'claude', 'cli', 'test', ?, ?)
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO sessions(
+              id, agent_id, started_at, ended_at, status, title, input_tokens,
+              output_tokens, estimated_cost_usd, created_at, updated_at
+            )
+            VALUES (
+              'sess-baseline', 'agent-claude', '2026-04-30T10:00:00+00:00',
+              '2026-04-30T10:03:00+00:00', 'completed', 'Baseline session',
+              80, 20, 0.21, ?, ?
+            )
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO steps(id, session_id, seq, type, started_at, status, summary, raw_attrs_json, created_at, updated_at)
+            VALUES ('baseline-step', 'sess-baseline', 1, 'llm_call', '2026-04-30T10:00:00+00:00', 'completed', '', '{}', ?, ?)
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO llm_calls(
+              id, step_id, session_id, provider, request_model, response_model,
+              input_tokens, output_tokens, estimated_cost_usd, created_at, updated_at
+            )
+            VALUES ('baseline-llm', 'baseline-step', 'sess-baseline', 'anthropic', 'gpt-5.4', 'gpt-5.4', 80, 20, 0.21, ?, ?)
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO session_rollups(
+              session_id, agent, started_at, ended_at, duration_ms, prompt_count,
+              tool_call_count, error_count, input_tokens, output_tokens,
+              cache_read_tokens, cache_write_tokens, total_cost, updated_at
+            )
+            VALUES (
+              'sess-baseline', 'claude', '2026-04-30T10:00:00+00:00',
+              '2026-04-30T10:03:00+00:00', 180000, 1, 1, 1,
+              80, 20, 0, 0, 0.21, ?
+            )
+            """,
+            (now,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _add_sql_codex_sibling_session(db_path):
+    now = "2026-05-01T12:30:00+00:00"
+    conn = connect_sqlite(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO sessions(
+              id, agent_id, started_at, ended_at, status, title, input_tokens,
+              output_tokens, estimated_cost_usd, created_at, updated_at
+            )
+            VALUES (
+              'sess-codex-2', 'agent-codex', '2026-05-01T11:00:00+00:00',
+              '2026-05-01T11:03:00+00:00', 'completed', 'Second Codex session',
+              60, 15, 0.11, ?, ?
+            )
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO steps(id, session_id, seq, type, started_at, status, summary, raw_attrs_json, created_at, updated_at)
+            VALUES ('codex-2-step', 'sess-codex-2', 1, 'llm_call', '2026-05-01T11:00:00+00:00', 'completed', '', '{}', ?, ?)
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO llm_calls(
+              id, step_id, session_id, provider, request_model, response_model,
+              input_tokens, output_tokens, estimated_cost_usd, created_at, updated_at
+            )
+            VALUES ('codex-2-llm', 'codex-2-step', 'sess-codex-2', 'openai', 'gpt-5.4', 'gpt-5.4', 60, 15, 0.11, ?, ?)
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO session_rollups(
+              session_id, agent, started_at, ended_at, duration_ms, prompt_count,
+              tool_call_count, error_count, input_tokens, output_tokens,
+              cache_read_tokens, cache_write_tokens, total_cost, updated_at
+            )
+            VALUES (
+              'sess-codex-2', 'codex', '2026-05-01T11:00:00+00:00',
+              '2026-05-01T11:03:00+00:00', 180000, 1, 1, 0,
+              60, 15, 0, 0, 0.11, ?
+            )
+            """,
+            (now,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def test_dashboard_api_embeds_sql_view_models(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
@@ -304,6 +421,12 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path, monkeypatch):
     assert payload["sqlite"]["tabs"]["exports"]["scoped"] is False
     assert payload["sqlite"]["tabs"]["tools"]["skills_by_count"] == {"review-skill": 1}
     assert payload["sqlite"]["tabs"]["agents"]["agents"]["codex"]["top_skills"] == {"review-skill": 1}
+    assert payload["sqlite"]["tabs"]["overview"]["unique_sessions"] == payload["unique_sessions"]
+    assert payload["sqlite"]["tabs"]["overview"]["prompt_submits"] == payload["prompt_submits"]
+    assert payload["sqlite"]["tabs"]["overview"]["tool_calls"] == payload["tool_calls"]
+    assert payload["sqlite"]["tabs"]["overview"]["models_by_count"] == payload["models_by_count"]
+    assert payload["sqlite"]["tabs"]["overview"]["events_by_type"] == payload["events_by_type"]
+    assert payload["sqlite"]["tabs"]["overview"]["model_costs"] == payload["model_costs"]
     assert payload["sessions"][0]["id"] == "sess-sql"
     assert payload["sessions"][0]["first_prompt"].startswith("Fix the failing SQL dashboard tests")
     assert payload["sessions"][0]["duration_ms"] == 120000
@@ -331,8 +454,17 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path, monkeypatch):
     assert payload["strengths"]
     assert payload["observations"]
     assert payload["recommendations"]
+    assert payload["sqlite"]["tabs"]["observations"]["strengths"] == payload["strengths"]
+    assert payload["sqlite"]["tabs"]["observations"]["observations"] == payload["observations"]
+    assert payload["sqlite"]["tabs"]["observations"]["recommendations"] == payload["recommendations"]
+    assert payload["sqlite"]["tabs"]["observations"]["token_economy"] == payload["token_economy"]
     assert any("Reduce MCP context bloat" in rec for rec in payload["recommendations"])
     assert all("SQL view models" not in rec for rec in payload["recommendations"])
+    assert payload["pricing_source"] == "local"
+    assert all("SQL" not in item and "SQLite" not in item for item in payload["strengths"])
+    assert all("SQL" not in item and "SQLite" not in item for item in payload["observations"])
+    assert all("SQL has" not in item and "SQL-observed" not in item for item in payload["recommendations"])
+    assert all(achievement["name"] != "SQL Report Store" for achievement in payload["achievements"])
     assert payload["practical_examples"]
     assert len(payload["achievements"]) >= 5
     assert payload["total_cache_creation_tokens"] == 10
@@ -359,6 +491,103 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path, monkeypatch):
     assert detail.json()["telemetry"]["summary"]["logs"] == 1
     assert detail.json()["telemetry"]["logs"][0]["event"] == "UserPromptSubmit"
     assert "User prompt submitted" in detail.json()["telemetry"]["logs"][0]["body"]
+
+
+def test_dashboard_session_detail_shows_metadata_only_llm_prompt_turns(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    now = "2026-05-01T10:01:30+00:00"
+    conn = connect_sqlite(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status, summary,
+              raw_attrs_json, created_at, updated_at
+            )
+            VALUES (
+              'metadata-only-llm-step', 'sess-sql', 4, 'llm_call',
+              ?, 'completed', 'gen_ai.client.hook.Stop',
+              '{"gen_ai.client.status":"completed","gen_ai.client.generation_id":"gen-2"}',
+              ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO llm_calls(
+              id, step_id, session_id, provider, request_model, response_model,
+              input_tokens, output_tokens, estimated_cost_usd, created_at, updated_at
+            )
+            VALUES (
+              'metadata-only-llm', 'metadata-only-llm-step', 'sess-sql',
+              'openai', 'gpt-5.4', 'gpt-5.4', 44, 11, 0.01, ?, ?
+            )
+            """,
+            (now, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    detail = TestClient(app).get("/api/session/sess-sql")
+
+    assert detail.status_code == 200
+    prompts = [event for event in detail.json()["conversation"] if event["type"] == "prompt"]
+    assert len(prompts) == 2
+    assert prompts[0]["preview"].startswith("Fix the failing SQL dashboard tests")
+    assert prompts[1]["preview"] == "Prompt text was not captured for this turn; token metadata is available."
+    assert prompts[1]["input_tokens"] == 44
+
+
+def test_dashboard_session_detail_shows_tokenless_stop_response_turns(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    now = "2026-05-01T10:02:30+00:00"
+    conn = connect_sqlite(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status, summary,
+              raw_attrs_json, created_at, updated_at
+            )
+            VALUES (
+              'tokenless-llm-step', 'sess-sql', 4, 'llm_call',
+              ?, 'completed', 'gen_ai.client.hook.Stop',
+              '{"gen_ai.client.status":"completed","gen_ai.client.generation_id":"gen-tokenless"}',
+              ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO llm_calls(
+              id, step_id, session_id, provider, request_model, response_model,
+              input_tokens, output_tokens, estimated_cost_usd, created_at, updated_at
+            )
+            VALUES (
+              'tokenless-llm', 'tokenless-llm-step', 'sess-sql',
+              'openai', 'gpt-5.4', 'gpt-5.4', 0, 0, 0, ?, ?
+            )
+            """,
+            (now, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    detail = TestClient(app).get("/api/session/sess-sql")
+
+    assert detail.status_code == 200
+    responses = [event for event in detail.json()["conversation"] if event["type"] == "response"]
+    assert len(responses) == 2
+    assert responses[1]["preview"] == "Assistant turn completed, but response text was not captured."
+    assert responses[1]["output_tokens"] == 0
 
 
 def test_dashboard_sql_sessions_endpoint_filters_from_sql(tmp_path):
@@ -390,6 +619,53 @@ def test_dashboard_api_filters_by_session_param_from_sql(tmp_path):
     assert [session["id"] for session in payload["sessions"]] == ["sess-sql"]
 
 
+def test_dashboard_api_applies_sql_filters_and_comparison(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    _add_sql_baseline_session(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    response = TestClient(app).get(
+        "/api/data",
+        params={"agents": "codex", "status": "completed", "model": "gpt-5.4", "range": "7d"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["unique_sessions"] == 1
+    assert [session["id"] for session in payload["sessions"]] == ["sess-sql"]
+    assert payload["comparison"]["primary"]["avg_quality"] == 87
+    assert payload["comparison"]["baseline"]["avg_quality"] == 65
+    assert payload["comparison"]["baseline_agents"][0]["avg_quality"] == 65
+    assert payload["sqlite"]["tabs"]["compare"]["comparison"] == payload["comparison"]
+    assert payload["sqlite"]["tabs"]["compare"]["agent_comparison"] == payload["agent_comparison"]
+    assert {item["name"] for item in payload["sessions"][0]["quality_breakdown"]} >= {"Completion", "Efficiency"}
+    assert payload["sessions"][0]["quality_breakdown"][0]["inputs"]
+
+    active = TestClient(app).get("/api/data", params={"agents": "codex", "status": "active"})
+    assert active.status_code == 200
+    assert active.json()["unique_sessions"] == 0
+
+
+def test_dashboard_api_session_scope_wins_with_agent_filter(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    _add_sql_baseline_session(db_path)
+    _add_sql_codex_sibling_session(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    response = TestClient(app).get("/api/data", params={"agents": "codex", "session": "sess-sql"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["unique_sessions"] == 1
+    assert payload["session_list_total"] == 2
+    assert [session["id"] for session in payload["sessions"]] == ["sess-codex-2", "sess-sql"]
+    assert payload["activity_by_day"] == {"2026-05-01": 3}
+    assert payload["sqlite"]["tabs"]["activity"]["activity_by_day"] == {"2026-05-01": 3}
+    assert payload["comparison"] is None
+
+
 def test_dashboard_api_scopes_sql_tab_view_models(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
@@ -418,3 +694,8 @@ def test_dashboard_sql_endpoints_are_disabled_without_db(tmp_path):
 
     assert response.status_code == 404
     assert "not configured" in response.json()["error"]
+
+    filtered = TestClient(app).get("/api/data", params={"agents": "codex"})
+    assert filtered.status_code == 409
+    assert filtered.json()["sql_backed"] is False
+    assert "SQLite report store" in filtered.json()["error"]

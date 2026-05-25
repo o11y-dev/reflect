@@ -16,7 +16,7 @@ from .economy import compute_token_economy  # noqa: F401
 from .percentiles import _percentile, compute_tool_percentiles  # noqa: F401
 from .profile import build_data_profile  # noqa: F401
 from .renderers import insights_to_example_tuples, insights_to_strings  # noqa: F401
-from .scoring import compute_session_quality  # noqa: F401
+from .scoring import compute_session_quality, compute_session_quality_breakdown  # noqa: F401
 from .signals import run_signals  # noqa: F401
 from .types import (  # noqa: F401
     DataProfile,

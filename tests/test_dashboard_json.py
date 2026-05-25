@@ -281,6 +281,50 @@ class TestBuildDashboardJson:
 
         assert data["unique_sessions"] == 2
         assert data["avg_quality_score"] == 40.0
+        native_session = next(session for session in data["sessions"] if session["full_id"] == "native-only-session")
+        telemetry_session = next(session for session in data["sessions"] if session["full_id"] == "telemetry-session")
+        assert native_session["quality_score"] is None
+        assert native_session["quality_available"] is False
+        assert "no scored telemetry spans" in native_session["quality_missing_reason"]
+        assert native_session["quality_breakdown"] == []
+        assert telemetry_session["quality_score"] == 80.0
+        assert telemetry_session["quality_available"] is True
+        assert telemetry_session["quality_breakdown"] == []
+        assert data["quality_rules"]
+        assert {rule["name"] for rule in data["quality_rules"]} >= {"Completion", "Tool reliability"}
+
+    def test_quality_score_includes_calculation_breakdown_when_spans_are_available(self):
+        session_id = "scored-session"
+        stats = TelemetryStats(
+            session_files=0,
+            span_files=0,
+            total_events=4,
+            events_by_type=Counter({"PreToolUse": 2, "Stop": 1}),
+            events_by_file={},
+            sessions_seen={session_id},
+            session_events={session_id: 4},
+            session_models={},
+            session_first_ts={session_id: 1_000_000_000},
+            agents={},
+            session_tokens={session_id: {"input": 3000, "output": 1000}},
+            session_span_details={
+                session_id: [
+                    {"event": "PreToolUse", "tool": "Read", "ok": True, "t": 1_000_000_000, "dur": 10.0},
+                    {"event": "PreToolUse", "tool": "Edit", "ok": True, "t": 2_000_000_000, "dur": 12.0},
+                    {"event": "Stop", "tool": "", "ok": True, "t": 61_000_000_000, "dur": 0.0},
+                ]
+            },
+            session_quality_scores={session_id: 80.0},
+        )
+
+        data = json.loads(_build_dashboard_json(stats))
+        session = data["sessions"][0]
+
+        assert session["quality_breakdown"]
+        assert {item["name"] for item in session["quality_breakdown"]} >= {"Completion", "Efficiency"}
+        efficiency = next(item for item in session["quality_breakdown"] if item["name"] == "Efficiency")
+        assert efficiency["metrics"]["tool_uses"] == 2
+        assert "tokens_per_tool" in efficiency["metrics"]
 
     def test_filter_dashboard_sessions_by_agent(self, rich_stats):
         data = json.loads(_build_dashboard_json(rich_stats))

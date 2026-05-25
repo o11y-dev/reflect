@@ -27,9 +27,23 @@ def rebuild_rollups(conn: sqlite3.Connection) -> dict[str, int]:
           s.started_at,
           s.ended_at,
           COALESCE(CAST((julianday(s.ended_at) - julianday(s.started_at)) * 86400000 AS INTEGER), 0),
-          COALESCE(SUM(CASE WHEN st.type = 'llm_call' THEN 1 ELSE 0 END), 0),
+          COALESCE(COUNT(DISTINCT CASE
+            WHEN COALESCE(json_extract(st.raw_attrs_json, '$."gen_ai.client.hook.event"'), st.summary) = 'UserPromptSubmit'
+              THEN COALESCE(
+                json_extract(st.raw_attrs_json, '$."gen_ai.client.generation_id"'),
+                json_extract(st.raw_attrs_json, '$."gen_ai.client.prompt.sha256"'),
+                st.id
+              )
+          END), 0),
           COALESCE(SUM(CASE WHEN st.type IN ('tool_call', 'mcp_call', 'shell_command') THEN 1 ELSE 0 END), 0),
-          s.failure_count + COALESCE(SUM(CASE WHEN st.status = 'error' THEN 1 ELSE 0 END), 0),
+          s.failure_count + COALESCE(COUNT(DISTINCT CASE
+            WHEN st.status = 'error'
+              THEN COALESCE(
+                json_extract(st.raw_attrs_json, '$."gen_ai.client.tool_use_id"'),
+                json_extract(st.raw_attrs_json, '$."tool.id"'),
+                st.id
+              )
+          END), 0),
           s.input_tokens,
           s.output_tokens,
           s.cache_read_tokens,
@@ -75,17 +89,30 @@ def rebuild_rollups(conn: sqlite3.Connection) -> dict[str, int]:
           total_duration_ms, updated_at
         )
         SELECT
-          tc.tool_name,
-          COALESCE(a.name, ''),
+          tool_name,
+          agent,
           COUNT(*),
-          SUM(CASE WHEN tc.status <> 'error' THEN 1 ELSE 0 END),
-          SUM(CASE WHEN tc.status = 'error' THEN 1 ELSE 0 END),
-          COALESCE(SUM(tc.duration_ms), 0),
+          SUM(CASE WHEN status <> 'error' THEN 1 ELSE 0 END),
+          SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END),
+          COALESCE(SUM(duration_ms), 0),
           ?
-        FROM tool_calls tc
-        JOIN sessions s ON s.id = tc.session_id
-        LEFT JOIN agents a ON a.id = s.agent_id
-        GROUP BY tc.tool_name, COALESCE(a.name, '')
+        FROM (
+          SELECT
+            tc.tool_name,
+            COALESCE(a.name, '') AS agent,
+            COALESCE(
+              json_extract(tc.raw_attrs_json, '$."gen_ai.client.tool_use_id"'),
+              json_extract(tc.raw_attrs_json, '$."tool.id"'),
+              tc.id
+            ) AS call_identity,
+            CASE WHEN SUM(CASE WHEN tc.status = 'error' THEN 1 ELSE 0 END) > 0 THEN 'error' ELSE 'ok' END AS status,
+            MAX(COALESCE(tc.duration_ms, 0)) AS duration_ms
+          FROM tool_calls tc
+          JOIN sessions s ON s.id = tc.session_id
+          LEFT JOIN agents a ON a.id = s.agent_id
+          GROUP BY tc.tool_name, COALESCE(a.name, ''), call_identity
+        )
+        GROUP BY tool_name, agent
         """,
         (timestamp,),
     )

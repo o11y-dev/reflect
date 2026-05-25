@@ -1,6 +1,6 @@
 """Tests for the distribution-aware session quality scorer."""
 
-from reflect.insights.scoring import compute_session_quality
+from reflect.insights.scoring import compute_session_quality, compute_session_quality_breakdown
 from reflect.insights.types import DataProfile, DistributionStats
 
 
@@ -150,3 +150,24 @@ class TestComputeSessionQuality:
         tokens = {"input": 3000, "output": 1000}
         score = compute_session_quality("s1", spans, tokens, profile=None)
         assert 0.0 <= score <= 100.0
+
+    def test_breakdown_sums_to_score(self):
+        spans = [
+            {"event": "UserPromptSubmit", "tool": None, "ok": True, "t": 1_000_000_000_000},
+            {"event": "PreToolUse", "tool": "Read", "ok": True, "t": 1_001_000_000_000},
+            {"event": "PreToolUse", "tool": "Edit", "ok": True, "t": 1_002_000_000_000},
+            {"event": "BeforeReadFile", "tool": "Read", "ok": True, "t": 1_003_000_000_000},
+            {"event": "AfterFileEdit", "tool": "Edit", "ok": True, "t": 1_004_000_000_000},
+            {"event": "Stop", "tool": None, "ok": True, "t": 1_060_000_000_000},
+        ]
+        tokens = {"input": 3000, "output": 1000}
+
+        score = compute_session_quality("s1", spans, tokens, profile=None)
+        breakdown = compute_session_quality_breakdown("s1", spans, tokens, profile=None)
+
+        assert round(sum(item["earned"] for item in breakdown), 2) == round(score, 2)
+        assert {item["name"] for item in breakdown} >= {"Completion", "Efficiency", "Tool reliability"}
+        efficiency = next(item for item in breakdown if item["name"] == "Efficiency")
+        assert efficiency["metrics"]["tool_uses"] > 0
+        assert "tokens_per_tool" in efficiency["metrics"]
+        assert {"name": "tool uses", "value": 4} in efficiency["inputs"]

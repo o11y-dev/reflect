@@ -16,6 +16,8 @@ Completed foundations now exist for:
 - `reflect db doctor` migration/foreign-key/pragma health check
 - initial Pydantic base/event models and schema export command
 - SQL ingestion now supports OTLP traces plus inferred sibling OTLP logs, including Codex native log events normalized into hook-like spans
+- native session ingestion now includes Codex CLI session files from `~/.codex/sessions/**/*.jsonl`
+- Cursor native transcript ingestion now extracts assistant `tool_use` blocks, including shell-style tool calls and MCP server/tool metadata
 - SQL-backed Overview and Sessions view models for the future Textual/report runtime
 - `reflect report` materializes the configured SQLite store by default and serves the browser report from SQL-backed APIs
 - legacy `reflect report --sql-only` is now a deprecated no-op kept for compatibility while SQLite is the default runtime path
@@ -27,6 +29,8 @@ Completed foundations now exist for:
 - SQL tab view models now derive skills/subagents from canonical steps, including explicit prompt invocations and structured skill tool calls, so Tools and Agents share the same SQL source for skill/subagent widgets
 - Browser report now exposes a Data tab that renders SQL-backed Specs, Memory, Privacy, and Export readiness directly from `sqlite.tabs.*`
 - Browser Activity, Tools/MCP, and Graphs panels now prefer `sqlite.tabs.activity/tools/mcp/graphs` payloads with legacy JSON fallback
+- SQL session quality now sends the backend rule catalog and per-rule score breakdown inputs to the browser, so the Quality tab no longer hardcodes rules in the frontend
+- SQL repricing now fills missing token-row models from same-session model hints, and explicit model aliases can resolve dated LiteLLM pricing keys before canonical date stripping
 - regression tests for SQLite runtime pragmas, migration idempotency, and Pydantic allow/forbid behavior
 
 ## Phase-by-phase checkpoint
@@ -49,7 +53,7 @@ Completed foundations now exist for:
   - `reflect ingest --otlp` now ingests OTLP traces JSON into `raw_events` with `source_id + content_hash` dedupe (`db ingest-otlp` kept as legacy alias)
   - SQL report preparation ingests inferred OTLP log files beside the selected trace file and reports per-source inserted/skipped counts
   - local hook spans JSONL can be ingested into `raw_events` with the same dedupe path
-  - richer native/session-store ingestion adapters are still pending
+  - richer native/session-store ingestion adapters are still pending for deeper vendor-specific gaps; Codex CLI session files are now covered, and Cursor transcripts now include assistant tool/MCP calls
 
 - 🚧 **Phase 4 — normalization**: **Partially complete**
   - canonical target tables exist
@@ -70,7 +74,12 @@ Completed foundations now exist for:
   - canonical `steps.parent_step_id` is populated during normalization from `raw_events.span_id` / `parent_span_id`
   - Tools and Agents consume shared SQL-derived skill/subagent counts from tab view models instead of dashboard-only compatibility logic
   - Browser Data tab renders Specs, Memory, Privacy, and Exports from `sqlite.tabs.*`
+  - Overview browser panel now prefers direct `sqlite.tabs.overview` payloads for headline stats, metrics, charts, tokens, and costs
   - Activity, Tools/MCP, and Graphs browser panels prefer direct SQL tab view-model payloads when present
+  - Compare browser panel now prefers direct `sqlite.tabs.compare` payloads for cohort comparison and agent ranking
+  - Observations browser panel now prefers direct `sqlite.tabs.observations` payloads for strengths, observations, recommendations, examples, achievements, and token economy
+  - Quality tab renders SQL-derived rule metadata and score breakdown inputs from the backend instead of frontend constants
+  - Cost reporting handles Copilot-style token rows without model names by inferring same-session model hints during SQL repricing
   - current runtime still uses existing terminal/dashboard code path
 
 - 🚧 **Phase 7 — Replace `reflect report` with browser-served Textual**: **Not started**
@@ -83,9 +92,8 @@ Completed foundations now exist for:
 
 ## Immediate next execution backlog
 
-1. Finish direct SQL tab payload consumption for Overview, Compare, and Observations surfaces.
-2. Implement static export from SQLite-backed view models.
-3. Add richer native/session-store ingestion adapters as a postponed follow-up track.
+1. Implement static export from SQLite-backed view models.
+2. Continue richer native/session-store ingestion adapters for remaining vendor-specific gaps.
 
 ## Definition of done reminder
 

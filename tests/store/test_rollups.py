@@ -18,9 +18,39 @@ def _write_spans(path):
             "attributes": {
                 "gen_ai.client.name": "claude",
                 "gen_ai.client.session_id": "sess-rollup",
+                "gen_ai.client.hook.event": "UserPromptSubmit",
+                "gen_ai.client.generation_id": "gen-1",
                 "gen_ai.request.model": "claude-4.6-opus",
                 "gen_ai.usage.input_tokens": 100,
                 "gen_ai.usage.output_tokens": 50,
+            },
+        },
+        {
+            "name": "UserPromptSubmit",
+            "traceId": "trace-1",
+            "spanId": "span-1-duplicate",
+            "start_time_ns": 1_700_000_000_010_000_000,
+            "end_time_ns": 1_700_000_000_110_000_000,
+            "attributes": {
+                "gen_ai.client.name": "claude",
+                "gen_ai.client.session_id": "sess-rollup",
+                "gen_ai.client.hook.event": "UserPromptSubmit",
+                "gen_ai.client.generation_id": "gen-1",
+                "gen_ai.request.model": "claude-4.6-opus",
+            },
+        },
+        {
+            "name": "UserPromptSubmit",
+            "traceId": "trace-1",
+            "spanId": "span-1-duplicate-2",
+            "start_time_ns": 1_700_000_000_020_000_000,
+            "end_time_ns": 1_700_000_000_120_000_000,
+            "attributes": {
+                "gen_ai.client.name": "claude",
+                "gen_ai.client.session_id": "sess-rollup",
+                "gen_ai.client.hook.event": "UserPromptSubmit",
+                "gen_ai.client.generation_id": "gen-1",
+                "gen_ai.request.model": "claude-4.6-opus",
             },
         },
         {
@@ -33,6 +63,34 @@ def _write_spans(path):
                 "gen_ai.client.name": "claude",
                 "gen_ai.client.session_id": "sess-rollup",
                 "gen_ai.client.tool_name": "Read",
+            },
+        },
+        {
+            "name": "PostToolUseFailure",
+            "traceId": "trace-1",
+            "spanId": "span-3",
+            "start_time_ns": 1_700_000_002_000_000_000,
+            "end_time_ns": 1_700_000_002_050_000_000,
+            "attributes": {
+                "gen_ai.client.name": "claude",
+                "gen_ai.client.session_id": "sess-rollup",
+                "gen_ai.client.hook.event": "PostToolUseFailure",
+                "gen_ai.client.tool_name": "Read",
+                "gen_ai.client.tool_use_id": "tool-failed-1",
+            },
+        },
+        {
+            "name": "PostToolUseFailure",
+            "traceId": "trace-1",
+            "spanId": "span-3-duplicate",
+            "start_time_ns": 1_700_000_002_000_000_000,
+            "end_time_ns": 1_700_000_002_050_000_000,
+            "attributes": {
+                "gen_ai.client.name": "claude",
+                "gen_ai.client.session_id": "sess-rollup",
+                "gen_ai.client.hook.event": "PostToolUseFailure",
+                "gen_ai.client.tool_name": "Read",
+                "gen_ai.client.tool_use_id": "tool-failed-1",
             },
         },
     ]
@@ -57,15 +115,17 @@ def test_rebuild_rollups_from_canonical_tables(tmp_path):
         assert second == result
         session = conn.execute(
             """
-            SELECT agent, prompt_count, tool_call_count, input_tokens, output_tokens
+            SELECT agent, prompt_count, tool_call_count, error_count, input_tokens, output_tokens
             FROM session_rollups
             WHERE session_id = 'sess-rollup'
             """
         ).fetchone()
-        assert session == ("claude", 1, 1, 100, 50)
-        day = conn.execute("SELECT session_count, prompt_count, tool_call_count FROM daily_rollups").fetchone()
-        assert day == (1, 1, 1)
-        tool = conn.execute("SELECT tool_name, call_count, total_duration_ms FROM tool_rollups").fetchone()
-        assert tool == ("Read", 1, 250)
+        assert session == ("claude", 1, 3, 1, 100, 50)
+        day = conn.execute("SELECT session_count, prompt_count, tool_call_count, error_count FROM daily_rollups").fetchone()
+        assert day == (1, 1, 3, 1)
+        tool = conn.execute(
+            "SELECT tool_name, call_count, success_count, error_count, total_duration_ms FROM tool_rollups"
+        ).fetchone()
+        assert tool == ("Read", 2, 1, 1, 300)
     finally:
         conn.close()

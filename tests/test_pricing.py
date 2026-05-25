@@ -136,6 +136,27 @@ class TestCalculateCost:
         assert breakdown.total_cost_usd == (10 * 0.1) + (20 * 0.2) + (4 * 0.05) + (5 * 0.01)
         assert breakdown.resolution.matched_model_key == "gpt-4o-mini"
 
+    def test_uses_explicit_alias_target_before_dated_normalization(self):
+        table = PricingTable(
+            prices={
+                "claude-sonnet-4-20250514": pricing_row(
+                    0.1, 0.2, 0.0, 0.0, model_key="claude-sonnet-4-20250514"
+                ),
+            },
+            source="live",
+            fetched_at_unix=0,
+        )
+
+        breakdown = calculate_cost(
+            tokens={"input": 10, "output": 20},
+            model="claude-sonnet-4",
+            pricing_table=table,
+            aliases={"claude-sonnet-4": "claude-sonnet-4-20250514"},
+        )
+
+        assert breakdown.total_cost_usd == (10 * 0.1) + (20 * 0.2)
+        assert breakdown.resolution.matched_model_key == "claude-sonnet-4-20250514"
+
 
 class TestFetchJsonUrl:
     def test_rejects_non_http_scheme(self):
@@ -173,9 +194,15 @@ class TestFetchJsonUrl:
 from reflect.pricing import ModelPricing  # noqa: E402
 
 
-def pricing_row(input_cost: float, output_cost: float, cache_create: float, cache_read: float) -> ModelPricing:
+def pricing_row(
+    input_cost: float,
+    output_cost: float,
+    cache_create: float,
+    cache_read: float,
+    model_key: str = "gpt-4o-mini",
+) -> ModelPricing:
     return ModelPricing(
-        model_key="gpt-4o-mini",
+        model_key=model_key,
         input_cost_per_token=input_cost,
         output_cost_per_token=output_cost,
         cache_creation_cost_per_token=cache_create,
