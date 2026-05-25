@@ -2181,8 +2181,10 @@ def _reprice_sql_store(conn) -> None:
 
     pricing_table = load_pricing_table()
     aliases = load_model_aliases()
+    import sqlite3
+
     previous_row_factory = conn.row_factory
-    conn.row_factory = __import__("sqlite3").Row
+    conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(
             """
