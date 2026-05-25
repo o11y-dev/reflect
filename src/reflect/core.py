@@ -2224,10 +2224,11 @@ def _reprice_sql_store(conn) -> None:
                 ),
             )
             session_costs[row["session_id"]] = session_costs.get(row["session_id"], 0.0) + breakdown.total_cost_usd
+        timestamp = datetime.now(tz=UTC).isoformat()
         for session_id, total_cost in session_costs.items():
             conn.execute(
-                "UPDATE sessions SET estimated_cost_usd = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (total_cost, session_id),
+                "UPDATE sessions SET estimated_cost_usd = ?, updated_at = ? WHERE id = ?",
+                (total_cost, timestamp, session_id),
             )
         conn.commit()
     finally:
