@@ -434,14 +434,16 @@ def normalize_pending_raw_events(conn: sqlite3.Connection, *, limit: int | None 
         failed = 0
         processed_session_ids: set[str] = set()
         timestamp = _now()
-        for row in rows:
+        for index, row in enumerate(rows):
+            savepoint = f"normalize_raw_event_{index}"
+            session_id = ""
             try:
+                conn.execute(f"SAVEPOINT {savepoint}")
                 attrs = _load_json(row["attrs_json"])
                 session_id = row["session_id"] or attrs.get("session.id") or attrs.get("gen_ai.client.session_id")
                 if not session_id:
                     session_id = _stable_id("session", row["source_id"])
                 session_id = str(session_id)
-                processed_session_ids.add(session_id)
                 agent_id = _insert_agent(conn, attrs, timestamp)
                 _upsert_session(
                     conn,
@@ -489,8 +491,12 @@ def normalize_pending_raw_events(conn: sqlite3.Connection, *, limit: int | None 
                     "UPDATE raw_events SET normalized_status = 'ok', normalization_error = NULL WHERE id = ?",
                     (row["id"],),
                 )
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                processed_session_ids.add(session_id)
                 processed += 1
             except Exception as exc:
+                conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
                 conn.execute(
                     "UPDATE raw_events SET normalized_status = 'failed', normalization_error = ? WHERE id = ?",
                     (str(exc), row["id"]),
