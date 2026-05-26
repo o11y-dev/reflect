@@ -190,6 +190,14 @@ By default, reflect uses LiteLLM's public model pricing map from `https://raw.gi
 
 If your live model names include suffixes or provider-specific variants that do not appear in the pricing map, add aliases in `~/.reflect/config/model-aliases.json`. Reflect uses those aliases to map your recorded model strings to the canonical LiteLLM keys that have pricing data, which is what lets cost show up in reports instead of staying at `0.00`.
 
+You can also let reflect append safe aliases from the SQLite store:
+
+```bash
+reflect doctor cost
+```
+
+This scans observed SQL model names, preserves every existing alias, appends only new unambiguous mappings, and refreshes cost estimates. `reflect ingest` runs the same cost refresh after ingestion so reports have priced rows without a separate manual step.
+
 ```json
 {
   "aliases": {

@@ -124,6 +124,36 @@ class TestHelp:
         assert result.exit_code == 0
         assert "inserted=1" in result.output
 
+    def test_ingest_spans_file_refreshes_cost_aliases(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        db_path = tmp_path / "reflect.db"
+        spans_file = tmp_path / "spans.jsonl"
+        spans_file.write_text(json.dumps(make_span(
+            "UserPromptSubmit",
+            model="claude-4-sonnet-20250514",
+            session="sess-cost-ingest",
+            input_tokens=100,
+            output_tokens=50,
+        )) + "\n")
+
+        with patch.dict(os.environ, {"REFLECT_HOME": str(reflect_home)}, clear=False):
+            result = runner.invoke(main, [
+                "ingest",
+                "--db-path", str(db_path),
+                "--spans-file", str(spans_file),
+            ])
+
+        assert result.exit_code == 0
+        alias_payload = json.loads((reflect_home / "config" / "model-aliases.json").read_text())
+        assert alias_payload["aliases"]["claude-4-sonnet-20250514"] == "claude-sonnet-4"
+        with sqlite3.connect(db_path) as conn:
+            cost = conn.execute("SELECT estimated_cost_usd FROM llm_calls").fetchone()[0]
+            session_cost = conn.execute(
+                "SELECT estimated_cost_usd FROM sessions WHERE id = 'sess-cost-ingest'"
+            ).fetchone()[0]
+        assert cost > 0
+        assert session_cost == cost
+
     def test_db_ingest_spans_alias(self, runner, tmp_path):
         db_path = tmp_path / "reflect.db"
         spans_file = tmp_path / "spans.jsonl"
@@ -170,7 +200,7 @@ class TestHelp:
         result = runner.invoke(main, ["db", "normalize", "--db-path", str(db_path)])
 
         assert result.exit_code == 0
-        assert "processed=1" in result.output
+        assert "processed=0" in result.output
 
     def test_db_rebuild_graph(self, runner, tmp_path):
         db_path = tmp_path / "reflect.db"
@@ -824,6 +854,64 @@ class TestUpdateAdvisor:
         assert "Pricing" in result.output
         assert "live" in result.output
         assert "gpt-4o" in result.output
+
+    def test_doctor_cost_appends_aliases_without_overwriting(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        alias_path = reflect_home / "config" / "model-aliases.json"
+        alias_path.parent.mkdir(parents=True)
+        alias_path.write_text(json.dumps({
+            "aliases": {
+                "claude-4-sonnet-20250514": "manual-target"
+            }
+        }))
+        db_path = tmp_path / "reflect.db"
+        from reflect.store.migrate import migrate
+        from reflect.store.sqlite import connect_sqlite
+
+        now = "2026-05-26T00:00:00+00:00"
+        conn = connect_sqlite(db_path)
+        try:
+            migrate(conn)
+            for suffix, model in [
+                ("manual", "claude-4-sonnet-20250514"),
+                ("new", "claude-4-5-sonnet-20250929"),
+            ]:
+                conn.execute(
+                    """
+                    INSERT INTO sessions(id, started_at, created_at, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (f"sess-{suffix}", now, now, now),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO steps(id, session_id, seq, type, started_at, raw_attrs_json, created_at, updated_at)
+                    VALUES (?, ?, 1, 'llm', ?, '{}', ?, ?)
+                    """,
+                    (f"step-{suffix}", f"sess-{suffix}", now, now, now),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO llm_calls(
+                      id, step_id, session_id, request_model, input_tokens, output_tokens, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, 100, 50, ?, ?)
+                    """,
+                    (f"llm-{suffix}", f"step-{suffix}", f"sess-{suffix}", model, now, now),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        with patch.dict(os.environ, {"REFLECT_HOME": str(reflect_home)}, clear=False):
+            result = runner.invoke(main, ["doctor", "cost", "--db-path", str(db_path)])
+
+        assert result.exit_code == 0
+        payload = json.loads(alias_path.read_text())
+        assert payload["aliases"]["claude-4-sonnet-20250514"] == "manual-target"
+        assert payload["aliases"]["claude-4-5-sonnet-20250929"] == "claude-sonnet-4-5"
+        assert "New aliases" in result.output
+        assert "1" in result.output
 
     def test_update_apply_uses_pipx_upgrade(self, runner):
         advisor = {

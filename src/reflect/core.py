@@ -1751,8 +1751,15 @@ def setup(
     )
 
 
-@main.command()
-def doctor() -> None:
+@main.group("doctor", invoke_without_command=True)
+@click.pass_context
+def doctor(ctx) -> None:
+    """Inspect local reflect health, or run focused doctor checks."""
+    if ctx.invoked_subcommand is None:
+        _run_doctor()
+
+
+def _run_doctor() -> None:
     """Inspect local reflect, hook, and agent state and suggest the next telemetry step."""
     from rich import box
     from rich.console import Console
@@ -1976,6 +1983,52 @@ def doctor() -> None:
     console.print()
 
 
+@doctor.command("cost")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+@click.option("--alias-path", type=click.Path(path_type=Path), default=None, help="Override model alias JSON path.")
+def doctor_cost(db_path: Path, alias_path: Path | None) -> None:
+    """Append missing model aliases from SQL data and refresh cost estimates."""
+    from rich import box
+    from rich.console import Console
+    from rich.table import Table
+
+    from reflect.store.migrate import migrate
+    from reflect.store.rollups import rebuild_rollups
+    from reflect.store.sqlite import connect_sqlite
+
+    console = Console(force_terminal=True)
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        alias_result = _ensure_sql_costs(conn, alias_path=alias_path)
+        rebuild_rollups(conn)
+    finally:
+        conn.close()
+
+    table = Table(box=box.SIMPLE_HEAVY, expand=True)
+    table.add_column("Check", style="bold cyan")
+    table.add_column("Result", overflow="fold")
+    table.add_row("SQLite DB", str(db_path))
+    table.add_row("Alias file", str(alias_result.alias_path))
+    table.add_row("Observed models", str(alias_result.observed_models))
+    table.add_row("Resolved models", str(alias_result.resolved_models))
+    table.add_row("New aliases", str(len(alias_result.added_aliases)))
+    console.print(table)
+
+    if alias_result.added_aliases:
+        alias_table = Table(box=box.SIMPLE, expand=True)
+        alias_table.add_column("Observed model", style="cyan", overflow="fold")
+        alias_table.add_column("Pricing key", style="green", overflow="fold")
+        for observed, target in alias_result.added_aliases.items():
+            alias_table.add_row(observed, target)
+        console.print(alias_table)
+    if alias_result.unresolved_models:
+        unresolved = ", ".join(alias_result.unresolved_models[:10])
+        if len(alias_result.unresolved_models) > 10:
+            unresolved += f", +{len(alias_result.unresolved_models) - 10} more"
+        console.print(f"[yellow]Unresolved models:[/] {unresolved}")
+
+
 @main.command()
 @click.option(
     "--apply",
@@ -2107,6 +2160,8 @@ def _ingest_into_db(
 ) -> dict[str, int]:
     from reflect.store.ingest import ingest_local_spans_file, ingest_otlp_traces_file
     from reflect.store.migrate import migrate
+    from reflect.store.normalize import normalize_pending_raw_events
+    from reflect.store.rollups import rebuild_rollups
     from reflect.store.sqlite import connect_sqlite
 
     if (otlp_traces is None) == (spans_file is None):
@@ -2119,9 +2174,20 @@ def _ingest_into_db(
             result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
         else:
             result = ingest_local_spans_file(conn, file_path=spans_file)
+        normalize_pending_raw_events(conn)
+        _ensure_sql_costs(conn)
+        rebuild_rollups(conn)
     finally:
         conn.close()
     return result
+
+
+def _ensure_sql_costs(conn, *, alias_path: Path | None = None):
+    from reflect.cost_aliases import ensure_cost_aliases
+
+    alias_result = ensure_cost_aliases(conn, alias_path=alias_path)
+    _reprice_sql_store(conn, alias_path=alias_result.alias_path)
+    return alias_result
 
 
 def _prepare_sql_report_db(
@@ -2184,7 +2250,7 @@ def _prepare_sql_report_db(
             if name in ingest_sources:
                 ingest_sources[name]["agents"] = _raw_event_agent_breakdown(conn, source_ids=refs)
         normalize_result = normalize_pending_raw_events(conn)
-        _reprice_sql_store(conn)
+        _ensure_sql_costs(conn)
         graph_result = rebuild_graph(conn)
         rollup_result = rebuild_rollups(conn)
     finally:
@@ -2232,12 +2298,12 @@ def _raw_event_agent_breakdown(conn, *, source_ids: list[str]) -> dict[str, dict
     }
 
 
-def _reprice_sql_store(conn) -> None:
+def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
     from reflect.config import load_model_aliases
     from reflect.pricing import calculate_cost, load_pricing_table
 
     pricing_table = load_pricing_table()
-    aliases = load_model_aliases()
+    aliases = load_model_aliases(alias_path)
     import sqlite3
 
     previous_row_factory = conn.row_factory
