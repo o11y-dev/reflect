@@ -267,8 +267,14 @@ class TestReportSubcommand:
                 "--db-path", str(db_path),
             ])
         assert result.exit_code == 0
+        assert "Prepared SQLite report store" in result.output
         assert mock_server.call_args.kwargs["db_path"] == db_path
         assert mock_server.call_args.kwargs["sql_only"] is False
+        conn = sqlite3.connect(db_path)
+        try:
+            assert conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0] > 0
+        finally:
+            conn.close()
 
     def test_report_sql_only_passes_migration_guard(self, runner, otlp_file, tmp_path):
         with patch("reflect.core._start_publish_server") as mock_server, \
@@ -352,6 +358,7 @@ class TestReportSubcommand:
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
+                "--db-path", str(tmp_path / "reflect.db"),
                 "--output", str(tmp_path / "report.md"),
             ])
         assert result.exit_code == 0
@@ -365,6 +372,7 @@ class TestReportSubcommand:
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
+                "--db-path", str(tmp_path / "reflect.db"),
                 "--dashboard-artifact", str(artifact_path),
             ])
         assert result.exit_code == 0
