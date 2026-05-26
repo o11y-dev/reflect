@@ -283,6 +283,31 @@ def test_dashboard_api_embeds_sql_view_models(tmp_path):
     assert sqlite_payload["tabs"]["exports"]["row_counts"]["sessions"] == 1
 
 
+def test_default_dashboard_api_promotes_sql_sessions_when_store_is_populated(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    response = TestClient(app).get("/api/data")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["sql_only"] is False
+    assert payload["sessions"][0]["id"] == "sess-sql"
+    assert payload["sessions"][0]["first_prompt"].startswith("Fix the failing SQL dashboard tests")
+    assert payload["sqlite"]["overview"]["session_count"] == 1
+
+    filtered = TestClient(app).get("/api/data", params={"session": "sess-sql"})
+    assert filtered.status_code == 200
+    filtered_payload = filtered.json()
+    assert filtered_payload["sql_only"] is False
+    assert [session["id"] for session in filtered_payload["sessions"]] == ["sess-sql"]
+
+    detail = TestClient(app).get("/api/session/sess-sql")
+    assert detail.status_code == 200
+    assert detail.json()["conversation"][0]["preview"].startswith("Fix the failing SQL dashboard tests")
+
+
 def test_sql_only_dashboard_api_does_not_build_legacy_json(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)

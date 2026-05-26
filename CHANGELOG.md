@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.2 (2026-05-26)
+
+### Fixed
+- Promote populated SQLite report data into the default dashboard payload so the SQL-backed sessions UI and session detail render without `--sql-only`.
+
 ## 0.8.1 (2026-05-26)
 
 ### Fixed

@@ -2492,6 +2492,7 @@ def _build_dashboard_app(
 
     import json as _json
     app = FastAPI(title="reflect dashboard", docs_url=None, redoc_url=None)
+    sql_backed_dashboard = False
     if sql_only:
         if db_path is None:
             raise ValueError("sql_only requires db_path")
@@ -2499,11 +2500,18 @@ def _build_dashboard_app(
     else:
         _cached = _json.loads(_build_dashboard_json(stats))
         _cached["comparison"] = None
-    if db_path is not None:
-        try:
-            _cached["sqlite"] = _sql_report_payload(db_path, limit=50, offset=0)
-        except Exception as exc:
-            _cached["sqlite"] = {"db_path": str(db_path), "error": str(exc)}
+        if db_path is not None:
+            try:
+                sql_payload = _sql_only_dashboard_payload(db_path, limit=50, offset=0)
+                sql_overview = (sql_payload.get("sqlite") or {}).get("overview") or {}
+                if int(sql_overview.get("session_count") or 0) > 0:
+                    sql_payload["sql_only"] = False
+                    _cached = sql_payload
+                    sql_backed_dashboard = True
+                else:
+                    _cached["sqlite"] = sql_payload.get("sqlite")
+            except Exception as exc:
+                _cached["sqlite"] = {"db_path": str(db_path), "error": str(exc)}
 
     @app.get("/api/data")
     def api_data(request: Request):
@@ -2517,10 +2525,10 @@ def _build_dashboard_app(
         model = params.get("model") or "all"
         status = params.get("status") or "all"
         range_name = params.get("range") or "all"
-        if sql_only:
+        if sql_only or sql_backed_dashboard:
             if not any([q, session_id, agents, model != "all", status != "all", range_name != "all"]):
                 return JSONResponse(_cached)
-            return JSONResponse(_sql_only_dashboard_payload(
+            payload = _sql_only_dashboard_payload(
                 db_path,
                 limit=50,
                 offset=0,
@@ -2530,7 +2538,10 @@ def _build_dashboard_app(
                 model=model,
                 status=status,
                 range_name=range_name,
-            ))
+            )
+            if sql_backed_dashboard:
+                payload["sql_only"] = False
+            return JSONResponse(payload)
         if not any([q, session_id, agents, model != "all", status != "all", range_name != "all"]):
             return JSONResponse(_cached)
         filtered_sessions = _filter_dashboard_sessions(
@@ -2603,7 +2614,7 @@ def _build_dashboard_app(
 
     @app.get("/api/session/{session_id:path}")
     def api_session(session_id: str):
-        if sql_only and db_path is not None:
+        if (sql_only or sql_backed_dashboard) and db_path is not None:
             detail = _load_sql_session_detail(db_path, session_id)
             if detail is None:
                 return JSONResponse({"error": f"Session {session_id} not found"}, status_code=404)
