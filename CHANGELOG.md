@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.x.x (unreleased)
+## 0.8.0 (2026-05-26)
 
 ### Added
 - Added temporary `reflect report --sql-only` migration guard to materialize the SQLite store and serve browser report data from SQLite without building legacy dashboard JSON.
