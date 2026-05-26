@@ -1091,13 +1091,15 @@ def _extract_event(span: dict) -> str | None:
     """Extract event type from OTLP span (attributes) or raw event format."""
     attrs = span.get("attributes") or {}
     # OTLP format (current hook output)
-    event = attrs.get("gen_ai.client.hook.event")
+    event = attrs.get("gen_ai.client.hook.event") or attrs.get("ide.hook.event")
     if event:
         return event
     # Span name fallback: ide.hook.EventName
     name = span.get("name", "")
     if name.startswith("gen_ai.client.hook."):
         return name[len("gen_ai.client.hook."):]
+    if name.startswith("ide.hook."):
+        return name[len("ide.hook."):]
     # Legacy raw format
     raw = span.get("event")
     if isinstance(raw, str) and raw:

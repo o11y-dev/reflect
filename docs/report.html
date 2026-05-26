@@ -1315,6 +1315,50 @@ body.rail-overlay-open{overflow:hidden}
   font-size:13px;
   color:var(--text-2);
 }
+.tool-inventory-shell{display:flex;flex-direction:column;gap:14px}
+.tool-inventory-summary{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(120px,1fr));
+  gap:10px;
+}
+.tool-inventory-card{
+  border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.03);
+  border-radius:8px;
+  padding:12px;
+}
+.tool-inventory-num{
+  font-size:22px;
+  font-weight:750;
+  color:var(--text);
+}
+.tool-inventory-label{
+  margin-top:3px;
+  font-size:12px;
+  color:var(--text-3);
+  text-transform:uppercase;
+  letter-spacing:.08em;
+}
+.tool-inventory-section{
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:8px;
+  overflow:hidden;
+  background:rgba(255,255,255,.018);
+}
+.tool-inventory-section h4{
+  margin:0;
+  padding:10px 12px;
+  font-size:13px;
+  color:var(--text-2);
+  border-bottom:1px solid rgba(255,255,255,.06);
+}
+.tool-inventory-table{width:100%;border-collapse:collapse;font-size:13px}
+.tool-inventory-table th,
+.tool-inventory-table td{padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.045);vertical-align:top}
+.tool-inventory-table th{text-align:left;color:var(--text-3);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+.tool-inventory-table tr:last-child td{border-bottom:0}
+.tool-inventory-name{font-weight:700;color:var(--text);overflow-wrap:anywhere}
+.tool-inventory-example{margin-top:4px;color:var(--text-3);font-size:12px;max-width:64ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ev-timeline{
   display:flex;
   flex-direction:column;
@@ -3966,6 +4010,7 @@ let dashboardSelectedSessionId = currentParams().get('session') || '';
 
     const detailTabsHtml = `<div class="sb-detail-tabs">
       <button type="button" class="sb-detail-tab${activeDetailTab === 'conversation' ? ' active' : ''}" data-tab="conversation">Conversation</button>
+      <button type="button" class="sb-detail-tab${activeDetailTab === 'tools' ? ' active' : ''}" data-tab="tools">Tools</button>
       <button type="button" class="sb-detail-tab${activeDetailTab === 'quality' ? ' active' : ''}" data-tab="quality">Quality</button>
       <button type="button" class="sb-detail-tab${activeDetailTab === 'telemetry' ? ' active' : ''}" data-tab="telemetry">Telemetry</button>
     </div>`;
@@ -3974,7 +4019,9 @@ let dashboardSelectedSessionId = currentParams().get('session') || '';
       ? renderTelemetryCockpit(session)
       : activeDetailTab === 'quality'
         ? renderQualityPanel(session)
-        : renderConversationCasefile(session, conversation, loadBtnHtml, timelineHtml);
+        : activeDetailTab === 'tools'
+          ? renderSessionToolsPanel(session)
+          : renderConversationCasefile(session, conversation, loadBtnHtml, timelineHtml);
 
     detailEl.innerHTML = headerHtml
       + sessionTimelineHtml
@@ -3985,7 +4032,7 @@ let dashboardSelectedSessionId = currentParams().get('session') || '';
       tab.addEventListener('click', () => {
         session._detailTab = tab.dataset.tab || 'conversation';
         renderSessionDetail(session);
-        if (session._detailTab === 'telemetry' && session.full_id && !session.telemetry && !session._loadingDetail) {
+        if ((session._detailTab === 'telemetry' || session._detailTab === 'tools') && session.full_id && !session._fullLoaded && !session._loadingDetail) {
           tryLoadFullDetail(session.full_id || session.id, null);
         }
       });
@@ -4211,6 +4258,172 @@ let dashboardSelectedSessionId = currentParams().get('session') || '';
         ${renderActivityGroup(turn.activity, sessionStartTs, turnIndex)}
       </section>
     `).join('')}</div>`;
+  }
+
+  function extractSkillFromPreview(preview){
+    const text = String(preview || '').trim();
+    if (!text) return '';
+    try {
+      const payload = JSON.parse(text);
+      if (payload && typeof payload.skill === 'string') return payload.skill.trim();
+    } catch (_) {
+      const match = text.match(/"skill"\s*:\s*"([^"]+)"/);
+      if (match) return match[1].trim();
+    }
+    return '';
+  }
+
+  function extractSubagentFromPreview(toolName, preview){
+    const normalizedTool = String(toolName || '').trim().toLowerCase();
+    if (!['subagent','agent','task','read_agent'].includes(normalizedTool)) return '';
+    let payload = {};
+    try { payload = JSON.parse(String(preview || '').trim() || '{}'); }
+    catch (_) { payload = {}; }
+    const keys = normalizedTool === 'task' || normalizedTool === 'read_agent'
+      ? ['agent_id','name','agent_type']
+      : ['subagent_type','agent_type','name','agent_id','description'];
+    for (const key of keys) {
+      const value = String(payload[key] || '').trim();
+      if (value && !value.includes('REDACTED') && !value.startsWith('[')) return value.slice(0,80);
+    }
+    return '';
+  }
+
+  function deriveToolInventory(session){
+    const provided = session.tool_inventory || {};
+    const hasProvided = Boolean((provided.tools || []).length || (provided.skills || []).length || (provided.mcp_tools || []).length || (provided.subagents || []).length);
+    const toolMap = new Map();
+    const skillMap = new Map();
+    const mcpMap = new Map();
+    const subagentMap = new Map();
+    const addTool = (name, count, failures, duration, examples) => {
+      const key = name || 'unknown';
+      const row = toolMap.get(key) || {name:key,count:0,failures:0,avg_duration_ms:0,examples:[]};
+      row.count += Number(count || 0);
+      row.failures += Number(failures || 0);
+      if (duration) row.avg_duration_ms = Number(duration || 0);
+      (examples || []).forEach(ex => {
+        if (ex && row.examples.length < 3) row.examples.push(String(ex));
+      });
+      toolMap.set(key, row);
+    };
+    (provided.tools || []).forEach(row => addTool(row.name, row.count, row.failures, row.avg_duration_ms, row.examples));
+    (provided.skills || []).forEach(row => {
+      const name = row.name || '';
+      if (!name) return;
+      const current = skillMap.get(name) || {name, count:0, source:row.source || ''};
+      current.count += Number(row.count || 0);
+      skillMap.set(name, current);
+    });
+    (provided.mcp_tools || []).forEach(row => {
+      if (!row.name) return;
+      mcpMap.set(row.name, {name: row.name, count: Number(row.count || 0)});
+    });
+    (provided.subagents || []).forEach(row => {
+      if (!row.name) return;
+      subagentMap.set(row.name, {
+        name: row.name,
+        count: Number(row.count || 0),
+        stops: Number(row.stops || 0),
+        source: row.source || '',
+      });
+    });
+    if (!hasProvided) {
+      (session.conversation || []).forEach(ev => {
+        if (ev.type === 'tool_call') {
+          addTool(ev.tool_name || 'unknown', 1, 0, ev.duration_ms || 0, [ev.preview || '']);
+          if (ev.tool_name === 'skill') {
+            const skillName = extractSkillFromPreview(ev.preview);
+            if (skillName) {
+              const current = skillMap.get(skillName) || {name:skillName,count:0,source:'tool'};
+              current.count += 1;
+              skillMap.set(skillName, current);
+            }
+          }
+          const subagentName = extractSubagentFromPreview(ev.tool_name, ev.preview);
+          if (subagentName) {
+            const current = subagentMap.get(subagentName) || {name:subagentName,count:0,stops:0,source:'tool'};
+            current.count += 1;
+            subagentMap.set(subagentName, current);
+          }
+        } else if (ev.type === 'tool_result' && ev.success === false && ev.tool_name) {
+          addTool(ev.tool_name, 0, 1, ev.duration_ms || 0, []);
+        } else if (ev.type === 'mcp_call') {
+          const label = ev.server && ev.tool_name ? `${ev.server}/${ev.tool_name}` : (ev.tool_name || ev.server || '');
+          if (label) {
+            const current = mcpMap.get(label) || {name:label,count:0};
+            current.count += 1;
+            mcpMap.set(label, current);
+          }
+        } else if (ev.type === 'subagent_start' || ev.type === 'subagent_stop') {
+          const name = ev.subagent_type || 'unknown';
+          const current = subagentMap.get(name) || {name,count:0,stops:0,source:'lifecycle'};
+          if (ev.type === 'subagent_stop') current.stops += 1;
+          else current.count += 1;
+          subagentMap.set(name, current);
+        }
+      });
+      Object.entries(session.tools || {}).forEach(([name,count]) => addTool(name, count, 0, 0, []));
+    }
+    Object.entries(session.skills || {}).forEach(([name,count]) => {
+      if (hasProvided && skillMap.has(name)) return;
+      const current = skillMap.get(name) || {name,count:0,source:'summary'};
+      current.count += Number(count || 0);
+      skillMap.set(name, current);
+    });
+    return {
+      tools: Array.from(toolMap.values()).sort((a,b) => b.count - a.count || a.name.localeCompare(b.name)),
+      skills: Array.from(skillMap.values()).sort((a,b) => b.count - a.count || a.name.localeCompare(b.name)),
+      mcp_tools: Array.from(mcpMap.values()).sort((a,b) => b.count - a.count || a.name.localeCompare(b.name)),
+      subagents: Array.from(subagentMap.values()).sort((a,b) => b.count - a.count || a.name.localeCompare(b.name)),
+    };
+  }
+
+  function renderSessionToolsPanel(session){
+    const inventory = deriveToolInventory(session);
+    const toolTotal = inventory.tools.reduce((sum,row) => sum + Number(row.count || 0), 0);
+    const skillTotal = inventory.skills.reduce((sum,row) => sum + Number(row.count || 0), 0);
+    const mcpTotal = inventory.mcp_tools.reduce((sum,row) => sum + Number(row.count || 0), 0);
+    const subagentTotal = inventory.subagents.reduce((sum,row) => sum + Number(row.count || 0), 0);
+    const renderRows = rows => rows.length ? rows.map(row => `
+      <tr>
+        <td>
+          <div class="tool-inventory-name">${escHtml(row.name || 'unknown')}</div>
+          ${(row.examples || []).slice(0,1).map(ex => `<div class="tool-inventory-example">${escHtml(ex)}</div>`).join('')}
+        </td>
+        <td style="text-align:right">${fmt(row.count || 0)}</td>
+        <td style="text-align:right">${fmt(row.failures || 0)}</td>
+        <td style="text-align:right">${row.avg_duration_ms ? fmtDur(row.avg_duration_ms) : '--'}</td>
+      </tr>
+    `).join('') : '<tr><td colspan="4" style="color:var(--text-3);text-align:center">No entries captured for this session.</td></tr>';
+    const renderSimpleRows = rows => rows.length ? rows.map(row => `
+      <tr><td><div class="tool-inventory-name">${escHtml(row.name || 'unknown')}</div>${row.source ? `<div class="tool-inventory-example">${escHtml(row.source)}</div>` : ''}</td><td style="text-align:right">${fmt(row.count || 0)}</td></tr>
+    `).join('') : '<tr><td colspan="2" style="color:var(--text-3);text-align:center">No entries captured for this session.</td></tr>';
+    return `<div class="tool-inventory-shell">
+      <div class="tool-inventory-summary">
+        <div class="tool-inventory-card"><div class="tool-inventory-num">${fmt(toolTotal)}</div><div class="tool-inventory-label">Tool calls</div></div>
+        <div class="tool-inventory-card"><div class="tool-inventory-num">${fmt(inventory.tools.length)}</div><div class="tool-inventory-label">Distinct tools</div></div>
+        <div class="tool-inventory-card"><div class="tool-inventory-num">${fmt(skillTotal)}</div><div class="tool-inventory-label">Skill uses</div></div>
+        <div class="tool-inventory-card"><div class="tool-inventory-num">${fmt(subagentTotal)}</div><div class="tool-inventory-label">Subagents</div></div>
+        <div class="tool-inventory-card"><div class="tool-inventory-num">${fmt(mcpTotal)}</div><div class="tool-inventory-label">MCP calls</div></div>
+      </div>
+      <section class="tool-inventory-section">
+        <h4>Tools</h4>
+        <table class="tool-inventory-table"><thead><tr><th>Tool</th><th style="text-align:right">Calls</th><th style="text-align:right">Failed</th><th style="text-align:right">Avg</th></tr></thead><tbody>${renderRows(inventory.tools)}</tbody></table>
+      </section>
+      <section class="tool-inventory-section">
+        <h4>Skills</h4>
+        <table class="tool-inventory-table"><thead><tr><th>Skill</th><th style="text-align:right">Uses</th></tr></thead><tbody>${renderSimpleRows(inventory.skills)}</tbody></table>
+      </section>
+      <section class="tool-inventory-section">
+        <h4>Subagents</h4>
+        <table class="tool-inventory-table"><thead><tr><th>Subagent</th><th style="text-align:right">Starts</th></tr></thead><tbody>${renderSimpleRows(inventory.subagents)}</tbody></table>
+      </section>
+      <section class="tool-inventory-section">
+        <h4>MCP tools</h4>
+        <table class="tool-inventory-table"><thead><tr><th>Server / tool</th><th style="text-align:right">Calls</th></tr></thead><tbody>${renderSimpleRows(inventory.mcp_tools)}</tbody></table>
+      </section>
+    </div>`;
   }
 
   function renderConversationCasefile(session, conversation, loadBtnHtml, timelineHtml){
@@ -5004,10 +5217,12 @@ let dashboardSelectedSessionId = currentParams().get('session') || '';
       .then(data => {
         const events = data.events || data.conversation || [];
         const telemetry = data.telemetry || null;
+        const toolInventory = data.tool_inventory || null;
         if (idx >= 0) {
           const conv = normalizeLoadedConversation(events, sessions[idx].conversation);
           if (conv.length > 0) sessions[idx].conversation = conv;
           if (telemetry) sessions[idx].telemetry = telemetry;
+          if (toolInventory) sessions[idx].tool_inventory = toolInventory;
           sessions[idx]._fullLoaded = true;
           sessions[idx]._loadingDetail = false;
           const estimated = getEstimatedSessionTokens(sessions[idx]);

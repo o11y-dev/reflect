@@ -106,6 +106,35 @@ def _seed_view_db(conn):
     )
     conn.executemany(
         """
+        INSERT INTO steps(
+          id, session_id, seq, type, started_at, status, summary,
+          raw_attrs_json, created_at, updated_at
+        )
+        VALUES (?, 'sess-2', ?, 'tool_call', ?, 'completed', ?, ?, ?, ?)
+        """,
+        [
+            (
+                "step-copilot-task",
+                2,
+                "2026-05-02T11:01:00+00:00",
+                "PreToolUse",
+                '{"gen_ai.client.hook.event":"PreToolUse","gen_ai.client.name":"copilot","gen_ai.client.tool_name":"task","gen_ai.client.tool.input":"{\\"agent_type\\":\\"explore\\",\\"name\\":\\"repo-strategy\\"}"}',
+                now,
+                now,
+            ),
+            (
+                "step-legacy-ide-subagent",
+                3,
+                "2026-05-02T11:02:00+00:00",
+                "ide.hook.SubagentStart",
+                '{"ide.hook.event":"SubagentStart","ide.name":"cursor","ide.subagent_type":"legacy-helper"}',
+                now,
+                now,
+            ),
+        ],
+    )
+    conn.executemany(
+        """
         INSERT INTO session_rollups(
           session_id, agent, started_at, ended_at, duration_ms, prompt_count,
           tool_call_count, error_count, input_tokens, output_tokens,
@@ -308,7 +337,7 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         tabs = build_report_tabs(conn)
         scoped = build_report_tabs(conn, session_ids={"sess-2"})
 
-        assert tabs.activity.events_by_type == {"llm_call": 2}
+        assert tabs.activity.events_by_type == {"llm_call": 2, "tool_call": 2}
         assert tabs.activity.activity_by_day == {"2026-05-01": 3, "2026-05-02": 5}
         assert tabs.models.models_by_count == {"claude-4.6-opus": 1, "gpt-5.4": 1}
         assert tabs.costs.model_costs["gpt-5.4"] == 0.75
@@ -318,11 +347,17 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
 
         assert scoped.tools.tools_by_count == {"Edit": 1}
         assert scoped.tools.skills_by_count == {"review-skill": 1}
-        assert scoped.tools.subagent_types_by_count == {"research-helper": 1}
+        assert scoped.tools.subagent_types_by_count == {
+            "legacy-helper": 1,
+            "repo-strategy": 1,
+            "research-helper": 1,
+        }
         assert scoped.tools.top_commands == [{"command": "poetry run pytest", "count": 1}]
         assert scoped.mcp.mcp_servers_by_count == {"metrics.example.test": 1, "mcp-issue-tracker": 1}
         assert scoped.agents.agents["codex"]["top_skills"] == {"review-skill": 1}
         assert scoped.agents.agents["codex"]["subagents"] == 1
+        assert scoped.agents.agents["copilot"]["subagents"] == 1
+        assert scoped.agents.agents["cursor"]["subagents"] == 1
         assert scoped.specs.total_specs == 1
         assert scoped.specs.requirements_by_status == {"planned": 1, "validated": 1}
         assert scoped.memory.memories_by_type == {"convention": 1}

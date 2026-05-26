@@ -49,6 +49,7 @@ def _duration_ms(observed_at: str, received_at: str) -> int | None:
 def _agent_name(attrs: dict[str, Any]) -> str:
     return str(
         attrs.get("gen_ai.client.name")
+        or attrs.get("ide.name")
         or attrs.get("agent.name")
         or attrs.get("service.name")
         or "unknown"
@@ -63,7 +64,7 @@ def _step_type(event_type: str, attrs: dict[str, Any]) -> str:
         return "mcp_call"
     if attrs.get("gen_ai.client.command"):
         return "shell_command"
-    if attrs.get("gen_ai.client.tool_name") or "tool" in event:
+    if attrs.get("gen_ai.client.tool_name") or attrs.get("ide.tool_name") or "tool" in event:
         return "tool_call"
     if (
         attrs.get("gen_ai.request.model")

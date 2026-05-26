@@ -51,6 +51,8 @@ class TestBuildDashboardJson:
         assert "total_cost_usd" in data["sessions"][0]
         assert "cache_creation_cost_usd" in data["sessions"][0]
         assert "cache_read_cost_usd" in data["sessions"][0]
+        assert "tool_inventory" in data["sessions"][0]
+        assert {"tools", "skills", "mcp_tools", "subagents"} <= set(data["sessions"][0]["tool_inventory"])
 
     def test_includes_cost_summary_fields(self, rich_stats):
         data = json.loads(_build_dashboard_json(rich_stats))

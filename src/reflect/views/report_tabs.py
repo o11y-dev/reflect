@@ -391,20 +391,47 @@ def _skill_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | Non
             attrs = {}
         if not isinstance(attrs, dict):
             continue
-        agent = str(row["agent"] or "unknown")
-        event = str(_attr(attrs, "gen_ai.client.hook.event") or row["summary"] or "")
+        agent = str(
+            _attr(attrs, "gen_ai.client.name", "ide.name", "agent.name")
+            or row["agent"]
+            or "unknown"
+        )
+        event = str(_attr(attrs, "gen_ai.client.hook.event", "ide.hook.event") or row["summary"] or "")
         event_lc = event.lower()
-        subagent_type = str(_attr(attrs, "gen_ai.client.subagent_type", "subagent.type") or "")
-        if subagent_type:
-            if event == "SubagentStop" or "stop" in event_lc:
+        subagent_type = str(_attr(attrs, "gen_ai.client.subagent_type", "ide.subagent_type", "subagent.type") or "")
+        is_subagent_start = event == "SubagentStart" or event.endswith(".SubagentStart")
+        is_subagent_stop = event == "SubagentStop" or event.endswith(".SubagentStop")
+        if subagent_type or is_subagent_start or is_subagent_stop:
+            subagent_type = subagent_type or "unknown"
+            if is_subagent_stop or ("subagent" in event_lc and "stop" in event_lc):
                 subagent_stops[subagent_type] += 1
             else:
                 subagent_starts[subagent_type] += 1
                 subagents_by_agent.setdefault(agent, Counter())[subagent_type] += 1
         tool_name = str(_attr(attrs, "gen_ai.client.tool_name") or "")
         preview = str(_attr(attrs, "gen_ai.client.tool.input", "tool.input") or "")
+        tool_subagent = _extract_subagent_name_from_tool(tool_name, attrs, preview)
+        if tool_subagent and (event == "PreToolUse" or event.endswith(".PreToolUse")):
+            subagent_starts[tool_subagent] += 1
+            subagents_by_agent.setdefault(agent, Counter())[tool_subagent] += 1
         prompt_text = str(_attr(attrs, "gen_ai.client.prompt", "gen_ai.client.prompt.text", "prompt") or "")
+        file_path = str(
+            _attr(
+                attrs,
+                "gen_ai.client.file_path",
+                "gen_ai.client.tool.input.file_path",
+                "gen_ai.client.tool.input.path",
+                "tool.input.file_path",
+                "tool.input.path",
+                "file.path",
+                "path",
+            )
+            or ""
+        )
         skill_names = set(_extract_skill_names_from_text(prompt_text))
+        path_skill = _extract_skill_name_from_path(file_path)
+        if path_skill:
+            skill_names.add(path_skill)
         if tool_name == "skill":
             skill_name = _extract_skill_name_from_preview(preview)
             if skill_name:
@@ -446,6 +473,53 @@ def _extract_skill_name_from_preview(preview: str) -> str:
         if isinstance(skill, str):
             return skill.strip()
     return ""
+
+
+def _extract_skill_name_from_path(path: str) -> str:
+    if not isinstance(path, str) or not path.strip():
+        return ""
+    match = re.search(r"(?:^|/)skills/(?:.*/)?([^/]+)/SKILL\.md$", path)
+    return match.group(1).strip() if match else ""
+
+
+def _load_json_dict(value: str) -> dict[str, Any]:
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _extract_subagent_name_from_tool(tool_name: str, attrs: dict[str, Any], preview: str) -> str:
+    normalized_tool = str(tool_name or "").strip().lower()
+    payload = _load_json_dict(preview)
+
+    def first_value(*keys: str) -> str:
+        for key in keys:
+            value = _attr(attrs, f"gen_ai.client.tool.input.{key}", f"tool.input.{key}")
+            if value in (None, ""):
+                value = payload.get(key)
+            cleaned = _clean_subagent_name(value)
+            if cleaned:
+                return cleaned
+        return ""
+
+    if normalized_tool in {"subagent", "agent"}:
+        return first_value("subagent_type", "agent_type", "name", "agent_id", "description")
+    if normalized_tool in {"task", "read_agent"}:
+        return first_value("agent_id", "name", "agent_type")
+    return ""
+
+
+def _clean_subagent_name(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    name = value.strip()
+    if not name or "REDACTED" in name.upper() or name.startswith("["):
+        return ""
+    return name[:80]
 
 
 def _extract_skill_names_from_text(text: str) -> set[str]:
@@ -783,6 +857,30 @@ def _build_agents(
             "cache_creation_tokens": 0,
             "cache_read_tokens": 0,
             "total_cost_usd": total_cost,
+            "top_model": "",
+            "top_tools": dict(top_tools.get(name, Counter()).most_common(10)),
+            "top_skills": dict(skill_subagent["skills_by_agent"].get(name, Counter()).most_common(10)),
+            "percentiles": [],
+        }
+    extra_agent_names = (
+        set(skill_subagent["subagents_by_agent"]) | set(skill_subagent["skills_by_agent"])
+    ) - set(agents)
+    for name in sorted(extra_agent_names):
+        agents[name] = {
+            "total_events": 0,
+            "sessions": 0,
+            "prompts": 0,
+            "tool_calls": 0,
+            "tool_ratio": 0,
+            "failures": 0,
+            "failure_rate": 0,
+            "mcp_calls": mcp_by_agent.get(name, 0),
+            "subagents": sum(skill_subagent["subagents_by_agent"].get(name, Counter()).values()),
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 0,
+            "total_cost_usd": 0,
             "top_model": "",
             "top_tools": dict(top_tools.get(name, Counter()).most_common(10)),
             "top_skills": dict(skill_subagent["skills_by_agent"].get(name, Counter()).most_common(10)),

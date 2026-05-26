@@ -86,8 +86,16 @@ def _seed_sql_report_db(db_path):
         )
         conn.execute(
             """
-            INSERT INTO steps(id, session_id, seq, type, started_at, duration_ms, status, created_at, updated_at)
-            VALUES ('tool-step-sql', 'sess-sql', 3, 'tool_call', '2026-05-01T10:01:00+00:00', 500, 'ok', ?, ?)
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, duration_ms, status,
+              raw_attrs_json, created_at, updated_at
+            )
+            VALUES (
+              'tool-step-sql', 'sess-sql', 3, 'tool_call',
+              '2026-05-01T10:01:00+00:00', 500, 'ok',
+              '{"gen_ai.client.tool.input.file_path":"/Users/test/.cursor/skills/sql-review/SKILL.md"}',
+              ?, ?
+            )
             """,
             (now, now),
         )
@@ -130,11 +138,13 @@ def _seed_sql_report_db(db_path):
             """
             INSERT INTO tool_calls(
               id, step_id, session_id, tool_name, tool_type, input_preview_redacted,
-              status, duration_ms, created_at, updated_at
+              status, duration_ms, raw_attrs_json, created_at, updated_at
             )
             VALUES (
               'tool-sql', 'tool-step-sql', 'sess-sql', 'exec_command', 'shell',
-              '{"cmd":"poetry run pytest"}', 'ok', 500, ?, ?
+              '{"cmd":"poetry run pytest"}', 'ok', 500,
+              '{"gen_ai.client.tool.input.file_path":"/Users/test/.cursor/skills/sql-review/SKILL.md"}',
+              ?, ?
             )
             """,
             (now, now),
@@ -419,8 +429,8 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path, monkeypatch):
     assert payload["sqlite"]["overview"]["session_count"] == 1
     assert payload["sqlite"]["tabs"]["specs"]["requirements_by_status"] == {"validated": 1}
     assert payload["sqlite"]["tabs"]["exports"]["scoped"] is False
-    assert payload["sqlite"]["tabs"]["tools"]["skills_by_count"] == {"review-skill": 1}
-    assert payload["sqlite"]["tabs"]["agents"]["agents"]["codex"]["top_skills"] == {"review-skill": 1}
+    assert payload["sqlite"]["tabs"]["tools"]["skills_by_count"] == {"review-skill": 1, "sql-review": 1}
+    assert payload["sqlite"]["tabs"]["agents"]["agents"]["codex"]["top_skills"] == {"review-skill": 1, "sql-review": 1}
     assert payload["sqlite"]["tabs"]["overview"]["unique_sessions"] == payload["unique_sessions"]
     assert payload["sqlite"]["tabs"]["overview"]["prompt_submits"] == payload["prompt_submits"]
     assert payload["sqlite"]["tabs"]["overview"]["tool_calls"] == payload["tool_calls"]
@@ -444,7 +454,7 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path, monkeypatch):
     assert payload["tools_by_count"] == {"exec_command": 2}
     assert payload["mcp_servers_by_count"] == {"mcp-issue-tracker": 1}
     assert "docker run" not in next(iter(payload["mcp_servers_by_count"]))
-    assert payload["skills_by_count"] == {"review-skill": 1}
+    assert payload["skills_by_count"] == {"review-skill": 1, "sql-review": 1}
     assert payload["subagent_types_by_count"] == {"research-helper": 1}
     assert payload["top_commands"] == [{"command": "poetry run pytest", "count": 1}]
     assert payload["unique_commands"] == 1
@@ -491,6 +501,12 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path, monkeypatch):
     assert detail.json()["telemetry"]["summary"]["logs"] == 1
     assert detail.json()["telemetry"]["logs"][0]["event"] == "UserPromptSubmit"
     assert "User prompt submitted" in detail.json()["telemetry"]["logs"][0]["body"]
+    tool_inventory = detail.json()["tool_inventory"]
+    assert tool_inventory["tools"][0]["name"] == "exec_command"
+    assert tool_inventory["tools"][0]["count"] == 1
+    assert {skill["name"] for skill in tool_inventory["skills"]} >= {"review-skill", "sql-review"}
+    assert {subagent["name"] for subagent in tool_inventory["subagents"]} >= {"research-helper"}
+    assert tool_inventory["mcp_tools"][0]["name"].endswith("/jira_search")
 
 
 def test_dashboard_session_detail_shows_metadata_only_llm_prompt_turns(tmp_path):
