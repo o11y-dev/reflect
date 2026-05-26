@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.3 (2026-05-26)
+
+### Added
+- Added `reflect doctor cost` to scan the SQLite store for observed model names, append only missing model aliases to `~/.reflect/config/model-aliases.json`, and refresh SQL cost estimates.
+
+### Changed
+- Run SQL normalization, cost-alias refresh, cost repricing, and rollup rebuilds after `reflect ingest` so newly ingested telemetry has cost data ready for reports.
+
 ## 0.8.2 (2026-05-26)
 
 ### Changed
