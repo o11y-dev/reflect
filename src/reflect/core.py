@@ -1035,6 +1035,7 @@ def report(
     sql_only: bool,
 ) -> None:
     """Open the AI usage dashboard in a browser via a local server."""
+    requested_otlp_traces = otlp_traces
     if sql_only:
         from collections import Counter
 
@@ -1090,12 +1091,35 @@ def report(
                 encoding="utf-8",
             )
     else:
-        stats, _, sessions_dir, spans_dir, _, _ = _resolve_and_analyze(
+        stats, resolved_otlp_traces, sessions_dir, spans_dir, _, _ = _resolve_and_analyze(
             otlp_traces=otlp_traces,
             sessions_dir=sessions_dir,
             spans_dir=spans_dir,
             demo=demo,
             time_range=time_range,
+        )
+        include_native_sessions = False
+        if not demo:
+            if requested_otlp_traces is None:
+                include_native_sessions = True
+            else:
+                default_otlp = _default_otlp_traces()
+                include_native_sessions = (
+                    default_otlp is not None
+                    and resolved_otlp_traces is not None
+                    and resolved_otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
+                )
+        preparation = _prepare_sql_report_db(
+            db_path,
+            otlp_traces=resolved_otlp_traces,
+            include_native_sessions=include_native_sessions,
+        )
+        click.echo(
+            "Prepared SQLite report store "
+            f"(inserted={preparation['ingest']['inserted']}, "
+            f"skipped={preparation['ingest']['skipped']}, "
+            f"normalized={preparation['normalize']['processed']}, "
+            f"sessions={preparation['rollups']['session_rollups']})"
         )
     if dashboard_artifact is not None and not sql_only:
         _write_dashboard_artifact(stats, dashboard_artifact)

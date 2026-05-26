@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1 (2026-05-26)
+
+### Fixed
+- Prepare the SQLite report store during the default `reflect report` path so SQL-backed dashboard data is populated without requiring `--sql-only`.
+
 ## 0.8.0 (2026-05-26)
 
 ### Added
