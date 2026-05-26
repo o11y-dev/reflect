@@ -263,30 +263,6 @@ header{
   z-index:1;
   box-shadow:0 0 28px rgba(242,138,26,.62);
 }
-.loader-orbit{
-  position:absolute;
-  left:50%;
-  top:60%;
-  width:92px;
-  height:92px;
-  transform:translate(-50%,-50%);
-  transform-origin:50% 50%;
-  border:1px solid rgba(255,177,86,.24);
-  border-radius:999px;
-  animation:loader-spin 1.4s linear infinite;
-}
-.loader-orbit::after{
-  content:'';
-  position:absolute;
-  right:-4px;
-  top:50%;
-  transform:translateY(-50%);
-  width:8px;
-  height:8px;
-  border-radius:999px;
-  background:var(--signal-2);
-  box-shadow:0 0 20px rgba(255,177,86,.75);
-}
 .loader-title{
   font-size:18px;
   font-weight:900;
@@ -2809,7 +2785,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 <div id="report-loader" class="report-loader" role="status" aria-live="polite" aria-label="Loading report">
   <div class="report-loader-inner">
-    <div class="loader-mark" aria-hidden="true"><span class="loader-orbit"></span></div>
+    <div class="loader-mark" aria-hidden="true"></div>
     <div class="loader-title">reflect.<em>o11y</em>.dev</div>
     <div class="loader-subtitle" id="report-loader-copy">Preparing report...</div>
     <div class="loader-bar" aria-hidden="true"><span></span></div>
@@ -4185,10 +4161,10 @@ let dashboardSelectedSessionId = currentParams().get('session') || '';
     const dur = ev.duration_ms ? `<span class="chip-dur">${fmtDur(ev.duration_ms)}</span>` : '';
     if (ev.type === 'tool_call') {
       icon = '▶'; name = ev.tool_name || 'Tool';
-      meta2 = ev.preview ? ev.preview.slice(0,72) : '';
+      meta2 = ev.preview ? ev.preview.slice(0,72) : 'input not captured';
     } else if (ev.type === 'tool_result') {
       icon = ev.success !== false ? '✓' : '✗'; name = ev.tool_name || 'Result';
-      meta2 = ev.preview ? ev.preview.slice(0,72) : '';
+      meta2 = ev.preview ? ev.preview.slice(0,72) : (ev.success === false ? 'failure details not captured' : '');
       statusHtml = ev.success !== false ? '<span class="chip-ok">ok</span>' : '<span class="chip-fail">failed</span>';
     } else if (ev.type === 'mcp_call') {
       icon = '⬡'; name = ev.tool_name || 'MCP';
@@ -4216,13 +4192,33 @@ let dashboardSelectedSessionId = currentParams().get('session') || '';
     if (!events.length) return '';
     const failures = events.filter(ev => ev.type === 'tool_result' && ev.success === false).length;
     const tools = events.filter(ev => ev.type === 'tool_call' || ev.type === 'mcp_call').length;
+    const toolNames = [...new Set(events
+      .filter(ev => ev.type === 'tool_call' || ev.type === 'mcp_call')
+      .map(ev => ev.type === 'mcp_call'
+        ? `${ev.server ? `${ev.server}/` : ''}${ev.tool_name || 'MCP'}`
+        : (ev.tool_name || 'Tool')))
+    ];
+    const failureSummaries = events
+      .filter(ev => ev.type === 'tool_result' && ev.success === false)
+      .map(ev => {
+        const name = ev.tool_name || 'Tool';
+        const detail = String(ev.preview || '').trim();
+        return detail ? `${name}: ${detail.slice(0, 96)}` : `${name} failed`;
+      });
+    const toolSummary = toolNames.length
+      ? toolNames.slice(0, 3).join(', ') + (toolNames.length > 3 ? ` +${toolNames.length - 3} more` : '')
+      : '';
+    const failureSummary = failureSummaries.length
+      ? `<span class="chip-fail">${escHtml(failureSummaries[0])}${failureSummaries.length > 1 ? ` +${failureSummaries.length - 1} more` : ''}</span>`
+      : '';
     const failedLabel = failures ? `<span class="chip-fail">${fmt(failures)} failed</span>` : '';
     const openAttr = failures ? ' open' : '';
     return `<details class="chat-activity-group"${openAttr}>
       <summary class="chat-activity-summary">
         <span>Turn activity</span>
-        <span class="chip-meta">${fmt(tools)} calls · ${fmt(events.length)} events</span>
+        <span class="chip-meta">${fmt(tools)} calls · ${fmt(events.length)} events${toolSummary ? ` · ${escHtml(toolSummary)}` : ''}</span>
         ${failedLabel}
+        ${failureSummary}
       </summary>
       <div class="chat-activity-list">
         ${events.map(ev => renderConversationActivity(ev, sessionStartTs)).join('')}
