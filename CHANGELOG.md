@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.2 (2026-05-26)
+
+### Changed
+- Make SQLite-backed report data the default `reflect report` runtime and keep `--sql-only` as a deprecated no-op compatibility flag.
+- Restore the SQL checkpoint dashboard UI, including SQL-backed report panels, quality scoring, Codex native session ingestion, and report artifact generation from SQLite.
+
+### Fixed
+- Guard raw event normalization with savepoints so a failed event does not abort the full normalization batch.
+
 ## 0.8.1 (2026-05-26)
 
 ### Fixed
