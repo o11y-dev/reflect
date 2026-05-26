@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.2 (2026-05-26)
+
+### Changed
+- Make SQLite-backed report data the default `reflect report` runtime and keep `--sql-only` as a deprecated no-op compatibility flag.
+- Restore the SQL checkpoint dashboard UI, including SQL-backed report panels, quality scoring, Codex native session ingestion, and report artifact generation from SQLite.
+
+### Fixed
+- Guard raw event normalization with savepoints so a failed event does not abort the full normalization batch.
+
 ## 0.8.1 (2026-05-26)
 
 ### Fixed
@@ -10,6 +19,7 @@
 ### Added
 - Added temporary `reflect report --sql-only` migration guard to materialize the SQLite store and serve browser report data from SQLite without building legacy dashboard JSON.
 - Added SQL ingest support for inferred OTLP log files so Codex native log events are normalized into the SQLite report store alongside OTLP traces.
+- Added Codex CLI native session-file ingestion from `~/.codex/sessions/**/*.jsonl` so local Codex prompts, assistant responses, and tool calls can populate the SQLite report store when OTLP logs are incomplete.
 - Added SQL-only session detail loading plus SQL-derived report data for quality scores, costs, skills, subagents, MCP servers, observations, examples, badges, and token-economy widgets.
 - Filled SQL-only cost widget breakdowns from SQLite LLM calls so input, output, and cache cost cards no longer render as zero when priced token data exists.
 - Expanded the SQL-only browser payload to populate shared dashboard widgets from SQLite, including activity, events, agents, models, tools, costs, MCP counts, and basic graph/timeline data.

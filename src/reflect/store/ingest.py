@@ -8,6 +8,7 @@ from pathlib import Path
 from reflect.parsing import (
     _iter_claude_session_spans,
     _iter_codex_log_spans,
+    _iter_codex_session_spans,
     _iter_copilot_session_spans,
     _iter_cursor_session_spans,
     _iter_gemini_log_spans,
@@ -163,7 +164,9 @@ def ingest_native_session_file(
     skip_existing_sessions: bool = False,
 ) -> dict[str, int]:
     source = source_id or f"native_session:{agent}:{file_path}"
-    if agent == "copilot":
+    if agent == "codex":
+        spans = _iter_codex_session_spans(file_path)
+    elif agent == "copilot":
         spans = _iter_copilot_session_spans(file_path)
     elif agent == "cursor":
         spans = _iter_cursor_session_spans(file_path)

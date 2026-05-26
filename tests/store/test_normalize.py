@@ -1,5 +1,6 @@
 import json
 
+from reflect.store import normalize as normalize_mod
 from reflect.store.ingest import ingest_local_spans_file
 from reflect.store.migrate import migrate
 from reflect.store.normalize import normalize_pending_raw_events
@@ -128,5 +129,46 @@ def test_normalize_promotes_memory_and_privacy_attrs(tmp_path):
         assert tuple(memory) == ("mem-1", "repo", "repo_convention")
         finding = conn.execute("SELECT finding_type, severity, action_taken FROM privacy_findings").fetchone()
         assert tuple(finding) == ("secret", "high", "redacted")
+    finally:
+        conn.close()
+
+
+def test_normalize_rolls_back_partial_event_on_failure(tmp_path, monkeypatch):
+    db = tmp_path / "reflect.db"
+    spans = tmp_path / "spans.jsonl"
+    span = {
+        "name": "PreToolUse",
+        "traceId": "trace-3",
+        "spanId": "span-5",
+        "start_time_ns": 100,
+        "end_time_ns": 200,
+        "attributes": {
+            "gen_ai.client.name": "cursor",
+            "gen_ai.client.session_id": "sess-fail",
+            "gen_ai.client.tool_name": "Shell",
+        },
+    }
+    spans.write_text(json.dumps(span) + "\n", encoding="utf-8")
+
+    def _raise_after_step_inserted(*_args, **_kwargs):
+        raise RuntimeError("forced call insert failure")
+
+    monkeypatch.setattr(normalize_mod, "_insert_call_record", _raise_after_step_inserted)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        ingest_local_spans_file(conn, file_path=spans)
+
+        assert normalize_pending_raw_events(conn) == {"processed": 0, "failed": 1, "skipped": 0}
+        raw = conn.execute(
+            "SELECT normalized_status, normalization_error FROM raw_events"
+        ).fetchone()
+        assert raw[0] == "failed"
+        assert "forced call insert failure" in raw[1]
+        assert conn.execute("SELECT COUNT(*) FROM agents").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM steps").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 0
     finally:
         conn.close()

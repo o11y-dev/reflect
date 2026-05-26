@@ -134,7 +134,7 @@ Running `reflect` for the first time is usually surprising:
   - GitHub Copilot VS Code: `github.copilot.chat.otel.*` keys in VS Code `settings.json`
   - GitHub Copilot CLI: `COPILOT_OTEL_ENABLED` / `COPILOT_OTEL_OTLP_ENDPOINT` env vars
   - Gemini CLI: `telemetry.*` keys in `~/.gemini/settings.json` (e.g. `telemetry.enabled`, `telemetry.otlpEndpoint`)
-- **Session/log adapters** (Cursor, Claude Code, Copilot, Gemini) — local transcript/session files fill gaps when native spans are absent or incomplete.
+- **Session/log adapters** (Codex CLI, Cursor, Claude Code, Copilot, Gemini) — local transcript/session files fill gaps when native spans are absent or incomplete.
 
 `reflect` records whichever verified local signal path is available. Hook-based flows emit OTLP spans for tool calls, token usage events, and session boundaries. Native OTel flows write traces and/or logs depending on the agent. Codex currently puts the useful agent-level records in OTLP logs (`codex.conversation_starts`, `codex.user_prompt`, `codex.tool_decision`, `codex.tool_result`, `codex.sse_event`), so `reflect` normalizes those records and ignores noisy low-level Rust runtime trace spans.
 
@@ -273,6 +273,7 @@ reflect's mission is to make every AI coding agent observable with zero manual i
 When hook spans and OTLP traces are absent, `reflect` falls back to rich local session stores:
 
 - Cursor: `~/.cursor/projects/**/agent-transcripts/**/*.jsonl`
+- Codex CLI: `~/.codex/sessions/**/*.jsonl`
 - Copilot: `~/.copilot/session-state/*/events.jsonl`
 - Claude Code: `~/.claude/projects/**/*.jsonl`
 - Gemini: `~/.gemini/tmp/**/chats/session-*.json`

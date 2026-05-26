@@ -702,8 +702,18 @@ def _build_agents(
           COALESCE(SUM(sr.tool_call_count), 0) AS tools,
           COALESCE(SUM(sr.error_count), 0) AS failures,
           COALESCE(SUM(sr.input_tokens + sr.output_tokens), 0) AS tokens,
-          COALESCE(SUM(sr.total_cost), 0) AS total_cost
+          COALESCE(SUM(sr.total_cost), 0) AS total_cost,
+          COALESCE(AVG(
+            MAX(0, MIN(100,
+              CASE
+                WHEN COALESCE(NULLIF(s.status, ''), 'unknown') IN ('ok', 'completed', 'success') THEN 90
+                WHEN COALESCE(NULLIF(s.status, ''), 'unknown') = 'unknown' THEN 80
+                ELSE 65
+              END - COALESCE(sr.error_count, 0) * 12
+            ))
+          ), 0) AS avg_quality
         FROM session_rollups sr
+        LEFT JOIN sessions s ON s.id = sr.session_id
         {scope}
         GROUP BY COALESCE(NULLIF(sr.agent, ''), 'unknown')
         ORDER BY sessions DESC, tools DESC, name ASC
@@ -748,7 +758,7 @@ def _build_agents(
             "name": name,
             "events": prompts + tools,
             "sessions": int(row["sessions"] or 0),
-            "avg_quality": max(0.0, min(100.0, 80.0 - failures * 12)),
+            "avg_quality": float(row["avg_quality"] or 0),
             "completed": 0,
             "recovered": 0,
             "prompts": prompts,

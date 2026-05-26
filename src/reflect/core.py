@@ -53,6 +53,9 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 import click
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
 # ---------------------------------------------------------------------------
 # Reflect home directory
@@ -70,6 +73,7 @@ HOOK_HOME = Path(os.environ.get("IDE_OTEL_HOOK_HOME",
 from reflect.dashboard import (  # noqa: F401
     _artifact_report_ref,
     _build_dashboard_json,
+    _sql_dashboard_payload,
     _start_publish_server,
     _start_publish_server_inline,
     _update_dashboard_data,
@@ -144,6 +148,7 @@ from reflect.parsing import (  # noqa: F401
     _infer_otlp_logs_file,
     _iter_claude_session_spans,
     _iter_codex_log_spans,
+    _iter_codex_session_spans,
     _iter_copilot_session_spans,
     _iter_cursor_session_spans,
     _iter_gemini_session_spans,
@@ -1021,7 +1026,7 @@ def main(
 @click.option(
     "--sql-only",
     is_flag=True,
-    help="Serve report data from SQLite only; temporary migration guard for removing legacy dashboard JSON.",
+    help="Deprecated no-op; SQLite-backed report data is now the default.",
 )
 def report(
     otlp_traces: Path | None,
@@ -1035,98 +1040,82 @@ def report(
     sql_only: bool,
 ) -> None:
     """Open the AI usage dashboard in a browser via a local server."""
-    requested_otlp_traces = otlp_traces
+    from collections import Counter
+
+    console = Console()
+
     if sql_only:
-        from collections import Counter
+        click.echo("Note: --sql-only is deprecated; SQLite-backed report data is now the default.")
 
-        from reflect.dashboard import _sql_only_dashboard_payload
-
-        include_native_sessions = False
-        if demo:
-            demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
-            if not demo_traces.exists():
-                demo_traces = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
-            otlp_traces = demo_traces if demo_traces.exists() else otlp_traces
-        elif otlp_traces is None:
-            otlp_traces = _default_otlp_traces()
-            include_native_sessions = True
-        else:
-            default_otlp = _default_otlp_traces()
-            include_native_sessions = (
-                default_otlp is not None
-                and otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
-            )
+    include_native_sessions = False
+    if demo:
+        demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
+        if not demo_traces.exists():
+            demo_traces = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
+        otlp_traces = demo_traces if demo_traces.exists() else otlp_traces
+    elif otlp_traces is None:
+        otlp_traces = _default_otlp_traces()
+        include_native_sessions = True
+    else:
+        default_otlp = _default_otlp_traces()
+        include_native_sessions = (
+            default_otlp is not None
+            and otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
+        )
+    with console.status("[bold orange3]reflecting...[/bold orange3]", spinner="dots"):
         preparation = _prepare_sql_report_db(
             db_path,
             otlp_traces=otlp_traces,
             include_native_sessions=include_native_sessions,
         )
-        click.echo(
-            "Prepared SQLite report store "
-            f"(inserted={preparation['ingest']['inserted']}, "
-            f"skipped={preparation['ingest']['skipped']}, "
-            f"normalized={preparation['normalize']['processed']}, "
-            f"sessions={preparation['rollups']['session_rollups']})"
-        )
-        ingest_sources = preparation.get("ingest_sources") or {}
-        if ingest_sources:
-            source_parts = [
-                f"{name}: inserted={result['inserted']} skipped={result['skipped']}"
-                for name, result in ingest_sources.items()
-            ]
-            click.echo("SQL ingest sources: " + "; ".join(source_parts))
-        stats = TelemetryStats(
-            session_files=0,
-            span_files=0,
-            total_events=0,
-            events_by_type=Counter(),
-            events_by_file={},
-        )
-        if output is not None:
-            raise click.ClickException("--sql-only does not support legacy markdown report output")
-        if dashboard_artifact is not None:
-            dashboard_artifact.parent.mkdir(parents=True, exist_ok=True)
-            dashboard_artifact.write_text(
-                _json_stdlib.dumps(_sql_only_dashboard_payload(db_path)),
-                encoding="utf-8",
+    ingest_sources = preparation.get("ingest_sources") or {}
+    summary = Table.grid(padding=(0, 2))
+    summary.add_column(style="bold")
+    summary.add_column(justify="right")
+    summary.add_row("Inserted", f"{preparation['ingest']['inserted']:,}")
+    summary.add_row("Skipped", f"{preparation['ingest']['skipped']:,}")
+    summary.add_row("Normalized", f"{preparation['normalize']['processed']:,}")
+    summary.add_row("Sessions", f"{preparation['rollups']['session_rollups']:,}")
+    if ingest_sources:
+        summary.add_row("", "")
+        for name, result in ingest_sources.items():
+            summary.add_row(
+                name.replace("_", " ").title(),
+                f"{result['inserted']:,} inserted / {result['skipped']:,} skipped",
             )
-    else:
-        stats, resolved_otlp_traces, sessions_dir, spans_dir, _, _ = _resolve_and_analyze(
+            for agent, counts in sorted((result.get("agents") or {}).items()):
+                summary.add_row(
+                    f"  {agent}",
+                    f"{counts['events']:,} event(s)",
+                )
+    console.print(Panel(summary, title="[bold orange3]REFLECT[/bold orange3]", border_style="orange3"))
+
+    stats = TelemetryStats(
+        session_files=0,
+        span_files=0,
+        total_events=0,
+        events_by_type=Counter(),
+        events_by_file={},
+    )
+    sessions_dir = sessions_dir or _default_sessions_dir()
+    spans_dir = spans_dir or _default_spans_dir()
+    if output is not None:
+        stats, _, sessions_dir, spans_dir, _, _ = _resolve_and_analyze(
             otlp_traces=otlp_traces,
             sessions_dir=sessions_dir,
             spans_dir=spans_dir,
             demo=demo,
             time_range=time_range,
         )
-        include_native_sessions = False
-        if not demo:
-            if requested_otlp_traces is None:
-                include_native_sessions = True
-            else:
-                default_otlp = _default_otlp_traces()
-                include_native_sessions = (
-                    default_otlp is not None
-                    and resolved_otlp_traces is not None
-                    and resolved_otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
-                )
-        preparation = _prepare_sql_report_db(
-            db_path,
-            otlp_traces=resolved_otlp_traces,
-            include_native_sessions=include_native_sessions,
-        )
-        click.echo(
-            "Prepared SQLite report store "
-            f"(inserted={preparation['ingest']['inserted']}, "
-            f"skipped={preparation['ingest']['skipped']}, "
-            f"normalized={preparation['normalize']['processed']}, "
-            f"sessions={preparation['rollups']['session_rollups']})"
-        )
-    if dashboard_artifact is not None and not sql_only:
-        _write_dashboard_artifact(stats, dashboard_artifact)
-    if output is not None and not sql_only:
         render_report(stats, sessions_dir, spans_dir, output)
         print(f"Report saved to: {output}")
-    _start_publish_server(stats, db_path=db_path, sql_only=sql_only)
+    if dashboard_artifact is not None:
+        dashboard_artifact.parent.mkdir(parents=True, exist_ok=True)
+        dashboard_artifact.write_text(
+            _json_stdlib.dumps(_sql_dashboard_payload(db_path)),
+            encoding="utf-8",
+        )
+    _start_publish_server(stats, db_path=db_path, sql_only=False)
 
 
 # ---------------------------------------------------------------------------
@@ -2156,33 +2145,44 @@ def _prepare_sql_report_db(
     try:
         applied = migrate(conn)
         ingest_result = {"inserted": 0, "skipped": 0}
-        ingest_sources: dict[str, dict[str, int]] = {}
+        ingest_sources: dict[str, dict[str, object]] = {}
+        source_refs: dict[str, list[str]] = {}
         if otlp_traces is not None and otlp_traces.exists():
             traces_result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
             ingest_sources["otlp_traces"] = traces_result
+            source_refs["otlp_traces"] = [str(otlp_traces)]
             ingest_result["inserted"] += traces_result["inserted"]
             ingest_result["skipped"] += traces_result["skipped"]
             otlp_logs = _infer_otlp_logs_file(otlp_traces)
             if otlp_logs is not None and otlp_logs.exists():
                 logs_result = ingest_otlp_logs_file(conn, file_path=otlp_logs)
                 ingest_sources["otlp_logs"] = logs_result
+                source_refs["otlp_logs"] = [str(otlp_logs)]
                 ingest_result["inserted"] += logs_result["inserted"]
                 ingest_result["skipped"] += logs_result["skipped"]
         if include_native_sessions:
             native_result = {"inserted": 0, "skipped": 0}
+            native_refs: list[str] = []
             for agent, session_file in _discover_rich_session_files():
+                source_ref = f"native_session:{agent}:{session_file}"
+                native_refs.append(source_ref)
                 result = ingest_native_session_file(
                     conn,
                     file_path=session_file,
                     agent=agent,
+                    source_id=source_ref,
                     skip_existing_sessions=True,
                 )
                 native_result["inserted"] += result["inserted"]
                 native_result["skipped"] += result["skipped"]
             if native_result["inserted"] or native_result["skipped"]:
                 ingest_sources["native_sessions"] = native_result
+                source_refs["native_sessions"] = native_refs
                 ingest_result["inserted"] += native_result["inserted"]
                 ingest_result["skipped"] += native_result["skipped"]
+        for name, refs in source_refs.items():
+            if name in ingest_sources:
+                ingest_sources[name]["agents"] = _raw_event_agent_breakdown(conn, source_ids=refs)
         normalize_result = normalize_pending_raw_events(conn)
         _reprice_sql_store(conn)
         graph_result = rebuild_graph(conn)
@@ -2196,6 +2196,39 @@ def _prepare_sql_report_db(
         "normalize": normalize_result,
         "graph": graph_result,
         "rollups": rollup_result,
+    }
+
+
+def _raw_event_agent_breakdown(conn, *, source_ids: list[str]) -> dict[str, dict[str, int]]:
+    if not source_ids:
+        return {}
+    totals: dict[str, int] = {}
+    for offset in range(0, len(source_ids), 500):
+        chunk = source_ids[offset:offset + 500]
+        placeholders = ", ".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"""
+            SELECT
+              COALESCE(
+                NULLIF(json_extract(attrs_json, '$."gen_ai.client.name"'), ''),
+                NULLIF(json_extract(attrs_json, '$."agent.name"'), ''),
+                NULLIF(json_extract(attrs_json, '$."service.name"'), ''),
+                'unknown'
+              ) AS agent,
+              COUNT(*) AS events
+            FROM raw_events
+            WHERE source_id IN ({placeholders})
+            GROUP BY agent
+            ORDER BY events DESC, agent ASC
+            """,
+            chunk,
+        ).fetchall()
+        for row in rows:
+            agent = str(row[0] or "unknown")
+            totals[agent] = totals.get(agent, 0) + int(row[1] or 0)
+    return {
+        agent: {"events": events}
+        for agent, events in sorted(totals.items(), key=lambda item: (-item[1], item[0]))
     }
 
 
@@ -2223,8 +2256,30 @@ def _reprice_sql_store(conn) -> None:
             FROM llm_calls
             """
         ).fetchall()
+        model_rows = conn.execute(
+            """
+            SELECT
+              session_id,
+              COALESCE(
+                NULLIF(json_extract(raw_attrs_json, '$."gen_ai.response.model"'), ''),
+                NULLIF(json_extract(raw_attrs_json, '$."gen_ai.request.model"'), '')
+              ) AS model,
+              COUNT(*) AS count
+            FROM steps
+            WHERE COALESCE(
+              NULLIF(json_extract(raw_attrs_json, '$."gen_ai.response.model"'), ''),
+              NULLIF(json_extract(raw_attrs_json, '$."gen_ai.request.model"'), '')
+            ) IS NOT NULL
+            GROUP BY session_id, model
+            ORDER BY session_id ASC, count DESC
+            """
+        ).fetchall()
+        session_models: dict[str, str] = {}
+        for model_row in model_rows:
+            session_models.setdefault(model_row["session_id"], model_row["model"])
         session_costs: dict[str, float] = {}
         for row in rows:
+            model = row["model"] or session_models.get(row["session_id"], "")
             breakdown = calculate_cost(
                 {
                     "input": row["input_tokens"],
@@ -2232,18 +2287,29 @@ def _reprice_sql_store(conn) -> None:
                     "cache_creation": row["cache_creation_input_tokens"],
                     "cache_read": row["cache_read_input_tokens"],
                 },
-                row["model"] or "",
+                model,
                 pricing_table,
                 aliases=aliases,
             )
             conn.execute(
                 """
                 UPDATE llm_calls
-                SET estimated_cost_usd = ?
+                SET
+                  estimated_cost_usd = ?,
+                  request_model = CASE
+                    WHEN COALESCE(request_model, '') = '' THEN NULLIF(?, '')
+                    ELSE request_model
+                  END,
+                  response_model = CASE
+                    WHEN COALESCE(response_model, '') = '' THEN NULLIF(?, '')
+                    ELSE response_model
+                  END
                 WHERE id = ?
                 """,
                 (
                     breakdown.total_cost_usd,
+                    model,
+                    model,
                     row["id"],
                 ),
             )

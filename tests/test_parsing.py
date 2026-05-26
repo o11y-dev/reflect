@@ -7,6 +7,8 @@ from conftest import DAY1, HOUR, make_span, wrap_otlp
 from reflect.core import (
     _flatten_otlp_attributes,
     _iter_codex_log_spans,
+    _iter_codex_session_spans,
+    _iter_cursor_session_spans,
     _load_json_lines,
     _load_otlp_logs,
     _load_otlp_traces,
@@ -254,6 +256,147 @@ class TestCodexOtlpLogs:
         assert spans[2]["attributes"]["gen_ai.usage.input_tokens"] == 750
         assert spans[2]["attributes"]["gen_ai.usage.cache_read.input_tokens"] == 250
         assert spans[2]["attributes"]["gen_ai.usage.output_tokens"] == 80
+
+
+class TestCursorNativeSessions:
+    def test_cursor_tool_use_content_blocks_normalize_to_tool_spans(self, tmp_path):
+        session = tmp_path / "cursor-session-1.jsonl"
+        session.write_text(
+            "\n".join([
+                json.dumps({
+                    "role": "user",
+                    "message": {"content": [{"type": "text", "text": "inspect the repo"}]},
+                }),
+                json.dumps({
+                    "role": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "I will inspect it."},
+                            {
+                                "type": "tool_use",
+                                "name": "Shell",
+                                "input": {"command": "git status --short", "description": "check status"},
+                            },
+                            {
+                                "type": "tool_use",
+                                "name": "CallMcpTool",
+                                "input": {"server": "jira", "toolName": "search", "arguments": {"jql": "project = O11Y"}},
+                            },
+                        ],
+                    },
+                }),
+            ])
+            + "\n",
+            encoding="utf-8",
+        )
+
+        spans = list(_iter_cursor_session_spans(session))
+        tool_spans = [span for span in spans if span["attributes"].get("gen_ai.client.hook.event") == "PreToolUse"]
+
+        assert [span["attributes"]["gen_ai.client.tool_name"] for span in tool_spans] == ["Shell", "CallMcpTool"]
+        assert "git status --short" in tool_spans[0]["attributes"]["gen_ai.client.tool.input"]
+        assert tool_spans[1]["attributes"]["gen_ai.client.mcp_server"] == "jira"
+        assert tool_spans[1]["attributes"]["gen_ai.client.mcp_tool"] == "search"
+
+
+class TestCodexSessionFiles:
+    def test_codex_session_events_normalize_to_agent_spans(self, tmp_path):
+        p = tmp_path / "rollout-2026-05-08T03-40-01-019e0506-efd5-7030-b2d2-6c41433270fb.jsonl"
+        records = [
+            {
+                "timestamp": "2026-05-08T00:42:07.990Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "019e0506-efd5-7030-b2d2-6c41433270fb",
+                    "cwd": "/work/repo",
+                    "model": "gpt-5.5",
+                    "model_provider": "openai",
+                },
+            },
+            {
+                "timestamp": "2026-05-08T00:42:07.992Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "please inspect the tests"}],
+                },
+            },
+            {
+                "timestamp": "2026-05-08T00:42:16.256Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "exec_command",
+                    "call_id": "call-1",
+                    "arguments": "{\"cmd\":\"pytest\"}",
+                },
+            },
+            {
+                "timestamp": "2026-05-08T00:42:18.256Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "call-1",
+                    "output": "passed",
+                },
+            },
+            {
+                "timestamp": "2026-05-08T00:42:20.256Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Tests pass."}],
+                },
+            },
+        ]
+        p.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+        spans = list(_iter_codex_session_spans(p))
+
+        assert [s["attributes"]["gen_ai.client.hook.event"] for s in spans] == [
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "Stop",
+            "SessionStart",
+            "SessionEnd",
+        ]
+        assert {s["attributes"]["gen_ai.client.name"] for s in spans} == {"codex"}
+        assert spans[0]["attributes"]["gen_ai.client.session_id"] == "019e0506-efd5-7030-b2d2-6c41433270fb"
+        assert spans[0]["attributes"]["gen_ai.client.prompt"] == "please inspect the tests"
+        assert spans[1]["attributes"]["gen_ai.client.tool_name"] == "exec_command"
+        assert spans[2]["attributes"]["gen_ai.client.tool_use_id"] == "call-1"
+        assert spans[3]["attributes"]["gen_ai.client.output"] == "Tests pass."
+        assert spans[4]["attributes"]["gen_ai.request.model"] == "gpt-5.5"
+
+    def test_codex_session_skips_environment_context_prompts(self, tmp_path):
+        p = tmp_path / "rollout-session.jsonl"
+        records = [
+            {
+                "timestamp": "2026-05-08T00:42:07.990Z",
+                "type": "session_meta",
+                "payload": {"id": "codex-session"},
+            },
+            {
+                "timestamp": "2026-05-08T00:42:07.992Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "<environment_context>\nignored\n</environment_context>"}],
+                },
+            },
+        ]
+        p.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+        spans = list(_iter_codex_session_spans(p))
+
+        assert [s["attributes"]["gen_ai.client.hook.event"] for s in spans] == [
+            "SessionStart",
+            "SessionEnd",
+        ]
 
 
 class TestLoadJsonLines:

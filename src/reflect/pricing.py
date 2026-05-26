@@ -291,9 +291,14 @@ def calculate_cost(
 ) -> CostBreakdown:
     aliases = aliases or load_model_aliases()
     requested_model = model or ""
+    alias_target = aliases.get(requested_model.strip().lower(), "")
     canonical = canonicalize_model_name(requested_model, aliases)
 
-    model_pricing = pricing_table.prices.get(canonical) or pricing_table.prices.get(requested_model.lower())
+    model_pricing = (
+        pricing_table.prices.get(canonical)
+        or pricing_table.prices.get(alias_target.strip().lower())
+        or pricing_table.prices.get(requested_model.lower())
+    )
     if model_pricing is None:
         resolution = PricingResolution(
             requested_model=requested_model,

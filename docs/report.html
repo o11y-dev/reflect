@@ -6,13 +6,13 @@
 <meta name="theme-color" content="#000000"/>
 <title>reflect — AI observability for every coding agent</title>
 <meta name="description" content="reflect is the vendor-neutral observability layer for AI coding agents. Turn local session data and OpenTelemetry GenAI spans into observation scores, helper-tool generation, and (coming) live-session policies. Works with Claude Code, Cursor, Copilot, Gemini CLI, OpenCode, and Antigravity."/>
-<link rel="canonical" href="https://reflect.o11y.dev/report.html"/>
+<link rel="canonical" href="https://reflect.o11y.dev/"/>
 <link rel="icon" type="image/svg+xml" href="favicon.svg"/>
 <meta property="og:type" content="website"/>
 <meta property="og:site_name" content="reflect.o11y.dev"/>
 <meta property="og:title" content="reflect — AI observability for every coding agent"/>
 <meta property="og:description" content="Vendor-neutral observability for AI coding agents. Observation scores, helper-tool generation, and (coming) live-session policies. Built on OpenTelemetry GenAI semantic conventions."/>
-<meta property="og:url" content="https://reflect.o11y.dev/report.html"/>
+<meta property="og:url" content="https://reflect.o11y.dev/"/>
 <meta property="og:image" content="https://reflect.o11y.dev/og-image.png"/>
 <meta property="og:image:width" content="1200"/>
 <meta property="og:image:height" content="630"/>
@@ -245,7 +245,7 @@ header{
 .loader-mark::before{
   content:'';
   position:absolute;
-  inset:2px 0 8px;
+  inset:-2px -4px 0;
   clip-path:polygon(50% 0,100% 92%,0 92%);
   background:var(--text);
 }
@@ -253,18 +253,24 @@ header{
   content:'';
   position:absolute;
   left:50%;
-  top:59%;
+  top:60%;
   transform:translate(-50%,-50%);
   width:22px;
   height:22px;
   border:7px solid var(--signal);
   border-radius:999px;
   background:var(--bg);
+  z-index:1;
   box-shadow:0 0 28px rgba(242,138,26,.62);
 }
 .loader-orbit{
   position:absolute;
-  inset:-10px;
+  left:50%;
+  top:60%;
+  width:92px;
+  height:92px;
+  transform:translate(-50%,-50%);
+  transform-origin:50% 50%;
   border:1px solid rgba(255,177,86,.24);
   border-radius:999px;
   animation:loader-spin 1.4s linear infinite;
@@ -272,8 +278,9 @@ header{
 .loader-orbit::after{
   content:'';
   position:absolute;
-  right:7px;
-  top:10px;
+  right:-4px;
+  top:50%;
+  transform:translateY(-50%);
   width:8px;
   height:8px;
   border-radius:999px;
@@ -312,7 +319,7 @@ header{
   50%{transform:translateY(-6px) scale(1.02)}
 }
 @keyframes loader-spin{
-  to{transform:rotate(360deg)}
+  to{transform:translate(-50%,-50%) rotate(360deg)}
 }
 @keyframes loader-bar{
   0%{transform:translateX(-110%)}
@@ -422,7 +429,7 @@ nav::after{
 }
 
 /* ── Layout ──────────────────────────────────────────────── */
-main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-right)) 12px max(24px,env(safe-area-inset-left));flex:1;width:100%}
+main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 12px max(14px,env(safe-area-inset-left));flex:1;width:100%}
 .tab-panel{display:none}
 .tab-panel.active{display:block}
 .tab-panel[hidden]{display:none!important}
@@ -713,64 +720,146 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 /* ── Section divider ─────────────────────────────────────── */
 .section-gap{height:8px}
 
-/* ── Session Browser — Split Pane ────────────────────────── */
-.session-browser{
+/* ── Persistent report shell ─────────────────────────────── */
+.report-shell{
   display:grid;
-  grid-template-columns:280px 1fr;
-  gap:0;
+  grid-template-columns:minmax(280px,360px) minmax(0,1fr) minmax(300px,360px);
+  gap:12px;
+  align-items:start;
+}
+body.sessions-rail-collapsed .report-shell{
+  grid-template-columns:48px minmax(0,1fr) minmax(300px,360px);
+}
+.report-content{min-width:0}
+.session-rail,
+.filter-rail{
+  position:sticky;
+  top:12px;
+  height:calc(100dvh - 150px);
+  min-height:480px;
+  min-width:0;
+}
+.session-rail{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.filter-rail{
+  display:block;
+}
+.rail-head,
+.shell-toolbar{
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.rail-head{
+  justify-content:space-between;
+  min-height:40px;
+  padding:0 2px;
+}
+.shell-toolbar{
+  justify-content:flex-end;
+  height:0;
+  margin:0;
+  position:sticky;
+  top:12px;
+  z-index:25;
+  pointer-events:none;
+}
+.rail-title{
+  min-width:0;
+  color:var(--text-2);
+  font-size:12px;
+  font-weight:700;
+  letter-spacing:.1em;
+  text-transform:uppercase;
+}
+.rail-toggle{
+  appearance:none;
+  width:36px;
+  height:36px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  flex-shrink:0;
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:8px;
+  background:rgba(255,255,255,.03);
+  color:var(--text-2);
+  cursor:pointer;
+}
+.rail-toggle:hover{
+  color:var(--text);
+  background:rgba(255,255,255,.06);
+}
+.rail-toggle:focus-visible{
+  outline:2px solid rgba(255,177,86,.9);
+  outline-offset:2px;
+}
+.rail-toggle-lines,
+.rail-toggle-lines::before,
+.rail-toggle-lines::after{
+  display:block;
+  width:16px;
+  height:2px;
+  border-radius:999px;
+  background:currentColor;
+}
+.rail-toggle-lines{
+  position:relative;
+}
+.rail-toggle-lines::before,
+.rail-toggle-lines::after{
+  content:'';
+  position:absolute;
+  left:0;
+}
+.rail-toggle-lines::before{top:-5px}
+.rail-toggle-lines::after{top:5px}
+.shell-left-toggle{display:none!important}
+.shell-filter-toggle{display:none}
+body.sessions-rail-collapsed .session-rail{
+  align-items:center;
+}
+body.sessions-rail-collapsed .session-rail .rail-head{
+  justify-content:center;
+  width:100%;
+}
+body.sessions-rail-collapsed .session-rail .sb-left,
+body.sessions-rail-collapsed .session-rail .rail-title{
+  display:none;
+}
+body.sessions-rail-collapsed .shell-left-toggle{display:none!important}
+
+/* ── Session Browser — Detail Pane ───────────────────────── */
+.session-browser{
+  display:block;
   height:calc(100dvh - 150px);
   min-height:480px;
   max-height:calc(100dvh - 150px);
 }
-@media(max-width:900px){
-  .session-browser{
-    grid-template-columns:1fr;
-    grid-template-rows:minmax(220px,34vh) minmax(0,1fr);
-    height:calc(100dvh - 126px);
-  }
-}
 
-/* Left panel — session list */
+/* Left rail — session list */
 .sb-left{
   background:var(--surface);
   backdrop-filter:saturate(180%) blur(var(--glass-blur));
   -webkit-backdrop-filter:saturate(180%) blur(var(--glass-blur));
   border:1px solid var(--glass-border);
-  border-radius:var(--radius) 0 0 var(--radius);
+  border-radius:var(--radius);
   display:flex;
   flex-direction:column;
   overflow:hidden;
+  height:calc(100% - 48px);
   min-height:0;
-}
-@media(max-width:900px){
-  .sb-left{border-radius:var(--radius) var(--radius) 0 0}
 }
 .sb-filter-bar{
   padding:14px 14px 10px;
   border-bottom:1px solid var(--glass-border);
   flex-shrink:0;
 }
-.session-filter-launcher{
-  display:none;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-  margin-bottom:8px;
-  padding:8px 10px;
-  background:rgba(255,255,255,.03);
-  border:1px solid var(--glass-border);
-  border-radius:8px;
-}
-.session-filter-launcher-meta{
-  min-width:0;
-  font-size:13px;
-  color:var(--text-2);
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-}
 .global-filter-shell{
-  margin-bottom:10px;
+  margin:0;
   padding:10px 12px 8px;
   background:rgba(255,255,255,.02);
   backdrop-filter:saturate(180%) blur(var(--glass-blur));
@@ -778,6 +867,8 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   border:1px solid var(--glass-border);
   border-radius:8px;
   box-shadow:none;
+  height:100%;
+  overflow:auto;
 }
 .global-filter-top{
   display:flex;
@@ -803,7 +894,7 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 }
 .global-filter-grid{
   display:grid;
-  grid-template-columns:minmax(220px,1.7fr) repeat(4,minmax(0,1fr));
+  grid-template-columns:1fr;
   gap:8px;
   align-items:center;
 }
@@ -872,6 +963,7 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   cursor:pointer;
 }
 .filter-compact-toggle{display:none}
+.filter-rail .filter-field-secondary{display:flex}
 .filter-compact-toggle:hover,
 .filter-sheet-launch:hover,
 .filter-sheet-close:hover{
@@ -949,13 +1041,8 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
 .sb-list::-webkit-scrollbar-track{background:transparent}
 .sb-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:3px}
 @media(max-width:1100px){
-  .global-filter-grid{grid-template-columns:minmax(220px,1.8fr) repeat(2,minmax(0,1fr))}
-  .filter-field-secondary{display:none}
-  .global-filter-shell.expanded .filter-field-secondary{display:flex}
-  .filter-compact-toggle{display:inline-flex}
+  .filter-compact-toggle{display:none}
 }
-@media(max-width:900px){.global-filter-grid{grid-template-columns:1fr 1fr}}
-@media(max-width:720px){.global-filter-grid{grid-template-columns:1fr}}
 .global-filter-backdrop{
   position:fixed;
   inset:0;
@@ -963,23 +1050,71 @@ main{max-width:1500px;margin:0 auto;padding:18px max(24px,env(safe-area-inset-ri
   backdrop-filter:blur(6px);
   z-index:39;
 }
-body.filter-sheet-open{overflow:hidden}
-@media(max-width:720px){
-  .session-filter-launcher{display:flex}
-  .global-filter-shell{
-    display:none;
+body.rail-overlay-open{overflow:hidden}
+@media(max-width:900px){
+  .report-shell{display:block}
+  .shell-toolbar{
+    position:sticky;
+    top:0;
+    z-index:20;
+    height:auto;
+    margin-bottom:10px;
+    padding:8px 0;
+    background:linear-gradient(180deg,rgba(13,13,15,.96),rgba(13,13,15,.86));
+    backdrop-filter:saturate(180%) blur(var(--glass-blur));
+    pointer-events:auto;
+    justify-content:space-between;
+  }
+  .shell-left-toggle{display:inline-flex!important}
+  .shell-filter-toggle{display:inline-flex}
+  .session-rail,
+  .filter-rail{
     position:fixed;
-    left:10px;
-    right:10px;
     top:max(10px, env(safe-area-inset-top));
     bottom:max(10px, env(safe-area-inset-bottom));
     z-index:40;
-    overflow:auto;
-    padding:12px;
+    width:min(86vw,360px);
+    height:auto;
+    min-height:0;
+    transition:transform .18s ease;
+  }
+  .session-rail{
+    left:10px;
+    transform:translateX(calc(-100% - 20px));
+  }
+  .filter-rail{
+    right:10px;
+    display:block;
+    transform:translateX(calc(100% + 20px));
+  }
+  body.sessions-rail-open .session-rail,
+  body.filters-rail-open .filter-rail{
+    transform:translateX(0);
+  }
+  .session-rail .rail-head,
+  .filter-rail .rail-head{
+    background:rgba(16,18,24,.98);
+    border:1px solid var(--glass-border);
+    border-bottom:none;
+    border-radius:8px 8px 0 0;
+    padding:8px 10px;
+  }
+  .session-rail .sb-left{
+    height:calc(100% - 57px);
+    border-radius:0 0 var(--radius) var(--radius);
+  }
+  .filter-rail .global-filter-shell{
+    height:calc(100% - 57px);
+    border-radius:0 0 8px 8px;
     background:rgba(16,18,24,.98);
   }
-  .global-filter-shell.mobile-open{display:block}
-  .global-filter-shell.mobile-open .filter-field-secondary{display:flex}
+  body.sessions-rail-collapsed .session-rail{
+    align-items:stretch;
+  }
+  body.sessions-rail-collapsed .session-rail .sb-left,
+  body.sessions-rail-collapsed .session-rail .rail-title{
+    display:flex;
+  }
   .filter-sheet-close{display:inline-flex}
 }
 
@@ -1041,11 +1176,11 @@ body.filter-sheet-open{overflow:hidden}
   backdrop-filter:saturate(180%) blur(var(--glass-blur));
   -webkit-backdrop-filter:saturate(180%) blur(var(--glass-blur));
   border:1px solid var(--glass-border);
-  border-left:none;
-  border-radius:0 var(--radius) var(--radius) 0;
+  border-radius:var(--radius);
   display:flex;
   flex-direction:column;
   overflow:hidden;
+  height:100%;
   min-height:0;
 }
 #sb-detail{
@@ -1057,7 +1192,7 @@ body.filter-sheet-open{overflow:hidden}
   overflow:hidden;
 }
 @media(max-width:900px){
-  .sb-right{border-radius:0 0 var(--radius) var(--radius);border-left:1px solid var(--glass-border);border-top:none}
+  .sb-right{border-radius:var(--radius)}
 }
 
 .sb-detail-header{
@@ -1324,6 +1459,63 @@ body.filter-sheet-open{overflow:hidden}
 
 /* ── Chat-style conversation thread ── */
 .chat-thread{display:flex;flex-direction:column;gap:6px;padding:4px 0 2px}
+.chat-turn{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  padding:0 0 8px;
+}
+.chat-turn + .chat-turn{
+  margin-top:8px;
+  padding-top:12px;
+  border-top:1px solid rgba(255,255,255,.055);
+}
+.chat-activity-group{
+  margin-left:62px;
+  border:1px solid rgba(255,255,255,.06);
+  border-radius:8px;
+  background:rgba(255,255,255,.018);
+  overflow:hidden;
+}
+.chat-activity-group[open]{
+  background:rgba(255,255,255,.024);
+  border-color:rgba(255,255,255,.085);
+}
+.chat-activity-summary{
+  list-style:none;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-height:32px;
+  padding:6px 10px;
+  cursor:pointer;
+  color:var(--text-2);
+  font-size:13px;
+  font-weight:650;
+}
+.chat-activity-summary::-webkit-details-marker{display:none}
+.chat-activity-summary::before{
+  content:'▸';
+  color:var(--signal-2);
+  font-size:12px;
+  transition:transform .15s ease;
+}
+.chat-activity-group[open] .chat-activity-summary::before{
+  transform:rotate(90deg);
+}
+.chat-activity-summary:hover{
+  background:rgba(255,255,255,.035);
+}
+.chat-activity-summary .chip-fail{margin-left:auto;font-weight:700}
+.chat-activity-list{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  padding:0 8px 8px;
+}
+.chat-activity-list .chat-activity{
+  grid-template-columns:44px minmax(0,1fr);
+}
 
 /* User prompt + agent response — full bubbles */
 .chat-msg{display:grid;grid-template-columns:52px minmax(0,1fr);gap:10px;align-items:start}
@@ -1401,6 +1593,192 @@ body.filter-sheet-open{overflow:hidden}
 .conv-stat-item{display:flex;align-items:center;gap:4px}
 .conv-stat-num{font-weight:700;color:var(--text);font-size:13px}
 .conv-stat-sep{color:rgba(255,255,255,.15);padding:0 4px}
+
+/* Session detail timeline */
+.session-timeline-panel{
+  flex:0 0 auto;
+  padding:10px 18px 12px;
+  border-bottom:1px solid rgba(255,255,255,.055);
+  background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01));
+}
+.session-timeline-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:8px;
+}
+.session-timeline-title{
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.16em;
+  text-transform:uppercase;
+  color:var(--text-2);
+}
+.session-timeline-meta{
+  font-size:11px;
+  color:var(--text-3);
+  white-space:nowrap;
+}
+.session-timeline-track{
+  position:relative;
+  height:34px;
+  border-radius:6px;
+  overflow:visible;
+  background:rgba(255,255,255,.04);
+  border:1px solid rgba(255,255,255,.055);
+}
+.session-timeline-track::before{
+  content:'';
+  position:absolute;
+  left:0;
+  right:0;
+  top:50%;
+  height:1px;
+  background:rgba(255,255,255,.08);
+}
+.session-timeline-span{
+  position:absolute;
+  top:8px;
+  height:18px;
+  min-width:3px;
+  border:0;
+  border-radius:3px;
+  background:var(--span-color, var(--signal));
+  opacity:.78;
+  cursor:default;
+  transition:opacity .15s ease, transform .15s ease, box-shadow .15s ease;
+}
+.session-timeline-span:hover{
+  opacity:1;
+  transform:translateY(-1px);
+  box-shadow:0 0 0 2px rgba(255,255,255,.1),0 0 16px color-mix(in srgb,var(--span-color) 44%, transparent);
+  z-index:2;
+}
+.session-timeline-span.is-failure{
+  top:4px;
+  height:26px;
+  min-width:6px;
+  opacity:1;
+  background:var(--red);
+  box-shadow:0 0 0 2px rgba(255,107,92,.28),0 0 18px rgba(255,107,92,.48);
+  z-index:3;
+}
+.session-timeline-gap{
+  position:absolute;
+  top:4px;
+  height:26px;
+  width:1px;
+  border-left:1px dashed rgba(255,255,255,.2);
+  opacity:.72;
+  cursor:default;
+}
+.session-timeline-gap::after{
+  content:'';
+  position:absolute;
+  left:-3px;
+  top:11px;
+  width:6px;
+  height:6px;
+  border-radius:999px;
+  background:rgba(255,255,255,.28);
+}
+.session-timeline-span::before,
+.session-timeline-gap::before{
+  content:'';
+  position:absolute;
+  left:50%;
+  bottom:calc(100% + 2px);
+  transform:translateX(-50%);
+  border:6px solid transparent;
+  border-top-color:rgba(18,18,17,.98);
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .12s ease, transform .12s ease;
+  z-index:20;
+}
+.session-timeline-span::after,
+.session-timeline-gap::after{
+  content:attr(data-tip);
+  position:absolute;
+  left:50%;
+  bottom:calc(100% + 13px);
+  transform:translateX(-50%) translateY(4px);
+  width:max-content;
+  max-width:min(320px, calc(100vw - 80px));
+  padding:9px 11px;
+  border-radius:8px;
+  border:1px solid rgba(255,255,255,.12);
+  background:rgba(18,18,17,.98);
+  color:var(--text);
+  box-shadow:0 14px 32px rgba(0,0,0,.42);
+  font-size:12px;
+  line-height:1.45;
+  white-space:normal;
+  text-align:left;
+  opacity:0;
+  pointer-events:none;
+  transition:opacity .12s ease, transform .12s ease;
+  z-index:21;
+}
+.session-timeline-span[data-tip-align="left"]::before,
+.session-timeline-gap[data-tip-align="left"]::before{
+  left:8px;
+  transform:translateX(0);
+}
+.session-timeline-span[data-tip-align="left"]::after,
+.session-timeline-gap[data-tip-align="left"]::after{
+  left:0;
+  transform:translateY(4px);
+}
+.session-timeline-span[data-tip-align="right"]::before,
+.session-timeline-gap[data-tip-align="right"]::before{
+  left:auto;
+  right:8px;
+  transform:translateX(0);
+}
+.session-timeline-span[data-tip-align="right"]::after,
+.session-timeline-gap[data-tip-align="right"]::after{
+  left:auto;
+  right:0;
+  transform:translateY(4px);
+}
+.session-timeline-span:hover::before,
+.session-timeline-span:hover::after,
+.session-timeline-span:focus-visible::before,
+.session-timeline-span:focus-visible::after,
+.session-timeline-gap:hover::before,
+.session-timeline-gap:hover::after,
+.session-timeline-gap:focus-visible::before,
+.session-timeline-gap:focus-visible::after{
+  opacity:1;
+  transform:translateX(-50%) translateY(0);
+}
+.session-timeline-span[data-tip-align="left"]:hover::before,
+.session-timeline-span[data-tip-align="left"]:hover::after,
+.session-timeline-span[data-tip-align="left"]:focus-visible::before,
+.session-timeline-span[data-tip-align="left"]:focus-visible::after,
+.session-timeline-gap[data-tip-align="left"]:hover::before,
+.session-timeline-gap[data-tip-align="left"]:hover::after,
+.session-timeline-gap[data-tip-align="left"]:focus-visible::before,
+.session-timeline-gap[data-tip-align="left"]:focus-visible::after,
+.session-timeline-span[data-tip-align="right"]:hover::before,
+.session-timeline-span[data-tip-align="right"]:hover::after,
+.session-timeline-span[data-tip-align="right"]:focus-visible::before,
+.session-timeline-span[data-tip-align="right"]:focus-visible::after,
+.session-timeline-gap[data-tip-align="right"]:hover::before,
+.session-timeline-gap[data-tip-align="right"]:hover::after,
+.session-timeline-gap[data-tip-align="right"]:focus-visible::before,
+.session-timeline-gap[data-tip-align="right"]:focus-visible::after{
+  transform:translateY(0);
+}
+.session-timeline-empty{
+  padding:10px 12px;
+  border-radius:8px;
+  border:1px dashed rgba(255,255,255,.08);
+  color:var(--text-3);
+  font-size:13px;
+}
 
 /* Loading state for auto-load */
 .chat-loading{display:flex;align-items:center;gap:8px;padding:20px 12px;color:var(--text-3);font-size:13px}
@@ -1536,6 +1914,102 @@ body.filter-sheet-open{overflow:hidden}
   font-size:11px;
   color:var(--text-3);
 }
+.quality-shell{display:flex;flex-direction:column;gap:12px}
+.quality-summary{
+  display:grid;
+  grid-template-columns:minmax(120px,180px) minmax(0,1fr);
+  gap:12px;
+  align-items:stretch;
+}
+.quality-score-card{
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:8px;
+  background:rgba(255,255,255,.03);
+  padding:14px;
+}
+.quality-score-value{
+  font-size:34px;
+  line-height:1;
+  font-weight:800;
+  color:var(--blue);
+}
+.quality-score-label{
+  margin-top:8px;
+  font-size:12px;
+  color:var(--text-3);
+  text-transform:uppercase;
+  letter-spacing:.1em;
+  font-weight:700;
+}
+.quality-note{
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:8px;
+  background:rgba(255,255,255,.022);
+  padding:14px;
+  color:var(--text-2);
+  font-size:13px;
+  line-height:1.55;
+}
+.quality-rules{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:10px;
+}
+.quality-rule{
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:8px;
+  background:rgba(255,255,255,.022);
+  padding:12px;
+}
+.quality-rule-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+.quality-rule-name{font-size:14px;font-weight:800;color:var(--text)}
+.quality-rule-points{
+  flex:0 0 auto;
+  padding:2px 7px;
+  border-radius:999px;
+  background:rgba(242,138,26,.14);
+  color:var(--blue);
+  font-size:11px;
+  font-weight:800;
+}
+.quality-rule-desc{font-size:13px;color:var(--text-2);line-height:1.45}
+.quality-rule-signals{margin-top:8px;font-size:11px;color:var(--text-3);font-family:'SF Mono',ui-monospace,monospace}
+.quality-breakdown-table-wrap{
+  overflow-x:auto;
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:8px;
+  background:rgba(255,255,255,.02);
+}
+.quality-breakdown-table{
+  width:100%;
+  border-collapse:collapse;
+  min-width:680px;
+}
+.quality-breakdown-table th,
+.quality-breakdown-table td{
+  padding:10px 12px;
+  border-bottom:1px solid rgba(255,255,255,.06);
+  vertical-align:top;
+  text-align:left;
+}
+.quality-breakdown-table th{
+  font-size:11px;
+  color:var(--text-3);
+  text-transform:uppercase;
+  letter-spacing:.1em;
+  font-weight:800;
+}
+.quality-breakdown-name{font-size:13px;font-weight:800;color:var(--text);white-space:nowrap}
+.quality-breakdown-score{font-size:13px;font-weight:800;color:var(--blue);white-space:nowrap;text-align:right}
+.quality-breakdown-summary{font-size:13px;color:var(--text-2);line-height:1.45}
+.quality-breakdown-input{font-size:12px;color:var(--text-2);font-family:'SF Mono',ui-monospace,monospace;white-space:nowrap}
+.quality-breakdown-value{font-size:12px;color:var(--text);font-family:'SF Mono',ui-monospace,monospace;word-break:break-word}
+.quality-breakdown-total td{
+  border-bottom:none;
+  background:rgba(242,138,26,.08);
+  font-weight:800;
+}
+.quality-breakdown-total .quality-breakdown-score{color:var(--green)}
 .telemetry-beat-row{
   border:1px solid rgba(205,214,226,.08);
   border-radius:8px;
@@ -2096,7 +2570,6 @@ body.filter-sheet-open{overflow:hidden}
 }
 @media(max-width:640px){
   .session-browser{
-    grid-template-rows:minmax(180px,30vh) minmax(0,1fr);
     height:calc(100dvh - 108px);
     min-height:0;
     max-height:none;
@@ -2319,94 +2792,43 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <!-- ── Nav tabs ── -->
 <nav id="tabs" role="tablist" aria-label="Dashboard sections">
   <button class="tab active" id="tab-button-sessions" type="button" role="tab" aria-selected="true" aria-controls="tab-sessions" tabindex="0" data-tab="sessions">Sessions</button>
-  <button class="tab" id="tab-button-overview" type="button" role="tab" aria-selected="false" aria-controls="tab-overview" tabindex="-1" data-tab="overview">Overview</button>
+  <button class="tab" id="tab-button-overview" type="button" role="tab" aria-selected="false" aria-controls="tab-overview" tabindex="-1" data-tab="overview">Activity</button>
   <button class="tab" id="tab-button-compare" type="button" role="tab" aria-selected="false" aria-controls="tab-compare" tabindex="-1" data-tab="compare">Compare</button>
   <button class="tab" id="tab-button-observations" type="button" role="tab" aria-selected="false" aria-controls="tab-observations" tabindex="-1" data-tab="observations">Observations</button>
-  <button class="tab" id="tab-button-activity" type="button" role="tab" aria-selected="false" aria-controls="tab-activity" tabindex="-1" data-tab="activity">Activity</button>
   <button class="tab" id="tab-button-tools" type="button" role="tab" aria-selected="false" aria-controls="tab-tools" tabindex="-1" data-tab="tools">Tools</button>
   <button class="tab" id="tab-button-graphs" type="button" role="tab" aria-selected="false" aria-controls="tab-graphs" tabindex="-1" data-tab="graphs">Graphs</button>
-  <button class="tab" id="tab-button-data" type="button" role="tab" aria-selected="false" aria-controls="tab-data" tabindex="-1" data-tab="data">Data</button>
+  <button class="tab" id="tab-button-data" type="button" role="tab" aria-selected="false" aria-controls="tab-data" tabindex="-1" data-tab="data">Context</button>
 </nav>
 
 <main id="main-content">
 
-<div class="session-filter-launcher" id="session-filter-launcher">
-  <div class="session-filter-launcher-meta" id="session-filter-launcher-meta">Showing all sessions</div>
-  <button type="button" class="filter-sheet-launch" id="filter-sheet-open">Filters</button>
-</div>
-
-<section class="global-filter-shell" id="global-filter-shell" aria-label="Session filters">
-  <div class="global-filter-top">
-    <div>
-      <div class="global-filter-title">Session filters</div>
-      <div class="global-filter-meta" id="global-filter-meta">Showing all sessions</div>
+<div class="report-shell" id="report-shell">
+  <aside class="session-rail" id="session-rail" aria-label="Sessions">
+    <div class="rail-head">
+      <div class="rail-title">Sessions</div>
+      <button type="button" class="rail-toggle" id="session-rail-toggle" aria-label="Toggle sessions" aria-expanded="true">
+        <span class="rail-toggle-lines" aria-hidden="true"></span>
+      </button>
     </div>
-    <div class="global-filter-actions">
-      <button type="button" class="filter-compact-toggle" id="filter-compact-toggle" aria-expanded="false" aria-controls="global-filter-grid">More filters</button>
-      <button type="button" class="filter-clear" id="filter-clear">Clear filters</button>
-      <button type="button" class="filter-sheet-close" id="filter-sheet-close">Done</button>
-    </div>
-  </div>
-  <div class="global-filter-grid" id="global-filter-grid">
-    <div class="filter-field">
-      <label class="filter-label" for="sb-search">Search</label>
-      <input type="text" class="sb-search" id="sb-search" name="session-search" autocomplete="off" spellcheck="false" placeholder="Search by prompt, session ID, model, or agent…"/>
-    </div>
-    <div class="filter-field">
-      <label class="filter-label" for="filter-model">Model</label>
-      <select class="filter-select" id="filter-model">
-        <option value="all">All models</option>
-      </select>
-    </div>
-    <div class="filter-field">
-      <label class="filter-label" for="filter-status">Status</label>
-      <select class="filter-select" id="filter-status">
-        <option value="all">All sessions</option>
-        <option value="completed">Completed</option>
-        <option value="active">Not completed</option>
-        <option value="recovered">Recovered failures</option>
-        <option value="failing">Has failures</option>
-      </select>
-    </div>
-    <div class="filter-field filter-field-secondary">
-      <label class="filter-label" for="filter-range">Range</label>
-      <select class="filter-select" id="filter-range">
-        <option value="all">All time</option>
-        <option value="24h">Last 24 hours</option>
-        <option value="7d">Last 7 days</option>
-        <option value="30d">Last 30 days</option>
-      </select>
-    </div>
-    <div class="filter-field filter-field-secondary">
-      <label class="filter-label" for="filter-sort">Sort</label>
-      <select class="filter-select" id="filter-sort">
-        <option value="recent">Most recent</option>
-        <option value="quality">Highest quality</option>
-        <option value="tokens">Most tokens</option>
-        <option value="cost">Most cost</option>
-        <option value="duration">Longest sessions</option>
-        <option value="events">Most events</option>
-      </select>
-    </div>
-  </div>
-  <div class="sb-agent-pills" id="sb-agent-pills">
-    <button class="sb-pill active" type="button" data-agent="all" aria-pressed="true">All agents</button>
-  </div>
-  <div class="filter-chip-row">
-    <div class="filter-chips" id="filter-chips"></div>
-  </div>
-</section>
-<div class="global-filter-backdrop" id="filter-sheet-backdrop" hidden></div>
-
-<!-- ════════════════════ SESSIONS BROWSER ════════════════════ -->
-<div class="tab-panel active" id="tab-sessions" role="tabpanel" aria-labelledby="tab-button-sessions">
-  <div class="session-browser">
-    <!-- Left: session list -->
     <div class="sb-left">
       <div class="sb-list-head" id="sb-list-head"></div>
       <div class="sb-list" id="sb-list"></div>
     </div>
-    <!-- Right: session detail -->
+  </aside>
+
+  <div class="report-content">
+    <div class="shell-toolbar" aria-label="Report panels">
+      <button type="button" class="rail-toggle shell-left-toggle" id="session-rail-open" aria-label="Open sessions" aria-expanded="true">
+        <span class="rail-toggle-lines" aria-hidden="true"></span>
+      </button>
+      <button type="button" class="rail-toggle shell-filter-toggle" id="filter-sheet-open" aria-label="Toggle filters" aria-expanded="false">
+        <span class="rail-toggle-lines" aria-hidden="true"></span>
+      </button>
+    </div>
+
+<!-- ════════════════════ SESSIONS BROWSER ════════════════════ -->
+<div class="tab-panel active" id="tab-sessions" role="tabpanel" aria-labelledby="tab-button-sessions">
+  <div class="session-browser">
     <div class="sb-right">
       <div id="sb-detail">
         <div class="sb-empty">
@@ -2422,18 +2844,6 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <div class="tab-panel" id="tab-overview" role="tabpanel" aria-labelledby="tab-button-overview" hidden>
   <!-- Row 1: 4 headline stats -->
   <div class="stat-row" id="stat-row"></div>
-
-  <!-- Row 2: SQLite store summary -->
-  <div class="panel" id="sqlite-panel" style="display:none">
-    <div class="panel-title">SQLite Store</div>
-    <div id="sqlite-summary"></div>
-  </div>
-
-  <!-- Row 3: Comparison summary -->
-  <div class="panel" id="agent-panel" style="display:none">
-    <div class="panel-title">Comparison Snapshot</div>
-    <div id="agent-summary"></div>
-  </div>
 
   <!-- Row 4: 8 metric tiles -->
   <div class="metric-row" id="metric-row"></div>
@@ -2489,6 +2899,49 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
       <div class="panel-title">Model Cost Share</div>
       <div id="model-cost-share" style="padding:8px 0"></div>
     </div>
+  </div>
+
+  <div class="cols-2">
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Activity — Last Year</div>
+      <div class="heatmap-wrap">
+        <div class="heatmap-outer">
+          <div class="hm-wd" id="hm-weekdays"></div>
+          <div class="hm-right">
+            <div class="hm-months" id="hm-months"></div>
+            <div class="hm-grid" id="hm-grid"></div>
+          </div>
+        </div>
+      </div>
+      <div class="hm-legend">
+        Less
+        <div class="hm-legend-sw">
+          <div style="background:var(--surface3);border:1px solid rgba(255,255,255,.06)"></div>
+          <div style="background:rgba(242,138,26,.2)"></div>
+          <div style="background:rgba(242,138,26,.4)"></div>
+          <div style="background:rgba(242,138,26,.65)"></div>
+          <div style="background:var(--blue)"></div>
+        </div>
+        More
+      </div>
+    </div>
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Subagent Effectiveness</div>
+      <div id="subagent-effectiveness"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Activity by Hour <span style="color:var(--text-3);font-weight:400;font-size:11px">(UTC)</span></div>
+    <div class="hour-wrap">
+      <div class="hour-bars" id="hour-bars"></div>
+      <div class="hour-labels" id="hour-labels"></div>
+    </div>
+  </div>
+
+  <div class="panel" id="weekly-trends-panel">
+    <div class="panel-title">Week-over-Week Activity</div>
+    <div id="weekly-trends-table"></div>
   </div>
 
 </div>
@@ -2562,54 +3015,6 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
     <div class="panel-title">Next Moves</div>
     <div class="obs-stack" id="obs-next-moves"></div>
   </div>
-</div>
-
-<!-- ════════════════════ ACTIVITY ════════════════════ -->
-<div class="tab-panel" id="tab-activity" role="tabpanel" aria-labelledby="tab-button-activity" hidden>
-
-  <div class="cols-2">
-    <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Activity — Last Year</div>
-      <div class="heatmap-wrap">
-        <div class="heatmap-outer">
-          <div class="hm-wd" id="hm-weekdays"></div>
-          <div class="hm-right">
-            <div class="hm-months" id="hm-months"></div>
-            <div class="hm-grid" id="hm-grid"></div>
-          </div>
-        </div>
-      </div>
-      <div class="hm-legend">
-        Less
-        <div class="hm-legend-sw">
-          <div style="background:var(--surface3);border:1px solid rgba(255,255,255,.06)"></div>
-          <div style="background:rgba(242,138,26,.2)"></div>
-          <div style="background:rgba(242,138,26,.4)"></div>
-          <div style="background:rgba(242,138,26,.65)"></div>
-          <div style="background:var(--blue)"></div>
-        </div>
-        More
-      </div>
-    </div>
-    <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Subagent Effectiveness</div>
-      <div id="subagent-effectiveness"></div>
-    </div>
-  </div>
-
-  <div class="panel">
-    <div class="panel-title">Activity by Hour <span style="color:var(--text-3);font-weight:400;font-size:11px">(UTC)</span></div>
-    <div class="hour-wrap">
-      <div class="hour-bars" id="hour-bars"></div>
-      <div class="hour-labels" id="hour-labels"></div>
-    </div>
-  </div>
-
-  <div class="panel" id="weekly-trends-panel">
-    <div class="panel-title">Week-over-Week Activity</div>
-    <div id="weekly-trends-table"></div>
-  </div>
-
 </div>
 
 <!-- ════════════════════ TOOLS (merged with Latency) ════════════════════ -->
@@ -2709,7 +3114,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 </div>
 
-<!-- ════════════════════ DATA ════════════════════ -->
+<!-- ════════════════════ CONTEXT ════════════════════ -->
 <div class="tab-panel" id="tab-data" role="tabpanel" aria-labelledby="tab-button-data" hidden>
   <div class="stat-row" id="data-stat-row"></div>
 
@@ -2736,9 +3141,82 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   </div>
 </div>
 
+  </div>
+
+  <aside class="filter-rail" id="filter-rail" aria-label="Filters">
+    <div class="rail-head">
+      <div class="rail-title">Filters</div>
+      <button type="button" class="rail-toggle filter-sheet-close" id="filter-sheet-close" aria-label="Close filters">
+        <span class="rail-toggle-lines" aria-hidden="true"></span>
+      </button>
+    </div>
+    <section class="global-filter-shell" id="global-filter-shell" aria-label="Session filters">
+      <div class="global-filter-top">
+        <div>
+          <div class="global-filter-title">Session filters</div>
+          <div class="global-filter-meta" id="global-filter-meta">Showing all sessions</div>
+        </div>
+        <div class="global-filter-actions">
+          <button type="button" class="filter-compact-toggle" id="filter-compact-toggle" aria-expanded="false" aria-controls="global-filter-grid">More filters</button>
+          <button type="button" class="filter-clear" id="filter-clear">Clear filters</button>
+        </div>
+      </div>
+      <div class="global-filter-grid" id="global-filter-grid">
+        <div class="filter-field">
+          <label class="filter-label" for="sb-search">Search</label>
+          <input type="text" class="sb-search" id="sb-search" name="session-search" autocomplete="off" spellcheck="false" placeholder="Search by prompt, session ID, model, or agent…"/>
+        </div>
+        <div class="filter-field">
+          <label class="filter-label" for="filter-model">Model</label>
+          <select class="filter-select" id="filter-model">
+            <option value="all">All models</option>
+          </select>
+        </div>
+        <div class="filter-field">
+          <label class="filter-label" for="filter-status">Status</label>
+          <select class="filter-select" id="filter-status">
+            <option value="all">All sessions</option>
+            <option value="completed">Completed</option>
+            <option value="active">Not completed</option>
+            <option value="recovered">Recovered failures</option>
+            <option value="failing">Has failures</option>
+          </select>
+        </div>
+        <div class="filter-field filter-field-secondary">
+          <label class="filter-label" for="filter-range">Range</label>
+          <select class="filter-select" id="filter-range">
+            <option value="all">All time</option>
+            <option value="24h">Last 24 hours</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+          </select>
+        </div>
+        <div class="filter-field filter-field-secondary">
+          <label class="filter-label" for="filter-sort">Sort</label>
+          <select class="filter-select" id="filter-sort">
+            <option value="recent">Most recent</option>
+            <option value="quality">Highest quality</option>
+            <option value="tokens">Most tokens</option>
+            <option value="cost">Most cost</option>
+            <option value="duration">Longest sessions</option>
+            <option value="events">Most events</option>
+          </select>
+        </div>
+      </div>
+      <div class="sb-agent-pills" id="sb-agent-pills">
+        <button class="sb-pill active" type="button" data-agent="all" aria-pressed="true">All agents</button>
+      </div>
+      <div class="filter-chip-row">
+        <div class="filter-chips" id="filter-chips"></div>
+      </div>
+    </section>
+  </aside>
+</div>
+<div class="global-filter-backdrop" id="filter-sheet-backdrop" hidden></div>
+
 </main>
 
-<footer>Powered by <a href="https://github.com/o11y-dev/reflect" style="color:var(--text-2);text-decoration:none"><code>reflect</code></a> — your data stays in the URL, nothing is stored server-side</footer>
+<footer>Powered by <a href="https://github.com/o11y-dev/reflect" style="color:var(--text-2);text-decoration:none"><code>reflect</code></a> — report data stays local and private</footer>
 
 <script>
 // ════════════════════ DATA LOADING ════════════════════
@@ -2843,12 +3321,10 @@ function reportUrlWithCurrentFilters(){
   const params = new URLSearchParams(window.location.search);
   const report = params.get('report') || '/api/data';
   const url = new URL(report, window.location.href);
-  const hasScopeFilter = Boolean(params.get('q') || params.get('agents') || params.get('agent') || params.get('model') || params.get('status') || params.get('range'));
-  ['q','agents','agent','model','status','range'].forEach(key => {
+  ['q','agents','agent','model','status','range','session'].forEach(key => {
     const value = params.get(key);
     if (value) url.searchParams.set(key, value);
   });
-  if (!hasScopeFilter && params.get('session')) url.searchParams.set('session', params.get('session'));
   return url.toString();
 }
 
@@ -3004,6 +3480,8 @@ function animateTabIndicator(){
 }
 
 function activateTab(tabName, {updateUrl = true, focusButton = false} = {}){
+  if (tabName === 'activity') tabName = 'overview';
+  if (tabName === 'context') tabName = 'data';
   const activeButton = document.querySelector(`.tab[data-tab="${tabName}"]`) || tabButtons[0];
   const activeTab = activeButton.dataset.tab;
   tabButtons.forEach(button => {
@@ -3052,6 +3530,8 @@ activateTab(currentParams().get('tab') || 'sessions', {updateUrl: false});
 document.getElementById('hdr-range').textContent = D.first_event_ts + ' — ' + D.last_event_ts;
 document.getElementById('hdr-ts').textContent = 'Refreshed ' + new Date().toLocaleString();
 let filteredDashboardSessions = (D.sessions || []).slice();
+let dashboardFilterActive = false;
+let dashboardSelectedSessionId = currentParams().get('session') || '';
 
 /* ════════════════════ SESSION BROWSER ════════════════════ */
 (function initSessionBrowser(){
@@ -3090,13 +3570,15 @@ let filteredDashboardSessions = (D.sessions || []).slice();
   const filterSheetOpenBtn = document.getElementById('filter-sheet-open');
   const filterSheetCloseBtn = document.getElementById('filter-sheet-close');
   const filterSheetBackdrop = document.getElementById('filter-sheet-backdrop');
+  const sessionRailToggleBtn = document.getElementById('session-rail-toggle');
+  const sessionRailOpenBtn = document.getElementById('session-rail-open');
   const searchInput = document.getElementById('sb-search');
   const modelSelect = document.getElementById('filter-model');
   const statusSelect = document.getElementById('filter-status');
   const rangeSelect = document.getElementById('filter-range');
   const sortSelect = document.getElementById('filter-sort');
   let reloadTimer = null;
-  let filterExpanded = false;
+  let filterExpanded = true;
   const agentNames = [...agentSet].sort((a,b) => a.localeCompare(b));
   const modelNames = [...new Set([
     ...sessions.map(s => s.primary_model).filter(Boolean),
@@ -3123,6 +3605,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
   }
 
   function persistFilters(){
+    dashboardSelectedSessionId = '';
     updateUrlParams(urlParams => {
       if (filterState.q) urlParams.set('q', filterState.q);
       else urlParams.delete('q');
@@ -3149,24 +3632,57 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     return true;
   }
 
-  function isMobileFilterSheet(){
-    return window.matchMedia('(max-width: 720px)').matches;
+  function isMobileShell(){
+    return window.matchMedia('(max-width: 900px)').matches;
   }
 
-  function closeFilterSheet(){
-    filterShell.classList.remove('mobile-open');
-    document.body.classList.remove('filter-sheet-open');
-    if (filterSheetBackdrop) filterSheetBackdrop.hidden = true;
+  function syncRailState(){
+    const mobile = isMobileShell();
+    const filtersOpen = mobile ? document.body.classList.contains('filters-rail-open') : true;
+    const sessionsOpen = document.body.classList.contains('sessions-rail-open');
+    const sessionsCollapsed = document.body.classList.contains('sessions-rail-collapsed');
+    const overlayOpen = mobile && (filtersOpen || sessionsOpen);
+    document.body.classList.toggle('rail-overlay-open', overlayOpen);
+    if (filterSheetBackdrop) filterSheetBackdrop.hidden = !overlayOpen;
+    sessionRailToggleBtn?.setAttribute('aria-expanded', String(mobile ? sessionsOpen : !sessionsCollapsed));
+    sessionRailOpenBtn?.setAttribute('aria-expanded', String(mobile ? sessionsOpen : !sessionsCollapsed));
+    filterSheetOpenBtn?.setAttribute('aria-expanded', String(filtersOpen));
+    if (!mobile) document.body.classList.remove('sessions-rail-open');
+  }
+
+  function toggleSessionRail(){
+    if (isMobileShell()) {
+      document.body.classList.toggle('sessions-rail-open');
+    } else {
+      document.body.classList.toggle('sessions-rail-collapsed');
+    }
+    syncRailState();
+  }
+
+  function closeFilterRail(){
+    if (isMobileShell()) document.body.classList.remove('filters-rail-open');
+    syncRailState();
+  }
+
+  function toggleFilterRail(){
+    if (!isMobileShell()) return;
+    document.body.classList.toggle('filters-rail-open');
+    syncRailState();
+  }
+
+  function closeShellOverlays(){
+    document.body.classList.remove('sessions-rail-open');
+    document.body.classList.remove('filters-rail-open');
+    syncRailState();
   }
 
   function syncFilterLayout(){
-    const mobile = isMobileFilterSheet();
-    filterShell.classList.toggle('expanded', filterExpanded || !mobile);
+    filterShell.classList.toggle('expanded', filterExpanded);
     if (compactToggleBtn) {
-      compactToggleBtn.setAttribute('aria-expanded', String(filterExpanded || !mobile));
+      compactToggleBtn.setAttribute('aria-expanded', String(filterExpanded));
       compactToggleBtn.textContent = filterExpanded ? 'Fewer filters' : 'More filters';
     }
-    if (!mobile) closeFilterSheet();
+    syncRailState();
   }
 
   function updateAgentPills(){
@@ -3181,6 +3697,8 @@ let filteredDashboardSessions = (D.sessions || []).slice();
 
   function setSelectedSession(idx, {updateUrl = true} = {}){
     selectedIdx = idx;
+    const selected = selectedIdx === null ? null : sessions[selectedIdx];
+    dashboardSelectedSessionId = selected ? (selected.full_id || selected.id || '') : '';
     renderSessionList();
     renderSessionDetail(selectedIdx === null ? null : sessions[idx]);
     if (updateUrl) {
@@ -3189,6 +3707,9 @@ let filteredDashboardSessions = (D.sessions || []).slice();
         if (selected) urlParams.set('session', selected.full_id || selected.id);
         else urlParams.delete('session');
       });
+      if (selected && reportSupportsServerFiltering()) {
+        scheduleDashboardReload();
+      }
     }
   }
 
@@ -3238,29 +3759,17 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     renderSessionList();
   });
   compactToggleBtn?.addEventListener('click', () => {
-    if (isMobileFilterSheet()) {
-      filterExpanded = true;
-      filterShell.classList.add('mobile-open');
-      document.body.classList.add('filter-sheet-open');
-      if (filterSheetBackdrop) filterSheetBackdrop.hidden = false;
-      syncFilterLayout();
-      return;
-    }
     filterExpanded = !filterExpanded;
     syncFilterLayout();
   });
-  filterSheetOpenBtn?.addEventListener('click', () => {
-    filterExpanded = true;
-    filterShell.classList.add('mobile-open');
-    document.body.classList.add('filter-sheet-open');
-    if (filterSheetBackdrop) filterSheetBackdrop.hidden = false;
-    syncFilterLayout();
-  });
-  filterSheetCloseBtn?.addEventListener('click', () => closeFilterSheet());
-  filterSheetBackdrop?.addEventListener('click', () => closeFilterSheet());
-  window.addEventListener('resize', syncFilterLayout);
+  sessionRailToggleBtn?.addEventListener('click', () => toggleSessionRail());
+  sessionRailOpenBtn?.addEventListener('click', () => toggleSessionRail());
+  filterSheetOpenBtn?.addEventListener('click', () => toggleFilterRail());
+  filterSheetCloseBtn?.addEventListener('click', () => closeFilterRail());
+  filterSheetBackdrop?.addEventListener('click', () => closeShellOverlays());
+  window.addEventListener('resize', syncRailState);
   document.addEventListener('keydown', evt => {
-    if (evt.key === 'Escape') closeFilterSheet();
+    if (evt.key === 'Escape') closeShellOverlays();
   });
   syncFilterLayout();
 
@@ -3299,7 +3808,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
 
   function filteredSessions(){
     const searchText = filterState.q.toLowerCase();
-    const now = Date.now();
+    const reportNow = Math.max(...sessions.map(sessionTimeMs).filter(Boolean), Date.now());
     const rangeMs = filterState.range === '24h' ? 24 * 60 * 60 * 1000
       : filterState.range === '7d' ? 7 * 24 * 60 * 60 * 1000
       : filterState.range === '30d' ? 30 * 24 * 60 * 60 * 1000
@@ -3313,7 +3822,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       if (filterState.status === 'failing' && !(Number(s.failure_count || 0) > 0)) return false;
       if (rangeMs > 0) {
         const createdMs = sessionTimeMs(s);
-        if (!createdMs || (now - createdMs) > rangeMs) return false;
+        if (!createdMs || (reportNow - createdMs) > rangeMs) return false;
       }
       if (searchText) {
         const haystack = [
@@ -3346,17 +3855,18 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     updateAgentPills();
     renderFilterChips();
     const hasFilters = Boolean(filterState.q || filterState.agents.size || filterState.model !== 'all' || filterState.status !== 'all' || filterState.range !== 'all' || filterState.sort !== 'recent');
-    const totalSessions = Number(D.unique_sessions || sessions.length || 0);
+    const totalSessions = Number(D.session_list_total || sessions.length || D.unique_sessions || 0);
     metaEl.textContent = hasFilters
       ? `Showing ${fmt(filtered.length)} of ${fmt(totalSessions)} sessions`
       : `Showing ${fmt(filtered.length)} of ${fmt(totalSessions)} sessions`;
     if (launcherMetaEl) launcherMetaEl.textContent = metaEl.textContent;
     listHead.textContent = `${fmt(filtered.length)} session${filtered.length === 1 ? '' : 's'} in view`;
     document.dispatchEvent(new CustomEvent('dashboard-filters-changed', {
-      detail: { sessions: filteredDashboardSessions.slice(), hasFilters, filters: {...filterState, agents:[...filterState.agents]} }
+      detail: { sessions: filteredDashboardSessions.slice(), hasFilters, selectedSessionId: dashboardSelectedSessionId, filters: {...filterState, agents:[...filterState.agents]} }
     }));
     if (selectedIdx !== null && !filtered.some(s => s._idx === selectedIdx)) {
       selectedIdx = null;
+      dashboardSelectedSessionId = '';
       updateUrlParams(urlParams => urlParams.delete('session'));
     }
     if (!filtered.length) {
@@ -3387,7 +3897,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
           <div class="sb-card-badge">${fmt(s.event_count || 0)} events</div>
           ${tokens > 0 ? `<div class="sb-card-badge">${estimatedTokens ? '~' : ''}${fmtTokenShort(tokens)} tok</div>` : ''}
           ${cost > 0 ? `<div class="sb-card-badge">${fmtCost(cost)} ${escHtml(unit)}</div>` : ''}
-          ${s.quality_score ? `<div class="sb-card-badge" style="color:${s.quality_score > 70 ? 'var(--green)' : 'var(--yellow)'}">${s.quality_score.toFixed(0)}%</div>` : ''}
+          ${s.quality_available ? `<div class="sb-card-badge" style="color:${Number(s.quality_score || 0) > 70 ? 'var(--green)' : 'var(--yellow)'}">${Number(s.quality_score || 0).toFixed(0)}%</div>` : '<div class="sb-card-badge" style="color:var(--text-3)">No score</div>'}
         </div>
       </button>`;
     }).join('');
@@ -3397,6 +3907,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
       card.addEventListener('click', () => {
         const idx = parseInt(card.dataset.idx);
         setSelectedSession(idx);
+        if (isMobileShell()) closeShellOverlays();
       });
     });
     renderSessionDetail(sessions[selectedIdx]);
@@ -3439,7 +3950,7 @@ let filteredDashboardSessions = (D.sessions || []).slice();
         <span title="${tokenMeta}">In: <strong>${estimatedTokens ? '~' : ''}${fmtTokenShort(inTok)}</strong></span>
         <span title="${tokenMeta}">Out: <strong>${estimatedTokens ? '~' : ''}${fmtTokenShort(outTok)}</strong></span>
         ${cacheTok > 0 ? `<span>Cache: <strong>${fmtTokenShort(cacheTok)}</strong></span>` : ''}
-        <span title="Pricing source: ${escHtml(session.pricing_source || D.pricing_source || 'unknown')}">Cost: <strong>${fmtCost(sessionCost)} ${escHtml(sessionUnit)}</strong></span>
+        <span title="Cost basis: ${escHtml(session.pricing_source || D.pricing_source || 'unknown')}">Cost: <strong>${fmtCost(sessionCost)} ${escHtml(sessionUnit)}</strong></span>
         ${session.failure_count > 0 ? `<span style="color:var(--red)">Failures: <strong>${session.failure_count}</strong></span>` : ''}
       </div>
       ${tokenNote ? `<div class="sb-detail-model" style="margin-top:8px">${escHtml(tokenNote)}</div>` : ''}
@@ -3450,73 +3961,23 @@ let filteredDashboardSessions = (D.sessions || []).slice();
 
     const loadBtnHtml = ''; // sessions auto-load on selection — see auto-load below
 
-    let timelineHtml = '';
     const isActivityType = t => ['tool_call','tool_result','mcp_call','mcp_result'].includes(t);
-
-    if (conversation.length > 0) {
-      timelineHtml = '<div class="chat-thread">';
-      conversation.forEach((ev, i) => {
-        const relTime = fmtRelTime(ev.ts - sessionStartTs);
-        const nodeColor = getEventNodeColor(ev);
-        const eventKind = `${ev.type || 'event'}${ev.type === 'tool_result' && ev.success === false ? ' fail' : ''}`;
-        const previewLimit = session._fullLoaded ? 5000 : 280;
-        const rawPreview = ev.preview ? ev.preview.slice(0, previewLimit) : '';
-        const preview = rawPreview ? escHtml(rawPreview) : '';
-        const isLong = ev.preview && ev.preview.length > 280;
-        const rail = `<div class="ev-rail"><span class="ev-ts">${relTime}</span><span class="ev-dot" aria-hidden="true"></span></div>`;
-
-        if (ev.type === 'prompt' || ev.type === 'response') {
-          const isUser = ev.type === 'prompt';
-          const who = isUser ? 'User' : (ev.model ? ev.model.replace(/^claude-/,'').replace(/-\d{8}$/,'') : 'Agent');
-          const meta = getEventMeta(ev);
-          timelineHtml += `<div class="chat-msg ${isUser ? 'is-user' : 'is-agent'}" data-kind="${escHtml(eventKind)}" style="--node-color:${nodeColor}">${rail}<div class="chat-bubble"><div class="chat-header"><span class="chat-who">${escHtml(who)}</span>${meta ? `<span class="chat-header-meta">${escHtml(meta)}</span>` : ''}</div>${preview ? `<div class="chat-content"><button type="button" class="ev-preview${session._fullLoaded ? ' full-content' : ''}${isLong ? ' expandable' : ''}" data-eidx="${i}" aria-expanded="false">${preview}</button>${isLong ? `<div class="ev-preview-hint">Tap to expand</div>` : ''}</div>` : `<div class="chat-content" style="color:var(--text-3);font-size:13px;font-style:italic">No content captured</div>`}</div></div>`;
-
-        } else if (isActivityType(ev.type)) {
-          let icon = '→', name = '', meta2 = '', statusHtml = '';
-          const dur = ev.duration_ms ? `<span class="chip-dur">${fmtDur(ev.duration_ms)}</span>` : '';
-          if (ev.type === 'tool_call') {
-            icon = '▶'; name = ev.tool_name || 'Tool';
-            meta2 = ev.preview ? ev.preview.slice(0,72) : '';
-          } else if (ev.type === 'tool_result') {
-            icon = ev.success !== false ? '✓' : '✗'; name = ev.tool_name || 'Result';
-            meta2 = ev.preview ? ev.preview.slice(0,72) : '';
-            statusHtml = ev.success !== false ? '<span class="chip-ok">ok</span>' : '<span class="chip-fail">failed</span>';
-          } else if (ev.type === 'mcp_call') {
-            icon = '⬡'; name = ev.tool_name || 'MCP';
-            meta2 = ev.server || '';
-          } else if (ev.type === 'mcp_result') {
-            icon = '⬡'; name = (ev.tool_name || 'MCP') + ' ↩';
-            meta2 = ev.server || '';
-          }
-          timelineHtml += `<div class="chat-activity" data-kind="${escHtml(eventKind)}" style="--node-color:${nodeColor}"><div class="ev-rail"><span class="ev-ts">${relTime}</span><span class="ev-dot" aria-hidden="true"></span></div><div class="chat-activity-chip"><em class="chip-icon">${icon}</em><span class="chip-name">${escHtml(name)}</span>${meta2 ? `<span class="chip-meta">${escHtml(meta2)}</span>` : ''}${dur}${statusHtml}</div></div>`;
-
-        } else {
-          // session_start, session_end, subagent_* — slim divider
-          const label = ev.type === 'session_start' ? 'session start'
-            : ev.type === 'session_end' ? 'session end'
-            : ev.type === 'subagent_start' ? `subagent · ${ev.subagent_type || 'start'}`
-            : ev.type === 'subagent_stop' ? 'subagent done'
-            : (ev.type || 'event');
-          timelineHtml += `<div class="chat-divider" data-kind="${escHtml(eventKind)}" style="--node-color:${nodeColor}"><div class="ev-rail"><span class="ev-ts" style="font-size:10px">${relTime}</span></div><div class="chat-divider-inner"><div class="chat-divider-line"></div><span class="chat-divider-label">${escHtml(label)}</span><div class="chat-divider-line"></div></div></div>`;
-        }
-      });
-      timelineHtml += '</div>';
-
-    } else if (session.full_id && !session._fullLoaded) {
-      timelineHtml = `<div class="chat-loading"><div class="chat-loading-dot"></div><div class="chat-loading-dot"></div><div class="chat-loading-dot"></div><span>Loading conversation…</span></div>`;
-    } else {
-      timelineHtml = '<div style="color:var(--text-3);text-align:center;padding:40px">No conversation data for this session</div>';
-    }
+    const timelineHtml = renderConversationThread(session, conversation, sessionStartTs, isActivityType);
 
     const detailTabsHtml = `<div class="sb-detail-tabs">
       <button type="button" class="sb-detail-tab${activeDetailTab === 'conversation' ? ' active' : ''}" data-tab="conversation">Conversation</button>
+      <button type="button" class="sb-detail-tab${activeDetailTab === 'quality' ? ' active' : ''}" data-tab="quality">Quality</button>
       <button type="button" class="sb-detail-tab${activeDetailTab === 'telemetry' ? ' active' : ''}" data-tab="telemetry">Telemetry</button>
     </div>`;
+    const sessionTimelineHtml = renderSessionTimelinePanel(session, conversation);
     const bodyHtml = activeDetailTab === 'telemetry'
       ? renderTelemetryCockpit(session)
-      : renderConversationCasefile(session, conversation, loadBtnHtml, timelineHtml);
+      : activeDetailTab === 'quality'
+        ? renderQualityPanel(session)
+        : renderConversationCasefile(session, conversation, loadBtnHtml, timelineHtml);
 
     detailEl.innerHTML = headerHtml
+      + sessionTimelineHtml
       + detailTabsHtml
       + `<div class="sb-detail-body">${bodyHtml}</div>`;
 
@@ -3654,23 +4115,217 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     return 'Details';
   }
 
+  function renderConversationMessage(session, ev, index, sessionStartTs){
+    const relTime = fmtRelTime(ev.ts - sessionStartTs);
+    const nodeColor = getEventNodeColor(ev);
+    const eventKind = `${ev.type || 'event'}${ev.type === 'tool_result' && ev.success === false ? ' fail' : ''}`;
+    const previewLimit = session._fullLoaded ? 5000 : 280;
+    const rawPreview = ev.preview ? ev.preview.slice(0, previewLimit) : '';
+    const preview = rawPreview ? escHtml(rawPreview) : '';
+    const isLong = ev.preview && ev.preview.length > 280;
+    const rail = `<div class="ev-rail"><span class="ev-ts">${relTime}</span><span class="ev-dot" aria-hidden="true"></span></div>`;
+    const isUser = ev.type === 'prompt';
+    const who = isUser ? 'User' : (ev.model ? ev.model.replace(/^claude-/,'').replace(/-\d{8}$/,'') : 'Agent');
+    const meta = getEventMeta(ev);
+    return `<div class="chat-msg ${isUser ? 'is-user' : 'is-agent'}" data-kind="${escHtml(eventKind)}" style="--node-color:${nodeColor}">${rail}<div class="chat-bubble"><div class="chat-header"><span class="chat-who">${escHtml(who)}</span>${meta ? `<span class="chat-header-meta">${escHtml(meta)}</span>` : ''}</div>${preview ? `<div class="chat-content"><button type="button" class="ev-preview${session._fullLoaded ? ' full-content' : ''}${isLong ? ' expandable' : ''}" data-eidx="${index}" aria-expanded="false">${preview}</button>${isLong ? `<div class="ev-preview-hint">Tap to expand</div>` : ''}</div>` : `<div class="chat-content" style="color:var(--text-3);font-size:13px;font-style:italic">No content captured</div>`}</div></div>`;
+  }
+
+  function renderConversationActivity(ev, sessionStartTs){
+    const relTime = fmtRelTime(ev.ts - sessionStartTs);
+    const nodeColor = getEventNodeColor(ev);
+    const eventKind = `${ev.type || 'event'}${ev.type === 'tool_result' && ev.success === false ? ' fail' : ''}`;
+    let icon = '→', name = '', meta2 = '', statusHtml = '';
+    const dur = ev.duration_ms ? `<span class="chip-dur">${fmtDur(ev.duration_ms)}</span>` : '';
+    if (ev.type === 'tool_call') {
+      icon = '▶'; name = ev.tool_name || 'Tool';
+      meta2 = ev.preview ? ev.preview.slice(0,72) : '';
+    } else if (ev.type === 'tool_result') {
+      icon = ev.success !== false ? '✓' : '✗'; name = ev.tool_name || 'Result';
+      meta2 = ev.preview ? ev.preview.slice(0,72) : '';
+      statusHtml = ev.success !== false ? '<span class="chip-ok">ok</span>' : '<span class="chip-fail">failed</span>';
+    } else if (ev.type === 'mcp_call') {
+      icon = '⬡'; name = ev.tool_name || 'MCP';
+      meta2 = ev.server || '';
+    } else if (ev.type === 'mcp_result') {
+      icon = '⬡'; name = (ev.tool_name || 'MCP') + ' ↩';
+      meta2 = ev.server || '';
+    }
+    return `<div class="chat-activity" data-kind="${escHtml(eventKind)}" style="--node-color:${nodeColor}"><div class="ev-rail"><span class="ev-ts">${relTime}</span><span class="ev-dot" aria-hidden="true"></span></div><div class="chat-activity-chip"><em class="chip-icon">${icon}</em><span class="chip-name">${escHtml(name)}</span>${meta2 ? `<span class="chip-meta">${escHtml(meta2)}</span>` : ''}${dur}${statusHtml}</div></div>`;
+  }
+
+  function renderConversationDivider(ev, sessionStartTs){
+    const relTime = fmtRelTime(ev.ts - sessionStartTs);
+    const nodeColor = getEventNodeColor(ev);
+    const eventKind = ev.type || 'event';
+    const label = ev.type === 'session_start' ? 'session start'
+      : ev.type === 'session_end' ? 'session end'
+      : ev.type === 'subagent_start' ? `subagent · ${ev.subagent_type || 'start'}`
+      : ev.type === 'subagent_stop' ? 'subagent done'
+      : (ev.type || 'event');
+    return `<div class="chat-divider" data-kind="${escHtml(eventKind)}" style="--node-color:${nodeColor}"><div class="ev-rail"><span class="ev-ts" style="font-size:10px">${relTime}</span></div><div class="chat-divider-inner"><div class="chat-divider-line"></div><span class="chat-divider-label">${escHtml(label)}</span><div class="chat-divider-line"></div></div></div>`;
+  }
+
+  function renderActivityGroup(events, sessionStartTs, turnIndex){
+    if (!events.length) return '';
+    const failures = events.filter(ev => ev.type === 'tool_result' && ev.success === false).length;
+    const tools = events.filter(ev => ev.type === 'tool_call' || ev.type === 'mcp_call').length;
+    const failedLabel = failures ? `<span class="chip-fail">${fmt(failures)} failed</span>` : '';
+    const openAttr = failures ? ' open' : '';
+    return `<details class="chat-activity-group"${openAttr}>
+      <summary class="chat-activity-summary">
+        <span>Turn activity</span>
+        <span class="chip-meta">${fmt(tools)} calls · ${fmt(events.length)} events</span>
+        ${failedLabel}
+      </summary>
+      <div class="chat-activity-list">
+        ${events.map(ev => renderConversationActivity(ev, sessionStartTs)).join('')}
+      </div>
+    </details>`;
+  }
+
+  function renderConversationThread(session, conversation, sessionStartTs, isActivityType){
+    if (!conversation.length) {
+      if (session.full_id && !session._fullLoaded) {
+        return `<div class="chat-loading"><div class="chat-loading-dot"></div><div class="chat-loading-dot"></div><div class="chat-loading-dot"></div><span>Loading conversation…</span></div>`;
+      }
+      return '<div style="color:var(--text-3);text-align:center;padding:40px">No conversation data for this session</div>';
+    }
+    const turns = [];
+    let current = {events: [], activity: [], index: 0};
+    conversation.forEach((ev, index) => {
+      if (ev.type === 'prompt' && current.events.length) {
+        turns.push(current);
+        current = {events: [], activity: [], index: turns.length};
+      }
+      const event = {...ev, _conversationIndex: index};
+      if (isActivityType(ev.type)) current.activity.push(event);
+      else current.events.push(event);
+    });
+    if (current.events.length || current.activity.length) turns.push(current);
+    return `<div class="chat-thread">${turns.map((turn, turnIndex) => `
+      <section class="chat-turn">
+        ${turn.events.map(ev => {
+          if (ev.type === 'prompt' || ev.type === 'response') return renderConversationMessage(session, ev, ev._conversationIndex, sessionStartTs);
+          return renderConversationDivider(ev, sessionStartTs);
+        }).join('')}
+        ${renderActivityGroup(turn.activity, sessionStartTs, turnIndex)}
+      </section>
+    `).join('')}</div>`;
+  }
+
   function renderConversationCasefile(session, conversation, loadBtnHtml, timelineHtml){
     const promptCount = conversation.filter(ev => ev.type === 'prompt').length;
     const responseCount = conversation.filter(ev => ev.type === 'response').length;
     const toolCallCount = conversation.filter(ev => ev.type === 'tool_call' || ev.type === 'mcp_call').length;
     const failureCount = conversation.filter(ev => ev.type === 'tool_result' && ev.success === false).length;
-    const failPart = failureCount
-      ? `<span class="conv-stat-sep">·</span><div class="conv-stat-item" style="color:var(--red)"><span class="conv-stat-num" style="color:var(--red)">${fmt(failureCount)}</span> failed</div>`
+    const totalPromptCount = Number(session.prompt_count || promptCount || 0);
+    const totalToolCallCount = Number(session.tool_calls || session.tool_call_count || toolCallCount || 0);
+    const totalFailureCount = Number(session.failure_count || failureCount || 0);
+    const promptLabel = totalPromptCount > promptCount
+      ? `<span class="conv-stat-num">${fmt(promptCount)}</span> shown / ${fmt(totalPromptCount)} prompts`
+      : `<span class="conv-stat-num">${fmt(promptCount)}</span> prompts`;
+    const toolLabel = totalToolCallCount > toolCallCount
+      ? `<span class="conv-stat-num">${fmt(toolCallCount)}</span> shown / ${fmt(totalToolCallCount)} tool calls`
+      : `<span class="conv-stat-num">${fmt(toolCallCount)}</span> tool calls`;
+    const failLabel = totalFailureCount > failureCount
+      ? `<span class="conv-stat-num" style="color:var(--red)">${fmt(failureCount)}</span> shown / ${fmt(totalFailureCount)} failed`
+      : `<span class="conv-stat-num" style="color:var(--red)">${fmt(failureCount)}</span> failed`;
+    const failPart = totalFailureCount
+      ? `<span class="conv-stat-sep">·</span><div class="conv-stat-item" style="color:var(--red)">${failLabel}</div>`
       : '';
     const statsBar = `<div class="conv-stats-bar">
-      <div class="conv-stat-item"><span class="conv-stat-num">${fmt(promptCount)}</span> prompts</div>
+      <div class="conv-stat-item">${promptLabel}</div>
       <span class="conv-stat-sep">·</span>
       <div class="conv-stat-item"><span class="conv-stat-num">${fmt(responseCount)}</span> responses</div>
       <span class="conv-stat-sep">·</span>
-      <div class="conv-stat-item"><span class="conv-stat-num">${fmt(toolCallCount)}</span> tool calls</div>
+      <div class="conv-stat-item">${toolLabel}</div>
       ${failPart}
     </div>`;
     return `<div class="conversation-shell">${statsBar}${timelineHtml}</div>`;
+  }
+
+  function sessionTimelineEventLabel(ev){
+    if (ev.type === 'prompt') return 'Prompt';
+    if (ev.type === 'response') return ev.model ? `Response · ${ev.model}` : 'Response';
+    if (ev.type === 'tool_call') return ev.tool_name || 'Tool call';
+    if (ev.type === 'tool_result') return `${ev.success === false ? 'Failed' : 'Done'} · ${ev.tool_name || 'Tool'}`;
+    if (ev.type === 'mcp_call') return `MCP · ${ev.tool_name || ev.server || 'Call'}`;
+    if (ev.type === 'mcp_result') return `MCP result · ${ev.tool_name || ev.server || 'Call'}`;
+    if (ev.type === 'subagent_start') return `Subagent · ${ev.subagent_type || 'start'}`;
+    if (ev.type === 'subagent_stop') return `Subagent done · ${ev.subagent_type || 'subagent'}`;
+    return ev.type || 'Event';
+  }
+
+  function renderSessionTimelinePanel(session, conversation){
+    const events = (conversation || []).filter(ev =>
+      ['prompt','response','tool_call','tool_result','mcp_call','mcp_result','subagent_start','subagent_stop'].includes(ev.type)
+    );
+    const totalShown = events.length;
+    const totalKnown = Math.max(
+      totalShown,
+      Number(session.prompt_count || 0) + Number(session.tool_calls || session.tool_call_count || 0)
+    );
+    if (!events.length) {
+      const copy = session.full_id && !session._fullLoaded ? 'Loading session timeline...' : 'No timeline events available for this session.';
+      return `<div class="session-timeline-panel"><div class="session-timeline-head"><div class="session-timeline-title">Session Timeline</div></div><div class="session-timeline-empty">${copy}</div></div>`;
+    }
+    const startTs = Number(events[0].ts || 0);
+    const rawPositioned = events.map((ev, index) => {
+      const ts = Number(ev.ts || 0) || (startTs + index * 1000);
+      const rel = Math.max(0, ts - startTs);
+      const dur = Math.max(1, Number(ev.duration_ms || 0) || (ev.type === 'tool_result' ? 300 : 120));
+      return {...ev, _rel: rel, _dur: dur, _index: index};
+    });
+    const gapThresholdMs = 2 * 60 * 1000;
+    const compressedGapMs = 20 * 1000;
+    const gapMarkers = [];
+    let compressedRel = 0;
+    const positioned = rawPositioned.map((ev, index) => {
+      if (index > 0) {
+        const previous = rawPositioned[index - 1];
+        const gap = Math.max(0, Number(ev._rel || 0) - Number(previous._rel || 0));
+        if (gap > gapThresholdMs) {
+          compressedRel += compressedGapMs;
+          gapMarkers.push({ rel: compressedRel, rawGap: gap });
+        } else {
+          compressedRel += gap;
+        }
+      }
+      return {...ev, _displayRel: compressedRel};
+    });
+    const maxRel = Math.max(
+      1,
+      ...positioned.map(ev => Number(ev._displayRel || 0) + Number(ev._dur || 0))
+    );
+    const tooltipAttr = value => escHtml(value).replace(/"/g, '&quot;');
+    const tooltipAlign = left => left < 16 ? 'left' : (left > 84 ? 'right' : 'center');
+    const bars = positioned.map(ev => {
+      const left = Math.max(0, Math.min(100, (Number(ev._displayRel || 0) / maxRel) * 100));
+      const width = Math.max(0.35, Math.min(100 - left, (Number(ev._dur || 1) / maxRel) * 100));
+      const label = sessionTimelineEventLabel(ev);
+      const preview = ev.preview ? ` - ${String(ev.preview).slice(0, 220)}` : '';
+      const compressedNote = ev._displayRel !== ev._rel ? ' · pauses compressed' : '';
+      const title = `${label} at ${fmtRelTime(ev._rel)}${compressedNote}${ev.duration_ms ? `, ${fmtDur(ev.duration_ms)}` : ''}${preview}`;
+      const safeTip = tooltipAttr(title);
+      const failureClass = ev.type === 'tool_result' && ev.success === false ? ' is-failure' : '';
+      return `<span class="session-timeline-span${failureClass}" data-tip-align="${tooltipAlign(left)}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;--span-color:${getEventNodeColor(ev)}" data-tip="${safeTip}" aria-label="${safeTip}" tabindex="0"></span>`;
+    }).join('');
+    const gaps = gapMarkers.map(gap => {
+      const left = Math.max(0, Math.min(100, (Number(gap.rel || 0) / maxRel) * 100));
+      const safeTip = tooltipAttr(`Idle gap compressed: ${fmtDur(gap.rawGap)}`);
+      return `<span class="session-timeline-gap" data-tip-align="${tooltipAlign(left)}" style="left:${left.toFixed(3)}%" data-tip="${safeTip}" aria-label="${safeTip}" tabindex="0"></span>`;
+    }).join('');
+    const failureTotal = positioned.filter(ev => ev.type === 'tool_result' && ev.success === false).length;
+    const rangeLabel = `${fmtRelTime(rawPositioned[rawPositioned.length - 1]?._rel || maxRel)}${gapMarkers.length ? ` · ${fmt(gapMarkers.length)} pauses compressed` : ''}`;
+    const countLabel = totalKnown > totalShown ? `${fmt(totalShown)} shown / ${fmt(totalKnown)} events` : `${fmt(totalShown)} events`;
+    const errorLabel = failureTotal ? ` · ${fmt(failureTotal)} shown failed` : '';
+    return `<div class="session-timeline-panel">
+      <div class="session-timeline-head">
+        <div class="session-timeline-title">Session Timeline</div>
+        <div class="session-timeline-meta">${countLabel}${errorLabel} · ${rangeLabel}</div>
+      </div>
+      <div class="session-timeline-track" aria-label="Session timeline">${gaps}${bars}</div>
+    </div>`;
   }
 
   function telemetryBeatLabel(ev){
@@ -4060,6 +4715,103 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     return '';
   }
 
+  function renderQualityPanel(session){
+    const rules = D.quality_rules || [];
+    const hasScore = session.quality_available === true;
+    const score = Number(session.quality_score || 0);
+    const breakdown = session.quality_breakdown || [];
+    const status = hasScore
+      ? (score >= 80 ? 'Strong' : score >= 60 ? 'Watch' : 'Needs attention')
+      : 'Not scored';
+    const note = hasScore
+      ? (session.quality_missing_reason || 'This score is computed from local telemetry spans, token usage, completion markers, tool failures, repeated tool loops, duration, recovery, tool diversity, and edit activity.')
+      : (session.quality_missing_reason || 'No quality score is available for this session because reflect did not load enough scored telemetry spans for it.');
+    const sessionSignals = [
+      ['Status', session.is_completed ? 'completed' : 'not completed'],
+      ['Failures', fmt(session.failure_count || session.failures || 0)],
+      ['Recovered', fmt(session.recovered_failures || 0)],
+      ['Tools', fmt(Object.values(session.tools || {}).reduce((sum, value) => sum + Number(value || 0), 0))],
+      ['Tokens', fmtTokenShort((session.input_tokens || 0) + (session.output_tokens || 0) + (session.cache_creation_tokens || 0) + (session.cache_read_tokens || 0))],
+    ];
+    const formatMetricValue = value => {
+      if (typeof value === 'number') return Number.isInteger(value) ? fmt(value) : String(Math.round(value * 100) / 100);
+      if (typeof value === 'boolean') return value ? 'yes' : 'no';
+      if (value === null || value === undefined || value === '') return 'none';
+      return String(value);
+    };
+    const inputEntries = item => {
+      const inputs = Array.isArray(item.inputs) ? item.inputs : [];
+      if (inputs.length) return inputs.map(input => [input.name || 'input', input.value]);
+      const metrics = Object.entries(item.metrics || {});
+      return metrics.length ? metrics.map(([key, value]) => [String(key).replace(/_/g, ' '), value]) : [['none', 'none']];
+    };
+    const renderBreakdownRows = item => {
+      const entries = inputEntries(item);
+      const rowSpan = entries.length;
+      return entries.map(([key, value], index) => `
+        <tr>
+          ${index === 0 ? `<td class="quality-breakdown-name" rowspan="${rowSpan}">${escHtml(item.name || '')}</td>` : ''}
+          ${index === 0 ? `<td class="quality-breakdown-score" rowspan="${rowSpan}">${Number(item.earned || 0).toFixed(1)} / ${Number(item.max || 0).toFixed(0)}</td>` : ''}
+          <td class="quality-breakdown-input">${escHtml(key)}</td>
+          <td class="quality-breakdown-value">${escHtml(formatMetricValue(value))}</td>
+          ${index === 0 ? `<td rowspan="${rowSpan}"><div class="quality-breakdown-summary">${escHtml(item.summary || '')}</div></td>` : ''}
+        </tr>
+      `).join('');
+    };
+    const breakdownTotal = breakdown.reduce((sum, item) => sum + Number(item.earned || 0), 0);
+    const breakdownMax = breakdown.reduce((sum, item) => sum + Number(item.max || 0), 0);
+    return `<div class="quality-shell">
+      <div class="quality-summary">
+        <div class="quality-score-card">
+          <div class="quality-score-value">${hasScore ? score.toFixed(0) + '%' : '--'}</div>
+          <div class="quality-score-label">${escHtml(status)}</div>
+        </div>
+        <div class="quality-note">
+          <div style="font-weight:800;color:var(--text);margin-bottom:8px">Why this session ${hasScore ? 'has a score' : 'does not have a score'}</div>
+          <div>${escHtml(note)}</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+            ${sessionSignals.map(([label, value]) => `<span class="sb-card-badge">${escHtml(label)}: ${escHtml(value)}</span>`).join('')}
+          </div>
+        </div>
+      </div>
+      <div class="panel-title" style="margin-top:2px">Score Breakdown</div>
+      ${breakdown.length ? `<div class="quality-breakdown-table-wrap">
+        <table class="quality-breakdown-table">
+          <thead>
+            <tr>
+              <th>Rule</th>
+              <th style="text-align:right">Score</th>
+              <th>Input</th>
+              <th>Value</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${breakdown.map(item => renderBreakdownRows(item)).join('')}
+            <tr class="quality-breakdown-total">
+              <td>Total</td>
+              <td class="quality-breakdown-score">${breakdownTotal.toFixed(1)} / ${breakdownMax.toFixed(0)}</td>
+              <td colspan="3">Final displayed score: ${hasScore ? score.toFixed(0) + '%' : '--'}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>` : `<div class="quality-note">No score breakdown is available because this session was not scored from detailed telemetry.</div>`}
+      <div class="panel-title" style="margin-top:2px">Quality Rules</div>
+      <div class="quality-rules">
+        ${rules.map(rule => `
+          <div class="quality-rule">
+            <div class="quality-rule-top">
+              <div class="quality-rule-name">${escHtml(rule.name || '')}</div>
+              <div class="quality-rule-points">${fmt(rule.points || 0)} pts</div>
+            </div>
+            <div class="quality-rule-desc">${escHtml(rule.description || '')}</div>
+            <div class="quality-rule-signals">${escHtml((rule.signals || []).join(' / '))}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>`;
+  }
+
   function renderTelemetryCockpit(session){
     const telemetry = session.telemetry;
     const summary = telemetry?.summary || {};
@@ -4101,16 +4853,6 @@ let filteredDashboardSessions = (D.sessions || []).slice();
     const rowSpans = treeRows.slice(0, 120);
     const collapsibleKeys = treeRows.filter(row => row.hasChildren).map(row => row.key);
     const collapsedCount = treeRows.filter(row => row.collapsed).length;
-    const sessionStartTs = session.conversation?.[0]?.ts || beats[0]?.ts || 0;
-    const observationMarkers = buildSessionObservationMarkers(session, spans, logs, anchorMs, sessionStartTs);
-    const activeObservation = observationMarkers.find(item => item.id === session._telemetryObservationId) || null;
-    const beatRail = buildTelemetryBeatRail(
-      beats,
-      sessionStartTs,
-      activeBeat?._beatId || '',
-      observationMarkers,
-      activeObservation?.id || ''
-    );
     const rulerTicks = [0, .25, .5, .75, 1].map(fraction => ({
       left: fraction * 100,
       label: fmtDur(traceWindowMs * fraction),
@@ -4134,50 +4876,11 @@ let filteredDashboardSessions = (D.sessions || []).slice();
             </div>
           `).join('')}
         </div>
-        ${beats.length ? `<div class="telemetry-beat-row">
-          <div class="telemetry-beat-scale">
-            <span>Session timeline${observationMarkers.length ? ` · ${fmt(observationMarkers.length)} observations` : ''}</span>
-            <span>${escHtml(fmtRelTime(beatRail.maxRel))}</span>
-          </div>
-          <div class="telemetry-beat-track" style="--track-height:${beatRail.height}px">${beatRail.items.map(item => `
-            <button
-              type="button"
-              class="telemetry-beat${activeBeat && item.beat._beatId === activeBeat._beatId ? ' active' : ''}"
-              data-beat-id="${item.beat._beatId}"
-              style="--beat-left:${item.left}%;--beat-level:${item.level};--beat-color:${telemetryBeatColor(item.beat)}"
-              aria-label="${escHtml(`${telemetryBeatLabel(item.beat)} at ${fmtRelTime(item.rel)}`)}"
-            >
-              ${activeBeat && item.beat._beatId === activeBeat._beatId ? `
-                <div class="telemetry-beat-bubble">
-                  <div class="telemetry-beat-label">${escHtml(telemetryBeatLabel(item.beat))}</div>
-                  <div class="telemetry-beat-sub">${escHtml(telemetryBeatSub(item.beat))}</div>
-                </div>` : ''}
-              ${item.showTime ? `<div class="telemetry-beat-time">${fmtRelTime(item.rel)}</div>` : ''}
-            </button>
-          `).join('')}
-          ${beatRail.observations.map(item => {
-            const active = activeObservation && activeObservation.id === item.id;
-            return `
-            <button
-              type="button"
-              class="telemetry-observation${active ? ' active' : ''}"
-              data-observation-id="${escHtml(item.id)}"
-              style="--obs-left:${item.left}%;--obs-level:${item.level};--obs-color:${telemetryObservationColor(item.tone)}"
-              aria-label="${escHtml(`${item.label} at ${fmtRelTime(item.rel)}`)}"
-              title="${escHtml(item.sub ? `${item.label}: ${item.sub}` : item.label)}"
-            >
-              <div class="telemetry-observation-bubble">
-                <div class="telemetry-observation-label">${escHtml(item.label)}</div>
-                <div class="telemetry-observation-sub">${escHtml(item.sub || fmtRelTime(item.rel))}</div>
-              </div>
-            </button>`;
-          }).join('')}</div>
-        </div>` : ''}
         <div class="telemetry-grid">
           <div class="telemetry-panel">
             <div class="telemetry-panel-title">
               <div class="telemetry-panel-head">
-                <span>Trace timeline</span>
+                <span>Trace waterfall</span>
                 <span class="telemetry-panel-sub">Jaeger-style waterfall with nested spans aligned to trace start</span>
               </div>
               <div class="telemetry-panel-actions">
@@ -4345,11 +5048,15 @@ let filteredDashboardSessions = (D.sessions || []).slice();
 /* ════════════════════ OVERVIEW ════════════════════ */
 
 /* Stat row */
+const overviewTab = sqlTab('overview');
+const overviewModels = overviewTab.models_by_count || sqlTab('models').models_by_count || D.models_by_count || {};
+const overviewEvents = overviewTab.events_by_type || sqlTab('activity').events_by_type || D.events_by_type || {};
+const overviewModelCosts = overviewTab.model_costs || sqlTab('costs').model_costs || D.model_costs || {};
 const statDefs = [
-  { label:'Avg Quality',   value:(D.avg_quality_score||0).toFixed(1)+'%', sub:'across all sessions',           c:D.avg_quality_score > 70 ? 'var(--green)' : 'var(--yellow)' },
-  { label:'Sessions',      value:fmt(D.unique_sessions),  sub:D.first_event_ts.slice(0,10)+' — now',   c:'var(--purple)' },
-  { label:'Prompts',       value:fmt(D.prompt_submits),   sub:'user prompt submits',                   c:'var(--teal)' },
-  { label:'Tool Calls',    value:fmt(D.tool_calls),       sub:D.tool_to_prompt_ratio+':1 per prompt',  c:'var(--blue)' },
+  { label:'Avg Quality',   value:(overviewTab.avg_quality_score ?? D.avg_quality_score ?? 0).toFixed(1)+'%', sub:'across all sessions',           c:(overviewTab.avg_quality_score ?? D.avg_quality_score ?? 0) > 70 ? 'var(--green)' : 'var(--yellow)' },
+  { label:'Sessions',      value:fmt(overviewTab.unique_sessions ?? D.unique_sessions),  sub:String(overviewTab.first_event_ts || D.first_event_ts || '').slice(0,10)+' - now',   c:'var(--purple)' },
+  { label:'Prompts',       value:fmt(overviewTab.prompt_submits ?? D.prompt_submits),   sub:'user prompt submits',                   c:'var(--teal)' },
+  { label:'Tool Calls',    value:fmt(overviewTab.tool_calls ?? D.tool_calls),       sub:(overviewTab.tool_to_prompt_ratio ?? D.tool_to_prompt_ratio)+':1 per prompt',  c:'var(--blue)' },
 ];
 document.getElementById('stat-row').innerHTML = statDefs.map(s=>`
   <div class="stat" style="--c:${s.c}">
@@ -4357,57 +5064,6 @@ document.getElementById('stat-row').innerHTML = statDefs.map(s=>`
     <div class="stat-value">${s.value}</div>
     <div class="stat-sub">${s.sub}</div>
   </div>`).join('');
-
-function renderSqliteSummary(){
-  const panel = document.getElementById('sqlite-panel');
-  const body = document.getElementById('sqlite-summary');
-  const sqlite = D.sqlite || null;
-  if (!panel || !body || !sqlite || sqlite.error || !sqlite.overview) return;
-  const overview = sqlite.overview || {};
-  const sessions = sqlite.sessions || {};
-  const topTools = (overview.top_tools || []).slice(0, 3);
-  const topModels = (overview.top_models || []).slice(0, 3);
-  const latestSessions = (sessions.rows || []).slice(0, 3);
-  panel.style.display = '';
-  body.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:14px">
-      <div class="stat" style="--c:var(--orange)">
-        <div class="stat-label">SQL Sessions</div>
-        <div class="stat-value">${fmt(overview.session_count || 0)}</div>
-        <div class="stat-sub">${fmt(overview.agent_count || 0)} agents, ${fmt(overview.model_count || 0)} models</div>
-      </div>
-      <div class="stat" style="--c:var(--teal)">
-        <div class="stat-label">SQL Tokens</div>
-        <div class="stat-value">${fmtTokenShort((overview.input_tokens || 0) + (overview.output_tokens || 0))}</div>
-        <div class="stat-sub">${fmtTokenShort(overview.input_tokens || 0)} in / ${fmtTokenShort(overview.output_tokens || 0)} out</div>
-      </div>
-      <div class="stat" style="--c:var(--green)">
-        <div class="stat-label">SQL Cost</div>
-        <div class="stat-value">${fmtCost(overview.estimated_cost_usd || 0)}</div>
-        <div class="stat-sub">${fmt(overview.tool_call_count || 0)} tool calls</div>
-      </div>
-      <div class="stat" style="--c:var(--red)">
-        <div class="stat-label">SQL Failures</div>
-        <div class="stat-value">${fmt(overview.failure_count || 0)}</div>
-        <div class="stat-sub">${fmt(overview.recovered_failure_count || 0)} recovered</div>
-      </div>
-    </div>
-    <div class="cols-3" style="margin-bottom:0">
-      <div>
-        <div class="panel-title" style="margin-bottom:8px">Top SQL Tools</div>
-        ${(topTools.length ? topTools.map(t => `<div class="chip" style="margin:0 6px 6px 0">${escHtml(t.tool_name || 'unknown')} · ${fmt(t.call_count || 0)}</div>`).join('') : '<div class="muted">No tools in SQLite rollups</div>')}
-      </div>
-      <div>
-        <div class="panel-title" style="margin-bottom:8px">Top SQL Models</div>
-        ${(topModels.length ? topModels.map(m => `<div class="chip" style="margin:0 6px 6px 0">${escHtml(m.model || 'unknown')} · ${fmt(m.call_count || 0)}</div>`).join('') : '<div class="muted">No model calls in SQLite</div>')}
-      </div>
-      <div>
-        <div class="panel-title" style="margin-bottom:8px">Latest SQL Sessions</div>
-        ${(latestSessions.length ? latestSessions.map(s => `<div style="font-size:13px;color:var(--text-2);margin-bottom:6px">${escHtml(s.session_id || '')} · ${escHtml(s.agent || 'unknown')}</div>`).join('') : '<div class="muted">No sessions in SQLite</div>')}
-      </div>
-    </div>`;
-}
-renderSqliteSummary();
 
 function renderSqlTabPayloads(){
   const tabs = (D.sqlite && D.sqlite.tabs) || {};
@@ -4427,10 +5083,10 @@ function renderSqlTabPayloads(){
     {label:'Specs', value:fmt(specs.total_specs || 0), sub:`${fmt(Object.values(specs.requirements_by_status || {}).reduce((a,b)=>a+b,0))} requirements`},
     {label:'Memory', value:fmt(memory.total_memories || 0), sub:`${fmt(Object.keys(memory.memories_by_type || {}).length)} types`},
     {label:'Privacy', value:fmt(privacy.total_findings || 0), sub:`${fmt(Object.keys(privacy.findings_by_severity || {}).length)} severities`},
-    {label:'Export Rows', value:fmt(Object.values(rowCounts).reduce((a,b)=>a + Number(b || 0), 0)), sub:(exports.export_ready ? 'SQLite export ready' : 'No SQL rows yet')},
+    {label:'Records', value:fmt(Object.values(rowCounts).reduce((a,b)=>a + Number(b || 0), 0)), sub:(exports.export_ready ? 'Ready for export' : 'No records yet')},
   ].map(item => `<div class="stat"><div class="stat-label">${item.label}</div><div class="stat-value">${item.value}</div><div class="stat-sub">${item.sub}</div></div>`).join('');
 
-  const empty = label => `<div class="empty-note">No ${label} data in SQLite yet.</div>`;
+  const empty = label => `<div class="empty-note">No ${label} data yet.</div>`;
   const countTable = (items, label) => {
     const entries = Object.entries(items || {});
     if (!entries.length) return empty(label);
@@ -4491,84 +5147,14 @@ function formatSignedDelta(delta, suffix = ''){
   return `${sign}${value.toFixed(1)}${suffix}`;
 }
 
-function renderOverviewComparisonSummary(){
-  const panel = document.getElementById('agent-panel');
-  const body = document.getElementById('agent-summary');
-  if (!panel || !body) return;
-
-  const comparison = D.comparison;
-  if (comparison && comparison.primary && comparison.baseline) {
-    const primary = comparison.primary;
-    const baseline = comparison.baseline;
-    const deltas = comparison.deltas || {};
-    panel.style.display = '';
-    body.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
-        <div>
-          <div style="font-size:13px;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Primary cohort</div>
-          <div style="font-size:24px;font-weight:700">${escHtml(primary.label)}</div>
-          <div style="color:var(--text-2);margin-top:4px">${fmt(primary.sessions)} sessions, ${fmt(primary.tool_calls)} tool calls, ${primary.avg_quality.toFixed(1)}% avg quality</div>
-        </div>
-        <button type="button" class="compare-clear" id="overview-open-compare">Open Compare tab</button>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:16px">
-        <div style="background:var(--surface2);border-radius:8px;padding:14px 16px">
-          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Vs baseline</div>
-          <div style="font-size:18px;font-weight:700;margin-top:6px">${escHtml(baseline.label)}</div>
-          <div style="color:var(--text-2);margin-top:4px">${fmt(baseline.sessions)} sessions</div>
-        </div>
-        <div style="background:var(--surface2);border-radius:8px;padding:14px 16px">
-          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Quality delta</div>
-          <div style="font-size:22px;font-weight:700;margin-top:6px;color:${(deltas.avg_quality?.absolute || 0) >= 0 ? 'var(--green)' : 'var(--red)'}">${formatSignedDelta(deltas.avg_quality?.absolute || 0, ' pts')}</div>
-          <div style="color:var(--text-2);margin-top:4px">${primary.avg_quality.toFixed(1)}% vs ${baseline.avg_quality.toFixed(1)}%</div>
-        </div>
-        <div style="background:var(--surface2);border-radius:8px;padding:14px 16px">
-          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Failure rate delta</div>
-          <div style="font-size:22px;font-weight:700;margin-top:6px;color:${(deltas.failure_rate_pct?.absolute || 0) <= 0 ? 'var(--green)' : 'var(--red)'}">${formatSignedDelta(deltas.failure_rate_pct?.absolute || 0, ' pts')}</div>
-          <div style="color:var(--text-2);margin-top:4px">${primary.failure_rate_pct.toFixed(1)}% vs ${baseline.failure_rate_pct.toFixed(1)}%</div>
-        </div>
-      </div>
-    `;
-    body.querySelector('#overview-open-compare')?.addEventListener('click', () => activateTab('compare', {focusButton: true}));
-    return;
-  }
-
-  const ranking = (D.agent_comparison || []).slice();
-  if (ranking.length < 2) {
-    panel.style.display = 'none';
-    body.innerHTML = '';
-    return;
-  }
-  panel.style.display = '';
-  body.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
-      <div>
-        <div style="font-size:24px;font-weight:700">Cross-agent ranking</div>
-        <div style="color:var(--text-2);margin-top:4px">Use the Compare tab for full cohort deltas and session A/B drill-down.</div>
-      </div>
-      <button type="button" class="compare-clear" id="overview-open-compare">Open Compare tab</button>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:16px">
-      ${ranking.slice(0, 3).map(agent => `
-        <div style="background:var(--surface2);border-radius:8px;padding:14px 16px">
-          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">${escHtml(agent.name)}</div>
-          <div style="font-size:22px;font-weight:700;margin-top:6px">${fmt(agent.sessions)} sessions</div>
-          <div style="color:var(--text-2);margin-top:4px">${fmt(agent.tools)} tools, ${Number(agent.avg_quality || 0).toFixed(1)}% quality</div>
-        </div>
-      `).join('')}
-    </div>
-  `;
-  body.querySelector('#overview-open-compare')?.addEventListener('click', () => activateTab('compare', {focusButton: true}));
-}
-renderOverviewComparisonSummary();
-
 function buildCompareTab(){
   const summaryEl = document.getElementById('compare-summary');
   const detailsEl = document.getElementById('compare-details');
   const baselineEl = document.getElementById('compare-baseline-agents');
   if (!summaryEl || !detailsEl || !baselineEl) return;
 
-  const comparison = D.comparison;
+  const compareTab = sqlTab('compare');
+  const comparison = compareTab.comparison || D.comparison;
   if (comparison && comparison.primary && comparison.baseline) {
     const primary = comparison.primary;
     const baseline = comparison.baseline;
@@ -4629,7 +5215,9 @@ function buildCompareTab(){
     return;
   }
 
-  const ranking = (D.agent_comparison || []).slice().sort((a, b) => Number(b.sessions || 0) - Number(a.sessions || 0));
+  const ranking = (compareTab.agent_comparison || currentAgentComparison())
+    .slice()
+    .sort((a, b) => Number(b.sessions || 0) - Number(a.sessions || 0));
   summaryEl.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
       <div>
@@ -4657,23 +5245,25 @@ function buildCompareTab(){
   baselineEl.innerHTML = `<div style="color:var(--text-3)">Apply an agent filter to unlock primary-vs-baseline comparison and keep session A/B below for drill-down.</div>`;
 }
 buildCompareTab();
-document.addEventListener('dashboard-filters-changed', () => {
-  renderOverviewComparisonSummary();
+document.addEventListener('dashboard-filters-changed', event => {
+  dashboardSelectedSessionId = event.detail?.selectedSessionId || dashboardSelectedSessionId || '';
+  dashboardFilterActive = Boolean(event.detail?.hasFilters || dashboardSelectedSessionId);
   buildCompareTab();
 });
 
 /* Metric tiles */
-const ph   = D.peak_hour >= 0 ? h12(D.peak_hour) : '--';
-const sig  = D.signature_command ? D.signature_command.slice(0,28)+(D.signature_command.length>28?'…':'') : '—';
+const ph   = (overviewTab.peak_hour ?? D.peak_hour) >= 0 ? h12(overviewTab.peak_hour ?? D.peak_hour) : '--';
+const signatureCommand = overviewTab.signature_command || D.signature_command || '';
+const sig  = signatureCommand ? signatureCommand.slice(0,28)+(signatureCommand.length>28?'…':'') : '—';
 const metricDefs = [
-  { label:'MCP Calls',          value:fmt(D.mcp_calls),           sub:Object.keys(D.mcp_servers_by_count).length+' servers' },
-  { label:'Subagents Launched', value:fmt(D.subagent_launches),   sub:Object.keys(D.subagent_types_by_count).length+' agent types' },
-  { label:'File Edits',         value:fmt(D.file_edits),          sub:'modified files' },
-  { label:'Shell Runs',         value:fmt(D.shell_executions),    sub:D.unique_commands+' unique patterns' },
-  { label:'Tool Failures',      value:fmt(D.tool_failures),       sub:D.failure_rate_pct+'% failure rate' },
-  { label:'Peak Hour',          value:ph,                         sub:fmt(D.peak_hour_count)+' events at peak' },
-  { label:'AI Models',          value:fmt(D.unique_models),       sub:'distinct models used' },
-  { label:'Signature Command',  value:sig,                        sub:D.signature_command_count+'x run' },
+  { label:'MCP Calls',          value:fmt(overviewTab.mcp_calls ?? D.mcp_calls),           sub:Object.keys(overviewTab.mcp_servers_by_count || D.mcp_servers_by_count || {}).length+' servers' },
+  { label:'Subagents Launched', value:fmt(overviewTab.subagent_launches ?? D.subagent_launches),   sub:Object.keys(overviewTab.subagent_types_by_count || D.subagent_types_by_count || {}).length+' agent types' },
+  { label:'File Edits',         value:fmt(overviewTab.file_edits ?? D.file_edits),          sub:'modified files' },
+  { label:'Shell Runs',         value:fmt(overviewTab.shell_executions ?? D.shell_executions),    sub:(overviewTab.unique_commands ?? D.unique_commands)+' unique patterns' },
+  { label:'Tool Failures',      value:fmt(overviewTab.tool_failures ?? D.tool_failures),       sub:(overviewTab.failure_rate_pct ?? D.failure_rate_pct)+'% failure rate' },
+  { label:'Peak Hour',          value:ph,                         sub:fmt(overviewTab.peak_hour_count ?? D.peak_hour_count)+' events at peak' },
+  { label:'AI Models',          value:fmt(overviewTab.unique_models ?? D.unique_models),       sub:'distinct models used' },
+  { label:'Signature Command',  value:sig,                        sub:(overviewTab.signature_command_count ?? D.signature_command_count)+'x run' },
 ];
 document.getElementById('metric-row').innerHTML = metricDefs.map(m=>`
   <div class="metric">
@@ -4687,31 +5277,35 @@ Chart.defaults.color = 'rgba(255,255,255,.5)';
 Chart.defaults.borderColor = 'rgba(255,255,255,.06)';
 
 makeDoughnut('modelChart',
-  Object.keys(D.models_by_count).map(k=>k.replace('claude-4.6-','cl-').replace('claude-','cl-').replace('gpt-5.4-','gpt-')),
-  Object.values(D.models_by_count));
+  Object.keys(overviewModels).map(k=>k.replace('claude-4.6-','cl-').replace('claude-','cl-').replace('gpt-5.4-','gpt-')),
+  Object.values(overviewModels));
 
 makeHBar('eventChart',
-  Object.keys(D.events_by_type).slice(0,8),
-  Object.values(D.events_by_type).slice(0,8),
+  Object.keys(overviewEvents).slice(0,8),
+  Object.values(overviewEvents).slice(0,8),
   P.blue);
 
 /* Token chart + stats */
-if (D.total_input_tokens > 0 || D.total_output_tokens > 0) {
+const overviewInputTokens = overviewTab.total_input_tokens ?? D.total_input_tokens ?? 0;
+const overviewOutputTokens = overviewTab.total_output_tokens ?? D.total_output_tokens ?? 0;
+const overviewCacheCreationTokens = overviewTab.total_cache_creation_tokens ?? D.total_cache_creation_tokens ?? 0;
+const overviewCacheReadTokens = overviewTab.total_cache_read_tokens ?? D.total_cache_read_tokens ?? 0;
+if (overviewInputTokens > 0 || overviewOutputTokens > 0) {
   makeDoughnut('tokenChart',
     ['Input','Output','Cache Creation','Cache Read'],
-    [D.total_input_tokens||0, D.total_output_tokens||0, D.total_cache_creation_tokens||0, D.total_cache_read_tokens||0]);
+    [overviewInputTokens, overviewOutputTokens, overviewCacheCreationTokens, overviewCacheReadTokens]);
 }
-document.getElementById('stat-input-tok').textContent = fmt(D.total_input_tokens||0);
-document.getElementById('stat-output-tok').textContent = fmt(D.total_output_tokens||0);
-document.getElementById('stat-cache-tok').textContent = fmt(D.total_cache_read_tokens||0);
-document.getElementById('stat-tok-ratio').textContent = D.total_input_tokens ? (D.total_output_tokens / D.total_input_tokens).toFixed(2) : '--';
+document.getElementById('stat-input-tok').textContent = fmt(overviewInputTokens);
+document.getElementById('stat-output-tok').textContent = fmt(overviewOutputTokens);
+document.getElementById('stat-cache-tok').textContent = fmt(overviewCacheReadTokens);
+document.getElementById('stat-tok-ratio').textContent = overviewInputTokens ? (overviewOutputTokens / overviewInputTokens).toFixed(2) : '--';
 
 const costStats = [
-  ['Total Cost', fmtCost(D.total_cost_usd || D.total_cost || 0), costUnit],
-  ['Input Cost', fmtCost(D.input_cost_usd || D.input_cost || 0), costUnit],
-  ['Output Cost', fmtCost(D.output_cost_usd || D.output_cost || 0), costUnit],
-  ['Cache Cost', fmtCost((D.cache_creation_cost_usd || D.cache_creation_cost || 0) + (D.cache_read_cost_usd || D.cache_read_cost || 0)), costUnit],
-  ['Pricing Source', escHtml(D.pricing_source || 'unknown'), `${Object.keys(D.model_costs || {}).length} priced model(s)`],
+  ['Total Cost', fmtCost(overviewTab.total_cost_usd ?? D.total_cost_usd ?? D.total_cost ?? 0), costUnit],
+  ['Input Cost', fmtCost(overviewTab.input_cost_usd ?? D.input_cost_usd ?? D.input_cost ?? 0), costUnit],
+  ['Output Cost', fmtCost(overviewTab.output_cost_usd ?? D.output_cost_usd ?? D.output_cost ?? 0), costUnit],
+  ['Cache Cost', fmtCost((overviewTab.cache_creation_cost_usd ?? D.cache_creation_cost_usd ?? D.cache_creation_cost ?? 0) + (overviewTab.cache_read_cost_usd ?? D.cache_read_cost_usd ?? D.cache_read_cost ?? 0)), costUnit],
+  ['Cost Basis', escHtml(overviewTab.pricing_source || D.pricing_source || 'unknown'), `${Object.keys(overviewModelCosts).length} priced model(s)`],
 ];
 const costStatsEl = document.getElementById('cost-stats');
 if (costStatsEl) {
@@ -4723,7 +5317,7 @@ if (costStatsEl) {
     </div>
   `).join('');
 }
-const modelCostRows = Object.entries(D.model_costs || {})
+const modelCostRows = Object.entries(overviewModelCosts)
   .sort((a,b) => Number(b[1] || 0) - Number(a[1] || 0))
   .slice(0, 8);
 const modelCostEl = document.getElementById('model-cost-share');
@@ -4740,12 +5334,13 @@ if (modelCostEl) {
 /* Insights */
 /* Observations */
 (function buildObservationsTab(){
-  const strengths = D.strengths || [];
-  const observations = D.observations || [];
-  const recommendations = D.recommendations || [];
-  const examples = D.practical_examples || [];
-  const achievements = D.achievements || [];
-  const economy = D.token_economy || {};
+  const obsTab = sqlTab('observations');
+  const strengths = obsTab.strengths || D.strengths || [];
+  const observations = obsTab.observations || D.observations || [];
+  const recommendations = obsTab.recommendations || D.recommendations || [];
+  const examples = obsTab.practical_examples || D.practical_examples || [];
+  const achievements = obsTab.achievements || D.achievements || [];
+  const economy = obsTab.token_economy || D.token_economy || {};
   const cacheSummary = Number(economy.cache_reuse_ratio || 0) > 1
     ? `${Number(economy.cache_reuse_ratio || 0).toFixed(1)}x cached reuse`
     : `${Number(economy.cache_hit_pct || 0).toFixed(1)}% effective hit rate`;
@@ -5408,10 +6003,12 @@ function initGraphs() {
 
 /* ── 1. Tool Flow — manual arc diagram ── */
 (function buildSankey(){
-  const trans = sqlTab('graphs').graph_tool_transitions || D.graph_tool_transitions || [];
-  if (!trans.length) return;
-
   const el = document.getElementById('sankey-svg');
+  const trans = sqlTab('graphs').graph_tool_transitions || D.graph_tool_transitions || [];
+  if (!el || !trans.length) {
+    if (el) d3.select(el).selectAll('*').remove();
+    return;
+  }
   const W = svgWidth(el.parentElement) - 48;
   const H = 360;
   el.setAttribute('viewBox', `0 0 ${W} ${H}`);
@@ -5807,6 +6404,18 @@ function initGraphs() {
 
 } // end initGraphs
 
+function currentAgentComparison(){
+  return (D.agent_comparison || []).slice();
+}
+
+function replaceChart(id, build){
+  const canvas = document.getElementById(id);
+  if (!canvas) return;
+  const existing = Chart.getChart(canvas);
+  if (existing) existing.destroy();
+  build(canvas);
+}
+
 /* ════════════════════ CHART HELPERS ════════════════════ */
 function makeDoughnut(id, labels, values){
   new Chart(document.getElementById(id).getContext('2d'),{
@@ -5852,6 +6461,23 @@ function makeHBar(id, labels, values, color){
     }
   });
 }
+
+function urlHasDashboardFilters(){
+  const params = currentParams();
+  return Boolean(
+    (params.get('q') || '').trim()
+    || (params.get('session') || '').trim()
+    || (params.get('agents') || '').trim()
+    || ((params.get('agent') || 'all') !== 'all')
+    || ((params.get('model') || 'all') !== 'all')
+    || ((params.get('status') || 'all') !== 'all')
+    || ((params.get('range') || 'all') !== 'all')
+    || ((params.get('sort') || 'recent') !== 'recent')
+  );
+}
+
+dashboardFilterActive = urlHasDashboardFilters();
+buildCompareTab();
 
 hideReportLoader();
 

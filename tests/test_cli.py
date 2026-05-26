@@ -267,7 +267,7 @@ class TestReportSubcommand:
                 "--db-path", str(db_path),
             ])
         assert result.exit_code == 0
-        assert "Prepared SQLite report store" in result.output
+        assert "REFLECT" in result.output
         assert mock_server.call_args.kwargs["db_path"] == db_path
         assert mock_server.call_args.kwargs["sql_only"] is False
         conn = sqlite3.connect(db_path)
@@ -289,9 +289,10 @@ class TestReportSubcommand:
                 "--sql-only",
             ])
         assert result.exit_code == 0
-        assert "Prepared SQLite report store" in result.output
+        assert "--sql-only is deprecated" in result.output
+        assert "REFLECT" in result.output
         assert mock_server.call_args.kwargs["db_path"] == db_path
-        assert mock_server.call_args.kwargs["sql_only"] is True
+        assert mock_server.call_args.kwargs["sql_only"] is False
         conn = sqlite3.connect(db_path)
         try:
             assert conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0] > 0
@@ -334,7 +335,10 @@ class TestReportSubcommand:
             ])
 
         assert result.exit_code == 0
-        assert "SQL ingest sources: otlp_traces: inserted=0 skipped=0; otlp_logs: inserted=1 skipped=0" in result.output
+        assert "REFLECT" in result.output
+        assert "Otlp Traces" in result.output
+        assert "Otlp Logs" in result.output
+        assert "codex" in result.output
         conn = sqlite3.connect(db_path)
         try:
             row = conn.execute(
@@ -349,16 +353,108 @@ class TestReportSubcommand:
         finally:
             conn.close()
 
+    def test_report_summary_breaks_native_sessions_down_by_agent(self, runner, tmp_path):
+        otlp_file = tmp_path / "otel-traces.json"
+        otlp_file.write_text(json.dumps({"resourceSpans": []}) + "\n", encoding="utf-8")
+        cursor_file = tmp_path / "cursor-native-session.jsonl"
+        cursor_file.write_text(
+            "\n".join([
+                json.dumps({
+                    "role": "user",
+                    "message": {"content": [{"type": "text", "text": "inspect native cursor"}]},
+                }),
+                json.dumps({
+                    "role": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "I will inspect it."},
+                            {
+                                "type": "tool_use",
+                                "name": "CallMcpTool",
+                                "input": {"server": "jira", "toolName": "search"},
+                            },
+                        ],
+                    },
+                }),
+            ])
+            + "\n",
+            encoding="utf-8",
+        )
+
+        with patch("reflect.core._start_publish_server"), \
+             patch("reflect.core._default_otlp_traces", return_value=otlp_file), \
+             patch("reflect.core._discover_rich_session_files", return_value=[("cursor", cursor_file)]):
+            db_path = tmp_path / "reflect.db"
+            result = runner.invoke(main, [
+                "report",
+                "--db-path", str(db_path),
+            ])
+
+        assert result.exit_code == 0
+        assert "Native Sessions" in result.output
+        assert "cursor" in result.output
+
+    def test_report_reprices_token_rows_with_session_model_hint(self, runner, tmp_path):
+        session_id = "copilot-priced-session"
+        model_hint = make_span(
+            "PostToolUse",
+            agent="copilot",
+            model="gpt-4o",
+            tool="view",
+            session=session_id,
+        )
+        token_row = make_span(
+            "SessionEnd",
+            agent="copilot",
+            model="gpt-4o",
+            session=session_id,
+            input_tokens=1000,
+            output_tokens=100,
+        )
+        token_row["attributes"].pop("gen_ai.request.model", None)
+        otlp_file = tmp_path / "copilot-traces.json"
+        otlp_file.write_text(wrap_otlp([model_hint, token_row], agent="copilot") + "\n", encoding="utf-8")
+
+        with patch("reflect.core._start_publish_server"):
+            db_path = tmp_path / "reflect.db"
+            result = runner.invoke(main, [
+                "report",
+                "--otlp-traces", str(otlp_file),
+                "--db-path", str(db_path),
+            ])
+
+        assert result.exit_code == 0
+        conn = sqlite3.connect(db_path)
+        try:
+            row = conn.execute(
+                """
+                SELECT response_model, estimated_cost_usd
+                FROM llm_calls
+                WHERE session_id = ?
+                  AND input_tokens > 0
+                """,
+                (session_id,),
+            ).fetchone()
+            assert row[0] == "gpt-4o"
+            assert row[1] > 0
+            assert conn.execute(
+                "SELECT total_cost FROM session_rollups WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()[0] > 0
+        finally:
+            conn.close()
+
     def test_report_with_output_saves_markdown(self, runner, otlp_file, tmp_path):
         with patch("reflect.core._start_publish_server"), \
              patch("reflect.core.render_report") as mock_report:
             mock_report.return_value = "# report"
+            db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "report",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
-                "--db-path", str(tmp_path / "reflect.db"),
+                "--db-path", str(db_path),
                 "--output", str(tmp_path / "report.md"),
             ])
         assert result.exit_code == 0
@@ -367,12 +463,13 @@ class TestReportSubcommand:
     def test_report_with_dashboard_artifact_writes_json(self, runner, otlp_file, tmp_path):
         artifact_path = tmp_path / "docs" / "reports" / "latest.json"
         with patch("reflect.core._start_publish_server"):
+            db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "report",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
-                "--db-path", str(tmp_path / "reflect.db"),
+                "--db-path", str(db_path),
                 "--dashboard-artifact", str(artifact_path),
             ])
         assert result.exit_code == 0

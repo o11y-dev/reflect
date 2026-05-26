@@ -2,6 +2,7 @@ import json
 
 from reflect.store.ingest import (
     ingest_local_spans_file,
+    ingest_native_session_file,
     ingest_otlp_logs_file,
     ingest_otlp_traces_file,
 )
@@ -125,6 +126,78 @@ def _write_gemini_logs_file(path):
     path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
 
+def _write_codex_session_file(path):
+    records = [
+        {
+            "timestamp": "2026-05-08T00:42:07.990Z",
+            "type": "session_meta",
+            "payload": {
+                "id": "codex-native-sess-1",
+                "cwd": "/work/repo",
+                "model": "gpt-5.5",
+                "model_provider": "openai",
+            },
+        },
+        {
+            "timestamp": "2026-05-08T00:42:07.992Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "inspect native sessions"}],
+            },
+        },
+        {
+            "timestamp": "2026-05-08T00:42:16.256Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "call_id": "call-1",
+                "arguments": "{\"cmd\":\"git status\"}",
+            },
+        },
+        {
+            "timestamp": "2026-05-08T00:42:18.256Z",
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "call-1",
+                "output": "clean",
+            },
+        },
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
+
+
+def _write_cursor_session_file(path):
+    records = [
+        {
+            "role": "user",
+            "message": {"content": [{"type": "text", "text": "inspect cursor native tools"}]},
+        },
+        {
+            "role": "assistant",
+            "message": {
+                "content": [
+                    {"type": "text", "text": "I will inspect the repo."},
+                    {
+                        "type": "tool_use",
+                        "name": "Shell",
+                        "input": {"command": "git status --short", "description": "check status"},
+                    },
+                    {
+                        "type": "tool_use",
+                        "name": "CallMcpTool",
+                        "input": {"server": "jira", "toolName": "search", "arguments": {"jql": "project = O11Y"}},
+                    },
+                ],
+            },
+        },
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
+
+
 def test_ingest_otlp_traces_dedupes(tmp_path):
     db = tmp_path / "reflect.db"
     otlp = tmp_path / "traces.json"
@@ -166,6 +239,72 @@ def test_ingest_otlp_logs_normalizes_codex_records(tmp_path):
         assert row[:3] == ("otlp_logs_json", "gen_ai.client.hook.UserPromptSubmit", "codex-sess-1")
         assert attrs["gen_ai.client.name"] == "codex"
         assert attrs["gen_ai.request.model"] == "gpt-5.5"
+    finally:
+        conn.close()
+
+
+def test_ingest_native_codex_session_file(tmp_path):
+    db = tmp_path / "reflect.db"
+    session_file = tmp_path / "rollout-codex-native-sess-1.jsonl"
+    _write_codex_session_file(session_file)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        first = ingest_native_session_file(conn, file_path=session_file, agent="codex")
+        second = ingest_native_session_file(conn, file_path=session_file, agent="codex")
+
+        assert first == {"inserted": 5, "skipped": 0}
+        assert second == {"inserted": 0, "skipped": 5}
+
+        rows = conn.execute(
+            """
+            SELECT source_type, event_type, session_id, attrs_json
+            FROM raw_events
+            ORDER BY observed_at, event_type
+            """
+        ).fetchall()
+        assert {row[0] for row in rows} == {"native_session"}
+        assert {row[2] for row in rows} == {"codex-native-sess-1"}
+        attrs = [json.loads(row[3]) for row in rows]
+        assert {attr["gen_ai.client.name"] for attr in attrs} == {"codex"}
+        assert any(attr.get("gen_ai.client.tool_name") == "exec_command" for attr in attrs)
+    finally:
+        conn.close()
+
+
+def test_ingest_native_cursor_session_file_extracts_tool_and_mcp_calls(tmp_path):
+    db = tmp_path / "reflect.db"
+    session_file = tmp_path / "cursor-native-sess-1.jsonl"
+    _write_cursor_session_file(session_file)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        first = ingest_native_session_file(conn, file_path=session_file, agent="cursor")
+        second = ingest_native_session_file(conn, file_path=session_file, agent="cursor")
+
+        assert first == {"inserted": 6, "skipped": 0}
+        assert second == {"inserted": 0, "skipped": 6}
+
+        assert normalize_pending_raw_events(conn) == {"processed": 6, "failed": 0, "skipped": 0}
+        tool = conn.execute(
+            """
+            SELECT tool_name, input_preview_redacted
+            FROM tool_calls
+            WHERE tool_name = 'Shell'
+            """
+        ).fetchone()
+        assert tool[0] == "Shell"
+        assert "git status --short" in tool[1]
+        mcp = conn.execute(
+            """
+            SELECT server_name, tool_name
+            FROM mcp_calls
+            WHERE server_name = 'jira'
+            """
+        ).fetchone()
+        assert tuple(mcp) == ("jira", "search")
     finally:
         conn.close()
 
@@ -212,7 +351,7 @@ def test_ingest_otlp_logs_normalizes_gemini_records(tmp_path):
             WHERE sr.session_id = 'gemini-sess-1'
             """
         ).fetchone()
-        assert tuple(session) == ("gemini", 2, 100, 25, 12)
+        assert tuple(session) == ("gemini", 1, 100, 25, 12)
         llm_call = conn.execute(
             "SELECT provider, response_model FROM llm_calls WHERE response_model IS NOT NULL"
         ).fetchone()
