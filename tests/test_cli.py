@@ -4,8 +4,10 @@ import io
 import json
 import os
 import sqlite3
+import subprocess
 import tomllib
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -201,6 +203,40 @@ class TestHelp:
 
         assert result.exit_code == 0
         assert "processed=0" in result.output
+
+    def test_db_sync_instructions(self, runner, tmp_path):
+        db_path = tmp_path / "reflect.db"
+        workspace = tmp_path / "repo"
+        home = tmp_path / "home"
+        workspace.mkdir()
+        home.mkdir()
+        (workspace / "AGENTS.md").write_text("# project\n", encoding="utf-8")
+        (workspace / ".github" / "instructions").mkdir(parents=True)
+        (workspace / ".github" / "instructions" / "workflow.instructions.md").write_text("# workflow\n", encoding="utf-8")
+        (home / ".cursor" / "plans").mkdir(parents=True)
+        (home / ".cursor" / "plans" / "workflow.plan.md").write_text("# cursor plan\n", encoding="utf-8")
+        (home / ".claude").mkdir(parents=True)
+        (home / ".claude" / "CLAUDE.md").write_text("# user\n", encoding="utf-8")
+
+        with patch.dict(os.environ, {"HOME": str(home)}, clear=False):
+            result = runner.invoke(
+                main,
+                ["db", "sync-instructions", "--db-path", str(db_path), "--workspace-root", str(workspace)],
+            )
+
+        assert result.exit_code == 0
+        assert "Synced instruction memories" in result.output
+        assert "discovered=4" in result.output
+
+        conn = sqlite3.connect(db_path)
+        try:
+            rows = conn.execute("SELECT scope, type, source FROM memories ORDER BY type, scope").fetchall()
+        finally:
+            conn.close()
+        assert ("project", "agent_instruction", "filesystem_instruction_scan") in rows
+        assert ("path", "copilot_instruction", "filesystem_instruction_scan") in rows
+        assert ("user", "claude_memory", "filesystem_instruction_scan") in rows
+        assert ("user", "cursor_plan", "filesystem_instruction_scan") in rows
 
     def test_db_rebuild_graph(self, runner, tmp_path):
         db_path = tmp_path / "reflect.db"
@@ -521,7 +557,6 @@ class TestSkillsSubcommand:
             "name": "Claude Code",
             "detected": True,
             "global_path": str(skill_dest),
-            "skill_path": ".claude/skills/",
         }]
 
     def test_skills_writes_all_with_yes(self, runner, otlp_file, tmp_path):
@@ -802,7 +837,7 @@ class TestUpdateAdvisor:
                 {
                     "component": "Reflect skill copies",
                     "summary": "Global skill distribution is out of date for Claude Code.",
-                    "remediation": "Run reflect setup from the workspace root to refresh installed skill copies.",
+                    "remediation": "Run reflect setup to refresh global installed skill copies.",
                 }
             ],
         }
@@ -814,7 +849,6 @@ class TestUpdateAdvisor:
         assert "Update advisor" in result.output
         assert "update available" in result.output
         assert "1.1.0" in result.output
-        assert "workspace root" in result.output
 
     def test_doctor_reports_pricing_status(self, runner, tmp_path, monkeypatch):
         reflect_home = tmp_path / ".reflect"
@@ -1278,6 +1312,75 @@ class TestSetup:
         assert "native OTel" in result.output
         assert "Gemini" in result.output
 
+    def test_setup_can_select_single_agent_non_interactively(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        home_dir = tmp_path / "home"
+        claude_home = home_dir / ".claude"
+        cursor_home = home_dir / ".cursor"
+        claude_home.mkdir(parents=True)
+        cursor_home.mkdir(parents=True)
+
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call") as check_call, \
+             patch("reflect.core._distribute_skills") as distribute_skills, \
+             patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
+            result = runner.invoke(main, ["setup", "--agent", "Claude Code"])
+
+        assert result.exit_code == 0
+        check_call.assert_any_call(
+            ["/usr/bin/otel-hook", "setup", "--global", "--agent", "claude"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        assert not any(
+            isinstance(call.args[0], list) and "--agent" in call.args[0] and "cursor" in call.args[0]
+            for call in check_call.call_args_list
+        )
+        assert distribute_skills.call_args.kwargs["selected_agent_names"] == {"claude-code"}
+
+    def test_setup_local_agent_is_explicit_opt_in(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        home_dir = tmp_path / "home"
+        claude_home = home_dir / ".claude"
+        claude_home.mkdir(parents=True)
+
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call") as check_call, \
+             patch("reflect.core._distribute_skills") as distribute_skills, \
+             patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
+            result = runner.invoke(main, ["setup", "--agent", "Claude Code", "--local-agent", "Claude Code"])
+
+        assert result.exit_code == 0
+        check_call.assert_any_call(
+            ["/usr/bin/otel-hook", "setup", "--no-global", "--agent", "claude", "--cwd", str(Path.cwd())],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        assert distribute_skills.call_args.kwargs["local_agent_names"] == {"claude-code"}
+
+    def test_setup_agent_selection_uses_interactive_picker(self):
+        agents = [
+            {"name": "Claude Code", "detected": True, "support_status": "Implemented"},
+            {"name": "Cursor", "detected": True, "support_status": "Implemented"},
+        ]
+        with patch("reflect.core._detect_agents", return_value=agents), \
+             patch("reflect.core.sys.stdin.isatty", return_value=True), \
+             patch("reflect.core._interactive_pick", return_value=[1]) as picker:
+            selected = core._resolve_setup_agent_selection(
+                core.Console(file=io.StringIO()),
+                agent_names=(),
+                all_agents=False,
+            )
+
+        assert selected == {"cursor"}
+        assert "Claude Code (Implemented)" in picker.call_args.args[0]
+
     def test_setup_writes_agent_env_files_and_backups(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
         hook_home = tmp_path / ".otel-hook-home"
@@ -1357,7 +1460,6 @@ class TestSetup:
             "name": "Claude Code",
             "detected": True,
             "global_path": str(global_skill_dir),
-            "skill_path": ".claude/skills/",
         }
 
         with patch("reflect.core._detect_agents", return_value=[agent]), \
@@ -1367,8 +1469,54 @@ class TestSetup:
 
         assert (global_skill_dir / "reflect" / "SKILL.md").exists()
         assert not (global_skill_dir / "skills").exists()
+        assert not (tmp_path / ".claude" / "skills" / "reflect" / "SKILL.md").exists()
+
+    def test_distribute_skills_dedupes_shared_global_paths(self, tmp_path):
+        from rich.console import Console
+
+        console = Console(file=io.StringIO())
+        shared_skill_dir = tmp_path / "shared-skills"
+        agents = [
+            {
+                "name": "Cursor",
+                "detected": True,
+                "global_path": str(shared_skill_dir),
+                "local_skill_path": ".agents/skills/",
+            },
+            {
+                "name": "Cline",
+                "detected": True,
+                "global_path": str(shared_skill_dir),
+                "local_skill_path": ".agents/skills/",
+            },
+        ]
+
+        with patch("reflect.core._detect_agents", return_value=agents), \
+             patch("reflect.core._fetch_opentelemetry_skill", return_value=None):
+            core._distribute_skills(console)
+
+        assert (shared_skill_dir / "reflect" / "SKILL.md").exists()
+        assert "already populated" in console.file.getvalue()
+
+    def test_distribute_skills_can_opt_into_local_project_path(self, tmp_path):
+        from rich.console import Console
+
+        console = Console(file=io.StringIO())
+        global_skill_dir = tmp_path / "global-skills"
+        agent = {
+            "name": "Claude Code",
+            "detected": True,
+            "global_path": str(global_skill_dir),
+            "local_skill_path": ".claude/skills/",
+        }
+
+        with patch("reflect.core._detect_agents", return_value=[agent]), \
+             patch("reflect.core._fetch_opentelemetry_skill", return_value=None), \
+             patch("reflect.core.Path.cwd", return_value=tmp_path):
+            core._distribute_skills(console, local_agent_names={"claude-code"})
+
+        assert (global_skill_dir / "reflect" / "SKILL.md").exists()
         assert (tmp_path / ".claude" / "skills" / "reflect" / "SKILL.md").exists()
-        assert not (tmp_path / ".claude" / "skills" / "skills").exists()
 
 
     def test_setup_seeds_config_from_example_on_fresh_install(self, runner, tmp_path):
@@ -1500,6 +1648,11 @@ class TestNativeOtelConfig:
     HOOK_CFG = {
         "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
         "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+    }
+    HOOK_CFG_CAPTURE_TEXT = {
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+        "IDE_OTEL_CAPTURE_TEXT": "true",
     }
 
     def _console(self):
@@ -1638,6 +1791,13 @@ class TestNativeOtelConfig:
         assert parsed["otel"]["logs_exporter"] == "otlp"
         assert parsed["otel"]["logs_endpoint"] == "http://localhost:4317"
         assert parsed["otel"]["log_user_prompt"] is False
+
+    def test_codex_native_otel_enables_prompt_logging_when_text_capture_is_enabled(self, tmp_path):
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            core._configure_codex_native_otel(self._console(), self.HOOK_CFG_CAPTURE_TEXT)
+
+        parsed = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text())
+        assert parsed["otel"]["log_user_prompt"] is True
 
     def test_codex_native_otel_appends_to_existing_config(self, tmp_path):
         codex_dir = tmp_path / ".codex"

@@ -73,7 +73,9 @@ def test_dashboard_html_shows_branded_loader_during_report_fetch(path: Path):
     assert "showReportLoader();" in text
     assert "hideReportLoader();" in text
     assert "animation:loader-float" in text
-    assert "animation:loader-spin" in text
+    assert "animation:loader-spin" not in text
+    assert "filter:drop-shadow(0 0 28px rgba(242,138,26,.34))" in text
+    assert "box-shadow:0 0 28px rgba(242,138,26,.62)" in text
     assert "top:60%" in text
 
 
@@ -251,6 +253,23 @@ def test_dashboard_html_prefers_sql_tab_payloads_for_existing_tabs(path: Path):
     assert "mcpTab.mcp_server_before || D.mcp_server_before || {}" in text
     assert "sqlTab('graphs').graph_tool_transitions || D.graph_tool_transitions || []" in text
     assert "sqlTab('graphs').graph_dep || D.graph_dep" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_graph_tab_renders_semantic_force_graph(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "Behavioral Memory Graph" in text
+    assert "buildSemanticGraph" in text
+    assert 'id="semantic-graph-svg"' in text
+    assert "d3.forceSimulation" in text
+    assert "d3.forceLink" in text
+    assert "d3.forceManyBody" in text
+    assert "d3.zoom" in text
+    assert "d3.drag" in text
+    assert "visibleIdsForSession" in text
+    assert "if (!node.session_id || node.session_id === sessionId)" not in text
+    assert "if (!edge.session_id || edge.session_id === sessionId)" not in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)

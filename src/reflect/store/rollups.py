@@ -3,6 +3,8 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime
 
+from reflect.store.normalize import refresh_all_session_statuses
+
 
 def _now() -> str:
     return datetime.now(tz=UTC).isoformat()
@@ -10,6 +12,7 @@ def _now() -> str:
 
 def rebuild_rollups(conn: sqlite3.Connection) -> dict[str, int]:
     timestamp = _now()
+    refresh_all_session_statuses(conn)
     conn.execute("DELETE FROM session_rollups")
     conn.execute("DELETE FROM daily_rollups")
     conn.execute("DELETE FROM tool_rollups")

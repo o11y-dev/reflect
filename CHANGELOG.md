@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.4 (2026-05-27)
+
+### Added
+- Added `reflect db sync-instructions` to discover project, path-specific, and user memory instruction files such as `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md`, `.github/instructions/*.instructions.md`, `.cursor/rules/*.md`, `.cursor/agents/*.md`, and Cursor plan files into the SQLite memory store.
+- Added a Behavioral Memory Graph canvas to the report Graphs tab, backed by `graph_nodes` and `graph_edges`.
+- Added per-session `Folder` graph nodes derived from touched paths, linking sessions and tool calls to the folders they investigated or edited.
+- Memory graph rebuilds now attach instruction-file memory rows to `Path` nodes when a stored instruction record carries its source path.
+
 ## 0.8.3 (2026-05-26)
 
 ### Added

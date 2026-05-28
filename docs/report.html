@@ -2709,6 +2709,22 @@ body.rail-overlay-open{overflow:hidden}
 .dep-node circle{transition:r .2s,opacity .2s}
 .dep-node:hover circle{opacity:.85}
 .dep-node text{pointer-events:none;font-size:12px;fill:rgba(255,255,255,.7)}
+.semantic-graph-shell{position:relative;height:620px;border:1px solid var(--glass-border);border-radius:8px;overflow:hidden;background:radial-gradient(circle at 50% 45%,rgba(255,255,255,.045),rgba(255,255,255,.012) 42%,rgba(0,0,0,.22))}
+.semantic-graph-toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap}
+.semantic-graph-toolbar select{min-height:32px;border:1px solid var(--glass-border);border-radius:6px;background:rgba(0,0,0,.24);color:var(--text-1);padding:4px 8px;font:inherit;font-size:12px}
+.semantic-graph-svg{display:block;width:100%;height:100%;cursor:grab}
+.semantic-graph-svg:active{cursor:grabbing}
+.semantic-graph-link{stroke:rgba(245,242,234,.15);stroke-width:1.1;stroke-linecap:round}
+.semantic-graph-node circle{stroke:rgba(255,255,255,.28);stroke-width:1.1;transition:stroke-width .12s,filter .12s}
+.semantic-graph-node text{pointer-events:none;font-size:11px;font-weight:650;fill:rgba(245,242,234,.78);paint-order:stroke;stroke:rgba(5,5,5,.72);stroke-width:3px;stroke-linejoin:round}
+.semantic-graph-node.is-hovered circle{stroke-width:2.2;filter:drop-shadow(0 0 10px rgba(242,138,26,.6))}
+.semantic-graph-tip{position:absolute;left:12px;top:12px;max-width:min(360px,calc(100% - 24px));padding:10px 12px;border:1px solid var(--glass-border);border-radius:6px;background:rgba(9,8,7,.92);box-shadow:0 16px 50px rgba(0,0,0,.32);font-size:12px;color:var(--text-2);pointer-events:none;opacity:0;transition:opacity .12s}
+.semantic-graph-tip.is-visible{opacity:1}
+.semantic-graph-tip strong{display:block;color:var(--signal);margin-bottom:4px;overflow-wrap:anywhere}
+.semantic-graph-tip dl{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:0}
+.semantic-graph-tip dt{color:var(--text-3)}
+.semantic-graph-tip dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.semantic-graph-empty{height:220px;display:flex;align-items:center;justify-content:center;color:var(--text-3);font-size:13px;border:1px dashed var(--glass-border);border-radius:8px}
 /* Co-occurrence matrix */
 .matrix-wrap{overflow-x:auto}
 .matrix-table{border-collapse:collapse;margin:0 auto}
@@ -3093,6 +3109,19 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 <!-- ════════════════════ GRAPHS ════════════════════ -->
 <div class="tab-panel" id="tab-graphs" role="tabpanel" aria-labelledby="tab-button-graphs" hidden>
+
+  <!-- 1. Behavioral Memory Graph -->
+  <div class="panel">
+    <div class="semantic-graph-toolbar">
+      <div class="panel-title" style="margin-bottom:0">Behavioral Memory Graph <span class="panel-title-count">(sessions, folders, tools, skills, memories, outcomes)</span></div>
+      <select id="semantic-session-filter" aria-label="Filter behavioral memory graph by session"></select>
+    </div>
+    <div class="semantic-graph-shell" id="semantic-graph-shell">
+      <svg class="semantic-graph-svg" id="semantic-graph-svg" role="img" aria-label="Behavioral memory graph"></svg>
+      <div class="semantic-graph-tip" id="semantic-graph-tip"></div>
+    </div>
+    <div class="graph-legend" id="semantic-graph-legend"></div>
+  </div>
 
   <!-- 1. Tool Flow (Sankey) -->
   <div class="panel">
@@ -6472,6 +6501,211 @@ function initGraphs() {
   }
 })();
 
+/* ── 3. Behavioral Memory Graph ── */
+(function buildSemanticGraph(){
+  const graph = sqlTab('graphs').graph_semantic || D.graph_semantic || { nodes: [], edges: [], sessions: [], legend: [] };
+  const shell = document.getElementById('semantic-graph-shell');
+  const svgEl = document.getElementById('semantic-graph-svg');
+  const filter = document.getElementById('semantic-session-filter');
+  const legend = document.getElementById('semantic-graph-legend');
+  const tip = document.getElementById('semantic-graph-tip');
+  if (!shell || !svgEl || !filter || !legend || !tip) return;
+  if (!graph.nodes.length) {
+    shell.outerHTML = '<div class="semantic-graph-empty">No semantic graph rows found. Run reflect db rebuild-graph after ingesting telemetry.</div>';
+    filter.innerHTML = '<option value="">All sessions</option>';
+    legend.innerHTML = '';
+    return;
+  }
+
+  const esc = (value) => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  const allNodes = graph.nodes.map(node => ({...node}));
+  const allEdges = graph.edges.map(edge => ({...edge}));
+  const nodeById = new Map(allNodes.map(node => [node.id, node]));
+  const edgeColor = {
+    touched_folder: 'rgba(100,199,161,.34)',
+    contains_touched_path: 'rgba(149,213,178,.26)',
+    touched_path: 'rgba(149,213,178,.24)',
+    described_by_path: 'rgba(255,141,125,.30)',
+    used_skill: 'rgba(199,156,255,.34)',
+    spawned_subagent: 'rgba(255,209,102,.36)',
+    achieved_outcome: 'rgba(255,107,107,.38)',
+  };
+
+  filter.innerHTML = ['<option value="">All sessions</option>', ...(graph.sessions || []).map(session => `<option value="${esc(session)}">${esc(session)}</option>`)].join('');
+  legend.innerHTML = (graph.legend || []).map(item =>
+    `<div class="graph-legend-item"><div class="graph-legend-dot" style="background:${esc(item.color)}"></div>${esc(item.kind)}</div>`
+  ).join('');
+
+  function visibleIdsForSession(sessionId) {
+    if (!sessionId) return new Set(allNodes.map(node => node.id));
+    const nodeIds = new Set();
+    for (const node of allNodes) {
+      if (node.session_id === sessionId) nodeIds.add(node.id);
+    }
+    for (const edge of allEdges) {
+      if (edge.session_id === sessionId) {
+        nodeIds.add(edge.source);
+        nodeIds.add(edge.target);
+      }
+    }
+    return nodeIds;
+  }
+
+  function nodeRadius(kind) {
+    return {Agent:12, Session:9, Repo:10, Folder:9, Path:5, Memory:10, Tool:9, ToolCall:5, MCPServer:10, Skill:11, Subagent:11, Outcome:12, Step:4}[kind] || 7;
+  }
+
+  function nodeCharge(kind) {
+    return {Agent:-520, Session:-360, Repo:-420, Folder:-260, Path:-80, Memory:-300, Tool:-260, ToolCall:-70, MCPServer:-280, Skill:-340, Subagent:-340, Outcome:-360}[kind] || -160;
+  }
+
+  function shortLabel(node) {
+    const label = String(node.label || '');
+    if (label.length <= 26) return label;
+    const parts = label.split('/');
+    return parts.length > 1 ? parts.slice(-2).join('/') : `${label.slice(0, 25)}...`;
+  }
+
+  function showTip(node, event) {
+    const attrs = node.attrs || {};
+    const rows = [
+      ['kind', node.kind],
+      ['session', node.session_id],
+      ['type', attrs.type || attrs.kind || attrs.tool_type],
+      ['status', attrs.status],
+      ['scope', attrs.scope],
+      ['source', attrs.source],
+      ['first seen', node.first_seen_at],
+      ['last seen', node.last_seen_at],
+    ].filter(([, value]) => value !== undefined && value !== null && String(value) !== '');
+    tip.innerHTML = `<strong>${esc(node.label)}</strong><dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`;
+    const bounds = shell.getBoundingClientRect();
+    tip.style.left = `${Math.min(Math.max(event.clientX - bounds.left + 14, 12), bounds.width - 280)}px`;
+    tip.style.top = `${Math.min(Math.max(event.clientY - bounds.top + 14, 12), bounds.height - 120)}px`;
+    tip.classList.add('is-visible');
+  }
+
+  const svg = d3.select(svgEl);
+  const viewport = svg.append('g');
+  const linkLayer = viewport.append('g');
+  const nodeLayer = viewport.append('g');
+  const zoom = d3.zoom()
+    .scaleExtent([.18, 3.5])
+    .on('zoom', event => viewport.attr('transform', event.transform));
+  svg.call(zoom);
+
+  let simulation = null;
+  let activeSession = '';
+
+  function render(sessionId) {
+    activeSession = sessionId || '';
+    const selectedIds = visibleIdsForSession(activeSession);
+    const nodes = allNodes.filter(node => selectedIds.has(node.id));
+    const visibleNodeIds = new Set(nodes.map(node => node.id));
+    const links = allEdges
+      .filter(edge => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target))
+      .filter(edge => !activeSession || !edge.session_id || edge.session_id === activeSession)
+      .map(edge => ({...edge, source: nodeById.get(edge.source), target: nodeById.get(edge.target)}))
+      .filter(edge => edge.source && edge.target);
+
+    const rect = shell.getBoundingClientRect();
+    const W = Math.max(rect.width, 640);
+    const H = Math.max(rect.height, 420);
+    svgEl.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+    if (simulation) simulation.stop();
+    linkLayer.selectAll('*').remove();
+    nodeLayer.selectAll('*').remove();
+
+    const linksSel = linkLayer.selectAll('line')
+      .data(links)
+      .join('line')
+      .attr('class', 'semantic-graph-link')
+      .attr('stroke', d => edgeColor[d.kind] || 'rgba(245,242,234,.16)')
+      .attr('stroke-width', d => Math.max(.8, Math.min(3.4, 1 + Math.log2((d.weight || d.value || 1) + 1) * .45)));
+
+    linksSel.append('title').text(d => `${d.kind || 'related'}: ${d.source.label || d.source.id} -> ${d.target.label || d.target.id}`);
+
+    const nodeSel = nodeLayer.selectAll('g')
+      .data(nodes, d => d.id)
+      .join('g')
+      .attr('class', 'semantic-graph-node')
+      .call(d3.drag()
+        .on('start', (event, d) => {
+          if (!event.active) simulation.alphaTarget(.25).restart();
+          d.fx = d.x;
+          d.fy = d.y;
+        })
+        .on('drag', (event, d) => {
+          d.fx = event.x;
+          d.fy = event.y;
+        })
+        .on('end', (event, d) => {
+          if (!event.active) simulation.alphaTarget(0);
+          d.fx = null;
+          d.fy = null;
+        }));
+
+    nodeSel.append('circle')
+      .attr('r', d => nodeRadius(d.kind))
+      .attr('fill', d => d.color || '#d7d1c6');
+
+    nodeSel.filter(d => ['Agent','Session','Repo','Folder','Skill','Subagent','Outcome','Memory'].includes(d.kind))
+      .append('text')
+      .attr('x', d => nodeRadius(d.kind) + 5)
+      .attr('y', 4)
+      .text(shortLabel);
+
+    nodeSel.append('title').text(d => `${d.kind}: ${d.label}`);
+    nodeSel
+      .on('pointerenter', function(event, d) {
+        d3.select(this).classed('is-hovered', true).raise();
+        showTip(d, event);
+      })
+      .on('pointermove', (event, d) => showTip(d, event))
+      .on('pointerleave', function() {
+        d3.select(this).classed('is-hovered', false);
+        tip.classList.remove('is-visible');
+      });
+
+    simulation = d3.forceSimulation(nodes)
+      .force('link', d3.forceLink(links).id(d => d.id).distance(d => {
+        if (d.kind === 'contains_touched_path') return 34;
+        if (d.kind === 'touched_folder') return 46;
+        if (d.kind === 'used_skill' || d.kind === 'spawned_subagent') return 70;
+        return 56;
+      }).strength(.42))
+      .force('charge', d3.forceManyBody().strength(d => nodeCharge(d.kind)))
+      .force('center', d3.forceCenter(W / 2, H / 2))
+      .force('collide', d3.forceCollide().radius(d => nodeRadius(d.kind) + 8).iterations(2))
+      .force('x', d3.forceX(d => {
+        const lanes = {Agent:.12, Session:.23, Repo:.34, Folder:.42, Path:.50, Memory:.58, Tool:.66, ToolCall:.72, MCPServer:.78, Skill:.84, Subagent:.90, Outcome:.94};
+        return W * (lanes[d.kind] || .5);
+      }).strength(.045))
+      .force('y', d3.forceY(H / 2).strength(.035))
+      .on('tick', () => {
+        linksSel
+          .attr('x1', d => d.source.x)
+          .attr('y1', d => d.source.y)
+          .attr('x2', d => d.target.x)
+          .attr('y2', d => d.target.y);
+        nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
+      });
+
+    setTimeout(() => {
+      const bounds = viewport.node()?.getBBox?.();
+      if (!bounds || !Number.isFinite(bounds.width) || !bounds.width) return;
+      const scale = Math.min(1.1, .88 / Math.max(bounds.width / W, bounds.height / H));
+      const tx = W / 2 - (bounds.x + bounds.width / 2) * scale;
+      const ty = H / 2 - (bounds.y + bounds.height / 2) * scale;
+      svg.transition().duration(450).call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+    }, 380);
+  }
+
+  filter.addEventListener('change', event => render(event.target.value));
+  window.addEventListener('resize', () => render(activeSession));
+  render('');
+})();
 /* ── 3. Session Timeline ── */
 (function buildTimeline(){
   const sessions = sqlTab('graphs').graph_session_timeline || D.graph_session_timeline || [];

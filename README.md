@@ -12,9 +12,9 @@
 [![License](https://img.shields.io/github/license/o11y-dev/reflect)](LICENSE)
 [![CI](https://github.com/o11y-dev/reflect/actions/workflows/test.yml/badge.svg)](https://github.com/o11y-dev/reflect/actions/workflows/test.yml)
 
-**Your AI agents are doing things you can't see. reflect shows you.**
+**Behavioral memory for developer-agent behavior and workflow.**
 
-Local-first telemetry for Claude Code, OpenAI Codex CLI, GitHub Copilot, Gemini CLI, and Cursor. See token spend, tool failure rates, latency, model mix, MCP usage, and the sessions that are actually burning your budget.
+Reflect turns agent telemetry into patterns about how developer-agent behavior and workflow actually work: prompt shape, tool loops, model mix, context breakage, token burn, and the mission shift happening across teams.
 
 No hosted backend. No account. Runs on your machine.
 
@@ -80,7 +80,13 @@ reflect setup
 reflect
 ```
 
-`reflect setup` starts a local OTLP gateway and wires the supported agents it can find. It edits local agent config files, points native OpenTelemetry exporters at the local gateway, installs hook-based capture where that path is supported, and writes everything under `~/.reflect/state/`.
+`reflect setup` starts a local OTLP gateway and wires the supported agents you select. It edits global user-level agent config files, points native OpenTelemetry exporters at the local gateway, installs hook-based capture where that path is supported, and writes everything under `~/.reflect/state/`. In an interactive terminal, setup asks which detected agents to instrument. In scripts, use `--agent <name>` repeatedly or `--all-agents`.
+
+Global/user-scoped setup is the default. Project-local hook and skill installs are available only by explicit opt-in, for agents or workflows that need repo-local instrumentation:
+
+```bash
+reflect setup --agent "Claude Code" --local-agent "Claude Code"
+```
 
 All `reflect setup` data is local and private to your machine: hook config, local spans, OTLP gateway files, and the SQLite report store live under local paths such as `~/.reflect/state/` and the opentelemetry-hooks state directory. `reflect` does not send this data to a hosted reflect service.
 

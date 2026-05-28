@@ -224,7 +224,8 @@ _AGENT_SPECS = [
         "env": "CLAUDE_HOME",
         "default": lambda: Path.home() / ".claude",
         "path_kind": "home",
-        "skill_path": ".claude/skills/",
+        "local_skill_path": ".claude/skills/",
+        "hook_agent": "claude",
         "global_path": "~/.claude/skills/",
         "recommendation": "Run reflect setup to wire Claude hooks and enable native Claude telemetry.",
     },
@@ -233,7 +234,8 @@ _AGENT_SPECS = [
         "env": "CURSOR_HOME",
         "default": lambda: Path.home() / ".cursor",
         "path_kind": "home",
-        "skill_path": ".agents/skills/",
+        "local_skill_path": ".agents/skills/",
+        "hook_agent": "cursor",
         "global_path": "~/.cursor/skills/",
         "recommendation": "Use session/log adapters for desktop; hooks help for headless or CLI launches. Treat state.vscdb as auth/context, not a guaranteed per-session token ledger.",
     },
@@ -243,7 +245,8 @@ _AGENT_SPECS = [
         "env_aliases": ["GEMINI_DIR"],
         "default": lambda: Path.home() / ".gemini",
         "path_kind": "home",
-        "skill_path": ".agents/skills/",
+        "local_skill_path": ".agents/skills/",
+        "hook_agent": "gemini",
         "global_path": "~/.gemini/skills/",
         "recommendation": "Prefer native Gemini OTel; keep session/log adapters for troubleshooting.",
     },
@@ -252,7 +255,8 @@ _AGENT_SPECS = [
         "env": "COPILOT_HOME",
         "default": lambda: Path.home() / ".copilot",
         "path_kind": "home",
-        "skill_path": ".agents/skills/",
+        "local_skill_path": ".agents/skills/",
+        "hook_agent": "copilot",
         "global_path": "~/.copilot/skills/",
         "recommendation": "Prefer native Copilot OTel on OTLP HTTP; add hooks for governance.",
     },
@@ -261,7 +265,8 @@ _AGENT_SPECS = [
         "env": "CODEX_HOME",
         "default": lambda: Path.home() / ".codex",
         "path_kind": "home",
-        "skill_path": ".codex/skills/",
+        "local_skill_path": ".codex/skills/",
+        "hook_agent": "codex",
         "global_path": "~/.codex/skills/",
         "recommendation": "Use native Codex OTel for interactive runs; reflect does not yet ship a native session adapter for Codex logs.",
     },
@@ -270,7 +275,7 @@ _AGENT_SPECS = [
         "env": "WINDSURF_HOME",
         "default": lambda: Path.home() / ".codeium" / "windsurf",
         "path_kind": "home",
-        "skill_path": ".windsurf/skills/",
+        "local_skill_path": ".windsurf/skills/",
         "global_path": "~/.codeium/windsurf/skills/",
         "recommendation": "Native OTel and hooks still need verification for Windsurf.",
     },
@@ -279,7 +284,7 @@ _AGENT_SPECS = [
         "env": "TRAE_HOME",
         "default": lambda: Path.home() / ".trae",
         "path_kind": "home",
-        "skill_path": ".trae/skills/",
+        "local_skill_path": ".trae/skills/",
         "global_path": "~/.trae/skills/",
         "recommendation": "Native OTel and hooks still need verification for Trae.",
     },
@@ -288,7 +293,7 @@ _AGENT_SPECS = [
         "env": "CLINE_HOME",
         "default": lambda: Path.home() / ".agents",
         "path_kind": "home",
-        "skill_path": ".agents/skills/",
+        "local_skill_path": ".agents/skills/",
         "global_path": "~/.agents/skills/",
         "recommendation": "Compatible with standard .agents/skills distribution.",
     },
@@ -297,7 +302,7 @@ _AGENT_SPECS = [
         "env": "ROO_HOME",
         "default": lambda: Path.home() / ".roo",
         "path_kind": "home",
-        "skill_path": ".roo/skills/",
+        "local_skill_path": ".roo/skills/",
         "global_path": "~/.roo/skills/",
         "recommendation": "Native OTel and hooks still need verification for Roo Code.",
     },
@@ -306,7 +311,7 @@ _AGENT_SPECS = [
         "env": "CONTINUE_HOME",
         "default": lambda: Path.home() / ".continue",
         "path_kind": "home",
-        "skill_path": ".continue/skills/",
+        "local_skill_path": ".continue/skills/",
         "global_path": "~/.continue/skills/",
         "recommendation": "Add hooks to cover exec / mcp-server gaps in Continue.",
     },
@@ -315,7 +320,7 @@ _AGENT_SPECS = [
         "env": "GOOSE_HOME",
         "default": lambda: Path.home() / ".config" / "goose",
         "path_kind": "home",
-        "skill_path": ".goose/skills/",
+        "local_skill_path": ".goose/skills/",
         "global_path": "~/.config/goose/skills/",
         "recommendation": "Native OTel and hooks still need verification for Goose.",
     },
@@ -324,7 +329,7 @@ _AGENT_SPECS = [
         "env": "OPENHANDS_HOME",
         "default": lambda: Path.home() / ".openhands",
         "path_kind": "home",
-        "skill_path": ".openhands/skills/",
+        "local_skill_path": ".openhands/skills/",
         "global_path": "~/.openhands/skills/",
         "recommendation": "Native OTel and hooks still need verification for OpenHands.",
     },
@@ -333,7 +338,7 @@ _AGENT_SPECS = [
         "env": "ANTIGRAVITY_HOME",
         "default": lambda: Path.home() / ".gemini" / "antigravity",
         "path_kind": "home",
-        "skill_path": ".agents/skills/",
+        "local_skill_path": ".agents/skills/",
         "global_path": "~/.gemini/antigravity/skills/",
         "recommendation": "Core target for reflect telemetry and skill distribution.",
     },
@@ -342,7 +347,7 @@ _AGENT_SPECS = [
         "env": "AMP_HOME",
         "default": lambda: Path.home() / ".local" / "share" / "amp",
         "path_kind": "home",
-        "skill_path": ".agents/skills/",
+        "local_skill_path": ".agents/skills/",
         "global_path": "~/.config/agents/skills/",
         "recommendation": "Start with session/log adapters before adding new default hook collection.",
     },
@@ -351,7 +356,7 @@ _AGENT_SPECS = [
         "env": "IFLOW_HOME",
         "default": lambda: Path.home() / ".iflow",
         "path_kind": "home",
-        "skill_path": ".iflow/skills/",
+        "local_skill_path": ".iflow/skills/",
         "global_path": "~/.iflow/skills/",
         "recommendation": "Start with session/log adapters; native OTel and hooks still need verification.",
     },
@@ -360,7 +365,7 @@ _AGENT_SPECS = [
         "env": "PI_HOME",
         "default": lambda: Path.home() / ".pi",
         "path_kind": "home",
-        "skill_path": ".pi/skills/",
+        "local_skill_path": ".pi/skills/",
         "global_path": "~/.pi/agent/skills/",
         "recommendation": "Start with session/log adapters; native OTel and hooks still need verification.",
     },
@@ -369,7 +374,7 @@ _AGENT_SPECS = [
         "env": "OPENCLAW_HOME",
         "default": lambda: Path.home() / ".openclaw",
         "path_kind": "home",
-        "skill_path": "skills/",
+        "local_skill_path": "skills/",
         "global_path": "~/.openclaw/skills/",
         "recommendation": "Start with session/log adapters; native OTel and hooks still need verification.",
     },
@@ -378,7 +383,8 @@ _AGENT_SPECS = [
         "env": "OPENCODE_HOME",
         "default": lambda: Path.home() / ".config" / "opencode",
         "path_kind": "home",
-        "skill_path": ".opencode/skills/",
+        "local_skill_path": ".opencode/skills/",
+        "hook_agent": "opencode",
         "global_path": "~/.config/opencode/skills/",
         "recommendation": "Use opencode run for skill extraction; opencode export for session telemetry.",
     },
@@ -683,7 +689,7 @@ def _detect_skill_drift(agents: list[dict]) -> dict | None:
     return {
         "component": "Reflect skill copies",
         "summary": "Global skill distribution is " + "; ".join(details) + ".",
-        "remediation": "Run reflect setup from the workspace root to refresh installed skill copies.",
+        "remediation": "Run reflect setup to refresh global installed skill copies.",
     }
 
 
@@ -1160,24 +1166,23 @@ def _interactive_pick(
         import tty
     except ImportError:
         # Platform (e.g. Windows) does not support raw-terminal mode.
-        hint = "↑↓ select  Enter confirm" if not multi else "comma-separated numbers, empty=all"
+        hint = "type one label" if not multi else "comma-separated labels, empty=all"
         click.echo(hint)
-        for i, label in enumerate(items, start=1):
-            click.echo(f"  {i}. {label}")
+        label_map = {_agent_key(label): index for index, label in enumerate(items)}
+        for label in items:
+            click.echo(f"  - {label}")
         if multi:
-            raw = click.prompt("Select by number (empty for all)", default="", show_default=False)
+            raw = click.prompt("Select by label (empty for all)", default="", show_default=False)
             if not raw.strip():
                 return list(range(n))
             picked = []
             for part in raw.split(","):
-                part = part.strip()
-                if part.isdigit():
-                    idx = int(part) - 1
-                    if 0 <= idx < n:
-                        picked.append(idx)
+                key = _agent_key(part.strip())
+                if key in label_map:
+                    picked.append(label_map[key])
             return sorted(set(picked)) or list(range(n))
-        choice = click.prompt("Select by number", type=click.IntRange(1, n), default=1)
-        return [choice - 1]
+        choice = click.prompt("Select by label", default=items[0], show_default=True)
+        return [label_map.get(_agent_key(choice), 0)]
 
     from rich.console import Console as _Console
 
@@ -1595,7 +1600,22 @@ def _fetch_opentelemetry_skill(console) -> Path | None:
         return None
 
 
-def _distribute_skills(console) -> None:
+def _agent_key(name: str) -> str:
+    return name.lower().replace(" ", "-")
+
+
+def _filter_agents_by_keys(agents: list[dict], keys: set[str] | None) -> list[dict]:
+    if keys is None:
+        return agents
+    return [agent for agent in agents if _agent_key(str(agent["name"])) in keys]
+
+
+def _distribute_skills(
+    console,
+    *,
+    selected_agent_names: set[str] | None = None,
+    local_agent_names: set[str] | None = None,
+) -> None:
     """Distribute the reflect and opentelemetry skills to detected agents."""
     # Only the reflect skill is bundled for automatic setup distribution.
     # The `skills` helper documents the extraction command itself and should
@@ -1617,35 +1637,47 @@ def _distribute_skills(console) -> None:
         return
 
     # Filter detected agents
-    detected_agents = [a for a in _detect_agents() if a.get("detected")]
+    detected_agents = _filter_agents_by_keys(
+        [a for a in _detect_agents() if a.get("detected")],
+        selected_agent_names,
+    )
+    local_agent_names = local_agent_names or set()
 
+    written_global_paths: set[Path] = set()
     for agent in detected_agents:
         # 1. Global path (expanded from ~/...)
         try:
             global_skill_path = Path(agent["global_path"]).expanduser()
-            global_skill_path.mkdir(parents=True, exist_ok=True)
-            for skill_name, skill_src in available_skills.items():
-                dest = global_skill_path / skill_name
-                if dest.exists():
-                    shutil.rmtree(dest)
-                shutil.copytree(skill_src, dest)
-            console.print(f"  [green]\u2713[/] Distributed skills to [bold]{agent['name']}[/] global path")
+            resolved_global_skill_path = global_skill_path.resolve()
+            if resolved_global_skill_path in written_global_paths:
+                console.print(
+                    f"  [dim]•[/] {agent['name']}: global path already populated ({global_skill_path})"
+                )
+            else:
+                written_global_paths.add(resolved_global_skill_path)
+                global_skill_path.mkdir(parents=True, exist_ok=True)
+                for skill_name, skill_src in available_skills.items():
+                    dest = global_skill_path / skill_name
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    shutil.copytree(skill_src, dest)
+                console.print(f"  [green]\u2713[/] Distributed skills to [bold]{agent['name']}[/] global path")
         except Exception as e:
             console.print(f"  [red]\u2717[/] Failed to distribute to {agent['name']} global: {e}")
 
-        # 2. Project path (local to workspace)
+        if _agent_key(str(agent["name"])) not in local_agent_names:
+            continue
         try:
-            project_skill_base = Path.cwd() / agent["skill_path"]
-            project_skill_base.mkdir(parents=True, exist_ok=True)
+            local_skill_base = Path.cwd() / str(agent["local_skill_path"])
+            local_skill_base.mkdir(parents=True, exist_ok=True)
             for skill_name, skill_src in available_skills.items():
-                dest = project_skill_base / skill_name
+                dest = local_skill_base / skill_name
                 if dest.exists():
                     shutil.rmtree(dest)
                 shutil.copytree(skill_src, dest)
-            console.print(f"  [green]\u2713[/] Distributed skills to [bold]{agent['name']}[/] project path")
+            console.print(f"  [green]\u2713[/] Distributed skills to [bold]{agent['name']}[/] local project path")
         except Exception as e:
-            console.print(f"  [red]\u2717[/] Failed to distribute to {agent['name']} project: {e}")
-
+            console.print(f"  [red]\u2717[/] Failed to distribute to {agent['name']} local project path: {e}")
 
 
 
@@ -1667,6 +1699,8 @@ def _run_setup(
     capture_text: bool | None = None,
     mask_captured_text: bool = True,
     text_max_chars: int | None = None,
+    selected_agent_names: set[str] | None = None,
+    local_agent_names: set[str] | None = None,
 ) -> None:
     _instrumentation_run_setup(
         console,
@@ -1677,7 +1711,39 @@ def _run_setup(
         capture_text=capture_text,
         mask_captured_text=mask_captured_text,
         text_max_chars=text_max_chars,
+        selected_agent_names=selected_agent_names,
+        local_agent_names=local_agent_names,
     )
+
+
+def _resolve_setup_agent_selection(
+    console,
+    *,
+    agent_names: tuple[str, ...],
+    all_agents: bool,
+) -> set[str] | None:
+    detected = [agent for agent in _detect_agents() if agent.get("detected")]
+    detected_keys = {_agent_key(str(agent["name"])) for agent in detected}
+    if agent_names:
+        selected = {_agent_key(name) for name in agent_names}
+        unknown = selected - detected_keys
+        if unknown:
+            raise click.ClickException(
+                "Agent(s) not detected: " + ", ".join(sorted(unknown))
+            )
+        return selected
+    if all_agents or not sys.stdin.isatty() or not detected:
+        return None
+
+    console.print("\n[bold]Agents to instrument[/]")
+    labels = [
+        f"{agent['name']} ({agent.get('support_status') or 'planned'})"
+        for agent in detected
+    ]
+    selected_indexes = _interactive_pick(labels, multi=True)
+    if len(selected_indexes) == len(detected):
+        return None
+    return {_agent_key(str(detected[index]["name"])) for index in selected_indexes}
 
 
 @main.command()
@@ -1710,11 +1776,31 @@ def _run_setup(
     default=None,
     help="Maximum characters of captured prompt/response text per event.",
 )
+@click.option(
+    "--agent",
+    "agent_names",
+    multiple=True,
+    help="Agent to instrument by name/key. Repeat to select multiple. Defaults to an interactive choice in a TTY, otherwise all detected agents.",
+)
+@click.option(
+    "--all-agents",
+    is_flag=True,
+    help="Instrument all detected agents without prompting.",
+)
+@click.option(
+    "--local-agent",
+    "local_agent_names",
+    multiple=True,
+    help="Also install project-scoped hooks and skills for this selected agent. Repeat to select multiple.",
+)
 def setup(
     capture_text: bool | None,
     text_capture_mode: str | None,
     mask_captured_text: bool,
     text_max_chars: int | None,
+    agent_names: tuple[str, ...],
+    all_agents: bool,
+    local_agent_names: tuple[str, ...],
 ) -> None:
     """Install opentelemetry-hooks, configure local data export, and suggest agent enablement."""
     from rich.console import Console
@@ -1726,28 +1812,34 @@ def setup(
     elif capture_text is None and sys.stdin.isatty():
         console.print("\n[bold]Prompt/response text capture[/]")
         console.print("[dim]All reflect setup data is stored locally on this machine; no hosted service receives it.[/]")
-        console.print("  [bold]1[/] Metadata only — tokens, models, lengths, and hashes; no prompt/response text.")
-        console.print("  [bold]2[/] Masked text — local prompt/response text with email/token/home-path masking.")
-        console.print("  [bold]3[/] Full text — local unmasked prompt/response text.")
-        choice = click.prompt(
-            "Choose capture mode",
-            type=click.Choice(["1", "2", "3"]),
-            default="1",
-            show_choices=False,
-        )
-        if choice == "1":
+        capture_modes = [
+            "Metadata only - tokens, models, lengths, and hashes; no prompt/response text",
+            "Masked text - local prompt/response text with email/token/home-path masking",
+            "Full text - local unmasked prompt/response text",
+        ]
+        choice = _interactive_pick(capture_modes, multi=False)[0]
+        if choice == 0:
             capture_text = False
-        elif choice == "2":
+        elif choice == 1:
             capture_text = True
             mask_captured_text = True
         else:
             capture_text = True
             mask_captured_text = False
+    selected_agent_keys = _resolve_setup_agent_selection(console, agent_names=agent_names, all_agents=all_agents)
+    local_agent_keys = {_agent_key(name) for name in local_agent_names}
+    unknown_local = local_agent_keys - selected_agent_keys if selected_agent_keys is not None else set()
+    if unknown_local:
+        raise click.ClickException(
+            "--local-agent must also be selected with --agent: " + ", ".join(sorted(unknown_local))
+        )
     _run_setup(
         console,
         capture_text=capture_text,
         mask_captured_text=mask_captured_text,
         text_max_chars=text_max_chars,
+        selected_agent_names=selected_agent_keys,
+        local_agent_names=local_agent_keys,
     )
 
 
@@ -2064,11 +2156,11 @@ def update(apply: bool) -> None:
             console.print("[green]No newer package release is available right now.[/]")
 
         if advisor["local_issues"]:
-            console.print("Local drift remains. Run [bold]reflect setup[/] from the workspace root to refresh hooks and skill copies.")
+            console.print("Local drift remains. Run [bold]reflect setup[/] to refresh global hooks and skill copies.")
     else:
         console.print("Use [bold]reflect update --apply[/] to upgrade the package when a newer release is available.")
         if advisor["local_issues"]:
-            console.print("For local hook or skill drift, run [bold]reflect setup[/] from the workspace root.")
+            console.print("For local hook or skill drift, run [bold]reflect setup[/] to refresh global wiring.")
     console.print()
 
 
@@ -2444,6 +2536,33 @@ def db_normalize(db_path: Path, limit: int | None) -> None:
     click.echo(
         "Normalized raw_events "
         f"(processed={result['processed']}, failed={result['failed']}, skipped={result['skipped']})"
+    )
+
+
+@db.command("sync-instructions")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+@click.option(
+    "--workspace-root",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Workspace root to scan for instruction files.",
+)
+def db_sync_instructions(db_path: Path, workspace_root: Path | None) -> None:
+    """Discover AGENTS.md, CLAUDE.md, GEMINI.md, and similar instruction files into memories."""
+    from reflect.store.instruction_memory import upsert_instruction_memories
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+
+    workspace_root = workspace_root or Path.cwd()
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        result = upsert_instruction_memories(conn, workspace_root=workspace_root, home_root=Path.home())
+    finally:
+        conn.close()
+    click.echo(
+        "Synced instruction memories "
+        f"(discovered={result['discovered']}, inserted={result['inserted']}, updated={result['updated']})"
     )
 
 

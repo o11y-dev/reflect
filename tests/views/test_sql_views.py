@@ -267,6 +267,58 @@ def _seed_view_db(conn):
         """,
         (now, now),
     )
+    conn.executemany(
+        """
+        INSERT INTO graph_nodes(id, kind, label, session_id, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            ("gn-session", "Session", "sess-2", "sess-2", now, now, "{}", now, now),
+            ("gn-memory", "Memory", "mem-1", "sess-2", now, now, '{"scope":"repo","type":"convention"}', now, now),
+            ("gn-path", "Path", "AGENTS.md", None, now, now, '{"source":"filesystem_instruction_scan"}', now, now),
+        ],
+    )
+    conn.executemany(
+        """
+        INSERT INTO graph_nodes(id, kind, label, session_id, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+        VALUES (?, 'Session', ?, ?, ?, ?, '{}', ?, ?)
+        """,
+        [
+            (f"gn-extra-session-{index}", f"sess-extra-{index}", f"sess-extra-{index}", now, now, now, now)
+            for index in range(420)
+        ],
+    )
+    conn.execute(
+        """
+        INSERT INTO graph_edges(id, source_node_id, target_node_id, kind, session_id, weight, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+        VALUES ('ge-memory-path', 'gn-memory', 'gn-path', 'described_by_path', 'sess-2', 1, ?, ?, '{}', ?, ?)
+        """,
+        (now, now, now, now),
+    )
+    conn.execute(
+        """
+        INSERT INTO graph_edges(id, source_node_id, target_node_id, kind, session_id, weight, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+        VALUES ('ge-session-memory', 'gn-session', 'gn-memory', 'recorded_memory', 'sess-2', 1, ?, ?, '{}', ?, ?)
+        """,
+        (now, now, now, now),
+    )
+    conn.executemany(
+        """
+        INSERT INTO graph_nodes(id, kind, label, session_id, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+        VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)
+        """,
+        [
+            ("gn-global-memory", "Memory", "global-memory", now, now, '{"scope":"user"}', now, now),
+            ("gn-global-path", "Path", "global.md", now, now, '{"source":"filesystem_instruction_scan"}', now, now),
+        ],
+    )
+    conn.execute(
+        """
+        INSERT INTO graph_edges(id, source_node_id, target_node_id, kind, session_id, weight, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+        VALUES ('ge-global-memory-path', 'gn-global-memory', 'gn-global-path', 'described_by_path', NULL, 1, ?, ?, '{}', ?, ?)
+        """,
+        (now, now, now, now),
+    )
     conn.execute(
         """
         INSERT INTO privacy_findings(
@@ -344,6 +396,8 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         assert tabs.tools.tools_by_count == {"Edit": 2, "Read": 1}
         assert tabs.agents.agent_comparison[0]["name"] == "codex"
         assert tabs.graphs.graph_session_timeline
+        assert tabs.graphs.graph_semantic["nodes"]
+        assert tabs.graphs.graph_semantic["edges"][0]["kind"] == "described_by_path"
 
         assert scoped.tools.tools_by_count == {"Edit": 1}
         assert scoped.tools.skills_by_count == {"review-skill": 1}
@@ -358,6 +412,16 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         assert scoped.agents.agents["codex"]["subagents"] == 1
         assert scoped.agents.agents["copilot"]["subagents"] == 1
         assert scoped.agents.agents["cursor"]["subagents"] == 1
+        assert any(node["label"] == "AGENTS.md" for node in scoped.graphs.graph_semantic["nodes"])
+        assert all(node["label"] != "global-memory" for node in scoped.graphs.graph_semantic["nodes"])
+        assert all(node["label"] != "global.md" for node in scoped.graphs.graph_semantic["nodes"])
+        scoped_node_ids = {node["id"] for node in scoped.graphs.graph_semantic["nodes"]}
+        scoped_edge_node_ids = {
+            node_id
+            for edge in scoped.graphs.graph_semantic["edges"]
+            for node_id in (edge["source"], edge["target"])
+        }
+        assert scoped_node_ids <= scoped_edge_node_ids
         assert scoped.specs.total_specs == 1
         assert scoped.specs.requirements_by_status == {"planned": 1, "validated": 1}
         assert scoped.memory.memories_by_type == {"convention": 1}

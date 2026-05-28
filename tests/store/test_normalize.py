@@ -3,7 +3,7 @@ import json
 from reflect.store import normalize as normalize_mod
 from reflect.store.ingest import ingest_local_spans_file
 from reflect.store.migrate import migrate
-from reflect.store.normalize import normalize_pending_raw_events
+from reflect.store.normalize import normalize_pending_raw_events, refresh_all_session_statuses
 from reflect.store.sqlite import connect_sqlite
 
 
@@ -22,6 +22,8 @@ def _write_spans(path):
                 "gen_ai.request.model": "claude-4.6-opus",
                 "gen_ai.usage.input_tokens": 100,
                 "gen_ai.usage.output_tokens": 50,
+                "gen_ai.client.prompt.text": "Review the graph normalization",
+                "gen_ai.response.text": "I will inspect the graph normalizer.",
             },
         },
         {
@@ -90,9 +92,113 @@ def test_normalize_pending_raw_events_populates_canonical_tables(tmp_path):
             "PreToolUse": "UserPromptSubmit",
             "BeforeMCPExecution": "PreToolUse",
         }
-        assert conn.execute("SELECT COUNT(*) FROM llm_calls").fetchone()[0] == 1
+        llm_call = conn.execute(
+            """
+            SELECT prompt_hash, response_hash, prompt_preview_redacted, response_preview_redacted
+            FROM llm_calls
+            """
+        ).fetchone()
+        assert llm_call[0]
+        assert llm_call[1]
+        assert llm_call[2] == "Review the graph normalization"
+        assert llm_call[3] == "I will inspect the graph normalizer."
         assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_normalize_derives_session_status_from_hook_outcomes(tmp_path):
+    db = tmp_path / "reflect.db"
+    spans = tmp_path / "spans.jsonl"
+    spans_data = [
+        {
+            "name": "gen_ai.client.hook.PreToolUse",
+            "traceId": "trace-status-1",
+            "spanId": "span-status-1",
+            "start_time_ns": 100,
+            "end_time_ns": 200,
+            "attributes": {
+                "gen_ai.client.name": "cursor",
+                "gen_ai.client.session_id": "sess-error",
+                "gen_ai.client.tool_name": "Read",
+            },
+        },
+        {
+            "name": "gen_ai.client.hook.PostToolUseFailure",
+            "traceId": "trace-status-1",
+            "spanId": "span-status-2",
+            "parentSpanId": "span-status-1",
+            "start_time_ns": 300,
+            "end_time_ns": 400,
+            "attributes": {
+                "gen_ai.client.name": "cursor",
+                "gen_ai.client.session_id": "sess-error",
+                "gen_ai.client.tool_name": "Read",
+            },
+        },
+        {
+            "name": "gen_ai.client.hook.SessionEnd",
+            "traceId": "trace-status-2",
+            "spanId": "span-status-3",
+            "start_time_ns": 500,
+            "end_time_ns": 600,
+            "attributes": {
+                "gen_ai.client.name": "codex",
+                "gen_ai.client.session_id": "sess-ok",
+            },
+        },
+    ]
+    spans.write_text("\n".join(json.dumps(span) for span in spans_data) + "\n", encoding="utf-8")
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        assert ingest_local_spans_file(conn, file_path=spans) == {"inserted": 3, "skipped": 0}
+        assert normalize_pending_raw_events(conn) == {"processed": 3, "failed": 0, "skipped": 0}
+
+        statuses = dict(conn.execute("SELECT id, status FROM sessions").fetchall())
+        assert statuses == {"sess-error": "error", "sess-ok": "ok"}
+        failures = dict(conn.execute("SELECT id, failure_count FROM sessions").fetchall())
+        assert failures == {"sess-error": 1, "sess-ok": 0}
+        step_statuses = dict(conn.execute("SELECT summary, status FROM steps").fetchall())
+        assert step_statuses["gen_ai.client.hook.PostToolUseFailure"] == "error"
+        assert step_statuses["gen_ai.client.hook.SessionEnd"] == "ok"
+    finally:
+        conn.close()
+
+
+def test_refresh_all_session_statuses_repairs_existing_unknown_rows(tmp_path):
+    db = tmp_path / "reflect.db"
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        conn.execute(
+            """
+            INSERT INTO agents(id, name, raw_json, created_at, updated_at)
+            VALUES ('agent-1', 'codex', '{}', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO sessions(id, agent_id, started_at, status, created_at, updated_at)
+            VALUES ('sess-old', 'agent-1', '2026-01-01T00:00:00+00:00', 'unknown',
+                    '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO steps(id, session_id, seq, type, started_at, status, summary, raw_attrs_json, created_at, updated_at)
+            VALUES ('step-old', 'sess-old', 0, 'unknown', '2026-01-01T00:00:01+00:00',
+                    'ok', 'gen_ai.client.hook.SessionEnd', '{}',
+                    '2026-01-01T00:00:01+00:00', '2026-01-01T00:00:01+00:00')
+            """
+        )
+
+        assert refresh_all_session_statuses(conn) == {"sessions": 1}
+
+        session = conn.execute("SELECT status, failure_count FROM sessions WHERE id = 'sess-old'").fetchone()
+        assert tuple(session) == ("ok", 0)
     finally:
         conn.close()
 

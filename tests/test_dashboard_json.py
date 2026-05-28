@@ -37,6 +37,7 @@ class TestBuildDashboardJson:
             "activity_by_day", "activity_by_hour",
             "graph_tool_transitions", "graph_cooccurrence",
             "graph_latency_histograms", "graph_dep", "graph_session_timeline",
+            "graph_semantic",
             "agents", "strengths", "observations", "recommendations",
             "practical_examples", "achievements", "token_economy",
         ]:

@@ -1711,6 +1711,7 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
         "graph_session_timeline": _compute_session_timeline(
             stats.session_span_details, stats.session_events,
         ),
+        "graph_semantic": {"nodes": [], "edges": [], "sessions": [], "legend": []},
         "agents": {
             name: {
                 "total_events": ag.total_events,
@@ -2372,6 +2373,7 @@ def _sql_dashboard_compat_payload(db_path: Path, *, session_ids: set[str] | None
         "graph_cooccurrence": graphs_view["graph_cooccurrence"],
         "graph_dep": graphs_view["graph_dep"],
         "graph_session_timeline": graphs_view["graph_session_timeline"],
+        "graph_semantic": graphs_view["graph_semantic"],
         "agents": agents_view["agents"],
         "specs": specs_view,
         "memory": memory_view,
@@ -2865,6 +2867,7 @@ def _sql_dashboard_payload(
             "graph_cooccurrence": compat["graph_cooccurrence"],
             "graph_dep": compat["graph_dep"],
             "graph_session_timeline": compat["graph_session_timeline"],
+            "graph_semantic": compat["graph_semantic"],
         },
         "specs": compat["specs"],
         "memory": compat["memory"],
@@ -2954,6 +2957,7 @@ def _sql_dashboard_payload(
         "graph_latency_histograms": {},
         "graph_dep": compat["graph_dep"],
         "graph_session_timeline": compat["graph_session_timeline"],
+        "graph_semantic": compat["graph_semantic"],
         "agents": compat["agents"],
         "agent_comparison": compat["agent_comparison"],
         "mcp_calls": compat["mcp_calls"],

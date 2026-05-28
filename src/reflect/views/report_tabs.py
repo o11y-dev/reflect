@@ -67,6 +67,7 @@ class GraphsViewModel(ReflectModel):
     graph_cooccurrence: dict[str, Any]
     graph_dep: dict[str, Any]
     graph_session_timeline: list[dict[str, Any]]
+    graph_semantic: dict[str, Any]
 
 
 class SpecsViewModel(ReflectModel):
@@ -920,6 +921,7 @@ def _build_graphs(
     co_matrix = _cooccurrence_matrix(conn, scoped_ids, co_tools)
     timeline = _timeline(conn, scoped_ids)
     graph_dep = _dependency_graph(conn, scoped_ids, tools_by_count, mcp_servers_by_count)
+    graph_semantic = _semantic_graph(conn, scoped_ids)
     return GraphsViewModel(
         graph_tool_transitions=[
             {"from": row["source"], "to": row["target"], "count": int(row["count"] or 0)}
@@ -928,7 +930,180 @@ def _build_graphs(
         graph_cooccurrence={"tools": co_tools, "matrix": co_matrix},
         graph_dep=graph_dep,
         graph_session_timeline=timeline,
+        graph_semantic=graph_semantic,
     )
+
+
+def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> dict[str, Any]:
+    node_filters: list[str] = []
+    node_params: list[str] = []
+    if scoped_ids is not None:
+        if not scoped_ids:
+            return {"nodes": [], "edges": [], "sessions": [], "legend": []}
+        placeholders = ", ".join("?" for _ in scoped_ids)
+        node_filters.append(f"(session_id IS NULL OR session_id IN ({placeholders}))")
+        node_params.extend(scoped_ids)
+    where = f"WHERE {' AND '.join(node_filters)}" if node_filters else ""
+    node_rows = _dict_rows(conn.execute(
+        f"""
+        WITH filtered AS (
+          SELECT id, kind, label, session_id, attrs_json, first_seen_at, last_seen_at
+          FROM graph_nodes
+          {where}
+        ),
+        ranked AS (
+          SELECT
+            *,
+            ROW_NUMBER() OVER (
+              PARTITION BY kind
+              ORDER BY COALESCE(last_seen_at, first_seen_at, '') DESC, label ASC
+            ) AS kind_rank
+          FROM filtered
+        )
+        SELECT id, kind, label, session_id, attrs_json, first_seen_at, last_seen_at
+        FROM ranked
+        WHERE kind_rank <= CASE kind
+          WHEN 'Agent' THEN 10
+          WHEN 'Session' THEN 40
+          WHEN 'Repo' THEN 20
+          WHEN 'Folder' THEN 75
+          WHEN 'Path' THEN 60
+          WHEN 'Tool' THEN 50
+          WHEN 'ToolCall' THEN 40
+          WHEN 'MCPServer' THEN 20
+          WHEN 'Memory' THEN 45
+          WHEN 'Skill' THEN 45
+          WHEN 'Subagent' THEN 45
+          WHEN 'Outcome' THEN 45
+          WHEN 'Step' THEN 0
+          ELSE 20
+        END
+        ORDER BY
+          CASE kind
+            WHEN 'Agent' THEN 0
+            WHEN 'Session' THEN 1
+            WHEN 'Skill' THEN 2
+            WHEN 'Subagent' THEN 3
+            WHEN 'Outcome' THEN 4
+            WHEN 'Repo' THEN 5
+            WHEN 'Folder' THEN 6
+            WHEN 'Tool' THEN 7
+            WHEN 'MCPServer' THEN 8
+            WHEN 'Path' THEN 9
+            WHEN 'ToolCall' THEN 10
+            WHEN 'Memory' THEN 11
+            ELSE 99
+          END,
+          COALESCE(last_seen_at, first_seen_at, '') DESC,
+          label ASC
+        """,
+        node_params,
+    ))
+    selected_ids = [str(row["id"]) for row in node_rows]
+    selected = set(selected_ids)
+    if not selected_ids:
+        return {"nodes": [], "edges": [], "sessions": [], "legend": []}
+
+    edge_filters = [
+        f"source_node_id IN ({', '.join('?' for _ in selected_ids)})",
+        f"target_node_id IN ({', '.join('?' for _ in selected_ids)})",
+    ]
+    edge_params = [*selected_ids, *selected_ids]
+    if scoped_ids is not None:
+        placeholders = ", ".join("?" for _ in scoped_ids)
+        edge_filters.append(f"(session_id IS NULL OR session_id IN ({placeholders}))")
+        edge_params.extend(scoped_ids)
+    edge_rows = _dict_rows(conn.execute(
+        f"""
+        SELECT source_node_id, target_node_id, kind, session_id, weight, attrs_json, first_seen_at, last_seen_at
+        FROM graph_edges
+        WHERE {' AND '.join(edge_filters)}
+        ORDER BY weight DESC, kind ASC
+        LIMIT 900
+        """,
+        edge_params,
+    ))
+
+    colors = {
+        "Agent": "#ffb156",
+        "Session": "#f5f2ea",
+        "Step": "#8f887d",
+        "Tool": "#48d597",
+        "ToolCall": "#2fa66f",
+        "MCPServer": "#76b7ff",
+        "Memory": "#ff8d7d",
+        "Skill": "#c79cff",
+        "Subagent": "#ffd166",
+        "Repo": "#b7e4c7",
+        "Folder": "#64c7a1",
+        "Path": "#95d5b2",
+        "Outcome": "#ff6b6b",
+    }
+    edge_rows = [
+        row for row in edge_rows
+        if str(row["source_node_id"]) in selected and str(row["target_node_id"]) in selected
+    ]
+    if scoped_ids is not None:
+        session_roots = {
+            str(row["id"])
+            for row in node_rows
+            if str(row["kind"] or "") == "Session" and str(row["session_id"] or "") in set(scoped_ids)
+        }
+        adjacency: dict[str, set[str]] = {}
+        for row in edge_rows:
+            source = str(row["source_node_id"])
+            target = str(row["target_node_id"])
+            adjacency.setdefault(source, set()).add(target)
+            adjacency.setdefault(target, set()).add(source)
+        reachable = set(session_roots)
+        frontier = list(session_roots)
+        while frontier:
+            current = frontier.pop()
+            for neighbor in adjacency.get(current, set()):
+                if neighbor in reachable:
+                    continue
+                reachable.add(neighbor)
+                frontier.append(neighbor)
+        node_rows = [row for row in node_rows if str(row["id"]) in reachable]
+        edge_rows = [
+            row for row in edge_rows
+            if str(row["source_node_id"]) in reachable and str(row["target_node_id"]) in reachable
+        ]
+    nodes = []
+    for row in node_rows:
+        attrs = _load_json_dict(str(row.get("attrs_json") or ""))
+        kind = str(row["kind"] or "")
+        label = str(row["label"] or "")
+        nodes.append({
+            "id": str(row["id"]),
+            "kind": kind,
+            "label": label,
+            "session_id": str(row["session_id"] or ""),
+            "color": colors.get(kind, "#d7d1c6"),
+            "size": min(18, 5 + len(label) / 12),
+            "attrs": attrs,
+            "first_seen_at": str(row["first_seen_at"] or ""),
+            "last_seen_at": str(row["last_seen_at"] or ""),
+        })
+    kinds = {node["kind"] for node in nodes}
+    return {
+        "nodes": nodes,
+        "edges": [
+            {
+                "source": str(row["source_node_id"]),
+                "target": str(row["target_node_id"]),
+                "kind": str(row["kind"] or ""),
+                "session_id": str(row["session_id"] or ""),
+                "weight": float(row["weight"] or 1.0),
+                "attrs": _load_json_dict(str(row.get("attrs_json") or "")),
+                "first_seen_at": str(row["first_seen_at"] or ""),
+                "last_seen_at": str(row["last_seen_at"] or ""),
+            }
+            for row in edge_rows
+        ],
+        "sessions": sorted({str(node["session_id"]) for node in nodes if node["session_id"]}),
+        "legend": [{"kind": kind, "color": colors.get(kind, "#d7d1c6")} for kind in sorted(kinds)],
+    }
 
 
 def _cooccurrence_matrix(conn: sqlite3.Connection, scoped_ids: list[str] | None, co_tools: list[str]) -> list[list[int]]:
