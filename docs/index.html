@@ -238,7 +238,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         <article class="card">
           <span class="badge">Improve</span>
           <h3>Better future runs</h3>
-          <p>Use real workflow behavior to shape context, skills, helper tools, and operational guidance instead of guessing what would have helped.</p>
+          <p>Use the Behavioral Memory Graph plus <code>reflect skills</code> extraction to turn real workflow patterns into reusable skills, context guardrails, and helper-tool playbooks.</p>
         </article>
       </div>
     </section>
@@ -247,11 +247,14 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
       <h2 class="section-title">60-Second Local Path</h2>
       <p>
         Start with reflect. It wires supported agents, reads local telemetry, and opens the same dashboard used by this showcase.
-        Use opentelemetry-hooks directly only when you want capture without the report workflow.
+        Use <code>reflect report</code> for the Behavioral Memory Graph and <code>reflect skills</code> to extract reusable skills from your session history.
+        Calculations are based on actual agent spans and dependency edges, so let your agent run for a bit to generate telemetry before running report or skills extraction.
       </p>
       <pre><code>pipx install o11y-reflect
 reflect setup
 reflect
+reflect report
+reflect skills
 
 # no telemetry yet?
 reflect --demo</code></pre>

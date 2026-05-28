@@ -1043,6 +1043,17 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
         row for row in edge_rows
         if str(row["source_node_id"]) in selected and str(row["target_node_id"]) in selected
     ]
+    if edge_rows:
+        connected_ids = {
+            node_id
+            for row in edge_rows
+            for node_id in (str(row["source_node_id"]), str(row["target_node_id"]))
+        }
+        node_rows = [row for row in node_rows if str(row["id"]) in connected_ids]
+        edge_rows = [
+            row for row in edge_rows
+            if str(row["source_node_id"]) in connected_ids and str(row["target_node_id"]) in connected_ids
+        ]
     if scoped_ids is not None:
         session_roots = {
             str(row["id"])

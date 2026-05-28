@@ -228,16 +228,17 @@ def test_rebuild_graph_adds_semantic_workflow_nodes(tmp_path):
         conn.execute(
             """
             INSERT INTO memories(
-              id, scope, type, session_id, content_hash, content_preview_redacted,
+              id, scope, type, session_id, repo_id, content_hash, content_preview_redacted,
               confidence, sensitivity, source, last_seen_at, raw_attrs_json, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "mem-graph",
                 "project",
                 "agent_instruction",
                 "sess-1",
+                "repo-1",
                 "hash-instruction",
                 "Use the graph memory files",
                 1.0,
@@ -276,6 +277,18 @@ def test_rebuild_graph_adds_semantic_workflow_nodes(tmp_path):
         assert {"reflect", "review-skill"} <= skills
         memory_paths = {row[0] for row in conn.execute("SELECT label FROM graph_nodes WHERE kind = 'Path'")}
         assert "AGENTS.md" in memory_paths
+        repo_memory_edges = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM graph_edges e
+            JOIN graph_nodes s ON s.id = e.source_node_id
+            JOIN graph_nodes t ON t.id = e.target_node_id
+            WHERE e.kind = 'recorded_memory'
+              AND s.kind = 'Repo'
+              AND t.kind = 'Memory'
+            """
+        ).fetchone()[0]
+        assert repo_memory_edges >= 1
         folders = {row[0] for row in conn.execute("SELECT label FROM graph_nodes WHERE kind = 'Folder'")}
         assert {"src", "src/reflect"} <= folders
     finally:

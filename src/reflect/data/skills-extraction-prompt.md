@@ -41,12 +41,14 @@ How to read the evidence:
 - `sessions[].error_recovery`: failure -> next-action chains
 - `sessions[].deep_context`: extra span/conversation detail for selected high-signal sessions
 - `sessions[].refs.session`: stable evidence reference for citations
+- `graph_evidence`: SQL Behavioral Memory Graph recurring patterns and skill/subagent clusters (when available)
 
 Selection guidance:
 1. Start from recurring improvement targets and recurring workflows.
 2. Use session quality, failures, loops, recoveries, and deep context to decide whether a skill would materially help.
-3. Prefer a smaller number of strong skills over many weak ones.
-4. When in doubt, omit a candidate.
+3. Prefer graph-backed patterns with clear multi-session support over one-off edges.
+4. Prefer a smaller number of strong skills over many weak ones.
+5. When in doubt, omit a candidate.
 
 Content guidance:
 - Make each skill practical and concise.

@@ -42,8 +42,10 @@ import os
 import platform
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
+import time
 import zipfile
 from datetime import UTC, datetime
 from importlib import metadata as importlib_metadata
@@ -159,8 +161,11 @@ from reflect.parsing import (  # noqa: F401
 from reflect.processing import _process_span, analyze_telemetry  # noqa: F401
 from reflect.report import render_report  # noqa: F401
 from reflect.skill_extraction import (  # noqa: F401
+    _build_graph_evidence,
     _build_skill_evidence_bundle,
+    _build_skill_evidence_bundle_from_sql,
     _build_skills_extraction_prompt,
+    _build_skills_extraction_prompt_from_bundle,
     _compress_tool_sequence,
     _extract_recovery_chains,
     _load_extracted_skills,
@@ -1424,6 +1429,12 @@ def _validate_skill_name(name: object) -> str:
     is_flag=True,
     help="Install all extracted skills without prompting for selection.",
 )
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+    help="SQLite store used to derive SQL graph evidence for skill extraction.",
+)
 def skills(
     otlp_traces: Path | None,
     sessions_dir: Path | None,
@@ -1432,6 +1443,7 @@ def skills(
     demo: bool,
     agent: str | None,
     yes: bool,
+    db_path: Path,
 ) -> None:
     """Extract reusable skills from your AI sessions using an agent."""
     import json as _json
@@ -1443,24 +1455,72 @@ def skills(
 
     agent_bin, agent_flags = _resolve_skills_agent(agent)
 
-    stats, _, _, _, _, _ = _resolve_and_analyze(
-        otlp_traces=otlp_traces,
-        sessions_dir=sessions_dir,
-        spans_dir=spans_dir,
-        demo=demo,
-        time_range=time_range,
-    )
+    with console.status("[bold orange3]reflecting...[/bold orange3]", spinner="dots"):
+        stats, _, _, _, _, _ = _resolve_and_analyze(
+            otlp_traces=otlp_traces,
+            sessions_dir=sessions_dir,
+            spans_dir=spans_dir,
+            demo=demo,
+            time_range=time_range,
+        )
 
+        try:
+            prompt_pkg = importlib_resources.files("reflect") / "data" / "skills-extraction-prompt.md"
+            prompt_text = prompt_pkg.read_text(encoding="utf-8")
+        except (FileNotFoundError, TypeError) as exc:
+            click.echo(
+                f"Could not load skills extraction prompt: {exc}",
+                err=True,
+            )
+            raise SystemExit(1) from exc
+    bundle = _build_skill_evidence_bundle(stats)
+    sql_bundle_used = False
+    graph_evidence_attached = False
     try:
-        prompt_pkg = importlib_resources.files("reflect") / "data" / "skills-extraction-prompt.md"
-        prompt_text = prompt_pkg.read_text(encoding="utf-8")
-    except (FileNotFoundError, TypeError) as exc:
+        from sqlite3 import Error as _SQLiteError
+        from reflect.store.sqlite import connect_sqlite
+
+        include_native_sessions = False
+        sql_otlp_traces = otlp_traces
+        if demo:
+            demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
+            if not demo_traces.exists():
+                demo_traces = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
+            sql_otlp_traces = demo_traces if demo_traces.exists() else otlp_traces
+        elif sql_otlp_traces is None:
+            sql_otlp_traces = _default_otlp_traces()
+            include_native_sessions = True
+        else:
+            default_otlp = _default_otlp_traces()
+            include_native_sessions = (
+                default_otlp is not None
+                and sql_otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
+            )
+
+        _prepare_sql_report_db(
+            db_path,
+            otlp_traces=sql_otlp_traces,
+            include_native_sessions=include_native_sessions,
+        )
+        conn = connect_sqlite(db_path)
+        try:
+            sql_bundle = _build_skill_evidence_bundle_from_sql(
+                conn,
+                session_ids=set(stats.sessions_seen),
+            )
+        finally:
+            conn.close()
+        if sql_bundle and sql_bundle.get("sessions"):
+            bundle = sql_bundle
+            sql_bundle_used = True
+            graph_evidence_attached = bool((sql_bundle.get("graph_evidence") or {}).get("recurring_patterns"))
+    except (_SQLiteError, OSError, ValueError) as exc:
         click.echo(
-            f"Could not load skills extraction prompt: {exc}",
+            f"SQL graph evidence unavailable for skills extraction: {exc}",
             err=True,
         )
-        raise SystemExit(1) from exc
-    prompt = _build_skills_extraction_prompt(prompt_text, stats)
+
+    prompt = _build_skills_extraction_prompt_from_bundle(prompt_text, bundle)
 
     with console.status(
         f"[bold]Extracting skills with {agent_bin}...[/bold]",
@@ -1533,6 +1593,10 @@ def skills(
             console.print(f"  [green]✓[/green] {agent_spec['name']}: {global_path}")
 
     names = ", ".join(f"/{s['name']}" for s in selected)
+    if sql_bundle_used:
+        console.print("[dim]Included SQL stats + Behavioral Memory Graph evidence in extraction prompt.[/dim]")
+    elif graph_evidence_attached:
+        console.print("[dim]Included SQL Behavioral Memory Graph evidence in extraction prompt.[/dim]")
     console.print(
         f"\n[bold green]{len(selected)} skill(s) ready.[/bold green] Use {names} in Claude Code."
     )
@@ -1617,9 +1681,7 @@ def _distribute_skills(
     local_agent_names: set[str] | None = None,
 ) -> None:
     """Distribute the reflect and opentelemetry skills to detected agents."""
-    # Only the reflect skill is bundled for automatic setup distribution.
-    # The `skills` helper documents the extraction command itself and should
-    # not be auto-installed into every agent skill directory.
+    # Bundle reflect core skills for automatic setup distribution.
     bundled_skills_dir = Path(__file__).parent / "data" / "skills"
 
     available_skills: dict[str, Path] = {}
@@ -1627,6 +1689,10 @@ def _distribute_skills(
     reflect_skill = bundled_skills_dir / "reflect"
     if (reflect_skill / "SKILL.md").exists():
         available_skills["reflect"] = reflect_skill
+
+    reflect_skills_helper = bundled_skills_dir / "reflect-skills"
+    if (reflect_skills_helper / "SKILL.md").exists():
+        available_skills["reflect-skills"] = reflect_skills_helper
 
     otel_skill = _fetch_opentelemetry_skill(console)
     if otel_skill:
@@ -2089,13 +2155,26 @@ def doctor_cost(db_path: Path, alias_path: Path | None) -> None:
     from reflect.store.sqlite import connect_sqlite
 
     console = Console(force_terminal=True)
-    conn = connect_sqlite(db_path)
-    try:
-        migrate(conn)
-        alias_result = _ensure_sql_costs(conn, alias_path=alias_path)
-        rebuild_rollups(conn)
-    finally:
-        conn.close()
+    alias_result = None
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        conn = connect_sqlite(db_path)
+        try:
+            migrate(conn)
+            alias_result = _ensure_sql_costs(conn, alias_path=alias_path)
+            rebuild_rollups(conn)
+            break
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower() or attempt >= max_attempts:
+                raise click.ClickException(str(exc)) from exc
+            time.sleep(1.5 * attempt)
+        finally:
+            conn.close()
+
+    if alias_result is None:
+        raise click.ClickException(
+            "database is locked; stop concurrent writers and retry `reflect doctor cost`"
+        )
 
     table = Table(box=box.SIMPLE_HEAVY, expand=True)
     table.add_column("Check", style="bold cyan")

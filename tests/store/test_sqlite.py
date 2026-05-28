@@ -1,6 +1,6 @@
 import sqlite3
 
-from reflect.store.sqlite import connect_sqlite, optimize
+from reflect.store.sqlite import DEFAULT_BUSY_TIMEOUT_MS, connect_sqlite, optimize
 
 
 def _pragma(conn: sqlite3.Connection, key: str):
@@ -14,7 +14,7 @@ def test_connect_sqlite_applies_default_pragmas(tmp_path):
         assert _pragma(conn, "journal_mode") == "wal"
         assert _pragma(conn, "synchronous") == 1  # NORMAL
         assert _pragma(conn, "wal_autocheckpoint") == 1000
-        assert _pragma(conn, "busy_timeout") == 5000
+        assert _pragma(conn, "busy_timeout") == DEFAULT_BUSY_TIMEOUT_MS
     finally:
         conn.close()
 

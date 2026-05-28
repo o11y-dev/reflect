@@ -592,6 +592,81 @@ class TestSkillsSubcommand:
         assert '"selection_policy"' in prompt
         assert '"sessions"' in prompt
 
+    def test_skills_attaches_sql_graph_evidence_when_available(self, runner, otlp_file, tmp_path):
+        fake_output = json.dumps([_FAKE_SKILLS[0]])
+        sql_bundle = {
+            "schema_version": 1,
+            "selection_policy": {"session_limit": 12, "deep_context_limit": 0, "evidence_source": "sql"},
+            "summary": {
+                "total_sessions_seen": 1,
+                "included_sessions": 1,
+                "deep_context_sessions": 0,
+                "average_quality_score": 72.0,
+                "recurring_tool_flows": [],
+                "recurring_shell_commands": [],
+                "recurring_recovery_chains": [],
+                "recurring_improvement_targets": [],
+            },
+            "sessions": [
+                {
+                    "id": "sess-default-001",
+                    "short_id": "sess-def",
+                    "rank": 1,
+                    "signal_score": 10.0,
+                    "refs": {"session": "session://sess-default-001", "telemetry": "telemetry://sess-default-001"},
+                    "agent": "claude",
+                    "model": "claude-sonnet",
+                    "event_count": 4,
+                    "quality_score": 72.0,
+                    "goal_completed": True,
+                    "recovered_failures": 0,
+                    "token_usage": {"input": 100, "output": 50, "total": 150},
+                    "score_signals": {"tool_uses": 2, "tool_failures": 0, "tool_loops": 0},
+                    "tool_flow": ["Read", "Edit"],
+                    "shell_cmds": [],
+                    "prompts": ["Fix skills extraction"],
+                    "error_recovery": [],
+                    "improvement_targets": [],
+                }
+            ],
+            "graph_evidence": {
+                "source": "sql-graph",
+                "scoped_session_count": 1,
+                "recurring_patterns": [
+                    {
+                        "id": "graph-01",
+                        "edge_kind": "used_skill",
+                        "source": {"kind": "Session", "label": "Session"},
+                        "target": {"kind": "Skill", "label": "reflect-skills"},
+                        "count": 2,
+                        "session_support": 1,
+                        "session_ids": ["sess-default-001"],
+                    }
+                ],
+                "skill_clusters": [],
+                "subagent_clusters": [],
+            },
+        }
+        with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
+             patch("reflect.core._detect_agents", return_value=[]), \
+             patch("reflect.core._prepare_sql_report_db"), \
+             patch("reflect.store.sqlite.connect_sqlite") as mock_connect, \
+             patch("reflect.core._build_skill_evidence_bundle_from_sql", return_value=sql_bundle):
+            mock_conn = sqlite3.connect(":memory:")
+            mock_connect.return_value = mock_conn
+            result = runner.invoke(main, [
+                "skills", "--yes", "--agent", "claude",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+                "--db-path", str(tmp_path / "reflect.db"),
+            ])
+
+        assert result.exit_code == 0
+        prompt = mock_run.call_args[0][0][-1]
+        assert '"graph_evidence"' in prompt
+        assert '"source": "sql-graph"' in prompt
+
     def test_skills_partial_selection(self, runner, otlp_file, tmp_path):
         """User selects only skill #1 from a list of 3."""
         skill_dest = tmp_path / "skills"
@@ -1451,7 +1526,7 @@ class TestSetup:
         assert copilot_backup_dir.exists()
         assert any(copilot_backup_dir.iterdir())
 
-    def test_distribute_skills_skips_builtin_skills_helper(self, tmp_path):
+    def test_distribute_skills_includes_reflect_skills_helper(self, tmp_path):
         from rich.console import Console
 
         console = Console(file=io.StringIO())
@@ -1468,7 +1543,7 @@ class TestSetup:
             core._distribute_skills(console)
 
         assert (global_skill_dir / "reflect" / "SKILL.md").exists()
-        assert not (global_skill_dir / "skills").exists()
+        assert (global_skill_dir / "reflect-skills" / "SKILL.md").exists()
         assert not (tmp_path / ".claude" / "skills" / "reflect" / "SKILL.md").exists()
 
     def test_distribute_skills_dedupes_shared_global_paths(self, tmp_path):
@@ -1496,6 +1571,7 @@ class TestSetup:
             core._distribute_skills(console)
 
         assert (shared_skill_dir / "reflect" / "SKILL.md").exists()
+        assert (shared_skill_dir / "reflect-skills" / "SKILL.md").exists()
         assert "already populated" in console.file.getvalue()
 
     def test_distribute_skills_can_opt_into_local_project_path(self, tmp_path):
@@ -1516,7 +1592,9 @@ class TestSetup:
             core._distribute_skills(console, local_agent_names={"claude-code"})
 
         assert (global_skill_dir / "reflect" / "SKILL.md").exists()
+        assert (global_skill_dir / "reflect-skills" / "SKILL.md").exists()
         assert (tmp_path / ".claude" / "skills" / "reflect" / "SKILL.md").exists()
+        assert (tmp_path / ".claude" / "skills" / "reflect-skills" / "SKILL.md").exists()
 
 
     def test_setup_seeds_config_from_example_on_fresh_install(self, runner, tmp_path):

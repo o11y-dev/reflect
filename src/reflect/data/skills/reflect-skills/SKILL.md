@@ -1,9 +1,8 @@
----
-name: skills
+name: reflect-skills
 description: Use when the user wants to extract reusable skills from their AI session history and distribute them to their coding agents.
 ---
 
-# skills
+# reflect-skills
 
 Run `reflect skills` to analyze your recent AI agent sessions and extract reusable skill patterns using an agent CLI.
 

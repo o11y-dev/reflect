@@ -398,6 +398,13 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         assert tabs.graphs.graph_session_timeline
         assert tabs.graphs.graph_semantic["nodes"]
         assert tabs.graphs.graph_semantic["edges"][0]["kind"] == "described_by_path"
+        unscoped_node_ids = {node["id"] for node in tabs.graphs.graph_semantic["nodes"]}
+        unscoped_edge_node_ids = {
+            node_id
+            for edge in tabs.graphs.graph_semantic["edges"]
+            for node_id in (edge["source"], edge["target"])
+        }
+        assert unscoped_node_ids <= unscoped_edge_node_ids
 
         assert scoped.tools.tools_by_count == {"Edit": 1}
         assert scoped.tools.skills_by_count == {"review-skill": 1}

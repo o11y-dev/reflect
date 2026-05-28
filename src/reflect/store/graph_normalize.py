@@ -766,6 +766,7 @@ def rebuild_graph(conn: sqlite3.Connection) -> dict[str, int]:
             )
             nodes += int(inserted)
             memory_path = str(memory_attrs.get("path") or "")
+            path_node_id: str | None = None
             if memory_path:
                 path_node, inserted = _insert_node(
                     conn,
@@ -780,6 +781,7 @@ def rebuild_graph(conn: sqlite3.Connection) -> dict[str, int]:
                     timestamp=timestamp,
                 )
                 nodes += int(inserted)
+                path_node_id = path_node
                 _, inserted = _insert_edge(
                     conn,
                     source_node_id=memory_node,
@@ -792,6 +794,61 @@ def rebuild_graph(conn: sqlite3.Connection) -> dict[str, int]:
                     timestamp=timestamp,
                 )
                 edges += int(inserted)
+            memory_repo_id = str(memory["repo_id"] or "")
+            if not memory_repo_id and memory_path:
+                repo_hint = conn.execute(
+                    """
+                    SELECT repo_id
+                    FROM files
+                    WHERE path = ? AND COALESCE(repo_id, '') <> ''
+                    GROUP BY repo_id
+                    ORDER BY COUNT(*) DESC, repo_id ASC
+                    LIMIT 1
+                    """,
+                    (memory_path,),
+                ).fetchone()
+                memory_repo_id = str(repo_hint["repo_id"] or "") if repo_hint else ""
+            if memory_repo_id:
+                repo = conn.execute("SELECT * FROM repos WHERE id = ?", (memory_repo_id,)).fetchone()
+                if repo:
+                    repo_node, inserted = _insert_node(
+                        conn,
+                        kind="Repo",
+                        label=repo["full_name"],
+                        attrs={
+                            "repo_id": repo["id"],
+                            "provider": repo["provider"],
+                            "branch": repo["branch"],
+                            "dirty": bool(repo["dirty"]),
+                        },
+                        timestamp=timestamp,
+                    )
+                    nodes += int(inserted)
+                    _, inserted = _insert_edge(
+                        conn,
+                        source_node_id=repo_node,
+                        target_node_id=memory_node,
+                        kind="recorded_memory",
+                        session_id=memory["session_id"],
+                        attrs={"scope": memory["scope"], "type": memory["type"], "source": memory["source"]},
+                        first_seen_at=memory["created_at"],
+                        last_seen_at=memory["last_seen_at"],
+                        timestamp=timestamp,
+                    )
+                    edges += int(inserted)
+                    if path_node_id:
+                        _, inserted = _insert_edge(
+                            conn,
+                            source_node_id=repo_node,
+                            target_node_id=path_node_id,
+                            kind="contains_path",
+                            session_id=memory["session_id"],
+                            attrs={"source": "memory", "scope": memory["scope"], "type": memory["type"]},
+                            first_seen_at=memory["created_at"],
+                            last_seen_at=memory["last_seen_at"],
+                            timestamp=timestamp,
+                        )
+                        edges += int(inserted)
             if memory["session_id"]:
                 session_node, _ = _insert_node(
                     conn,
