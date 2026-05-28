@@ -3,7 +3,7 @@ from __future__ import annotations
 from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite
 from reflect.views.overview import build_overview
-from reflect.views.report_tabs import build_report_tabs
+from reflect.views.report_tabs import _semantic_graph, build_report_tabs
 from reflect.views.sessions import list_sessions
 
 
@@ -445,5 +445,92 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
             ("mcp_tool:mcp-issue-tracker", "mcp_server:mcp-issue-tracker"),
             ("mcp_tool:metrics.example.test", "mcp_server:metrics.example.test"),
         }
+    finally:
+        conn.close()
+
+
+def test_semantic_graph_keeps_memory_bridges_with_hot_edge_budget(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        now = "2026-05-03T00:00:00+00:00"
+        conn.executemany(
+            """
+            INSERT INTO graph_nodes(id, kind, label, session_id, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+            VALUES (?, 'Session', ?, ?, ?, ?, '{}', ?, ?)
+            """,
+            [
+                (f"session-node-{idx}", f"sess-hot-{idx}", f"sess-hot-{idx}", now, now, now, now)
+                for idx in range(40)
+            ],
+        )
+        conn.execute(
+            """
+            INSERT INTO graph_nodes(id, kind, label, session_id, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+            VALUES ('memory-node-1', 'Memory', 'instruction-1', NULL, ?, ?, '{"scope":"project"}', ?, ?)
+            """,
+            (now, now, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO graph_nodes(id, kind, label, session_id, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+            VALUES ('path-node-1', 'Path', 'AGENTS.md', NULL, ?, ?, '{"source":"filesystem_instruction_scan"}', ?, ?)
+            """,
+            (now, now, now, now),
+        )
+        heavy_edges = []
+        for idx in range(950):
+            source = f"session-node-{idx % 40}"
+            target = f"session-node-{(idx * 7 + 3) % 40}"
+            heavy_edges.append(
+                (
+                    f"hot-edge-{idx}",
+                    source,
+                    target,
+                    "has_step",
+                    f"sess-hot-{idx % 40}",
+                    10,
+                    now,
+                    now,
+                    "{}",
+                    now,
+                    now,
+                )
+            )
+        conn.executemany(
+            """
+            INSERT INTO graph_edges(
+              id, source_node_id, target_node_id, kind, session_id, weight,
+              first_seen_at, last_seen_at, attrs_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            heavy_edges,
+        )
+        conn.execute(
+            """
+            INSERT INTO graph_edges(
+              id, source_node_id, target_node_id, kind, session_id, weight,
+              first_seen_at, last_seen_at, attrs_json, created_at, updated_at
+            )
+            VALUES (
+              'memory-edge-1', 'memory-node-1', 'path-node-1', 'described_by_path', NULL, 1,
+              ?, ?, '{}', ?, ?
+            )
+            """,
+            (now, now, now, now),
+        )
+        conn.commit()
+
+        graph = _semantic_graph(conn, None)
+
+        node_ids = {node["id"] for node in graph["nodes"]}
+        assert "memory-node-1" in node_ids
+        assert "path-node-1" in node_ids
+        assert any(
+            edge["kind"] == "described_by_path"
+            and {edge["source"], edge["target"]} == {"memory-node-1", "path-node-1"}
+            for edge in graph["edges"]
+        )
     finally:
         conn.close()

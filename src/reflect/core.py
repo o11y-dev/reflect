@@ -1371,6 +1371,32 @@ def _select_skills(
         raise SystemExit(0)
     return [skill_defs[i] for i in indices]
 
+
+def _select_skill_install_agents(
+    agents: list[dict],
+    console: object,
+    *,
+    yes: bool,
+) -> list[dict]:
+    """Choose which detected agents should receive extracted skills."""
+    import sys
+
+    if not agents:
+        return []
+    if yes or len(agents) == 1 or not sys.stdin.isatty():
+        return agents
+
+    console.print("\nInstall extracted skills to which agent(s)?\n")
+    labels = [
+        f"[cyan]{agent['name']:<22}[/cyan] {agent.get('global_path', '')}"
+        for agent in agents
+    ]
+    indices = _interactive_pick(labels, multi=True)
+    if not indices:
+        console.print("\n[yellow]No agents selected. Aborted.[/yellow]")
+        raise SystemExit(0)
+    return [agents[i] for i in indices]
+
 # Strict kebab-case: lowercase letters, digits, and hyphens only; 1-64 chars.
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$")
 
@@ -1543,10 +1569,11 @@ def skills(
     selected = _select_skills(skill_defs, console, yes=yes)
 
     detected = [a for a in _detect_agents() if a["detected"]]
+    install_agents = _select_skill_install_agents(detected, console, yes=yes)
     if not yes:
         console.print()
         confirmed = click.confirm(
-            f"Write {len(selected)} skill(s) to {len(detected)} detected agent(s)?",
+            f"Write {len(selected)} skill(s) to {len(install_agents)} selected agent(s)?",
             default=True,
         )
         if not confirmed:
@@ -1569,7 +1596,7 @@ def skills(
             (skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
 
         console.print()
-        for agent_spec in detected:
+        for agent_spec in install_agents:
             global_path = Path(agent_spec["global_path"]).expanduser()
             global_path.mkdir(parents=True, exist_ok=True)
             for s in selected:
@@ -1702,6 +1729,11 @@ def _distribute_skills(
         console.print("  [yellow]\u2022[/] No skills available to distribute.")
         return
 
+    def _remove_legacy_skill_aliases(skill_base: Path) -> None:
+        legacy = skill_base / "skills"
+        if "reflect-skills" in available_skills and legacy.exists():
+            shutil.rmtree(legacy)
+
     # Filter detected agents
     detected_agents = _filter_agents_by_keys(
         [a for a in _detect_agents() if a.get("detected")],
@@ -1727,6 +1759,7 @@ def _distribute_skills(
                     if dest.exists():
                         shutil.rmtree(dest)
                     shutil.copytree(skill_src, dest)
+                _remove_legacy_skill_aliases(global_skill_path)
                 console.print(f"  [green]\u2713[/] Distributed skills to [bold]{agent['name']}[/] global path")
         except Exception as e:
             console.print(f"  [red]\u2717[/] Failed to distribute to {agent['name']} global: {e}")
@@ -1741,6 +1774,7 @@ def _distribute_skills(
                 if dest.exists():
                     shutil.rmtree(dest)
                 shutil.copytree(skill_src, dest)
+            _remove_legacy_skill_aliases(local_skill_base)
             console.print(f"  [green]\u2713[/] Distributed skills to [bold]{agent['name']}[/] local project path")
         except Exception as e:
             console.print(f"  [red]\u2717[/] Failed to distribute to {agent['name']} local project path: {e}")

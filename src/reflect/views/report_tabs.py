@@ -1023,6 +1023,58 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
         """,
         edge_params,
     ))
+    if scoped_ids is None:
+        memory_ids = [str(row["id"]) for row in node_rows if str(row.get("kind") or "") == "Memory"]
+        if memory_ids:
+            memory_placeholders = ", ".join("?" for _ in memory_ids)
+            bridge_rows = _dict_rows(conn.execute(
+                f"""
+                SELECT source_node_id, target_node_id, kind, session_id, weight, attrs_json, first_seen_at, last_seen_at
+                FROM graph_edges
+                WHERE kind IN ('recorded_memory', 'described_by_path', 'contains_path')
+                  AND (
+                    source_node_id IN ({memory_placeholders})
+                    OR target_node_id IN ({memory_placeholders})
+                  )
+                ORDER BY COALESCE(last_seen_at, first_seen_at, '') DESC, weight DESC
+                LIMIT 240
+                """,
+                [*memory_ids, *memory_ids],
+            ))
+            if bridge_rows:
+                bridge_ids = {
+                    str(node_id)
+                    for row in bridge_rows
+                    for node_id in (row["source_node_id"], row["target_node_id"])
+                }
+                missing_ids = [node_id for node_id in bridge_ids if node_id not in selected]
+                if missing_ids:
+                    placeholders = ", ".join("?" for _ in missing_ids)
+                    node_rows.extend(
+                        _dict_rows(conn.execute(
+                            f"""
+                            SELECT id, kind, label, session_id, attrs_json, first_seen_at, last_seen_at
+                            FROM graph_nodes
+                            WHERE id IN ({placeholders})
+                            """,
+                            missing_ids,
+                        ))
+                    )
+                    selected_ids.extend(missing_ids)
+                    selected.update(missing_ids)
+                edge_rows.extend(bridge_rows)
+                deduped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+                for row in edge_rows:
+                    key = (
+                        str(row["source_node_id"]),
+                        str(row["target_node_id"]),
+                        str(row["kind"]),
+                        str(row.get("session_id") or ""),
+                    )
+                    existing = deduped.get(key)
+                    if existing is None or float(row.get("weight") or 0) > float(existing.get("weight") or 0):
+                        deduped[key] = row
+                edge_rows = list(deduped.values())
 
     colors = {
         "Agent": "#ffb156",

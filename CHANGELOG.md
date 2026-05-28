@@ -7,6 +7,8 @@
 - Updated `reflect skills` to augment extraction prompts with SQL Behavioral Memory Graph evidence from the SQLite store (with telemetry-based fallback when graph evidence is unavailable).
 - Migrated `reflect skills` session-stat evidence generation to SQL canonical tables by default, including both SQL stats and Behavioral Memory Graph evidence in extraction bundles.
 - Updated `reflect setup` skill distribution to install `reflect-skills` alongside `reflect` and `opentelemetry-skill`.
+- Added interactive agent selection before skill installation so `reflect skills` can target a subset of detected agents in terminals.
+- Cleaned up legacy `skills/` aliases during skill distribution so renamed bundles do not leave stale directories behind.
 
 ### Fixed
 - Made `reflect doctor cost` resilient to transient SQLite lock contention by retrying locked operations and increasing default SQLite busy timeout.

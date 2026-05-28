@@ -685,6 +685,31 @@ class TestSkillsSubcommand:
         assert not (skill_dest / "context-reset").exists()
         assert not (skill_dest / "test-first").exists()
 
+    def test_skills_interactive_agent_selection_limits_install_targets(self, runner, otlp_file, tmp_path):
+        skill_output = json.dumps([_FAKE_SKILLS[0]])
+        first_dest = tmp_path / "agent-one"
+        second_dest = tmp_path / "agent-two"
+        agents = [
+            {"name": "Claude Code", "detected": True, "global_path": str(first_dest)},
+            {"name": "Cursor", "detected": True, "global_path": str(second_dest)},
+        ]
+        with patch("subprocess.run", return_value=_R(0, skill_output)), \
+             patch("reflect.core._detect_agents", return_value=agents), \
+             patch("reflect.core._select_skills", return_value=[_FAKE_SKILLS[0]]), \
+             patch("reflect.core._select_skill_install_agents", return_value=[agents[1]]) as selector, \
+             patch("reflect.core.click.confirm", return_value=True):
+            result = runner.invoke(main, [
+                "skills", "--agent", "claude",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+
+        assert result.exit_code == 0
+        assert selector.called
+        assert not (first_dest / "debug-loop" / "SKILL.md").exists()
+        assert (second_dest / "debug-loop" / "SKILL.md").exists()
+
     def test_skills_gemini_uses_p_flag(self, runner, otlp_file, tmp_path):
         """gemini agent uses -p flag, not --print."""
         fake_output = json.dumps([_FAKE_SKILLS[0]])
@@ -1531,6 +1556,8 @@ class TestSetup:
 
         console = Console(file=io.StringIO())
         global_skill_dir = tmp_path / "global-skills"
+        (global_skill_dir / "skills").mkdir(parents=True)
+        (global_skill_dir / "skills" / "SKILL.md").write_text("# legacy\n", encoding="utf-8")
         agent = {
             "name": "Claude Code",
             "detected": True,
@@ -1544,6 +1571,7 @@ class TestSetup:
 
         assert (global_skill_dir / "reflect" / "SKILL.md").exists()
         assert (global_skill_dir / "reflect-skills" / "SKILL.md").exists()
+        assert not (global_skill_dir / "skills").exists()
         assert not (tmp_path / ".claude" / "skills" / "reflect" / "SKILL.md").exists()
 
     def test_distribute_skills_dedupes_shared_global_paths(self, tmp_path):
@@ -1579,6 +1607,8 @@ class TestSetup:
 
         console = Console(file=io.StringIO())
         global_skill_dir = tmp_path / "global-skills"
+        (tmp_path / ".claude" / "skills").mkdir(parents=True)
+        (tmp_path / ".claude" / "skills" / "SKILL.md").write_text("# legacy\n", encoding="utf-8")
         agent = {
             "name": "Claude Code",
             "detected": True,
@@ -1595,6 +1625,7 @@ class TestSetup:
         assert (global_skill_dir / "reflect-skills" / "SKILL.md").exists()
         assert (tmp_path / ".claude" / "skills" / "reflect" / "SKILL.md").exists()
         assert (tmp_path / ".claude" / "skills" / "reflect-skills" / "SKILL.md").exists()
+        assert not (tmp_path / ".claude" / "skills" / "skills").exists()
 
 
     def test_setup_seeds_config_from_example_on_fresh_install(self, runner, tmp_path):
