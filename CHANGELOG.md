@@ -12,22 +12,22 @@
 - Expanded report ingest summaries with hook-event counts per source and agent, so hook-derived telemetry is visible alongside native OTLP and session-file inputs.
 - Made bare `reflect` open the local browser report from SQLite by default, leaving `reflect report` as a deprecated compatibility alias and terminal/markdown/JSON outputs behind explicit deprecated flags.
 - Updated public docs and bundled reflect skill guidance around the Behavioral Memory Graph and the new default browser-report workflow.
+- Added a session-level `Tools` tab that persists tool, skill, MCP tool, MCP server, and subagent usage into the session detail view.
+- Expanded skill detection so `SKILL.md` reads and prompt text hints are surfaced, not just explicit `skill` tool calls.
+- Normalized subagent detection across Cursor, Claude, and Copilot-style events, including nested tool-input file paths.
+- Added instruction file discovery and memory upsert into SQLite via `reflect db sync-instructions`.
+- Added a Behavioral Memory Graph canvas to the report Graphs tab, backed by `graph_nodes` and `graph_edges`.
+- Added per-session `Folder` graph nodes derived from touched paths, linking sessions and tool calls to the folders they investigated or edited.
 
 ### Fixed
 - Made `reflect doctor cost` resilient to transient SQLite lock contention by retrying locked operations and increasing default SQLite busy timeout.
 - Backfilled costs for Claude Code native OTLP log rows and Codex native session token-count rows during SQL report ingestion.
 - Prevented duplicate model/token rows from overlapping local sources from inflating SQL session token and cost totals.
 - Added the missing YAML frontmatter delimiter to the bundled `reflect-skills` skill.
+- Fixed `content_preview_redacted` column in memories table to properly redact sensitive file paths from user/home directories (e.g., `~/.claude/CLAUDE.md`) by showing only path basename and metadata instead of full content.
+- Fixed session detail `tool_inventory` to include `tool_result` events so tool durations and failures are properly captured for all telemetry sources (span, native, and conversation).
 
-## 0.8.4 (2026-05-27)
-
-### Added
-- Added `reflect db sync-instructions` to discover project, path-specific, and user memory instruction files such as `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md`, `.github/instructions/*.instructions.md`, `.cursor/rules/*.md`, `.cursor/agents/*.md`, and Cursor plan files into the SQLite memory store.
-- Added a Behavioral Memory Graph canvas to the report Graphs tab, backed by `graph_nodes` and `graph_edges`.
-- Added per-session `Folder` graph nodes derived from touched paths, linking sessions and tool calls to the folders they investigated or edited.
-- Memory graph rebuilds now attach instruction-file memory rows to `Path` nodes when a stored instruction record carries its source path.
-
-## 0.8.3 (2026-05-26)
+## 0.8.2 (2026-05-26)
 
 ### Added
 - Added `reflect doctor cost` to scan the SQLite store for observed model names, append only missing model aliases to `~/.reflect/config/model-aliases.json`, and refresh SQL cost estimates.

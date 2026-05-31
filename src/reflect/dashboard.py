@@ -371,11 +371,13 @@ def _build_tool_inventory(
 
     for event in tool_events:
         tool_name = str(event.get("tool_name") or "unknown").strip() or "unknown"
-        tools[tool_name] += 1
+        # Support explicit count (default 1) so result-only rows can use count=0 without inflating totals
+        count = int(event.get("count", 1))
+        tools[tool_name] += count
         status = str(event.get("status") or "").lower()
         success = event.get("success")
         if status == "error" or success is False:
-            tool_failures[tool_name] += 1
+            tool_failures[tool_name] += count
         duration = event.get("duration_ms")
         if isinstance(duration, (int, float)) and duration > 0:
             tool_durations[tool_name].append(int(duration))
@@ -385,20 +387,20 @@ def _build_tool_inventory(
         file_path = str(event.get("file_path") or "").strip()
         path_skill = _extract_skill_name_from_path(file_path)
         if path_skill:
-            skills[path_skill] += 1
-            skill_tools[path_skill][tool_name] += 1
+            skills[path_skill] += count
+            skill_tools[path_skill][tool_name] += count
         if tool_name == "skill":
             skill_name = _extract_skill_name_from_preview(preview)
             if skill_name:
-                skills[skill_name] += 1
-                skill_tools[skill_name][tool_name] += 1
+                skills[skill_name] += count
+                skill_tools[skill_name][tool_name] += count
         attrs = event.get("attrs")
         if not isinstance(attrs, dict):
             attrs = {}
         subagent_name = _extract_subagent_name_from_tool(tool_name, attrs, preview)
         if subagent_name:
-            subagents[subagent_name] += 1
-            subagent_sources[subagent_name][tool_name] += 1
+            subagents[subagent_name] += count
+            subagent_sources[subagent_name][tool_name] += count
 
     for event in mcp_events or []:
         tool_name = str(event.get("tool_name") or "").strip()
@@ -2008,7 +2010,7 @@ def _load_session_detail(session_id: str, stats: TelemetryStats) -> dict | None:
                 "file_path": event.get("file_path", ""),
             }
             for event in detail.get("events", [])
-            if isinstance(event, dict) and event.get("type") == "tool_call"
+            if isinstance(event, dict) and event.get("type") in ("tool_call", "tool_result")
         ],
         [
             {

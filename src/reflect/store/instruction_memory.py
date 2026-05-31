@@ -28,6 +28,26 @@ def _preview(text: str, *, max_chars: int = 360) -> str:
     return cleaned[:max_chars]
 
 
+def _redacted_preview(path: Path, *, max_chars: int = 100) -> str:
+    """Return a safe preview that doesn't expose file contents.
+    
+    For user/home files, only expose the basename and metadata hints.
+    For workspace files, show a truncated preview of the content.
+    """
+    try:
+        relative_home = path.relative_to(Path.home())
+        # User/home file: only show basename and size hint
+        return f"[user config: {path.name}]"
+    except ValueError:
+        # Not a home file; safe to show content preview
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return f"[{path.name}: unreadable]"
+        cleaned = " ".join(line.strip() for line in text.splitlines() if line.strip())
+        return cleaned[:max_chars]
+
+
 def _user_memory_files(home_root: Path) -> tuple[Path, ...]:
     return (
         home_root / ".claude" / "CLAUDE.md",
@@ -158,7 +178,7 @@ def upsert_instruction_memories(
 
         kind, scope = _classify_instruction(path, workspace_root, home_root=home_root or Path.home())
         content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        preview = _preview(text)
+        redacted = _redacted_preview(path)
         stat = path.stat()
         raw_attrs = {
             "path": str(path),
@@ -194,7 +214,7 @@ def upsert_instruction_memories(
                 scope,
                 kind,
                 content_hash,
-                preview,
+                redacted,
                 1.0,
                 "private" if scope == "user" else "unknown",
                 "filesystem_instruction_scan",
