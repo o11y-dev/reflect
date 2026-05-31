@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from reflect.parsing import (
-    _iter_claude_session_spans,
     _iter_claude_log_spans,
+    _iter_claude_session_spans,
     _iter_codex_log_spans,
     _iter_codex_session_spans,
     _iter_copilot_session_spans,

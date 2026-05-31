@@ -1576,6 +1576,7 @@ def skills(
     graph_evidence_attached = False
     try:
         from sqlite3 import Error as _SQLiteError
+
         from reflect.store.sqlite import connect_sqlite
 
         include_native_sessions = False
@@ -2578,10 +2579,9 @@ def _raw_event_agent_breakdown(conn, *, source_ids: list[str]) -> dict[str, dict
             counts = totals.setdefault(agent, {"events": 0, "hook_events": 0})
             counts["events"] += int(row[1] or 0)
             counts["hook_events"] += int(row[2] or 0)
-    return {
-        agent: counts
-        for agent, counts in sorted(totals.items(), key=lambda item: (-item[1]["events"], item[0]))
-    }
+    return dict(
+        sorted(totals.items(), key=lambda item: (-item[1]["events"], item[0]))
+    )
 
 
 def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
