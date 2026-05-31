@@ -2491,10 +2491,12 @@ def _prepare_sql_report_db(
         ingest_result = {"inserted": 0, "skipped": 0}
         ingest_sources: dict[str, dict[str, object]] = {}
         source_refs: dict[str, list[str]] = {}
+        source_types: dict[str, str] = {}
         if otlp_traces is not None and otlp_traces.exists():
             traces_result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
             ingest_sources["otlp_traces"] = traces_result
             source_refs["otlp_traces"] = [str(otlp_traces)]
+            source_types["otlp_traces"] = "otlp_traces_json"
             ingest_result["inserted"] += traces_result["inserted"]
             ingest_result["skipped"] += traces_result["skipped"]
             otlp_logs = _infer_otlp_logs_file(otlp_traces)
@@ -2502,6 +2504,7 @@ def _prepare_sql_report_db(
                 logs_result = ingest_otlp_logs_file(conn, file_path=otlp_logs)
                 ingest_sources["otlp_logs"] = logs_result
                 source_refs["otlp_logs"] = [str(otlp_logs)]
+                source_types["otlp_logs"] = "otlp_logs_json"
                 ingest_result["inserted"] += logs_result["inserted"]
                 ingest_result["skipped"] += logs_result["skipped"]
         if include_native_sessions:
@@ -2522,11 +2525,15 @@ def _prepare_sql_report_db(
             if native_result["inserted"] or native_result["skipped"]:
                 ingest_sources["native_sessions"] = native_result
                 source_refs["native_sessions"] = native_refs
+                source_types["native_sessions"] = "native_session"
                 ingest_result["inserted"] += native_result["inserted"]
                 ingest_result["skipped"] += native_result["skipped"]
         for name, refs in source_refs.items():
             if name in ingest_sources:
-                ingest_sources[name]["agents"] = _raw_event_agent_breakdown(conn, source_ids=refs)
+                source_type = source_types.get(name, "")
+                ingest_sources[name]["agents"] = _raw_event_agent_breakdown(
+                    conn, source_ids_by_type={source_type: refs} if source_type else {}
+                )
         normalize_result = normalize_pending_raw_events(conn)
         _ensure_sql_costs(conn)
         graph_result = rebuild_graph(conn)
@@ -2543,12 +2550,28 @@ def _prepare_sql_report_db(
     }
 
 
-def _raw_event_agent_breakdown(conn, *, source_ids: list[str]) -> dict[str, dict[str, int]]:
-    if not source_ids:
+def _raw_event_agent_breakdown(conn, *, source_ids_by_type: dict[str, list[str]]) -> dict[str, dict[str, int]]:
+    """Breakdown raw events by agent, with separate hook event counting by source type.
+    
+    Source types:
+    - otlp_traces_json, otlp_logs_json: Count hook events (instrumented via otel-hook)
+    - native_session, local_spans_jsonl: Never count hook events (direct agent exports)
+    """
+    if not source_ids_by_type:
         return {}
     totals: dict[str, dict[str, int]] = {}
-    for offset in range(0, len(source_ids), 500):
-        chunk = source_ids[offset:offset + 500]
+    
+    # Only count hook events for OTLP sources (which can have hook instrumentation)
+    hook_source_types = {"otlp_traces_json", "otlp_logs_json"}
+    hook_source_ids = []
+    for source_type, source_ids in source_ids_by_type.items():
+        if source_type in hook_source_types:
+            hook_source_ids.extend(source_ids)
+    
+    # Fetch all events grouped by agent and source_type
+    all_source_ids = [sid for ids in source_ids_by_type.values() for sid in ids]
+    for offset in range(0, len(all_source_ids), 500):
+        chunk = all_source_ids[offset:offset + 500]
         placeholders = ", ".join("?" for _ in chunk)
         rows = conn.execute(
             f"""
@@ -2559,14 +2582,7 @@ def _raw_event_agent_breakdown(conn, *, source_ids: list[str]) -> dict[str, dict
                 NULLIF(json_extract(attrs_json, '$."service.name"'), ''),
                 'unknown'
               ) AS agent,
-              COUNT(*) AS events,
-              SUM(CASE
-                WHEN COALESCE(
-                  NULLIF(json_extract(attrs_json, '$."gen_ai.client.hook.event"'), ''),
-                  NULLIF(json_extract(attrs_json, '$."ide.hook.event"'), '')
-                ) IS NOT NULL THEN 1
-                ELSE 0
-              END) AS hook_events
+              COUNT(*) AS events
             FROM raw_events
             WHERE source_id IN ({placeholders})
             GROUP BY agent
@@ -2578,7 +2594,39 @@ def _raw_event_agent_breakdown(conn, *, source_ids: list[str]) -> dict[str, dict
             agent = str(row[0] or "unknown")
             counts = totals.setdefault(agent, {"events": 0, "hook_events": 0})
             counts["events"] += int(row[1] or 0)
-            counts["hook_events"] += int(row[2] or 0)
+    
+    # Count hook events only for OTLP sources
+    if hook_source_ids:
+        for offset in range(0, len(hook_source_ids), 500):
+            chunk = hook_source_ids[offset:offset + 500]
+            placeholders = ", ".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"""
+                SELECT
+                  COALESCE(
+                    NULLIF(json_extract(attrs_json, '$."gen_ai.client.name"'), ''),
+                    NULLIF(json_extract(attrs_json, '$."agent.name"'), ''),
+                    NULLIF(json_extract(attrs_json, '$."service.name"'), ''),
+                    'unknown'
+                  ) AS agent,
+                  SUM(CASE
+                    WHEN COALESCE(
+                      NULLIF(json_extract(attrs_json, '$."gen_ai.client.hook.event"'), ''),
+                      NULLIF(json_extract(attrs_json, '$."ide.hook.event"'), '')
+                    ) IS NOT NULL THEN 1
+                    ELSE 0
+                  END) AS hook_events
+                FROM raw_events
+                WHERE source_id IN ({placeholders})
+                GROUP BY agent
+                """,
+                chunk,
+            ).fetchall()
+            for row in rows:
+                agent = str(row[0] or "unknown")
+                if agent in totals:
+                    totals[agent]["hook_events"] += int(row[1] or 0)
+    
     return dict(
         sorted(totals.items(), key=lambda item: (-item[1]["events"], item[0]))
     )
