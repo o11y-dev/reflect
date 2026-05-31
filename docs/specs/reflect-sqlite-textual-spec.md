@@ -1226,7 +1226,8 @@ Normalization must be idempotent. It must be safe to rerun.
 
 ### Phase 7. Replace report command
 
-- `reflect report` starts browser-served Textual.
+- `reflect` starts the browser-served report.
+- `reflect report` remains only as a deprecated compatibility alias.
 - Old live HTML server is removed.
 
 ### Phase 8. Static export
@@ -1293,8 +1294,8 @@ Use SQL queries and rollups for reporting, not Python loops over all rows.
 
 ### Runtime
 
-- `reflect` opens Textual TUI by default.
-- `reflect report` opens browser-served Textual.
+- `reflect` opens the browser-served report by default.
+- `reflect report` is deprecated compatibility.
 - No live Textual screen reads dashboard JSON files.
 - No live report path loads report JSON into memory.
 - All report data comes from SQLite queries.

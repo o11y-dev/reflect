@@ -94,7 +94,7 @@ class TestHelp:
         result = runner.invoke(main, ["db", "doctor", "--db-path", str(db_path)])
 
         assert result.exit_code != 0
-        assert "Pending migrations: 1, 2, 3, 4" in result.output
+        assert "Pending migrations: 1, 2, 3, 4, 5" in result.output
         assert "SQLite store health: needs attention" in result.output
 
     def test_ingest_requires_one_source(self, runner, tmp_path):
@@ -424,6 +424,7 @@ class TestReportSubcommand:
         assert "Otlp Traces" in result.output
         assert "Otlp Logs" in result.output
         assert "codex" in result.output
+        assert "1 native / 0 hook" in result.output
         conn = sqlite3.connect(db_path)
         try:
             row = conn.execute(
@@ -478,6 +479,7 @@ class TestReportSubcommand:
         assert result.exit_code == 0
         assert "Native Sessions" in result.output
         assert "cursor" in result.output
+        assert "native /" in result.output
         assert "hook event(s)" in result.output
 
     def test_report_reprices_token_rows_with_session_model_hint(self, runner, tmp_path):
@@ -1068,6 +1070,68 @@ class TestUpdateAdvisor:
         assert payload["aliases"]["claude-4-5-sonnet-20250929"] == "claude-sonnet-4-5"
         assert "New aliases" in result.output
         assert "1" in result.output
+
+    def test_prepare_sql_report_db_repairs_provenance_before_summary_breakdown(self, tmp_path, monkeypatch):
+        from reflect.store.migrate import migrate
+        from reflect.store.sqlite import connect_sqlite
+
+        db_path = tmp_path / "reflect.db"
+        otlp_traces = tmp_path / "otel-traces.json"
+        otlp_traces.write_text("{}")
+
+        conn = connect_sqlite(db_path)
+        try:
+            migrate(conn)
+            conn.execute(
+                """
+                INSERT INTO raw_events(
+                  id, source_id, source_type, event_type, trace_id, span_id, parent_span_id,
+                  session_id, observed_at, received_at, attrs_json, body_json,
+                  normalized_status, normalization_error, content_hash, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "raw-legacy-hook-trace",
+                    str(otlp_traces),
+                    "otlp_traces_json",
+                    "tool_call",
+                    "trace-1",
+                    "span-1",
+                    "",
+                    "sess-1",
+                    "2026-01-01T00:00:00+00:00",
+                    "2026-01-01T00:00:01+00:00",
+                    json.dumps(
+                        {
+                            "gen_ai.client.name": "cursor",
+                            "gen_ai.client.hook.event": "PreToolUse",
+                            "session.id": "sess-1",
+                        },
+                        sort_keys=True,
+                    ),
+                    "{}",
+                    "pending",
+                    None,
+                    "legacy-hash",
+                    "2026-01-01T00:00:01+00:00",
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        monkeypatch.setattr("reflect.store.ingest.ingest_otlp_traces_file", lambda *_args, **_kwargs: {"inserted": 0, "skipped": 1})
+        monkeypatch.setattr("reflect.store.graph_normalize.rebuild_graph", lambda *_args, **_kwargs: {"sessions": 0, "transitions": 0})
+        monkeypatch.setattr("reflect.store.rollups.rebuild_rollups", lambda *_args, **_kwargs: {"session_rollups": 0})
+        monkeypatch.setattr(core, "_ensure_sql_costs", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(core, "_infer_otlp_logs_file", lambda *_args, **_kwargs: None)
+
+        result = core._prepare_sql_report_db(db_path, otlp_traces=otlp_traces, include_native_sessions=False)
+
+        counts = result["ingest_sources"]["otlp_traces"]["agents"]["cursor"]
+        assert counts["events"] == 1
+        assert counts["native_events"] == 0
+        assert counts["hook_events"] == 1
 
     def test_update_apply_uses_pipx_upgrade(self, runner):
         advisor = {

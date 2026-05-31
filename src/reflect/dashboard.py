@@ -2066,6 +2066,7 @@ def _load_session_detail(session_id: str, stats: TelemetryStats) -> dict | None:
 
 def _sql_report_payload(db_path: Path, *, limit: int = 50, offset: int = 0) -> dict[str, object]:
     from reflect.store.migrate import migrate
+    from reflect.store.normalize import repair_telemetry_provenance
     from reflect.store.sqlite import connect_sqlite
     from reflect.views.overview import build_overview
     from reflect.views.report_tabs import build_report_tabs
@@ -2074,6 +2075,7 @@ def _sql_report_payload(db_path: Path, *, limit: int = 50, offset: int = 0) -> d
     conn = connect_sqlite(db_path)
     try:
         migrate(conn)
+        repair_telemetry_provenance(conn)
         return {
             "db_path": str(db_path),
             "overview": build_overview(conn).model_dump(),
@@ -2314,7 +2316,9 @@ def _sql_response_preview(attrs: dict[str, object], call: dict[str, object]) -> 
 
 def _sql_dashboard_compat_payload(db_path: Path, *, session_ids: set[str] | None = None) -> dict[str, object]:
     from reflect.store.migrate import migrate
+    from reflect.store.normalize import repair_telemetry_provenance
     from reflect.store.sqlite import connect_sqlite
+    from reflect.views.overview import list_source_provenance
     from reflect.views.report_tabs import build_report_tabs
 
     scoped = session_ids is not None
@@ -2323,7 +2327,9 @@ def _sql_dashboard_compat_payload(db_path: Path, *, session_ids: set[str] | None
     conn = connect_sqlite(db_path)
     try:
         migrate(conn)
+        repair_telemetry_provenance(conn)
         tab_views = build_report_tabs(conn, session_ids=set(scoped_ids) if scoped else None).model_dump()
+        source_provenance = list_source_provenance(conn, session_ids=set(scoped_ids) if scoped else None)
     finally:
         conn.close()
 
@@ -2376,6 +2382,7 @@ def _sql_dashboard_compat_payload(db_path: Path, *, session_ids: set[str] | None
         "graph_dep": graphs_view["graph_dep"],
         "graph_session_timeline": graphs_view["graph_session_timeline"],
         "graph_semantic": graphs_view["graph_semantic"],
+        "source_provenance": source_provenance,
         "agents": agents_view["agents"],
         "specs": specs_view,
         "memory": memory_view,
@@ -2774,6 +2781,7 @@ def _sql_dashboard_payload(
     prompt_count = sum(row["prompt_count"] for row in scoped_session_rows)
     scoped_session_ids = {str(row["session_id"]) for row in scoped_session_rows}
     compat = _sql_dashboard_compat_payload(db_path, session_ids=scoped_session_ids if has_scope_filter else None)
+    scoped_overview["source_provenance"] = compat["source_provenance"]
     cost_breakdown = compat["cost_breakdown"]
     total_cost_usd = float(scoped_overview["estimated_cost_usd"] or cost_breakdown["total_cost_usd"] or 0)
     sqlite_payload["tabs"] = {
@@ -2807,6 +2815,7 @@ def _sql_dashboard_payload(
             "unique_models": compat["unique_models"],
             "models_by_count": compat["models_by_count"],
             "events_by_type": compat["events_by_type"],
+            "source_provenance": compat["source_provenance"],
             "total_input_tokens": scoped_overview["input_tokens"],
             "total_output_tokens": scoped_overview["output_tokens"],
             "total_cache_creation_tokens": compat["total_cache_creation_tokens"],
@@ -2920,6 +2929,7 @@ def _sql_dashboard_payload(
         "tool_calls": scoped_overview["tool_call_count"],
         "tool_to_prompt_ratio": f"{scoped_overview['tool_call_count'] / prompt_count:.1f}" if prompt_count else "0.0",
         "events_by_type": compat["events_by_type"],
+        "source_provenance": compat["source_provenance"],
         "failure_rate_pct": 0,
         "file_edits": compat["file_edits"],
         "file_reads": compat["file_reads"],

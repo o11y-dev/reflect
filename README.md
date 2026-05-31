@@ -317,24 +317,42 @@ Commands:
 
 ## Data flow
 
-```
-reflect setup
-    ├── installs opentelemetry-hooks
-    ├── edits each agent's settings file to enable telemetry
-    │       via hooks        Claude Code  → ~/.claude/settings.json
-    │       via native otel  Claude Code  → ~/.claude/settings.json  (env block, metrics+logs)
-    │                        Codex CLI    → ~/.codex/config.toml    ([otel] section)
-    │                        Copilot VS Code → VS Code settings.json (otel.* keys)
-    │                        Copilot CLI  → VS Code settings.json  (env block)
-    │                        Gemini CLI   → ~/.gemini/settings.json  (telemetry.* keys)
-    ├── starts local OTLP gateway (gRPC :4317, HTTP :4318)
-    ├── distributes skill packages
-    └── enables local span export to ~/.reflect/state/
+```mermaid
+flowchart LR
+    subgraph Setup["reflect setup"]
+        A[Install opentelemetry-hooks]
+        B[Write agent telemetry config]
+        C[Start local OTLP gateway<br/>gRPC :4317 / HTTP :4318]
+        D[Distribute skill packages]
+    end
 
-Your AI tool → hooks -or- native OTLP → gateway → ~/.reflect/state/otlp/
+    subgraph Agents["Agent signal paths"]
+        E[Claude Code hooks]
+        F[Native OTLP exporters<br/>Claude / Codex / Copilot / Gemini]
+        G[Local session stores<br/>Cursor / Codex / Copilot / Claude / Gemini]
+    end
 
-reflect → reads traces + logs + session stores → local SQLite → browser report
+    H[reflect gateway]
+    I[~/.reflect/state/otlp/<br/>otel-traces.json + otel-logs.json]
+    J[Normalization + ingestion]
+    K[Local SQLite store]
+    L[Browser report]
+
+    A --> E
+    B --> F
+    C --> H
+    D --> L
+
+    E --> H
+    F --> H
+    H --> I
+    I --> J
+    G --> J
+    J --> K
+    K --> L
 ```
+
+`reflect setup` wires both hook-based and native OTLP paths into the local gateway. The gateway persists a shared OTLP traces/logs cache under `~/.reflect/state/otlp/`, while local session stores are ingested alongside that OTLP cache into the SQLite-backed browser report.
 
 ## Skill package
 

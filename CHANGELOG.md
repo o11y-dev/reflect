@@ -18,6 +18,7 @@
 - Added instruction file discovery and memory upsert into SQLite via `reflect db sync-instructions`.
 - Added a Behavioral Memory Graph canvas to the report Graphs tab, backed by `graph_nodes` and `graph_edges`.
 - Added per-session `Folder` graph nodes derived from touched paths, linking sessions and tool calls to the folders they investigated or edited.
+- Added durable telemetry provenance on SQL `raw_events` and `steps`, separating transport/source origin from semantic event style in the browser overview.
 
 ### Fixed
 - Made `reflect doctor cost` resilient to transient SQLite lock contention by retrying locked operations and increasing default SQLite busy timeout.
@@ -26,6 +27,8 @@
 - Added the missing YAML frontmatter delimiter to the bundled `reflect-skills` skill.
 - Fixed `content_preview_redacted` column in memories table to properly redact sensitive file paths from user/home directories (e.g., `~/.claude/CLAUDE.md`) by showing only path basename and metadata instead of full content.
 - Fixed session detail `tool_inventory` to include `tool_result` events so tool durations and failures are properly captured for all telemetry sources (span, native, and conversation).
+- Fixed OTLP ingest summaries so native Claude/Codex/Gemini OTLP log records are counted as native OTLP telemetry instead of hook telemetry after normalization.
+- Fixed OTLP provenance repair so existing SQLite rows are backfilled without reingest, and excluded reflect-injected provenance markers from raw-event dedupe hashes.
 
 ## 0.8.2 (2026-05-26)
 

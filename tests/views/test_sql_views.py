@@ -349,6 +349,7 @@ def test_build_overview_from_rollups_and_canonical_tables(tmp_path):
         assert overview.estimated_cost_usd == 1.25
         assert overview.failure_count == 3
         assert overview.recovered_failure_count == 1
+        assert isinstance(overview.source_provenance, list)
         assert overview.top_sessions[0]["session_id"] == "sess-2"
         assert overview.top_models[0]["model"] == "gpt-5.4"
         assert overview.top_tools[0]["tool_name"] == "Edit"

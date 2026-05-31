@@ -7,7 +7,7 @@ def test_migrate_applies_initial_schema(tmp_path):
     conn = connect_sqlite(db_path)
     try:
         applied = migrate(conn)
-        assert applied == [1, 2, 3, 4]
+        assert applied == [1, 2, 3, 4, 5]
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "raw_events" in tables
         assert "schema_migrations" in tables
@@ -36,7 +36,7 @@ def test_migrate_applies_initial_schema(tmp_path):
 def test_migrate_is_idempotent(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
-        assert migrate(conn) == [1, 2, 3, 4]
+        assert migrate(conn) == [1, 2, 3, 4, 5]
         assert migrate(conn) == []
     finally:
         conn.close()
@@ -79,6 +79,10 @@ def test_migrate_creates_canonical_indexes(tmp_path):
 
         step_indexes = {row[1] for row in conn.execute("PRAGMA index_list('steps')")}
         assert "idx_steps_session_seq" in step_indexes
+        assert "idx_steps_origin_kind" in step_indexes
+
+        raw_indexes = {row[1] for row in conn.execute("PRAGMA index_list('raw_events')")}
+        assert "idx_raw_events_origin_kind" in raw_indexes
 
         llm_indexes = {row[1] for row in conn.execute("PRAGMA index_list('llm_calls')")}
         assert "idx_llm_calls_provider_model" in llm_indexes
@@ -143,4 +147,4 @@ def test_database_doctor_reports_pending_migrations(tmp_path):
 
     assert status["ok"] is False
     assert status["applied_migrations"] == []
-    assert status["pending_migrations"] == [1, 2, 3, 4]
+    assert status["pending_migrations"] == [1, 2, 3, 4, 5]

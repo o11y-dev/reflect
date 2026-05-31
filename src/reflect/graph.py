@@ -96,6 +96,7 @@ def _compute_dep_graph(
     session_conversation = session_conversation or {}
     session_agents = session_agents or {}
     agent_mcp_tools: dict[str, Counter[str]] = {}
+    agent_mcp_servers: dict[str, Counter[str]] = {}
     mcp_tool_servers: Counter[tuple[str, str]] = Counter()
     mcp_tool_totals: Counter[str] = Counter()
 
@@ -106,12 +107,17 @@ def _compute_dep_graph(
                 continue
             tool_name = str(event.get("tool_name") or "").strip()
             server_name = str(event.get("server") or "").strip()
-            if not tool_name or not server_name:
+            if not server_name and not tool_name:
                 continue
-            mcp_tool_totals[tool_name] += 1
-            mcp_tool_servers[(tool_name, server_name)] += 1
             if agent_name:
-                agent_mcp_tools.setdefault(agent_name, Counter())[tool_name] += 1
+                if server_name and not tool_name:
+                    agent_mcp_servers.setdefault(agent_name, Counter())[server_name] += 1
+                elif tool_name:
+                    agent_mcp_tools.setdefault(agent_name, Counter())[tool_name] += 1
+            if tool_name:
+                mcp_tool_totals[tool_name] += 1
+                if server_name:
+                    mcp_tool_servers[(tool_name, server_name)] += 1
 
     top_mcp_tools = {tool for tool, _ in mcp_tool_totals.most_common(12)}
     top_server_names = {server for server, _ in mcp_servers.most_common(8)}
@@ -128,6 +134,11 @@ def _compute_dep_graph(
                 continue
             add_node(tool, "mcp_tool", mcp_tool_totals.get(tool, count))
             agent_links.append({"source": agent_name, "target": tool, "value": count})
+        for server, count in agent_mcp_servers.get(agent_name, Counter()).most_common(6):
+            if server not in top_server_names:
+                continue
+            add_node(server, "mcp_server", mcp_servers.get(server, count))
+            agent_links.append({"source": agent_name, "target": server, "value": count})
 
         if agent_links:
             add_node(agent_name, "agent", ag.total_events)

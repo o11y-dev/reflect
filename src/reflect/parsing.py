@@ -227,6 +227,7 @@ def _iter_codex_log_spans(records: Iterable[dict], since_ns: int = 0) -> Iterabl
             "gen_ai.client.session_id": session_id,
             "session.id": session_id,
             "service.name": service,
+            "reflect.telemetry.origin": "native_otlp_log",
         }
         model = str(attrs.get("slug") or attrs.get("model") or "").strip()
         if model:
@@ -357,6 +358,7 @@ def _iter_claude_log_spans(records: Iterable[dict], since_ns: int = 0) -> Iterab
             "gen_ai.client.session_id": session_id,
             "session.id": session_id,
             "service.name": service,
+            "reflect.telemetry.origin": "native_otlp_log",
         }
         if attrs.get("model"):
             base_attrs["gen_ai.request.model"] = str(attrs["model"])
@@ -425,6 +427,7 @@ def _iter_gemini_log_spans(records: Iterable[dict], since_ns: int = 0) -> Iterab
             "gen_ai.client.session_id": session_id,
             "session.id": session_id,
             "service.name": "gemini-cli",
+            "reflect.telemetry.origin": "native_otlp_log",
         }
 
         model = str(

@@ -30,6 +30,45 @@ def _attr(attrs: dict, *keys: str) -> object:
     return None
 
 
+def _extract_mcp_server_and_tool(attrs: dict) -> tuple[str, str]:
+    server = str(
+        _attr(
+            attrs,
+            "gen_ai.client.mcp_server",
+            "mcp.server",
+            "gen_ai.client.tool.input.server",
+            "tool.input.server",
+        )
+        or ""
+    ).strip()
+    tool = str(
+        _attr(
+            attrs,
+            "gen_ai.client.mcp_tool",
+            "mcp.tool",
+            "gen_ai.client.tool.input.toolName",
+            "gen_ai.client.tool.input.tool",
+            "tool.input.toolName",
+            "tool.input.tool",
+        )
+        or ""
+    ).strip()
+    payload = _load_json_dict(str(_attr(attrs, "gen_ai.client.tool.input", "tool.input") or ""))
+    if not server:
+        for key in ("server", "serverName", "mcpServer"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                server = value.strip()
+                break
+    if not tool:
+        for key in ("toolName", "tool", "mcpTool"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                tool = value.strip()
+                break
+    return server, tool
+
+
 def _extract_subagent_name_from_tool(tool_name: object, attrs: dict) -> str:
     normalized_tool = str(tool_name or "").strip().lower()
     preview = str(_attr(attrs, "gen_ai.client.tool.input", "tool.input") or "")
@@ -143,11 +182,14 @@ def _process_span(
     if model:
         models[model] += 1
 
-    tool_name = _attr(attrs, "gen_ai.client.tool_name", "ide.tool_name")
+    raw_tool_name = _attr(attrs, "gen_ai.client.tool_name", "ide.tool_name")
+    mcp_server, mcp_tool = _extract_mcp_server_and_tool(attrs)
+    tool_name = raw_tool_name
+    if event in ("BeforeMCPExecution", "AfterMCPExecution") and mcp_tool:
+        tool_name = mcp_tool
     if tool_name:
         tools[tool_name] += 1
 
-    mcp_server = attrs.get("gen_ai.client.mcp_server")
     if mcp_server:
         short_server = _shorten_mcp_server(mcp_server)
         mcp_servers[short_server] += 1
@@ -344,7 +386,6 @@ def _process_span(
         elif event == "SessionEnd":
             conv_event = {"type": "session_end", "ts": _ts_ms}
         elif event in ("BeforeMCPExecution", "AfterMCPExecution"):
-            mcp_tool = attrs.get("gen_ai.client.mcp_tool", "")
             conv_event = {
                 "type": "mcp_call" if event == "BeforeMCPExecution" else "mcp_result",
                 "ts": _ts_ms, "tool_name": mcp_tool,

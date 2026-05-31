@@ -178,6 +178,15 @@ def test_dashboard_tools_tab_spaces_event_distribution_from_top_widgets(path: Pa
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_agent_tool_network_supports_sql_graph_value_shapes(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "const raw = node && (node.size ?? node.value ?? node.count ?? node.events ?? 0);" in text
+    assert "const label = server.id ?? server.server ?? '';" in text
+    assert "const count = server.events ?? server.count ?? server.value ?? 0;" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_session_detail_has_quality_rules_tab(path: Path):
     text = path.read_text(encoding="utf-8")
 
@@ -239,6 +248,15 @@ def test_dashboard_activity_widgets_live_on_overview_tab(path: Path):
     assert 'id="weekly-trends-table"' in text
     assert "if (tabName === 'activity') tabName = 'overview';" in text
     assert "if (tabName === 'context') tabName = 'data';" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_overview_separates_source_provenance_from_event_semantics(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert 'id="source-provenance"' in text
+    assert "const sourceProvenance = overviewTab.source_provenance || D.source_provenance || [];" in text
+    assert "Transport/source provenance. The chart above stays semantic by event type." in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)

@@ -6,6 +6,8 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
+from reflect.store.provenance import apply_origin_kind, classify_origin_kind
+
 
 def _now() -> str:
     return datetime.now(tz=UTC).isoformat()
@@ -60,6 +62,45 @@ def _first_hash(attrs: dict[str, Any], text: str | None, *keys: str) -> str | No
         if isinstance(value, str) and value:
             return value
     return hashlib.sha256(text.encode("utf-8")).hexdigest() if text else None
+
+
+def _extract_mcp_server_and_tool(attrs: dict[str, Any]) -> tuple[str | None, str | None]:
+    server = _first_text(
+        attrs,
+        "gen_ai.client.mcp_server",
+        "mcp.server",
+        "gen_ai.client.tool.input.server",
+        "tool.input.server",
+    )
+    tool = _first_text(
+        attrs,
+        "gen_ai.client.mcp_tool",
+        "mcp.tool",
+        "gen_ai.client.tool.input.toolName",
+        "gen_ai.client.tool.input.tool",
+        "tool.input.toolName",
+        "tool.input.tool",
+    )
+    payload = _load_json(
+        str(
+            attrs.get("gen_ai.client.tool.input")
+            or attrs.get("tool.input")
+            or ""
+        )
+    )
+    if server is None:
+        for key in ("server", "serverName", "mcpServer"):
+            value = payload.get(key)
+            if isinstance(value, str) and value:
+                server = value
+                break
+    if tool is None:
+        for key in ("toolName", "tool", "mcpTool"):
+            value = payload.get(key)
+            if isinstance(value, str) and value:
+                tool = value
+                break
+    return server, tool
 
 
 def _agent_name(attrs: dict[str, Any]) -> str:
@@ -218,8 +259,8 @@ def _insert_step(
         """
         INSERT OR IGNORE INTO steps(
           id, session_id, seq, type, started_at, ended_at, duration_ms,
-          status, summary, raw_attrs_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          status, summary, origin_kind, raw_attrs_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             step_id,
@@ -231,12 +272,52 @@ def _insert_step(
             _duration_ms(raw_event["observed_at"], raw_event["received_at"]),
             _status(raw_event["event_type"], attrs),
             raw_event["event_type"],
+            raw_event["origin_kind"],
             raw_event["attrs_json"],
             timestamp,
             timestamp,
         ),
     )
     return step_id
+
+
+def repair_telemetry_provenance(conn: sqlite3.Connection) -> dict[str, int]:
+    previous_row_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, source_type, origin_kind, attrs_json
+            FROM raw_events
+            WHERE origin_kind IS NULL
+               OR COALESCE(NULLIF(json_extract(attrs_json, '$."reflect.telemetry.origin"'), ''), '') = ''
+            ORDER BY observed_at, id
+            """
+        ).fetchall()
+        repaired_raw_events = 0
+        repaired_steps = 0
+        for row in rows:
+            attrs = _load_json(row["attrs_json"])
+            origin_kind = classify_origin_kind(str(row["source_type"] or ""), attrs)
+            if not origin_kind:
+                continue
+            repaired_attrs = apply_origin_kind(attrs, origin_kind)
+            attrs_json = json.dumps(repaired_attrs, sort_keys=True)
+            conn.execute(
+                "UPDATE raw_events SET origin_kind = ?, attrs_json = ? WHERE id = ?",
+                (origin_kind, attrs_json, row["id"]),
+            )
+            repaired_raw_events += 1
+            step_id = _stable_id("step", row["id"])
+            step_result = conn.execute(
+                "UPDATE steps SET origin_kind = ?, raw_attrs_json = ? WHERE id = ?",
+                (origin_kind, attrs_json, step_id),
+            )
+            repaired_steps += int(step_result.rowcount or 0)
+        conn.commit()
+        return {"raw_events": repaired_raw_events, "steps": repaired_steps}
+    finally:
+        conn.row_factory = previous_row_factory
 
 
 def _insert_call_record(
@@ -326,6 +407,7 @@ def _insert_call_record(
             ),
         )
     elif step_type == "mcp_call":
+        mcp_server, mcp_tool = _extract_mcp_server_and_tool(attrs)
         conn.execute(
             """
             INSERT OR IGNORE INTO mcp_calls(
@@ -341,8 +423,8 @@ def _insert_call_record(
                 attrs.get("gen_ai.client.mcp_session_id"),
                 attrs.get("gen_ai.client.mcp_protocol_version"),
                 attrs.get("gen_ai.client.mcp_transport"),
-                attrs.get("gen_ai.client.mcp_server"),
-                attrs.get("gen_ai.client.mcp_tool") or attrs.get("gen_ai.client.tool_name"),
+                mcp_server,
+                mcp_tool or attrs.get("gen_ai.client.tool_name"),
                 status,
                 duration,
                 raw_event["attrs_json"],
@@ -530,6 +612,7 @@ def normalize_pending_raw_events(conn: sqlite3.Connection, *, limit: int | None 
     previous_row_factory = conn.row_factory
     conn.row_factory = sqlite3.Row
     try:
+        repair_telemetry_provenance(conn)
         params: list[int] = []
         limit_sql = ""
         if limit is not None:

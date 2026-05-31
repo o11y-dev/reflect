@@ -258,8 +258,10 @@ def test_ingest_otlp_traces_dedupes(tmp_path):
         assert first == {"inserted": 1, "skipped": 0}
         assert second == {"inserted": 0, "skipped": 1}
 
-        row = conn.execute("SELECT source_type, event_type, session_id FROM raw_events").fetchone()
-        assert row == ("otlp_traces_json", "UserPromptSubmit", "sess-1")
+        row = conn.execute("SELECT source_type, event_type, session_id, origin_kind, attrs_json FROM raw_events").fetchone()
+        attrs = json.loads(row[4])
+        assert row[:4] == ("otlp_traces_json", "UserPromptSubmit", "sess-1", "native_otlp_trace")
+        assert attrs["reflect.telemetry.origin"] == "native_otlp_trace"
     finally:
         conn.close()
 
@@ -279,12 +281,13 @@ def test_ingest_otlp_logs_normalizes_codex_records(tmp_path):
         assert second == {"inserted": 0, "skipped": 1}
 
         row = conn.execute(
-            "SELECT source_type, event_type, session_id, attrs_json FROM raw_events"
+            "SELECT source_type, event_type, session_id, origin_kind, attrs_json FROM raw_events"
         ).fetchone()
-        attrs = json.loads(row[3])
-        assert row[:3] == ("otlp_logs_json", "gen_ai.client.hook.UserPromptSubmit", "codex-sess-1")
+        attrs = json.loads(row[4])
+        assert row[:4] == ("otlp_logs_json", "gen_ai.client.hook.UserPromptSubmit", "codex-sess-1", "native_otlp_log")
         assert attrs["gen_ai.client.name"] == "codex"
         assert attrs["gen_ai.request.model"] == "gpt-5.5"
+        assert attrs["reflect.telemetry.origin"] == "native_otlp_log"
     finally:
         conn.close()
 
@@ -302,13 +305,14 @@ def test_ingest_otlp_logs_normalizes_claude_api_request(tmp_path):
         assert first == {"inserted": 1, "skipped": 0}
 
         row = conn.execute(
-            "SELECT source_type, event_type, session_id, attrs_json FROM raw_events"
+            "SELECT source_type, event_type, session_id, origin_kind, attrs_json FROM raw_events"
         ).fetchone()
-        attrs = json.loads(row[3])
-        assert row[:3] == ("otlp_logs_json", "gen_ai.client.hook.Stop", "claude-sess-1")
+        attrs = json.loads(row[4])
+        assert row[:4] == ("otlp_logs_json", "gen_ai.client.hook.Stop", "claude-sess-1", "native_otlp_log")
         assert attrs["gen_ai.client.name"] == "claude"
         assert attrs["gen_ai.request.model"] == "claude-opus-4-6"
         assert attrs["gen_ai.usage.output_tokens"] == 7238
+        assert attrs["reflect.telemetry.origin"] == "native_otlp_log"
     finally:
         conn.close()
 
@@ -329,14 +333,15 @@ def test_ingest_native_codex_session_file(tmp_path):
 
         rows = conn.execute(
             """
-            SELECT source_type, event_type, session_id, attrs_json
+            SELECT source_type, event_type, session_id, origin_kind, attrs_json
             FROM raw_events
             ORDER BY observed_at, event_type
             """
         ).fetchall()
         assert {row[0] for row in rows} == {"native_session"}
         assert {row[2] for row in rows} == {"codex-native-sess-1"}
-        attrs = [json.loads(row[3]) for row in rows]
+        assert {row[3] for row in rows} == {"native_session"}
+        attrs = [json.loads(row[4]) for row in rows]
         assert {attr["gen_ai.client.name"] for attr in attrs} == {"codex"}
         assert any(attr.get("gen_ai.client.tool_name") == "exec_command" for attr in attrs)
         assert any(attr.get("gen_ai.usage.input_tokens") == 750 for attr in attrs)

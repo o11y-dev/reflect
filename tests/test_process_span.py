@@ -142,6 +142,17 @@ class TestMcpTracking:
         assert c["mcp_servers"]["mcp-issue-tracker"] == 1
         assert raw not in c["mcp_servers"]
 
+    def test_mcp_server_and_tool_fall_back_to_tool_input_payload(self):
+        c = process(
+            make_span(
+                "BeforeMCPExecution",
+                tool="CallMcpTool",
+                tool_input='{"server":"mcp-github","toolName":"get_issue"}',
+            )
+        )
+        assert c["mcp_servers"]["mcp-github"] == 1
+        assert c["tools"]["get_issue"] == 1
+
 
 class TestSubagentTracking:
     def test_subagent_start_counted(self):
