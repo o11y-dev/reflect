@@ -9,9 +9,15 @@
 - Updated `reflect setup` skill distribution to install `reflect-skills` alongside `reflect` and `opentelemetry-skill`.
 - Added interactive agent selection before skill installation so `reflect skills` can target a subset of detected agents in terminals.
 - Cleaned up legacy `skills/` aliases during skill distribution so renamed bundles do not leave stale directories behind.
+- Expanded report ingest summaries with hook-event counts per source and agent, so hook-derived telemetry is visible alongside native OTLP and session-file inputs.
+- Made bare `reflect` open the local browser report from SQLite by default, leaving `reflect report` as a deprecated compatibility alias and terminal/markdown/JSON outputs behind explicit deprecated flags.
+- Updated public docs and bundled reflect skill guidance around the Behavioral Memory Graph and the new default browser-report workflow.
 
 ### Fixed
 - Made `reflect doctor cost` resilient to transient SQLite lock contention by retrying locked operations and increasing default SQLite busy timeout.
+- Backfilled costs for Claude Code native OTLP log rows and Codex native session token-count rows during SQL report ingestion.
+- Prevented duplicate model/token rows from overlapping local sources from inflating SQL session token and cost totals.
+- Added the missing YAML frontmatter delimiter to the bundled `reflect-skills` skill.
 
 ## 0.8.4 (2026-05-27)
 

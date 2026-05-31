@@ -1,3 +1,4 @@
+---
 name: reflect-skills
 description: Use when the user wants to extract reusable skills from their AI session history and distribute them to their coding agents.
 ---

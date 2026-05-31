@@ -20,13 +20,13 @@ Usage:
     python3 src/reflect/core.py \\
         --otlp-traces ~/.reflect/state/otlp/otel-traces.json
 
-    # Save a markdown report instead of the terminal dashboard
+    # Open the local browser report
+    python3 src/reflect/core.py \\
+        --otlp-traces ~/.reflect/state/otlp/otel-traces.json
+
+    # Legacy markdown report
     python3 src/reflect/core.py \\
         --otlp-traces ~/.reflect/state/otlp/otel-traces.json --no-terminal
-
-    # Open the local dashboard in a browser
-    python3 src/reflect/core.py report \\
-        --otlp-traces ~/.reflect/state/otlp/otel-traces.json
 
     # From local hook state (legacy)
     python3 src/reflect/core.py \\
@@ -148,6 +148,7 @@ from reflect.parsing import (  # noqa: F401
     _flatten_otlp_attributes,
     _flatten_text_content,
     _infer_otlp_logs_file,
+    _iter_claude_log_spans,
     _iter_claude_session_spans,
     _iter_codex_log_spans,
     _iter_codex_session_spans,
@@ -908,14 +909,25 @@ def _resolve_and_analyze(
 )
 @click.option(
     "--terminal/--no-terminal",
-    default=True,
-    help="Render an interactive dashboard in the terminal using rich (default). Use --no-terminal to save a markdown report instead.",
+    default=None,
+    help="Deprecated. Use --terminal for the legacy Rich terminal view or --no-terminal for the legacy markdown report.",
 )
 @click.option(
     "--dashboard-artifact",
     type=click.Path(path_type=Path),
     default=None,
-    help="Write the dashboard JSON artifact to a file. Best when serving docs/index.html locally or from GitHub Pages.",
+    help="Deprecated. Write the legacy dashboard JSON artifact to a file.",
+)
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+    help="SQLite store used for SQL-backed browser report endpoints.",
+)
+@click.option(
+    "--sql-only",
+    is_flag=True,
+    help="Deprecated no-op; SQLite-backed report data is now the default.",
 )
 @click.option(
     "--demo",
@@ -933,14 +945,36 @@ def main(
     spans_dir: Path | None,
     output: Path | None,
     otlp_traces: Path | None,
-    terminal: bool,
+    terminal: bool | None,
     dashboard_artifact: Path | None,
+    db_path: Path,
+    sql_only: bool,
     demo: bool,
     time_range: str,
 ) -> None:
-    """AI usage telemetry report — analyze OpenTelemetry span data from your AI sessions."""
+    """Open the local Reflect browser report."""
     if ctx.invoked_subcommand is not None:
         return
+
+    if sql_only:
+        click.echo("Note: --sql-only is deprecated; SQLite-backed report data is now the default.")
+
+    if terminal is None:
+        _run_browser_report(
+            otlp_traces=otlp_traces,
+            sessions_dir=sessions_dir,
+            spans_dir=spans_dir,
+            time_range=time_range,
+            demo=demo,
+            dashboard_artifact=dashboard_artifact,
+            output=output,
+            db_path=db_path,
+        )
+        return
+
+    click.echo(
+        "Note: terminal and markdown modes are deprecated. Run `reflect` with no terminal flags to open the browser report."
+    )
 
     stats, otlp_traces, sessions_dir, spans_dir, time_range, since = _resolve_and_analyze(
         otlp_traces=otlp_traces,
@@ -960,6 +994,7 @@ def main(
     if update_notice:
         click.echo(f"reflect notice: {update_notice}")
     if dashboard_artifact is not None:
+        click.echo("Note: --dashboard-artifact is deprecated; the browser report is served from SQLite by default.")
         _write_dashboard_artifact(stats, dashboard_artifact)
 
     if terminal:
@@ -986,6 +1021,106 @@ def main(
 # ---------------------------------------------------------------------------
 # Report command
 # ---------------------------------------------------------------------------
+
+
+def _run_browser_report(
+    *,
+    otlp_traces: Path | None,
+    sessions_dir: Path | None,
+    spans_dir: Path | None,
+    time_range: str,
+    demo: bool,
+    dashboard_artifact: Path | None,
+    output: Path | None,
+    db_path: Path,
+) -> None:
+    from collections import Counter
+
+    console = Console()
+    update_notice = _build_startup_update_notice()
+    if update_notice:
+        click.echo(f"reflect notice: {update_notice}")
+
+    include_native_sessions = False
+    if demo:
+        demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
+        if not demo_traces.exists():
+            demo_traces = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
+        otlp_traces = demo_traces if demo_traces.exists() else otlp_traces
+    elif otlp_traces is None:
+        otlp_traces = _default_otlp_traces()
+        include_native_sessions = True
+    else:
+        default_otlp = _default_otlp_traces()
+        include_native_sessions = (
+            default_otlp is not None
+            and otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
+        )
+    with console.status("[bold orange3]reflecting...[/bold orange3]", spinner="dots"):
+        preparation = _prepare_sql_report_db(
+            db_path,
+            otlp_traces=otlp_traces,
+            include_native_sessions=include_native_sessions,
+        )
+    ingest_sources = preparation.get("ingest_sources") or {}
+    summary = Table.grid(padding=(0, 2))
+    summary.add_column(style="bold")
+    summary.add_column(justify="right")
+    summary.add_row("Inserted", f"{preparation['ingest']['inserted']:,}")
+    summary.add_row("Skipped", f"{preparation['ingest']['skipped']:,}")
+    summary.add_row("Normalized", f"{preparation['normalize']['processed']:,}")
+    summary.add_row("Sessions", f"{preparation['rollups']['session_rollups']:,}")
+    if ingest_sources:
+        summary.add_row("", "")
+        for name, result in ingest_sources.items():
+            hook_events = sum(
+                int(counts.get("hook_events") or 0)
+                for counts in (result.get("agents") or {}).values()
+            )
+            source_detail = f"{result['inserted']:,} inserted / {result['skipped']:,} skipped"
+            if hook_events:
+                source_detail += f" / {hook_events:,} hook event(s)"
+            summary.add_row(
+                name.replace("_", " ").title(),
+                source_detail,
+            )
+            for agent, counts in sorted((result.get("agents") or {}).items()):
+                agent_detail = f"{counts['events']:,} event(s)"
+                if counts.get("hook_events"):
+                    agent_detail += f"{' / ' if agent_detail else ''}{counts['hook_events']:,} hook"
+                summary.add_row(
+                    f"  {agent}",
+                    agent_detail,
+                )
+    console.print(Panel(summary, title="[bold orange3]REFLECT[/bold orange3]", border_style="orange3"))
+
+    stats = TelemetryStats(
+        session_files=0,
+        span_files=0,
+        total_events=0,
+        events_by_type=Counter(),
+        events_by_file={},
+    )
+    sessions_dir = sessions_dir or _default_sessions_dir()
+    spans_dir = spans_dir or _default_spans_dir()
+    if output is not None:
+        stats, _, sessions_dir, spans_dir, _, _ = _resolve_and_analyze(
+            otlp_traces=otlp_traces,
+            sessions_dir=sessions_dir,
+            spans_dir=spans_dir,
+            demo=demo,
+            time_range=time_range,
+        )
+        render_report(stats, sessions_dir, spans_dir, output)
+        print(f"Report saved to: {output}")
+    if dashboard_artifact is not None:
+        click.echo("Note: --dashboard-artifact is deprecated; the browser report is served from SQLite by default.")
+        dashboard_artifact.parent.mkdir(parents=True, exist_ok=True)
+        dashboard_artifact.write_text(
+            _json_stdlib.dumps(_sql_dashboard_payload(db_path)),
+            encoding="utf-8",
+        )
+    _start_publish_server(stats, db_path=db_path, sql_only=False)
 
 
 @main.command()
@@ -1050,83 +1185,20 @@ def report(
     db_path: Path,
     sql_only: bool,
 ) -> None:
-    """Open the AI usage dashboard in a browser via a local server."""
-    from collections import Counter
-
-    console = Console()
-
+    """Deprecated alias for `reflect`."""
+    click.echo("Note: `reflect report` is deprecated. Run `reflect` to open the browser report.")
     if sql_only:
         click.echo("Note: --sql-only is deprecated; SQLite-backed report data is now the default.")
-
-    include_native_sessions = False
-    if demo:
-        demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
-        if not demo_traces.exists():
-            demo_traces = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
-        otlp_traces = demo_traces if demo_traces.exists() else otlp_traces
-    elif otlp_traces is None:
-        otlp_traces = _default_otlp_traces()
-        include_native_sessions = True
-    else:
-        default_otlp = _default_otlp_traces()
-        include_native_sessions = (
-            default_otlp is not None
-            and otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
-        )
-    with console.status("[bold orange3]reflecting...[/bold orange3]", spinner="dots"):
-        preparation = _prepare_sql_report_db(
-            db_path,
-            otlp_traces=otlp_traces,
-            include_native_sessions=include_native_sessions,
-        )
-    ingest_sources = preparation.get("ingest_sources") or {}
-    summary = Table.grid(padding=(0, 2))
-    summary.add_column(style="bold")
-    summary.add_column(justify="right")
-    summary.add_row("Inserted", f"{preparation['ingest']['inserted']:,}")
-    summary.add_row("Skipped", f"{preparation['ingest']['skipped']:,}")
-    summary.add_row("Normalized", f"{preparation['normalize']['processed']:,}")
-    summary.add_row("Sessions", f"{preparation['rollups']['session_rollups']:,}")
-    if ingest_sources:
-        summary.add_row("", "")
-        for name, result in ingest_sources.items():
-            summary.add_row(
-                name.replace("_", " ").title(),
-                f"{result['inserted']:,} inserted / {result['skipped']:,} skipped",
-            )
-            for agent, counts in sorted((result.get("agents") or {}).items()):
-                summary.add_row(
-                    f"  {agent}",
-                    f"{counts['events']:,} event(s)",
-                )
-    console.print(Panel(summary, title="[bold orange3]REFLECT[/bold orange3]", border_style="orange3"))
-
-    stats = TelemetryStats(
-        session_files=0,
-        span_files=0,
-        total_events=0,
-        events_by_type=Counter(),
-        events_by_file={},
+    _run_browser_report(
+        otlp_traces=otlp_traces,
+        sessions_dir=sessions_dir,
+        spans_dir=spans_dir,
+        time_range=time_range,
+        demo=demo,
+        dashboard_artifact=dashboard_artifact,
+        output=output,
+        db_path=db_path,
     )
-    sessions_dir = sessions_dir or _default_sessions_dir()
-    spans_dir = spans_dir or _default_spans_dir()
-    if output is not None:
-        stats, _, sessions_dir, spans_dir, _, _ = _resolve_and_analyze(
-            otlp_traces=otlp_traces,
-            sessions_dir=sessions_dir,
-            spans_dir=spans_dir,
-            demo=demo,
-            time_range=time_range,
-        )
-        render_report(stats, sessions_dir, spans_dir, output)
-        print(f"Report saved to: {output}")
-    if dashboard_artifact is not None:
-        dashboard_artifact.parent.mkdir(parents=True, exist_ok=True)
-        dashboard_artifact.write_text(
-            _json_stdlib.dumps(_sql_dashboard_payload(db_path)),
-            encoding="utf-8",
-        )
-    _start_publish_server(stats, db_path=db_path, sql_only=False)
 
 
 # ---------------------------------------------------------------------------
@@ -2473,7 +2545,7 @@ def _prepare_sql_report_db(
 def _raw_event_agent_breakdown(conn, *, source_ids: list[str]) -> dict[str, dict[str, int]]:
     if not source_ids:
         return {}
-    totals: dict[str, int] = {}
+    totals: dict[str, dict[str, int]] = {}
     for offset in range(0, len(source_ids), 500):
         chunk = source_ids[offset:offset + 500]
         placeholders = ", ".join("?" for _ in chunk)
@@ -2486,7 +2558,14 @@ def _raw_event_agent_breakdown(conn, *, source_ids: list[str]) -> dict[str, dict
                 NULLIF(json_extract(attrs_json, '$."service.name"'), ''),
                 'unknown'
               ) AS agent,
-              COUNT(*) AS events
+              COUNT(*) AS events,
+              SUM(CASE
+                WHEN COALESCE(
+                  NULLIF(json_extract(attrs_json, '$."gen_ai.client.hook.event"'), ''),
+                  NULLIF(json_extract(attrs_json, '$."ide.hook.event"'), '')
+                ) IS NOT NULL THEN 1
+                ELSE 0
+              END) AS hook_events
             FROM raw_events
             WHERE source_id IN ({placeholders})
             GROUP BY agent
@@ -2496,10 +2575,12 @@ def _raw_event_agent_breakdown(conn, *, source_ids: list[str]) -> dict[str, dict
         ).fetchall()
         for row in rows:
             agent = str(row[0] or "unknown")
-            totals[agent] = totals.get(agent, 0) + int(row[1] or 0)
+            counts = totals.setdefault(agent, {"events": 0, "hook_events": 0})
+            counts["events"] += int(row[1] or 0)
+            counts["hook_events"] += int(row[2] or 0)
     return {
-        agent: {"events": events}
-        for agent, events in sorted(totals.items(), key=lambda item: (-item[1], item[0]))
+        agent: counts
+        for agent, counts in sorted(totals.items(), key=lambda item: (-item[1]["events"], item[0]))
     }
 
 
@@ -2523,7 +2604,8 @@ def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
               input_tokens,
               output_tokens,
               cache_creation_input_tokens,
-              cache_read_input_tokens
+              cache_read_input_tokens,
+              reasoning_output_tokens
             FROM llm_calls
             """
         ).fetchall()
@@ -2548,9 +2630,20 @@ def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
         session_models: dict[str, str] = {}
         for model_row in model_rows:
             session_models.setdefault(model_row["session_id"], model_row["model"])
+        seen_usage: set[tuple] = set()
         session_costs: dict[str, float] = {}
+        session_tokens: dict[str, dict[str, int]] = {}
         for row in rows:
             model = row["model"] or session_models.get(row["session_id"], "")
+            usage_key = (
+                row["session_id"],
+                model,
+                int(row["input_tokens"] or 0),
+                int(row["output_tokens"] or 0),
+                int(row["cache_creation_input_tokens"] or 0),
+                int(row["cache_read_input_tokens"] or 0),
+                int(row["reasoning_output_tokens"] or 0),
+            )
             breakdown = calculate_cost(
                 {
                     "input": row["input_tokens"],
@@ -2562,6 +2655,21 @@ def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
                 pricing_table,
                 aliases=aliases,
             )
+            counted = usage_key not in seen_usage
+            if counted:
+                seen_usage.add(usage_key)
+                tokens = session_tokens.setdefault(
+                    row["session_id"],
+                    {"input": 0, "output": 0, "cache_creation": 0, "cache_read": 0, "reasoning": 0},
+                )
+                tokens["input"] += int(row["input_tokens"] or 0)
+                tokens["output"] += int(row["output_tokens"] or 0)
+                tokens["cache_creation"] += int(row["cache_creation_input_tokens"] or 0)
+                tokens["cache_read"] += int(row["cache_read_input_tokens"] or 0)
+                tokens["reasoning"] += int(row["reasoning_output_tokens"] or 0)
+                session_costs[row["session_id"]] = (
+                    session_costs.get(row["session_id"], 0.0) + breakdown.total_cost_usd
+                )
             conn.execute(
                 """
                 UPDATE llm_calls
@@ -2578,18 +2686,38 @@ def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
                 WHERE id = ?
                 """,
                 (
-                    breakdown.total_cost_usd,
+                    breakdown.total_cost_usd if counted else 0.0,
                     model,
                     model,
                     row["id"],
                 ),
             )
-            session_costs[row["session_id"]] = session_costs.get(row["session_id"], 0.0) + breakdown.total_cost_usd
         timestamp = datetime.now(tz=UTC).isoformat()
         for session_id, total_cost in session_costs.items():
+            tokens = session_tokens.get(session_id, {})
             conn.execute(
-                "UPDATE sessions SET estimated_cost_usd = ?, updated_at = ? WHERE id = ?",
-                (total_cost, timestamp, session_id),
+                """
+                UPDATE sessions
+                SET
+                  input_tokens = ?,
+                  output_tokens = ?,
+                  cache_creation_tokens = ?,
+                  cache_read_tokens = ?,
+                  reasoning_tokens = ?,
+                  estimated_cost_usd = ?,
+                  updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    tokens.get("input", 0),
+                    tokens.get("output", 0),
+                    tokens.get("cache_creation", 0),
+                    tokens.get("cache_read", 0),
+                    tokens.get("reasoning", 0),
+                    total_cost,
+                    timestamp,
+                    session_id,
+                ),
             )
         conn.commit()
     finally:

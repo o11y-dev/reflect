@@ -296,14 +296,31 @@ class TestHelp:
 
 
 class TestTerminalMode:
-    def test_default_terminal_mode(self, runner, otlp_file, tmp_path):
+    def test_default_opens_browser_report(self, runner, otlp_file, tmp_path):
+        with patch("reflect.core._start_publish_server") as mock_server, \
+             patch("reflect.core._render_terminal") as mock_render:
+            db_path = tmp_path / "reflect.db"
+            result = runner.invoke(main, [
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+                "--db-path", str(db_path),
+            ])
+            assert result.exit_code == 0
+            mock_server.assert_called_once()
+            mock_render.assert_not_called()
+            assert mock_server.call_args.kwargs["db_path"] == db_path
+
+    def test_explicit_terminal_mode_is_deprecated(self, runner, otlp_file, tmp_path):
         with patch("reflect.core._render_terminal") as mock_render:
             result = runner.invoke(main, [
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
+                "--terminal",
             ])
             assert result.exit_code == 0
+            assert "terminal and markdown modes are deprecated" in result.output
             mock_render.assert_called_once()
 
     def test_no_terminal_saves_report(self, runner, otlp_file, tmp_path):
@@ -318,6 +335,7 @@ class TestTerminalMode:
                 "--output", str(output_path),
             ])
             assert result.exit_code == 0
+            assert "terminal and markdown modes are deprecated" in result.output
             mock_report.assert_called_once()
 
 
@@ -333,6 +351,7 @@ class TestReportSubcommand:
                 "--db-path", str(db_path),
             ])
         assert result.exit_code == 0
+        assert "`reflect report` is deprecated" in result.output
         assert "REFLECT" in result.output
         assert mock_server.call_args.kwargs["db_path"] == db_path
         assert mock_server.call_args.kwargs["sql_only"] is False
@@ -459,6 +478,7 @@ class TestReportSubcommand:
         assert result.exit_code == 0
         assert "Native Sessions" in result.output
         assert "cursor" in result.output
+        assert "hook event(s)" in result.output
 
     def test_report_reprices_token_rows_with_session_model_hint(self, runner, tmp_path):
         session_id = "copilot-priced-session"
@@ -899,22 +919,24 @@ def test_strip_json_fences_variants():
 
 class TestNoDataNoCrash:
     def test_empty_dirs_no_crash(self, runner, tmp_path):
-        with patch("reflect.core._render_terminal"):
+        with patch("reflect.core._start_publish_server"):
             result = runner.invoke(main, [
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
+                "--db-path", str(tmp_path / "reflect.db"),
             ])
             assert result.exit_code == 0
 
 
 class TestUpdateAdvisor:
     def test_default_run_surfaces_startup_notice(self, runner, otlp_file, tmp_path):
-        with patch("reflect.core._render_terminal"), \
+        with patch("reflect.core._start_publish_server"), \
              patch("reflect.core._build_startup_update_notice", return_value="v9.9.9 is available. Run reflect doctor for details."):
             result = runner.invoke(main, [
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
+                "--db-path", str(tmp_path / "reflect.db"),
             ])
         assert result.exit_code == 0
         assert "reflect notice:" in result.output

@@ -246,14 +246,13 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
     <section class="panel install section" id="install">
       <h2 class="section-title">60-Second Local Path</h2>
       <p>
-        Start with reflect. It wires supported agents, reads local telemetry, and opens the same dashboard used by this showcase.
-        Use <code>reflect report</code> for the Behavioral Memory Graph and <code>reflect skills</code> to extract reusable skills from your session history.
-        Calculations are based on actual agent spans and dependency edges, so let your agent run for a bit to generate telemetry before running report or skills extraction.
+        Start with reflect. It wires supported agents, reads local telemetry, and opens the same browser dashboard used by this showcase.
+        Use <code>reflect</code> for the Behavioral Memory Graph and <code>reflect skills</code> to extract reusable skills from your session history.
+        Calculations are based on actual agent spans and dependency edges, so let your agent run for a bit to generate telemetry before opening the report or running skills extraction.
       </p>
       <pre><code>pipx install o11y-reflect
 reflect setup
 reflect
-reflect report
 reflect skills
 
 # no telemetry yet?
@@ -270,6 +269,10 @@ reflect --demo</code></pre>
         <article class="card">
           <h3>Governance at the Edge</h3>
           <p>Keep control close to the hook boundary, where sessions can be inspected, denied, asked about, or mutated before waste and risk compound.</p>
+        </article>
+        <article class="card">
+          <h3>Behavioral Memory Graph</h3>
+          <p>Turn sessions, tools, folders, skills, memories, and outcomes into a graph teams can query to understand repeated patterns and improve future agent runs.</p>
         </article>
         <article class="card">
           <h3>Vendor Neutral</h3>

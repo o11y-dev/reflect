@@ -7,6 +7,7 @@ from pathlib import Path
 
 from reflect.parsing import (
     _iter_claude_session_spans,
+    _iter_claude_log_spans,
     _iter_codex_log_spans,
     _iter_codex_session_spans,
     _iter_copilot_session_spans,
@@ -134,6 +135,7 @@ def ingest_otlp_logs_file(db_conn, *, file_path: Path, source_id: str | None = N
     records = list(_load_otlp_logs(file_path))
 
     def spans():
+        yield from _iter_claude_log_spans(records)
         yield from _iter_codex_log_spans(records)
         yield from _iter_gemini_log_spans(records)
 
@@ -176,21 +178,6 @@ def ingest_native_session_file(
         spans = _iter_gemini_session_spans(file_path)
     else:
         spans = ()
-    if skip_existing_sessions:
-        spans = list(spans)
-        session_ids = sorted({
-            str((span.get("attributes") or {}).get("session.id") or "")
-            for span in spans
-            if (span.get("attributes") or {}).get("session.id")
-        })
-        if session_ids:
-            placeholders = ", ".join("?" for _ in session_ids)
-            existing = db_conn.execute(
-                f"SELECT 1 FROM raw_events WHERE session_id IN ({placeholders}) LIMIT 1",
-                session_ids,
-            ).fetchone()
-            if existing:
-                return {"inserted": 0, "skipped": len(spans)}
     return _ingest_spans(
         db_conn,
         spans=spans,

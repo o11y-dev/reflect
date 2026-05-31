@@ -4,6 +4,7 @@ import hashlib
 import json as _json_stdlib
 import os
 import re
+import tomllib
 from collections import Counter
 from collections.abc import Iterable
 from datetime import datetime
@@ -159,6 +160,43 @@ def _coerce_int(value) -> int:
         return 0
 
 
+def _usage_attrs_from_token_count(info: dict) -> dict[str, int]:
+    usage = info.get("last_token_usage") or info.get("total_token_usage") or {}
+    if not isinstance(usage, dict):
+        return {}
+    input_tokens = _coerce_int(usage.get("input_tokens"))
+    cached_tokens = _coerce_int(usage.get("cached_input_tokens"))
+    output_tokens = _coerce_int(usage.get("output_tokens"))
+    reasoning_tokens = _coerce_int(usage.get("reasoning_output_tokens"))
+    attrs: dict[str, int] = {}
+    if input_tokens or cached_tokens:
+        attrs["gen_ai.usage.input_tokens"] = max(input_tokens - cached_tokens, 0)
+        attrs["gen_ai.usage.cache_read.input_tokens"] = cached_tokens
+    if output_tokens:
+        attrs["gen_ai.usage.output_tokens"] = output_tokens
+    if reasoning_tokens:
+        attrs["gen_ai.usage.reasoning_output_tokens"] = reasoning_tokens
+    return attrs
+
+
+def _first_attr(attrs: dict, *names: str) -> str:
+    for name in names:
+        value = attrs.get(name)
+        if value not in (None, ""):
+            return str(value)
+    return ""
+
+
+def _load_codex_default_model() -> str:
+    config_path = Path.home() / ".codex" / "config.toml"
+    try:
+        data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return ""
+    model = data.get("model")
+    return model.strip() if isinstance(model, str) else ""
+
+
 def _iter_codex_log_spans(records: Iterable[dict], since_ns: int = 0) -> Iterable[dict]:
     """Normalize native Codex OTLP log records into Reflect hook-like spans."""
     active_tools: dict[tuple[str, str], dict] = {}
@@ -287,6 +325,77 @@ def _iter_codex_log_spans(records: Iterable[dict], since_ns: int = 0) -> Iterabl
                 },
                 trace_id,
                 f"{index}:sse_response_completed",
+            )
+
+
+def _iter_claude_log_spans(records: Iterable[dict], since_ns: int = 0) -> Iterable[dict]:
+    """Normalize native Claude Code OTLP log records into Reflect hook-like spans."""
+    for index, record in enumerate(records):
+        attrs = record.get("attributes") or {}
+        service = str(attrs.get("service.name") or "")
+        event_name = str(record.get("body") or attrs.get("event.name") or "")
+        if service != "claude-code":
+            continue
+        if not event_name.startswith("claude_code."):
+            event_name = f"claude_code.{event_name}"
+
+        session_id = str(attrs.get("session.id") or attrs.get("gen_ai.client.session_id") or "").strip()
+        if not session_id:
+            continue
+
+        ts_ns = _parse_timestamp_to_ns(attrs.get("event.timestamp")) or int(
+            record.get("time_ns", 0) or record.get("observed_time_ns", 0) or 0
+        )
+        if since_ns and ts_ns and ts_ns < since_ns:
+            continue
+
+        trace_id = _stable_hex_id("claude", session_id, length=32)
+        base_attrs = {
+            "gen_ai.client.name": "claude",
+            "gen_ai.system": "claude",
+            "gen_ai.provider.name": "anthropic",
+            "gen_ai.client.session_id": session_id,
+            "session.id": session_id,
+            "service.name": service,
+        }
+        if attrs.get("model"):
+            base_attrs["gen_ai.request.model"] = str(attrs["model"])
+
+        if event_name == "claude_code.user_prompt":
+            yield _make_flat_span(
+                "gen_ai.client.hook.UserPromptSubmit",
+                ts_ns,
+                ts_ns,
+                {
+                    **base_attrs,
+                    "gen_ai.client.hook.event": "UserPromptSubmit",
+                    "gen_ai.client.prompt": str(attrs.get("prompt") or "[REDACTED]"),
+                },
+                trace_id,
+                f"{index}:user_prompt",
+            )
+        elif event_name == "claude_code.api_request":
+            duration_ms = _coerce_int(attrs.get("duration_ms"))
+            start_ns = max(ts_ns - duration_ms * 1_000_000, 0) if duration_ms else ts_ns
+            span_attrs = {
+                **base_attrs,
+                "gen_ai.client.hook.event": "Stop",
+                "gen_ai.client.status": "ok" if str(attrs.get("success") or "true").lower() != "false" else "error",
+                "gen_ai.usage.input_tokens": _coerce_int(attrs.get("input_tokens")),
+                "gen_ai.usage.output_tokens": _coerce_int(attrs.get("output_tokens")),
+                "gen_ai.usage.cache_read.input_tokens": _coerce_int(attrs.get("cache_read_tokens")),
+                "gen_ai.usage.cache_creation.input_tokens": _coerce_int(attrs.get("cache_creation_tokens")),
+            }
+            cost = attrs.get("cost_usd")
+            if cost not in (None, ""):
+                span_attrs["gen_ai.usage.cost_usd"] = str(cost)
+            yield _make_flat_span(
+                "gen_ai.client.hook.Stop",
+                start_ns,
+                ts_ns,
+                span_attrs,
+                trace_id,
+                f"{index}:api_request",
             )
 
 
@@ -532,8 +641,13 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
         "session.id": session_id,
         "service.name": "codex",
     }
-    if meta.get("model"):
-        base_attrs["gen_ai.request.model"] = str(meta["model"])
+    codex_model = str(meta.get("model") or meta.get("last_known_model") or "").strip()
+    if not codex_model:
+        codex_model = _load_codex_default_model()
+        if codex_model:
+            base_attrs["gen_ai.request.model_source"] = "codex_config_default"
+    if codex_model:
+        base_attrs["gen_ai.request.model"] = codex_model
     if meta.get("model_provider"):
         base_attrs["gen_ai.system"] = str(meta["model_provider"])
     if meta.get("cwd"):
@@ -626,6 +740,22 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
                     trace_id,
                     f"{index}:function_call_output:{call_id}",
                 )
+        elif record_type == "event_msg" and payload.get("type") == "token_count":
+            usage_attrs = _usage_attrs_from_token_count(payload.get("info") or {})
+            if not usage_attrs:
+                continue
+            yield _make_flat_span(
+                "gen_ai.client.hook.Stop",
+                ts_ns,
+                ts_ns,
+                {
+                    **base_attrs,
+                    "gen_ai.client.hook.event": "Stop",
+                    **usage_attrs,
+                },
+                trace_id,
+                f"{index}:token_count",
+            )
 
     if first_ts:
         yield _make_flat_span(

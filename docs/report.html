@@ -3274,7 +3274,7 @@ function renderDashboardError(kind, message){
   if (kind === 'no-data') {
     document.body.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:24px;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:rgba(255,255,255,.9)">'
       + '<h1 style="font-size:42px;font-weight:700;background:linear-gradient(135deg,#f28a1a,#d7d1c6);-webkit-background-clip:text;-webkit-text-fill-color:transparent">reflect.o11y.dev</h1>'
-      + '<p style="color:rgba(255,255,255,.5);font-size:16px;max-width:420px;text-align:center;line-height:1.7">AI usage telemetry dashboard.<br>Run <code style="background:rgba(255,255,255,.08);padding:2px 8px;border-radius:4px">reflect report --dashboard-artifact docs/reports/latest.json</code> to open your report here.</p>'
+      + '<p style="color:rgba(255,255,255,.5);font-size:16px;max-width:420px;text-align:center;line-height:1.7">AI usage telemetry dashboard.<br>Run <code style="background:rgba(255,255,255,.08);padding:2px 8px;border-radius:4px">reflect</code> to open your local browser report.</p>'
       + '<a href="https://github.com/o11y-dev/reflect" style="color:#f28a1a;font-size:14px;text-decoration:none">github.com/o11y-dev/reflect</a>'
       + '</div>';
     return;
@@ -3285,7 +3285,7 @@ function renderDashboardError(kind, message){
       <div style="color:rgba(255,255,255,.55);font-size:18px;max-width:480px;line-height:1.65;margin-bottom:32px">Local-first telemetry for AI coding agents.<br>See why your agents fail, stall, or burn budget.</div>
       <pre style="background:#080807;border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:20px 28px;font-size:16px;color:#ffb156;text-align:left;margin-bottom:32px">pipx install o11y-reflect
 reflect setup
-reflect report</pre>
+reflect</pre>
       <div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center">
         <a href="https://github.com/o11y-dev/reflect" style="padding:12px 20px;background:linear-gradient(135deg,#ffb156,#f28a1a);color:#100903;border-radius:8px;text-decoration:none;font-weight:700">View on GitHub</a>
         <a href="https://reflect.o11y.dev/" style="padding:12px 20px;border:1px solid rgba(255,255,255,.12);color:#f5f2ea;border-radius:8px;text-decoration:none;font-weight:700">reflect.o11y.dev</a>

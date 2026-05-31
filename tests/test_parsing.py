@@ -1,11 +1,13 @@
 """Tests for OTLP parsing functions."""
 import json
+from pathlib import Path
 
 import pytest
 from conftest import DAY1, HOUR, make_span, wrap_otlp
 
 from reflect.core import (
     _flatten_otlp_attributes,
+    _iter_claude_log_spans,
     _iter_codex_log_spans,
     _iter_codex_session_spans,
     _iter_cursor_session_spans,
@@ -258,6 +260,44 @@ class TestCodexOtlpLogs:
         assert spans[2]["attributes"]["gen_ai.usage.output_tokens"] == 80
 
 
+class TestClaudeOtlpLogs:
+    def test_claude_api_request_normalizes_model_tokens_and_cost(self, tmp_path):
+        p = tmp_path / "otel-logs.json"
+        p.write_text(json.dumps({
+            "resourceLogs": [{
+                "resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "claude-code"}}]},
+                "scopeLogs": [{
+                    "logRecords": [{
+                        "timeUnixNano": "3000",
+                        "attributes": [
+                            {"key": "event.name", "value": {"stringValue": "claude_code.api_request"}},
+                            {"key": "event.timestamp", "value": {"stringValue": "2026-05-28T14:47:57Z"}},
+                            {"key": "session.id", "value": {"stringValue": "claude-sess-1"}},
+                            {"key": "model", "value": {"stringValue": "claude-opus-4-6"}},
+                            {"key": "input_tokens", "value": {"stringValue": "9"}},
+                            {"key": "output_tokens", "value": {"stringValue": "7238"}},
+                            {"key": "cache_read_tokens", "value": {"stringValue": "0"}},
+                            {"key": "cache_creation_tokens", "value": {"stringValue": "41530"}},
+                            {"key": "cost_usd", "value": {"stringValue": "0.4405575"}},
+                            {"key": "duration_ms", "value": {"stringValue": "135933"}},
+                        ],
+                    }]
+                }],
+            }]
+        }) + "\n")
+
+        spans = list(_iter_claude_log_spans(_load_otlp_logs(p)))
+
+        assert len(spans) == 1
+        attrs = spans[0]["attributes"]
+        assert attrs["gen_ai.client.name"] == "claude"
+        assert attrs["gen_ai.request.model"] == "claude-opus-4-6"
+        assert attrs["gen_ai.usage.input_tokens"] == 9
+        assert attrs["gen_ai.usage.output_tokens"] == 7238
+        assert attrs["gen_ai.usage.cache_creation.input_tokens"] == 41530
+        assert attrs["gen_ai.usage.cost_usd"] == "0.4405575"
+
+
 class TestCursorNativeSessions:
     def test_cursor_tool_use_content_blocks_normalize_to_tool_spans(self, tmp_path):
         session = tmp_path / "cursor-session-1.jsonl"
@@ -397,6 +437,43 @@ class TestCodexSessionFiles:
             "SessionStart",
             "SessionEnd",
         ]
+
+    def test_codex_session_uses_config_model_when_meta_omits_model(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        (home / ".codex").mkdir(parents=True)
+        (home / ".codex" / "config.toml").write_text('model = "gpt-5.5"\n', encoding="utf-8")
+        monkeypatch.setattr(Path, "home", lambda: home)
+        p = tmp_path / "rollout-codex-session.jsonl"
+        p.write_text(
+            "\n".join([
+                json.dumps({
+                    "timestamp": "2026-05-08T00:42:07.990Z",
+                    "type": "session_meta",
+                    "payload": {"id": "codex-session", "model_provider": "openai"},
+                }),
+                json.dumps({
+                    "timestamp": "2026-05-08T00:42:08.990Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "last_token_usage": {
+                                "input_tokens": 1000,
+                                "cached_input_tokens": 250,
+                                "output_tokens": 80,
+                            }
+                        },
+                    },
+                }),
+            ])
+            + "\n"
+        )
+
+        spans = list(_iter_codex_session_spans(p))
+
+        token_span = next(span for span in spans if span["attributes"].get("gen_ai.usage.output_tokens") == 80)
+        assert token_span["attributes"]["gen_ai.request.model"] == "gpt-5.5"
+        assert token_span["attributes"]["gen_ai.request.model_source"] == "codex_config_default"
 
 
 class TestLoadJsonLines:
