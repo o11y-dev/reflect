@@ -5544,7 +5544,23 @@ if (sourceProvenanceEl) {
 }
 
 /* Token chart + stats */
-const overviewAgentCostRows = overviewTab.agent_cost_over_time || D.agent_cost_over_time || [];
+function deriveAgentCostRowsFromSessions(sessions){
+  const rows = new Map();
+  (sessions || []).forEach(session => {
+    const totalCost = Number(session.total_cost_usd ?? session.total_cost ?? session.estimated_cost_usd ?? 0);
+    if (!totalCost) return;
+    const rawDay = String(session.day || session.started_at || session.created_at || session.timestamp || D.first_event_ts || 'sessions');
+    const day = rawDay.slice(0, 10) || 'sessions';
+    const agent = String(session.agent || 'unknown');
+    const key = `${day}\u0000${agent}`;
+    const current = rows.get(key) || {day, agent, total_cost: 0};
+    current.total_cost += totalCost;
+    rows.set(key, current);
+  });
+  return Array.from(rows.values()).sort((a, b) => String(a.day).localeCompare(String(b.day)) || Number(b.total_cost || 0) - Number(a.total_cost || 0) || String(a.agent).localeCompare(String(b.agent)));
+}
+const rawOverviewAgentCostRows = overviewTab.agent_cost_over_time || D.agent_cost_over_time || [];
+const overviewAgentCostRows = rawOverviewAgentCostRows.length ? rawOverviewAgentCostRows : deriveAgentCostRowsFromSessions(D.sessions || []);
 const agentCostChartEl = document.getElementById('agentCostChart');
 if (agentCostChartEl) {
   if (overviewAgentCostRows.length) {
