@@ -41,6 +41,83 @@ def _short_id(value: object, length: int = 10) -> str:
     return text[-length:] if len(text) > length else text
 
 
+def _spec_label_from_plan(memory: sqlite3.Row, attrs: dict) -> str:
+    name = str(attrs.get("name") or "").strip()
+    if name:
+        base = name.removesuffix(".plan.md").removesuffix(".md")
+        if base:
+            return base
+    preview = str(memory["content_preview_redacted"] or "").strip()
+    if preview:
+        return preview
+    return str(memory["id"] or "cursor-plan")
+
+
+def _relative_repo_path(path: str, workspace_root: str) -> str | None:
+    normalized_path = PurePosixPath(path.replace("\\", "/")).as_posix().strip()
+    normalized_root = PurePosixPath(workspace_root.replace("\\", "/")).as_posix().strip()
+    if not normalized_path or not normalized_root:
+        return None
+    root_prefix = normalized_root.rstrip("/")
+    if normalized_path == root_prefix:
+        return None
+    path_prefix = f"{root_prefix}/"
+    if not normalized_path.startswith(path_prefix):
+        return None
+    relative = normalized_path[len(path_prefix):].strip("/")
+    return relative or None
+
+
+def _infer_repo_id_for_memory(
+    conn: sqlite3.Connection,
+    *,
+    explicit_repo_id: str,
+    memory_path: str,
+    memory_attrs: dict,
+) -> str:
+    if explicit_repo_id:
+        return explicit_repo_id
+    candidates: list[str] = []
+    path_candidates = [memory_path]
+    workspace_root = str(memory_attrs.get("workspace_root") or "").strip()
+    relative_path = _relative_repo_path(memory_path, workspace_root) if memory_path and workspace_root else None
+    if relative_path and relative_path not in path_candidates:
+        path_candidates.append(relative_path)
+    for candidate_path in path_candidates:
+        if not candidate_path:
+            continue
+        repo_hint = conn.execute(
+            """
+            SELECT repo_id
+            FROM files
+            WHERE path = ? AND COALESCE(repo_id, '') <> ''
+            GROUP BY repo_id
+            ORDER BY COUNT(*) DESC, repo_id ASC
+            LIMIT 1
+            """,
+            (candidate_path,),
+        ).fetchone()
+        if repo_hint and str(repo_hint["repo_id"] or ""):
+            candidates.append(str(repo_hint["repo_id"]))
+            break
+    if candidates:
+        return candidates[0]
+    if workspace_root:
+        repo_rows = conn.execute(
+            """
+            SELECT repo_id
+            FROM sessions
+            WHERE COALESCE(repo_id, '') <> ''
+            GROUP BY repo_id
+            ORDER BY COUNT(*) DESC, repo_id ASC
+            LIMIT 2
+            """
+        ).fetchall()
+        if len(repo_rows) == 1:
+            return str(repo_rows[0]["repo_id"] or "")
+    return ""
+
+
 def _path_candidates(*values: object) -> list[str]:
     paths: list[str] = []
     seen: set[str] = set()
@@ -210,6 +287,34 @@ def _insert_edge(
         ),
     )
     return edge_id, cursor.rowcount != 0
+
+
+def _refresh_node(
+    conn: sqlite3.Connection,
+    *,
+    node_id: str,
+    attrs: dict | None,
+    first_seen_at: str | None,
+    last_seen_at: str | None,
+    timestamp: str,
+) -> None:
+    conn.execute(
+        """
+        UPDATE graph_nodes
+        SET attrs_json = ?,
+            first_seen_at = COALESCE(first_seen_at, ?),
+            last_seen_at = COALESCE(?, last_seen_at),
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            json.dumps(attrs or {}, sort_keys=True),
+            first_seen_at,
+            last_seen_at,
+            timestamp,
+            node_id,
+        ),
+    )
 
 
 def rebuild_graph(conn: sqlite3.Connection) -> dict[str, int]:
@@ -725,6 +830,113 @@ def rebuild_graph(conn: sqlite3.Connection) -> dict[str, int]:
                 )
                 edges += int(inserted)
 
+        for spec in conn.execute("SELECT * FROM specs ORDER BY updated_at, id"):
+            spec_attrs = {
+                "spec_id": spec["id"],
+                "repo_id": spec["repo_id"],
+                "status": spec["status"],
+                "owner": spec["owner"],
+                "source_path": spec["source_path"],
+                "source": "spec_table",
+            }
+            spec_node, inserted = _insert_node(
+                conn,
+                kind="Spec",
+                label=spec["title"],
+                attrs=spec_attrs,
+                first_seen_at=spec["created_at"],
+                last_seen_at=spec["updated_at"],
+                timestamp=timestamp,
+            )
+            if not inserted:
+                _refresh_node(
+                    conn,
+                    node_id=spec_node,
+                    attrs=spec_attrs,
+                    first_seen_at=spec["created_at"],
+                    last_seen_at=spec["updated_at"],
+                    timestamp=timestamp,
+                )
+            nodes += int(inserted)
+            if spec["repo_id"]:
+                repo = conn.execute("SELECT * FROM repos WHERE id = ?", (spec["repo_id"],)).fetchone()
+                if repo:
+                    repo_node, inserted = _insert_node(
+                        conn,
+                        kind="Repo",
+                        label=repo["full_name"],
+                        attrs={
+                            "repo_id": repo["id"],
+                            "provider": repo["provider"],
+                            "branch": repo["branch"],
+                            "dirty": bool(repo["dirty"]),
+                        },
+                        timestamp=timestamp,
+                    )
+                    nodes += int(inserted)
+                    _, inserted = _insert_edge(
+                        conn,
+                        source_node_id=repo_node,
+                        target_node_id=spec_node,
+                        kind="defines_spec",
+                        attrs={"status": spec["status"], "owner": spec["owner"]},
+                        first_seen_at=spec["created_at"],
+                        last_seen_at=spec["updated_at"],
+                        timestamp=timestamp,
+                    )
+                    edges += int(inserted)
+            spec_path = str(spec["source_path"] or "").strip()
+            if spec_path:
+                path_node, inserted = _insert_node(
+                    conn,
+                    kind="Path",
+                    label=spec_path,
+                    attrs={"source": "spec", "spec_id": spec["id"]},
+                    timestamp=timestamp,
+                )
+                nodes += int(inserted)
+                _, inserted = _insert_edge(
+                    conn,
+                    source_node_id=spec_node,
+                    target_node_id=path_node,
+                    kind="described_by_path",
+                    attrs={"source": "spec", "spec_id": spec["id"]},
+                    first_seen_at=spec["created_at"],
+                    last_seen_at=spec["updated_at"],
+                    timestamp=timestamp,
+                )
+                edges += int(inserted)
+            for evidence in conn.execute(
+                """
+                SELECT e.session_id, MIN(e.created_at) AS first_seen_at, MAX(e.updated_at) AS last_seen_at
+                FROM evidence e
+                JOIN requirements r ON r.id = e.requirement_id
+                WHERE r.spec_id = ? AND COALESCE(e.session_id, '') <> ''
+                GROUP BY e.session_id
+                ORDER BY e.session_id
+                """,
+                (spec["id"],),
+            ):
+                session_node, _ = _insert_node(
+                    conn,
+                    kind="Session",
+                    label=evidence["session_id"],
+                    session_id=evidence["session_id"],
+                    timestamp=timestamp,
+                )
+                _, inserted = _insert_edge(
+                    conn,
+                    source_node_id=session_node,
+                    target_node_id=spec_node,
+                    kind="addressed_spec",
+                    session_id=evidence["session_id"],
+                    attrs={"spec_id": spec["id"], "status": spec["status"]},
+                    first_seen_at=evidence["first_seen_at"],
+                    last_seen_at=evidence["last_seen_at"],
+                    timestamp=timestamp,
+                )
+                edges += int(inserted)
+
         for mcp in conn.execute("SELECT * FROM mcp_calls WHERE server_name IS NOT NULL ORDER BY created_at, id"):
             session_node, _ = _insert_node(
                 conn,
@@ -752,8 +964,15 @@ def rebuild_graph(conn: sqlite3.Connection) -> dict[str, int]:
             )
             edges += int(inserted)
 
-        for memory in conn.execute("SELECT * FROM memories ORDER BY created_at, id"):
+        for memory in conn.execute("SELECT * FROM memories WHERE type <> 'cursor_plan' ORDER BY created_at, id"):
             memory_attrs = _load_json_dict(memory["raw_attrs_json"])
+            memory_path = str(memory_attrs.get("path") or "").strip()
+            memory_repo_id = _infer_repo_id_for_memory(
+                conn,
+                explicit_repo_id=str(memory["repo_id"] or ""),
+                memory_path=memory_path,
+                memory_attrs=memory_attrs,
+            )
             memory_node, inserted = _insert_node(
                 conn,
                 kind="Memory",
@@ -765,7 +984,6 @@ def rebuild_graph(conn: sqlite3.Connection) -> dict[str, int]:
                 timestamp=timestamp,
             )
             nodes += int(inserted)
-            memory_path = str(memory_attrs.get("path") or "")
             path_node_id: str | None = None
             if memory_path:
                 path_node, inserted = _insert_node(
@@ -794,20 +1012,6 @@ def rebuild_graph(conn: sqlite3.Connection) -> dict[str, int]:
                     timestamp=timestamp,
                 )
                 edges += int(inserted)
-            memory_repo_id = str(memory["repo_id"] or "")
-            if not memory_repo_id and memory_path:
-                repo_hint = conn.execute(
-                    """
-                    SELECT repo_id
-                    FROM files
-                    WHERE path = ? AND COALESCE(repo_id, '') <> ''
-                    GROUP BY repo_id
-                    ORDER BY COUNT(*) DESC, repo_id ASC
-                    LIMIT 1
-                    """,
-                    (memory_path,),
-                ).fetchone()
-                memory_repo_id = str(repo_hint["repo_id"] or "") if repo_hint else ""
             if memory_repo_id:
                 repo = conn.execute("SELECT * FROM repos WHERE id = ?", (memory_repo_id,)).fetchone()
                 if repo:
@@ -863,6 +1067,129 @@ def rebuild_graph(conn: sqlite3.Connection) -> dict[str, int]:
                     target_node_id=memory_node,
                     kind="recorded_memory",
                     session_id=memory["session_id"],
+                    timestamp=timestamp,
+                )
+                edges += int(inserted)
+
+        for memory in conn.execute("SELECT * FROM memories WHERE type = 'cursor_plan' ORDER BY created_at, id"):
+            memory_attrs = _load_json_dict(memory["raw_attrs_json"])
+            memory_path = str(memory_attrs.get("path") or "").strip()
+            memory_repo_id = _infer_repo_id_for_memory(
+                conn,
+                explicit_repo_id=str(memory["repo_id"] or ""),
+                memory_path=memory_path,
+                memory_attrs=memory_attrs,
+            )
+            spec_label = _spec_label_from_plan(memory, memory_attrs)
+            spec_attrs = {
+                "memory_id": memory["id"],
+                "repo_id": memory_repo_id,
+                "source": "cursor_plan",
+                "scope": memory["scope"],
+                "path": memory_attrs.get("path"),
+            }
+            spec_node, inserted = _insert_node(
+                conn,
+                kind="Spec",
+                label=spec_label,
+                session_id=memory["session_id"],
+                attrs=spec_attrs,
+                first_seen_at=memory["created_at"],
+                last_seen_at=memory["last_seen_at"],
+                timestamp=timestamp,
+            )
+            if not inserted:
+                _refresh_node(
+                    conn,
+                    node_id=spec_node,
+                    attrs=spec_attrs,
+                    first_seen_at=memory["created_at"],
+                    last_seen_at=memory["last_seen_at"],
+                    timestamp=timestamp,
+                )
+            nodes += int(inserted)
+            path_node_id: str | None = None
+            if memory_path:
+                path_node, inserted = _insert_node(
+                    conn,
+                    kind="Path",
+                    label=memory_path,
+                    session_id=memory["session_id"],
+                    attrs={"source": "cursor_plan", "memory_id": memory["id"]},
+                    timestamp=timestamp,
+                )
+                nodes += int(inserted)
+                path_node_id = path_node
+                _, inserted = _insert_edge(
+                    conn,
+                    source_node_id=spec_node,
+                    target_node_id=path_node,
+                    kind="described_by_path",
+                    session_id=memory["session_id"],
+                    attrs={"source": "cursor_plan", "memory_id": memory["id"]},
+                    first_seen_at=memory["created_at"],
+                    last_seen_at=memory["last_seen_at"],
+                    timestamp=timestamp,
+                )
+                edges += int(inserted)
+            if memory_repo_id:
+                repo = conn.execute("SELECT * FROM repos WHERE id = ?", (memory_repo_id,)).fetchone()
+                if repo:
+                    repo_node, inserted = _insert_node(
+                        conn,
+                        kind="Repo",
+                        label=repo["full_name"],
+                        attrs={
+                            "repo_id": repo["id"],
+                            "provider": repo["provider"],
+                            "branch": repo["branch"],
+                            "dirty": bool(repo["dirty"]),
+                        },
+                        timestamp=timestamp,
+                    )
+                    nodes += int(inserted)
+                    _, inserted = _insert_edge(
+                        conn,
+                        source_node_id=repo_node,
+                        target_node_id=spec_node,
+                        kind="defines_spec",
+                        session_id=memory["session_id"],
+                        attrs={"source": "cursor_plan", "memory_id": memory["id"]},
+                        first_seen_at=memory["created_at"],
+                        last_seen_at=memory["last_seen_at"],
+                        timestamp=timestamp,
+                    )
+                    edges += int(inserted)
+                    if path_node_id:
+                        _, inserted = _insert_edge(
+                            conn,
+                            source_node_id=repo_node,
+                            target_node_id=path_node_id,
+                            kind="contains_path",
+                            session_id=memory["session_id"],
+                            attrs={"source": "cursor_plan", "memory_id": memory["id"]},
+                            first_seen_at=memory["created_at"],
+                            last_seen_at=memory["last_seen_at"],
+                            timestamp=timestamp,
+                        )
+                        edges += int(inserted)
+            if memory["session_id"]:
+                session_node, _ = _insert_node(
+                    conn,
+                    kind="Session",
+                    label=memory["session_id"],
+                    session_id=memory["session_id"],
+                    timestamp=timestamp,
+                )
+                _, inserted = _insert_edge(
+                    conn,
+                    source_node_id=session_node,
+                    target_node_id=spec_node,
+                    kind="planned_spec",
+                    session_id=memory["session_id"],
+                    attrs={"memory_id": memory["id"]},
+                    first_seen_at=memory["created_at"],
+                    last_seen_at=memory["last_seen_at"],
                     timestamp=timestamp,
                 )
                 edges += int(inserted)

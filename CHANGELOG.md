@@ -19,6 +19,7 @@
 - Added a Behavioral Memory Graph canvas to the report Graphs tab, backed by `graph_nodes` and `graph_edges`.
 - Added per-session `Folder` graph nodes derived from touched paths, linking sessions and tool calls to the folders they investigated or edited.
 - Added durable telemetry provenance on SQL `raw_events` and `steps`, separating transport/source origin from semantic event style in the browser overview.
+- Added an Overview cost-trends chart that breaks estimated cost down over time by agent.
 
 ### Fixed
 - Made `reflect doctor cost` resilient to transient SQLite lock contention by retrying locked operations and increasing default SQLite busy timeout.
@@ -29,6 +30,11 @@
 - Fixed session detail `tool_inventory` to include `tool_result` events so tool durations and failures are properly captured for all telemetry sources (span, native, and conversation).
 - Fixed OTLP ingest summaries so native Claude/Codex/Gemini OTLP log records are counted as native OTLP telemetry instead of hook telemetry after normalization.
 - Fixed OTLP provenance repair so existing SQLite rows are backfilled without reingest, and excluded reflect-injected provenance markers from raw-event dedupe hashes.
+- Fixed SQL rollups so session and daily error counts do not double-count failures already represented by canonical error steps.
+- Fixed SQL context-tab classification so Cursor plan artifacts render under Specs instead of the Memory widget.
+- Fixed the semantic/memory graph so specs render as first-class `Spec` nodes, including Cursor plan artifacts, instead of leaking through as generic memory nodes.
+- Fixed semantic graph orphaning for instruction, memory, and plan nodes by pulling their connected session context into the rendered graph and inferring repo links for workspace-scoped instruction files.
+- Fixed session-filtered semantic graph views so connected memory and instruction context stays visible through repo/path bridges instead of disappearing unless nodes had a direct session stamp.
 
 ## 0.8.2 (2026-05-26)
 

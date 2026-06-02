@@ -39,7 +39,7 @@ def rebuild_rollups(conn: sqlite3.Connection) -> dict[str, int]:
               )
           END), 0),
           COALESCE(SUM(CASE WHEN st.type IN ('tool_call', 'mcp_call', 'shell_command') THEN 1 ELSE 0 END), 0),
-          s.failure_count + COALESCE(COUNT(DISTINCT CASE
+          COALESCE(COUNT(DISTINCT CASE
             WHEN st.status = 'error'
               THEN COALESCE(
                 json_extract(st.raw_attrs_json, '$."gen_ai.client.tool_use_id"'),

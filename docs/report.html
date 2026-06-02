@@ -2933,8 +2933,9 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
       <div id="cost-stats" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px 0"></div>
     </div>
     <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Model Cost Share</div>
-      <div id="model-cost-share" style="padding:8px 0"></div>
+      <div class="panel-title">Cost Trends</div>
+      <div class="chart-box" style="height:200px"><canvas id="agentCostChart"></canvas></div>
+      <div id="model-cost-share" style="padding:12px 0 0"></div>
     </div>
   </div>
 
@@ -5543,6 +5544,35 @@ if (sourceProvenanceEl) {
 }
 
 /* Token chart + stats */
+const overviewAgentCostRows = overviewTab.agent_cost_over_time || D.agent_cost_over_time || [];
+const agentCostChartEl = document.getElementById('agentCostChart');
+if (agentCostChartEl) {
+  if (overviewAgentCostRows.length) {
+    const dayLabels = Array.from(new Set(overviewAgentCostRows.map(row => String(row.day || '')))).filter(Boolean).sort();
+    const totalsByAgent = new Map();
+    const byAgentDay = new Map();
+    overviewAgentCostRows.forEach(row => {
+      const agent = String(row.agent || 'unknown');
+      const day = String(row.day || '');
+      const totalCost = Number(row.total_cost || 0);
+      totalsByAgent.set(agent, (totalsByAgent.get(agent) || 0) + totalCost);
+      if (!byAgentDay.has(agent)) byAgentDay.set(agent, new Map());
+      byAgentDay.get(agent).set(day, totalCost);
+    });
+    const topAgents = Array.from(totalsByAgent.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 6)
+      .map(([agent]) => agent);
+    makeLine('agentCostChart', dayLabels, topAgents.map((agent, idx) => ({
+      label: agent,
+      data: dayLabels.map(day => byAgentDay.get(agent)?.get(day) || 0),
+      borderColor: COLORS[idx % COLORS.length],
+      backgroundColor: COLORS[idx % COLORS.length],
+    })), true);
+  } else {
+    agentCostChartEl.parentElement.innerHTML = '<div style="font-size:12px;color:var(--text-3);padding:24px 0">No priced sessions available yet for agent cost trends.</div>';
+  }
+}
 const overviewInputTokens = overviewTab.total_input_tokens ?? D.total_input_tokens ?? 0;
 const overviewOutputTokens = overviewTab.total_output_tokens ?? D.total_output_tokens ?? 0;
 const overviewCacheCreationTokens = overviewTab.total_cache_creation_tokens ?? D.total_cache_creation_tokens ?? 0;
@@ -6550,6 +6580,13 @@ function initGraphs() {
   const allNodes = graph.nodes.map(node => ({...node}));
   const allEdges = graph.edges.map(edge => ({...edge}));
   const nodeById = new Map(allNodes.map(node => [node.id, node]));
+  const adjacency = new Map();
+  for (const edge of allEdges) {
+    if (!adjacency.has(edge.source)) adjacency.set(edge.source, []);
+    if (!adjacency.has(edge.target)) adjacency.set(edge.target, []);
+    adjacency.get(edge.source).push(edge);
+    adjacency.get(edge.target).push(edge);
+  }
   const edgeColor = {
     touched_folder: 'rgba(100,199,161,.34)',
     contains_touched_path: 'rgba(149,213,178,.26)',
@@ -6568,13 +6605,29 @@ function initGraphs() {
   function visibleIdsForSession(sessionId) {
     if (!sessionId) return new Set(allNodes.map(node => node.id));
     const nodeIds = new Set();
+    const frontier = [];
     for (const node of allNodes) {
-      if (node.session_id === sessionId) nodeIds.add(node.id);
+      if (node.session_id === sessionId) {
+        nodeIds.add(node.id);
+        frontier.push(node.id);
+      }
     }
     for (const edge of allEdges) {
       if (edge.session_id === sessionId) {
+        if (!nodeIds.has(edge.source)) frontier.push(edge.source);
+        if (!nodeIds.has(edge.target)) frontier.push(edge.target);
         nodeIds.add(edge.source);
         nodeIds.add(edge.target);
+      }
+    }
+    while (frontier.length) {
+      const current = frontier.pop();
+      for (const edge of adjacency.get(current) || []) {
+        if (edge.session_id && edge.session_id !== sessionId) continue;
+        const neighbor = edge.source === current ? edge.target : edge.source;
+        if (nodeIds.has(neighbor)) continue;
+        nodeIds.add(neighbor);
+        frontier.push(neighbor);
       }
     }
     return nodeIds;
@@ -6931,6 +6984,44 @@ function makeHBar(id, labels, values, color){
       scales:{
         x:{grid:{color:'rgba(255,255,255,.04)'},ticks:{color:'rgba(255,255,255,.35)',font:{size:10}}},
         y:{grid:{display:false},ticks:{color:'rgba(255,255,255,.5)',font:{size:11},maxRotation:0}}
+      }
+    }
+  });
+}
+
+function makeLine(id, labels, datasets, costAxis=false){
+  new Chart(document.getElementById(id).getContext('2d'),{
+    type:'line',
+    data:{labels,datasets:datasets.map(dataset=>({
+      ...dataset,
+      fill:false,
+      tension:.25,
+      borderWidth:2,
+      pointRadius:2,
+      pointHoverRadius:3
+    }))},
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{
+          position:'bottom',
+          labels:{color:'rgba(255,255,255,.5)',font:{size:11},boxWidth:10,padding:10}
+        },
+        tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${costAxis ? fmtCost(c.parsed.y || 0) : (c.parsed.y || 0).toLocaleString()}`}}
+      },
+      scales:{
+        x:{grid:{color:'rgba(255,255,255,.04)'},ticks:{color:'rgba(255,255,255,.35)',font:{size:10}}},
+        y:{
+          beginAtZero:true,
+          grid:{color:'rgba(255,255,255,.04)'},
+          ticks:{
+            color:'rgba(255,255,255,.35)',
+            font:{size:10},
+            callback:value=>costAxis ? fmtCost(Number(value || 0)) : Number(value || 0).toLocaleString()
+          }
+        }
       }
     }
   });

@@ -154,6 +154,20 @@ def _scope_clause(column: str, scoped_ids: list[str] | None, *, prefix: str = "W
     return f"{prefix} {column} IN ({', '.join('?' for _ in scoped_ids)})", scoped_ids
 
 
+def _cursor_plan_scope_clause(scoped_ids: list[str] | None, *, prefix: str = "WHERE") -> tuple[str, list[str]]:
+    base_scope, params = _scope_clause("session_id", scoped_ids, prefix=prefix)
+    if not base_scope:
+        return f"{prefix} type = 'cursor_plan'", []
+    return f"{base_scope} AND type = 'cursor_plan'", params
+
+
+def _memory_scope_clause(scoped_ids: list[str] | None, *, prefix: str = "WHERE") -> tuple[str, list[str]]:
+    base_scope, params = _scope_clause("session_id", scoped_ids, prefix=prefix)
+    if not base_scope:
+        return f"{prefix} type <> 'cursor_plan'", []
+    return f"{base_scope} AND type <> 'cursor_plan'", params
+
+
 def _dict_rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
     columns = [column[0] for column in cursor.description]
     return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
@@ -966,6 +980,7 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
           WHEN 'Agent' THEN 10
           WHEN 'Session' THEN 40
           WHEN 'Repo' THEN 20
+          WHEN 'Spec' THEN 35
           WHEN 'Folder' THEN 75
           WHEN 'Path' THEN 60
           WHEN 'Tool' THEN 50
@@ -986,12 +1001,13 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
             WHEN 'Subagent' THEN 3
             WHEN 'Outcome' THEN 4
             WHEN 'Repo' THEN 5
-            WHEN 'Folder' THEN 6
-            WHEN 'Tool' THEN 7
-            WHEN 'MCPServer' THEN 8
-            WHEN 'Path' THEN 9
-            WHEN 'ToolCall' THEN 10
-            WHEN 'Memory' THEN 11
+            WHEN 'Spec' THEN 6
+            WHEN 'Folder' THEN 7
+            WHEN 'Tool' THEN 8
+            WHEN 'MCPServer' THEN 9
+            WHEN 'Path' THEN 10
+            WHEN 'ToolCall' THEN 11
+            WHEN 'Memory' THEN 12
             ELSE 99
           END,
           COALESCE(last_seen_at, first_seen_at, '') DESC,
@@ -1024,22 +1040,26 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
         edge_params,
     ))
     if scoped_ids is None:
-        memory_ids = [str(row["id"]) for row in node_rows if str(row.get("kind") or "") == "Memory"]
-        if memory_ids:
-            memory_placeholders = ", ".join("?" for _ in memory_ids)
+        bridge_ids = [
+            str(row["id"])
+            for row in node_rows
+            if str(row.get("kind") or "") in {"Memory", "Spec"}
+        ]
+        if bridge_ids:
+            bridge_placeholders = ", ".join("?" for _ in bridge_ids)
             bridge_rows = _dict_rows(conn.execute(
                 f"""
                 SELECT source_node_id, target_node_id, kind, session_id, weight, attrs_json, first_seen_at, last_seen_at
                 FROM graph_edges
-                WHERE kind IN ('recorded_memory', 'described_by_path', 'contains_path')
+                WHERE kind IN ('recorded_memory', 'described_by_path', 'contains_path', 'defines_spec')
                   AND (
-                    source_node_id IN ({memory_placeholders})
-                    OR target_node_id IN ({memory_placeholders})
+                    source_node_id IN ({bridge_placeholders})
+                    OR target_node_id IN ({bridge_placeholders})
                   )
                 ORDER BY COALESCE(last_seen_at, first_seen_at, '') DESC, weight DESC
                 LIMIT 240
                 """,
-                [*memory_ids, *memory_ids],
+                [*bridge_ids, *bridge_ids],
             ))
             if bridge_rows:
                 bridge_ids = {
@@ -1075,6 +1095,63 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
                     if existing is None or float(row.get("weight") or 0) > float(existing.get("weight") or 0):
                         deduped[key] = row
                 edge_rows = list(deduped.values())
+        context_ids = [
+            str(row["id"])
+            for row in node_rows
+            if str(row.get("kind") or "") in {"Memory", "Spec", "Repo"}
+        ]
+        if context_ids:
+            context_placeholders = ", ".join("?" for _ in context_ids)
+            session_bridge_rows = _dict_rows(conn.execute(
+                f"""
+                SELECT ge.source_node_id, ge.target_node_id, ge.kind, ge.session_id, ge.weight, ge.attrs_json, ge.first_seen_at, ge.last_seen_at
+                FROM graph_edges ge
+                JOIN graph_nodes gs ON gs.id = ge.source_node_id
+                JOIN graph_nodes gt ON gt.id = ge.target_node_id
+                WHERE ge.kind IN ('recorded_memory', 'planned_spec', 'addressed_spec', 'worked_in_repo')
+                  AND (
+                    (ge.source_node_id IN ({context_placeholders}) AND gt.kind = 'Session')
+                    OR (ge.target_node_id IN ({context_placeholders}) AND gs.kind = 'Session')
+                  )
+                ORDER BY COALESCE(ge.last_seen_at, ge.first_seen_at, '') DESC, ge.weight DESC
+                LIMIT 320
+                """,
+                [*context_ids, *context_ids],
+            ))
+            if session_bridge_rows:
+                session_ids = {
+                    str(node_id)
+                    for row in session_bridge_rows
+                    for node_id in (row["source_node_id"], row["target_node_id"])
+                }
+                missing_ids = [node_id for node_id in session_ids if node_id not in selected]
+                if missing_ids:
+                    placeholders = ", ".join("?" for _ in missing_ids)
+                    node_rows.extend(
+                        _dict_rows(conn.execute(
+                            f"""
+                            SELECT id, kind, label, session_id, attrs_json, first_seen_at, last_seen_at
+                            FROM graph_nodes
+                            WHERE id IN ({placeholders})
+                            """,
+                            missing_ids,
+                        ))
+                    )
+                    selected_ids.extend(missing_ids)
+                    selected.update(missing_ids)
+                edge_rows.extend(session_bridge_rows)
+                deduped = {}
+                for row in edge_rows:
+                    key = (
+                        str(row["source_node_id"]),
+                        str(row["target_node_id"]),
+                        str(row["kind"]),
+                        str(row.get("session_id") or ""),
+                    )
+                    existing = deduped.get(key)
+                    if existing is None or float(row.get("weight") or 0) > float(existing.get("weight") or 0):
+                        deduped[key] = row
+                edge_rows = list(deduped.values())
 
     colors = {
         "Agent": "#ffb156",
@@ -1087,6 +1164,7 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
         "Skill": "#c79cff",
         "Subagent": "#ffd166",
         "Repo": "#b7e4c7",
+        "Spec": "#f97316",
         "Folder": "#64c7a1",
         "Path": "#95d5b2",
         "Outcome": "#ff6b6b",
@@ -1370,6 +1448,23 @@ def _build_specs(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Spec
         """,
         spec_params,
     ))
+    cursor_plan_where, cursor_plan_params = _cursor_plan_scope_clause(scoped_ids)
+    cursor_plan_rows = _dict_rows(conn.execute(
+        f"""
+        SELECT
+          id,
+          content_preview_redacted,
+          confidence,
+          source,
+          last_seen_at,
+          raw_attrs_json
+        FROM memories
+        {cursor_plan_where}
+        ORDER BY COALESCE(last_seen_at, updated_at, created_at) DESC, id ASC
+        LIMIT 100
+        """,
+        cursor_plan_params,
+    ))
     status_rows = _dict_rows(conn.execute(
         f"""
         SELECT s.status, COUNT(*) AS count
@@ -1379,6 +1474,15 @@ def _build_specs(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Spec
         ORDER BY count DESC, s.status ASC
         """,
         spec_params,
+    ))
+    plan_status_rows = _dict_rows(conn.execute(
+        f"""
+        SELECT 'plan' AS status, COUNT(*) AS count
+        FROM memories
+        {cursor_plan_where}
+        HAVING COUNT(*) > 0
+        """,
+        cursor_plan_params,
     ))
     req_rows = _dict_rows(conn.execute(
         f"""
@@ -1403,30 +1507,58 @@ def _build_specs(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Spec
         """,
         spec_params,
     ))
-    return SpecsViewModel(
-        total_specs=_count_specs(conn, scoped_ids),
-        specs_by_status=_counter(status_rows, "status", "count"),
-        requirements_by_status=_counter(req_rows, "status", "count"),
-        evidence_by_kind=_counter(evidence_rows, "kind", "count"),
-        specs=[
+    specs_by_status = _counter([*status_rows, *plan_status_rows], "status", "count")
+    spec_items = [
+        {
+            "id": row["id"],
+            "title": row["title"],
+            "status": row["status"],
+            "owner": row["owner"] or "",
+            "source_path": row["source_path"] or "",
+            "updated_at": row["updated_at"],
+            "requirements": int(row["requirement_count"] or 0),
+            "evidence": int(row["evidence_count"] or 0),
+            "avg_confidence": float(row["avg_confidence"] or 0),
+        }
+        for row in specs
+    ]
+    for row in cursor_plan_rows:
+        try:
+            attrs = json.loads(str(row["raw_attrs_json"] or "{}"))
+        except json.JSONDecodeError:
+            attrs = {}
+        source_path = ""
+        title = row["content_preview_redacted"] or row["id"]
+        if isinstance(attrs, dict):
+            source_path = str(attrs.get("path") or "")
+            name = str(attrs.get("name") or "")
+            if name:
+                title = name.removesuffix(".plan.md") or name
+        spec_items.append(
             {
                 "id": row["id"],
-                "title": row["title"],
-                "status": row["status"],
-                "owner": row["owner"] or "",
-                "source_path": row["source_path"] or "",
-                "updated_at": row["updated_at"],
-                "requirements": int(row["requirement_count"] or 0),
-                "evidence": int(row["evidence_count"] or 0),
-                "avg_confidence": float(row["avg_confidence"] or 0),
+                "title": title,
+                "status": "plan",
+                "owner": "cursor",
+                "source_path": source_path,
+                "updated_at": row["last_seen_at"] or "",
+                "requirements": 0,
+                "evidence": 0,
+                "avg_confidence": float(row["confidence"] or 0),
             }
-            for row in specs
-        ],
+        )
+    spec_items.sort(key=lambda item: (str(item["updated_at"] or ""), str(item["title"] or "")), reverse=True)
+    return SpecsViewModel(
+        total_specs=sum(specs_by_status.values()),
+        specs_by_status=specs_by_status,
+        requirements_by_status=_counter(req_rows, "status", "count"),
+        evidence_by_kind=_counter(evidence_rows, "kind", "count"),
+        specs=spec_items[:100],
     )
 
 
 def _build_memory(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> MemoryViewModel:
-    scope, params = _scope_clause("session_id", scoped_ids)
+    scope, params = _memory_scope_clause(scoped_ids)
     rows = _dict_rows(conn.execute(
         f"""
         SELECT id, scope, type, sensitivity, source, confidence, content_preview_redacted, last_seen_at, session_id
@@ -1438,11 +1570,53 @@ def _build_memory(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Mem
         params,
     ))
     return MemoryViewModel(
-        total_memories=_count_rows(conn, "memories", "session_id", scoped_ids),
-        memories_by_scope=_count_by(conn, "memories", "scope", "session_id", scoped_ids),
-        memories_by_type=_count_by(conn, "memories", "type", "session_id", scoped_ids),
-        memories_by_sensitivity=_count_by(conn, "memories", "sensitivity", "session_id", scoped_ids),
-        memories_by_source=_count_by(conn, "memories", "source", "session_id", scoped_ids),
+        total_memories=int(
+            conn.execute(
+                f"SELECT COUNT(*) FROM memories {scope}",
+                params,
+            ).fetchone()[0]
+            or 0
+        ),
+        memories_by_scope=_counter(
+            _dict_rows(
+                conn.execute(
+                    f"SELECT scope, COUNT(*) AS count FROM memories {scope} GROUP BY scope ORDER BY count DESC, scope ASC",
+                    params,
+                )
+            ),
+            "scope",
+            "count",
+        ),
+        memories_by_type=_counter(
+            _dict_rows(
+                conn.execute(
+                    f"SELECT type, COUNT(*) AS count FROM memories {scope} GROUP BY type ORDER BY count DESC, type ASC",
+                    params,
+                )
+            ),
+            "type",
+            "count",
+        ),
+        memories_by_sensitivity=_counter(
+            _dict_rows(
+                conn.execute(
+                    f"SELECT sensitivity, COUNT(*) AS count FROM memories {scope} GROUP BY sensitivity ORDER BY count DESC, sensitivity ASC",
+                    params,
+                )
+            ),
+            "sensitivity",
+            "count",
+        ),
+        memories_by_source=_counter(
+            _dict_rows(
+                conn.execute(
+                    f"SELECT source, COUNT(*) AS count FROM memories {scope} GROUP BY source ORDER BY count DESC, source ASC",
+                    params,
+                )
+            ),
+            "source",
+            "count",
+        ),
         recent_memories=[
             {
                 "id": row["id"],

@@ -255,7 +255,10 @@ def test_dashboard_overview_separates_source_provenance_from_event_semantics(pat
     text = path.read_text(encoding="utf-8")
 
     assert 'id="source-provenance"' in text
+    assert 'id="agentCostChart"' in text
     assert "const sourceProvenance = overviewTab.source_provenance || D.source_provenance || [];" in text
+    assert "const overviewAgentCostRows = overviewTab.agent_cost_over_time || D.agent_cost_over_time || [];" in text
+    assert "makeLine('agentCostChart'" in text
     assert "Transport/source provenance. The chart above stays semantic by event type." in text
 
 
@@ -286,8 +289,9 @@ def test_dashboard_graph_tab_renders_semantic_force_graph(path: Path):
     assert "d3.zoom" in text
     assert "d3.drag" in text
     assert "visibleIdsForSession" in text
-    assert "if (!node.session_id || node.session_id === sessionId)" not in text
-    assert "if (!edge.session_id || edge.session_id === sessionId)" not in text
+    assert "const adjacency = new Map();" in text
+    assert "while (frontier.length)" in text
+    assert "if (edge.session_id && edge.session_id !== sessionId) continue;" in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)

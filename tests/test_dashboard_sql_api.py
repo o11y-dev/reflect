@@ -127,6 +127,16 @@ def _seed_sql_report_db(db_path):
         )
         conn.execute(
             """
+            INSERT INTO daily_rollups(
+              day, agent, session_count, prompt_count, tool_call_count, error_count,
+              input_tokens, output_tokens, total_cost, updated_at
+            )
+            VALUES ('2026-05-01', 'codex', 1, 1, 2, 0, 120, 30, 0.42, ?)
+            """,
+            (now,),
+        )
+        conn.execute(
+            """
             INSERT INTO tool_rollups(
               tool_name, agent, call_count, success_count, error_count, total_duration_ms, updated_at
             )
@@ -402,6 +412,7 @@ def test_dashboard_api_embeds_sql_view_models(tmp_path):
     assert response.status_code == 200
     sqlite_payload = response.json()["sqlite"]
     assert sqlite_payload["overview"]["session_count"] == 1
+    assert sqlite_payload["overview"]["agent_cost_over_time"][0]["total_cost"] == 0.42
     assert sqlite_payload["overview"]["top_tools"][0]["tool_name"] == "exec_command"
     assert sqlite_payload["sessions"]["rows"][0]["session_id"] == "sess-sql"
     assert sqlite_payload["tabs"]["specs"]["total_specs"] == 1
