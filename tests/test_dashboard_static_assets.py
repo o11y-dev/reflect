@@ -257,9 +257,14 @@ def test_dashboard_overview_separates_source_provenance_from_event_semantics(pat
     assert 'id="source-provenance"' in text
     assert 'id="agentCostChart"' in text
     assert "const sourceProvenance = overviewTab.source_provenance || D.source_provenance || [];" in text
+    assert "function validCostTrendDay(value)" in text
+    assert "Number(day.slice(0, 4)) < 2000" in text
+    assert "function normalizeAgentCostRows(rows)" in text
     assert "function deriveAgentCostRowsFromSessions(sessions)" in text
     assert "const rawOverviewAgentCostRows = overviewTab.agent_cost_over_time || D.agent_cost_over_time || [];" in text
+    assert "const normalizedOverviewAgentCostRows = normalizeAgentCostRows(rawOverviewAgentCostRows);" in text
     assert "deriveAgentCostRowsFromSessions(D.sessions || [])" in text
+    assert "Cost totals are available, but priced sessions do not have valid dates for a trend chart." in text
     assert "makeLine('agentCostChart'" in text
     assert "Transport/source provenance. The chart above stays semantic by event type." in text
 

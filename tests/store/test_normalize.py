@@ -3,7 +3,11 @@ import json
 from reflect.store import normalize as normalize_mod
 from reflect.store.ingest import ingest_local_spans_file
 from reflect.store.migrate import migrate
-from reflect.store.normalize import normalize_pending_raw_events, refresh_all_session_statuses, repair_telemetry_provenance
+from reflect.store.normalize import (
+    normalize_pending_raw_events,
+    refresh_all_session_statuses,
+    repair_telemetry_provenance,
+)
 from reflect.store.sqlite import connect_sqlite
 
 

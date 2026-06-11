@@ -159,7 +159,6 @@ from reflect.parsing import (  # noqa: F401
     _load_otlp_logs,
     _load_otlp_traces,
 )
-from reflect.store.provenance import HOOK_ORIGINS, NATIVE_OTLP_ORIGINS
 from reflect.processing import _process_span, analyze_telemetry  # noqa: F401
 from reflect.report import render_report  # noqa: F401
 from reflect.skill_extraction import (  # noqa: F401
@@ -174,6 +173,7 @@ from reflect.skill_extraction import (  # noqa: F401
     _serialize_sessions_for_skills,
     _strip_json_fences,
 )
+from reflect.store.provenance import HOOK_ORIGINS, NATIVE_OTLP_ORIGINS
 from reflect.terminal import _render_terminal  # noqa: F401
 from reflect.utils import (  # noqa: F401
     _bar,
@@ -2451,7 +2451,7 @@ def _ingest_into_db(
 ) -> dict[str, int]:
     from reflect.store.ingest import ingest_local_spans_file, ingest_otlp_traces_file
     from reflect.store.migrate import migrate
-    from reflect.store.normalize import normalize_pending_raw_events, repair_telemetry_provenance
+    from reflect.store.normalize import normalize_pending_raw_events
     from reflect.store.rollups import rebuild_rollups
     from reflect.store.sqlite import connect_sqlite
 

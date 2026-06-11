@@ -448,6 +448,37 @@ def test_list_sessions_paginates_and_filters_from_sql(tmp_path):
         conn.close()
 
 
+def test_list_sessions_prefers_valid_end_time_over_epoch_start(tmp_path):
+    db = tmp_path / "views.db"
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        _seed_view_db(conn)
+        conn.execute(
+            """
+            UPDATE sessions
+            SET started_at = '1970-01-01T00:00:00+00:00',
+                ended_at = '2026-05-04T06:30:05+00:00'
+            WHERE id = 'sess-2'
+            """
+        )
+        conn.execute(
+            """
+            UPDATE session_rollups
+            SET started_at = '1970-01-01T00:00:00+00:00',
+                ended_at = '2026-05-04T06:30:05+00:00'
+            WHERE session_id = 'sess-2'
+            """
+        )
+
+        page = list_sessions(conn, limit=10)
+
+        row = next(session for session in page.rows if session.session_id == "sess-2")
+        assert row.started_at == "2026-05-04T06:30:05+00:00"
+    finally:
+        conn.close()
+
+
 def test_build_report_tabs_view_models_from_sql(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:

@@ -129,3 +129,32 @@ def test_rebuild_rollups_from_canonical_tables(tmp_path):
         assert tool == ("Read", 2, 1, 1, 300)
     finally:
         conn.close()
+
+
+def test_rebuild_rollups_uses_valid_end_time_when_start_is_epoch(tmp_path):
+    db = tmp_path / "reflect.db"
+    spans = tmp_path / "spans.jsonl"
+    _write_spans(spans)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        ingest_local_spans_file(conn, file_path=spans)
+        normalize_pending_raw_events(conn)
+        conn.execute(
+            """
+            UPDATE sessions
+            SET started_at = '1970-01-01T00:00:00+00:00',
+                ended_at = '2026-03-25T06:40:50+00:00'
+            WHERE id = 'sess-rollup'
+            """
+        )
+
+        rebuild_rollups(conn)
+
+        assert conn.execute(
+            "SELECT started_at FROM session_rollups WHERE session_id = 'sess-rollup'"
+        ).fetchone()[0] == "2026-03-25T06:40:50+00:00"
+        assert conn.execute("SELECT day FROM daily_rollups").fetchone()[0] == "2026-03-25"
+    finally:
+        conn.close()

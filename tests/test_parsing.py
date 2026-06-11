@@ -337,6 +337,7 @@ class TestCursorNativeSessions:
         assert "git status --short" in tool_spans[0]["attributes"]["gen_ai.client.tool.input"]
         assert tool_spans[1]["attributes"]["gen_ai.client.mcp_server"] == "jira"
         assert tool_spans[1]["attributes"]["gen_ai.client.mcp_tool"] == "search"
+        assert all(span["start_time_ns"] >= 946_684_800_000_000_000 for span in spans)
 
 
 class TestCodexSessionFiles:

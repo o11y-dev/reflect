@@ -30,12 +30,12 @@ def _preview(text: str, *, max_chars: int = 360) -> str:
 
 def _redacted_preview(path: Path, *, max_chars: int = 100) -> str:
     """Return a safe preview that doesn't expose file contents.
-    
+
     For user/home files, only expose the basename and metadata hints.
     For workspace files, show a truncated preview of the content.
     """
     try:
-        relative_home = path.relative_to(Path.home())
+        path.relative_to(Path.home())
         # User/home file: only show basename and size hint
         return f"[user config: {path.name}]"
     except ValueError:

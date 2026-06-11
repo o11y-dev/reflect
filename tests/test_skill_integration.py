@@ -38,10 +38,11 @@ class TestCliInvocable:
         p = tmp_path / "traces.json"
         p.write_text(wrap_otlp(spans) + "\n")
         runner = CliRunner()
-        with patch("reflect.core._render_terminal"):
+        with patch("reflect.core._start_publish_server"):
             result = runner.invoke(main, [
                 "--otlp-traces", str(p),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
+                "--db-path", str(tmp_path / "reflect.db"),
             ])
         assert result.exit_code == 0

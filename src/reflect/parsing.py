@@ -973,13 +973,17 @@ def _iter_cursor_session_spans(file_path: Path) -> Iterable[dict]:
     trace_id = _stable_hex_id("cursor", session_id, length=32)
     first_ts = 0
     last_ts = 0
+    try:
+        fallback_ts_ns = int(file_path.stat().st_mtime_ns)
+    except OSError:
+        fallback_ts_ns = 0
     for index, event in enumerate(events):
         role = event.get("role")
         if role not in ("user", "assistant"):
             continue
         ts_ns = _parse_timestamp_to_ns(event.get("timestamp"))
         if not ts_ns:
-            ts_ns = index + 1
+            ts_ns = (fallback_ts_ns or 1) + (index * 1_000_000)
         first_ts = ts_ns if not first_ts else min(first_ts, ts_ns)
         last_ts = max(last_ts, ts_ns)
         attrs = {

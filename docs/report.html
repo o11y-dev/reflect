@@ -5544,13 +5544,29 @@ if (sourceProvenanceEl) {
 }
 
 /* Token chart + stats */
+function validCostTrendDay(value){
+  const day = String(value || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return '';
+  if (Number(day.slice(0, 4)) < 2000) return '';
+  return day;
+}
+function normalizeAgentCostRows(rows){
+  return (rows || []).map(row => ({
+    day: validCostTrendDay(row.day),
+    agent: String(row.agent || 'unknown'),
+    total_cost: Number(row.total_cost || 0),
+  })).filter(row => row.day && row.total_cost > 0);
+}
+function hasPricedSessionCost(sessions){
+  return (sessions || []).some(session => Number(session.total_cost_usd ?? session.total_cost ?? session.estimated_cost_usd ?? 0) > 0);
+}
 function deriveAgentCostRowsFromSessions(sessions){
   const rows = new Map();
   (sessions || []).forEach(session => {
     const totalCost = Number(session.total_cost_usd ?? session.total_cost ?? session.estimated_cost_usd ?? 0);
     if (!totalCost) return;
-    const rawDay = String(session.day || session.started_at || session.created_at || session.timestamp || D.first_event_ts || 'sessions');
-    const day = rawDay.slice(0, 10) || 'sessions';
+    const day = validCostTrendDay(session.day || session.started_at || session.created_at || session.timestamp);
+    if (!day) return;
     const agent = String(session.agent || 'unknown');
     const key = `${day}\u0000${agent}`;
     const current = rows.get(key) || {day, agent, total_cost: 0};
@@ -5560,7 +5576,8 @@ function deriveAgentCostRowsFromSessions(sessions){
   return Array.from(rows.values()).sort((a, b) => String(a.day).localeCompare(String(b.day)) || Number(b.total_cost || 0) - Number(a.total_cost || 0) || String(a.agent).localeCompare(String(b.agent)));
 }
 const rawOverviewAgentCostRows = overviewTab.agent_cost_over_time || D.agent_cost_over_time || [];
-const overviewAgentCostRows = rawOverviewAgentCostRows.length ? rawOverviewAgentCostRows : deriveAgentCostRowsFromSessions(D.sessions || []);
+const normalizedOverviewAgentCostRows = normalizeAgentCostRows(rawOverviewAgentCostRows);
+const overviewAgentCostRows = normalizedOverviewAgentCostRows.length ? normalizedOverviewAgentCostRows : deriveAgentCostRowsFromSessions(D.sessions || []);
 const agentCostChartEl = document.getElementById('agentCostChart');
 if (agentCostChartEl) {
   if (overviewAgentCostRows.length) {
@@ -5586,7 +5603,10 @@ if (agentCostChartEl) {
       backgroundColor: COLORS[idx % COLORS.length],
     })), true);
   } else {
-    agentCostChartEl.parentElement.innerHTML = '<div style="font-size:12px;color:var(--text-3);padding:24px 0">No priced sessions available yet for agent cost trends.</div>';
+    const message = hasPricedSessionCost(D.sessions || [])
+      ? 'Cost totals are available, but priced sessions do not have valid dates for a trend chart.'
+      : 'No priced sessions available yet for agent cost trends.';
+    agentCostChartEl.parentElement.innerHTML = `<div style="font-size:12px;color:var(--text-3);padding:24px 0">${message}</div>`;
   }
 }
 const overviewInputTokens = overviewTab.total_input_tokens ?? D.total_input_tokens ?? 0;
