@@ -61,6 +61,7 @@ jobs:
             VERSION=$(python3 scripts/release_workflow.py determine-version)
           fi
           if [ -z "$VERSION" ]; then
+            echo "version=" >> "$GITHUB_OUTPUT"
             echo "::notice::No unreleased version found in pyproject.toml and no semantic-release bump was detected."
           else
             echo "version=$VERSION" >> "$GITHUB_OUTPUT"
