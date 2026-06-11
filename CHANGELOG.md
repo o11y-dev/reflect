@@ -1,6 +1,42 @@
 # Changelog
 
-## 0.8.3 (2026-05-26)
+## 0.8.3 (unreleased)
+
+### Changed
+- Renamed the bundled skills-extraction helper skill from `skills` to `reflect-skills` so generated/distributed skill naming is clearly reflect-scoped.
+- Updated `reflect skills` to augment extraction prompts with SQL Behavioral Memory Graph evidence from the SQLite store (with telemetry-based fallback when graph evidence is unavailable).
+- Migrated `reflect skills` session-stat evidence generation to SQL canonical tables by default, including both SQL stats and Behavioral Memory Graph evidence in extraction bundles.
+- Updated `reflect setup` skill distribution to install `reflect-skills` alongside `reflect` and `opentelemetry-skill`.
+- Added interactive agent selection before skill installation so `reflect skills` can target a subset of detected agents in terminals.
+- Cleaned up legacy `skills/` aliases during skill distribution so renamed bundles do not leave stale directories behind.
+- Expanded report ingest summaries with hook-event counts per source and agent, so hook-derived telemetry is visible alongside native OTLP and session-file inputs.
+- Made bare `reflect` open the local browser report from SQLite by default, leaving `reflect report` as a deprecated compatibility alias and terminal/markdown/JSON outputs behind explicit deprecated flags.
+- Updated public docs and bundled reflect skill guidance around the Behavioral Memory Graph and the new default browser-report workflow.
+- Added a session-level `Tools` tab that persists tool, skill, MCP tool, MCP server, and subagent usage into the session detail view.
+- Expanded skill detection so `SKILL.md` reads and prompt text hints are surfaced, not just explicit `skill` tool calls.
+- Normalized subagent detection across Cursor, Claude, and Copilot-style events, including nested tool-input file paths.
+- Added instruction file discovery and memory upsert into SQLite via `reflect db sync-instructions`.
+- Added a Behavioral Memory Graph canvas to the report Graphs tab, backed by `graph_nodes` and `graph_edges`.
+- Added per-session `Folder` graph nodes derived from touched paths, linking sessions and tool calls to the folders they investigated or edited.
+- Added durable telemetry provenance on SQL `raw_events` and `steps`, separating transport/source origin from semantic event style in the browser overview.
+- Added an Overview cost-trends chart that breaks estimated cost down over time by agent.
+
+### Fixed
+- Made `reflect doctor cost` resilient to transient SQLite lock contention by retrying locked operations and increasing default SQLite busy timeout.
+- Backfilled costs for Claude Code native OTLP log rows and Codex native session token-count rows during SQL report ingestion.
+- Prevented duplicate model/token rows from overlapping local sources from inflating SQL session token and cost totals.
+- Added the missing YAML frontmatter delimiter to the bundled `reflect-skills` skill.
+- Fixed `content_preview_redacted` column in memories table to properly redact sensitive file paths from user/home directories (e.g., `~/.claude/CLAUDE.md`) by showing only path basename and metadata instead of full content.
+- Fixed session detail `tool_inventory` to include `tool_result` events so tool durations and failures are properly captured for all telemetry sources (span, native, and conversation).
+- Fixed OTLP ingest summaries so native Claude/Codex/Gemini OTLP log records are counted as native OTLP telemetry instead of hook telemetry after normalization.
+- Fixed OTLP provenance repair so existing SQLite rows are backfilled without reingest, and excluded reflect-injected provenance markers from raw-event dedupe hashes.
+- Fixed SQL rollups so session and daily error counts do not double-count failures already represented by canonical error steps.
+- Fixed SQL context-tab classification so Cursor plan artifacts render under Specs instead of the Memory widget.
+- Fixed the semantic/memory graph so specs render as first-class `Spec` nodes, including Cursor plan artifacts, instead of leaking through as generic memory nodes.
+- Fixed semantic graph orphaning for instruction, memory, and plan nodes by pulling their connected session context into the rendered graph and inferring repo links for workspace-scoped instruction files.
+- Fixed session-filtered semantic graph views so connected memory and instruction context stays visible through repo/path bridges instead of disappearing unless nodes had a direct session stamp.
+
+## 0.8.2 (2026-05-26)
 
 ### Added
 - Added `reflect doctor cost` to scan the SQLite store for observed model names, append only missing model aliases to `~/.reflect/config/model-aliases.json`, and refresh SQL cost estimates.

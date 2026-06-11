@@ -79,9 +79,14 @@ def _gemini_otlp_protocol(protocol: str) -> str:
     return "http" if protocol.startswith("http") else "grpc"
 
 
+def _prompt_capture_enabled(hook_config: dict[str, str]) -> bool:
+    return str(hook_config.get("IDE_OTEL_CAPTURE_TEXT", "")).lower() in {"1", "true", "yes", "on"}
+
+
 def _native_otel_target(hook_config: dict[str, str], agent_name: str) -> dict[str, object]:
     grpc_endpoint = _hook_otlp_endpoint(hook_config)
     hook_protocol = _hook_otlp_protocol(hook_config)
+    prompt_capture = _prompt_capture_enabled(hook_config)
     targets = {
         "Claude Code": {
             "endpoint": grpc_endpoint,
@@ -95,28 +100,28 @@ def _native_otel_target(hook_config: dict[str, str], agent_name: str) -> dict[st
             "protocol": "otlp-http",
             "emit_logs": True,
             "emit_traces": True,
-            "prompt_capture": False,
+            "prompt_capture": prompt_capture,
         },
         "GitHub Copilot CLI": {
             "endpoint": _copilot_otlp_endpoint(grpc_endpoint),
             "protocol": "otlp-http",
             "emit_logs": True,
             "emit_traces": True,
-            "prompt_capture": False,
+            "prompt_capture": prompt_capture,
         },
         "Gemini CLI": {
             "endpoint": grpc_endpoint,
             "protocol": _gemini_otlp_protocol(hook_protocol),
             "emit_logs": True,
             "emit_traces": True,
-            "prompt_capture": False,
+            "prompt_capture": prompt_capture,
         },
         "OpenAI Codex CLI": {
             "endpoint": grpc_endpoint,
             "protocol": hook_protocol,
             "emit_logs": True,
             "emit_traces": True,
-            "prompt_capture": False,
+            "prompt_capture": prompt_capture,
         },
     }
     return targets[agent_name]
@@ -186,6 +191,7 @@ def _codex_native_otel_matches_desired(otel: object, desired: dict[str, object])
 def _render_codex_native_otel_block(hook_config: dict[str, str]) -> str:
     desired = _codex_native_otel_settings(hook_config)
     endpoint = desired["traces_endpoint"]
+    log_user_prompt = "true" if desired["log_user_prompt"] else "false"
     return (
         "[otel]\n"
         f'exporter = {{otlp-grpc = {{endpoint = "{endpoint}"}}}}\n'
@@ -193,7 +199,7 @@ def _render_codex_native_otel_block(hook_config: dict[str, str]) -> str:
         f'traces_endpoint = "{endpoint}"\n'
         'logs_exporter = "otlp"\n'
         f'logs_endpoint = "{endpoint}"\n'
-        "log_user_prompt = false\n"
+        f"log_user_prompt = {log_user_prompt}\n"
     )
 
 
@@ -696,6 +702,8 @@ def _run_setup(
     capture_text: bool | None = None,
     mask_captured_text: bool = True,
     text_max_chars: int | None = None,
+    selected_agent_names: set[str] | None = None,
+    local_agent_names: set[str] | None = None,
 ) -> None:
     console.print("\n[bold cyan]reflect setup[/]\n")
     console.print("[dim]Prepare local telemetry capture, wire supported agents, and leave clear next steps.[/]")
@@ -705,7 +713,14 @@ def _run_setup(
         (reflect_home / subdir).mkdir(parents=True, exist_ok=True)
     console.print(f"  [green]✓[/] Created [bold]{reflect_home}[/]")
 
-    detected_agents = [agent for agent in detect_agents() if agent["detected"]]
+    def agent_key(agent: dict) -> str:
+        return str(agent["name"]).lower().replace(" ", "-")
+
+    detected_agents = [
+        agent for agent in detect_agents()
+        if agent["detected"] and (selected_agent_names is None or agent_key(agent) in selected_agent_names)
+    ]
+    local_agent_names = local_agent_names or set()
     if detected_agents:
         console.print("\n[bold]Step 2: Snapshot detected agent configs[/]")
         _snapshot_detected_agent_configs(console, detected_agents, reflect_home=reflect_home)
@@ -806,22 +821,52 @@ def _run_setup(
 
     console.print("\n[bold]Step 5: Wire hook-based agents via opentelemetry-hooks[/]")
     if otel_hook:
-        try:
-            subprocess.check_call([otel_hook, "setup", "--global"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            console.print("  [green]✓[/] opentelemetry-hooks setup complete")
-        except subprocess.CalledProcessError as exc:
-            console.print(f"  [red]✗[/] opentelemetry-hooks setup failed (exit {exc.returncode})")
-            console.print("    Run manually: [bold]otel-hook setup[/]")
+        hook_agents = [agent for agent in detected_agents if agent.get("hook_agent")]
+        for agent in hook_agents:
+            hook_agent = str(agent["hook_agent"])
+            try:
+                subprocess.check_call(
+                    [otel_hook, "setup", "--global", "--agent", hook_agent],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                console.print(f"  [green]✓[/] {agent['name']} global hook setup complete")
+            except subprocess.CalledProcessError as exc:
+                console.print(f"  [red]✗[/] {agent['name']} global hook setup failed (exit {exc.returncode})")
+                console.print(f"    Run manually: [bold]otel-hook setup --global --agent {hook_agent}[/]")
+            if agent_key(agent) not in local_agent_names:
+                continue
+            try:
+                subprocess.check_call(
+                    [otel_hook, "setup", "--no-global", "--agent", hook_agent, "--cwd", str(Path.cwd())],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                console.print(f"  [green]✓[/] {agent['name']} local project hook setup complete")
+            except subprocess.CalledProcessError as exc:
+                console.print(f"  [red]✗[/] {agent['name']} local project hook setup failed (exit {exc.returncode})")
+                console.print(
+                    f"    Run manually: [bold]otel-hook setup --no-global --agent {hook_agent} --cwd {Path.cwd()}[/]"
+                )
+        if not hook_agents:
+            console.print("  [yellow]•[/] No selected agents have hook setup support.")
     else:
         console.print("  [yellow]•[/] otel-hook not found; skipping hook-based agent wiring")
         console.print(f"    Install first: [bold]pipx install {_HOOK_PACKAGE_SPEC}[/]")
 
     console.print("\n[bold]Step 6: Enable native OTel (Claude Code, Copilot, Gemini, Codex)[/]")
-    _configure_claude_native_otel(console, config)
-    _configure_copilot_native_otel(console, config)
-    _configure_copilot_cli_native_otel(console, config)
-    _configure_gemini_native_otel(console, config)
-    _configure_codex_native_otel(console, config)
+    def selected(agent_name: str) -> bool:
+        return selected_agent_names is None or agent_name.lower().replace(" ", "-") in selected_agent_names
+
+    if selected("Claude Code"):
+        _configure_claude_native_otel(console, config)
+    if selected("GitHub Copilot"):
+        _configure_copilot_native_otel(console, config)
+        _configure_copilot_cli_native_otel(console, config)
+    if selected("Gemini CLI"):
+        _configure_gemini_native_otel(console, config)
+    if selected("OpenAI Codex CLI"):
+        _configure_codex_native_otel(console, config)
 
     console.print("\n[bold]Step 6b: Start local OTLP gateway[/]")
     from reflect.gateway import _is_running as _gateway_is_running
@@ -852,7 +897,11 @@ def _run_setup(
             )
 
     console.print("\n[bold]Step 7: Distribute AI Agent Skills[/]")
-    distribute_skills(console)
+    distribute_skills(
+        console,
+        selected_agent_names=selected_agent_names,
+        local_agent_names=local_agent_names,
+    )
 
     console.print("\n[bold]Step 8: Next steps[/]")
     console.print(f"[bold green]Done![/] Data will be written to [bold]{reflect_home}/state/[/]")

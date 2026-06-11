@@ -4,7 +4,7 @@ import hashlib
 import json
 import os
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -314,6 +314,29 @@ def _extract_skill_name_from_preview(preview: str) -> str:
     return ""
 
 
+def _extract_skill_name_from_path(path: str) -> str:
+    if not isinstance(path, str) or not path.strip():
+        return ""
+    match = re.search(r"(?:^|/)skills/(?:.*/)?([^/]+)/SKILL\.md$", path)
+    return match.group(1).strip() if match else ""
+
+
+def _extract_file_path_from_attrs(attrs: dict[str, object]) -> str:
+    return str(
+        _sql_attr(
+            attrs,
+            "gen_ai.client.file_path",
+            "gen_ai.client.tool.input.file_path",
+            "gen_ai.client.tool.input.path",
+            "tool.input.file_path",
+            "tool.input.path",
+            "file.path",
+            "path",
+        )
+        or ""
+    ).strip()
+
+
 def _extract_skill_names_from_text(text: str) -> set[str]:
     if not isinstance(text, str) or not text.strip():
         return set()
@@ -329,6 +352,159 @@ def _extract_skill_names_from_text(text: str) -> set[str]:
     return {name for name in names if name}
 
 
+def _build_tool_inventory(
+    tool_events: list[dict[str, object]],
+    mcp_events: list[dict[str, object]] | None = None,
+    subagent_events: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    tools: Counter[str] = Counter()
+    tool_failures: Counter[str] = Counter()
+    tool_durations: defaultdict[str, list[int]] = defaultdict(list)
+    tool_examples: defaultdict[str, list[str]] = defaultdict(list)
+    skills: Counter[str] = Counter()
+    skill_tools: defaultdict[str, Counter[str]] = defaultdict(Counter)
+    subagents: Counter[str] = Counter()
+    subagent_stops: Counter[str] = Counter()
+    subagent_sources: defaultdict[str, Counter[str]] = defaultdict(Counter)
+    mcp_tools: Counter[str] = Counter()
+    mcp_servers: Counter[str] = Counter()
+
+    for event in tool_events:
+        tool_name = str(event.get("tool_name") or "unknown").strip() or "unknown"
+        # Support explicit count (default 1) so result-only rows can use count=0 without inflating totals
+        count = int(event.get("count", 1))
+        tools[tool_name] += count
+        status = str(event.get("status") or "").lower()
+        success = event.get("success")
+        if status == "error" or success is False:
+            tool_failures[tool_name] += count
+        duration = event.get("duration_ms")
+        if isinstance(duration, (int, float)) and duration > 0:
+            tool_durations[tool_name].append(int(duration))
+        preview = str(event.get("input_preview") or event.get("preview") or event.get("input") or "").strip()
+        if preview and len(tool_examples[tool_name]) < 3:
+            tool_examples[tool_name].append(preview[:500])
+        file_path = str(event.get("file_path") or "").strip()
+        path_skill = _extract_skill_name_from_path(file_path)
+        if path_skill:
+            skills[path_skill] += count
+            skill_tools[path_skill][tool_name] += count
+        if tool_name == "skill":
+            skill_name = _extract_skill_name_from_preview(preview)
+            if skill_name:
+                skills[skill_name] += count
+                skill_tools[skill_name][tool_name] += count
+        attrs = event.get("attrs")
+        if not isinstance(attrs, dict):
+            attrs = {}
+        subagent_name = _extract_subagent_name_from_tool(tool_name, attrs, preview)
+        if subagent_name:
+            subagents[subagent_name] += count
+            subagent_sources[subagent_name][tool_name] += count
+
+    for event in mcp_events or []:
+        tool_name = str(event.get("tool_name") or "").strip()
+        server_name = str(event.get("server") or event.get("server_name") or "").strip()
+        label = f"{server_name}/{tool_name}" if server_name and tool_name else tool_name or server_name
+        if label:
+            mcp_tools[label] += 1
+        if server_name:
+            mcp_servers[server_name] += 1
+
+    for event in subagent_events or []:
+        name = _clean_subagent_name(event.get("name")) or "unknown"
+        status = str(event.get("status") or "start").lower()
+        if status == "stop":
+            subagent_stops[name] += 1
+        else:
+            subagents[name] += 1
+            source = str(event.get("source") or "lifecycle")
+            subagent_sources[name][source] += 1
+
+    def tool_row(item: tuple[str, int]) -> dict[str, object]:
+        name, count = item
+        durations = tool_durations.get(name, [])
+        return {
+            "name": name,
+            "count": count,
+            "failures": tool_failures.get(name, 0),
+            "avg_duration_ms": round(sum(durations) / len(durations), 1) if durations else 0,
+            "examples": tool_examples.get(name, []),
+        }
+
+    return {
+        "tools": [tool_row(item) for item in tools.most_common()],
+        "skills": [
+            {
+                "name": name,
+                "count": count,
+                "tools": dict(skill_tools.get(name, Counter()).most_common()),
+            }
+            for name, count in skills.most_common()
+        ],
+        "mcp_tools": [
+            {"name": name, "count": count}
+            for name, count in mcp_tools.most_common()
+        ],
+        "subagents": [
+            {
+                "name": name,
+                "count": count,
+                "stops": subagent_stops.get(name, 0),
+                "sources": dict(subagent_sources.get(name, Counter()).most_common()),
+            }
+            for name, count in subagents.most_common()
+        ],
+        "mcp_servers": [
+            {"name": name, "count": count}
+            for name, count in mcp_servers.most_common()
+        ],
+        "total_tool_calls": sum(tools.values()),
+        "total_skill_calls": sum(skills.values()),
+        "total_mcp_calls": sum(mcp_tools.values()),
+        "total_subagent_starts": sum(subagents.values()),
+        "total_subagent_stops": sum(subagent_stops.values()),
+    }
+
+
+def _add_skill_hints_to_inventory(inventory: dict[str, object], skill_names: set[str]) -> dict[str, object]:
+    if not skill_names:
+        return inventory
+    existing = {
+        str(item.get("name") or "")
+        for item in inventory.get("skills", [])
+        if isinstance(item, dict)
+    }
+    hinted = [
+        {"name": name, "count": 1, "tools": {}, "source": "conversation"}
+        for name in sorted(skill_names)
+        if name not in existing
+    ]
+    if hinted:
+        inventory["skills"] = [*inventory.get("skills", []), *hinted]
+        inventory["total_skill_calls"] = int(inventory.get("total_skill_calls") or 0) + len(hinted)
+    return inventory
+
+
+def _add_subagent_hints_to_inventory(inventory: dict[str, object], subagent_names: set[str]) -> dict[str, object]:
+    if not subagent_names:
+        return inventory
+    existing = {
+        str(item.get("name") or "")
+        for item in inventory.get("subagents", [])
+        if isinstance(item, dict)
+    }
+    hinted = [
+        {"name": name, "count": 1, "stops": 0, "sources": {}, "source": "conversation"}
+        for name in sorted(subagent_names)
+        if name not in existing
+    ]
+    if hinted:
+        inventory["subagents"] = [*inventory.get("subagents", []), *hinted]
+        inventory["total_subagent_starts"] = int(inventory.get("total_subagent_starts") or 0) + len(hinted)
+    return inventory
+
+
 def _extract_subagent_names_from_text(text: str) -> set[str]:
     if not isinstance(text, str) or not text.strip():
         return set()
@@ -342,6 +518,37 @@ def _extract_subagent_names_from_text(text: str) -> set[str]:
     ):
         names.add(match.group(1).strip())
     return {name for name in names if name}
+
+
+def _extract_subagent_name_from_tool(tool_name: str, attrs: dict | None = None, preview: str = "") -> str:
+    normalized_tool = str(tool_name or "").strip().lower()
+    attrs = attrs or {}
+    payload = _load_json_dict(preview)
+
+    def first_value(*keys: str) -> str:
+        for key in keys:
+            value = _sql_attr(attrs, f"gen_ai.client.tool.input.{key}", f"tool.input.{key}")
+            if value in (None, ""):
+                value = payload.get(key)
+            cleaned = _clean_subagent_name(value)
+            if cleaned:
+                return cleaned
+        return ""
+
+    if normalized_tool in {"subagent", "agent"}:
+        return first_value("subagent_type", "agent_type", "name", "agent_id", "description")
+    if normalized_tool in {"task", "read_agent"}:
+        return first_value("agent_id", "name", "agent_type")
+    return ""
+
+
+def _clean_subagent_name(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    name = value.strip()
+    if not name or "REDACTED" in name.upper() or name.startswith("["):
+        return ""
+    return name[:80]
 
 
 def _sql_step_id_for_raw_event(raw_event_id: object) -> str:
@@ -586,6 +793,17 @@ def _build_filtered_stats(stats: TelemetryStats, sessions: list[dict]) -> Teleme
                 result_event = "PostToolUse" if event.get("success") else "PostToolUseFailure"
                 events_by_type[result_event] += 1
                 agent_stats.events_by_type[result_event] += 1
+            elif event_type == "tool_call":
+                subagent_name = _extract_subagent_name_from_tool(
+                    str(event.get("tool_name") or ""),
+                    {},
+                    str(event.get("preview") or ""),
+                )
+                if subagent_name:
+                    events_by_type["SubagentStart"] += 1
+                    agent_stats.events_by_type["SubagentStart"] += 1
+                    subagent_types[subagent_name] += 1
+                    agent_stats.subagent_types[subagent_name] += 1
             elif event_type == "subagent_start":
                 subtype = str(event.get("subagent_type") or "unknown")
                 events_by_type["SubagentStart"] += 1
@@ -1197,12 +1415,51 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
 
         # Conversation events for session browser (capped at 500 per session)
         conv_events = stats.session_conversation.get(sid, [])[:500]
+        tool_inventory = _build_tool_inventory(
+            [
+                {
+                    "tool_name": event.get("tool_name"),
+                    "status": "error" if event.get("success") is False else "completed",
+                    "success": event.get("success", True),
+                    "duration_ms": event.get("duration_ms", 0),
+                    "preview": event.get("preview", ""),
+                    "file_path": event.get("file_path", ""),
+                }
+                for event in stats.session_conversation.get(sid, [])
+                if event.get("type") == "tool_call"
+            ],
+            [
+                {
+                    "tool_name": event.get("tool_name"),
+                    "server": event.get("server"),
+                    "status": "error" if event.get("success") is False else "completed",
+                }
+                for event in stats.session_conversation.get(sid, [])
+                if event.get("type") == "mcp_call"
+            ],
+            [
+                {
+                    "name": event.get("subagent_type"),
+                    "status": "stop" if event.get("type") == "subagent_stop" else "start",
+                    "source": "lifecycle",
+                }
+                for event in stats.session_conversation.get(sid, [])
+                if event.get("type") in {"subagent_start", "subagent_stop"}
+            ],
+        )
         # Extract first prompt preview for session card
         first_prompt = ""
+        skill_hints: set[str] = set()
+        subagent_hints: set[str] = set()
         for ce in conv_events:
-            if ce.get("type") == "prompt" and ce.get("preview"):
+            if not first_prompt and ce.get("type") == "prompt" and ce.get("preview"):
                 first_prompt = ce["preview"]
-                break
+            if ce.get("type") in {"prompt", "response"}:
+                text = str(ce.get("preview") or "")
+                skill_hints.update(_extract_skill_names_from_text(text))
+                subagent_hints.update(_extract_subagent_names_from_text(text))
+        tool_inventory = _add_skill_hints_to_inventory(tool_inventory, skill_hints)
+        tool_inventory = _add_subagent_hints_to_inventory(tool_inventory, subagent_hints)
         # Agent name for this session
         source_info = stats.session_source.get(sid)
         agent_name = source_info[0] if source_info else ""
@@ -1261,6 +1518,7 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
             "models": dict(model_counter.most_common()),
             "tools": dict(tool_counter.most_common(10)),
             "skills": dict(skill_counter.most_common(10)),
+            "tool_inventory": tool_inventory,
             "tool_p50": tool_p50,
             "commands": dict(cmd_counter.most_common(10)),
             "failure_count": failure_count,
@@ -1455,6 +1713,7 @@ def _build_dashboard_json(stats: TelemetryStats) -> str:
         "graph_session_timeline": _compute_session_timeline(
             stats.session_span_details, stats.session_events,
         ),
+        "graph_semantic": {"nodes": [], "edges": [], "sessions": [], "legend": []},
         "agents": {
             name: {
                 "total_events": ag.total_events,
@@ -1740,6 +1999,60 @@ def _load_session_detail(session_id: str, stats: TelemetryStats) -> dict | None:
         }
     detail.setdefault("warnings", [])
     detail["telemetry"] = telemetry
+    detail["tool_inventory"] = _build_tool_inventory(
+        [
+            {
+                "tool_name": event.get("tool_name"),
+                "status": "error" if event.get("success") is False else "completed",
+                "success": event.get("success", True),
+                "duration_ms": event.get("duration_ms", 0),
+                "preview": event.get("preview", event.get("input", "")),
+                "file_path": event.get("file_path", ""),
+            }
+            for event in detail.get("events", [])
+            if isinstance(event, dict) and event.get("type") in ("tool_call", "tool_result")
+        ],
+        [
+            {
+                "tool_name": event.get("tool_name"),
+                "server": event.get("server"),
+                "status": "error" if event.get("success") is False else "completed",
+            }
+            for event in detail.get("events", [])
+            if isinstance(event, dict) and event.get("type") == "mcp_call"
+        ],
+        [
+            {
+                "name": event.get("subagent_type"),
+                "status": "stop" if event.get("type") == "subagent_stop" else "start",
+                "source": "lifecycle",
+            }
+            for event in detail.get("events", [])
+            if isinstance(event, dict) and event.get("type") in {"subagent_start", "subagent_stop"}
+        ],
+    )
+    detail["tool_inventory"] = _add_skill_hints_to_inventory(
+        detail["tool_inventory"],
+        {
+            skill_name
+            for event in detail.get("events", [])
+            if isinstance(event, dict) and event.get("type") in {"prompt", "response"}
+            for skill_name in _extract_skill_names_from_text(
+                str(event.get("preview") or event.get("content") or "")
+            )
+        },
+    )
+    detail["tool_inventory"] = _add_subagent_hints_to_inventory(
+        detail["tool_inventory"],
+        {
+            subagent_name
+            for event in detail.get("events", [])
+            if isinstance(event, dict) and event.get("type") in {"prompt", "response"}
+            for subagent_name in _extract_subagent_names_from_text(
+                str(event.get("preview") or event.get("content") or "")
+            )
+        },
+    )
     detail["insights"] = [
         {
             "kind": i.kind, "title": i.title, "body": i.body,
@@ -1753,6 +2066,7 @@ def _load_session_detail(session_id: str, stats: TelemetryStats) -> dict | None:
 
 def _sql_report_payload(db_path: Path, *, limit: int = 50, offset: int = 0) -> dict[str, object]:
     from reflect.store.migrate import migrate
+    from reflect.store.normalize import repair_telemetry_provenance
     from reflect.store.sqlite import connect_sqlite
     from reflect.views.overview import build_overview
     from reflect.views.report_tabs import build_report_tabs
@@ -1761,6 +2075,7 @@ def _sql_report_payload(db_path: Path, *, limit: int = 50, offset: int = 0) -> d
     conn = connect_sqlite(db_path)
     try:
         migrate(conn)
+        repair_telemetry_provenance(conn)
         return {
             "db_path": str(db_path),
             "overview": build_overview(conn).model_dump(),
@@ -2001,7 +2316,9 @@ def _sql_response_preview(attrs: dict[str, object], call: dict[str, object]) -> 
 
 def _sql_dashboard_compat_payload(db_path: Path, *, session_ids: set[str] | None = None) -> dict[str, object]:
     from reflect.store.migrate import migrate
+    from reflect.store.normalize import repair_telemetry_provenance
     from reflect.store.sqlite import connect_sqlite
+    from reflect.views.overview import list_source_provenance
     from reflect.views.report_tabs import build_report_tabs
 
     scoped = session_ids is not None
@@ -2010,7 +2327,9 @@ def _sql_dashboard_compat_payload(db_path: Path, *, session_ids: set[str] | None
     conn = connect_sqlite(db_path)
     try:
         migrate(conn)
+        repair_telemetry_provenance(conn)
         tab_views = build_report_tabs(conn, session_ids=set(scoped_ids) if scoped else None).model_dump()
+        source_provenance = list_source_provenance(conn, session_ids=set(scoped_ids) if scoped else None)
     finally:
         conn.close()
 
@@ -2062,6 +2381,8 @@ def _sql_dashboard_compat_payload(db_path: Path, *, session_ids: set[str] | None
         "graph_cooccurrence": graphs_view["graph_cooccurrence"],
         "graph_dep": graphs_view["graph_dep"],
         "graph_session_timeline": graphs_view["graph_session_timeline"],
+        "graph_semantic": graphs_view["graph_semantic"],
+        "source_provenance": source_provenance,
         "agents": agents_view["agents"],
         "specs": specs_view,
         "memory": memory_view,
@@ -2460,6 +2781,7 @@ def _sql_dashboard_payload(
     prompt_count = sum(row["prompt_count"] for row in scoped_session_rows)
     scoped_session_ids = {str(row["session_id"]) for row in scoped_session_rows}
     compat = _sql_dashboard_compat_payload(db_path, session_ids=scoped_session_ids if has_scope_filter else None)
+    scoped_overview["source_provenance"] = compat["source_provenance"]
     cost_breakdown = compat["cost_breakdown"]
     total_cost_usd = float(scoped_overview["estimated_cost_usd"] or cost_breakdown["total_cost_usd"] or 0)
     sqlite_payload["tabs"] = {
@@ -2493,6 +2815,7 @@ def _sql_dashboard_payload(
             "unique_models": compat["unique_models"],
             "models_by_count": compat["models_by_count"],
             "events_by_type": compat["events_by_type"],
+            "source_provenance": compat["source_provenance"],
             "total_input_tokens": scoped_overview["input_tokens"],
             "total_output_tokens": scoped_overview["output_tokens"],
             "total_cache_creation_tokens": compat["total_cache_creation_tokens"],
@@ -2555,6 +2878,7 @@ def _sql_dashboard_payload(
             "graph_cooccurrence": compat["graph_cooccurrence"],
             "graph_dep": compat["graph_dep"],
             "graph_session_timeline": compat["graph_session_timeline"],
+            "graph_semantic": compat["graph_semantic"],
         },
         "specs": compat["specs"],
         "memory": compat["memory"],
@@ -2605,6 +2929,7 @@ def _sql_dashboard_payload(
         "tool_calls": scoped_overview["tool_call_count"],
         "tool_to_prompt_ratio": f"{scoped_overview['tool_call_count'] / prompt_count:.1f}" if prompt_count else "0.0",
         "events_by_type": compat["events_by_type"],
+        "source_provenance": compat["source_provenance"],
         "failure_rate_pct": 0,
         "file_edits": compat["file_edits"],
         "file_reads": compat["file_reads"],
@@ -2644,6 +2969,7 @@ def _sql_dashboard_payload(
         "graph_latency_histograms": {},
         "graph_dep": compat["graph_dep"],
         "graph_session_timeline": compat["graph_session_timeline"],
+        "graph_semantic": compat["graph_semantic"],
         "agents": compat["agents"],
         "agent_comparison": compat["agent_comparison"],
         "mcp_calls": compat["mcp_calls"],
@@ -2715,14 +3041,10 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
             row["step_id"]: row
             for row in _dict_rows(conn.execute("SELECT * FROM llm_calls WHERE session_id = ?", (session_id,)))
         }
-        tools_by_step = {
-            row["step_id"]: row
-            for row in _dict_rows(conn.execute("SELECT * FROM tool_calls WHERE session_id = ?", (session_id,)))
-        }
-        mcp_by_step = {
-            row["step_id"]: row
-            for row in _dict_rows(conn.execute("SELECT * FROM mcp_calls WHERE session_id = ?", (session_id,)))
-        }
+        tool_rows = _dict_rows(conn.execute("SELECT * FROM tool_calls WHERE session_id = ?", (session_id,)))
+        tools_by_step = {row["step_id"]: row for row in tool_rows}
+        mcp_rows = _dict_rows(conn.execute("SELECT * FROM mcp_calls WHERE session_id = ?", (session_id,)))
+        mcp_by_step = {row["step_id"]: row for row in mcp_rows}
         raw_span_rows = _dict_rows(conn.execute(
             """
             SELECT id, event_type, trace_id, span_id, parent_span_id, observed_at
@@ -2755,6 +3077,49 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
             """,
             (session_id,),
         ).fetchone()[0]
+        tool_inventory = _build_tool_inventory(
+            [
+                {
+                    "tool_name": row.get("tool_name"),
+                    "status": row.get("status"),
+                    "duration_ms": row.get("duration_ms") or 0,
+                    "input_preview": row.get("input_preview_redacted") or "",
+                    "file_path": _extract_file_path_from_attrs(
+                        attrs := _load_json_dict(row.get("raw_attrs_json"))
+                    ),
+                    "attrs": attrs,
+                }
+                for row in tool_rows
+            ],
+            [
+                {
+                    "tool_name": row.get("tool_name"),
+                    "server": row.get("server_name"),
+                    "status": row.get("status"),
+                    "duration_ms": row.get("duration_ms") or 0,
+                }
+                for row in mcp_rows
+            ],
+            [
+                {
+                    "name": _sql_attr(
+                        attrs := _load_json_dict(step.get("raw_attrs_json")),
+                        "gen_ai.client.subagent_type",
+                        "ide.subagent_type",
+                        "subagent.type",
+                    ) or "unknown",
+                    "status": "stop" if "stop" in str(
+                        _sql_attr(attrs, "gen_ai.client.hook.event", "ide.hook.event") or step.get("summary") or ""
+                    ).lower() else "start",
+                    "source": "lifecycle",
+                }
+                for step in steps
+                if (
+                    "subagent" in str(step.get("summary") or "").lower()
+                    or "subagent" in str(step.get("raw_attrs_json") or "").lower()
+                )
+            ],
+        )
     finally:
         conn.close()
 
@@ -2957,9 +3322,28 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
     errors = sum(1 for step in steps if step["status"] == "error") + sum(
         1 for log in telemetry_logs if log.get("severity") in {"ERROR", "FATAL"}
     )
+    tool_inventory = _add_skill_hints_to_inventory(
+        tool_inventory,
+        {
+            skill_name
+            for event in conversation
+            if event.get("type") in {"prompt", "response"}
+            for skill_name in _extract_skill_names_from_text(str(event.get("preview") or ""))
+        },
+    )
+    tool_inventory = _add_subagent_hints_to_inventory(
+        tool_inventory,
+        {
+            subagent_name
+            for event in conversation
+            if event.get("type") in {"prompt", "response"}
+            for subagent_name in _extract_subagent_names_from_text(str(event.get("preview") or ""))
+        },
+    )
     return {
         "session_id": session_id,
         "conversation": conversation,
+        "tool_inventory": tool_inventory,
         "telemetry": {
             "summary": {
                 "spans": len(telemetry_spans),

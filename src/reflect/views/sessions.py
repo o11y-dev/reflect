@@ -81,7 +81,12 @@ def list_sessions(
           r.full_name AS repo,
           s.status,
           s.title,
-          s.started_at,
+          CASE
+            WHEN (s.started_at IS NULL OR s.started_at = '' OR substr(s.started_at, 1, 4) < '2000')
+              AND s.ended_at IS NOT NULL AND s.ended_at <> '' AND substr(s.ended_at, 1, 4) >= '2000'
+            THEN s.ended_at
+            ELSE s.started_at
+          END AS started_at,
           s.ended_at,
           COALESCE(
             sr.duration_ms,
@@ -105,7 +110,14 @@ def list_sessions(
         LEFT JOIN repos r ON r.id = s.repo_id
         LEFT JOIN session_rollups sr ON sr.session_id = s.id
         {where_sql}
-        ORDER BY s.started_at DESC, s.id ASC
+        ORDER BY
+          CASE
+            WHEN (s.started_at IS NULL OR s.started_at = '' OR substr(s.started_at, 1, 4) < '2000')
+              AND s.ended_at IS NOT NULL AND s.ended_at <> '' AND substr(s.ended_at, 1, 4) >= '2000'
+            THEN s.ended_at
+            ELSE s.started_at
+          END DESC,
+          s.id ASC
         LIMIT ? OFFSET ?
         """,
         [*params, page_limit, page_offset],

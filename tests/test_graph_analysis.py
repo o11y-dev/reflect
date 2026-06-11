@@ -180,6 +180,27 @@ class TestDepGraph:
         assert ("claude", "get_issue") in links
         assert ("get_issue", "mcp-code-host") in links
 
+    def test_agent_links_directly_to_mcp_server_when_tool_name_missing(self):
+        agents = {
+            "claude": self._make_agent("claude", tools={"Read": 5}, mcp={"mcp-github": 1}),
+        }
+        result = _compute_dep_graph(
+            agents,
+            Counter({"Read": 5}),
+            Counter({"mcp-github": 1}),
+            session_conversation={
+                "s1": [
+                    {"type": "mcp_call", "tool_name": "", "server": "mcp-github"},
+                ]
+            },
+            session_agents={"s1": "claude"},
+        )
+        node_ids = {n["id"] for n in result["nodes"]}
+        links = {(lnk["source"], lnk["target"]) for lnk in result["links"]}
+
+        assert "mcp-github" in node_ids
+        assert ("claude", "mcp-github") in links
+
 
 class TestSessionTimeline:
     def test_basic(self):

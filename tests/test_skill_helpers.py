@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections import Counter
 
 from reflect.core import (
+    _build_graph_evidence,
     _build_skill_evidence_bundle,
+    _build_skill_evidence_bundle_from_sql,
     _build_skills_extraction_prompt,
+    _build_skills_extraction_prompt_from_bundle,
     _compress_tool_sequence,
     _extract_recovery_chains,
     _serialize_sessions_for_skills,
@@ -369,3 +373,255 @@ class TestBuildSkillsExtractionPrompt:
         assert "Evidence JSON (authoritative):" in prompt
         assert '"schema_version": 1' in prompt
         assert "session://test-session-abc" in prompt
+
+    def test_prompt_from_bundle_keeps_graph_evidence(self):
+        bundle = {
+            "schema_version": 1,
+            "summary": {
+                "included_sessions": 0,
+                "deep_context_sessions": 0,
+                "average_quality_score": 0.0,
+                "recurring_tool_flows": [],
+                "recurring_shell_commands": [],
+                "recurring_recovery_chains": [],
+                "recurring_improvement_targets": [],
+            },
+            "sessions": [],
+            "graph_evidence": {
+                "source": "sql-graph",
+                "scoped_session_count": 2,
+                "recurring_patterns": [
+                    {
+                        "id": "graph-01",
+                        "edge_kind": "used_skill",
+                        "source": {"kind": "Session", "label": "sess-a"},
+                        "target": {"kind": "Skill", "label": "reflect-skills"},
+                        "count": 3,
+                        "session_support": 2,
+                        "session_ids": ["sess-a", "sess-b"],
+                    }
+                ],
+                "skill_clusters": [],
+                "subagent_clusters": [],
+            },
+        }
+
+        prompt = _build_skills_extraction_prompt_from_bundle("Base prompt", bundle)
+
+        assert '"graph_evidence"' in prompt
+        assert '"edge_kind": "used_skill"' in prompt
+        assert "Graph recurring patterns:" in prompt
+
+
+class TestBuildGraphEvidence:
+    def test_graph_evidence_extracts_recurring_patterns(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            """
+            CREATE TABLE graph_nodes (
+              id TEXT PRIMARY KEY,
+              kind TEXT NOT NULL,
+              label TEXT NOT NULL,
+              session_id TEXT,
+              first_seen_at TEXT,
+              last_seen_at TEXT,
+              attrs_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE graph_edges (
+              id TEXT PRIMARY KEY,
+              source_node_id TEXT NOT NULL,
+              target_node_id TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              session_id TEXT,
+              weight REAL NOT NULL DEFAULT 1,
+              first_seen_at TEXT,
+              last_seen_at TEXT,
+              attrs_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """
+        )
+        rows_nodes = [
+            ("session-a", "Session", "sess-a", "sess-a"),
+            ("session-b", "Session", "sess-b", "sess-b"),
+            ("skill-rs", "Skill", "reflect-skills", None),
+            ("subagent-review", "Subagent", "code-review", "sess-a"),
+        ]
+        for node_id, kind, label, session_id in rows_nodes:
+            conn.execute(
+                """
+                INSERT INTO graph_nodes(id, kind, label, session_id, attrs_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, '{}', '2026-05-28T00:00:00+00:00', '2026-05-28T00:00:00+00:00')
+                """,
+                (node_id, kind, label, session_id),
+            )
+
+        rows_edges = [
+            ("edge-1", "session-a", "skill-rs", "used_skill", "sess-a"),
+            ("edge-2", "session-b", "skill-rs", "used_skill", "sess-b"),
+            ("edge-3", "session-a", "subagent-review", "spawned_subagent", "sess-a"),
+            ("edge-4", "session-b", "subagent-review", "spawned_subagent", "sess-b"),
+        ]
+        for edge_id, source, target, kind, session_id in rows_edges:
+            conn.execute(
+                """
+                INSERT INTO graph_edges(id, source_node_id, target_node_id, kind, session_id, attrs_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, '{}', '2026-05-28T00:00:00+00:00', '2026-05-28T00:00:00+00:00')
+                """,
+                (edge_id, source, target, kind, session_id),
+            )
+        conn.commit()
+
+        evidence = _build_graph_evidence(conn, session_ids={"sess-a", "sess-b"})
+
+        assert evidence["source"] == "sql-graph"
+        assert evidence["scoped_session_count"] == 2
+        assert evidence["recurring_patterns"]
+        assert any(item["name"] == "reflect-skills" for item in evidence["skill_clusters"])
+
+
+class TestBuildSkillEvidenceBundleFromSql:
+    def test_sql_bundle_includes_stats_and_graph(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE sessions (
+              id TEXT PRIMARY KEY,
+              agent_id TEXT,
+              status TEXT,
+              quality_score REAL,
+              recovered_failure_count INTEGER,
+              input_tokens INTEGER,
+              output_tokens INTEGER,
+              started_at TEXT,
+              created_at TEXT
+            )
+            """
+        )
+        conn.execute("CREATE TABLE steps (id TEXT PRIMARY KEY, session_id TEXT, seq INTEGER, type TEXT, summary TEXT, raw_attrs_json TEXT)")
+        conn.execute(
+            """
+            CREATE TABLE tool_calls (
+              id TEXT PRIMARY KEY,
+              step_id TEXT,
+              session_id TEXT,
+              tool_name TEXT,
+              status TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE llm_calls (
+              id TEXT PRIMARY KEY,
+              session_id TEXT,
+              prompt_preview_redacted TEXT,
+              response_model TEXT,
+              request_model TEXT,
+              created_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE graph_nodes (
+              id TEXT PRIMARY KEY,
+              kind TEXT NOT NULL,
+              label TEXT NOT NULL,
+              session_id TEXT,
+              first_seen_at TEXT,
+              last_seen_at TEXT,
+              attrs_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE graph_edges (
+              id TEXT PRIMARY KEY,
+              source_node_id TEXT NOT NULL,
+              target_node_id TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              session_id TEXT,
+              weight REAL NOT NULL DEFAULT 1,
+              first_seen_at TEXT,
+              last_seen_at TEXT,
+              attrs_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+            """
+        )
+
+        conn.execute("INSERT INTO agents(id, name) VALUES ('agent-a', 'Claude Code')")
+        conn.execute(
+            """
+            INSERT INTO sessions(id, agent_id, status, quality_score, recovered_failure_count, input_tokens, output_tokens, started_at, created_at)
+            VALUES
+              ('sess-a', 'agent-a', 'ok', 82, 1, 300, 200, '2026-05-28T00:00:00+00:00', '2026-05-28T00:00:00+00:00'),
+              ('sess-b', 'agent-a', 'ok', 79, 0, 200, 100, '2026-05-28T01:00:00+00:00', '2026-05-28T01:00:00+00:00')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO steps(id, session_id, seq, type, summary, raw_attrs_json)
+            VALUES
+              ('step-a1', 'sess-a', 1, 'shell_command', 'pytest -q', '{"gen_ai.client.command":"pytest -q"}'),
+              ('step-a2', 'sess-a', 2, 'tool_call', 'read', '{}'),
+              ('step-a3', 'sess-a', 3, 'tool_call', 'edit', '{}'),
+              ('step-b1', 'sess-b', 1, 'tool_call', 'read', '{}')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO tool_calls(id, step_id, session_id, tool_name, status)
+            VALUES
+              ('tc-a1', 'step-a2', 'sess-a', 'Read', 'ok'),
+              ('tc-a2', 'step-a3', 'sess-a', 'Edit', 'error'),
+              ('tc-b1', 'step-b1', 'sess-b', 'Read', 'ok')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO llm_calls(id, session_id, prompt_preview_redacted, response_model, request_model, created_at)
+            VALUES
+              ('llm-a', 'sess-a', 'Fix failing test', 'claude-sonnet', 'claude-sonnet', '2026-05-28T00:00:00+00:00'),
+              ('llm-b', 'sess-b', 'Investigate flaky spec', 'claude-sonnet', 'claude-sonnet', '2026-05-28T01:00:00+00:00')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO graph_nodes(id, kind, label, session_id, attrs_json, created_at, updated_at)
+            VALUES
+              ('n-sa', 'Session', 'sess-a', 'sess-a', '{}', '2026-05-28T00:00:00+00:00', '2026-05-28T00:00:00+00:00'),
+              ('n-sb', 'Session', 'sess-b', 'sess-b', '{}', '2026-05-28T00:00:00+00:00', '2026-05-28T00:00:00+00:00'),
+              ('n-skill', 'Skill', 'reflect-skills', NULL, '{}', '2026-05-28T00:00:00+00:00', '2026-05-28T00:00:00+00:00')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO graph_edges(id, source_node_id, target_node_id, kind, session_id, attrs_json, created_at, updated_at)
+            VALUES
+              ('ge-1', 'n-sa', 'n-skill', 'used_skill', 'sess-a', '{}', '2026-05-28T00:00:00+00:00', '2026-05-28T00:00:00+00:00'),
+              ('ge-2', 'n-sb', 'n-skill', 'used_skill', 'sess-b', '{}', '2026-05-28T00:00:00+00:00', '2026-05-28T00:00:00+00:00')
+            """
+        )
+        conn.commit()
+
+        bundle = _build_skill_evidence_bundle_from_sql(conn, session_ids={"sess-a", "sess-b"})
+
+        assert bundle is not None
+        assert bundle["selection_policy"]["evidence_source"] == "sql"
+        assert bundle["sessions"]
+        assert bundle["graph_evidence"]["source"] == "sql-graph"
+        assert "graph_evidence" in bundle

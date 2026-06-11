@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,6 +10,110 @@ from reflect.models import AgentStats, TelemetryStats
 
 if TYPE_CHECKING:
     pass
+
+
+def _load_json_dict(value: object) -> dict[str, object]:
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _attr(attrs: dict, *keys: str) -> object:
+    for key in keys:
+        value = attrs.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _extract_mcp_server_and_tool(attrs: dict) -> tuple[str, str]:
+    server = str(
+        _attr(
+            attrs,
+            "gen_ai.client.mcp_server",
+            "mcp.server",
+            "gen_ai.client.tool.input.server",
+            "tool.input.server",
+        )
+        or ""
+    ).strip()
+    tool = str(
+        _attr(
+            attrs,
+            "gen_ai.client.mcp_tool",
+            "mcp.tool",
+            "gen_ai.client.tool.input.toolName",
+            "gen_ai.client.tool.input.tool",
+            "tool.input.toolName",
+            "tool.input.tool",
+        )
+        or ""
+    ).strip()
+    payload = _load_json_dict(str(_attr(attrs, "gen_ai.client.tool.input", "tool.input") or ""))
+    if not server:
+        for key in ("server", "serverName", "mcpServer"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                server = value.strip()
+                break
+    if not tool:
+        for key in ("toolName", "tool", "mcpTool"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                tool = value.strip()
+                break
+    return server, tool
+
+
+def _extract_subagent_name_from_tool(tool_name: object, attrs: dict) -> str:
+    normalized_tool = str(tool_name or "").strip().lower()
+    preview = str(_attr(attrs, "gen_ai.client.tool.input", "tool.input") or "")
+    payload = _load_json_dict(preview)
+
+    def first_value(*keys: str) -> str:
+        for key in keys:
+            value = _attr(attrs, f"gen_ai.client.tool.input.{key}", f"tool.input.{key}")
+            if value in (None, ""):
+                value = payload.get(key)
+            cleaned = _clean_subagent_name(value)
+            if cleaned:
+                return cleaned
+        return ""
+
+    if normalized_tool in {"subagent", "agent"}:
+        return first_value("subagent_type", "agent_type", "name", "agent_id", "description")
+    if normalized_tool in {"task", "read_agent"}:
+        return first_value("agent_id", "name", "agent_type")
+    return ""
+
+
+def _clean_subagent_name(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    name = value.strip()
+    if not name or "REDACTED" in name.upper() or name.startswith("["):
+        return ""
+    return name[:80]
+
+
+def _extract_file_path(attrs: dict) -> str:
+    for key in (
+        "gen_ai.client.file_path",
+        "gen_ai.client.tool.input.file_path",
+        "gen_ai.client.tool.input.path",
+        "tool.input.file_path",
+        "tool.input.path",
+        "file.path",
+        "path",
+    ):
+        value = attrs.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return ""
 
 
 # These are duplicated here to avoid importing from core.py (which imports from us).
@@ -77,11 +182,14 @@ def _process_span(
     if model:
         models[model] += 1
 
-    tool_name = attrs.get("gen_ai.client.tool_name")
+    raw_tool_name = _attr(attrs, "gen_ai.client.tool_name", "ide.tool_name")
+    mcp_server, mcp_tool = _extract_mcp_server_and_tool(attrs)
+    tool_name = raw_tool_name
+    if event in ("BeforeMCPExecution", "AfterMCPExecution") and mcp_tool:
+        tool_name = mcp_tool
     if tool_name:
         tools[tool_name] += 1
 
-    mcp_server = attrs.get("gen_ai.client.mcp_server")
     if mcp_server:
         short_server = _shorten_mcp_server(mcp_server)
         mcp_servers[short_server] += 1
@@ -90,12 +198,19 @@ def _process_span(
         elif event == "AfterMCPExecution" and mcp_server_after is not None:
             mcp_server_after[short_server] += 1
 
-    subagent_type = attrs.get("gen_ai.client.subagent_type")
-    if subagent_type:
-        if event == "SubagentStart":
-            subagent_types[subagent_type] += 1
-        elif event == "SubagentStop" and subagent_stops_by_type is not None:
-            subagent_stops_by_type[subagent_type] += 1
+    subagent_type = _attr(attrs, "gen_ai.client.subagent_type", "ide.subagent_type", "subagent.type")
+    is_subagent_start = event == "SubagentStart"
+    is_subagent_stop = event == "SubagentStop"
+    if subagent_type or is_subagent_start or is_subagent_stop:
+        subagent_name = str(subagent_type or "unknown")
+        if is_subagent_start:
+            subagent_types[subagent_name] += 1
+        elif is_subagent_stop and subagent_stops_by_type is not None:
+            subagent_stops_by_type[subagent_name] += 1
+    tool_subagent = _extract_subagent_name_from_tool(tool_name, attrs)
+    if tool_subagent and event == "PreToolUse":
+        events_by_type["SubagentStart"] += 1
+        subagent_types[tool_subagent] += 1
 
     session_id = _extract_session_id(attrs)
     if session_id:
@@ -248,7 +363,13 @@ def _process_span(
             }
         elif event == "PreToolUse":
             preview = str(attrs.get("gen_ai.client.tool.input", ""))[:200]
-            conv_event = {"type": "tool_call", "ts": _ts_ms, "tool_name": tool_name or "", "preview": preview}
+            conv_event = {
+                "type": "tool_call",
+                "ts": _ts_ms,
+                "tool_name": tool_name or "",
+                "preview": preview,
+                "file_path": _extract_file_path(attrs),
+            }
         elif event in ("PostToolUse", "PostToolUseFailure"):
             dur = 0.0
             if start_ns and end_ns:
@@ -259,13 +380,12 @@ def _process_span(
                 "duration_ms": round(dur, 1),
             }
         elif event == "SubagentStart":
-            conv_event = {"type": "subagent_start", "ts": _ts_ms, "subagent_type": subagent_type or ""}
+            conv_event = {"type": "subagent_start", "ts": _ts_ms, "subagent_type": str(subagent_type or "unknown")}
         elif event == "SubagentStop":
-            conv_event = {"type": "subagent_stop", "ts": _ts_ms, "subagent_type": subagent_type or ""}
+            conv_event = {"type": "subagent_stop", "ts": _ts_ms, "subagent_type": str(subagent_type or "unknown")}
         elif event == "SessionEnd":
             conv_event = {"type": "session_end", "ts": _ts_ms}
         elif event in ("BeforeMCPExecution", "AfterMCPExecution"):
-            mcp_tool = attrs.get("gen_ai.client.mcp_tool", "")
             conv_event = {
                 "type": "mcp_call" if event == "BeforeMCPExecution" else "mcp_result",
                 "ts": _ts_ms, "tool_name": mcp_tool,
@@ -275,7 +395,7 @@ def _process_span(
             session_conversation.setdefault(session_id, []).append(conv_event)
 
     # Per-agent (IDE) stats
-    agent_name = attrs.get("gen_ai.client.name") or attrs.get("ide.name") or attrs.get("service.name") or "unknown"
+    agent_name = _attr(attrs, "gen_ai.client.name", "ide.name", "service.name") or "unknown"
     if agent_name not in agents:
         agents[agent_name] = AgentStats(name=agent_name)
     ag = agents[agent_name]
@@ -288,8 +408,11 @@ def _process_span(
         ag.tools_by_count[tool_name] += 1
     if mcp_server:
         ag.mcp_servers[_shorten_mcp_server(mcp_server)] += 1
-    if subagent_type and event == "SubagentStart":
-        ag.subagent_types[subagent_type] += 1
+    if (subagent_type or is_subagent_start) and event == "SubagentStart":
+        ag.subagent_types[str(subagent_type or "unknown")] += 1
+    if tool_subagent and event == "PreToolUse":
+        ag.events_by_type["SubagentStart"] += 1
+        ag.subagent_types[tool_subagent] += 1
     if session_id:
         ag.sessions_seen.add(session_id)
     if tool_name and start_ns and end_ns:

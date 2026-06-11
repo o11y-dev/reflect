@@ -4,6 +4,7 @@ import sqlite3
 from typing import Any
 
 from reflect.schema.base import ReflectModel
+from reflect.store.provenance import origin_label, origin_transport
 
 
 class OverviewViewModel(ReflectModel):
@@ -16,6 +17,8 @@ class OverviewViewModel(ReflectModel):
     estimated_cost_usd: float
     failure_count: int
     recovered_failure_count: int
+    source_provenance: list[dict[str, Any]]
+    agent_cost_over_time: list[dict[str, Any]]
     top_sessions: list[dict[str, Any]]
     top_models: list[dict[str, Any]]
     top_tools: list[dict[str, Any]]
@@ -58,10 +61,48 @@ def build_overview(conn: sqlite3.Connection, *, limit: int = 10) -> OverviewView
         estimated_cost_usd=totals[5],
         failure_count=totals[6],
         recovered_failure_count=recovered_failure_count,
+        source_provenance=list_source_provenance(conn),
+        agent_cost_over_time=_agent_cost_over_time(conn),
         top_sessions=_top_sessions(conn, limit=top_limit),
         top_models=_top_models(conn, limit=top_limit),
         top_tools=_top_tools(conn, limit=top_limit),
     )
+
+
+def list_source_provenance(
+    conn: sqlite3.Connection,
+    *,
+    session_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    if session_ids is not None and not session_ids:
+        return []
+    params: list[str] = []
+    where = ""
+    if session_ids is not None:
+        placeholders = ", ".join("?" for _ in sorted(session_ids))
+        where = f"WHERE session_id IN ({placeholders})"
+        params.extend(sorted(session_ids))
+    cursor = conn.execute(
+        f"""
+        SELECT
+          COALESCE(NULLIF(origin_kind, ''), 'unknown') AS origin_kind,
+          COUNT(*) AS event_count
+        FROM raw_events
+        {where}
+        GROUP BY origin_kind
+        ORDER BY event_count DESC, origin_kind ASC
+        """,
+        params,
+    )
+    return [
+        {
+            "origin_kind": row[0],
+            "label": origin_label(row[0]),
+            "transport": origin_transport(row[0]),
+            "event_count": row[1],
+        }
+        for row in cursor.fetchall()
+    ]
 
 
 def _top_sessions(conn: sqlite3.Connection, *, limit: int) -> list[dict[str, Any]]:
@@ -84,6 +125,30 @@ def _top_sessions(conn: sqlite3.Connection, *, limit: int) -> list[dict[str, Any
         JOIN sessions s ON s.id = sr.session_id
         ORDER BY sr.total_cost DESC, sr.tool_call_count DESC, sr.started_at DESC
         LIMIT ?
+        """,
+        (limit,),
+    )
+    return _cursor_dicts(cursor)
+
+
+def _agent_cost_over_time(conn: sqlite3.Connection, *, limit: int = 180) -> list[dict[str, Any]]:
+    cursor = conn.execute(
+        """
+        WITH recent_days AS (
+          SELECT day
+          FROM daily_rollups
+          GROUP BY day
+          ORDER BY day DESC
+          LIMIT ?
+        )
+        SELECT
+          dr.day,
+          dr.agent,
+          dr.total_cost
+        FROM daily_rollups dr
+        JOIN recent_days rd ON rd.day = dr.day
+        WHERE dr.total_cost > 0
+        ORDER BY dr.day ASC, dr.total_cost DESC, dr.agent ASC
         """,
         (limit,),
     )

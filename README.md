@@ -12,61 +12,23 @@
 [![License](https://img.shields.io/github/license/o11y-dev/reflect)](LICENSE)
 [![CI](https://github.com/o11y-dev/reflect/actions/workflows/test.yml/badge.svg)](https://github.com/o11y-dev/reflect/actions/workflows/test.yml)
 
-**Your AI agents are doing things you can't see. reflect shows you.**
+**Behavioral memory for developer-agent behavior and workflow.**
 
-Local-first telemetry for Claude Code, OpenAI Codex CLI, GitHub Copilot, Gemini CLI, and Cursor. See token spend, tool failure rates, latency, model mix, MCP usage, and the sessions that are actually burning your budget.
+Reflect turns agent telemetry into patterns about how developer-agent behavior and workflow actually work: prompt shape, tool loops, model mix, context breakage, token burn, and the mission shift happening across teams.
 
 No hosted backend. No account. Runs on your machine.
 
 ```
 $ reflect --demo
 
-─────────── AI Usage Dashboard  All time  (2026-03-16 → 2026-03-23) ────────────
+reflecting...
+REFLECT
+Inserted     0
+Skipped      0
+Normalized   0
+Sessions     9
 
-╭────────────────────────────────── Insights ──────────────────────────────────╮
-│ ✓ Good prompt-to-action ratio — 4.2 tool calls per prompt, showing           │
-│   effective task delegation.                                                 │
-│ ✓ Effective subagent delegation — 1 Task subagent, keeping main context      │
-│   focused.                                                                   │
-│ ⚠ 7 tool failures (20.6% of tool calls). Path and schema validation up       │
-│   front can reduce iteration cost.                                           │
-│ ⚠ Top session consumed 42% of all tokens — context blowout pattern.          │
-│ → Use a fixed prompt contract: Goal, Context, Constraints, Output, Done-when │
-│ → Pin relevant files in the first prompt to reduce exploratory tool churn.   │
-╰──────────────────────────────────────────────────────────────────────────────╯
-
-╭── Quality Score ──╮ ╭─── Sessions ────╮ ╭── Active Days ──╮
-│       75.0%       │ │        8        │ │        8        │
-╰───────────────────╯ ╰─────────────────╯ ╰─────────────────╯
-╭───── Prompts ─────╮ ╭── Tool/Prompt ──╮ ╭─── Failure % ───╮
-│         9         │ │      4.4:1      │ │      18.9%      │
-╰───────────────────╯ ╰─────────────────╯ ╰─────────────────╯
-
-╭────────────────────────────── Agent Comparison ──────────────────────────────╮
-│                                                        Top    In    Out  Fail │
-│   Agent     Sess  Events  Quality      Top Model       Tool  Tok    Tok     % │
-│  ──────────────────────────────────────────────────────────────────────────  │
-│   claude       4      46  ████░ High   sonnet-4-5      Read  275K  44.5K  16% │
-│   codex        1       7  ████░ High   gpt-5.5         exec…  15K   1.2K   0% │
-│   copilot      2      20  ████░ High   gpt-4o          Read   33K   6.3K  12% │
-│   cursor       1      11  █░░░░ Low    —               Write  95K   8.0K  60% │
-│   gemini       1       8  ████░ High   gemini-2.0-fla… Read   12K   2.5K   0% │
-╰──────────────────────────────────────────────────────────────────────────────╯
-
-╭───────────────────────────── Sessions (9 total) ─────────────────────────────╮
-│   Session                    Agent     Started (UTC)      Score   In Tok      │
-│  ──────────────────────────────────────────────────────────────────────────  │
-│   implement the entire da…   claude    2026-03-16 20:10      60   180.0K      │
-│   add Codex native OTel …    codex     2026-03-24 13:50      80    15.0K      │
-│   migrate the users table…   cursor    2026-03-20 17:25      20    95.0K      │
-│   investigate the memory …   claude    2026-03-22 14:55      80    45.0K      │
-│   refactor the auth modul…   claude    2026-03-23 10:10      90    28.0K      │
-│   add cursor-based pagina…   copilot   2026-03-21 10:40      80    18.0K      │
-│   fix the token expiry bu…   copilot   2026-03-17 09:40      90    15.0K      │
-│   review PR #142 for secu…   gemini    2026-03-18 16:03      90    12.0K      │
-╰──────────────────────────────────────────────────────────────────────────────╯
-
-─────────────────────────────── reflect.o11y.dev ───────────────────────────────
+Serving browser report at http://127.0.0.1:8765
 ```
 
 > Run this yourself: `pipx install o11y-reflect && reflect --demo`
@@ -80,7 +42,13 @@ reflect setup
 reflect
 ```
 
-`reflect setup` starts a local OTLP gateway and wires the supported agents it can find. It edits local agent config files, points native OpenTelemetry exporters at the local gateway, installs hook-based capture where that path is supported, and writes everything under `~/.reflect/state/`.
+`reflect setup` starts a local OTLP gateway and wires the supported agents you select. It edits global user-level agent config files, points native OpenTelemetry exporters at the local gateway, installs hook-based capture where that path is supported, and writes everything under `~/.reflect/state/`. In an interactive terminal, setup asks which detected agents to instrument. In scripts, use `--agent <name>` repeatedly or `--all-agents`.
+
+Global/user-scoped setup is the default. Project-local hook and skill installs are available only by explicit opt-in, for agents or workflows that need repo-local instrumentation:
+
+```bash
+reflect setup --agent "Claude Code" --local-agent "Claude Code"
+```
 
 All `reflect setup` data is local and private to your machine: hook config, local spans, OTLP gateway files, and the SQLite report store live under local paths such as `~/.reflect/state/` and the opentelemetry-hooks state directory. `reflect` does not send this data to a hosted reflect service.
 
@@ -92,12 +60,14 @@ By default, hook spans keep prompt/response text out of telemetry and store meta
 
 For scripted setup, use `reflect setup --text-capture-mode metadata|masked|full`. The lower-level flags `--capture-text`, `--no-capture-text`, `--mask-captured-text`, `--no-mask-captured-text`, and `--text-max-chars` are also available.
 
-Then use your AI tools normally. New sessions will show up in:
+Then use your AI tools normally and run `reflect`. The default command opens the local browser report backed by the SQLite store under `~/.reflect/state/`.
 
-- `reflect` for the terminal dashboard
-- `reflect report` for the local browser dashboard
-- `reflect --no-terminal` for a markdown report
-- `reflect --dashboard-artifact out.json` for a static dashboard artifact
+Legacy output modes remain available for now but are deprecated:
+
+- `reflect report` — deprecated alias for `reflect`
+- `reflect --terminal` — legacy Rich terminal view
+- `reflect --no-terminal --output report.md` — legacy markdown report
+- `reflect --dashboard-artifact out.json` — legacy static dashboard JSON artifact
 
 ## Demo
 
@@ -143,7 +113,7 @@ When you run `reflect`, it:
 1. **Reads local telemetry** from `~/.reflect/state/otlp/`, local hook spans, or supported session stores
 2. **Normalizes** them into a single cross-agent data model — so a Claude tool call and a Copilot tool call look the same
 3. **Aggregates** per-session and cross-session metrics: token totals, tool failure rates, latency percentiles, subagent delegation patterns
-4. **Renders** the results as a terminal dashboard, markdown report, or JSON artifact for a hosted web view
+4. **Serves** the browser report locally from SQLite, with deprecated terminal, markdown, and JSON artifact outputs still available for compatibility
 
 Nothing leaves your machine. There's no cloud backend, no account, no API key.
 
@@ -159,13 +129,14 @@ Nothing leaves your machine. There's no cloud backend, no account, no API key.
 - **Activity heatmaps** — by hour and day of week
 - **Actionable recommendations** — based on your actual usage patterns
 
-## Output modes
+## Commands
 
 ```bash
-reflect                        # interactive terminal dashboard (default)
-reflect --no-terminal          # markdown report
-reflect --dashboard-artifact out.json  # JSON artifact for dashboards
-reflect report                 # open local dashboard in browser
+reflect                        # open local browser report (default)
+reflect report                 # deprecated alias for reflect
+reflect --terminal             # deprecated terminal dashboard
+reflect --no-terminal --output report.md  # deprecated markdown report
+reflect --dashboard-artifact out.json  # deprecated JSON artifact
 reflect skills                 # extract reusable skills from your sessions
 reflect --demo                 # instant demo with Claude/Codex/Copilot/Cursor/Gemini data
 ```
@@ -303,9 +274,9 @@ otel-traces.json
 otel-logs.json
 ```
 
-### Hosted dashboard
+### Legacy dashboard artifact
 
-Write a JSON artifact for GitHub Pages or a local server:
+The browser report is now served from SQLite by default. The JSON artifact path is kept for compatibility with older GitHub Pages/static dashboard workflows:
 
 ```bash
 reflect --dashboard-artifact docs/reports/latest.json
@@ -325,8 +296,9 @@ Options:
   --spans-dir PATH             Local span JSONL directory
   --otlp-traces PATH           OTLP JSON traces file
   --output PATH                Markdown report output path
-  --terminal / --no-terminal   Terminal dashboard (default) or markdown report
-  --dashboard-artifact PATH    Write dashboard JSON artifact
+  --terminal / --no-terminal   Deprecated terminal dashboard or markdown report
+  --dashboard-artifact PATH    Deprecated dashboard JSON artifact
+  --db-path PATH               SQLite store used by browser report endpoints
   --demo                       Run with bundled sample data
   --help                       Show help
 
@@ -345,24 +317,42 @@ Commands:
 
 ## Data flow
 
-```
-reflect setup
-    ├── installs opentelemetry-hooks
-    ├── edits each agent's settings file to enable telemetry
-    │       via hooks        Claude Code  → ~/.claude/settings.json
-    │       via native otel  Claude Code  → ~/.claude/settings.json  (env block, metrics+logs)
-    │                        Codex CLI    → ~/.codex/config.toml    ([otel] section)
-    │                        Copilot VS Code → VS Code settings.json (otel.* keys)
-    │                        Copilot CLI  → VS Code settings.json  (env block)
-    │                        Gemini CLI   → ~/.gemini/settings.json  (telemetry.* keys)
-    ├── starts local OTLP gateway (gRPC :4317, HTTP :4318)
-    ├── distributes skill packages
-    └── enables local span export to ~/.reflect/state/
+```mermaid
+flowchart LR
+    subgraph Setup["reflect setup"]
+        A[Install opentelemetry-hooks]
+        B[Write agent telemetry config]
+        C[Start local OTLP gateway<br/>gRPC :4317 / HTTP :4318]
+        D[Distribute skill packages]
+    end
 
-Your AI tool → hooks -or- native OTLP → gateway → ~/.reflect/state/otlp/
+    subgraph Agents["Agent signal paths"]
+        E[Claude Code hooks]
+        F[Native OTLP exporters<br/>Claude / Codex / Copilot / Gemini]
+        G[Local session stores<br/>Cursor / Codex / Copilot / Claude / Gemini]
+    end
 
-reflect → reads traces + logs + session stores → terminal dashboard / report / hosted view
+    H[reflect gateway]
+    I[~/.reflect/state/otlp/<br/>otel-traces.json + otel-logs.json]
+    J[Normalization + ingestion]
+    K[Local SQLite store]
+    L[Browser report]
+
+    A --> E
+    B --> F
+    C --> H
+    D --> L
+
+    E --> H
+    F --> H
+    H --> I
+    I --> J
+    G --> J
+    J --> K
+    K --> L
 ```
+
+`reflect setup` wires both hook-based and native OTLP paths into the local gateway. The gateway persists a shared OTLP traces/logs cache under `~/.reflect/state/otlp/`, while local session stores are ingested alongside that OTLP cache into the SQLite-backed browser report.
 
 ## Skill package
 

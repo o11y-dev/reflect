@@ -83,6 +83,37 @@ def _write_codex_logs_file(path):
     path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
 
+def _write_claude_logs_file(path):
+    payload = {
+        "resourceLogs": [
+            {
+                "resource": {
+                    "attributes": [{"key": "service.name", "value": {"stringValue": "claude-code"}}]
+                },
+                "scopeLogs": [
+                    {
+                        "logRecords": [
+                            {
+                                "timeUnixNano": "3000",
+                                "attributes": [
+                                    {"key": "event.name", "value": {"stringValue": "claude_code.api_request"}},
+                                    {"key": "event.timestamp", "value": {"stringValue": "2026-05-28T14:47:57Z"}},
+                                    {"key": "session.id", "value": {"stringValue": "claude-sess-1"}},
+                                    {"key": "model", "value": {"stringValue": "claude-opus-4-6"}},
+                                    {"key": "input_tokens", "value": {"stringValue": "9"}},
+                                    {"key": "output_tokens", "value": {"stringValue": "7238"}},
+                                    {"key": "cache_creation_tokens", "value": {"stringValue": "41530"}},
+                                ],
+                            }
+                        ]
+                    }
+                ],
+            }
+        ]
+    }
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
 def _write_gemini_logs_file(path):
     payload = {
         "resourceLogs": [
@@ -166,6 +197,21 @@ def _write_codex_session_file(path):
                 "output": "clean",
             },
         },
+        {
+            "timestamp": "2026-05-08T00:42:19.256Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "last_token_usage": {
+                        "input_tokens": 1000,
+                        "cached_input_tokens": 250,
+                        "output_tokens": 80,
+                        "reasoning_output_tokens": 12,
+                    }
+                },
+            },
+        },
     ]
     path.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
 
@@ -212,8 +258,10 @@ def test_ingest_otlp_traces_dedupes(tmp_path):
         assert first == {"inserted": 1, "skipped": 0}
         assert second == {"inserted": 0, "skipped": 1}
 
-        row = conn.execute("SELECT source_type, event_type, session_id FROM raw_events").fetchone()
-        assert row == ("otlp_traces_json", "UserPromptSubmit", "sess-1")
+        row = conn.execute("SELECT source_type, event_type, session_id, origin_kind, attrs_json FROM raw_events").fetchone()
+        attrs = json.loads(row[4])
+        assert row[:4] == ("otlp_traces_json", "UserPromptSubmit", "sess-1", "native_otlp_trace")
+        assert attrs["reflect.telemetry.origin"] == "native_otlp_trace"
     finally:
         conn.close()
 
@@ -233,12 +281,38 @@ def test_ingest_otlp_logs_normalizes_codex_records(tmp_path):
         assert second == {"inserted": 0, "skipped": 1}
 
         row = conn.execute(
-            "SELECT source_type, event_type, session_id, attrs_json FROM raw_events"
+            "SELECT source_type, event_type, session_id, origin_kind, attrs_json FROM raw_events"
         ).fetchone()
-        attrs = json.loads(row[3])
-        assert row[:3] == ("otlp_logs_json", "gen_ai.client.hook.UserPromptSubmit", "codex-sess-1")
+        attrs = json.loads(row[4])
+        assert row[:4] == ("otlp_logs_json", "gen_ai.client.hook.UserPromptSubmit", "codex-sess-1", "native_otlp_log")
         assert attrs["gen_ai.client.name"] == "codex"
         assert attrs["gen_ai.request.model"] == "gpt-5.5"
+        assert attrs["reflect.telemetry.origin"] == "native_otlp_log"
+    finally:
+        conn.close()
+
+
+def test_ingest_otlp_logs_normalizes_claude_api_request(tmp_path):
+    db = tmp_path / "reflect.db"
+    logs = tmp_path / "otel-logs.json"
+    _write_claude_logs_file(logs)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        first = ingest_otlp_logs_file(conn, file_path=logs)
+
+        assert first == {"inserted": 1, "skipped": 0}
+
+        row = conn.execute(
+            "SELECT source_type, event_type, session_id, origin_kind, attrs_json FROM raw_events"
+        ).fetchone()
+        attrs = json.loads(row[4])
+        assert row[:4] == ("otlp_logs_json", "gen_ai.client.hook.Stop", "claude-sess-1", "native_otlp_log")
+        assert attrs["gen_ai.client.name"] == "claude"
+        assert attrs["gen_ai.request.model"] == "claude-opus-4-6"
+        assert attrs["gen_ai.usage.output_tokens"] == 7238
+        assert attrs["reflect.telemetry.origin"] == "native_otlp_log"
     finally:
         conn.close()
 
@@ -254,21 +328,23 @@ def test_ingest_native_codex_session_file(tmp_path):
         first = ingest_native_session_file(conn, file_path=session_file, agent="codex")
         second = ingest_native_session_file(conn, file_path=session_file, agent="codex")
 
-        assert first == {"inserted": 5, "skipped": 0}
-        assert second == {"inserted": 0, "skipped": 5}
+        assert first == {"inserted": 6, "skipped": 0}
+        assert second == {"inserted": 0, "skipped": 6}
 
         rows = conn.execute(
             """
-            SELECT source_type, event_type, session_id, attrs_json
+            SELECT source_type, event_type, session_id, origin_kind, attrs_json
             FROM raw_events
             ORDER BY observed_at, event_type
             """
         ).fetchall()
         assert {row[0] for row in rows} == {"native_session"}
         assert {row[2] for row in rows} == {"codex-native-sess-1"}
-        attrs = [json.loads(row[3]) for row in rows]
+        assert {row[3] for row in rows} == {"native_session"}
+        attrs = [json.loads(row[4]) for row in rows]
         assert {attr["gen_ai.client.name"] for attr in attrs} == {"codex"}
         assert any(attr.get("gen_ai.client.tool_name") == "exec_command" for attr in attrs)
+        assert any(attr.get("gen_ai.usage.input_tokens") == 750 for attr in attrs)
     finally:
         conn.close()
 

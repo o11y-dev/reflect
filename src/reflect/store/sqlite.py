@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-DEFAULT_BUSY_TIMEOUT_MS = 5000
+DEFAULT_BUSY_TIMEOUT_MS = 30000
 DEFAULT_WAL_AUTOCHECKPOINT = 1000
 
 
@@ -11,7 +11,7 @@ def connect_sqlite(db_path: str | Path, *, strict_durability: bool = False) -> s
     """Open a SQLite connection configured for Reflect runtime defaults."""
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=DEFAULT_BUSY_TIMEOUT_MS / 1000)
     _apply_runtime_pragmas(conn, strict_durability=strict_durability)
     return conn
 

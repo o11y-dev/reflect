@@ -20,13 +20,13 @@ Usage:
     python3 src/reflect/core.py \\
         --otlp-traces ~/.reflect/state/otlp/otel-traces.json
 
-    # Save a markdown report instead of the terminal dashboard
+    # Open the local browser report
+    python3 src/reflect/core.py \\
+        --otlp-traces ~/.reflect/state/otlp/otel-traces.json
+
+    # Legacy markdown report
     python3 src/reflect/core.py \\
         --otlp-traces ~/.reflect/state/otlp/otel-traces.json --no-terminal
-
-    # Open the local dashboard in a browser
-    python3 src/reflect/core.py report \\
-        --otlp-traces ~/.reflect/state/otlp/otel-traces.json
 
     # From local hook state (legacy)
     python3 src/reflect/core.py \\
@@ -42,8 +42,10 @@ import os
 import platform
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
+import time
 import zipfile
 from datetime import UTC, datetime
 from importlib import metadata as importlib_metadata
@@ -146,6 +148,7 @@ from reflect.parsing import (  # noqa: F401
     _flatten_otlp_attributes,
     _flatten_text_content,
     _infer_otlp_logs_file,
+    _iter_claude_log_spans,
     _iter_claude_session_spans,
     _iter_codex_log_spans,
     _iter_codex_session_spans,
@@ -159,14 +162,18 @@ from reflect.parsing import (  # noqa: F401
 from reflect.processing import _process_span, analyze_telemetry  # noqa: F401
 from reflect.report import render_report  # noqa: F401
 from reflect.skill_extraction import (  # noqa: F401
+    _build_graph_evidence,
     _build_skill_evidence_bundle,
+    _build_skill_evidence_bundle_from_sql,
     _build_skills_extraction_prompt,
+    _build_skills_extraction_prompt_from_bundle,
     _compress_tool_sequence,
     _extract_recovery_chains,
     _load_extracted_skills,
     _serialize_sessions_for_skills,
     _strip_json_fences,
 )
+from reflect.store.provenance import HOOK_ORIGINS, NATIVE_OTLP_ORIGINS
 from reflect.terminal import _render_terminal  # noqa: F401
 from reflect.utils import (  # noqa: F401
     _bar,
@@ -224,7 +231,8 @@ _AGENT_SPECS = [
         "env": "CLAUDE_HOME",
         "default": lambda: Path.home() / ".claude",
         "path_kind": "home",
-        "skill_path": ".claude/skills/",
+        "local_skill_path": ".claude/skills/",
+        "hook_agent": "claude",
         "global_path": "~/.claude/skills/",
         "recommendation": "Run reflect setup to wire Claude hooks and enable native Claude telemetry.",
     },
@@ -233,7 +241,8 @@ _AGENT_SPECS = [
         "env": "CURSOR_HOME",
         "default": lambda: Path.home() / ".cursor",
         "path_kind": "home",
-        "skill_path": ".agents/skills/",
+        "local_skill_path": ".agents/skills/",
+        "hook_agent": "cursor",
         "global_path": "~/.cursor/skills/",
         "recommendation": "Use session/log adapters for desktop; hooks help for headless or CLI launches. Treat state.vscdb as auth/context, not a guaranteed per-session token ledger.",
     },
@@ -243,7 +252,8 @@ _AGENT_SPECS = [
         "env_aliases": ["GEMINI_DIR"],
         "default": lambda: Path.home() / ".gemini",
         "path_kind": "home",
-        "skill_path": ".agents/skills/",
+        "local_skill_path": ".agents/skills/",
+        "hook_agent": "gemini",
         "global_path": "~/.gemini/skills/",
         "recommendation": "Prefer native Gemini OTel; keep session/log adapters for troubleshooting.",
     },
@@ -252,7 +262,8 @@ _AGENT_SPECS = [
         "env": "COPILOT_HOME",
         "default": lambda: Path.home() / ".copilot",
         "path_kind": "home",
-        "skill_path": ".agents/skills/",
+        "local_skill_path": ".agents/skills/",
+        "hook_agent": "copilot",
         "global_path": "~/.copilot/skills/",
         "recommendation": "Prefer native Copilot OTel on OTLP HTTP; add hooks for governance.",
     },
@@ -261,7 +272,8 @@ _AGENT_SPECS = [
         "env": "CODEX_HOME",
         "default": lambda: Path.home() / ".codex",
         "path_kind": "home",
-        "skill_path": ".codex/skills/",
+        "local_skill_path": ".codex/skills/",
+        "hook_agent": "codex",
         "global_path": "~/.codex/skills/",
         "recommendation": "Use native Codex OTel for interactive runs; reflect does not yet ship a native session adapter for Codex logs.",
     },
@@ -270,7 +282,7 @@ _AGENT_SPECS = [
         "env": "WINDSURF_HOME",
         "default": lambda: Path.home() / ".codeium" / "windsurf",
         "path_kind": "home",
-        "skill_path": ".windsurf/skills/",
+        "local_skill_path": ".windsurf/skills/",
         "global_path": "~/.codeium/windsurf/skills/",
         "recommendation": "Native OTel and hooks still need verification for Windsurf.",
     },
@@ -279,7 +291,7 @@ _AGENT_SPECS = [
         "env": "TRAE_HOME",
         "default": lambda: Path.home() / ".trae",
         "path_kind": "home",
-        "skill_path": ".trae/skills/",
+        "local_skill_path": ".trae/skills/",
         "global_path": "~/.trae/skills/",
         "recommendation": "Native OTel and hooks still need verification for Trae.",
     },
@@ -288,7 +300,7 @@ _AGENT_SPECS = [
         "env": "CLINE_HOME",
         "default": lambda: Path.home() / ".agents",
         "path_kind": "home",
-        "skill_path": ".agents/skills/",
+        "local_skill_path": ".agents/skills/",
         "global_path": "~/.agents/skills/",
         "recommendation": "Compatible with standard .agents/skills distribution.",
     },
@@ -297,7 +309,7 @@ _AGENT_SPECS = [
         "env": "ROO_HOME",
         "default": lambda: Path.home() / ".roo",
         "path_kind": "home",
-        "skill_path": ".roo/skills/",
+        "local_skill_path": ".roo/skills/",
         "global_path": "~/.roo/skills/",
         "recommendation": "Native OTel and hooks still need verification for Roo Code.",
     },
@@ -306,7 +318,7 @@ _AGENT_SPECS = [
         "env": "CONTINUE_HOME",
         "default": lambda: Path.home() / ".continue",
         "path_kind": "home",
-        "skill_path": ".continue/skills/",
+        "local_skill_path": ".continue/skills/",
         "global_path": "~/.continue/skills/",
         "recommendation": "Add hooks to cover exec / mcp-server gaps in Continue.",
     },
@@ -315,7 +327,7 @@ _AGENT_SPECS = [
         "env": "GOOSE_HOME",
         "default": lambda: Path.home() / ".config" / "goose",
         "path_kind": "home",
-        "skill_path": ".goose/skills/",
+        "local_skill_path": ".goose/skills/",
         "global_path": "~/.config/goose/skills/",
         "recommendation": "Native OTel and hooks still need verification for Goose.",
     },
@@ -324,7 +336,7 @@ _AGENT_SPECS = [
         "env": "OPENHANDS_HOME",
         "default": lambda: Path.home() / ".openhands",
         "path_kind": "home",
-        "skill_path": ".openhands/skills/",
+        "local_skill_path": ".openhands/skills/",
         "global_path": "~/.openhands/skills/",
         "recommendation": "Native OTel and hooks still need verification for OpenHands.",
     },
@@ -333,7 +345,7 @@ _AGENT_SPECS = [
         "env": "ANTIGRAVITY_HOME",
         "default": lambda: Path.home() / ".gemini" / "antigravity",
         "path_kind": "home",
-        "skill_path": ".agents/skills/",
+        "local_skill_path": ".agents/skills/",
         "global_path": "~/.gemini/antigravity/skills/",
         "recommendation": "Core target for reflect telemetry and skill distribution.",
     },
@@ -342,7 +354,7 @@ _AGENT_SPECS = [
         "env": "AMP_HOME",
         "default": lambda: Path.home() / ".local" / "share" / "amp",
         "path_kind": "home",
-        "skill_path": ".agents/skills/",
+        "local_skill_path": ".agents/skills/",
         "global_path": "~/.config/agents/skills/",
         "recommendation": "Start with session/log adapters before adding new default hook collection.",
     },
@@ -351,7 +363,7 @@ _AGENT_SPECS = [
         "env": "IFLOW_HOME",
         "default": lambda: Path.home() / ".iflow",
         "path_kind": "home",
-        "skill_path": ".iflow/skills/",
+        "local_skill_path": ".iflow/skills/",
         "global_path": "~/.iflow/skills/",
         "recommendation": "Start with session/log adapters; native OTel and hooks still need verification.",
     },
@@ -360,7 +372,7 @@ _AGENT_SPECS = [
         "env": "PI_HOME",
         "default": lambda: Path.home() / ".pi",
         "path_kind": "home",
-        "skill_path": ".pi/skills/",
+        "local_skill_path": ".pi/skills/",
         "global_path": "~/.pi/agent/skills/",
         "recommendation": "Start with session/log adapters; native OTel and hooks still need verification.",
     },
@@ -369,7 +381,7 @@ _AGENT_SPECS = [
         "env": "OPENCLAW_HOME",
         "default": lambda: Path.home() / ".openclaw",
         "path_kind": "home",
-        "skill_path": "skills/",
+        "local_skill_path": "skills/",
         "global_path": "~/.openclaw/skills/",
         "recommendation": "Start with session/log adapters; native OTel and hooks still need verification.",
     },
@@ -378,7 +390,8 @@ _AGENT_SPECS = [
         "env": "OPENCODE_HOME",
         "default": lambda: Path.home() / ".config" / "opencode",
         "path_kind": "home",
-        "skill_path": ".opencode/skills/",
+        "local_skill_path": ".opencode/skills/",
+        "hook_agent": "opencode",
         "global_path": "~/.config/opencode/skills/",
         "recommendation": "Use opencode run for skill extraction; opencode export for session telemetry.",
     },
@@ -683,7 +696,7 @@ def _detect_skill_drift(agents: list[dict]) -> dict | None:
     return {
         "component": "Reflect skill copies",
         "summary": "Global skill distribution is " + "; ".join(details) + ".",
-        "remediation": "Run reflect setup from the workspace root to refresh installed skill copies.",
+        "remediation": "Run reflect setup to refresh global installed skill copies.",
     }
 
 
@@ -897,14 +910,25 @@ def _resolve_and_analyze(
 )
 @click.option(
     "--terminal/--no-terminal",
-    default=True,
-    help="Render an interactive dashboard in the terminal using rich (default). Use --no-terminal to save a markdown report instead.",
+    default=None,
+    help="Deprecated. Use --terminal for the legacy Rich terminal view or --no-terminal for the legacy markdown report.",
 )
 @click.option(
     "--dashboard-artifact",
     type=click.Path(path_type=Path),
     default=None,
-    help="Write the dashboard JSON artifact to a file. Best when serving docs/index.html locally or from GitHub Pages.",
+    help="Deprecated. Write the legacy dashboard JSON artifact to a file.",
+)
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+    help="SQLite store used for SQL-backed browser report endpoints.",
+)
+@click.option(
+    "--sql-only",
+    is_flag=True,
+    help="Deprecated no-op; SQLite-backed report data is now the default.",
 )
 @click.option(
     "--demo",
@@ -922,14 +946,36 @@ def main(
     spans_dir: Path | None,
     output: Path | None,
     otlp_traces: Path | None,
-    terminal: bool,
+    terminal: bool | None,
     dashboard_artifact: Path | None,
+    db_path: Path,
+    sql_only: bool,
     demo: bool,
     time_range: str,
 ) -> None:
-    """AI usage telemetry report — analyze OpenTelemetry span data from your AI sessions."""
+    """Open the local Reflect browser report."""
     if ctx.invoked_subcommand is not None:
         return
+
+    if sql_only:
+        click.echo("Note: --sql-only is deprecated; SQLite-backed report data is now the default.")
+
+    if terminal is None:
+        _run_browser_report(
+            otlp_traces=otlp_traces,
+            sessions_dir=sessions_dir,
+            spans_dir=spans_dir,
+            time_range=time_range,
+            demo=demo,
+            dashboard_artifact=dashboard_artifact,
+            output=output,
+            db_path=db_path,
+        )
+        return
+
+    click.echo(
+        "Note: terminal and markdown modes are deprecated. Run `reflect` with no terminal flags to open the browser report."
+    )
 
     stats, otlp_traces, sessions_dir, spans_dir, time_range, since = _resolve_and_analyze(
         otlp_traces=otlp_traces,
@@ -949,6 +995,7 @@ def main(
     if update_notice:
         click.echo(f"reflect notice: {update_notice}")
     if dashboard_artifact is not None:
+        click.echo("Note: --dashboard-artifact is deprecated; the browser report is served from SQLite by default.")
         _write_dashboard_artifact(stats, dashboard_artifact)
 
     if terminal:
@@ -975,6 +1022,118 @@ def main(
 # ---------------------------------------------------------------------------
 # Report command
 # ---------------------------------------------------------------------------
+
+
+def _run_browser_report(
+    *,
+    otlp_traces: Path | None,
+    sessions_dir: Path | None,
+    spans_dir: Path | None,
+    time_range: str,
+    demo: bool,
+    dashboard_artifact: Path | None,
+    output: Path | None,
+    db_path: Path,
+) -> None:
+    from collections import Counter
+
+    console = Console()
+    update_notice = _build_startup_update_notice()
+    if update_notice:
+        click.echo(f"reflect notice: {update_notice}")
+
+    include_native_sessions = False
+    if demo:
+        demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
+        if not demo_traces.exists():
+            demo_traces = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
+        otlp_traces = demo_traces if demo_traces.exists() else otlp_traces
+    elif otlp_traces is None:
+        otlp_traces = _default_otlp_traces()
+        include_native_sessions = True
+    else:
+        default_otlp = _default_otlp_traces()
+        include_native_sessions = (
+            default_otlp is not None
+            and otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
+        )
+    with console.status("[bold orange3]reflecting...[/bold orange3]", spinner="dots"):
+        preparation = _prepare_sql_report_db(
+            db_path,
+            otlp_traces=otlp_traces,
+            include_native_sessions=include_native_sessions,
+        )
+    ingest_sources = preparation.get("ingest_sources") or {}
+    summary = Table.grid(padding=(0, 2))
+    summary.add_column(style="bold")
+    summary.add_column(justify="right")
+    summary.add_row("Inserted", f"{preparation['ingest']['inserted']:,}")
+    summary.add_row("Skipped", f"{preparation['ingest']['skipped']:,}")
+    summary.add_row("Normalized", f"{preparation['normalize']['processed']:,}")
+    summary.add_row("Sessions", f"{preparation['rollups']['session_rollups']:,}")
+    if ingest_sources:
+        summary.add_row("", "")
+        for name, result in ingest_sources.items():
+            source_type = str(result.get("source_type") or "")
+            native_events = sum(
+                int(counts.get("native_events") or 0)
+                for counts in (result.get("agents") or {}).values()
+            )
+            hook_events = sum(
+                int(counts.get("hook_events") or 0)
+                for counts in (result.get("agents") or {}).values()
+            )
+            source_detail = f"{result['inserted']:,} inserted / {result['skipped']:,} skipped"
+            if source_type in {"otlp_traces_json", "otlp_logs_json"}:
+                source_detail += f" / {native_events:,} native / {hook_events:,} hook event(s)"
+            elif hook_events:
+                source_detail += f" / {hook_events:,} hook event(s)"
+            summary.add_row(
+                name.replace("_", " ").title(),
+                source_detail,
+            )
+            for agent, counts in sorted((result.get("agents") or {}).items()):
+                agent_detail = f"{counts['events']:,} event(s)"
+                if source_type in {"otlp_traces_json", "otlp_logs_json"}:
+                    agent_detail += (
+                        f" / {int(counts.get('native_events') or 0):,} native"
+                        f" / {int(counts.get('hook_events') or 0):,} hook"
+                    )
+                elif counts.get("hook_events"):
+                    agent_detail += f"{' / ' if agent_detail else ''}{counts['hook_events']:,} hook"
+                summary.add_row(
+                    f"  {agent}",
+                    agent_detail,
+                )
+    console.print(Panel(summary, title="[bold orange3]REFLECT[/bold orange3]", border_style="orange3"))
+
+    stats = TelemetryStats(
+        session_files=0,
+        span_files=0,
+        total_events=0,
+        events_by_type=Counter(),
+        events_by_file={},
+    )
+    sessions_dir = sessions_dir or _default_sessions_dir()
+    spans_dir = spans_dir or _default_spans_dir()
+    if output is not None:
+        stats, _, sessions_dir, spans_dir, _, _ = _resolve_and_analyze(
+            otlp_traces=otlp_traces,
+            sessions_dir=sessions_dir,
+            spans_dir=spans_dir,
+            demo=demo,
+            time_range=time_range,
+        )
+        render_report(stats, sessions_dir, spans_dir, output)
+        print(f"Report saved to: {output}")
+    if dashboard_artifact is not None:
+        click.echo("Note: --dashboard-artifact is deprecated; the browser report is served from SQLite by default.")
+        dashboard_artifact.parent.mkdir(parents=True, exist_ok=True)
+        dashboard_artifact.write_text(
+            _json_stdlib.dumps(_sql_dashboard_payload(db_path)),
+            encoding="utf-8",
+        )
+    _start_publish_server(stats, db_path=db_path, sql_only=False)
 
 
 @main.command()
@@ -1039,83 +1198,20 @@ def report(
     db_path: Path,
     sql_only: bool,
 ) -> None:
-    """Open the AI usage dashboard in a browser via a local server."""
-    from collections import Counter
-
-    console = Console()
-
+    """Deprecated alias for `reflect`."""
+    click.echo("Note: `reflect report` is deprecated. Run `reflect` to open the browser report.")
     if sql_only:
         click.echo("Note: --sql-only is deprecated; SQLite-backed report data is now the default.")
-
-    include_native_sessions = False
-    if demo:
-        demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
-        if not demo_traces.exists():
-            demo_traces = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
-        otlp_traces = demo_traces if demo_traces.exists() else otlp_traces
-    elif otlp_traces is None:
-        otlp_traces = _default_otlp_traces()
-        include_native_sessions = True
-    else:
-        default_otlp = _default_otlp_traces()
-        include_native_sessions = (
-            default_otlp is not None
-            and otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
-        )
-    with console.status("[bold orange3]reflecting...[/bold orange3]", spinner="dots"):
-        preparation = _prepare_sql_report_db(
-            db_path,
-            otlp_traces=otlp_traces,
-            include_native_sessions=include_native_sessions,
-        )
-    ingest_sources = preparation.get("ingest_sources") or {}
-    summary = Table.grid(padding=(0, 2))
-    summary.add_column(style="bold")
-    summary.add_column(justify="right")
-    summary.add_row("Inserted", f"{preparation['ingest']['inserted']:,}")
-    summary.add_row("Skipped", f"{preparation['ingest']['skipped']:,}")
-    summary.add_row("Normalized", f"{preparation['normalize']['processed']:,}")
-    summary.add_row("Sessions", f"{preparation['rollups']['session_rollups']:,}")
-    if ingest_sources:
-        summary.add_row("", "")
-        for name, result in ingest_sources.items():
-            summary.add_row(
-                name.replace("_", " ").title(),
-                f"{result['inserted']:,} inserted / {result['skipped']:,} skipped",
-            )
-            for agent, counts in sorted((result.get("agents") or {}).items()):
-                summary.add_row(
-                    f"  {agent}",
-                    f"{counts['events']:,} event(s)",
-                )
-    console.print(Panel(summary, title="[bold orange3]REFLECT[/bold orange3]", border_style="orange3"))
-
-    stats = TelemetryStats(
-        session_files=0,
-        span_files=0,
-        total_events=0,
-        events_by_type=Counter(),
-        events_by_file={},
+    _run_browser_report(
+        otlp_traces=otlp_traces,
+        sessions_dir=sessions_dir,
+        spans_dir=spans_dir,
+        time_range=time_range,
+        demo=demo,
+        dashboard_artifact=dashboard_artifact,
+        output=output,
+        db_path=db_path,
     )
-    sessions_dir = sessions_dir or _default_sessions_dir()
-    spans_dir = spans_dir or _default_spans_dir()
-    if output is not None:
-        stats, _, sessions_dir, spans_dir, _, _ = _resolve_and_analyze(
-            otlp_traces=otlp_traces,
-            sessions_dir=sessions_dir,
-            spans_dir=spans_dir,
-            demo=demo,
-            time_range=time_range,
-        )
-        render_report(stats, sessions_dir, spans_dir, output)
-        print(f"Report saved to: {output}")
-    if dashboard_artifact is not None:
-        dashboard_artifact.parent.mkdir(parents=True, exist_ok=True)
-        dashboard_artifact.write_text(
-            _json_stdlib.dumps(_sql_dashboard_payload(db_path)),
-            encoding="utf-8",
-        )
-    _start_publish_server(stats, db_path=db_path, sql_only=False)
 
 
 # ---------------------------------------------------------------------------
@@ -1160,24 +1256,23 @@ def _interactive_pick(
         import tty
     except ImportError:
         # Platform (e.g. Windows) does not support raw-terminal mode.
-        hint = "↑↓ select  Enter confirm" if not multi else "comma-separated numbers, empty=all"
+        hint = "type one label" if not multi else "comma-separated labels, empty=all"
         click.echo(hint)
-        for i, label in enumerate(items, start=1):
-            click.echo(f"  {i}. {label}")
+        label_map = {_agent_key(label): index for index, label in enumerate(items)}
+        for label in items:
+            click.echo(f"  - {label}")
         if multi:
-            raw = click.prompt("Select by number (empty for all)", default="", show_default=False)
+            raw = click.prompt("Select by label (empty for all)", default="", show_default=False)
             if not raw.strip():
                 return list(range(n))
             picked = []
             for part in raw.split(","):
-                part = part.strip()
-                if part.isdigit():
-                    idx = int(part) - 1
-                    if 0 <= idx < n:
-                        picked.append(idx)
+                key = _agent_key(part.strip())
+                if key in label_map:
+                    picked.append(label_map[key])
             return sorted(set(picked)) or list(range(n))
-        choice = click.prompt("Select by number", type=click.IntRange(1, n), default=1)
-        return [choice - 1]
+        choice = click.prompt("Select by label", default=items[0], show_default=True)
+        return [label_map.get(_agent_key(choice), 0)]
 
     from rich.console import Console as _Console
 
@@ -1361,6 +1456,32 @@ def _select_skills(
         raise SystemExit(0)
     return [skill_defs[i] for i in indices]
 
+
+def _select_skill_install_agents(
+    agents: list[dict],
+    console: object,
+    *,
+    yes: bool,
+) -> list[dict]:
+    """Choose which detected agents should receive extracted skills."""
+    import sys
+
+    if not agents:
+        return []
+    if yes or len(agents) == 1 or not sys.stdin.isatty():
+        return agents
+
+    console.print("\nInstall extracted skills to which agent(s)?\n")
+    labels = [
+        f"[cyan]{agent['name']:<22}[/cyan] {agent.get('global_path', '')}"
+        for agent in agents
+    ]
+    indices = _interactive_pick(labels, multi=True)
+    if not indices:
+        console.print("\n[yellow]No agents selected. Aborted.[/yellow]")
+        raise SystemExit(0)
+    return [agents[i] for i in indices]
+
 # Strict kebab-case: lowercase letters, digits, and hyphens only; 1-64 chars.
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$")
 
@@ -1419,6 +1540,12 @@ def _validate_skill_name(name: object) -> str:
     is_flag=True,
     help="Install all extracted skills without prompting for selection.",
 )
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+    help="SQLite store used to derive SQL graph evidence for skill extraction.",
+)
 def skills(
     otlp_traces: Path | None,
     sessions_dir: Path | None,
@@ -1427,6 +1554,7 @@ def skills(
     demo: bool,
     agent: str | None,
     yes: bool,
+    db_path: Path,
 ) -> None:
     """Extract reusable skills from your AI sessions using an agent."""
     import json as _json
@@ -1438,24 +1566,73 @@ def skills(
 
     agent_bin, agent_flags = _resolve_skills_agent(agent)
 
-    stats, _, _, _, _, _ = _resolve_and_analyze(
-        otlp_traces=otlp_traces,
-        sessions_dir=sessions_dir,
-        spans_dir=spans_dir,
-        demo=demo,
-        time_range=time_range,
-    )
+    with console.status("[bold orange3]reflecting...[/bold orange3]", spinner="dots"):
+        stats, _, _, _, _, _ = _resolve_and_analyze(
+            otlp_traces=otlp_traces,
+            sessions_dir=sessions_dir,
+            spans_dir=spans_dir,
+            demo=demo,
+            time_range=time_range,
+        )
 
+        try:
+            prompt_pkg = importlib_resources.files("reflect") / "data" / "skills-extraction-prompt.md"
+            prompt_text = prompt_pkg.read_text(encoding="utf-8")
+        except (FileNotFoundError, TypeError) as exc:
+            click.echo(
+                f"Could not load skills extraction prompt: {exc}",
+                err=True,
+            )
+            raise SystemExit(1) from exc
+    bundle = _build_skill_evidence_bundle(stats)
+    sql_bundle_used = False
+    graph_evidence_attached = False
     try:
-        prompt_pkg = importlib_resources.files("reflect") / "data" / "skills-extraction-prompt.md"
-        prompt_text = prompt_pkg.read_text(encoding="utf-8")
-    except (FileNotFoundError, TypeError) as exc:
+        from sqlite3 import Error as _SQLiteError
+
+        from reflect.store.sqlite import connect_sqlite
+
+        include_native_sessions = False
+        sql_otlp_traces = otlp_traces
+        if demo:
+            demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
+            if not demo_traces.exists():
+                demo_traces = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
+            sql_otlp_traces = demo_traces if demo_traces.exists() else otlp_traces
+        elif sql_otlp_traces is None:
+            sql_otlp_traces = _default_otlp_traces()
+            include_native_sessions = True
+        else:
+            default_otlp = _default_otlp_traces()
+            include_native_sessions = (
+                default_otlp is not None
+                and sql_otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
+            )
+
+        _prepare_sql_report_db(
+            db_path,
+            otlp_traces=sql_otlp_traces,
+            include_native_sessions=include_native_sessions,
+        )
+        conn = connect_sqlite(db_path)
+        try:
+            sql_bundle = _build_skill_evidence_bundle_from_sql(
+                conn,
+                session_ids=set(stats.sessions_seen),
+            )
+        finally:
+            conn.close()
+        if sql_bundle and sql_bundle.get("sessions"):
+            bundle = sql_bundle
+            sql_bundle_used = True
+            graph_evidence_attached = bool((sql_bundle.get("graph_evidence") or {}).get("recurring_patterns"))
+    except (_SQLiteError, OSError, ValueError) as exc:
         click.echo(
-            f"Could not load skills extraction prompt: {exc}",
+            f"SQL graph evidence unavailable for skills extraction: {exc}",
             err=True,
         )
-        raise SystemExit(1) from exc
-    prompt = _build_skills_extraction_prompt(prompt_text, stats)
+
+    prompt = _build_skills_extraction_prompt_from_bundle(prompt_text, bundle)
 
     with console.status(
         f"[bold]Extracting skills with {agent_bin}...[/bold]",
@@ -1478,10 +1655,11 @@ def skills(
     selected = _select_skills(skill_defs, console, yes=yes)
 
     detected = [a for a in _detect_agents() if a["detected"]]
+    install_agents = _select_skill_install_agents(detected, console, yes=yes)
     if not yes:
         console.print()
         confirmed = click.confirm(
-            f"Write {len(selected)} skill(s) to {len(detected)} detected agent(s)?",
+            f"Write {len(selected)} skill(s) to {len(install_agents)} selected agent(s)?",
             default=True,
         )
         if not confirmed:
@@ -1504,7 +1682,7 @@ def skills(
             (skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
 
         console.print()
-        for agent_spec in detected:
+        for agent_spec in install_agents:
             global_path = Path(agent_spec["global_path"]).expanduser()
             global_path.mkdir(parents=True, exist_ok=True)
             for s in selected:
@@ -1528,6 +1706,10 @@ def skills(
             console.print(f"  [green]✓[/green] {agent_spec['name']}: {global_path}")
 
     names = ", ".join(f"/{s['name']}" for s in selected)
+    if sql_bundle_used:
+        console.print("[dim]Included SQL stats + Behavioral Memory Graph evidence in extraction prompt.[/dim]")
+    elif graph_evidence_attached:
+        console.print("[dim]Included SQL Behavioral Memory Graph evidence in extraction prompt.[/dim]")
     console.print(
         f"\n[bold green]{len(selected)} skill(s) ready.[/bold green] Use {names} in Claude Code."
     )
@@ -1595,11 +1777,24 @@ def _fetch_opentelemetry_skill(console) -> Path | None:
         return None
 
 
-def _distribute_skills(console) -> None:
+def _agent_key(name: str) -> str:
+    return name.lower().replace(" ", "-")
+
+
+def _filter_agents_by_keys(agents: list[dict], keys: set[str] | None) -> list[dict]:
+    if keys is None:
+        return agents
+    return [agent for agent in agents if _agent_key(str(agent["name"])) in keys]
+
+
+def _distribute_skills(
+    console,
+    *,
+    selected_agent_names: set[str] | None = None,
+    local_agent_names: set[str] | None = None,
+) -> None:
     """Distribute the reflect and opentelemetry skills to detected agents."""
-    # Only the reflect skill is bundled for automatic setup distribution.
-    # The `skills` helper documents the extraction command itself and should
-    # not be auto-installed into every agent skill directory.
+    # Bundle reflect core skills for automatic setup distribution.
     bundled_skills_dir = Path(__file__).parent / "data" / "skills"
 
     available_skills: dict[str, Path] = {}
@@ -1607,6 +1802,10 @@ def _distribute_skills(console) -> None:
     reflect_skill = bundled_skills_dir / "reflect"
     if (reflect_skill / "SKILL.md").exists():
         available_skills["reflect"] = reflect_skill
+
+    reflect_skills_helper = bundled_skills_dir / "reflect-skills"
+    if (reflect_skills_helper / "SKILL.md").exists():
+        available_skills["reflect-skills"] = reflect_skills_helper
 
     otel_skill = _fetch_opentelemetry_skill(console)
     if otel_skill:
@@ -1616,36 +1815,55 @@ def _distribute_skills(console) -> None:
         console.print("  [yellow]\u2022[/] No skills available to distribute.")
         return
 
-    # Filter detected agents
-    detected_agents = [a for a in _detect_agents() if a.get("detected")]
+    def _remove_legacy_skill_aliases(skill_base: Path) -> None:
+        legacy = skill_base / "skills"
+        if "reflect-skills" in available_skills and legacy.exists():
+            shutil.rmtree(legacy)
 
+    # Filter detected agents
+    detected_agents = _filter_agents_by_keys(
+        [a for a in _detect_agents() if a.get("detected")],
+        selected_agent_names,
+    )
+    local_agent_names = local_agent_names or set()
+
+    written_global_paths: set[Path] = set()
     for agent in detected_agents:
         # 1. Global path (expanded from ~/...)
         try:
             global_skill_path = Path(agent["global_path"]).expanduser()
-            global_skill_path.mkdir(parents=True, exist_ok=True)
-            for skill_name, skill_src in available_skills.items():
-                dest = global_skill_path / skill_name
-                if dest.exists():
-                    shutil.rmtree(dest)
-                shutil.copytree(skill_src, dest)
-            console.print(f"  [green]\u2713[/] Distributed skills to [bold]{agent['name']}[/] global path")
+            resolved_global_skill_path = global_skill_path.resolve()
+            if resolved_global_skill_path in written_global_paths:
+                console.print(
+                    f"  [dim]•[/] {agent['name']}: global path already populated ({global_skill_path})"
+                )
+            else:
+                written_global_paths.add(resolved_global_skill_path)
+                global_skill_path.mkdir(parents=True, exist_ok=True)
+                for skill_name, skill_src in available_skills.items():
+                    dest = global_skill_path / skill_name
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    shutil.copytree(skill_src, dest)
+                _remove_legacy_skill_aliases(global_skill_path)
+                console.print(f"  [green]\u2713[/] Distributed skills to [bold]{agent['name']}[/] global path")
         except Exception as e:
             console.print(f"  [red]\u2717[/] Failed to distribute to {agent['name']} global: {e}")
 
-        # 2. Project path (local to workspace)
+        if _agent_key(str(agent["name"])) not in local_agent_names:
+            continue
         try:
-            project_skill_base = Path.cwd() / agent["skill_path"]
-            project_skill_base.mkdir(parents=True, exist_ok=True)
+            local_skill_base = Path.cwd() / str(agent["local_skill_path"])
+            local_skill_base.mkdir(parents=True, exist_ok=True)
             for skill_name, skill_src in available_skills.items():
-                dest = project_skill_base / skill_name
+                dest = local_skill_base / skill_name
                 if dest.exists():
                     shutil.rmtree(dest)
                 shutil.copytree(skill_src, dest)
-            console.print(f"  [green]\u2713[/] Distributed skills to [bold]{agent['name']}[/] project path")
+            _remove_legacy_skill_aliases(local_skill_base)
+            console.print(f"  [green]\u2713[/] Distributed skills to [bold]{agent['name']}[/] local project path")
         except Exception as e:
-            console.print(f"  [red]\u2717[/] Failed to distribute to {agent['name']} project: {e}")
-
+            console.print(f"  [red]\u2717[/] Failed to distribute to {agent['name']} local project path: {e}")
 
 
 
@@ -1667,6 +1885,8 @@ def _run_setup(
     capture_text: bool | None = None,
     mask_captured_text: bool = True,
     text_max_chars: int | None = None,
+    selected_agent_names: set[str] | None = None,
+    local_agent_names: set[str] | None = None,
 ) -> None:
     _instrumentation_run_setup(
         console,
@@ -1677,7 +1897,39 @@ def _run_setup(
         capture_text=capture_text,
         mask_captured_text=mask_captured_text,
         text_max_chars=text_max_chars,
+        selected_agent_names=selected_agent_names,
+        local_agent_names=local_agent_names,
     )
+
+
+def _resolve_setup_agent_selection(
+    console,
+    *,
+    agent_names: tuple[str, ...],
+    all_agents: bool,
+) -> set[str] | None:
+    detected = [agent for agent in _detect_agents() if agent.get("detected")]
+    detected_keys = {_agent_key(str(agent["name"])) for agent in detected}
+    if agent_names:
+        selected = {_agent_key(name) for name in agent_names}
+        unknown = selected - detected_keys
+        if unknown:
+            raise click.ClickException(
+                "Agent(s) not detected: " + ", ".join(sorted(unknown))
+            )
+        return selected
+    if all_agents or not sys.stdin.isatty() or not detected:
+        return None
+
+    console.print("\n[bold]Agents to instrument[/]")
+    labels = [
+        f"{agent['name']} ({agent.get('support_status') or 'planned'})"
+        for agent in detected
+    ]
+    selected_indexes = _interactive_pick(labels, multi=True)
+    if len(selected_indexes) == len(detected):
+        return None
+    return {_agent_key(str(detected[index]["name"])) for index in selected_indexes}
 
 
 @main.command()
@@ -1710,11 +1962,31 @@ def _run_setup(
     default=None,
     help="Maximum characters of captured prompt/response text per event.",
 )
+@click.option(
+    "--agent",
+    "agent_names",
+    multiple=True,
+    help="Agent to instrument by name/key. Repeat to select multiple. Defaults to an interactive choice in a TTY, otherwise all detected agents.",
+)
+@click.option(
+    "--all-agents",
+    is_flag=True,
+    help="Instrument all detected agents without prompting.",
+)
+@click.option(
+    "--local-agent",
+    "local_agent_names",
+    multiple=True,
+    help="Also install project-scoped hooks and skills for this selected agent. Repeat to select multiple.",
+)
 def setup(
     capture_text: bool | None,
     text_capture_mode: str | None,
     mask_captured_text: bool,
     text_max_chars: int | None,
+    agent_names: tuple[str, ...],
+    all_agents: bool,
+    local_agent_names: tuple[str, ...],
 ) -> None:
     """Install opentelemetry-hooks, configure local data export, and suggest agent enablement."""
     from rich.console import Console
@@ -1726,28 +1998,34 @@ def setup(
     elif capture_text is None and sys.stdin.isatty():
         console.print("\n[bold]Prompt/response text capture[/]")
         console.print("[dim]All reflect setup data is stored locally on this machine; no hosted service receives it.[/]")
-        console.print("  [bold]1[/] Metadata only — tokens, models, lengths, and hashes; no prompt/response text.")
-        console.print("  [bold]2[/] Masked text — local prompt/response text with email/token/home-path masking.")
-        console.print("  [bold]3[/] Full text — local unmasked prompt/response text.")
-        choice = click.prompt(
-            "Choose capture mode",
-            type=click.Choice(["1", "2", "3"]),
-            default="1",
-            show_choices=False,
-        )
-        if choice == "1":
+        capture_modes = [
+            "Metadata only - tokens, models, lengths, and hashes; no prompt/response text",
+            "Masked text - local prompt/response text with email/token/home-path masking",
+            "Full text - local unmasked prompt/response text",
+        ]
+        choice = _interactive_pick(capture_modes, multi=False)[0]
+        if choice == 0:
             capture_text = False
-        elif choice == "2":
+        elif choice == 1:
             capture_text = True
             mask_captured_text = True
         else:
             capture_text = True
             mask_captured_text = False
+    selected_agent_keys = _resolve_setup_agent_selection(console, agent_names=agent_names, all_agents=all_agents)
+    local_agent_keys = {_agent_key(name) for name in local_agent_names}
+    unknown_local = local_agent_keys - selected_agent_keys if selected_agent_keys is not None else set()
+    if unknown_local:
+        raise click.ClickException(
+            "--local-agent must also be selected with --agent: " + ", ".join(sorted(unknown_local))
+        )
     _run_setup(
         console,
         capture_text=capture_text,
         mask_captured_text=mask_captured_text,
         text_max_chars=text_max_chars,
+        selected_agent_names=selected_agent_keys,
+        local_agent_names=local_agent_keys,
     )
 
 
@@ -1997,13 +2275,26 @@ def doctor_cost(db_path: Path, alias_path: Path | None) -> None:
     from reflect.store.sqlite import connect_sqlite
 
     console = Console(force_terminal=True)
-    conn = connect_sqlite(db_path)
-    try:
-        migrate(conn)
-        alias_result = _ensure_sql_costs(conn, alias_path=alias_path)
-        rebuild_rollups(conn)
-    finally:
-        conn.close()
+    alias_result = None
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        conn = connect_sqlite(db_path)
+        try:
+            migrate(conn)
+            alias_result = _ensure_sql_costs(conn, alias_path=alias_path)
+            rebuild_rollups(conn)
+            break
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower() or attempt >= max_attempts:
+                raise click.ClickException(str(exc)) from exc
+            time.sleep(1.5 * attempt)
+        finally:
+            conn.close()
+
+    if alias_result is None:
+        raise click.ClickException(
+            "database is locked; stop concurrent writers and retry `reflect doctor cost`"
+        )
 
     table = Table(box=box.SIMPLE_HEAVY, expand=True)
     table.add_column("Check", style="bold cyan")
@@ -2064,11 +2355,11 @@ def update(apply: bool) -> None:
             console.print("[green]No newer package release is available right now.[/]")
 
         if advisor["local_issues"]:
-            console.print("Local drift remains. Run [bold]reflect setup[/] from the workspace root to refresh hooks and skill copies.")
+            console.print("Local drift remains. Run [bold]reflect setup[/] to refresh global hooks and skill copies.")
     else:
         console.print("Use [bold]reflect update --apply[/] to upgrade the package when a newer release is available.")
         if advisor["local_issues"]:
-            console.print("For local hook or skill drift, run [bold]reflect setup[/] from the workspace root.")
+            console.print("For local hook or skill drift, run [bold]reflect setup[/] to refresh global wiring.")
     console.print()
 
 
@@ -2203,7 +2494,7 @@ def _prepare_sql_report_db(
         ingest_otlp_traces_file,
     )
     from reflect.store.migrate import migrate
-    from reflect.store.normalize import normalize_pending_raw_events
+    from reflect.store.normalize import normalize_pending_raw_events, repair_telemetry_provenance
     from reflect.store.rollups import rebuild_rollups
     from reflect.store.sqlite import connect_sqlite
 
@@ -2213,17 +2504,22 @@ def _prepare_sql_report_db(
         ingest_result = {"inserted": 0, "skipped": 0}
         ingest_sources: dict[str, dict[str, object]] = {}
         source_refs: dict[str, list[str]] = {}
+        source_types: dict[str, str] = {}
         if otlp_traces is not None and otlp_traces.exists():
             traces_result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
             ingest_sources["otlp_traces"] = traces_result
+            ingest_sources["otlp_traces"]["source_type"] = "otlp_traces_json"
             source_refs["otlp_traces"] = [str(otlp_traces)]
+            source_types["otlp_traces"] = "otlp_traces_json"
             ingest_result["inserted"] += traces_result["inserted"]
             ingest_result["skipped"] += traces_result["skipped"]
             otlp_logs = _infer_otlp_logs_file(otlp_traces)
             if otlp_logs is not None and otlp_logs.exists():
                 logs_result = ingest_otlp_logs_file(conn, file_path=otlp_logs)
                 ingest_sources["otlp_logs"] = logs_result
+                ingest_sources["otlp_logs"]["source_type"] = "otlp_logs_json"
                 source_refs["otlp_logs"] = [str(otlp_logs)]
+                source_types["otlp_logs"] = "otlp_logs_json"
                 ingest_result["inserted"] += logs_result["inserted"]
                 ingest_result["skipped"] += logs_result["skipped"]
         if include_native_sessions:
@@ -2243,12 +2539,18 @@ def _prepare_sql_report_db(
                 native_result["skipped"] += result["skipped"]
             if native_result["inserted"] or native_result["skipped"]:
                 ingest_sources["native_sessions"] = native_result
+                ingest_sources["native_sessions"]["source_type"] = "native_session"
                 source_refs["native_sessions"] = native_refs
+                source_types["native_sessions"] = "native_session"
                 ingest_result["inserted"] += native_result["inserted"]
                 ingest_result["skipped"] += native_result["skipped"]
+        repair_telemetry_provenance(conn)
         for name, refs in source_refs.items():
             if name in ingest_sources:
-                ingest_sources[name]["agents"] = _raw_event_agent_breakdown(conn, source_ids=refs)
+                source_type = source_types.get(name, "")
+                ingest_sources[name]["agents"] = _raw_event_agent_breakdown(
+                    conn, source_ids_by_type={source_type: refs} if source_type else {}
+                )
         normalize_result = normalize_pending_raw_events(conn)
         _ensure_sql_costs(conn)
         graph_result = rebuild_graph(conn)
@@ -2265,12 +2567,16 @@ def _prepare_sql_report_db(
     }
 
 
-def _raw_event_agent_breakdown(conn, *, source_ids: list[str]) -> dict[str, dict[str, int]]:
-    if not source_ids:
+def _raw_event_agent_breakdown(conn, *, source_ids_by_type: dict[str, list[str]]) -> dict[str, dict[str, int]]:
+    """Break down raw events by agent using durable provenance, not hook-shaped attrs."""
+    if not source_ids_by_type:
         return {}
-    totals: dict[str, int] = {}
-    for offset in range(0, len(source_ids), 500):
-        chunk = source_ids[offset:offset + 500]
+    totals: dict[str, dict[str, int]] = {}
+    native_otlp_placeholders = ", ".join("?" for _ in NATIVE_OTLP_ORIGINS)
+    hook_placeholders = ", ".join("?" for _ in HOOK_ORIGINS)
+    all_source_ids = [sid for ids in source_ids_by_type.values() for sid in ids]
+    for offset in range(0, len(all_source_ids), 500):
+        chunk = all_source_ids[offset:offset + 500]
         placeholders = ", ".join("?" for _ in chunk)
         rows = conn.execute(
             f"""
@@ -2281,21 +2587,25 @@ def _raw_event_agent_breakdown(conn, *, source_ids: list[str]) -> dict[str, dict
                 NULLIF(json_extract(attrs_json, '$."service.name"'), ''),
                 'unknown'
               ) AS agent,
-              COUNT(*) AS events
+              COUNT(*) AS events,
+              SUM(CASE WHEN origin_kind IN ({native_otlp_placeholders}) THEN 1 ELSE 0 END) AS native_events,
+              SUM(CASE WHEN origin_kind IN ({hook_placeholders}) THEN 1 ELSE 0 END) AS hook_events
             FROM raw_events
             WHERE source_id IN ({placeholders})
             GROUP BY agent
             ORDER BY events DESC, agent ASC
             """,
-            chunk,
+            [*NATIVE_OTLP_ORIGINS, *HOOK_ORIGINS, *chunk],
         ).fetchall()
         for row in rows:
             agent = str(row[0] or "unknown")
-            totals[agent] = totals.get(agent, 0) + int(row[1] or 0)
-    return {
-        agent: {"events": events}
-        for agent, events in sorted(totals.items(), key=lambda item: (-item[1], item[0]))
-    }
+            counts = totals.setdefault(agent, {"events": 0, "hook_events": 0, "native_events": 0})
+            counts["events"] += int(row[1] or 0)
+            counts["native_events"] += int(row[2] or 0)
+            counts["hook_events"] += int(row[3] or 0)
+    return dict(
+        sorted(totals.items(), key=lambda item: (-item[1]["events"], item[0]))
+    )
 
 
 def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
@@ -2318,7 +2628,8 @@ def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
               input_tokens,
               output_tokens,
               cache_creation_input_tokens,
-              cache_read_input_tokens
+              cache_read_input_tokens,
+              reasoning_output_tokens
             FROM llm_calls
             """
         ).fetchall()
@@ -2343,9 +2654,20 @@ def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
         session_models: dict[str, str] = {}
         for model_row in model_rows:
             session_models.setdefault(model_row["session_id"], model_row["model"])
+        seen_usage: set[tuple] = set()
         session_costs: dict[str, float] = {}
+        session_tokens: dict[str, dict[str, int]] = {}
         for row in rows:
             model = row["model"] or session_models.get(row["session_id"], "")
+            usage_key = (
+                row["session_id"],
+                model,
+                int(row["input_tokens"] or 0),
+                int(row["output_tokens"] or 0),
+                int(row["cache_creation_input_tokens"] or 0),
+                int(row["cache_read_input_tokens"] or 0),
+                int(row["reasoning_output_tokens"] or 0),
+            )
             breakdown = calculate_cost(
                 {
                     "input": row["input_tokens"],
@@ -2357,6 +2679,21 @@ def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
                 pricing_table,
                 aliases=aliases,
             )
+            counted = usage_key not in seen_usage
+            if counted:
+                seen_usage.add(usage_key)
+                tokens = session_tokens.setdefault(
+                    row["session_id"],
+                    {"input": 0, "output": 0, "cache_creation": 0, "cache_read": 0, "reasoning": 0},
+                )
+                tokens["input"] += int(row["input_tokens"] or 0)
+                tokens["output"] += int(row["output_tokens"] or 0)
+                tokens["cache_creation"] += int(row["cache_creation_input_tokens"] or 0)
+                tokens["cache_read"] += int(row["cache_read_input_tokens"] or 0)
+                tokens["reasoning"] += int(row["reasoning_output_tokens"] or 0)
+                session_costs[row["session_id"]] = (
+                    session_costs.get(row["session_id"], 0.0) + breakdown.total_cost_usd
+                )
             conn.execute(
                 """
                 UPDATE llm_calls
@@ -2373,18 +2710,38 @@ def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
                 WHERE id = ?
                 """,
                 (
-                    breakdown.total_cost_usd,
+                    breakdown.total_cost_usd if counted else 0.0,
                     model,
                     model,
                     row["id"],
                 ),
             )
-            session_costs[row["session_id"]] = session_costs.get(row["session_id"], 0.0) + breakdown.total_cost_usd
         timestamp = datetime.now(tz=UTC).isoformat()
         for session_id, total_cost in session_costs.items():
+            tokens = session_tokens.get(session_id, {})
             conn.execute(
-                "UPDATE sessions SET estimated_cost_usd = ?, updated_at = ? WHERE id = ?",
-                (total_cost, timestamp, session_id),
+                """
+                UPDATE sessions
+                SET
+                  input_tokens = ?,
+                  output_tokens = ?,
+                  cache_creation_tokens = ?,
+                  cache_read_tokens = ?,
+                  reasoning_tokens = ?,
+                  estimated_cost_usd = ?,
+                  updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    tokens.get("input", 0),
+                    tokens.get("output", 0),
+                    tokens.get("cache_creation", 0),
+                    tokens.get("cache_read", 0),
+                    tokens.get("reasoning", 0),
+                    total_cost,
+                    timestamp,
+                    session_id,
+                ),
             )
         conn.commit()
     finally:
@@ -2444,6 +2801,33 @@ def db_normalize(db_path: Path, limit: int | None) -> None:
     click.echo(
         "Normalized raw_events "
         f"(processed={result['processed']}, failed={result['failed']}, skipped={result['skipped']})"
+    )
+
+
+@db.command("sync-instructions")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+@click.option(
+    "--workspace-root",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Workspace root to scan for instruction files.",
+)
+def db_sync_instructions(db_path: Path, workspace_root: Path | None) -> None:
+    """Discover AGENTS.md, CLAUDE.md, GEMINI.md, and similar instruction files into memories."""
+    from reflect.store.instruction_memory import upsert_instruction_memories
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+
+    workspace_root = workspace_root or Path.cwd()
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        result = upsert_instruction_memories(conn, workspace_root=workspace_root, home_root=Path.home())
+    finally:
+        conn.close()
+    click.echo(
+        "Synced instruction memories "
+        f"(discovered={result['discovered']}, inserted={result['inserted']}, updated={result['updated']})"
     )
 
 

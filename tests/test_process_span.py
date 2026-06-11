@@ -142,6 +142,17 @@ class TestMcpTracking:
         assert c["mcp_servers"]["mcp-issue-tracker"] == 1
         assert raw not in c["mcp_servers"]
 
+    def test_mcp_server_and_tool_fall_back_to_tool_input_payload(self):
+        c = process(
+            make_span(
+                "BeforeMCPExecution",
+                tool="CallMcpTool",
+                tool_input='{"server":"mcp-github","toolName":"get_issue"}',
+            )
+        )
+        assert c["mcp_servers"]["mcp-github"] == 1
+        assert c["tools"]["get_issue"] == 1
+
 
 class TestSubagentTracking:
     def test_subagent_start_counted(self):
@@ -155,6 +166,29 @@ class TestSubagentTracking:
     def test_subagent_stop_tracked_separately(self):
         c = process(make_span("SubagentStop", subagent_type="explore"))
         assert c["subagent_stops_by_type"]["explore"] == 1
+
+    def test_tool_shaped_agent_task_counts_as_subagent_start(self):
+        c = process(make_span(
+            "PreToolUse",
+            agent=COPILOT,
+            tool="task",
+            tool_input='{"agent_type":"explore","name":"repo-strategy"}',
+        ))
+        assert c["events_by_type"]["SubagentStart"] == 1
+        assert c["subagent_types"]["repo-strategy"] == 1
+        assert c["agents"][COPILOT].subagent_types["repo-strategy"] == 1
+
+    def test_pre_tool_use_captures_nested_skill_file_path(self):
+        span = make_span(
+            "PreToolUse",
+            tool="Read",
+            tool_input='{"path":"/Users/test/.cursor/skills/sql-review/SKILL.md"}',
+        )
+        span["attributes"]["gen_ai.client.tool.input.file_path"] = "/Users/test/.cursor/skills/sql-review/SKILL.md"
+        c = _fresh_counters()
+        c["session_conversation"] = {}
+        _process_span(span, **c)
+        assert c["session_conversation"]["sess-default-001"][0]["file_path"].endswith("/skills/sql-review/SKILL.md")
 
 
 class TestSessionTracking:

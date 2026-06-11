@@ -73,7 +73,9 @@ def test_dashboard_html_shows_branded_loader_during_report_fetch(path: Path):
     assert "showReportLoader();" in text
     assert "hideReportLoader();" in text
     assert "animation:loader-float" in text
-    assert "animation:loader-spin" in text
+    assert "animation:loader-spin" not in text
+    assert "filter:drop-shadow(0 0 28px rgba(242,138,26,.34))" in text
+    assert "box-shadow:0 0 28px rgba(242,138,26,.62)" in text
     assert "top:60%" in text
 
 
@@ -176,6 +178,15 @@ def test_dashboard_tools_tab_spaces_event_distribution_from_top_widgets(path: Pa
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_agent_tool_network_supports_sql_graph_value_shapes(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "const raw = node && (node.size ?? node.value ?? node.count ?? node.events ?? 0);" in text
+    assert "const label = server.id ?? server.server ?? '';" in text
+    assert "const count = server.events ?? server.count ?? server.value ?? 0;" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_session_detail_has_quality_rules_tab(path: Path):
     text = path.read_text(encoding="utf-8")
 
@@ -240,6 +251,25 @@ def test_dashboard_activity_widgets_live_on_overview_tab(path: Path):
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_overview_separates_source_provenance_from_event_semantics(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert 'id="source-provenance"' in text
+    assert 'id="agentCostChart"' in text
+    assert "const sourceProvenance = overviewTab.source_provenance || D.source_provenance || [];" in text
+    assert "function validCostTrendDay(value)" in text
+    assert "Number(day.slice(0, 4)) < 2000" in text
+    assert "function normalizeAgentCostRows(rows)" in text
+    assert "function deriveAgentCostRowsFromSessions(sessions)" in text
+    assert "const rawOverviewAgentCostRows = overviewTab.agent_cost_over_time || D.agent_cost_over_time || [];" in text
+    assert "const normalizedOverviewAgentCostRows = normalizeAgentCostRows(rawOverviewAgentCostRows);" in text
+    assert "deriveAgentCostRowsFromSessions(D.sessions || [])" in text
+    assert "Cost totals are available, but priced sessions do not have valid dates for a trend chart." in text
+    assert "makeLine('agentCostChart'" in text
+    assert "Transport/source provenance. The chart above stays semantic by event type." in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_html_prefers_sql_tab_payloads_for_existing_tabs(path: Path):
     text = path.read_text(encoding="utf-8")
 
@@ -251,6 +281,24 @@ def test_dashboard_html_prefers_sql_tab_payloads_for_existing_tabs(path: Path):
     assert "mcpTab.mcp_server_before || D.mcp_server_before || {}" in text
     assert "sqlTab('graphs').graph_tool_transitions || D.graph_tool_transitions || []" in text
     assert "sqlTab('graphs').graph_dep || D.graph_dep" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_graph_tab_renders_semantic_force_graph(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "Behavioral Memory Graph" in text
+    assert "buildSemanticGraph" in text
+    assert 'id="semantic-graph-svg"' in text
+    assert "d3.forceSimulation" in text
+    assert "d3.forceLink" in text
+    assert "d3.forceManyBody" in text
+    assert "d3.zoom" in text
+    assert "d3.drag" in text
+    assert "visibleIdsForSession" in text
+    assert "const adjacency = new Map();" in text
+    assert "while (frontier.length)" in text
+    assert "if (edge.session_id && edge.session_id !== sessionId) continue;" in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)

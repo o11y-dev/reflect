@@ -3,7 +3,7 @@ from __future__ import annotations
 from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite
 from reflect.views.overview import build_overview
-from reflect.views.report_tabs import build_report_tabs
+from reflect.views.report_tabs import _semantic_graph, build_report_tabs
 from reflect.views.sessions import list_sessions
 
 
@@ -106,6 +106,35 @@ def _seed_view_db(conn):
     )
     conn.executemany(
         """
+        INSERT INTO steps(
+          id, session_id, seq, type, started_at, status, summary,
+          raw_attrs_json, created_at, updated_at
+        )
+        VALUES (?, 'sess-2', ?, 'tool_call', ?, 'completed', ?, ?, ?, ?)
+        """,
+        [
+            (
+                "step-copilot-task",
+                2,
+                "2026-05-02T11:01:00+00:00",
+                "PreToolUse",
+                '{"gen_ai.client.hook.event":"PreToolUse","gen_ai.client.name":"copilot","gen_ai.client.tool_name":"task","gen_ai.client.tool.input":"{\\"agent_type\\":\\"explore\\",\\"name\\":\\"repo-strategy\\"}"}',
+                now,
+                now,
+            ),
+            (
+                "step-legacy-ide-subagent",
+                3,
+                "2026-05-02T11:02:00+00:00",
+                "ide.hook.SubagentStart",
+                '{"ide.hook.event":"SubagentStart","ide.name":"cursor","ide.subagent_type":"legacy-helper"}',
+                now,
+                now,
+            ),
+        ],
+    )
+    conn.executemany(
+        """
         INSERT INTO session_rollups(
           session_id, agent, started_at, ended_at, duration_ms, prompt_count,
           tool_call_count, error_count, input_tokens, output_tokens,
@@ -142,6 +171,19 @@ def _seed_view_db(conn):
                 0.75,
                 now,
             ),
+        ],
+    )
+    conn.executemany(
+        """
+        INSERT INTO daily_rollups(
+          day, agent, session_count, prompt_count, tool_call_count, error_count,
+          input_tokens, output_tokens, total_cost, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            ("2026-05-01", "claude", 1, 1, 1, 1, 100, 40, 0.50, now),
+            ("2026-05-02", "codex", 1, 1, 2, 2, 200, 50, 0.75, now),
         ],
     )
     conn.executemany(
@@ -240,6 +282,110 @@ def _seed_view_db(conn):
     )
     conn.execute(
         """
+        INSERT INTO memories(
+          id, scope, type, repo_id, session_id, content_hash,
+          content_preview_redacted, confidence, sensitivity, source, last_seen_at,
+          raw_attrs_json, created_at, updated_at
+        )
+        VALUES (
+          'mem-cursor-plan', 'user', 'cursor_plan', 'repo-1', 'sess-2', 'hash-plan',
+          'Cursor migration plan', 1.0, 'unknown', 'filesystem_instruction_scan',
+          '2026-05-03T12:00:00+00:00',
+          '{"path":"/workspace/.cursor/plans/migration.plan.md","name":"migration.plan.md"}', ?, ?
+        )
+        """,
+        (now, now),
+    )
+    conn.executemany(
+        """
+        INSERT INTO graph_nodes(id, kind, label, session_id, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            ("gn-session", "Session", "sess-2", "sess-2", now, now, "{}", now, now),
+            ("gn-memory", "Memory", "mem-1", "sess-2", now, now, '{"scope":"repo","type":"convention"}', now, now),
+            ("gn-path", "Path", "AGENTS.md", None, now, now, '{"source":"filesystem_instruction_scan"}', now, now),
+            (
+                "gn-spec",
+                "Spec",
+                "SQL view test spec",
+                None,
+                now,
+                now,
+                '{"status":"active","source_path":"docs/specs/sql-view-test.md"}',
+                now,
+                now,
+            ),
+            (
+                "gn-spec-path",
+                "Path",
+                "docs/specs/sql-view-test.md",
+                None,
+                now,
+                now,
+                '{"source":"spec"}',
+                now,
+                now,
+            ),
+        ],
+    )
+    conn.executemany(
+        """
+        INSERT INTO graph_nodes(id, kind, label, session_id, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+        VALUES (?, 'Session', ?, ?, ?, ?, '{}', ?, ?)
+        """,
+        [
+            (f"gn-extra-session-{index}", f"a-session-{index:03d}", f"a-session-{index:03d}", now, now, now, now)
+            for index in range(420)
+        ],
+    )
+    conn.execute(
+        """
+        INSERT INTO graph_edges(id, source_node_id, target_node_id, kind, session_id, weight, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+        VALUES ('ge-memory-path', 'gn-memory', 'gn-path', 'described_by_path', 'sess-2', 1, ?, ?, '{}', ?, ?)
+        """,
+        (now, now, now, now),
+    )
+    conn.execute(
+        """
+        INSERT INTO graph_edges(id, source_node_id, target_node_id, kind, session_id, weight, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+        VALUES ('ge-session-memory', 'gn-session', 'gn-memory', 'recorded_memory', 'sess-2', 1, ?, ?, '{}', ?, ?)
+        """,
+        (now, now, now, now),
+    )
+    conn.execute(
+        """
+        INSERT INTO graph_edges(id, source_node_id, target_node_id, kind, session_id, weight, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+        VALUES ('ge-session-spec', 'gn-session', 'gn-spec', 'addressed_spec', 'sess-2', 1, ?, ?, '{}', ?, ?)
+        """,
+        (now, now, now, now),
+    )
+    conn.execute(
+        """
+        INSERT INTO graph_edges(id, source_node_id, target_node_id, kind, session_id, weight, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+        VALUES ('ge-spec-path', 'gn-spec', 'gn-spec-path', 'described_by_path', NULL, 1, ?, ?, '{}', ?, ?)
+        """,
+        (now, now, now, now),
+    )
+    conn.executemany(
+        """
+        INSERT INTO graph_nodes(id, kind, label, session_id, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+        VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?)
+        """,
+        [
+            ("gn-global-memory", "Memory", "global-memory", now, now, '{"scope":"user"}', now, now),
+            ("gn-global-path", "Path", "global.md", now, now, '{"source":"filesystem_instruction_scan"}', now, now),
+        ],
+    )
+    conn.execute(
+        """
+        INSERT INTO graph_edges(id, source_node_id, target_node_id, kind, session_id, weight, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+        VALUES ('ge-global-memory-path', 'gn-global-memory', 'gn-global-path', 'described_by_path', NULL, 1, ?, ?, '{}', ?, ?)
+        """,
+        (now, now, now, now),
+    )
+    conn.execute(
+        """
         INSERT INTO privacy_findings(
           id, session_id, step_id, finding_type, severity, field_name,
           action_taken, detail_redacted, created_at
@@ -268,6 +414,9 @@ def test_build_overview_from_rollups_and_canonical_tables(tmp_path):
         assert overview.estimated_cost_usd == 1.25
         assert overview.failure_count == 3
         assert overview.recovered_failure_count == 1
+        assert isinstance(overview.source_provenance, list)
+        assert overview.agent_cost_over_time[0]["agent"] == "claude"
+        assert overview.agent_cost_over_time[1]["total_cost"] == 0.75
         assert overview.top_sessions[0]["session_id"] == "sess-2"
         assert overview.top_models[0]["model"] == "gpt-5.4"
         assert overview.top_tools[0]["tool_name"] == "Edit"
@@ -299,6 +448,37 @@ def test_list_sessions_paginates_and_filters_from_sql(tmp_path):
         conn.close()
 
 
+def test_list_sessions_prefers_valid_end_time_over_epoch_start(tmp_path):
+    db = tmp_path / "views.db"
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        _seed_view_db(conn)
+        conn.execute(
+            """
+            UPDATE sessions
+            SET started_at = '1970-01-01T00:00:00+00:00',
+                ended_at = '2026-05-04T06:30:05+00:00'
+            WHERE id = 'sess-2'
+            """
+        )
+        conn.execute(
+            """
+            UPDATE session_rollups
+            SET started_at = '1970-01-01T00:00:00+00:00',
+                ended_at = '2026-05-04T06:30:05+00:00'
+            WHERE session_id = 'sess-2'
+            """
+        )
+
+        page = list_sessions(conn, limit=10)
+
+        row = next(session for session in page.rows if session.session_id == "sess-2")
+        assert row.started_at == "2026-05-04T06:30:05+00:00"
+    finally:
+        conn.close()
+
+
 def test_build_report_tabs_view_models_from_sql(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
@@ -308,26 +488,63 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         tabs = build_report_tabs(conn)
         scoped = build_report_tabs(conn, session_ids={"sess-2"})
 
-        assert tabs.activity.events_by_type == {"llm_call": 2}
+        assert tabs.activity.events_by_type == {"llm_call": 2, "tool_call": 2}
         assert tabs.activity.activity_by_day == {"2026-05-01": 3, "2026-05-02": 5}
         assert tabs.models.models_by_count == {"claude-4.6-opus": 1, "gpt-5.4": 1}
         assert tabs.costs.model_costs["gpt-5.4"] == 0.75
         assert tabs.tools.tools_by_count == {"Edit": 2, "Read": 1}
         assert tabs.agents.agent_comparison[0]["name"] == "codex"
         assert tabs.graphs.graph_session_timeline
+        assert tabs.graphs.graph_semantic["nodes"]
+        assert any(
+            node["kind"] == "Session" and node["label"] == "sess-2"
+            for node in tabs.graphs.graph_semantic["nodes"]
+        )
+        assert {"addressed_spec", "described_by_path"} <= {
+            edge["kind"] for edge in tabs.graphs.graph_semantic["edges"]
+        }
+        assert any(node["kind"] == "Spec" and node["label"] == "SQL view test spec" for node in tabs.graphs.graph_semantic["nodes"])
+        assert any(item["kind"] == "Spec" for item in tabs.graphs.graph_semantic["legend"])
+        unscoped_node_ids = {node["id"] for node in tabs.graphs.graph_semantic["nodes"]}
+        unscoped_edge_node_ids = {
+            node_id
+            for edge in tabs.graphs.graph_semantic["edges"]
+            for node_id in (edge["source"], edge["target"])
+        }
+        assert unscoped_node_ids <= unscoped_edge_node_ids
 
         assert scoped.tools.tools_by_count == {"Edit": 1}
         assert scoped.tools.skills_by_count == {"review-skill": 1}
-        assert scoped.tools.subagent_types_by_count == {"research-helper": 1}
+        assert scoped.tools.subagent_types_by_count == {
+            "legacy-helper": 1,
+            "repo-strategy": 1,
+            "research-helper": 1,
+        }
         assert scoped.tools.top_commands == [{"command": "poetry run pytest", "count": 1}]
         assert scoped.mcp.mcp_servers_by_count == {"metrics.example.test": 1, "mcp-issue-tracker": 1}
         assert scoped.agents.agents["codex"]["top_skills"] == {"review-skill": 1}
         assert scoped.agents.agents["codex"]["subagents"] == 1
-        assert scoped.specs.total_specs == 1
+        assert scoped.agents.agents["copilot"]["subagents"] == 1
+        assert scoped.agents.agents["cursor"]["subagents"] == 1
+        assert any(node["label"] == "AGENTS.md" for node in scoped.graphs.graph_semantic["nodes"])
+        assert any(node["kind"] == "Spec" and node["label"] == "SQL view test spec" for node in scoped.graphs.graph_semantic["nodes"])
+        assert all(node["label"] != "global-memory" for node in scoped.graphs.graph_semantic["nodes"])
+        assert all(node["label"] != "global.md" for node in scoped.graphs.graph_semantic["nodes"])
+        scoped_node_ids = {node["id"] for node in scoped.graphs.graph_semantic["nodes"]}
+        scoped_edge_node_ids = {
+            node_id
+            for edge in scoped.graphs.graph_semantic["edges"]
+            for node_id in (edge["source"], edge["target"])
+        }
+        assert scoped_node_ids <= scoped_edge_node_ids
+        assert scoped.specs.total_specs == 2
+        assert scoped.specs.specs[0]["title"] == "migration"
+        assert scoped.specs.specs[0]["status"] == "plan"
         assert scoped.specs.requirements_by_status == {"planned": 1, "validated": 1}
         assert scoped.memory.memories_by_type == {"convention": 1}
+        assert all(memory["type"] != "cursor_plan" for memory in scoped.memory.recent_memories)
         assert scoped.privacy.findings_by_severity == {"medium": 1}
-        assert scoped.exports.row_counts["memories"] == 1
+        assert scoped.exports.row_counts["memories"] == 2
         assert scoped.exports.row_counts["privacy_findings"] == 1
         assert {node["type"] for node in scoped.graphs.graph_dep["nodes"]} >= {"agent", "tool", "mcp_tool", "mcp_server"}
         assert {
@@ -339,5 +556,92 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
             ("mcp_tool:mcp-issue-tracker", "mcp_server:mcp-issue-tracker"),
             ("mcp_tool:metrics.example.test", "mcp_server:metrics.example.test"),
         }
+    finally:
+        conn.close()
+
+
+def test_semantic_graph_keeps_memory_bridges_with_hot_edge_budget(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        now = "2026-05-03T00:00:00+00:00"
+        conn.executemany(
+            """
+            INSERT INTO graph_nodes(id, kind, label, session_id, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+            VALUES (?, 'Session', ?, ?, ?, ?, '{}', ?, ?)
+            """,
+            [
+                (f"session-node-{idx}", f"sess-hot-{idx}", f"sess-hot-{idx}", now, now, now, now)
+                for idx in range(40)
+            ],
+        )
+        conn.execute(
+            """
+            INSERT INTO graph_nodes(id, kind, label, session_id, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+            VALUES ('memory-node-1', 'Memory', 'instruction-1', NULL, ?, ?, '{"scope":"project"}', ?, ?)
+            """,
+            (now, now, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO graph_nodes(id, kind, label, session_id, first_seen_at, last_seen_at, attrs_json, created_at, updated_at)
+            VALUES ('path-node-1', 'Path', 'AGENTS.md', NULL, ?, ?, '{"source":"filesystem_instruction_scan"}', ?, ?)
+            """,
+            (now, now, now, now),
+        )
+        heavy_edges = []
+        for idx in range(950):
+            source = f"session-node-{idx % 40}"
+            target = f"session-node-{(idx * 7 + 3) % 40}"
+            heavy_edges.append(
+                (
+                    f"hot-edge-{idx}",
+                    source,
+                    target,
+                    "has_step",
+                    f"sess-hot-{idx % 40}",
+                    10,
+                    now,
+                    now,
+                    "{}",
+                    now,
+                    now,
+                )
+            )
+        conn.executemany(
+            """
+            INSERT INTO graph_edges(
+              id, source_node_id, target_node_id, kind, session_id, weight,
+              first_seen_at, last_seen_at, attrs_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            heavy_edges,
+        )
+        conn.execute(
+            """
+            INSERT INTO graph_edges(
+              id, source_node_id, target_node_id, kind, session_id, weight,
+              first_seen_at, last_seen_at, attrs_json, created_at, updated_at
+            )
+            VALUES (
+              'memory-edge-1', 'memory-node-1', 'path-node-1', 'described_by_path', NULL, 1,
+              ?, ?, '{}', ?, ?
+            )
+            """,
+            (now, now, now, now),
+        )
+        conn.commit()
+
+        graph = _semantic_graph(conn, None)
+
+        node_ids = {node["id"] for node in graph["nodes"]}
+        assert "memory-node-1" in node_ids
+        assert "path-node-1" in node_ids
+        assert any(
+            edge["kind"] == "described_by_path"
+            and {edge["source"], edge["target"]} == {"memory-node-1", "path-node-1"}
+            for edge in graph["edges"]
+        )
     finally:
         conn.close()

@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from reflect.parsing import (
+    _iter_claude_log_spans,
     _iter_claude_session_spans,
     _iter_codex_log_spans,
     _iter_codex_session_spans,
@@ -17,6 +18,7 @@ from reflect.parsing import (
     _load_otlp_logs,
     _load_otlp_traces,
 )
+from reflect.store.provenance import apply_origin_kind, classify_origin_kind, stable_hash_attrs
 
 
 def _iso8601_from_ns(value_ns: int) -> str:
@@ -26,6 +28,7 @@ def _iso8601_from_ns(value_ns: int) -> str:
 
 
 def _event_hash(span: dict) -> str:
+    attrs = span.get("attributes", {}) or {}
     payload = {
         "traceId": span.get("traceId", ""),
         "spanId": span.get("spanId", ""),
@@ -33,7 +36,7 @@ def _event_hash(span: dict) -> str:
         "name": span.get("name", ""),
         "start_time_ns": span.get("start_time_ns", 0),
         "end_time_ns": span.get("end_time_ns", 0),
-        "attributes": span.get("attributes", {}),
+        "attributes": stable_hash_attrs(attrs),
     }
     canon = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canon.encode()).hexdigest()
@@ -58,18 +61,20 @@ def _insert_raw_span(
     created_at: str,
 ) -> bool:
     attrs = span.get("attributes", {}) or {}
+    origin_kind = classify_origin_kind(source_type, attrs)
+    attrs = apply_origin_kind(attrs, origin_kind)
     observed_at = _iso8601_from_ns(int(span.get("start_time_ns", 0) or 0))
     received_at = _iso8601_from_ns(int(span.get("end_time_ns", 0) or 0))
-    content_hash = _event_hash(span)
+    content_hash = _event_hash({**span, "attributes": attrs})
     event_id = hashlib.sha1(f"{source}:{content_hash}".encode()).hexdigest()
 
     cursor = db_conn.execute(
         """
         INSERT OR IGNORE INTO raw_events(
           id, source_id, source_type, event_type, trace_id, span_id, parent_span_id,
-          session_id, observed_at, received_at, attrs_json, body_json,
+          session_id, observed_at, received_at, origin_kind, attrs_json, body_json,
           normalized_status, normalization_error, content_hash, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event_id,
@@ -82,6 +87,7 @@ def _insert_raw_span(
             _session_id(attrs),
             observed_at,
             received_at,
+            origin_kind,
             json.dumps(attrs, sort_keys=True),
             json.dumps(span.get("body", {}) or {}, sort_keys=True),
             "pending",
@@ -134,6 +140,7 @@ def ingest_otlp_logs_file(db_conn, *, file_path: Path, source_id: str | None = N
     records = list(_load_otlp_logs(file_path))
 
     def spans():
+        yield from _iter_claude_log_spans(records)
         yield from _iter_codex_log_spans(records)
         yield from _iter_gemini_log_spans(records)
 
@@ -176,21 +183,6 @@ def ingest_native_session_file(
         spans = _iter_gemini_session_spans(file_path)
     else:
         spans = ()
-    if skip_existing_sessions:
-        spans = list(spans)
-        session_ids = sorted({
-            str((span.get("attributes") or {}).get("session.id") or "")
-            for span in spans
-            if (span.get("attributes") or {}).get("session.id")
-        })
-        if session_ids:
-            placeholders = ", ".join("?" for _ in session_ids)
-            existing = db_conn.execute(
-                f"SELECT 1 FROM raw_events WHERE session_id IN ({placeholders}) LIMIT 1",
-                session_ids,
-            ).fetchone()
-            if existing:
-                return {"inserted": 0, "skipped": len(spans)}
     return _ingest_spans(
         db_conn,
         spans=spans,

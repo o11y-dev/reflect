@@ -4,21 +4,21 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <meta name="theme-color" content="#000000"/>
-<title>reflect — AI observability for every coding agent</title>
-<meta name="description" content="reflect is the vendor-neutral observability layer for AI coding agents. Turn local session data and OpenTelemetry GenAI spans into observation scores, helper-tool generation, and (coming) live-session policies. Works with Claude Code, Cursor, Copilot, Gemini CLI, OpenCode, and Antigravity."/>
+<title>reflect — Behavioral Memory for Developer-Agent Workflow</title>
+<meta name="description" content="reflect is the behavioral memory layer for developer-agent workflow. Turn local session data and OpenTelemetry GenAI spans into patterns about prompts, tools, context, budget burn, and enterprise handoff."/>
 <link rel="canonical" href="https://reflect.o11y.dev/"/>
 <link rel="icon" type="image/svg+xml" href="favicon.svg"/>
 <meta property="og:type" content="website"/>
 <meta property="og:site_name" content="reflect.o11y.dev"/>
-<meta property="og:title" content="reflect — AI observability for every coding agent"/>
-<meta property="og:description" content="Vendor-neutral observability for AI coding agents. Observation scores, helper-tool generation, and (coming) live-session policies. Built on OpenTelemetry GenAI semantic conventions."/>
+<meta property="og:title" content="reflect — Behavioral Memory for Developer-Agent Workflow"/>
+<meta property="og:description" content="Behavioral memory for developer-agent workflow. Patterns about prompts, tools, context, budget burn, and enterprise handoff."/>
 <meta property="og:url" content="https://reflect.o11y.dev/"/>
 <meta property="og:image" content="https://reflect.o11y.dev/og-image.png"/>
 <meta property="og:image:width" content="1200"/>
 <meta property="og:image:height" content="630"/>
 <meta name="twitter:card" content="summary_large_image"/>
-<meta name="twitter:title" content="reflect — AI observability for every coding agent"/>
-<meta name="twitter:description" content="Vendor-neutral observability for AI coding agents. Built on OpenTelemetry GenAI semantic conventions."/>
+<meta name="twitter:title" content="reflect — Behavioral Memory for Developer-Agent Workflow"/>
+<meta name="twitter:description" content="Behavioral memory for developer-agent workflow. Built on OpenTelemetry GenAI semantic conventions."/>
 <meta name="twitter:image" content="https://reflect.o11y.dev/og-image.png"/>
 <script type="application/ld+json">
 {
@@ -29,7 +29,7 @@
       "name": "reflect",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "macOS, Linux, Windows",
-      "description": "Observability for any AI coding agent. Turns local session data and OpenTelemetry GenAI spans into observation scores, helper-tool generation, and (coming) live-session policies.",
+      "description": "Behavioral memory for developer-agent workflow. Turns local session data and OpenTelemetry GenAI spans into patterns about prompts, tools, context, budget burn, and enterprise handoff.",
       "url": "https://reflect.o11y.dev/",
       "downloadUrl": "https://pypi.org/project/o11y-reflect/",
       "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
@@ -262,30 +262,6 @@ header{
   background:var(--bg);
   z-index:1;
   box-shadow:0 0 28px rgba(242,138,26,.62);
-}
-.loader-orbit{
-  position:absolute;
-  left:50%;
-  top:60%;
-  width:92px;
-  height:92px;
-  transform:translate(-50%,-50%);
-  transform-origin:50% 50%;
-  border:1px solid rgba(255,177,86,.24);
-  border-radius:999px;
-  animation:loader-spin 1.4s linear infinite;
-}
-.loader-orbit::after{
-  content:'';
-  position:absolute;
-  right:-4px;
-  top:50%;
-  transform:translateY(-50%);
-  width:8px;
-  height:8px;
-  border-radius:999px;
-  background:var(--signal-2);
-  box-shadow:0 0 20px rgba(255,177,86,.75);
 }
 .loader-title{
   font-size:18px;
@@ -1315,6 +1291,50 @@ body.rail-overlay-open{overflow:hidden}
   font-size:13px;
   color:var(--text-2);
 }
+.tool-inventory-shell{display:flex;flex-direction:column;gap:14px}
+.tool-inventory-summary{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(120px,1fr));
+  gap:10px;
+}
+.tool-inventory-card{
+  border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.03);
+  border-radius:8px;
+  padding:12px;
+}
+.tool-inventory-num{
+  font-size:22px;
+  font-weight:750;
+  color:var(--text);
+}
+.tool-inventory-label{
+  margin-top:3px;
+  font-size:12px;
+  color:var(--text-3);
+  text-transform:uppercase;
+  letter-spacing:.08em;
+}
+.tool-inventory-section{
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:8px;
+  overflow:hidden;
+  background:rgba(255,255,255,.018);
+}
+.tool-inventory-section h4{
+  margin:0;
+  padding:10px 12px;
+  font-size:13px;
+  color:var(--text-2);
+  border-bottom:1px solid rgba(255,255,255,.06);
+}
+.tool-inventory-table{width:100%;border-collapse:collapse;font-size:13px}
+.tool-inventory-table th,
+.tool-inventory-table td{padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.045);vertical-align:top}
+.tool-inventory-table th{text-align:left;color:var(--text-3);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+.tool-inventory-table tr:last-child td{border-bottom:0}
+.tool-inventory-name{font-weight:700;color:var(--text);overflow-wrap:anywhere}
+.tool-inventory-example{margin-top:4px;color:var(--text-3);font-size:12px;max-width:64ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ev-timeline{
   display:flex;
   flex-direction:column;
@@ -2689,6 +2709,22 @@ body.rail-overlay-open{overflow:hidden}
 .dep-node circle{transition:r .2s,opacity .2s}
 .dep-node:hover circle{opacity:.85}
 .dep-node text{pointer-events:none;font-size:12px;fill:rgba(255,255,255,.7)}
+.semantic-graph-shell{position:relative;height:620px;border:1px solid var(--glass-border);border-radius:8px;overflow:hidden;background:radial-gradient(circle at 50% 45%,rgba(255,255,255,.045),rgba(255,255,255,.012) 42%,rgba(0,0,0,.22))}
+.semantic-graph-toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap}
+.semantic-graph-toolbar select{min-height:32px;border:1px solid var(--glass-border);border-radius:6px;background:rgba(0,0,0,.24);color:var(--text-1);padding:4px 8px;font:inherit;font-size:12px}
+.semantic-graph-svg{display:block;width:100%;height:100%;cursor:grab}
+.semantic-graph-svg:active{cursor:grabbing}
+.semantic-graph-link{stroke:rgba(245,242,234,.15);stroke-width:1.1;stroke-linecap:round}
+.semantic-graph-node circle{stroke:rgba(255,255,255,.28);stroke-width:1.1;transition:stroke-width .12s,filter .12s}
+.semantic-graph-node text{pointer-events:none;font-size:11px;font-weight:650;fill:rgba(245,242,234,.78);paint-order:stroke;stroke:rgba(5,5,5,.72);stroke-width:3px;stroke-linejoin:round}
+.semantic-graph-node.is-hovered circle{stroke-width:2.2;filter:drop-shadow(0 0 10px rgba(242,138,26,.6))}
+.semantic-graph-tip{position:absolute;left:12px;top:12px;max-width:min(360px,calc(100% - 24px));padding:10px 12px;border:1px solid var(--glass-border);border-radius:6px;background:rgba(9,8,7,.92);box-shadow:0 16px 50px rgba(0,0,0,.32);font-size:12px;color:var(--text-2);pointer-events:none;opacity:0;transition:opacity .12s}
+.semantic-graph-tip.is-visible{opacity:1}
+.semantic-graph-tip strong{display:block;color:var(--signal);margin-bottom:4px;overflow-wrap:anywhere}
+.semantic-graph-tip dl{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:0}
+.semantic-graph-tip dt{color:var(--text-3)}
+.semantic-graph-tip dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.semantic-graph-empty{height:220px;display:flex;align-items:center;justify-content:center;color:var(--text-3);font-size:13px;border:1px dashed var(--glass-border);border-radius:8px}
 /* Co-occurrence matrix */
 .matrix-wrap{overflow-x:auto}
 .matrix-table{border-collapse:collapse;margin:0 auto}
@@ -2765,7 +2801,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 <div id="report-loader" class="report-loader" role="status" aria-live="polite" aria-label="Loading report">
   <div class="report-loader-inner">
-    <div class="loader-mark" aria-hidden="true"><span class="loader-orbit"></span></div>
+    <div class="loader-mark" aria-hidden="true"></div>
     <div class="loader-title">reflect.<em>o11y</em>.dev</div>
     <div class="loader-subtitle" id="report-loader-copy">Preparing report...</div>
     <div class="loader-bar" aria-hidden="true"><span></span></div>
@@ -2857,6 +2893,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
     <div class="panel" style="margin-bottom:0">
       <div class="panel-title">Event Types</div>
       <div class="chart-box" style="height:200px"><canvas id="eventChart"></canvas></div>
+      <div id="source-provenance" style="padding:8px 0 0"></div>
     </div>
   </div>
 
@@ -2896,8 +2933,9 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
       <div id="cost-stats" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px 0"></div>
     </div>
     <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Model Cost Share</div>
-      <div id="model-cost-share" style="padding:8px 0"></div>
+      <div class="panel-title">Cost Trends</div>
+      <div class="chart-box" style="height:200px"><canvas id="agentCostChart"></canvas></div>
+      <div id="model-cost-share" style="padding:12px 0 0"></div>
     </div>
   </div>
 
@@ -3074,6 +3112,19 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <!-- ════════════════════ GRAPHS ════════════════════ -->
 <div class="tab-panel" id="tab-graphs" role="tabpanel" aria-labelledby="tab-button-graphs" hidden>
 
+  <!-- 1. Behavioral Memory Graph -->
+  <div class="panel">
+    <div class="semantic-graph-toolbar">
+      <div class="panel-title" style="margin-bottom:0">Behavioral Memory Graph <span class="panel-title-count">(sessions, folders, tools, skills, memories, outcomes)</span></div>
+      <select id="semantic-session-filter" aria-label="Filter behavioral memory graph by session"></select>
+    </div>
+    <div class="semantic-graph-shell" id="semantic-graph-shell">
+      <svg class="semantic-graph-svg" id="semantic-graph-svg" role="img" aria-label="Behavioral memory graph"></svg>
+      <div class="semantic-graph-tip" id="semantic-graph-tip"></div>
+    </div>
+    <div class="graph-legend" id="semantic-graph-legend"></div>
+  </div>
+
   <!-- 1. Tool Flow (Sankey) -->
   <div class="panel">
     <div class="panel-title">Tool Sequence Flow</div>
@@ -3225,7 +3276,7 @@ function renderDashboardError(kind, message){
   if (kind === 'no-data') {
     document.body.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:24px;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:rgba(255,255,255,.9)">'
       + '<h1 style="font-size:42px;font-weight:700;background:linear-gradient(135deg,#f28a1a,#d7d1c6);-webkit-background-clip:text;-webkit-text-fill-color:transparent">reflect.o11y.dev</h1>'
-      + '<p style="color:rgba(255,255,255,.5);font-size:16px;max-width:420px;text-align:center;line-height:1.7">AI usage telemetry dashboard.<br>Run <code style="background:rgba(255,255,255,.08);padding:2px 8px;border-radius:4px">reflect report --dashboard-artifact docs/reports/latest.json</code> to open your report here.</p>'
+      + '<p style="color:rgba(255,255,255,.5);font-size:16px;max-width:460px;text-align:center;line-height:1.7">Behavioral memory for developer-agent telemetry.<br>Run <code style="background:rgba(255,255,255,.08);padding:2px 8px;border-radius:4px">reflect</code> to open your local browser report.</p>'
       + '<a href="https://github.com/o11y-dev/reflect" style="color:#f28a1a;font-size:14px;text-decoration:none">github.com/o11y-dev/reflect</a>'
       + '</div>';
     return;
@@ -3236,7 +3287,7 @@ function renderDashboardError(kind, message){
       <div style="color:rgba(255,255,255,.55);font-size:18px;max-width:480px;line-height:1.65;margin-bottom:32px">Local-first telemetry for AI coding agents.<br>See why your agents fail, stall, or burn budget.</div>
       <pre style="background:#080807;border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:20px 28px;font-size:16px;color:#ffb156;text-align:left;margin-bottom:32px">pipx install o11y-reflect
 reflect setup
-reflect report</pre>
+reflect</pre>
       <div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center">
         <a href="https://github.com/o11y-dev/reflect" style="padding:12px 20px;background:linear-gradient(135deg,#ffb156,#f28a1a);color:#100903;border-radius:8px;text-decoration:none;font-weight:700">View on GitHub</a>
         <a href="https://reflect.o11y.dev/" style="padding:12px 20px;border:1px solid rgba(255,255,255,.12);color:#f5f2ea;border-radius:8px;text-decoration:none;font-weight:700">reflect.o11y.dev</a>
@@ -3966,6 +4017,7 @@ let dashboardSelectedSessionId = currentParams().get('session') || '';
 
     const detailTabsHtml = `<div class="sb-detail-tabs">
       <button type="button" class="sb-detail-tab${activeDetailTab === 'conversation' ? ' active' : ''}" data-tab="conversation">Conversation</button>
+      <button type="button" class="sb-detail-tab${activeDetailTab === 'tools' ? ' active' : ''}" data-tab="tools">Tools</button>
       <button type="button" class="sb-detail-tab${activeDetailTab === 'quality' ? ' active' : ''}" data-tab="quality">Quality</button>
       <button type="button" class="sb-detail-tab${activeDetailTab === 'telemetry' ? ' active' : ''}" data-tab="telemetry">Telemetry</button>
     </div>`;
@@ -3974,7 +4026,9 @@ let dashboardSelectedSessionId = currentParams().get('session') || '';
       ? renderTelemetryCockpit(session)
       : activeDetailTab === 'quality'
         ? renderQualityPanel(session)
-        : renderConversationCasefile(session, conversation, loadBtnHtml, timelineHtml);
+        : activeDetailTab === 'tools'
+          ? renderSessionToolsPanel(session)
+          : renderConversationCasefile(session, conversation, loadBtnHtml, timelineHtml);
 
     detailEl.innerHTML = headerHtml
       + sessionTimelineHtml
@@ -3985,7 +4039,7 @@ let dashboardSelectedSessionId = currentParams().get('session') || '';
       tab.addEventListener('click', () => {
         session._detailTab = tab.dataset.tab || 'conversation';
         renderSessionDetail(session);
-        if (session._detailTab === 'telemetry' && session.full_id && !session.telemetry && !session._loadingDetail) {
+        if ((session._detailTab === 'telemetry' || session._detailTab === 'tools') && session.full_id && !session._fullLoaded && !session._loadingDetail) {
           tryLoadFullDetail(session.full_id || session.id, null);
         }
       });
@@ -4138,10 +4192,10 @@ let dashboardSelectedSessionId = currentParams().get('session') || '';
     const dur = ev.duration_ms ? `<span class="chip-dur">${fmtDur(ev.duration_ms)}</span>` : '';
     if (ev.type === 'tool_call') {
       icon = '▶'; name = ev.tool_name || 'Tool';
-      meta2 = ev.preview ? ev.preview.slice(0,72) : '';
+      meta2 = ev.preview ? ev.preview.slice(0,72) : 'input not captured';
     } else if (ev.type === 'tool_result') {
       icon = ev.success !== false ? '✓' : '✗'; name = ev.tool_name || 'Result';
-      meta2 = ev.preview ? ev.preview.slice(0,72) : '';
+      meta2 = ev.preview ? ev.preview.slice(0,72) : (ev.success === false ? 'failure details not captured' : '');
       statusHtml = ev.success !== false ? '<span class="chip-ok">ok</span>' : '<span class="chip-fail">failed</span>';
     } else if (ev.type === 'mcp_call') {
       icon = '⬡'; name = ev.tool_name || 'MCP';
@@ -4169,13 +4223,33 @@ let dashboardSelectedSessionId = currentParams().get('session') || '';
     if (!events.length) return '';
     const failures = events.filter(ev => ev.type === 'tool_result' && ev.success === false).length;
     const tools = events.filter(ev => ev.type === 'tool_call' || ev.type === 'mcp_call').length;
+    const toolNames = [...new Set(events
+      .filter(ev => ev.type === 'tool_call' || ev.type === 'mcp_call')
+      .map(ev => ev.type === 'mcp_call'
+        ? `${ev.server ? `${ev.server}/` : ''}${ev.tool_name || 'MCP'}`
+        : (ev.tool_name || 'Tool')))
+    ];
+    const failureSummaries = events
+      .filter(ev => ev.type === 'tool_result' && ev.success === false)
+      .map(ev => {
+        const name = ev.tool_name || 'Tool';
+        const detail = String(ev.preview || '').trim();
+        return detail ? `${name}: ${detail.slice(0, 96)}` : `${name} failed`;
+      });
+    const toolSummary = toolNames.length
+      ? toolNames.slice(0, 3).join(', ') + (toolNames.length > 3 ? ` +${toolNames.length - 3} more` : '')
+      : '';
+    const failureSummary = failureSummaries.length
+      ? `<span class="chip-fail">${escHtml(failureSummaries[0])}${failureSummaries.length > 1 ? ` +${failureSummaries.length - 1} more` : ''}</span>`
+      : '';
     const failedLabel = failures ? `<span class="chip-fail">${fmt(failures)} failed</span>` : '';
     const openAttr = failures ? ' open' : '';
     return `<details class="chat-activity-group"${openAttr}>
       <summary class="chat-activity-summary">
         <span>Turn activity</span>
-        <span class="chip-meta">${fmt(tools)} calls · ${fmt(events.length)} events</span>
+        <span class="chip-meta">${fmt(tools)} calls · ${fmt(events.length)} events${toolSummary ? ` · ${escHtml(toolSummary)}` : ''}</span>
         ${failedLabel}
+        ${failureSummary}
       </summary>
       <div class="chat-activity-list">
         ${events.map(ev => renderConversationActivity(ev, sessionStartTs)).join('')}
@@ -4211,6 +4285,172 @@ let dashboardSelectedSessionId = currentParams().get('session') || '';
         ${renderActivityGroup(turn.activity, sessionStartTs, turnIndex)}
       </section>
     `).join('')}</div>`;
+  }
+
+  function extractSkillFromPreview(preview){
+    const text = String(preview || '').trim();
+    if (!text) return '';
+    try {
+      const payload = JSON.parse(text);
+      if (payload && typeof payload.skill === 'string') return payload.skill.trim();
+    } catch (_) {
+      const match = text.match(/"skill"\s*:\s*"([^"]+)"/);
+      if (match) return match[1].trim();
+    }
+    return '';
+  }
+
+  function extractSubagentFromPreview(toolName, preview){
+    const normalizedTool = String(toolName || '').trim().toLowerCase();
+    if (!['subagent','agent','task','read_agent'].includes(normalizedTool)) return '';
+    let payload = {};
+    try { payload = JSON.parse(String(preview || '').trim() || '{}'); }
+    catch (_) { payload = {}; }
+    const keys = normalizedTool === 'task' || normalizedTool === 'read_agent'
+      ? ['agent_id','name','agent_type']
+      : ['subagent_type','agent_type','name','agent_id','description'];
+    for (const key of keys) {
+      const value = String(payload[key] || '').trim();
+      if (value && !value.includes('REDACTED') && !value.startsWith('[')) return value.slice(0,80);
+    }
+    return '';
+  }
+
+  function deriveToolInventory(session){
+    const provided = session.tool_inventory || {};
+    const hasProvided = Boolean((provided.tools || []).length || (provided.skills || []).length || (provided.mcp_tools || []).length || (provided.subagents || []).length);
+    const toolMap = new Map();
+    const skillMap = new Map();
+    const mcpMap = new Map();
+    const subagentMap = new Map();
+    const addTool = (name, count, failures, duration, examples) => {
+      const key = name || 'unknown';
+      const row = toolMap.get(key) || {name:key,count:0,failures:0,avg_duration_ms:0,examples:[]};
+      row.count += Number(count || 0);
+      row.failures += Number(failures || 0);
+      if (duration) row.avg_duration_ms = Number(duration || 0);
+      (examples || []).forEach(ex => {
+        if (ex && row.examples.length < 3) row.examples.push(String(ex));
+      });
+      toolMap.set(key, row);
+    };
+    (provided.tools || []).forEach(row => addTool(row.name, row.count, row.failures, row.avg_duration_ms, row.examples));
+    (provided.skills || []).forEach(row => {
+      const name = row.name || '';
+      if (!name) return;
+      const current = skillMap.get(name) || {name, count:0, source:row.source || ''};
+      current.count += Number(row.count || 0);
+      skillMap.set(name, current);
+    });
+    (provided.mcp_tools || []).forEach(row => {
+      if (!row.name) return;
+      mcpMap.set(row.name, {name: row.name, count: Number(row.count || 0)});
+    });
+    (provided.subagents || []).forEach(row => {
+      if (!row.name) return;
+      subagentMap.set(row.name, {
+        name: row.name,
+        count: Number(row.count || 0),
+        stops: Number(row.stops || 0),
+        source: row.source || '',
+      });
+    });
+    if (!hasProvided) {
+      (session.conversation || []).forEach(ev => {
+        if (ev.type === 'tool_call') {
+          addTool(ev.tool_name || 'unknown', 1, 0, ev.duration_ms || 0, [ev.preview || '']);
+          if (ev.tool_name === 'skill') {
+            const skillName = extractSkillFromPreview(ev.preview);
+            if (skillName) {
+              const current = skillMap.get(skillName) || {name:skillName,count:0,source:'tool'};
+              current.count += 1;
+              skillMap.set(skillName, current);
+            }
+          }
+          const subagentName = extractSubagentFromPreview(ev.tool_name, ev.preview);
+          if (subagentName) {
+            const current = subagentMap.get(subagentName) || {name:subagentName,count:0,stops:0,source:'tool'};
+            current.count += 1;
+            subagentMap.set(subagentName, current);
+          }
+        } else if (ev.type === 'tool_result' && ev.success === false && ev.tool_name) {
+          addTool(ev.tool_name, 0, 1, ev.duration_ms || 0, []);
+        } else if (ev.type === 'mcp_call') {
+          const label = ev.server && ev.tool_name ? `${ev.server}/${ev.tool_name}` : (ev.tool_name || ev.server || '');
+          if (label) {
+            const current = mcpMap.get(label) || {name:label,count:0};
+            current.count += 1;
+            mcpMap.set(label, current);
+          }
+        } else if (ev.type === 'subagent_start' || ev.type === 'subagent_stop') {
+          const name = ev.subagent_type || 'unknown';
+          const current = subagentMap.get(name) || {name,count:0,stops:0,source:'lifecycle'};
+          if (ev.type === 'subagent_stop') current.stops += 1;
+          else current.count += 1;
+          subagentMap.set(name, current);
+        }
+      });
+      Object.entries(session.tools || {}).forEach(([name,count]) => addTool(name, count, 0, 0, []));
+    }
+    Object.entries(session.skills || {}).forEach(([name,count]) => {
+      if (hasProvided && skillMap.has(name)) return;
+      const current = skillMap.get(name) || {name,count:0,source:'summary'};
+      current.count += Number(count || 0);
+      skillMap.set(name, current);
+    });
+    return {
+      tools: Array.from(toolMap.values()).sort((a,b) => b.count - a.count || a.name.localeCompare(b.name)),
+      skills: Array.from(skillMap.values()).sort((a,b) => b.count - a.count || a.name.localeCompare(b.name)),
+      mcp_tools: Array.from(mcpMap.values()).sort((a,b) => b.count - a.count || a.name.localeCompare(b.name)),
+      subagents: Array.from(subagentMap.values()).sort((a,b) => b.count - a.count || a.name.localeCompare(b.name)),
+    };
+  }
+
+  function renderSessionToolsPanel(session){
+    const inventory = deriveToolInventory(session);
+    const toolTotal = inventory.tools.reduce((sum,row) => sum + Number(row.count || 0), 0);
+    const skillTotal = inventory.skills.reduce((sum,row) => sum + Number(row.count || 0), 0);
+    const mcpTotal = inventory.mcp_tools.reduce((sum,row) => sum + Number(row.count || 0), 0);
+    const subagentTotal = inventory.subagents.reduce((sum,row) => sum + Number(row.count || 0), 0);
+    const renderRows = rows => rows.length ? rows.map(row => `
+      <tr>
+        <td>
+          <div class="tool-inventory-name">${escHtml(row.name || 'unknown')}</div>
+          ${(row.examples || []).slice(0,1).map(ex => `<div class="tool-inventory-example">${escHtml(ex)}</div>`).join('')}
+        </td>
+        <td style="text-align:right">${fmt(row.count || 0)}</td>
+        <td style="text-align:right">${fmt(row.failures || 0)}</td>
+        <td style="text-align:right">${row.avg_duration_ms ? fmtDur(row.avg_duration_ms) : '--'}</td>
+      </tr>
+    `).join('') : '<tr><td colspan="4" style="color:var(--text-3);text-align:center">No entries captured for this session.</td></tr>';
+    const renderSimpleRows = rows => rows.length ? rows.map(row => `
+      <tr><td><div class="tool-inventory-name">${escHtml(row.name || 'unknown')}</div>${row.source ? `<div class="tool-inventory-example">${escHtml(row.source)}</div>` : ''}</td><td style="text-align:right">${fmt(row.count || 0)}</td></tr>
+    `).join('') : '<tr><td colspan="2" style="color:var(--text-3);text-align:center">No entries captured for this session.</td></tr>';
+    return `<div class="tool-inventory-shell">
+      <div class="tool-inventory-summary">
+        <div class="tool-inventory-card"><div class="tool-inventory-num">${fmt(toolTotal)}</div><div class="tool-inventory-label">Tool calls</div></div>
+        <div class="tool-inventory-card"><div class="tool-inventory-num">${fmt(inventory.tools.length)}</div><div class="tool-inventory-label">Distinct tools</div></div>
+        <div class="tool-inventory-card"><div class="tool-inventory-num">${fmt(skillTotal)}</div><div class="tool-inventory-label">Skill uses</div></div>
+        <div class="tool-inventory-card"><div class="tool-inventory-num">${fmt(subagentTotal)}</div><div class="tool-inventory-label">Subagents</div></div>
+        <div class="tool-inventory-card"><div class="tool-inventory-num">${fmt(mcpTotal)}</div><div class="tool-inventory-label">MCP calls</div></div>
+      </div>
+      <section class="tool-inventory-section">
+        <h4>Tools</h4>
+        <table class="tool-inventory-table"><thead><tr><th>Tool</th><th style="text-align:right">Calls</th><th style="text-align:right">Failed</th><th style="text-align:right">Avg</th></tr></thead><tbody>${renderRows(inventory.tools)}</tbody></table>
+      </section>
+      <section class="tool-inventory-section">
+        <h4>Skills</h4>
+        <table class="tool-inventory-table"><thead><tr><th>Skill</th><th style="text-align:right">Uses</th></tr></thead><tbody>${renderSimpleRows(inventory.skills)}</tbody></table>
+      </section>
+      <section class="tool-inventory-section">
+        <h4>Subagents</h4>
+        <table class="tool-inventory-table"><thead><tr><th>Subagent</th><th style="text-align:right">Starts</th></tr></thead><tbody>${renderSimpleRows(inventory.subagents)}</tbody></table>
+      </section>
+      <section class="tool-inventory-section">
+        <h4>MCP tools</h4>
+        <table class="tool-inventory-table"><thead><tr><th>Server / tool</th><th style="text-align:right">Calls</th></tr></thead><tbody>${renderSimpleRows(inventory.mcp_tools)}</tbody></table>
+      </section>
+    </div>`;
   }
 
   function renderConversationCasefile(session, conversation, loadBtnHtml, timelineHtml){
@@ -5004,10 +5244,12 @@ let dashboardSelectedSessionId = currentParams().get('session') || '';
       .then(data => {
         const events = data.events || data.conversation || [];
         const telemetry = data.telemetry || null;
+        const toolInventory = data.tool_inventory || null;
         if (idx >= 0) {
           const conv = normalizeLoadedConversation(events, sessions[idx].conversation);
           if (conv.length > 0) sessions[idx].conversation = conv;
           if (telemetry) sessions[idx].telemetry = telemetry;
+          if (toolInventory) sessions[idx].tool_inventory = toolInventory;
           sessions[idx]._fullLoaded = true;
           sessions[idx]._loadingDetail = false;
           const estimated = getEstimatedSessionTokens(sessions[idx]);
@@ -5284,8 +5526,89 @@ makeHBar('eventChart',
   Object.keys(overviewEvents).slice(0,8),
   Object.values(overviewEvents).slice(0,8),
   P.blue);
+const sourceProvenance = overviewTab.source_provenance || D.source_provenance || [];
+const sourceProvenanceEl = document.getElementById('source-provenance');
+if (sourceProvenanceEl) {
+  sourceProvenanceEl.innerHTML = sourceProvenance.length
+    ? `<div style="font-size:12px;color:var(--text-3);margin-bottom:8px">Transport/source provenance. The chart above stays semantic by event type.</div>
+       <table class="tbl"><thead><tr><th>Source</th><th>Transport</th><th style="text-align:right">Events</th></tr></thead><tbody>${
+          sourceProvenance.slice(0, 6).map(entry => `
+            <tr>
+              <td style="font-weight:600">${escHtml(entry.label || entry.origin_kind || 'unknown')}</td>
+              <td>${escHtml(String(entry.transport || 'unknown').replace(/_/g, ' '))}</td>
+              <td style="text-align:right">${fmt(entry.event_count || 0)}</td>
+            </tr>
+          `).join('')
+       }</tbody></table>`
+    : `<div style="font-size:12px;color:var(--text-3)">No source provenance available for the current selection.</div>`;
+}
 
 /* Token chart + stats */
+function validCostTrendDay(value){
+  const day = String(value || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return '';
+  if (Number(day.slice(0, 4)) < 2000) return '';
+  return day;
+}
+function normalizeAgentCostRows(rows){
+  return (rows || []).map(row => ({
+    day: validCostTrendDay(row.day),
+    agent: String(row.agent || 'unknown'),
+    total_cost: Number(row.total_cost || 0),
+  })).filter(row => row.day && row.total_cost > 0);
+}
+function hasPricedSessionCost(sessions){
+  return (sessions || []).some(session => Number(session.total_cost_usd ?? session.total_cost ?? session.estimated_cost_usd ?? 0) > 0);
+}
+function deriveAgentCostRowsFromSessions(sessions){
+  const rows = new Map();
+  (sessions || []).forEach(session => {
+    const totalCost = Number(session.total_cost_usd ?? session.total_cost ?? session.estimated_cost_usd ?? 0);
+    if (!totalCost) return;
+    const day = validCostTrendDay(session.day || session.started_at || session.created_at || session.timestamp);
+    if (!day) return;
+    const agent = String(session.agent || 'unknown');
+    const key = `${day}\u0000${agent}`;
+    const current = rows.get(key) || {day, agent, total_cost: 0};
+    current.total_cost += totalCost;
+    rows.set(key, current);
+  });
+  return Array.from(rows.values()).sort((a, b) => String(a.day).localeCompare(String(b.day)) || Number(b.total_cost || 0) - Number(a.total_cost || 0) || String(a.agent).localeCompare(String(b.agent)));
+}
+const rawOverviewAgentCostRows = overviewTab.agent_cost_over_time || D.agent_cost_over_time || [];
+const normalizedOverviewAgentCostRows = normalizeAgentCostRows(rawOverviewAgentCostRows);
+const overviewAgentCostRows = normalizedOverviewAgentCostRows.length ? normalizedOverviewAgentCostRows : deriveAgentCostRowsFromSessions(D.sessions || []);
+const agentCostChartEl = document.getElementById('agentCostChart');
+if (agentCostChartEl) {
+  if (overviewAgentCostRows.length) {
+    const dayLabels = Array.from(new Set(overviewAgentCostRows.map(row => String(row.day || '')))).filter(Boolean).sort();
+    const totalsByAgent = new Map();
+    const byAgentDay = new Map();
+    overviewAgentCostRows.forEach(row => {
+      const agent = String(row.agent || 'unknown');
+      const day = String(row.day || '');
+      const totalCost = Number(row.total_cost || 0);
+      totalsByAgent.set(agent, (totalsByAgent.get(agent) || 0) + totalCost);
+      if (!byAgentDay.has(agent)) byAgentDay.set(agent, new Map());
+      byAgentDay.get(agent).set(day, totalCost);
+    });
+    const topAgents = Array.from(totalsByAgent.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 6)
+      .map(([agent]) => agent);
+    makeLine('agentCostChart', dayLabels, topAgents.map((agent, idx) => ({
+      label: agent,
+      data: dayLabels.map(day => byAgentDay.get(agent)?.get(day) || 0),
+      borderColor: COLORS[idx % COLORS.length],
+      backgroundColor: COLORS[idx % COLORS.length],
+    })), true);
+  } else {
+    const message = hasPricedSessionCost(D.sessions || [])
+      ? 'Cost totals are available, but priced sessions do not have valid dates for a trend chart.'
+      : 'No priced sessions available yet for agent cost trends.';
+    agentCostChartEl.parentElement.innerHTML = `<div style="font-size:12px;color:var(--text-3);padding:24px 0">${message}</div>`;
+  }
+}
 const overviewInputTokens = overviewTab.total_input_tokens ?? D.total_input_tokens ?? 0;
 const overviewOutputTokens = overviewTab.total_output_tokens ?? D.total_output_tokens ?? 0;
 const overviewCacheCreationTokens = overviewTab.total_cache_creation_tokens ?? D.total_cache_creation_tokens ?? 0;
@@ -6165,6 +6488,11 @@ function initGraphs() {
   const mcpToolX = hasMcpTools ? (hasMcpServers ? Math.round(W * 0.62) : Math.round(W - 150)) : Math.round(W - 150);
   const mcpServerX = Math.round(W - 120);
 
+  const metricForNode = (node) => {
+    const raw = node && (node.size ?? node.value ?? node.count ?? node.events ?? 0);
+    return Number.isFinite(Number(raw)) ? Number(raw) : 0;
+  };
+
   const laidOut = [
     ...columnLayout(agentNodes, agentX, top, bottom),
     ...columnLayout(toolNodes, toolX, top, bottom),
@@ -6249,18 +6577,253 @@ function initGraphs() {
     .attr('text-anchor', 'end')
     .attr('fill', 'rgba(255,255,255,.42)')
     .attr('font-size', 10.5)
-    .text(d => fmt(d.size));
+    .text(d => fmt(metricForNode(d)));
 
   nodeEl.append('title')
-    .text(d => `${d.label} -- ${fmt(d.size)} ${d.type === 'agent' ? 'events' : 'calls'}`);
+    .text(d => `${d.label} -- ${fmt(metricForNode(d))} ${d.type === 'agent' ? 'events' : 'calls'}`);
 
   const serverSummary = dep.top_mcp_servers || [];
   if (serverSummary.length) {
-    const serverText = serverSummary.map(server => `${server.id} (${fmt(server.events)})`).join(', ');
+    const serverText = serverSummary
+      .map(server => {
+        const label = server.id ?? server.server ?? '';
+        const count = server.events ?? server.count ?? server.value ?? 0;
+        return label ? `${label} (${fmt(count)})` : '';
+      })
+      .filter(Boolean)
+      .join(', ');
     noteEl.textContent = `${noteEl.textContent ? `${noteEl.textContent} ` : ''}Top MCP servers: ${serverText}.`;
   }
 })();
 
+/* ── 3. Behavioral Memory Graph ── */
+(function buildSemanticGraph(){
+  const graph = sqlTab('graphs').graph_semantic || D.graph_semantic || { nodes: [], edges: [], sessions: [], legend: [] };
+  const shell = document.getElementById('semantic-graph-shell');
+  const svgEl = document.getElementById('semantic-graph-svg');
+  const filter = document.getElementById('semantic-session-filter');
+  const legend = document.getElementById('semantic-graph-legend');
+  const tip = document.getElementById('semantic-graph-tip');
+  if (!shell || !svgEl || !filter || !legend || !tip) return;
+  if (!graph.nodes.length) {
+    shell.outerHTML = '<div class="semantic-graph-empty">No semantic graph rows found. Run reflect db rebuild-graph after ingesting telemetry.</div>';
+    filter.innerHTML = '<option value="">All sessions</option>';
+    legend.innerHTML = '';
+    return;
+  }
+
+  const esc = (value) => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  const allNodes = graph.nodes.map(node => ({...node}));
+  const allEdges = graph.edges.map(edge => ({...edge}));
+  const nodeById = new Map(allNodes.map(node => [node.id, node]));
+  const adjacency = new Map();
+  for (const edge of allEdges) {
+    if (!adjacency.has(edge.source)) adjacency.set(edge.source, []);
+    if (!adjacency.has(edge.target)) adjacency.set(edge.target, []);
+    adjacency.get(edge.source).push(edge);
+    adjacency.get(edge.target).push(edge);
+  }
+  const edgeColor = {
+    touched_folder: 'rgba(100,199,161,.34)',
+    contains_touched_path: 'rgba(149,213,178,.26)',
+    touched_path: 'rgba(149,213,178,.24)',
+    described_by_path: 'rgba(255,141,125,.30)',
+    used_skill: 'rgba(199,156,255,.34)',
+    spawned_subagent: 'rgba(255,209,102,.36)',
+    achieved_outcome: 'rgba(255,107,107,.38)',
+  };
+
+  filter.innerHTML = ['<option value="">All sessions</option>', ...(graph.sessions || []).map(session => `<option value="${esc(session)}">${esc(session)}</option>`)].join('');
+  legend.innerHTML = (graph.legend || []).map(item =>
+    `<div class="graph-legend-item"><div class="graph-legend-dot" style="background:${esc(item.color)}"></div>${esc(item.kind)}</div>`
+  ).join('');
+
+  function visibleIdsForSession(sessionId) {
+    if (!sessionId) return new Set(allNodes.map(node => node.id));
+    const nodeIds = new Set();
+    const frontier = [];
+    for (const node of allNodes) {
+      if (node.session_id === sessionId) {
+        nodeIds.add(node.id);
+        frontier.push(node.id);
+      }
+    }
+    for (const edge of allEdges) {
+      if (edge.session_id === sessionId) {
+        if (!nodeIds.has(edge.source)) frontier.push(edge.source);
+        if (!nodeIds.has(edge.target)) frontier.push(edge.target);
+        nodeIds.add(edge.source);
+        nodeIds.add(edge.target);
+      }
+    }
+    while (frontier.length) {
+      const current = frontier.pop();
+      for (const edge of adjacency.get(current) || []) {
+        if (edge.session_id && edge.session_id !== sessionId) continue;
+        const neighbor = edge.source === current ? edge.target : edge.source;
+        if (nodeIds.has(neighbor)) continue;
+        nodeIds.add(neighbor);
+        frontier.push(neighbor);
+      }
+    }
+    return nodeIds;
+  }
+
+  function nodeRadius(kind) {
+    return {Agent:12, Session:9, Repo:10, Folder:9, Path:5, Memory:10, Tool:9, ToolCall:5, MCPServer:10, Skill:11, Subagent:11, Outcome:12, Step:4}[kind] || 7;
+  }
+
+  function nodeCharge(kind) {
+    return {Agent:-520, Session:-360, Repo:-420, Folder:-260, Path:-80, Memory:-300, Tool:-260, ToolCall:-70, MCPServer:-280, Skill:-340, Subagent:-340, Outcome:-360}[kind] || -160;
+  }
+
+  function shortLabel(node) {
+    const label = String(node.label || '');
+    if (label.length <= 26) return label;
+    const parts = label.split('/');
+    return parts.length > 1 ? parts.slice(-2).join('/') : `${label.slice(0, 25)}...`;
+  }
+
+  function showTip(node, event) {
+    const attrs = node.attrs || {};
+    const rows = [
+      ['kind', node.kind],
+      ['session', node.session_id],
+      ['type', attrs.type || attrs.kind || attrs.tool_type],
+      ['status', attrs.status],
+      ['scope', attrs.scope],
+      ['source', attrs.source],
+      ['first seen', node.first_seen_at],
+      ['last seen', node.last_seen_at],
+    ].filter(([, value]) => value !== undefined && value !== null && String(value) !== '');
+    tip.innerHTML = `<strong>${esc(node.label)}</strong><dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`;
+    const bounds = shell.getBoundingClientRect();
+    tip.style.left = `${Math.min(Math.max(event.clientX - bounds.left + 14, 12), bounds.width - 280)}px`;
+    tip.style.top = `${Math.min(Math.max(event.clientY - bounds.top + 14, 12), bounds.height - 120)}px`;
+    tip.classList.add('is-visible');
+  }
+
+  const svg = d3.select(svgEl);
+  const viewport = svg.append('g');
+  const linkLayer = viewport.append('g');
+  const nodeLayer = viewport.append('g');
+  const zoom = d3.zoom()
+    .scaleExtent([.18, 3.5])
+    .on('zoom', event => viewport.attr('transform', event.transform));
+  svg.call(zoom);
+
+  let simulation = null;
+  let activeSession = '';
+
+  function render(sessionId) {
+    activeSession = sessionId || '';
+    const selectedIds = visibleIdsForSession(activeSession);
+    const nodes = allNodes.filter(node => selectedIds.has(node.id));
+    const visibleNodeIds = new Set(nodes.map(node => node.id));
+    const links = allEdges
+      .filter(edge => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target))
+      .filter(edge => !activeSession || !edge.session_id || edge.session_id === activeSession)
+      .map(edge => ({...edge, source: nodeById.get(edge.source), target: nodeById.get(edge.target)}))
+      .filter(edge => edge.source && edge.target);
+
+    const rect = shell.getBoundingClientRect();
+    const W = Math.max(rect.width, 640);
+    const H = Math.max(rect.height, 420);
+    svgEl.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+    if (simulation) simulation.stop();
+    linkLayer.selectAll('*').remove();
+    nodeLayer.selectAll('*').remove();
+
+    const linksSel = linkLayer.selectAll('line')
+      .data(links)
+      .join('line')
+      .attr('class', 'semantic-graph-link')
+      .attr('stroke', d => edgeColor[d.kind] || 'rgba(245,242,234,.16)')
+      .attr('stroke-width', d => Math.max(.8, Math.min(3.4, 1 + Math.log2((d.weight || d.value || 1) + 1) * .45)));
+
+    linksSel.append('title').text(d => `${d.kind || 'related'}: ${d.source.label || d.source.id} -> ${d.target.label || d.target.id}`);
+
+    const nodeSel = nodeLayer.selectAll('g')
+      .data(nodes, d => d.id)
+      .join('g')
+      .attr('class', 'semantic-graph-node')
+      .call(d3.drag()
+        .on('start', (event, d) => {
+          if (!event.active) simulation.alphaTarget(.25).restart();
+          d.fx = d.x;
+          d.fy = d.y;
+        })
+        .on('drag', (event, d) => {
+          d.fx = event.x;
+          d.fy = event.y;
+        })
+        .on('end', (event, d) => {
+          if (!event.active) simulation.alphaTarget(0);
+          d.fx = null;
+          d.fy = null;
+        }));
+
+    nodeSel.append('circle')
+      .attr('r', d => nodeRadius(d.kind))
+      .attr('fill', d => d.color || '#d7d1c6');
+
+    nodeSel.filter(d => ['Agent','Session','Repo','Folder','Skill','Subagent','Outcome','Memory'].includes(d.kind))
+      .append('text')
+      .attr('x', d => nodeRadius(d.kind) + 5)
+      .attr('y', 4)
+      .text(shortLabel);
+
+    nodeSel.append('title').text(d => `${d.kind}: ${d.label}`);
+    nodeSel
+      .on('pointerenter', function(event, d) {
+        d3.select(this).classed('is-hovered', true).raise();
+        showTip(d, event);
+      })
+      .on('pointermove', (event, d) => showTip(d, event))
+      .on('pointerleave', function() {
+        d3.select(this).classed('is-hovered', false);
+        tip.classList.remove('is-visible');
+      });
+
+    simulation = d3.forceSimulation(nodes)
+      .force('link', d3.forceLink(links).id(d => d.id).distance(d => {
+        if (d.kind === 'contains_touched_path') return 34;
+        if (d.kind === 'touched_folder') return 46;
+        if (d.kind === 'used_skill' || d.kind === 'spawned_subagent') return 70;
+        return 56;
+      }).strength(.42))
+      .force('charge', d3.forceManyBody().strength(d => nodeCharge(d.kind)))
+      .force('center', d3.forceCenter(W / 2, H / 2))
+      .force('collide', d3.forceCollide().radius(d => nodeRadius(d.kind) + 8).iterations(2))
+      .force('x', d3.forceX(d => {
+        const lanes = {Agent:.12, Session:.23, Repo:.34, Folder:.42, Path:.50, Memory:.58, Tool:.66, ToolCall:.72, MCPServer:.78, Skill:.84, Subagent:.90, Outcome:.94};
+        return W * (lanes[d.kind] || .5);
+      }).strength(.045))
+      .force('y', d3.forceY(H / 2).strength(.035))
+      .on('tick', () => {
+        linksSel
+          .attr('x1', d => d.source.x)
+          .attr('y1', d => d.source.y)
+          .attr('x2', d => d.target.x)
+          .attr('y2', d => d.target.y);
+        nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
+      });
+
+    setTimeout(() => {
+      const bounds = viewport.node()?.getBBox?.();
+      if (!bounds || !Number.isFinite(bounds.width) || !bounds.width) return;
+      const scale = Math.min(1.1, .88 / Math.max(bounds.width / W, bounds.height / H));
+      const tx = W / 2 - (bounds.x + bounds.width / 2) * scale;
+      const ty = H / 2 - (bounds.y + bounds.height / 2) * scale;
+      svg.transition().duration(450).call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+    }, 380);
+  }
+
+  filter.addEventListener('change', event => render(event.target.value));
+  window.addEventListener('resize', () => render(activeSession));
+  render('');
+})();
 /* ── 3. Session Timeline ── */
 (function buildTimeline(){
   const sessions = sqlTab('graphs').graph_session_timeline || D.graph_session_timeline || [];
@@ -6457,6 +7020,44 @@ function makeHBar(id, labels, values, color){
       scales:{
         x:{grid:{color:'rgba(255,255,255,.04)'},ticks:{color:'rgba(255,255,255,.35)',font:{size:10}}},
         y:{grid:{display:false},ticks:{color:'rgba(255,255,255,.5)',font:{size:11},maxRotation:0}}
+      }
+    }
+  });
+}
+
+function makeLine(id, labels, datasets, costAxis=false){
+  new Chart(document.getElementById(id).getContext('2d'),{
+    type:'line',
+    data:{labels,datasets:datasets.map(dataset=>({
+      ...dataset,
+      fill:false,
+      tension:.25,
+      borderWidth:2,
+      pointRadius:2,
+      pointHoverRadius:3
+    }))},
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{
+          position:'bottom',
+          labels:{color:'rgba(255,255,255,.5)',font:{size:11},boxWidth:10,padding:10}
+        },
+        tooltip:{callbacks:{label:c=>` ${c.dataset.label}: ${costAxis ? fmtCost(c.parsed.y || 0) : (c.parsed.y || 0).toLocaleString()}`}}
+      },
+      scales:{
+        x:{grid:{color:'rgba(255,255,255,.04)'},ticks:{color:'rgba(255,255,255,.35)',font:{size:10}}},
+        y:{
+          beginAtZero:true,
+          grid:{color:'rgba(255,255,255,.04)'},
+          ticks:{
+            color:'rgba(255,255,255,.35)',
+            font:{size:10},
+            callback:value=>costAxis ? fmtCost(Number(value || 0)) : Number(value || 0).toLocaleString()
+          }
+        }
       }
     }
   });

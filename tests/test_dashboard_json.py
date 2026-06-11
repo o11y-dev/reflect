@@ -37,6 +37,7 @@ class TestBuildDashboardJson:
             "activity_by_day", "activity_by_hour",
             "graph_tool_transitions", "graph_cooccurrence",
             "graph_latency_histograms", "graph_dep", "graph_session_timeline",
+            "graph_semantic",
             "agents", "strengths", "observations", "recommendations",
             "practical_examples", "achievements", "token_economy",
         ]:
@@ -51,6 +52,8 @@ class TestBuildDashboardJson:
         assert "total_cost_usd" in data["sessions"][0]
         assert "cache_creation_cost_usd" in data["sessions"][0]
         assert "cache_read_cost_usd" in data["sessions"][0]
+        assert "tool_inventory" in data["sessions"][0]
+        assert {"tools", "skills", "mcp_tools", "subagents"} <= set(data["sessions"][0]["tool_inventory"])
 
     def test_includes_cost_summary_fields(self, rich_stats):
         data = json.loads(_build_dashboard_json(rich_stats))

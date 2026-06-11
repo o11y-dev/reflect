@@ -6,6 +6,8 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
+from reflect.store.provenance import apply_origin_kind, classify_origin_kind
+
 
 def _now() -> str:
     return datetime.now(tz=UTC).isoformat()
@@ -46,9 +48,65 @@ def _duration_ms(observed_at: str, received_at: str) -> int | None:
     return max(delta, 0)
 
 
+def _first_text(attrs: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = attrs.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _first_hash(attrs: dict[str, Any], text: str | None, *keys: str) -> str | None:
+    for key in keys:
+        value = attrs.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return hashlib.sha256(text.encode("utf-8")).hexdigest() if text else None
+
+
+def _extract_mcp_server_and_tool(attrs: dict[str, Any]) -> tuple[str | None, str | None]:
+    server = _first_text(
+        attrs,
+        "gen_ai.client.mcp_server",
+        "mcp.server",
+        "gen_ai.client.tool.input.server",
+        "tool.input.server",
+    )
+    tool = _first_text(
+        attrs,
+        "gen_ai.client.mcp_tool",
+        "mcp.tool",
+        "gen_ai.client.tool.input.toolName",
+        "gen_ai.client.tool.input.tool",
+        "tool.input.toolName",
+        "tool.input.tool",
+    )
+    payload = _load_json(
+        str(
+            attrs.get("gen_ai.client.tool.input")
+            or attrs.get("tool.input")
+            or ""
+        )
+    )
+    if server is None:
+        for key in ("server", "serverName", "mcpServer"):
+            value = payload.get(key)
+            if isinstance(value, str) and value:
+                server = value
+                break
+    if tool is None:
+        for key in ("toolName", "tool", "mcpTool"):
+            value = payload.get(key)
+            if isinstance(value, str) and value:
+                tool = value
+                break
+    return server, tool
+
+
 def _agent_name(attrs: dict[str, Any]) -> str:
     return str(
         attrs.get("gen_ai.client.name")
+        or attrs.get("ide.name")
         or attrs.get("agent.name")
         or attrs.get("service.name")
         or "unknown"
@@ -56,14 +114,14 @@ def _agent_name(attrs: dict[str, Any]) -> str:
 
 
 def _step_type(event_type: str, attrs: dict[str, Any]) -> str:
-    event = event_type.lower()
+    event = _event_name(event_type, attrs).lower()
     if attrs.get("gen_ai.memory.id"):
         return "memory_event"
     if "mcp" in event or attrs.get("gen_ai.client.mcp_server") or attrs.get("gen_ai.client.mcp_tool"):
         return "mcp_call"
     if attrs.get("gen_ai.client.command"):
         return "shell_command"
-    if attrs.get("gen_ai.client.tool_name") or "tool" in event:
+    if attrs.get("gen_ai.client.tool_name") or attrs.get("ide.tool_name") or "tool" in event:
         return "tool_call"
     if (
         attrs.get("gen_ai.request.model")
@@ -81,14 +139,28 @@ def _step_type(event_type: str, attrs: dict[str, Any]) -> str:
 
 def _status(event_type: str, attrs: dict[str, Any]) -> str:
     status = str(attrs.get("gen_ai.client.status") or attrs.get("status") or "").lower()
-    event = event_type.lower()
-    if status in {"ok", "error", "skipped"}:
+    event = _event_name(event_type, attrs).lower()
+    if status in {"ok", "error", "skipped", "unknown"}:
         return status
+    if status in {"completed", "complete", "success", "succeeded"}:
+        return "ok"
+    if status in {"failed", "failure"}:
+        return "error"
     if "error" in event or "fail" in event:
         return "error"
     if event.startswith("after") or event.startswith("post") or event in {"stop", "sessionend"}:
         return "ok"
     return "unknown"
+
+
+def _event_name(event_type: str, attrs: dict[str, Any]) -> str:
+    event = (
+        attrs.get("gen_ai.client.hook.event")
+        or attrs.get("ide.hook.event")
+        or attrs.get("event.name")
+        or event_type
+    )
+    return str(event).rsplit(".", 1)[-1]
 
 
 def _next_step_seq(conn: sqlite3.Connection, session_id: str) -> int:
@@ -146,6 +218,12 @@ def _upsert_session(
           cache_creation_tokens = sessions.cache_creation_tokens + excluded.cache_creation_tokens,
           cache_read_tokens = sessions.cache_read_tokens + excluded.cache_read_tokens,
           reasoning_tokens = sessions.reasoning_tokens + excluded.reasoning_tokens,
+          status = CASE
+            WHEN sessions.status = 'error' OR excluded.status = 'error' THEN 'error'
+            WHEN excluded.status = 'ok' THEN 'ok'
+            WHEN sessions.status IN ('ok', 'active') THEN sessions.status
+            ELSE excluded.status
+          END,
           updated_at = excluded.updated_at
         """,
         (
@@ -181,8 +259,8 @@ def _insert_step(
         """
         INSERT OR IGNORE INTO steps(
           id, session_id, seq, type, started_at, ended_at, duration_ms,
-          status, summary, raw_attrs_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          status, summary, origin_kind, raw_attrs_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             step_id,
@@ -194,12 +272,52 @@ def _insert_step(
             _duration_ms(raw_event["observed_at"], raw_event["received_at"]),
             _status(raw_event["event_type"], attrs),
             raw_event["event_type"],
+            raw_event["origin_kind"],
             raw_event["attrs_json"],
             timestamp,
             timestamp,
         ),
     )
     return step_id
+
+
+def repair_telemetry_provenance(conn: sqlite3.Connection) -> dict[str, int]:
+    previous_row_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, source_type, origin_kind, attrs_json
+            FROM raw_events
+            WHERE origin_kind IS NULL
+               OR COALESCE(NULLIF(json_extract(attrs_json, '$."reflect.telemetry.origin"'), ''), '') = ''
+            ORDER BY observed_at, id
+            """
+        ).fetchall()
+        repaired_raw_events = 0
+        repaired_steps = 0
+        for row in rows:
+            attrs = _load_json(row["attrs_json"])
+            origin_kind = classify_origin_kind(str(row["source_type"] or ""), attrs)
+            if not origin_kind:
+                continue
+            repaired_attrs = apply_origin_kind(attrs, origin_kind)
+            attrs_json = json.dumps(repaired_attrs, sort_keys=True)
+            conn.execute(
+                "UPDATE raw_events SET origin_kind = ?, attrs_json = ? WHERE id = ?",
+                (origin_kind, attrs_json, row["id"]),
+            )
+            repaired_raw_events += 1
+            step_id = _stable_id("step", row["id"])
+            step_result = conn.execute(
+                "UPDATE steps SET origin_kind = ?, raw_attrs_json = ? WHERE id = ?",
+                (origin_kind, attrs_json, step_id),
+            )
+            repaired_steps += int(step_result.rowcount or 0)
+        conn.commit()
+        return {"raw_events": repaired_raw_events, "steps": repaired_steps}
+    finally:
+        conn.row_factory = previous_row_factory
 
 
 def _insert_call_record(
@@ -215,14 +333,28 @@ def _insert_call_record(
     duration = _duration_ms(raw_event["observed_at"], raw_event["received_at"])
     status = _status(raw_event["event_type"], attrs)
     if step_type == "llm_call":
+        prompt_preview = _first_text(
+            attrs,
+            "gen_ai.client.prompt.text",
+            "gen_ai.client.prompt",
+            "gen_ai.input.messages",
+            "prompt",
+        )
+        response_preview = _first_text(
+            attrs,
+            "gen_ai.response.text",
+            "gen_ai.output.messages",
+            "response",
+        )
         conn.execute(
             """
             INSERT OR IGNORE INTO llm_calls(
               id, step_id, session_id, provider, request_model, response_model,
               operation_name, input_tokens, output_tokens, cache_creation_input_tokens,
               cache_read_input_tokens, reasoning_output_tokens, latency_ms,
+              prompt_hash, response_hash, prompt_preview_redacted, response_preview_redacted,
               raw_attrs_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 _stable_id("llm", raw_event["id"]),
@@ -238,6 +370,10 @@ def _insert_call_record(
                 _to_int(attrs.get("gen_ai.usage.cache_read.input_tokens")),
                 _to_int(attrs.get("gen_ai.usage.reasoning_output_tokens")),
                 duration,
+                _first_hash(attrs, prompt_preview, "gen_ai.client.prompt.sha256", "gen_ai.prompt.sha256"),
+                _first_hash(attrs, response_preview, "gen_ai.response.sha256"),
+                prompt_preview,
+                response_preview,
                 raw_event["attrs_json"],
                 timestamp,
                 timestamp,
@@ -271,6 +407,7 @@ def _insert_call_record(
             ),
         )
     elif step_type == "mcp_call":
+        mcp_server, mcp_tool = _extract_mcp_server_and_tool(attrs)
         conn.execute(
             """
             INSERT OR IGNORE INTO mcp_calls(
@@ -286,8 +423,8 @@ def _insert_call_record(
                 attrs.get("gen_ai.client.mcp_session_id"),
                 attrs.get("gen_ai.client.mcp_protocol_version"),
                 attrs.get("gen_ai.client.mcp_transport"),
-                attrs.get("gen_ai.client.mcp_server"),
-                attrs.get("gen_ai.client.mcp_tool") or attrs.get("gen_ai.client.tool_name"),
+                mcp_server,
+                mcp_tool or attrs.get("gen_ai.client.tool_name"),
                 status,
                 duration,
                 raw_event["attrs_json"],
@@ -411,10 +548,71 @@ def _backfill_parent_step_ids(conn: sqlite3.Connection, session_ids: set[str]) -
             )
 
 
+def _refresh_session_statuses(conn: sqlite3.Connection, session_ids: set[str], timestamp: str) -> None:
+    if not session_ids:
+        return
+    for session_id in sorted(session_ids):
+        row = conn.execute(
+            """
+            SELECT
+              COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) AS error_count,
+              COALESCE(SUM(CASE
+                WHEN lower(COALESCE(json_extract(raw_attrs_json, '$."gen_ai.client.hook.event"'), summary, ''))
+                  IN ('stop', 'sessionend', 'session_end', 'subagentstop', 'subagent_stop')
+                  THEN 1
+                WHEN lower(COALESCE(summary, '')) IN (
+                  'gen_ai.client.hook.stop',
+                  'gen_ai.client.hook.sessionend',
+                  'gen_ai.client.hook.subagentstop',
+                  'ide.hook.stop'
+                )
+                  THEN 1
+                ELSE 0
+              END), 0) AS terminal_count
+            FROM steps
+            WHERE session_id = ?
+            """,
+            (session_id,),
+        ).fetchone()
+        if not row:
+            continue
+        error_count = int(row["error_count"] or 0)
+        terminal_count = int(row["terminal_count"] or 0)
+        if error_count > 0:
+            status = "error"
+        elif terminal_count > 0:
+            status = "ok"
+        else:
+            status = "unknown"
+        conn.execute(
+            """
+            UPDATE sessions
+            SET status = ?, failure_count = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (status, error_count, timestamp, session_id),
+        )
+
+
+def refresh_all_session_statuses(conn: sqlite3.Connection) -> dict[str, int]:
+    previous_row_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        session_ids = {
+            str(row["id"])
+            for row in conn.execute("SELECT id FROM sessions").fetchall()
+        }
+        _refresh_session_statuses(conn, session_ids, _now())
+        return {"sessions": len(session_ids)}
+    finally:
+        conn.row_factory = previous_row_factory
+
+
 def normalize_pending_raw_events(conn: sqlite3.Connection, *, limit: int | None = None) -> dict[str, int]:
     previous_row_factory = conn.row_factory
     conn.row_factory = sqlite3.Row
     try:
+        repair_telemetry_provenance(conn)
         params: list[int] = []
         limit_sql = ""
         if limit is not None:
@@ -503,6 +701,7 @@ def normalize_pending_raw_events(conn: sqlite3.Connection, *, limit: int | None 
                 )
                 failed += 1
         _backfill_parent_step_ids(conn, processed_session_ids)
+        _refresh_session_statuses(conn, processed_session_ids, timestamp)
         conn.commit()
         return {"processed": processed, "failed": failed, "skipped": 0}
     finally:

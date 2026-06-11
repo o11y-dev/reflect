@@ -67,6 +67,7 @@ class GraphsViewModel(ReflectModel):
     graph_cooccurrence: dict[str, Any]
     graph_dep: dict[str, Any]
     graph_session_timeline: list[dict[str, Any]]
+    graph_semantic: dict[str, Any]
 
 
 class SpecsViewModel(ReflectModel):
@@ -151,6 +152,20 @@ def _scope_clause(column: str, scoped_ids: list[str] | None, *, prefix: str = "W
     if not scoped_ids:
         return f"{prefix} 1 = 0", []
     return f"{prefix} {column} IN ({', '.join('?' for _ in scoped_ids)})", scoped_ids
+
+
+def _cursor_plan_scope_clause(scoped_ids: list[str] | None, *, prefix: str = "WHERE") -> tuple[str, list[str]]:
+    base_scope, params = _scope_clause("session_id", scoped_ids, prefix=prefix)
+    if not base_scope:
+        return f"{prefix} type = 'cursor_plan'", []
+    return f"{base_scope} AND type = 'cursor_plan'", params
+
+
+def _memory_scope_clause(scoped_ids: list[str] | None, *, prefix: str = "WHERE") -> tuple[str, list[str]]:
+    base_scope, params = _scope_clause("session_id", scoped_ids, prefix=prefix)
+    if not base_scope:
+        return f"{prefix} type <> 'cursor_plan'", []
+    return f"{base_scope} AND type <> 'cursor_plan'", params
 
 
 def _dict_rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
@@ -391,20 +406,47 @@ def _skill_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | Non
             attrs = {}
         if not isinstance(attrs, dict):
             continue
-        agent = str(row["agent"] or "unknown")
-        event = str(_attr(attrs, "gen_ai.client.hook.event") or row["summary"] or "")
+        agent = str(
+            _attr(attrs, "gen_ai.client.name", "ide.name", "agent.name")
+            or row["agent"]
+            or "unknown"
+        )
+        event = str(_attr(attrs, "gen_ai.client.hook.event", "ide.hook.event") or row["summary"] or "")
         event_lc = event.lower()
-        subagent_type = str(_attr(attrs, "gen_ai.client.subagent_type", "subagent.type") or "")
-        if subagent_type:
-            if event == "SubagentStop" or "stop" in event_lc:
+        subagent_type = str(_attr(attrs, "gen_ai.client.subagent_type", "ide.subagent_type", "subagent.type") or "")
+        is_subagent_start = event == "SubagentStart" or event.endswith(".SubagentStart")
+        is_subagent_stop = event == "SubagentStop" or event.endswith(".SubagentStop")
+        if subagent_type or is_subagent_start or is_subagent_stop:
+            subagent_type = subagent_type or "unknown"
+            if is_subagent_stop or ("subagent" in event_lc and "stop" in event_lc):
                 subagent_stops[subagent_type] += 1
             else:
                 subagent_starts[subagent_type] += 1
                 subagents_by_agent.setdefault(agent, Counter())[subagent_type] += 1
         tool_name = str(_attr(attrs, "gen_ai.client.tool_name") or "")
         preview = str(_attr(attrs, "gen_ai.client.tool.input", "tool.input") or "")
+        tool_subagent = _extract_subagent_name_from_tool(tool_name, attrs, preview)
+        if tool_subagent and (event == "PreToolUse" or event.endswith(".PreToolUse")):
+            subagent_starts[tool_subagent] += 1
+            subagents_by_agent.setdefault(agent, Counter())[tool_subagent] += 1
         prompt_text = str(_attr(attrs, "gen_ai.client.prompt", "gen_ai.client.prompt.text", "prompt") or "")
+        file_path = str(
+            _attr(
+                attrs,
+                "gen_ai.client.file_path",
+                "gen_ai.client.tool.input.file_path",
+                "gen_ai.client.tool.input.path",
+                "tool.input.file_path",
+                "tool.input.path",
+                "file.path",
+                "path",
+            )
+            or ""
+        )
         skill_names = set(_extract_skill_names_from_text(prompt_text))
+        path_skill = _extract_skill_name_from_path(file_path)
+        if path_skill:
+            skill_names.add(path_skill)
         if tool_name == "skill":
             skill_name = _extract_skill_name_from_preview(preview)
             if skill_name:
@@ -446,6 +488,53 @@ def _extract_skill_name_from_preview(preview: str) -> str:
         if isinstance(skill, str):
             return skill.strip()
     return ""
+
+
+def _extract_skill_name_from_path(path: str) -> str:
+    if not isinstance(path, str) or not path.strip():
+        return ""
+    match = re.search(r"(?:^|/)skills/(?:.*/)?([^/]+)/SKILL\.md$", path)
+    return match.group(1).strip() if match else ""
+
+
+def _load_json_dict(value: str) -> dict[str, Any]:
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _extract_subagent_name_from_tool(tool_name: str, attrs: dict[str, Any], preview: str) -> str:
+    normalized_tool = str(tool_name or "").strip().lower()
+    payload = _load_json_dict(preview)
+
+    def first_value(*keys: str) -> str:
+        for key in keys:
+            value = _attr(attrs, f"gen_ai.client.tool.input.{key}", f"tool.input.{key}")
+            if value in (None, ""):
+                value = payload.get(key)
+            cleaned = _clean_subagent_name(value)
+            if cleaned:
+                return cleaned
+        return ""
+
+    if normalized_tool in {"subagent", "agent"}:
+        return first_value("subagent_type", "agent_type", "name", "agent_id", "description")
+    if normalized_tool in {"task", "read_agent"}:
+        return first_value("agent_id", "name", "agent_type")
+    return ""
+
+
+def _clean_subagent_name(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    name = value.strip()
+    if not name or "REDACTED" in name.upper() or name.startswith("["):
+        return ""
+    return name[:80]
 
 
 def _extract_skill_names_from_text(text: str) -> set[str]:
@@ -788,6 +877,30 @@ def _build_agents(
             "top_skills": dict(skill_subagent["skills_by_agent"].get(name, Counter()).most_common(10)),
             "percentiles": [],
         }
+    extra_agent_names = (
+        set(skill_subagent["subagents_by_agent"]) | set(skill_subagent["skills_by_agent"])
+    ) - set(agents)
+    for name in sorted(extra_agent_names):
+        agents[name] = {
+            "total_events": 0,
+            "sessions": 0,
+            "prompts": 0,
+            "tool_calls": 0,
+            "tool_ratio": 0,
+            "failures": 0,
+            "failure_rate": 0,
+            "mcp_calls": mcp_by_agent.get(name, 0),
+            "subagents": sum(skill_subagent["subagents_by_agent"].get(name, Counter()).values()),
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cache_read_tokens": 0,
+            "total_cost_usd": 0,
+            "top_model": "",
+            "top_tools": dict(top_tools.get(name, Counter()).most_common(10)),
+            "top_skills": dict(skill_subagent["skills_by_agent"].get(name, Counter()).most_common(10)),
+            "percentiles": [],
+        }
     return AgentsViewModel(agent_comparison=comparison, agents=agents)
 
 
@@ -822,6 +935,7 @@ def _build_graphs(
     co_matrix = _cooccurrence_matrix(conn, scoped_ids, co_tools)
     timeline = _timeline(conn, scoped_ids)
     graph_dep = _dependency_graph(conn, scoped_ids, tools_by_count, mcp_servers_by_count)
+    graph_semantic = _semantic_graph(conn, scoped_ids)
     return GraphsViewModel(
         graph_tool_transitions=[
             {"from": row["source"], "to": row["target"], "count": int(row["count"] or 0)}
@@ -830,7 +944,307 @@ def _build_graphs(
         graph_cooccurrence={"tools": co_tools, "matrix": co_matrix},
         graph_dep=graph_dep,
         graph_session_timeline=timeline,
+        graph_semantic=graph_semantic,
     )
+
+
+def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> dict[str, Any]:
+    node_filters: list[str] = []
+    node_params: list[str] = []
+    if scoped_ids is not None:
+        if not scoped_ids:
+            return {"nodes": [], "edges": [], "sessions": [], "legend": []}
+        placeholders = ", ".join("?" for _ in scoped_ids)
+        node_filters.append(f"(session_id IS NULL OR session_id IN ({placeholders}))")
+        node_params.extend(scoped_ids)
+    where = f"WHERE {' AND '.join(node_filters)}" if node_filters else ""
+    node_rows = _dict_rows(conn.execute(
+        f"""
+        WITH filtered AS (
+          SELECT id, kind, label, session_id, attrs_json, first_seen_at, last_seen_at
+          FROM graph_nodes
+          {where}
+        ),
+        ranked AS (
+          SELECT
+            *,
+            ROW_NUMBER() OVER (
+              PARTITION BY kind
+              ORDER BY COALESCE(last_seen_at, first_seen_at, '') DESC, label ASC
+            ) AS kind_rank
+          FROM filtered
+        )
+        SELECT id, kind, label, session_id, attrs_json, first_seen_at, last_seen_at
+        FROM ranked
+        WHERE kind_rank <= CASE kind
+          WHEN 'Agent' THEN 10
+          WHEN 'Session' THEN 40
+          WHEN 'Repo' THEN 20
+          WHEN 'Spec' THEN 35
+          WHEN 'Folder' THEN 75
+          WHEN 'Path' THEN 60
+          WHEN 'Tool' THEN 50
+          WHEN 'ToolCall' THEN 40
+          WHEN 'MCPServer' THEN 20
+          WHEN 'Memory' THEN 45
+          WHEN 'Skill' THEN 45
+          WHEN 'Subagent' THEN 45
+          WHEN 'Outcome' THEN 45
+          WHEN 'Step' THEN 0
+          ELSE 20
+        END
+        ORDER BY
+          CASE kind
+            WHEN 'Agent' THEN 0
+            WHEN 'Session' THEN 1
+            WHEN 'Skill' THEN 2
+            WHEN 'Subagent' THEN 3
+            WHEN 'Outcome' THEN 4
+            WHEN 'Repo' THEN 5
+            WHEN 'Spec' THEN 6
+            WHEN 'Folder' THEN 7
+            WHEN 'Tool' THEN 8
+            WHEN 'MCPServer' THEN 9
+            WHEN 'Path' THEN 10
+            WHEN 'ToolCall' THEN 11
+            WHEN 'Memory' THEN 12
+            ELSE 99
+          END,
+          COALESCE(last_seen_at, first_seen_at, '') DESC,
+          label ASC
+        """,
+        node_params,
+    ))
+    selected_ids = [str(row["id"]) for row in node_rows]
+    selected = set(selected_ids)
+    if not selected_ids:
+        return {"nodes": [], "edges": [], "sessions": [], "legend": []}
+
+    edge_filters = [
+        f"source_node_id IN ({', '.join('?' for _ in selected_ids)})",
+        f"target_node_id IN ({', '.join('?' for _ in selected_ids)})",
+    ]
+    edge_params = [*selected_ids, *selected_ids]
+    if scoped_ids is not None:
+        placeholders = ", ".join("?" for _ in scoped_ids)
+        edge_filters.append(f"(session_id IS NULL OR session_id IN ({placeholders}))")
+        edge_params.extend(scoped_ids)
+    edge_rows = _dict_rows(conn.execute(
+        f"""
+        SELECT source_node_id, target_node_id, kind, session_id, weight, attrs_json, first_seen_at, last_seen_at
+        FROM graph_edges
+        WHERE {' AND '.join(edge_filters)}
+        ORDER BY weight DESC, kind ASC
+        LIMIT 900
+        """,
+        edge_params,
+    ))
+    if scoped_ids is None:
+        bridge_ids = [
+            str(row["id"])
+            for row in node_rows
+            if str(row.get("kind") or "") in {"Memory", "Spec"}
+        ]
+        if bridge_ids:
+            bridge_placeholders = ", ".join("?" for _ in bridge_ids)
+            bridge_rows = _dict_rows(conn.execute(
+                f"""
+                SELECT source_node_id, target_node_id, kind, session_id, weight, attrs_json, first_seen_at, last_seen_at
+                FROM graph_edges
+                WHERE kind IN ('recorded_memory', 'described_by_path', 'contains_path', 'defines_spec')
+                  AND (
+                    source_node_id IN ({bridge_placeholders})
+                    OR target_node_id IN ({bridge_placeholders})
+                  )
+                ORDER BY COALESCE(last_seen_at, first_seen_at, '') DESC, weight DESC
+                LIMIT 240
+                """,
+                [*bridge_ids, *bridge_ids],
+            ))
+            if bridge_rows:
+                bridge_ids = {
+                    str(node_id)
+                    for row in bridge_rows
+                    for node_id in (row["source_node_id"], row["target_node_id"])
+                }
+                missing_ids = [node_id for node_id in bridge_ids if node_id not in selected]
+                if missing_ids:
+                    placeholders = ", ".join("?" for _ in missing_ids)
+                    node_rows.extend(
+                        _dict_rows(conn.execute(
+                            f"""
+                            SELECT id, kind, label, session_id, attrs_json, first_seen_at, last_seen_at
+                            FROM graph_nodes
+                            WHERE id IN ({placeholders})
+                            """,
+                            missing_ids,
+                        ))
+                    )
+                    selected_ids.extend(missing_ids)
+                    selected.update(missing_ids)
+                edge_rows.extend(bridge_rows)
+                deduped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+                for row in edge_rows:
+                    key = (
+                        str(row["source_node_id"]),
+                        str(row["target_node_id"]),
+                        str(row["kind"]),
+                        str(row.get("session_id") or ""),
+                    )
+                    existing = deduped.get(key)
+                    if existing is None or float(row.get("weight") or 0) > float(existing.get("weight") or 0):
+                        deduped[key] = row
+                edge_rows = list(deduped.values())
+        context_ids = [
+            str(row["id"])
+            for row in node_rows
+            if str(row.get("kind") or "") in {"Memory", "Spec", "Repo"}
+        ]
+        if context_ids:
+            context_placeholders = ", ".join("?" for _ in context_ids)
+            session_bridge_rows = _dict_rows(conn.execute(
+                f"""
+                SELECT ge.source_node_id, ge.target_node_id, ge.kind, ge.session_id, ge.weight, ge.attrs_json, ge.first_seen_at, ge.last_seen_at
+                FROM graph_edges ge
+                JOIN graph_nodes gs ON gs.id = ge.source_node_id
+                JOIN graph_nodes gt ON gt.id = ge.target_node_id
+                WHERE ge.kind IN ('recorded_memory', 'planned_spec', 'addressed_spec', 'worked_in_repo')
+                  AND (
+                    (ge.source_node_id IN ({context_placeholders}) AND gt.kind = 'Session')
+                    OR (ge.target_node_id IN ({context_placeholders}) AND gs.kind = 'Session')
+                  )
+                ORDER BY COALESCE(ge.last_seen_at, ge.first_seen_at, '') DESC, ge.weight DESC
+                LIMIT 320
+                """,
+                [*context_ids, *context_ids],
+            ))
+            if session_bridge_rows:
+                session_ids = {
+                    str(node_id)
+                    for row in session_bridge_rows
+                    for node_id in (row["source_node_id"], row["target_node_id"])
+                }
+                missing_ids = [node_id for node_id in session_ids if node_id not in selected]
+                if missing_ids:
+                    placeholders = ", ".join("?" for _ in missing_ids)
+                    node_rows.extend(
+                        _dict_rows(conn.execute(
+                            f"""
+                            SELECT id, kind, label, session_id, attrs_json, first_seen_at, last_seen_at
+                            FROM graph_nodes
+                            WHERE id IN ({placeholders})
+                            """,
+                            missing_ids,
+                        ))
+                    )
+                    selected_ids.extend(missing_ids)
+                    selected.update(missing_ids)
+                edge_rows.extend(session_bridge_rows)
+                deduped = {}
+                for row in edge_rows:
+                    key = (
+                        str(row["source_node_id"]),
+                        str(row["target_node_id"]),
+                        str(row["kind"]),
+                        str(row.get("session_id") or ""),
+                    )
+                    existing = deduped.get(key)
+                    if existing is None or float(row.get("weight") or 0) > float(existing.get("weight") or 0):
+                        deduped[key] = row
+                edge_rows = list(deduped.values())
+
+    colors = {
+        "Agent": "#ffb156",
+        "Session": "#f5f2ea",
+        "Step": "#8f887d",
+        "Tool": "#48d597",
+        "ToolCall": "#2fa66f",
+        "MCPServer": "#76b7ff",
+        "Memory": "#ff8d7d",
+        "Skill": "#c79cff",
+        "Subagent": "#ffd166",
+        "Repo": "#b7e4c7",
+        "Spec": "#f97316",
+        "Folder": "#64c7a1",
+        "Path": "#95d5b2",
+        "Outcome": "#ff6b6b",
+    }
+    edge_rows = [
+        row for row in edge_rows
+        if str(row["source_node_id"]) in selected and str(row["target_node_id"]) in selected
+    ]
+    if edge_rows:
+        connected_ids = {
+            node_id
+            for row in edge_rows
+            for node_id in (str(row["source_node_id"]), str(row["target_node_id"]))
+        }
+        node_rows = [row for row in node_rows if str(row["id"]) in connected_ids]
+        edge_rows = [
+            row for row in edge_rows
+            if str(row["source_node_id"]) in connected_ids and str(row["target_node_id"]) in connected_ids
+        ]
+    if scoped_ids is not None:
+        session_roots = {
+            str(row["id"])
+            for row in node_rows
+            if str(row["kind"] or "") == "Session" and str(row["session_id"] or "") in set(scoped_ids)
+        }
+        adjacency: dict[str, set[str]] = {}
+        for row in edge_rows:
+            source = str(row["source_node_id"])
+            target = str(row["target_node_id"])
+            adjacency.setdefault(source, set()).add(target)
+            adjacency.setdefault(target, set()).add(source)
+        reachable = set(session_roots)
+        frontier = list(session_roots)
+        while frontier:
+            current = frontier.pop()
+            for neighbor in adjacency.get(current, set()):
+                if neighbor in reachable:
+                    continue
+                reachable.add(neighbor)
+                frontier.append(neighbor)
+        node_rows = [row for row in node_rows if str(row["id"]) in reachable]
+        edge_rows = [
+            row for row in edge_rows
+            if str(row["source_node_id"]) in reachable and str(row["target_node_id"]) in reachable
+        ]
+    nodes = []
+    for row in node_rows:
+        attrs = _load_json_dict(str(row.get("attrs_json") or ""))
+        kind = str(row["kind"] or "")
+        label = str(row["label"] or "")
+        nodes.append({
+            "id": str(row["id"]),
+            "kind": kind,
+            "label": label,
+            "session_id": str(row["session_id"] or ""),
+            "color": colors.get(kind, "#d7d1c6"),
+            "size": min(18, 5 + len(label) / 12),
+            "attrs": attrs,
+            "first_seen_at": str(row["first_seen_at"] or ""),
+            "last_seen_at": str(row["last_seen_at"] or ""),
+        })
+    kinds = {node["kind"] for node in nodes}
+    return {
+        "nodes": nodes,
+        "edges": [
+            {
+                "source": str(row["source_node_id"]),
+                "target": str(row["target_node_id"]),
+                "kind": str(row["kind"] or ""),
+                "session_id": str(row["session_id"] or ""),
+                "weight": float(row["weight"] or 1.0),
+                "attrs": _load_json_dict(str(row.get("attrs_json") or "")),
+                "first_seen_at": str(row["first_seen_at"] or ""),
+                "last_seen_at": str(row["last_seen_at"] or ""),
+            }
+            for row in edge_rows
+        ],
+        "sessions": sorted({str(node["session_id"]) for node in nodes if node["session_id"]}),
+        "legend": [{"kind": kind, "color": colors.get(kind, "#d7d1c6")} for kind in sorted(kinds)],
+    }
 
 
 def _cooccurrence_matrix(conn: sqlite3.Connection, scoped_ids: list[str] | None, co_tools: list[str]) -> list[list[int]]:
@@ -1034,6 +1448,23 @@ def _build_specs(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Spec
         """,
         spec_params,
     ))
+    cursor_plan_where, cursor_plan_params = _cursor_plan_scope_clause(scoped_ids)
+    cursor_plan_rows = _dict_rows(conn.execute(
+        f"""
+        SELECT
+          id,
+          content_preview_redacted,
+          confidence,
+          source,
+          last_seen_at,
+          raw_attrs_json
+        FROM memories
+        {cursor_plan_where}
+        ORDER BY COALESCE(last_seen_at, updated_at, created_at) DESC, id ASC
+        LIMIT 100
+        """,
+        cursor_plan_params,
+    ))
     status_rows = _dict_rows(conn.execute(
         f"""
         SELECT s.status, COUNT(*) AS count
@@ -1043,6 +1474,15 @@ def _build_specs(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Spec
         ORDER BY count DESC, s.status ASC
         """,
         spec_params,
+    ))
+    plan_status_rows = _dict_rows(conn.execute(
+        f"""
+        SELECT 'plan' AS status, COUNT(*) AS count
+        FROM memories
+        {cursor_plan_where}
+        HAVING COUNT(*) > 0
+        """,
+        cursor_plan_params,
     ))
     req_rows = _dict_rows(conn.execute(
         f"""
@@ -1067,30 +1507,58 @@ def _build_specs(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Spec
         """,
         spec_params,
     ))
-    return SpecsViewModel(
-        total_specs=_count_specs(conn, scoped_ids),
-        specs_by_status=_counter(status_rows, "status", "count"),
-        requirements_by_status=_counter(req_rows, "status", "count"),
-        evidence_by_kind=_counter(evidence_rows, "kind", "count"),
-        specs=[
+    specs_by_status = _counter([*status_rows, *plan_status_rows], "status", "count")
+    spec_items = [
+        {
+            "id": row["id"],
+            "title": row["title"],
+            "status": row["status"],
+            "owner": row["owner"] or "",
+            "source_path": row["source_path"] or "",
+            "updated_at": row["updated_at"],
+            "requirements": int(row["requirement_count"] or 0),
+            "evidence": int(row["evidence_count"] or 0),
+            "avg_confidence": float(row["avg_confidence"] or 0),
+        }
+        for row in specs
+    ]
+    for row in cursor_plan_rows:
+        try:
+            attrs = json.loads(str(row["raw_attrs_json"] or "{}"))
+        except json.JSONDecodeError:
+            attrs = {}
+        source_path = ""
+        title = row["content_preview_redacted"] or row["id"]
+        if isinstance(attrs, dict):
+            source_path = str(attrs.get("path") or "")
+            name = str(attrs.get("name") or "")
+            if name:
+                title = name.removesuffix(".plan.md") or name
+        spec_items.append(
             {
                 "id": row["id"],
-                "title": row["title"],
-                "status": row["status"],
-                "owner": row["owner"] or "",
-                "source_path": row["source_path"] or "",
-                "updated_at": row["updated_at"],
-                "requirements": int(row["requirement_count"] or 0),
-                "evidence": int(row["evidence_count"] or 0),
-                "avg_confidence": float(row["avg_confidence"] or 0),
+                "title": title,
+                "status": "plan",
+                "owner": "cursor",
+                "source_path": source_path,
+                "updated_at": row["last_seen_at"] or "",
+                "requirements": 0,
+                "evidence": 0,
+                "avg_confidence": float(row["confidence"] or 0),
             }
-            for row in specs
-        ],
+        )
+    spec_items.sort(key=lambda item: (str(item["updated_at"] or ""), str(item["title"] or "")), reverse=True)
+    return SpecsViewModel(
+        total_specs=sum(specs_by_status.values()),
+        specs_by_status=specs_by_status,
+        requirements_by_status=_counter(req_rows, "status", "count"),
+        evidence_by_kind=_counter(evidence_rows, "kind", "count"),
+        specs=spec_items[:100],
     )
 
 
 def _build_memory(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> MemoryViewModel:
-    scope, params = _scope_clause("session_id", scoped_ids)
+    scope, params = _memory_scope_clause(scoped_ids)
     rows = _dict_rows(conn.execute(
         f"""
         SELECT id, scope, type, sensitivity, source, confidence, content_preview_redacted, last_seen_at, session_id
@@ -1102,11 +1570,53 @@ def _build_memory(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Mem
         params,
     ))
     return MemoryViewModel(
-        total_memories=_count_rows(conn, "memories", "session_id", scoped_ids),
-        memories_by_scope=_count_by(conn, "memories", "scope", "session_id", scoped_ids),
-        memories_by_type=_count_by(conn, "memories", "type", "session_id", scoped_ids),
-        memories_by_sensitivity=_count_by(conn, "memories", "sensitivity", "session_id", scoped_ids),
-        memories_by_source=_count_by(conn, "memories", "source", "session_id", scoped_ids),
+        total_memories=int(
+            conn.execute(
+                f"SELECT COUNT(*) FROM memories {scope}",
+                params,
+            ).fetchone()[0]
+            or 0
+        ),
+        memories_by_scope=_counter(
+            _dict_rows(
+                conn.execute(
+                    f"SELECT scope, COUNT(*) AS count FROM memories {scope} GROUP BY scope ORDER BY count DESC, scope ASC",
+                    params,
+                )
+            ),
+            "scope",
+            "count",
+        ),
+        memories_by_type=_counter(
+            _dict_rows(
+                conn.execute(
+                    f"SELECT type, COUNT(*) AS count FROM memories {scope} GROUP BY type ORDER BY count DESC, type ASC",
+                    params,
+                )
+            ),
+            "type",
+            "count",
+        ),
+        memories_by_sensitivity=_counter(
+            _dict_rows(
+                conn.execute(
+                    f"SELECT sensitivity, COUNT(*) AS count FROM memories {scope} GROUP BY sensitivity ORDER BY count DESC, sensitivity ASC",
+                    params,
+                )
+            ),
+            "sensitivity",
+            "count",
+        ),
+        memories_by_source=_counter(
+            _dict_rows(
+                conn.execute(
+                    f"SELECT source, COUNT(*) AS count FROM memories {scope} GROUP BY source ORDER BY count DESC, source ASC",
+                    params,
+                )
+            ),
+            "source",
+            "count",
+        ),
         recent_memories=[
             {
                 "id": row["id"],

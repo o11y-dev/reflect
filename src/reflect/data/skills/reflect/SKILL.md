@@ -31,9 +31,10 @@ Always follow this order:
 0. **Auto-initialize capture when the skill starts**
    - Before analysis, check whether telemetry capture is already wired for the current workspace.
    - If hooks are not yet set up, run `reflect setup` (or `python3 -m reflect.core setup` if `reflect` is not yet on PATH).
-   - Treat GitHub Copilot as **repo-scoped**:
-     - install or merge `.github/hooks/otel-hooks.json` only in a real git repo
-     - if the current workspace is not a git repo, say that clearly and target the actual repo the user is working in
+   - Keep setup global/user-scoped by default:
+     - do not install or merge repo-local hook files such as `.github/hooks/otel-hooks.json` unless the user explicitly asks for local/project instrumentation
+     - use global agent config and global skill directories by default
+     - if local/project instrumentation is requested, use the explicit `reflect setup --agent <name> --local-agent <name>` path
    - Do not block analysis on setup. If hooks cannot be initialized, continue with the telemetry that already exists and explain the limitation.
    - When setup succeeds, tell the user that only **new** agent runs will emit the newly initialized traces.
 
@@ -41,9 +42,9 @@ Always follow this order:
    - Prefer OTLP JSON traces such as `~/.reflect/state/otlp/otel-traces.json`.
    - Use the existing `reflect` CLI or `python3 src/reflect/core.py`.
     - Remember the current CLI behavior:
-      - default: terminal dashboard
-      - `--no-terminal`: markdown report
-      - `reflect report` (or `python3 -m reflect.core report`): open the local dashboard in a browser
+      - default: open the local browser report from the SQLite store
+      - `reflect report` is a deprecated alias for `reflect`
+      - `--terminal`, `--no-terminal`, and `--dashboard-artifact` are deprecated compatibility outputs
    - If local traces are unavailable, fall back to legacy local state such as Cursor hook directories when present.
 
 2. **Explain what local telemetry can prove**
