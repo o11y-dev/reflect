@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.4 (unreleased)
+## 0.8.4 (2026-06-16)
 
 ### Changed
 - Renamed the bundled skills-extraction helper skill from `skills` to `reflect-skills` so generated/distributed skill naming is clearly reflect-scoped.
