@@ -1223,8 +1223,8 @@ def report(
 _SKILL_AGENT_SPECS: list[tuple[str, list[str]]] = [
     ("claude", ["--print"]),
     ("gemini", ["-p"]),
-    ("codex", ["--print"]),
-    ("cursor-agent", ["--print"]),
+    ("codex", ["exec"]),
+    ("cursor-agent", ["--print", "--trust", "--mode", "ask"]),
     ("copilot", ["--prompt"]),
     ("opencode", ["run"]),
     ("qwen", ["--print"]),
