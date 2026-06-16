@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.3 (unreleased)
+## 0.8.4 (unreleased)
 
 ### Changed
 - Renamed the bundled skills-extraction helper skill from `skills` to `reflect-skills` so generated/distributed skill naming is clearly reflect-scoped.
@@ -22,6 +22,8 @@
 - Added an Overview cost-trends chart that breaks estimated cost down over time by agent.
 
 ### Fixed
+- Fixed `reflect skills --agent codex` to use the Codex CLI's non-interactive `exec` subcommand instead of the unsupported top-level `--print` flag.
+- Fixed bundled package data so releases include the renamed `reflect-skills` helper skill instead of the removed legacy `skills` path.
 - Made `reflect doctor cost` resilient to transient SQLite lock contention by retrying locked operations and increasing default SQLite busy timeout.
 - Backfilled costs for Claude Code native OTLP log rows and Codex native session token-count rows during SQL report ingestion.
 - Prevented duplicate model/token rows from overlapping local sources from inflating SQL session token and cost totals.

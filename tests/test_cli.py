@@ -748,8 +748,23 @@ class TestSkillsSubcommand:
         assert "-p" in cmd
         assert "--print" not in cmd
 
-    def test_skills_cursor_agent_uses_print_flag(self, runner, otlp_file, tmp_path):
-        """cursor-agent uses --print flag."""
+    def test_skills_codex_uses_exec_subcommand(self, runner, otlp_file, tmp_path):
+        """codex uses the exec subcommand, not the interactive CLI's unsupported --print flag."""
+        fake_output = json.dumps([_FAKE_SKILLS[0]])
+        with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
+             patch("reflect.core._detect_agents", return_value=[]):
+            runner.invoke(main, [
+                "skills", "--yes", "--agent", "codex",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+        cmd = mock_run.call_args[0][0]
+        assert cmd[:2] == ["codex", "exec"]
+        assert "--print" not in cmd
+
+    def test_skills_cursor_agent_uses_headless_trusted_ask_mode(self, runner, otlp_file, tmp_path):
+        """cursor-agent uses print mode with trust and read-only ask mode for headless extraction."""
         fake_output = json.dumps([_FAKE_SKILLS[0]])
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]):
@@ -762,6 +777,9 @@ class TestSkillsSubcommand:
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "cursor-agent"
         assert "--print" in cmd
+        assert "--trust" in cmd
+        assert "--mode" in cmd
+        assert "ask" in cmd
 
     def test_skills_copilot_uses_prompt_flag(self, runner, otlp_file, tmp_path):
         """copilot uses --prompt flag, not --print."""

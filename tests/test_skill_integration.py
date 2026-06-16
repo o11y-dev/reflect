@@ -9,11 +9,30 @@ from conftest import make_span, wrap_otlp
 from reflect.core import main
 
 SKILL_MD = Path(__file__).parent.parent / "src" / "reflect" / "data" / "skills" / "reflect" / "SKILL.md"
+REFLECT_SKILLS_MD = (
+    Path(__file__).parent.parent
+    / "src"
+    / "reflect"
+    / "data"
+    / "skills"
+    / "reflect-skills"
+    / "SKILL.md"
+)
 
 
 class TestSkillMd:
     def test_skill_md_exists(self):
         assert SKILL_MD.exists(), f"SKILL.md not found at {SKILL_MD}"
+
+    def test_reflect_skills_helper_exists(self):
+        assert REFLECT_SKILLS_MD.exists(), f"SKILL.md not found at {REFLECT_SKILLS_MD}"
+
+    def test_package_data_references_current_skill_paths(self):
+        pyproject = Path(__file__).parent.parent / "pyproject.toml"
+        content = pyproject.read_text(encoding="utf-8")
+        assert "data/skills/reflect/SKILL.md" in content
+        assert "data/skills/reflect-skills/SKILL.md" in content
+        assert "data/skills/skills/SKILL.md" not in content
 
     def test_skill_md_has_reflect_name(self):
         content = SKILL_MD.read_text()
