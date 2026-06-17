@@ -131,6 +131,15 @@ def _seed_view_db(conn):
                 now,
                 now,
             ),
+            (
+                "step-hook-command-noise",
+                4,
+                "2026-05-02T11:03:00+00:00",
+                "gen_ai.client.hook.PreToolUse",
+                '{"gen_ai.client.hook.event":"PreToolUse","gen_ai.client.name":"codex","gen_ai.client.tool_name":"Read","gen_ai.client.command.preview":"not-a-shell-command"}',
+                now,
+                now,
+            ),
         ],
     )
     conn.executemany(
@@ -488,7 +497,7 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         tabs = build_report_tabs(conn)
         scoped = build_report_tabs(conn, session_ids={"sess-2"})
 
-        assert tabs.activity.events_by_type == {"llm_call": 2, "tool_call": 2}
+        assert tabs.activity.events_by_type == {"llm_call": 2, "tool_call": 3}
         assert tabs.activity.activity_by_day == {"2026-05-01": 3, "2026-05-02": 5}
         assert tabs.models.models_by_count == {"claude-4.6-opus": 1, "gpt-5.4": 1}
         assert tabs.costs.model_costs["gpt-5.4"] == 0.75
@@ -521,6 +530,11 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
             "research-helper": 1,
         }
         assert scoped.tools.top_commands == [{"command": "poetry run pytest", "count": 1}]
+        assert "gen_ai.client.hook.PreToolUse" not in scoped.tools.tools_by_count
+        assert all(
+            item["command"] != "gen_ai.client.hook.PreToolUse"
+            for item in scoped.tools.top_commands
+        )
         assert scoped.mcp.mcp_servers_by_count == {"metrics.example.test": 1, "mcp-issue-tracker": 1}
         assert scoped.agents.agents["codex"]["top_skills"] == {"review-skill": 1}
         assert scoped.agents.agents["codex"]["subagents"] == 1

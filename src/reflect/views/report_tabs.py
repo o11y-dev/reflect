@@ -578,7 +578,7 @@ def _and_scope(column: str, scoped_ids: list[str] | None) -> str:
 def _command_patterns(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Counter[str]:
     step_rows = _dict_rows(conn.execute(
         f"""
-        SELECT summary, raw_attrs_json
+        SELECT type, summary, raw_attrs_json
         FROM steps
         WHERE (raw_attrs_json LIKE '%command%' OR type = 'shell_command')
         {_and_scope('session_id', scoped_ids)}
@@ -598,7 +598,11 @@ def _command_patterns(conn: sqlite3.Connection, scoped_ids: list[str] | None) ->
     ))
     commands: Counter[str] = Counter()
     for row in step_rows:
-        command = _extract_command(row["raw_attrs_json"], row["summary"])
+        command = _extract_command(
+            row["raw_attrs_json"],
+            row["summary"],
+            allow_text_fallback=str(row["type"] or "") == "shell_command",
+        )
         if command:
             commands[_sanitize_command(command)] += 1
     for row in tool_rows:
@@ -608,7 +612,12 @@ def _command_patterns(conn: sqlite3.Connection, scoped_ids: list[str] | None) ->
     return Counter({command: count for command, count in commands.items() if command})
 
 
-def _extract_command(attrs_json: object, preview: object = "") -> str:
+def _extract_command(
+    attrs_json: object,
+    preview: object = "",
+    *,
+    allow_text_fallback: bool = True,
+) -> str:
     import json
 
     attrs: dict[str, Any] = {}
@@ -628,7 +637,7 @@ def _extract_command(attrs_json: object, preview: object = "") -> str:
     try:
         payload = json.loads(text)
     except json.JSONDecodeError:
-        return text.splitlines()[0].strip()
+        return text.splitlines()[0].strip() if allow_text_fallback else ""
     if isinstance(payload, dict):
         value = payload.get("cmd") or payload.get("command")
         if isinstance(value, str):

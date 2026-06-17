@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.5 (unreleased)
+
+### Fixed
+- Fixed SQL Tools tab command-pattern extraction so hook event summaries such as `gen_ai.client.hook.PreToolUse` are not counted as shell commands.
+
 ## 0.8.4 (2026-06-16)
 
 ### Changed
