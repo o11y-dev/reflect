@@ -218,6 +218,28 @@ def _seed_view_db(conn):
         [
             ("tool-1", "step-1", "sess-1", "Read", "{}", "ok", 100, now, now),
             ("tool-2", "step-2", "sess-2", "Edit", '{"cmd":"poetry run pytest"}', "error", 250, now, now),
+            (
+                "tool-rtk-1",
+                "step-2",
+                "sess-2",
+                "Bash",
+                '{"cmd":"rtk memory sync --project /tmp/reflect --format json"}',
+                "ok",
+                75,
+                now,
+                now,
+            ),
+            (
+                "tool-rtk-2",
+                "step-2",
+                "sess-2",
+                "Bash",
+                '{"cmd":"rtk memory sync --project /tmp/reflect --dry-run"}',
+                "ok",
+                80,
+                now,
+                now,
+            ),
         ],
     )
     conn.executemany(
@@ -522,14 +544,17 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         }
         assert unscoped_node_ids <= unscoped_edge_node_ids
 
-        assert scoped.tools.tools_by_count == {"Edit": 1}
+        assert scoped.tools.tools_by_count == {"Bash": 2, "Edit": 1}
         assert scoped.tools.skills_by_count == {"review-skill": 1}
         assert scoped.tools.subagent_types_by_count == {
             "legacy-helper": 1,
             "repo-strategy": 1,
             "research-helper": 1,
         }
-        assert scoped.tools.top_commands == [{"command": "poetry run pytest", "count": 1}]
+        assert scoped.tools.top_commands == [
+            {"command": "rtk memory sync", "count": 2},
+            {"command": "poetry run pytest", "count": 1},
+        ]
         assert "gen_ai.client.hook.PreToolUse" not in scoped.tools.tools_by_count
         assert all(
             item["command"] != "gen_ai.client.hook.PreToolUse"

@@ -649,12 +649,53 @@ def _sanitize_command(value: str) -> str:
     text = " ".join(value.strip().split())
     if not text:
         return ""
+    cli_pattern = _cli_command_pattern(text)
+    if cli_pattern:
+        return cli_pattern
     lowered = text.lower()
     if lowered.startswith("poetry run pytest") or " pytest" in lowered:
         return text[:120]
     if lowered.startswith("python"):
         return "python command"
     return text[:120]
+
+
+def _cli_command_pattern(value: str) -> str:
+    try:
+        tokens = shlex.split(value)
+    except ValueError:
+        tokens = value.split()
+    if not tokens:
+        return ""
+    cli = tokens[0].strip()
+    if cli not in {"rtk"}:
+        return ""
+    options_with_values = {
+        "--config",
+        "--cwd",
+        "--format",
+        "--output",
+        "--profile",
+        "--project",
+        "--workspace",
+        "-c",
+        "-o",
+    }
+    actions: list[str] = []
+    skip_next = False
+    for token in tokens[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if token.startswith("-"):
+            option_name = token.split("=", 1)[0]
+            if "=" not in token and option_name in options_with_values:
+                skip_next = True
+            continue
+        actions.append(token)
+        if len(actions) == 2:
+            break
+    return " ".join([cli, *actions])[:120] if actions else cli
 
 
 def _file_counts(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> dict[str, int]:
