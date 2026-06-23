@@ -156,6 +156,134 @@ class TestHelp:
         assert cost > 0
         assert session_cost == cost
 
+    def test_reprice_preserves_session_tokens_when_llm_rows_have_no_usage(self, tmp_path):
+        from reflect.store.migrate import migrate
+        from reflect.store.sqlite import connect_sqlite
+
+        db_path = tmp_path / "reflect.db"
+        conn = connect_sqlite(db_path)
+        try:
+            migrate(conn)
+            now = "2026-01-01T00:00:00+00:00"
+            conn.execute(
+                """
+                INSERT INTO agents(id, name, raw_json, created_at, updated_at)
+                VALUES ('agent-cursor', 'cursor', '{}', ?, ?)
+                """,
+                (now, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO sessions(
+                  id, agent_id, started_at, ended_at, status, input_tokens, output_tokens,
+                  created_at, updated_at
+                ) VALUES ('sess-cursor-estimate', 'agent-cursor', ?, ?, 'ok', 123, 456, ?, ?)
+                """,
+                (now, now, now, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO steps(
+                  id, session_id, seq, type, started_at, ended_at, status, summary,
+                  raw_attrs_json, created_at, updated_at
+                ) VALUES ('step-zero-llm', 'sess-cursor-estimate', 0, 'llm_call', ?, ?, 'ok', 'Stop',
+                  '{"gen_ai.request.model":"gpt-4o-mini"}', ?, ?)
+                """,
+                (now, now, now, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO llm_calls(
+                  id, step_id, session_id, request_model, operation_name,
+                  input_tokens, output_tokens, raw_attrs_json, created_at, updated_at
+                ) VALUES ('llm-zero-usage', 'step-zero-llm', 'sess-cursor-estimate', 'gpt-4o-mini', 'Stop',
+                  0, 0, '{"gen_ai.request.model":"gpt-4o-mini"}', ?, ?)
+                """,
+                (now, now),
+            )
+            conn.commit()
+
+            core._reprice_sql_store(conn)
+
+            tokens = conn.execute(
+                """
+                SELECT input_tokens, output_tokens, estimated_cost_usd
+                FROM sessions
+                WHERE id = 'sess-cursor-estimate'
+                """
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert tokens[0] == 123
+        assert tokens[1] == 456
+        assert tokens[2] > 0
+
+    def test_reprice_uses_cursor_parent_hook_model_for_native_subagent_tokens(self, tmp_path):
+        from reflect.store.migrate import migrate
+        from reflect.store.sqlite import connect_sqlite
+
+        db_path = tmp_path / "reflect.db"
+        conn = connect_sqlite(db_path)
+        try:
+            migrate(conn)
+            now = "2026-01-01T00:00:00+00:00"
+            conn.execute(
+                """
+                INSERT INTO agents(id, name, raw_json, created_at, updated_at)
+                VALUES ('agent-cursor', 'cursor', '{}', ?, ?)
+                """,
+                (now, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO sessions(id, agent_id, started_at, ended_at, status, created_at, updated_at)
+                VALUES ('parent-cursor-session', 'agent-cursor', ?, ?, 'ok', ?, ?)
+                """,
+                (now, now, now, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO steps(
+                  id, session_id, seq, type, started_at, ended_at, status, summary,
+                  raw_attrs_json, created_at, updated_at
+                ) VALUES ('step-parent-model', 'parent-cursor-session', 0, 'llm_call', ?, ?, 'ok', 'Stop',
+                  '{"gen_ai.request.model":"gpt-4o-mini"}', ?, ?)
+                """,
+                (now, now, now, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO sessions(
+                  id, agent_id, started_at, ended_at, status, input_tokens, output_tokens,
+                  source_kind, source_ref, created_at, updated_at
+                ) VALUES (
+                  'child-cursor-subagent', 'agent-cursor', ?, ?, 'ok', 1000, 500,
+                  'native_session',
+                  'native_session:cursor:/tmp/project/agent-transcripts/parent-cursor-session/subagents/child-cursor-subagent.jsonl',
+                  ?, ?
+                )
+                """,
+                (now, now, now, now),
+            )
+            conn.commit()
+
+            core._reprice_sql_store(conn)
+
+            child = conn.execute(
+                """
+                SELECT input_tokens, output_tokens, estimated_cost_usd
+                FROM sessions
+                WHERE id = 'child-cursor-subagent'
+                """
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert child[0] == 1000
+        assert child[1] == 500
+        assert child[2] > 0
+
     def test_db_ingest_spans_alias(self, runner, tmp_path):
         db_path = tmp_path / "reflect.db"
         spans_file = tmp_path / "spans.jsonl"
@@ -781,6 +909,46 @@ class TestSkillsSubcommand:
         assert "--mode" in cmd
         assert "ask" in cmd
 
+    def test_skills_auto_detection_skips_broken_cursor_agent(self, runner, otlp_file, tmp_path):
+        fake_output = json.dumps([_FAKE_SKILLS[0]])
+
+        def fake_which(binary):
+            return f"/usr/bin/{binary}" if binary in {"cursor-agent", "codex"} else None
+
+        def fake_run(cmd, *_args, **_kwargs):
+            if cmd[:3] == ["cursor-agent", "status", "--format"]:
+                return _R(139, "", "ERROR: SecItemCopyMatching failed -50")
+            return _R(0, fake_output)
+
+        with patch("subprocess.run", side_effect=fake_run) as mock_run, \
+             patch("reflect.core._detect_agents", return_value=[]), \
+             patch("reflect.core.shutil.which", side_effect=fake_which):
+            result = runner.invoke(main, [
+                "skills", "--yes",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+
+        assert result.exit_code == 0
+        extraction_cmd = mock_run.call_args[0][0]
+        assert extraction_cmd[:2] == ["codex", "exec"]
+
+    def test_skills_agent_failure_truncates_noisy_stderr(self, runner, otlp_file, tmp_path):
+        noisy_error = "ERROR: SecItemCopyMatching failed -50\n" + ("minified-js" * 500)
+        with patch("subprocess.run", return_value=_R(1, "", noisy_error)), \
+             patch("reflect.core._detect_agents", return_value=[]):
+            result = runner.invoke(main, [
+                "skills", "--yes", "--agent", "claude",
+                "--otlp-traces", str(otlp_file),
+                "--sessions-dir", str(tmp_path / "s"),
+                "--spans-dir", str(tmp_path / "sp"),
+            ])
+
+        assert result.exit_code != 0
+        assert "truncated" in result.output
+        assert len(result.output) < 2500
+
     def test_skills_copilot_uses_prompt_flag(self, runner, otlp_file, tmp_path):
         """copilot uses --prompt flag, not --print."""
         fake_output = json.dumps([_FAKE_SKILLS[0]])
@@ -1150,6 +1318,57 @@ class TestUpdateAdvisor:
         assert counts["events"] == 1
         assert counts["native_events"] == 0
         assert counts["hook_events"] == 1
+
+    def test_prepare_sql_report_db_applies_cursor_adapter_before_rollups(self, tmp_path, monkeypatch):
+        from reflect.store.sqlite import connect_sqlite
+
+        db_path = tmp_path / "reflect.db"
+        session_file = tmp_path / "cursor-native-sess-1.jsonl"
+        session_file.write_text(
+            "\n".join([
+                json.dumps({
+                    "role": "user",
+                    "message": {"content": [{"type": "text", "text": "summarize this failing test output"}]},
+                }),
+                json.dumps({
+                    "role": "assistant",
+                    "message": {"content": [{"type": "text", "text": "The failing assertion is in the adapter path."}]},
+                }),
+            ])
+            + "\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(core, "_discover_rich_session_files", lambda: [("cursor", session_file)])
+        monkeypatch.setattr("reflect.store.graph_normalize.rebuild_graph", lambda *_args, **_kwargs: {"sessions": 0})
+        monkeypatch.setattr(core, "_ensure_sql_costs", lambda *_args, **_kwargs: None)
+
+        result = core._prepare_sql_report_db(db_path, otlp_traces=None, include_native_sessions=True)
+
+        assert result["cursor_adapter"] == {"updated": 1, "skipped": 0, "missing": 0}
+        assert result["rollups"] == {"session_rollups": 1, "daily_rollups": 1, "tool_rollups": 0}
+        conn = connect_sqlite(db_path)
+        try:
+            rollup = conn.execute(
+                """
+                SELECT input_tokens, output_tokens
+                FROM session_rollups
+                WHERE session_id = 'cursor-native-sess-1'
+                """
+            ).fetchone()
+            assert rollup[0] > 0
+            assert rollup[1] > 0
+            raw_count = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM raw_events
+                WHERE attrs_json LIKE '%estimated_cursor_transcript%'
+                   OR attrs_json LIKE '%gen_ai.usage.input_tokens%'
+                """
+            ).fetchone()[0]
+            assert raw_count == 0
+        finally:
+            conn.close()
 
     def test_update_apply_uses_pipx_upgrade(self, runner):
         advisor = {

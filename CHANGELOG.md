@@ -3,6 +3,7 @@
 ## 0.8.5 (unreleased)
 
 ### Fixed
+- Added adapter-level transcript token estimates for native Cursor session ingest so SQL rollups no longer show zero tokens when exact Cursor usage is unavailable locally, without mutating raw span events.
 - Fixed SQL Tools tab command-pattern extraction so hook event summaries such as `gen_ai.client.hook.PreToolUse` are not counted as shell commands.
 
 ## 0.8.4 (2026-06-16)
