@@ -8,7 +8,7 @@ import subprocess
 import tomllib
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 from click.testing import CliRunner
@@ -1386,8 +1386,32 @@ class TestUpdateAdvisor:
              patch("reflect.core.subprocess.check_call") as mock_check_call:
             result = runner.invoke(main, ["update", "--apply"])
         assert result.exit_code == 0
-        mock_check_call.assert_called_once_with(["/usr/local/bin/pipx", "upgrade", "o11y-reflect"])
-        assert "Package upgrade finished." in result.output
+        assert mock_check_call.call_args_list == [
+            call(["/usr/local/bin/pipx", "upgrade", "o11y-reflect"]),
+            call(["/usr/local/bin/pipx", "upgrade", "opentelemetry-hooks"]),
+        ]
+        assert "Package upgrades finished." in result.output
+
+    def test_update_apply_upgrades_hooks_even_without_new_reflect_release(self, runner):
+        advisor = {
+            "release": {
+                "current_version": "1.1.0",
+                "latest_version": "1.1.0",
+                "checked_at": "2025-01-01T00:00:00Z",
+                "update_available": False,
+                "source": "remote",
+            },
+            "local_issues": [],
+        }
+        with patch("reflect.core._collect_update_advisor", return_value=advisor), \
+             patch("reflect.core.shutil.which", return_value="/usr/local/bin/pipx"), \
+             patch("reflect.core.subprocess.check_call") as mock_check_call:
+            result = runner.invoke(main, ["update", "--apply"])
+        assert result.exit_code == 0
+        assert mock_check_call.call_args_list == [
+            call(["/usr/local/bin/pipx", "upgrade", "o11y-reflect"]),
+            call(["/usr/local/bin/pipx", "upgrade", "opentelemetry-hooks"]),
+        ]
 
     def test_release_update_status_uses_cache_when_fresh(self, tmp_path):
         cache_path = tmp_path / "update-check.json"

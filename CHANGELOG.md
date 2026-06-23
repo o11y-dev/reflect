@@ -3,6 +3,7 @@
 ## 0.8.5 (unreleased)
 
 ### Fixed
+- Updated `reflect update --apply` to upgrade both `o11y-reflect` and `opentelemetry-hooks` via pipx.
 - Added adapter-level transcript token estimates for native Cursor session ingest so SQL rollups no longer show zero tokens when exact Cursor usage is unavailable locally, without mutating raw span events.
 - Fixed SQL Tools tab command-pattern extraction so hook event summaries such as `gen_ai.client.hook.PreToolUse` are not counted as shell commands.
 

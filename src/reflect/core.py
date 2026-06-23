@@ -2356,11 +2356,15 @@ def doctor_cost(db_path: Path, alias_path: Path | None) -> None:
         console.print(f"[yellow]Unresolved models:[/] {unresolved}")
 
 
+def _pipx_upgrade_package(pipx: str, package: str) -> None:
+    subprocess.check_call([pipx, "upgrade", package])
+
+
 @main.command()
 @click.option(
     "--apply",
     is_flag=True,
-    help="Attempt a package upgrade via pipx when a newer reflect release is available.",
+    help="Attempt package upgrades via pipx when a newer reflect release is available.",
 )
 def update(apply: bool) -> None:
     """Check reflect release drift and show concrete repair steps."""
@@ -2375,25 +2379,28 @@ def update(apply: bool) -> None:
 
     release = advisor["release"]
     if apply:
-        if release["update_available"]:
-            pipx = shutil.which("pipx")
-            if not pipx:
-                console.print("[red]pipx is not installed or not on PATH.[/]")
-                console.print("Install pipx, then run [bold]pipx upgrade o11y-reflect[/].")
-                raise SystemExit(1)
-            try:
-                subprocess.check_call([pipx, "upgrade", "o11y-reflect"])
-                console.print("[green]Package upgrade finished.[/] Re-run [bold]reflect doctor[/] to refresh the cached status.")
-            except subprocess.CalledProcessError as exc:
-                console.print(f"[red]pipx upgrade failed:[/] {exc}")
-                raise SystemExit(exc.returncode or 1) from exc
-        else:
-            console.print("[green]No newer package release is available right now.[/]")
+        pipx = shutil.which("pipx")
+        if not pipx:
+            console.print("[red]pipx is not installed or not on PATH.[/]")
+            console.print("Install pipx, then run [bold]pipx upgrade o11y-reflect[/] and [bold]pipx upgrade opentelemetry-hooks[/].")
+            raise SystemExit(1)
+        try:
+            for package in ("o11y-reflect", "opentelemetry-hooks"):
+                console.print(f"Upgrading [bold]{package}[/]...")
+                _pipx_upgrade_package(pipx, package)
+            console.print("[green]Package upgrades finished.[/] Re-run [bold]reflect doctor[/] to refresh the cached status.")
+        except subprocess.CalledProcessError as exc:
+            console.print(f"[red]pipx upgrade failed:[/] {exc}")
+            raise SystemExit(exc.returncode or 1) from exc
 
         if advisor["local_issues"]:
             console.print("Local drift remains. Run [bold]reflect setup[/] to refresh global hooks and skill copies.")
     else:
-        console.print("Use [bold]reflect update --apply[/] to upgrade the package when a newer release is available.")
+        if release["update_available"]:
+            console.print("Use [bold]reflect update --apply[/] to upgrade reflect and opentelemetry-hooks.")
+        else:
+            console.print("[green]No newer reflect release is available right now.[/]")
+            console.print("Use [bold]reflect update --apply[/] to force-check pipx upgrades for reflect and opentelemetry-hooks.")
         if advisor["local_issues"]:
             console.print("For local hook or skill drift, run [bold]reflect setup[/] to refresh global wiring.")
     console.print()
