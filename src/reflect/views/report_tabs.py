@@ -5,6 +5,7 @@ import re
 import shlex
 import sqlite3
 from collections import Counter
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
@@ -660,7 +661,58 @@ def _sanitize_command(value: str) -> str:
     return text[:120]
 
 
+@dataclass
+class CLICommandPattern:
+    """Describes how to canonicalise a CLI command into a stable pattern string.
+
+    options_with_values lists flags whose next token is a value (not an action),
+    e.g. ``--project /path``.  max_actions controls how many positional subcommand
+    tokens to keep (default 2, e.g. ``rtk memory sync``).
+    """
+
+    options_with_values: frozenset[str] = field(default_factory=frozenset)
+    max_actions: int = 2
+
+    def extract(self, cli: str, tokens: list[str]) -> str:
+        """Return a canonical ``cli [sub] [cmd]`` string, stripping flag noise."""
+        actions: list[str] = []
+        skip_next = False
+        for token in tokens:
+            if skip_next:
+                skip_next = False
+                continue
+            if token.startswith("-"):
+                option_name = token.split("=", 1)[0]
+                if "=" not in token and option_name in self.options_with_values:
+                    skip_next = True
+                continue
+            actions.append(token)
+            if len(actions) == self.max_actions:
+                break
+        return " ".join([cli, *actions])[:120] if actions else cli
+
+
+# Registry of CLI tools whose commands should be normalised.
+# Add an entry here to teach the pattern extractor about a new tool.
+_CLI_PATTERNS: dict[str, CLICommandPattern] = {
+    "rtk": CLICommandPattern(
+        options_with_values=frozenset({
+            "--config",
+            "--cwd",
+            "--format",
+            "--output",
+            "--profile",
+            "--project",
+            "--workspace",
+            "-c",
+            "-o",
+        }),
+    ),
+}
+
+
 def _cli_command_pattern(value: str) -> str:
+    """Return a canonical pattern string for known CLI tools, or empty string."""
     try:
         tokens = shlex.split(value)
     except ValueError:
@@ -668,34 +720,10 @@ def _cli_command_pattern(value: str) -> str:
     if not tokens:
         return ""
     cli = tokens[0].strip()
-    if cli not in {"rtk"}:
+    pattern = _CLI_PATTERNS.get(cli)
+    if pattern is None:
         return ""
-    options_with_values = {
-        "--config",
-        "--cwd",
-        "--format",
-        "--output",
-        "--profile",
-        "--project",
-        "--workspace",
-        "-c",
-        "-o",
-    }
-    actions: list[str] = []
-    skip_next = False
-    for token in tokens[1:]:
-        if skip_next:
-            skip_next = False
-            continue
-        if token.startswith("-"):
-            option_name = token.split("=", 1)[0]
-            if "=" not in token and option_name in options_with_values:
-                skip_next = True
-            continue
-        actions.append(token)
-        if len(actions) == 2:
-            break
-    return " ".join([cli, *actions])[:120] if actions else cli
+    return pattern.extract(cli, tokens[1:])
 
 
 def _file_counts(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> dict[str, int]:
