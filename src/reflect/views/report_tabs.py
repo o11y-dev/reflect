@@ -663,7 +663,7 @@ def _sanitize_command(value: str) -> str:
 
 @dataclass
 class CLICommandPattern:
-    """Describes how to canonicalise a CLI command into a stable pattern string.
+    """Describes how to canonicalize a CLI command into a stable pattern string.
 
     options_with_values lists flags whose next token is a value (not an action),
     e.g. ``--project /path``.  max_actions controls how many positional subcommand
@@ -692,7 +692,7 @@ class CLICommandPattern:
         return " ".join([cli, *actions])[:120] if actions else cli
 
 
-# Registry of CLI tools whose commands should be normalised.
+# Registry of CLI tools whose commands should be normalized.
 # Add an entry here to teach the pattern extractor about a new tool.
 _CLI_PATTERNS: dict[str, CLICommandPattern] = {
     "rtk": CLICommandPattern(
