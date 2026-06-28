@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.5 (unreleased)
+## 0.8.5 (2026-06-28)
 
 ### Fixed
 - Updated `reflect update --apply` to upgrade both `o11y-reflect` and `opentelemetry-hooks` via pipx.
