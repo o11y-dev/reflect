@@ -65,6 +65,23 @@ poetry run reflect doctor
 - **If you test the pipx-installed live dashboard, source edits are not enough.** Sync changed files into `~/.local/pipx/venvs/o11y-reflect/lib/python*/site-packages/reflect/` or reinstall before validating `reflect report`.
 - **Roadmap items do not live here by default.** If you discover durable roadmap or future-work items while working in `reflect`, mirror them into `../office/roadmap.md` or `../office/plan.md`. Keep this repo focused on implementation guidance and repo-local decisions.
 
+## Engineering design defaults
+
+- **Prefer OOP for new stateful or swappable behavior.** When a change introduces lifecycle, configuration, strategy selection, adapters, stores, or renderer-like behavior, default to small classes with explicit methods instead of growing procedural branches. Keep pure functions for stateless transformations.
+- **Write agnostic, interchangeable code.** Avoid hard-coding one agent, vendor, transport, storage backend, or renderer into shared logic. Put provider-specific behavior behind narrow adapters or strategy objects so Claude, Codex, Copilot, Cursor, Gemini, hooks, native OTLP, JSONL, SQLite, markdown, terminal, and dashboard paths can evolve independently.
+- **Keep contracts explicit.** Prefer typed dataclasses/models, protocols, and small interface surfaces over loosely shaped dict plumbing across module boundaries. If dicts are the existing contract, normalize them at the boundary and document required keys in tests.
+- **Lean development wins.** Make the smallest coherent change that preserves the architecture, add only abstractions that remove real duplication or isolate a likely variant, and avoid speculative frameworks. Do not refactor unrelated code just to make a local fix look cleaner.
+- **Composition over condition piles.** When branching grows around agent type, source type, or output target, introduce a mapper/adapter/strategy and register it close to the relevant domain instead of adding long `if/elif` ladders in orchestration code.
+
+## Release cycle
+
+- **Every releasable change keeps `CHANGELOG.md` current.** Add entries under the top `## 0.x.x (unreleased)` heading as work lands. Use `### Added`, `### Fixed`, `### Changed`, or `### Dependencies`.
+- **Version and changelog move together.** For a proper release, `pyproject.toml` should already contain the target version and `CHANGELOG.md` should contain `## <version> (unreleased)` before the release workflow stamps the date.
+- **Before saying a release is ready, check both remote and local state.** Report GitHub PR/check status separately from local validation and local uncommitted/untracked files. A mergeable PR with no reported checks is not the same as CI passing.
+- **Local release gate:** run `poetry run ruff check .`, `poetry run pytest -q --no-cov`, and `poetry run python scripts/release_workflow.py release-notes <version>` before declaring readiness for a proper release.
+- **Release after merge.** Treat PR merge to `main` as the handoff point for a proper release unless the user explicitly asks for a branch-based or emergency release.
+- **Update path matters.** `reflect update --apply` upgrades both `o11y-reflect` and `opentelemetry-hooks` via pipx; keep that behavior and docs aligned so users get the latest hook package when updating reflect.
+
 ## Visual style guidelines
 
 Use the current `docs/showcase.html` page as the product visual baseline for public pages and the browser dashboard.

@@ -131,6 +131,15 @@ def _seed_view_db(conn):
                 now,
                 now,
             ),
+            (
+                "step-hook-command-noise",
+                4,
+                "2026-05-02T11:03:00+00:00",
+                "gen_ai.client.hook.PreToolUse",
+                '{"gen_ai.client.hook.event":"PreToolUse","gen_ai.client.name":"codex","gen_ai.client.tool_name":"Read","gen_ai.client.command.preview":"not-a-shell-command"}',
+                now,
+                now,
+            ),
         ],
     )
     conn.executemany(
@@ -209,6 +218,28 @@ def _seed_view_db(conn):
         [
             ("tool-1", "step-1", "sess-1", "Read", "{}", "ok", 100, now, now),
             ("tool-2", "step-2", "sess-2", "Edit", '{"cmd":"poetry run pytest"}', "error", 250, now, now),
+            (
+                "tool-rtk-1",
+                "step-2",
+                "sess-2",
+                "Bash",
+                '{"cmd":"rtk memory sync --project /tmp/reflect --format json"}',
+                "ok",
+                75,
+                now,
+                now,
+            ),
+            (
+                "tool-rtk-2",
+                "step-2",
+                "sess-2",
+                "Bash",
+                '{"cmd":"rtk memory sync --project /tmp/reflect --dry-run"}',
+                "ok",
+                80,
+                now,
+                now,
+            ),
         ],
     )
     conn.executemany(
@@ -488,7 +519,7 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         tabs = build_report_tabs(conn)
         scoped = build_report_tabs(conn, session_ids={"sess-2"})
 
-        assert tabs.activity.events_by_type == {"llm_call": 2, "tool_call": 2}
+        assert tabs.activity.events_by_type == {"llm_call": 2, "tool_call": 3}
         assert tabs.activity.activity_by_day == {"2026-05-01": 3, "2026-05-02": 5}
         assert tabs.models.models_by_count == {"claude-4.6-opus": 1, "gpt-5.4": 1}
         assert tabs.costs.model_costs["gpt-5.4"] == 0.75
@@ -513,14 +544,22 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         }
         assert unscoped_node_ids <= unscoped_edge_node_ids
 
-        assert scoped.tools.tools_by_count == {"Edit": 1}
+        assert scoped.tools.tools_by_count == {"Bash": 2, "Edit": 1}
         assert scoped.tools.skills_by_count == {"review-skill": 1}
         assert scoped.tools.subagent_types_by_count == {
             "legacy-helper": 1,
             "repo-strategy": 1,
             "research-helper": 1,
         }
-        assert scoped.tools.top_commands == [{"command": "poetry run pytest", "count": 1}]
+        assert scoped.tools.top_commands == [
+            {"command": "rtk memory sync", "count": 2},
+            {"command": "poetry run pytest", "count": 1},
+        ]
+        assert "gen_ai.client.hook.PreToolUse" not in scoped.tools.tools_by_count
+        assert all(
+            item["command"] != "gen_ai.client.hook.PreToolUse"
+            for item in scoped.tools.top_commands
+        )
         assert scoped.mcp.mcp_servers_by_count == {"metrics.example.test": 1, "mcp-issue-tracker": 1}
         assert scoped.agents.agents["codex"]["top_skills"] == {"review-skill": 1}
         assert scoped.agents.agents["codex"]["subagents"] == 1

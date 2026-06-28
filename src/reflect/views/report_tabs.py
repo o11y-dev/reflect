@@ -5,6 +5,7 @@ import re
 import shlex
 import sqlite3
 from collections import Counter
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
@@ -578,7 +579,7 @@ def _and_scope(column: str, scoped_ids: list[str] | None) -> str:
 def _command_patterns(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Counter[str]:
     step_rows = _dict_rows(conn.execute(
         f"""
-        SELECT summary, raw_attrs_json
+        SELECT type, summary, raw_attrs_json
         FROM steps
         WHERE (raw_attrs_json LIKE '%command%' OR type = 'shell_command')
         {_and_scope('session_id', scoped_ids)}
@@ -598,7 +599,11 @@ def _command_patterns(conn: sqlite3.Connection, scoped_ids: list[str] | None) ->
     ))
     commands: Counter[str] = Counter()
     for row in step_rows:
-        command = _extract_command(row["raw_attrs_json"], row["summary"])
+        command = _extract_command(
+            row["raw_attrs_json"],
+            row["summary"],
+            allow_text_fallback=str(row["type"] or "") == "shell_command",
+        )
         if command:
             commands[_sanitize_command(command)] += 1
     for row in tool_rows:
@@ -608,7 +613,12 @@ def _command_patterns(conn: sqlite3.Connection, scoped_ids: list[str] | None) ->
     return Counter({command: count for command, count in commands.items() if command})
 
 
-def _extract_command(attrs_json: object, preview: object = "") -> str:
+def _extract_command(
+    attrs_json: object,
+    preview: object = "",
+    *,
+    allow_text_fallback: bool = True,
+) -> str:
     import json
 
     attrs: dict[str, Any] = {}
@@ -628,7 +638,7 @@ def _extract_command(attrs_json: object, preview: object = "") -> str:
     try:
         payload = json.loads(text)
     except json.JSONDecodeError:
-        return text.splitlines()[0].strip()
+        return text.splitlines()[0].strip() if allow_text_fallback else ""
     if isinstance(payload, dict):
         value = payload.get("cmd") or payload.get("command")
         if isinstance(value, str):
@@ -640,12 +650,80 @@ def _sanitize_command(value: str) -> str:
     text = " ".join(value.strip().split())
     if not text:
         return ""
+    cli_pattern = _cli_command_pattern(text)
+    if cli_pattern:
+        return cli_pattern
     lowered = text.lower()
     if lowered.startswith("poetry run pytest") or " pytest" in lowered:
         return text[:120]
     if lowered.startswith("python"):
         return "python command"
     return text[:120]
+
+
+@dataclass
+class CLICommandPattern:
+    """Describes how to canonicalize a CLI command into a stable pattern string.
+
+    options_with_values lists flags whose next token is a value (not an action),
+    e.g. ``--project /path``.  max_actions controls how many positional subcommand
+    tokens to keep (default 2, e.g. ``rtk memory sync``).
+    """
+
+    options_with_values: frozenset[str] = field(default_factory=frozenset)
+    max_actions: int = 2
+
+    def extract(self, cli: str, tokens: list[str]) -> str:
+        """Return a canonical ``cli [sub] [cmd]`` string, stripping flag noise."""
+        actions: list[str] = []
+        skip_next = False
+        for token in tokens:
+            if skip_next:
+                skip_next = False
+                continue
+            if token.startswith("-"):
+                option_name = token.split("=", 1)[0]
+                if "=" not in token and option_name in self.options_with_values:
+                    skip_next = True
+                continue
+            actions.append(token)
+            if len(actions) == self.max_actions:
+                break
+        return " ".join([cli, *actions])[:120] if actions else cli
+
+
+# Registry of CLI tools whose commands should be normalized.
+# Add an entry here to teach the pattern extractor about a new tool.
+_CLI_PATTERNS: dict[str, CLICommandPattern] = {
+    "rtk": CLICommandPattern(
+        options_with_values=frozenset({
+            "--config",
+            "--cwd",
+            "--format",
+            "--output",
+            "--profile",
+            "--project",
+            "--workspace",
+            "-c",
+            "-o",
+        }),
+    ),
+}
+
+
+def _cli_command_pattern(value: str) -> str:
+    """Return a canonical pattern string for known CLI tools, or empty string."""
+    try:
+        tokens = shlex.split(value)
+    except ValueError:
+        tokens = value.split()
+    if not tokens:
+        return ""
+    cli = tokens[0].strip()
+    pattern = _CLI_PATTERNS.get(cli)
+    if pattern is None:
+        return ""
+    return pattern.extract(cli, tokens[1:])
 
 
 def _file_counts(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> dict[str, int]:

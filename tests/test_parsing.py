@@ -332,11 +332,23 @@ class TestCursorNativeSessions:
 
         spans = list(_iter_cursor_session_spans(session))
         tool_spans = [span for span in spans if span["attributes"].get("gen_ai.client.hook.event") == "PreToolUse"]
+        user_span = next(
+            span for span in spans
+            if span["attributes"].get("gen_ai.client.hook.event") == "UserPromptSubmit"
+        )
+        assistant_span = next(
+            span for span in spans
+            if span["attributes"].get("gen_ai.client.hook.event") == "Stop"
+        )
 
         assert [span["attributes"]["gen_ai.client.tool_name"] for span in tool_spans] == ["Shell", "CallMcpTool"]
         assert "git status --short" in tool_spans[0]["attributes"]["gen_ai.client.tool.input"]
         assert tool_spans[1]["attributes"]["gen_ai.client.mcp_server"] == "jira"
         assert tool_spans[1]["attributes"]["gen_ai.client.mcp_tool"] == "search"
+        assert "gen_ai.usage.input_tokens" not in user_span["attributes"]
+        assert "gen_ai.usage.output_tokens" not in assistant_span["attributes"]
+        assert "reflect.token.source" not in user_span["attributes"]
+        assert "reflect.token.estimate_algorithm" not in assistant_span["attributes"]
         assert all(span["start_time_ns"] >= 946_684_800_000_000_000 for span in spans)
 
 

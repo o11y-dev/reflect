@@ -11,7 +11,13 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-from reflect.utils import _json_dumps, _json_loads, logger
+from reflect.utils import (
+    _flatten_text_content,
+    _json_dumps,
+    _json_loads,
+    _load_json_lines,
+    logger,
+)
 
 REFLECT_HOME = Path(os.environ.get("REFLECT_HOME", Path.home() / ".reflect"))
 HOOK_HOME = Path(os.environ.get("IDE_OTEL_HOOK_HOME", Path.home() / ".local" / "share" / "opentelemetry-hooks"))
@@ -511,20 +517,6 @@ def _iter_gemini_log_spans(records: Iterable[dict], since_ns: int = 0) -> Iterab
             )
 
 
-def _load_json_lines(file_path: Path) -> Iterable[dict]:
-    with file_path.open("r", encoding="utf-8") as handle:
-        for raw_line in handle:
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                payload = _json_loads(line)
-            except (ValueError, _json_stdlib.JSONDecodeError):
-                continue
-            if isinstance(payload, dict):
-                yield payload
-
-
 def _parse_timestamp_to_ns(value) -> int:
     if value is None:
         return 0
@@ -567,18 +559,6 @@ def _make_flat_span(
         "end_time_ns": end_ns if end_ns >= start_ns else start_ns,
         "attributes": attributes,
     }
-
-
-def _flatten_text_content(content) -> str:
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        return ""
-    parts: list[str] = []
-    for item in content:
-        if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
-            parts.append(item["text"])
-    return "\n".join(part for part in parts if part)
 
 
 def _codex_content_text(content) -> str:

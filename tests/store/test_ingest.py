@@ -1,5 +1,6 @@
 import json
 
+from reflect.store.cursor_adapter import apply_cursor_transcript_usage_estimates
 from reflect.store.ingest import (
     ingest_local_spans_file,
     ingest_native_session_file,
@@ -364,6 +365,57 @@ def test_ingest_native_cursor_session_file_extracts_tool_and_mcp_calls(tmp_path)
         assert second == {"inserted": 0, "skipped": 6}
 
         assert normalize_pending_raw_events(conn) == {"processed": 6, "failed": 0, "skipped": 0}
+        assert apply_cursor_transcript_usage_estimates(conn, [session_file]) == {
+            "updated": 1,
+            "skipped": 0,
+            "missing": 0,
+        }
+        assert rebuild_rollups(conn) == {"session_rollups": 1, "daily_rollups": 1, "tool_rollups": 1}
+        rollup = conn.execute(
+            """
+            SELECT agent, input_tokens, output_tokens, total_cost
+            FROM session_rollups
+            WHERE session_id = 'cursor-native-sess-1'
+            """
+        ).fetchone()
+        assert rollup[0] == "cursor"
+        assert rollup[1] > 0
+        assert rollup[2] > 0
+        assert rollup[3] == 0
+        raw_attrs = conn.execute(
+            """
+            SELECT attrs_json
+            FROM raw_events
+            WHERE source_id = ?
+            ORDER BY event_type
+            """,
+            (f"native_session:cursor:{session_file}",),
+        ).fetchall()
+        assert raw_attrs
+        assert all("estimated_cursor_transcript" not in row[0] for row in raw_attrs)
+        assert all("gen_ai.usage.input_tokens" not in row[0] for row in raw_attrs)
+        llm_rows = conn.execute(
+            """
+            SELECT input_tokens, output_tokens, raw_attrs_json
+            FROM llm_calls
+            WHERE session_id = 'cursor-native-sess-1'
+            ORDER BY operation_name
+            """
+        ).fetchall()
+        assert not any(row[0] > 0 for row in llm_rows)
+        assert not any(row[1] > 0 for row in llm_rows)
+        assert not any("estimated_cursor_transcript" in row[2] for row in llm_rows)
+        token_step = conn.execute(
+            """
+            SELECT type, summary, raw_attrs_json
+            FROM steps
+            WHERE session_id = 'cursor-native-sess-1'
+              AND type = 'token_estimate'
+            """
+        ).fetchone()
+        assert token_step[0] == "token_estimate"
+        assert token_step[1] == "cursor.transcript.token_estimate"
+        assert "estimated_cursor_transcript" in token_step[2]
         tool = conn.execute(
             """
             SELECT tool_name, input_preview_redacted

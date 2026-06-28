@@ -4,6 +4,7 @@ import json as _json_stdlib
 import logging
 import re
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
 
 logger = logging.getLogger("reflect")
@@ -17,6 +18,32 @@ try:
 except ImportError:
     _json_loads = _json_stdlib.loads
     _json_dumps = _json_stdlib.dumps
+
+
+def _load_json_lines(file_path: Path) -> Iterable[dict]:
+    with file_path.open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                payload = _json_loads(line)
+            except (ValueError, _json_stdlib.JSONDecodeError):
+                continue
+            if isinstance(payload, dict):
+                yield payload
+
+
+def _flatten_text_content(content: object) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for item in content:
+        if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
+            parts.append(item["text"])
+    return "\n".join(part for part in parts if part)
 
 
 def _safe_ratio(numerator: int, denominator: int) -> float:

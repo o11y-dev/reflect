@@ -1230,6 +1230,34 @@ _SKILL_AGENT_SPECS: list[tuple[str, list[str]]] = [
     ("qwen", ["--print"]),
 ]
 _SKILL_AGENT_NAMES = ", ".join(name for name, _ in _SKILL_AGENT_SPECS)
+_AGENT_ERROR_LIMIT = 2000
+
+
+def _format_agent_failure(stderr: str, stdout: str = "") -> str:
+    text = (stderr or stdout or "").strip()
+    if not text:
+        return "(no output)"
+    if len(text) <= _AGENT_ERROR_LIMIT:
+        return text
+    return (
+        text[:_AGENT_ERROR_LIMIT]
+        + f"\n... truncated {len(text) - _AGENT_ERROR_LIMIT} characters ..."
+    )
+
+
+def _skill_agent_ready(agent: str) -> bool:
+    if agent != "cursor-agent":
+        return True
+    try:
+        result = subprocess.run(
+            [agent, "status", "--format", "json"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
 
 
 def _interactive_pick(
@@ -1369,7 +1397,11 @@ def _resolve_skills_agent(agent: str | None) -> tuple[str, list[str]]:
         return agent, ["--print"]
 
     # Probe all supported CLIs
-    available = [(name, flags) for name, flags in _SKILL_AGENT_SPECS if shutil.which(name)]
+    available = [
+        (name, flags)
+        for name, flags in _SKILL_AGENT_SPECS
+        if shutil.which(name) and _skill_agent_ready(name)
+    ]
 
     if not available:
         click.echo(
@@ -1640,7 +1672,11 @@ def skills(
     ):
         result = subprocess.run([agent_bin, *agent_flags, prompt], capture_output=True, text=True)
     if result.returncode != 0:
-        click.echo(f"Agent exited with code {result.returncode}:\n{result.stderr}", err=True)
+        click.echo(
+            f"Agent exited with code {result.returncode}:\n"
+            f"{_format_agent_failure(result.stderr, result.stdout)}",
+            err=True,
+        )
         raise SystemExit(1)
 
     try:
@@ -2320,11 +2356,15 @@ def doctor_cost(db_path: Path, alias_path: Path | None) -> None:
         console.print(f"[yellow]Unresolved models:[/] {unresolved}")
 
 
+def _pipx_upgrade_package(pipx: str, package: str) -> None:
+    subprocess.check_call([pipx, "upgrade", package])
+
+
 @main.command()
 @click.option(
     "--apply",
     is_flag=True,
-    help="Attempt a package upgrade via pipx when a newer reflect release is available.",
+    help="Attempt package upgrades via pipx when a newer reflect release is available.",
 )
 def update(apply: bool) -> None:
     """Check reflect release drift and show concrete repair steps."""
@@ -2339,25 +2379,28 @@ def update(apply: bool) -> None:
 
     release = advisor["release"]
     if apply:
-        if release["update_available"]:
-            pipx = shutil.which("pipx")
-            if not pipx:
-                console.print("[red]pipx is not installed or not on PATH.[/]")
-                console.print("Install pipx, then run [bold]pipx upgrade o11y-reflect[/].")
-                raise SystemExit(1)
-            try:
-                subprocess.check_call([pipx, "upgrade", "o11y-reflect"])
-                console.print("[green]Package upgrade finished.[/] Re-run [bold]reflect doctor[/] to refresh the cached status.")
-            except subprocess.CalledProcessError as exc:
-                console.print(f"[red]pipx upgrade failed:[/] {exc}")
-                raise SystemExit(exc.returncode or 1) from exc
-        else:
-            console.print("[green]No newer package release is available right now.[/]")
+        pipx = shutil.which("pipx")
+        if not pipx:
+            console.print("[red]pipx is not installed or not on PATH.[/]")
+            console.print("Install pipx, then run [bold]pipx upgrade o11y-reflect[/] and [bold]pipx upgrade opentelemetry-hooks[/].")
+            raise SystemExit(1)
+        try:
+            for package in ("o11y-reflect", "opentelemetry-hooks"):
+                console.print(f"Upgrading [bold]{package}[/]...")
+                _pipx_upgrade_package(pipx, package)
+            console.print("[green]Package upgrades finished.[/] Re-run [bold]reflect doctor[/] to refresh the cached status.")
+        except subprocess.CalledProcessError as exc:
+            console.print(f"[red]pipx upgrade failed:[/] {exc}")
+            raise SystemExit(exc.returncode or 1) from exc
 
         if advisor["local_issues"]:
             console.print("Local drift remains. Run [bold]reflect setup[/] to refresh global hooks and skill copies.")
     else:
-        console.print("Use [bold]reflect update --apply[/] to upgrade the package when a newer release is available.")
+        if release["update_available"]:
+            console.print("Use [bold]reflect update --apply[/] to upgrade reflect and opentelemetry-hooks.")
+        else:
+            console.print("[green]No newer reflect release is available right now.[/]")
+            console.print("Use [bold]reflect update --apply[/] to force-check pipx upgrades for reflect and opentelemetry-hooks.")
         if advisor["local_issues"]:
             console.print("For local hook or skill drift, run [bold]reflect setup[/] to refresh global wiring.")
     console.print()
@@ -2481,12 +2524,18 @@ def _ensure_sql_costs(conn, *, alias_path: Path | None = None):
     return alias_result
 
 
+def _cursor_native_parent_session_id(source_ref: str) -> str:
+    match = re.search(r"/agent-transcripts/([^/]+)/", source_ref or "")
+    return match.group(1) if match else ""
+
+
 def _prepare_sql_report_db(
     db_path: Path,
     *,
     otlp_traces: Path | None,
     include_native_sessions: bool = False,
 ) -> dict[str, object]:
+    from reflect.store.cursor_adapter import apply_cursor_transcript_usage_estimates
     from reflect.store.graph_normalize import rebuild_graph
     from reflect.store.ingest import (
         ingest_native_session_file,
@@ -2505,6 +2554,7 @@ def _prepare_sql_report_db(
         ingest_sources: dict[str, dict[str, object]] = {}
         source_refs: dict[str, list[str]] = {}
         source_types: dict[str, str] = {}
+        cursor_native_files: list[Path] = []
         if otlp_traces is not None and otlp_traces.exists():
             traces_result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
             ingest_sources["otlp_traces"] = traces_result
@@ -2528,6 +2578,8 @@ def _prepare_sql_report_db(
             for agent, session_file in _discover_rich_session_files():
                 source_ref = f"native_session:{agent}:{session_file}"
                 native_refs.append(source_ref)
+                if agent == "cursor":
+                    cursor_native_files.append(session_file)
                 result = ingest_native_session_file(
                     conn,
                     file_path=session_file,
@@ -2552,6 +2604,11 @@ def _prepare_sql_report_db(
                     conn, source_ids_by_type={source_type: refs} if source_type else {}
                 )
         normalize_result = normalize_pending_raw_events(conn)
+        cursor_adapter_result = (
+            apply_cursor_transcript_usage_estimates(conn, cursor_native_files)
+            if cursor_native_files
+            else {"updated": 0, "skipped": 0, "missing": 0}
+        )
         _ensure_sql_costs(conn)
         graph_result = rebuild_graph(conn)
         rollup_result = rebuild_rollups(conn)
@@ -2562,6 +2619,7 @@ def _prepare_sql_report_db(
         "ingest": ingest_result,
         "ingest_sources": ingest_sources,
         "normalize": normalize_result,
+        "cursor_adapter": cursor_adapter_result,
         "graph": graph_result,
         "rollups": rollup_result,
     }
@@ -2657,8 +2715,11 @@ def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
         seen_usage: set[tuple] = set()
         session_costs: dict[str, float] = {}
         session_tokens: dict[str, dict[str, int]] = {}
+        session_model_hints: dict[str, str] = {}
         for row in rows:
             model = row["model"] or session_models.get(row["session_id"], "")
+            if model:
+                session_model_hints.setdefault(row["session_id"], model)
             usage_key = (
                 row["session_id"],
                 model,
@@ -2717,26 +2778,85 @@ def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
                 ),
             )
         timestamp = datetime.now(tz=UTC).isoformat()
+        session_level_rows = conn.execute(
+            """
+            SELECT
+              id,
+              source_ref,
+              input_tokens,
+              output_tokens,
+              cache_creation_tokens,
+              cache_read_tokens,
+              reasoning_tokens
+            FROM sessions
+            WHERE COALESCE(input_tokens, 0)
+                + COALESCE(output_tokens, 0)
+                + COALESCE(cache_creation_tokens, 0)
+                + COALESCE(cache_read_tokens, 0)
+                + COALESCE(reasoning_tokens, 0) > 0
+            """
+        ).fetchall()
+        for session_row in session_level_rows:
+            session_id = session_row["id"]
+            exact_tokens = session_tokens.get(session_id, {})
+            exact_token_total = sum(int(value or 0) for value in exact_tokens.values())
+            if exact_token_total > 0:
+                continue
+            model = session_model_hints.get(session_id) or session_models.get(session_id, "")
+            if not model:
+                parent_session_id = _cursor_native_parent_session_id(str(session_row["source_ref"] or ""))
+                if parent_session_id and parent_session_id != session_id:
+                    model = session_model_hints.get(parent_session_id) or session_models.get(parent_session_id, "")
+            if not model:
+                continue
+            breakdown = calculate_cost(
+                {
+                    "input": session_row["input_tokens"],
+                    "output": session_row["output_tokens"],
+                    "cache_creation": session_row["cache_creation_tokens"],
+                    "cache_read": session_row["cache_read_tokens"],
+                },
+                model,
+                pricing_table,
+                aliases=aliases,
+            )
+            if not breakdown.resolution.matched_model_key:
+                continue
+            session_costs[session_id] = max(session_costs.get(session_id, 0.0), breakdown.total_cost_usd)
         for session_id, total_cost in session_costs.items():
             tokens = session_tokens.get(session_id, {})
+            token_total = (
+                tokens.get("input", 0)
+                + tokens.get("output", 0)
+                + tokens.get("cache_creation", 0)
+                + tokens.get("cache_read", 0)
+                + tokens.get("reasoning", 0)
+            )
+            if token_total <= 0 and total_cost <= 0:
+                continue
             conn.execute(
                 """
                 UPDATE sessions
                 SET
-                  input_tokens = ?,
-                  output_tokens = ?,
-                  cache_creation_tokens = ?,
-                  cache_read_tokens = ?,
-                  reasoning_tokens = ?,
+                  input_tokens = CASE WHEN ? > 0 THEN ? ELSE input_tokens END,
+                  output_tokens = CASE WHEN ? > 0 THEN ? ELSE output_tokens END,
+                  cache_creation_tokens = CASE WHEN ? > 0 THEN ? ELSE cache_creation_tokens END,
+                  cache_read_tokens = CASE WHEN ? > 0 THEN ? ELSE cache_read_tokens END,
+                  reasoning_tokens = CASE WHEN ? > 0 THEN ? ELSE reasoning_tokens END,
                   estimated_cost_usd = ?,
                   updated_at = ?
                 WHERE id = ?
                 """,
                 (
+                    token_total,
                     tokens.get("input", 0),
+                    token_total,
                     tokens.get("output", 0),
+                    token_total,
                     tokens.get("cache_creation", 0),
+                    token_total,
                     tokens.get("cache_read", 0),
+                    token_total,
                     tokens.get("reasoning", 0),
                     total_cost,
                     timestamp,
