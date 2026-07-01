@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.6 (unreleased)
+
+### Added
+- Added a SQLite-first Reflect Memory provider subsystem with evidence validation, folder-scoped sync/list/search/inspect/forget/validate commands, provider discovery, graph-derived memory candidates, and local MCP-style memory tool handlers.
+- Added additive SQLite memory provider metadata, memory FTS search, and graph-derived memory candidate storage.
+
+### Changed
+- Moved local instruction-memory sync from `reflect db sync-instructions` to `reflect memory sync [PATH]`.
+- Removed deprecated `reflect report`, `--terminal`, `--no-terminal`, and `--sql-only` command surfaces; `reflect` is now the browser report entry point.
+- Updated docs and bundled dashboard copy to show the Behavioral Memory Graph and local memory workflow.
+
 ## 0.8.5 (2026-06-28)
 
 ### Fixed

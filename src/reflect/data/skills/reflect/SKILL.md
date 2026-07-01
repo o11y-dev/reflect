@@ -1,6 +1,6 @@
 ---
 name: reflect
-description: Use when the user wants to analyze AI coding agent telemetry, generate a reflect report, investigate tool/model/MCP/subagent patterns, understand Claude, Copilot, or Gemini usage/limit behavior, or decide between local-first and central gateway-based telemetry flows. Start with local OTLP/span analysis, then optionally enrich the explanation with provider-side admin APIs, exports, or quota views when available.
+description: Use when the user wants to analyze AI coding agent telemetry, generate a Reflect dashboard, investigate tool/model/MCP/subagent patterns, understand Claude, Copilot, or Gemini usage/limit behavior, or decide between local-first and central gateway-based telemetry flows. Start with local OTLP/span analysis, then optionally enrich the explanation with provider-side admin APIs, exports, or quota views when available.
 ---
 
 # reflect skill
@@ -42,9 +42,9 @@ Always follow this order:
    - Prefer OTLP JSON traces such as `~/.reflect/state/otlp/otel-traces.json`.
    - Use the existing `reflect` CLI or `python3 src/reflect/core.py`.
     - Remember the current CLI behavior:
-      - default: open the local browser report from the SQLite store
-      - `reflect report` is a deprecated alias for `reflect`
-      - `--terminal`, `--no-terminal`, and `--dashboard-artifact` are deprecated compatibility outputs
+      - `reflect`: open the local browser report from the SQLite store
+      - `reflect memory sync .`: sync local folder instruction memories into SQLite
+      - `reflect memory list .`: inspect local folder memories
    - If local traces are unavailable, fall back to legacy local state such as Cursor hook directories when present.
 
 2. **Explain what local telemetry can prove**

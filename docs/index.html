@@ -238,7 +238,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         <article class="card">
           <span class="badge">Improve</span>
           <h3>Better future runs</h3>
-          <p>Use the Behavioral Memory Graph to turn real workflow patterns into reusable skills, context guardrails, and helper-tool playbooks.</p>
+          <p>Use the Behavioral Memory Graph to turn real workflow patterns into reusable skills, validated memories, context guardrails, and helper-tool playbooks.</p>
         </article>
       </div>
     </section>
@@ -247,12 +247,15 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
       <h2 class="section-title">60-Second Local Path</h2>
       <p>
         Start with reflect. It wires supported agents, reads local telemetry, and opens the same browser dashboard used by this showcase.
-        Use <code>reflect</code> for the Behavioral Memory Graph and <code>reflect skills</code> to extract reusable skills from your session history.
+        Use <code>reflect</code> for the Behavioral Memory Graph, <code>reflect memory sync .</code> for local folder memories, and <code>reflect skills</code> to extract reusable skills from your session history.
         Calculations are based on actual agent spans and dependency edges, so let your agent run for a bit to generate telemetry before opening the report or running skills extraction.
       </p>
       <pre><code>pipx install o11y-reflect
 reflect setup
 reflect
+reflect memory sync .
+reflect memory list .
+reflect memory candidates .
 reflect skills
 
 # no telemetry yet?

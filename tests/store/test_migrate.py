@@ -7,7 +7,7 @@ def test_migrate_applies_initial_schema(tmp_path):
     conn = connect_sqlite(db_path)
     try:
         applied = migrate(conn)
-        assert applied == [1, 2, 3, 4, 5]
+        assert applied == [1, 2, 3, 4, 5, 6]
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "raw_events" in tables
         assert "schema_migrations" in tables
@@ -29,6 +29,8 @@ def test_migrate_applies_initial_schema(tmp_path):
         assert "tool_rollups" in tables
         assert "graph_nodes" in tables
         assert "graph_edges" in tables
+        assert "memory_fts" in tables
+        assert "memory_candidates" in tables
     finally:
         conn.close()
 
@@ -36,7 +38,7 @@ def test_migrate_applies_initial_schema(tmp_path):
 def test_migrate_is_idempotent(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
-        assert migrate(conn) == [1, 2, 3, 4, 5]
+        assert migrate(conn) == [1, 2, 3, 4, 5, 6]
         assert migrate(conn) == []
     finally:
         conn.close()
@@ -147,4 +149,4 @@ def test_database_doctor_reports_pending_migrations(tmp_path):
 
     assert status["ok"] is False
     assert status["applied_migrations"] == []
-    assert status["pending_migrations"] == [1, 2, 3, 4, 5]
+    assert status["pending_migrations"] == [1, 2, 3, 4, 5, 6]

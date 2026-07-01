@@ -449,7 +449,7 @@ def render_report(
         "## Next Step",
         "",
         "Re-run this report weekly and compare event ratios (tool calls, failures, and prompt turns) "
-        "to track improvement. Use `reflect report` to open a local browser dashboard, and pass the same "
+        "to track improvement. Use `reflect` to open a local browser dashboard, and pass the same "
         "input flags again (for example `--otlp-traces`, `--sessions-dir`, and `--spans-dir`) to inspect "
         "the same dataset.",
         "",

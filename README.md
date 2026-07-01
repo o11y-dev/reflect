@@ -62,12 +62,14 @@ For scripted setup, use `reflect setup --text-capture-mode metadata|masked|full`
 
 Then use your AI tools normally and run `reflect`. The default command opens the local browser report backed by the SQLite store under `~/.reflect/state/`.
 
-Legacy output modes remain available for now but are deprecated:
+Local folder memory is also SQLite-backed. Sync a repo's instruction files and inspect them through the memory commands:
 
-- `reflect report` — deprecated alias for `reflect`
-- `reflect --terminal` — legacy Rich terminal view
-- `reflect --no-terminal --output report.md` — legacy markdown report
-- `reflect --dashboard-artifact out.json` — legacy static dashboard JSON artifact
+```bash
+reflect memory sync .
+reflect memory list .
+reflect memory search "changelog" .
+reflect memory candidates .
+```
 
 ## Demo
 
@@ -113,7 +115,8 @@ When you run `reflect`, it:
 1. **Reads local telemetry** from `~/.reflect/state/otlp/`, local hook spans, or supported session stores
 2. **Normalizes** them into a single cross-agent data model — so a Claude tool call and a Copilot tool call look the same
 3. **Aggregates** per-session and cross-session metrics: token totals, tool failure rates, latency percentiles, subagent delegation patterns
-4. **Serves** the browser report locally from SQLite, with deprecated terminal, markdown, and JSON artifact outputs still available for compatibility
+4. **Serves** the browser report locally from SQLite
+5. **Builds** an evidence-backed Behavioral Memory Graph from sessions, folders, tools, skills, specs, outcomes, and local instruction memories
 
 Nothing leaves your machine. There's no cloud backend, no account, no API key.
 
@@ -126,6 +129,8 @@ Nothing leaves your machine. There's no cloud backend, no account, no API key.
 - **Model breakdown** — which models you're actually using and how much
 - **MCP server tracking** — observed usage counts and completion gaps from recorded MCP events
 - **Subagent patterns** — delegation frequency and types
+- **Behavioral Memory Graph** — evidence-backed links between sessions, repositories, folders, tools, skills, specs, outcomes, and local memories
+- **Memory providers** — local SQLite memory by default, with provider discovery and routing for optional backends
 - **Activity heatmaps** — by hour and day of week
 - **Actionable recommendations** — based on your actual usage patterns
 
@@ -133,10 +138,11 @@ Nothing leaves your machine. There's no cloud backend, no account, no API key.
 
 ```bash
 reflect                        # open local browser report (default)
-reflect report                 # deprecated alias for reflect
-reflect --terminal             # deprecated terminal dashboard
-reflect --no-terminal --output report.md  # deprecated markdown report
-reflect --dashboard-artifact out.json  # deprecated JSON artifact
+reflect memory sync .          # sync local instruction memories for this folder
+reflect memory list .          # list memories for this folder
+reflect memory search "query" . # search local SQLite memory
+reflect memory candidates .    # derive evidence-backed memory candidates from the graph
+reflect memory providers       # inspect configured memory providers
 reflect skills                 # extract reusable skills from your sessions
 reflect --demo                 # instant demo with Claude/Codex/Copilot/Cursor/Gemini data
 ```
@@ -296,8 +302,7 @@ Options:
   --spans-dir PATH             Local span JSONL directory
   --otlp-traces PATH           OTLP JSON traces file
   --output PATH                Markdown report output path
-  --terminal / --no-terminal   Deprecated terminal dashboard or markdown report
-  --dashboard-artifact PATH    Deprecated dashboard JSON artifact
+  --dashboard-artifact PATH    Dashboard JSON artifact
   --db-path PATH               SQLite store used by browser report endpoints
   --demo                       Run with bundled sample data
   --help                       Show help
@@ -306,7 +311,7 @@ Commands:
   setup    Install hooks, wire agents, configure telemetry, start gateway
   doctor   Check installation health and agent status
   update   Check release drift and optional package upgrade
-  report   Open the AI usage dashboard in a browser
+  memory   Sync, search, validate, and route evidence-backed memories
   skills   Extract reusable skills from your session history
   gateway  Manage the local OTLP gateway (start/stop/status)
 ```
