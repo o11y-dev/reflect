@@ -130,7 +130,7 @@ Nothing leaves your machine. There's no cloud backend, no account, no API key.
 - **MCP server tracking** — observed usage counts and completion gaps from recorded MCP events
 - **Subagent patterns** — delegation frequency and types
 - **Behavioral Memory Graph** — evidence-backed links between sessions, repositories, folders, tools, skills, specs, outcomes, and local memories
-- **Memory providers** — local SQLite memory by default, with provider discovery and routing for optional backends
+- **Memory providers** — local SQLite memory by default, with provider discovery and optional routing for LiteLLM Proxy memory, Memory Palace, Agent Memory, Mem0, Graphiti, and TencentDB-Agent-Memory
 - **Activity heatmaps** — by hour and day of week
 - **Actionable recommendations** — based on your actual usage patterns
 
@@ -145,6 +145,40 @@ reflect memory candidates .    # derive evidence-backed memory candidates from t
 reflect memory providers       # inspect configured memory providers
 reflect skills                 # extract reusable skills from your sessions
 reflect --demo                 # instant demo with Claude/Codex/Copilot/Cursor/Gemini data
+```
+
+## Memory providers
+
+Reflect keeps local SQLite as the source of truth and can mirror writes into optional memory backends. Remote provider failures do not block the local memory row; the local record is marked with provider status so you can inspect what was mirrored versus stored locally only. Reflect operational memories stay local by default; generic agent-session memory routes to `agentmemory`, `litellm`, or `memorypalace` when the matching provider is configured.
+
+```bash
+reflect memory providers
+reflect memory search "release gate" . --provider litellm
+```
+
+Configured providers:
+
+- `local_sqlite` — default local memory store under `~/.reflect/state/reflect.db`
+- `litellm` — LiteLLM Proxy `/v1/memory` key/value memory endpoint
+- `memorypalace` — Memory Palace-compatible HTTP memory endpoint
+- `agentmemory` — generic Agent Memory HTTP endpoint via `AGENTMEMORY_URL`
+- `mem0`, `graphiti`, `tencentdb_agent_memory` — discovery-only adapters in this release
+
+LiteLLM memory is separate from LiteLLM pricing. To enable it, run a LiteLLM Proxy with a connected database and set:
+
+```bash
+export LITELLM_MEMORY_URL="https://litellm.internal"
+export LITELLM_API_KEY="sk-..."
+export LITELLM_MEMORY_KEY_PREFIX="reflect:" # optional
+```
+
+Optional LiteLLM memory scope overrides are `LITELLM_MEMORY_USER_ID` and `LITELLM_MEMORY_TEAM_ID`. If your key lives in another environment variable, set `REFLECT_LITELLM_MEMORY_API_KEY_ENV`.
+
+To enable Memory Palace routing:
+
+```bash
+export MEMORYPALACE_URL="https://memorypalace.internal"
+export MEMORYPALACE_API_KEY="sk-..." # optional
 ```
 
 ## Cost and pricing

@@ -5,6 +5,7 @@
 ### Added
 - Added a SQLite-first Reflect Memory provider subsystem with evidence validation, folder-scoped sync/list/search/inspect/forget/validate commands, provider discovery, graph-derived memory candidates, and local MCP-style memory tool handlers.
 - Added additive SQLite memory provider metadata, memory FTS search, and graph-derived memory candidate storage.
+- Added optional LiteLLM Proxy `/v1/memory` and Memory Palace memory providers, with local SQLite mirroring and provider health discovery.
 
 ### Changed
 - Moved local instruction-memory sync from `reflect db sync-instructions` to `reflect memory sync [PATH]`.

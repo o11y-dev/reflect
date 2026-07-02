@@ -45,6 +45,7 @@ Always follow this order:
       - `reflect`: open the local browser report from the SQLite store
       - `reflect memory sync .`: sync local folder instruction memories into SQLite
       - `reflect memory list .`: inspect local folder memories
+      - `reflect memory providers`: report local SQLite plus optional LiteLLM, Memory Palace, Agent Memory, Mem0, Graphiti, and TencentDB-Agent-Memory adapters
    - If local traces are unavailable, fall back to legacy local state such as Cursor hook directories when present.
 
 2. **Explain what local telemetry can prove**

@@ -232,6 +232,12 @@ class MemoryService:
     def _route_provider(self, semantic_domain: str, item: MemoryItem) -> str:
         if semantic_domain == "generic_agent_session" and os.environ.get("AGENTMEMORY_URL"):
             return "agentmemory"
+        if semantic_domain == "generic_agent_session" and (
+            os.environ.get("LITELLM_MEMORY_URL") or os.environ.get("REFLECT_LITELLM_MEMORY_URL")
+        ):
+            return "litellm"
+        if semantic_domain == "generic_agent_session" and os.environ.get("MEMORYPALACE_URL"):
+            return "memorypalace"
         return "local_sqlite"
 
     def _generate_candidates(self, *, path: Path | None, session_id: str, limit: int) -> None:
