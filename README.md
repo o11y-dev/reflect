@@ -16,7 +16,7 @@
 
 Reflect turns agent telemetry into patterns about how developer-agent behavior and workflow actually work: prompt shape, tool loops, model mix, context breakage, token burn, and the mission shift happening across teams.
 
-Local-only. No account. Runs on your machine.
+No hosted backend. No account. Runs on your machine.
 
 ```
 $ reflect --demo
@@ -74,12 +74,20 @@ reflect memory candidates .
 If you already have a lot of local telemetry and want to see `reflect` load real sessions, a run will print the ingest summary before opening the browser report. For example:
 
 ```text
-╭──────────────────────────── REFLECT ────────────────────────────╮
-│ Inserted      5                                                  │
-│ Skipped       266,370                                            │
-│ Normalized    5                                                  │
-│ Sessions      583                                                │
-╰──────────────────────────────────────────────────────────────────╯
+╭───────────────────────────────────────────────────────────────────── REFLECT ──────────────────────────────────────────────────────────────────────╮
+│ Inserted                                                                              5                                                            │
+│ Skipped                                                                         266,370                                                            │
+│ Normalized                                                                            5                                                            │
+│ Sessions                                                                            583                                                            │
+│                                                                                                                                                    │
+│ Otlp Traces         0 inserted / 167,868 skipped / 3,024 native / 226,081 hook event(s)                                                            │
+│   claude                                   53,549 event(s) / 1,652 native / 51,897 hook                                                            │
+│   codex                                          6,741 event(s) / 0 native / 6,741 hook                                                            │
+│ Otlp Logs                 0 inserted / 18,678 skipped / 18,678 native / 0 hook event(s)                                                            │
+│   codex                                        17,788 event(s) / 17,788 native / 0 hook                                                            │
+│ Native Sessions                                             5 inserted / 79,824 skipped                                                            │
+│   codex                                                                 22,927 event(s)                                                            │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
 That is the same default `reflect` path used for bundled demo data and for live local session stores. The exact counts depend on what is present under `~/.reflect/state/`, `~/.codex/sessions/`, `~/.claude/projects/`, `~/.cursor/projects/`, and the other local agent stores on your machine.
