@@ -12,6 +12,9 @@
 - Removed deprecated `reflect report`, `--terminal`, `--no-terminal`, and `--sql-only` command surfaces; `reflect` is now the browser report entry point.
 - Updated docs and bundled dashboard copy to show the Behavioral Memory Graph and local memory workflow.
 
+### Fixed
+- Fixed `reflect setup --agent codex` and related setup aliases so Codex skill distribution targets `~/.codex/skills/`.
+
 ## 0.8.5 (2026-06-28)
 
 ### Fixed

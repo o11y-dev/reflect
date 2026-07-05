@@ -1756,6 +1756,24 @@ class TestSetup:
         )
         assert distribute_skills.call_args.kwargs["selected_agent_names"] == {"claude-code"}
 
+    def test_setup_accepts_codex_alias_for_codex_cli(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        home_dir = tmp_path / "home"
+        codex_home = home_dir / ".codex"
+        codex_home.mkdir(parents=True)
+
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call"), \
+             patch("reflect.core._distribute_skills") as distribute_skills, \
+             patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
+            result = runner.invoke(main, ["setup", "--agent", "codex"])
+
+        assert result.exit_code == 0
+        assert distribute_skills.call_args.kwargs["selected_agent_names"] == {"openai-codex-cli"}
+
     def test_setup_local_agent_is_explicit_opt_in(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
         hook_home = tmp_path / ".otel-hook-home"
@@ -1941,6 +1959,25 @@ class TestSetup:
         assert (tmp_path / ".claude" / "skills" / "reflect" / "SKILL.md").exists()
         assert (tmp_path / ".claude" / "skills" / "reflect-skills" / "SKILL.md").exists()
         assert not (tmp_path / ".claude" / "skills" / "skills").exists()
+
+    def test_distribute_skills_writes_codex_global_path(self, tmp_path):
+        from rich.console import Console
+
+        console = Console(file=io.StringIO())
+        codex_skill_dir = tmp_path / ".codex" / "skills"
+        agent = {
+            "name": "OpenAI Codex CLI",
+            "detected": True,
+            "global_path": str(codex_skill_dir),
+            "local_skill_path": ".codex/skills/",
+        }
+
+        with patch("reflect.core._detect_agents", return_value=[agent]), \
+             patch("reflect.core._fetch_opentelemetry_skill", return_value=None):
+            core._distribute_skills(console, selected_agent_names={"openai-codex-cli"})
+
+        assert (codex_skill_dir / "reflect" / "SKILL.md").exists()
+        assert (codex_skill_dir / "reflect-skills" / "SKILL.md").exists()
 
 
     def test_setup_seeds_config_from_example_on_fresh_install(self, runner, tmp_path):

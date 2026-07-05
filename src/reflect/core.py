@@ -228,6 +228,7 @@ def _default_vscode_copilot_dir() -> Path:
 _AGENT_SPECS = [
     {
         "name": "Claude Code",
+        "setup_aliases": ["claude"],
         "env": "CLAUDE_HOME",
         "default": lambda: Path.home() / ".claude",
         "path_kind": "home",
@@ -238,6 +239,7 @@ _AGENT_SPECS = [
     },
     {
         "name": "Cursor",
+        "setup_aliases": ["cursor-agent"],
         "env": "CURSOR_HOME",
         "default": lambda: Path.home() / ".cursor",
         "path_kind": "home",
@@ -248,6 +250,7 @@ _AGENT_SPECS = [
     },
     {
         "name": "Gemini CLI",
+        "setup_aliases": ["gemini"],
         "env": "GEMINI_HOME",
         "env_aliases": ["GEMINI_DIR"],
         "default": lambda: Path.home() / ".gemini",
@@ -259,6 +262,7 @@ _AGENT_SPECS = [
     },
     {
         "name": "GitHub Copilot",
+        "setup_aliases": ["copilot"],
         "env": "COPILOT_HOME",
         "default": lambda: Path.home() / ".copilot",
         "path_kind": "home",
@@ -269,6 +273,7 @@ _AGENT_SPECS = [
     },
     {
         "name": "OpenAI Codex CLI",
+        "setup_aliases": ["codex", "codex-cli", "openai-codex"],
         "env": "CODEX_HOME",
         "default": lambda: Path.home() / ".codex",
         "path_kind": "home",
@@ -1677,6 +1682,38 @@ def _agent_key(name: str) -> str:
     return name.lower().replace(" ", "-")
 
 
+def _agent_selection_keys(agent: dict) -> set[str]:
+    keys = {_agent_key(str(agent["name"]))}
+    keys.update(_agent_key(str(alias)) for alias in agent.get("setup_aliases", []))
+    return keys
+
+
+def _setup_agent_alias_map(agents: list[dict]) -> dict[str, str]:
+    alias_map: dict[str, str] = {}
+    for agent in agents:
+        canonical = _agent_key(str(agent["name"]))
+        for key in _agent_selection_keys(agent):
+            alias_map[key] = canonical
+    return alias_map
+
+
+def _resolve_setup_agent_name_keys(
+    agent_names: tuple[str, ...],
+    detected_agents: list[dict],
+) -> tuple[set[str], set[str]]:
+    alias_map = _setup_agent_alias_map(detected_agents)
+    selected: set[str] = set()
+    unknown: set[str] = set()
+    for name in agent_names:
+        key = _agent_key(name)
+        canonical = alias_map.get(key)
+        if canonical is None:
+            unknown.add(key)
+        else:
+            selected.add(canonical)
+    return selected, unknown
+
+
 def _filter_agents_by_keys(agents: list[dict], keys: set[str] | None) -> list[dict]:
     if keys is None:
         return agents
@@ -1805,10 +1842,8 @@ def _resolve_setup_agent_selection(
     all_agents: bool,
 ) -> set[str] | None:
     detected = [agent for agent in _detect_agents() if agent.get("detected")]
-    detected_keys = {_agent_key(str(agent["name"])) for agent in detected}
     if agent_names:
-        selected = {_agent_key(name) for name in agent_names}
-        unknown = selected - detected_keys
+        selected, unknown = _resolve_setup_agent_name_keys(agent_names, detected)
         if unknown:
             raise click.ClickException(
                 "Agent(s) not detected: " + ", ".join(sorted(unknown))
@@ -1909,7 +1944,15 @@ def setup(
             capture_text = True
             mask_captured_text = False
     selected_agent_keys = _resolve_setup_agent_selection(console, agent_names=agent_names, all_agents=all_agents)
-    local_agent_keys = {_agent_key(name) for name in local_agent_names}
+    detected_agents = [agent for agent in _detect_agents() if agent.get("detected")]
+    local_agent_keys, unknown_local_agent_keys = _resolve_setup_agent_name_keys(
+        local_agent_names,
+        detected_agents,
+    )
+    if unknown_local_agent_keys:
+        raise click.ClickException(
+            "Agent(s) not detected: " + ", ".join(sorted(unknown_local_agent_keys))
+        )
     unknown_local = local_agent_keys - selected_agent_keys if selected_agent_keys is not None else set()
     if unknown_local:
         raise click.ClickException(
