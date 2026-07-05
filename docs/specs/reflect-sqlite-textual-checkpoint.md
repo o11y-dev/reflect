@@ -20,7 +20,7 @@ Completed foundations now exist for:
 - Cursor native transcript ingestion now extracts assistant `tool_use` blocks, including shell-style tool calls and MCP server/tool metadata
 - SQL-backed Overview and Sessions view models for the future Textual/report runtime
 - `reflect` materializes the configured SQLite store by default and serves the browser report from SQL-backed APIs
-- legacy `reflect` and  are deprecated compatibility paths while SQLite is the default runtime path
+- legacy `reflect report` and terminal/report flags are deprecated compatibility paths while SQLite is the default runtime path
 - SQL-backed browser payload now populates shared dashboard widget data for activity, events, agents, models, tools, costs, MCP counts, and basic graph/timeline views
 - SQL-backed session detail loads from SQLite and fills quality, pricing, skills/subagents, MCP server, observations, examples, badges, and token-economy fields from SQLite-derived data
 - SQL-backed tab view models now cover Activity, Agents, Models, Tools, MCP, Costs, Graphs, Specs, Memory, Privacy, and Exports, with the browser compatibility payload consuming those shared view models
@@ -68,7 +68,7 @@ Completed foundations now exist for:
   - SQL-backed view models exist for Overview and paginated Sessions
   - dedicated SQL-backed view models exist for Activity, Agents, Models, Tools, MCP, Costs, Graphs, Specs, Memory, Privacy, and Exports
   - browser report server exposes those view models via `/api/sql/overview`, `/api/sql/sessions`, and `/api/data.sqlite`
-  - `reflect` materializes the SQLite store from selected/default OTLP traces before serving, then proves SQL-backed serving without legacy dashboard JSON; `reflect` and  are deprecated compatibility paths
+  - `reflect` materializes the SQLite store from selected/default OTLP traces before serving, then proves SQL-backed serving without legacy dashboard JSON; `reflect report` and terminal/report flags are deprecated compatibility paths
   - SQL-backed report mode supplies shared dashboard widget fields from SQLite for existing tabs, including session detail, costs, quality, MCP, skills/subagents, observations, examples, badges, token economy, specs, memory, privacy, and export readiness
   - session detail carries trace/span identifiers and resolved parent row IDs so corrected hook parent relationships can render in the browser timeline
   - canonical `steps.parent_step_id` is populated during normalization from `raw_events.span_id` / `parent_span_id`
@@ -82,7 +82,7 @@ Completed foundations now exist for:
   - Cost reporting handles Copilot-style token rows without model names by inferring same-session model hints during SQL repricing
   - current runtime opens the browser report from `reflect`; terminal and markdown outputs are explicit deprecated compatibility modes
 
-- ✅ **Phase 7 — Replace `reflect` default workflow with browser report on `reflect`**: **Done**
+- ✅ **Phase 7 — Replace old `reflect report` workflow with browser report on `reflect`**: **Done**
 
 - 🚧 **Phase 8 — Static export from SQLite**: **Not started**
 

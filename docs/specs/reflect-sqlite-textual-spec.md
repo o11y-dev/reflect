@@ -1227,7 +1227,7 @@ Normalization must be idempotent. It must be safe to rerun.
 ### Phase 7. Replace report command
 
 - `reflect` starts the browser-served report.
-- `reflect` remains only as a deprecated compatibility alias.
+- `reflect report` remains only as a deprecated compatibility alias.
 - Old live HTML server is removed.
 
 ### Phase 8. Static export
@@ -1272,7 +1272,7 @@ PR 7. Add Textual shell and Overview screen from SQLite.
 PR 8. Add Sessions and Session Detail screens.
 PR 9. Add Agents, Models, Tools, MCP, Costs screens.
 PR 10. Add Specs, Memory, Privacy screens.
-PR 11. Change `reflect` and `reflect` command behavior.
+PR 11. Change `reflect report` and `reflect` command behavior.
 PR 12. Add static export from SQLite and remove live JSON dashboard path.
 ```
 
@@ -1295,7 +1295,7 @@ Use SQL queries and rollups for reporting, not Python loops over all rows.
 ### Runtime
 
 - `reflect` opens the browser-served report by default.
-- `reflect` is deprecated compatibility.
+- `reflect report` is deprecated compatibility.
 - No live Textual screen reads dashboard JSON files.
 - No live report path loads report JSON into memory.
 - All report data comes from SQLite queries.

@@ -84,6 +84,31 @@ def test_stale_memory_detection_for_deleted_source(tmp_path):
         conn.close()
 
 
+def test_sync_resets_stale_validation_state_for_updated_source(tmp_path):
+    conn, service = _service(tmp_path)
+    source_file = tmp_path / "repo" / "AGENTS.md"
+    source_file.parent.mkdir()
+    source_file.write_text("Original memory provider rules\n", encoding="utf-8")
+    try:
+        service.sync_path(source_file.parent, home_root=tmp_path / "home")
+        memory_id = service.list_memories(path=source_file.parent)[0]["id"]
+        source_file.write_text("Updated memory provider rules\n", encoding="utf-8")
+
+        validation = service.validate(memory_id)
+        assert validation["status"] == "stale"
+        assert validation["stale_reason"] == "source_hash_changed"
+
+        result = service.sync_path(source_file.parent, home_root=tmp_path / "home")
+        refreshed = service.inspect(memory_id)
+
+        assert result["updated"] == 1
+        assert refreshed["validation_status"] == "unvalidated"
+        assert refreshed["stale_reason"] is None
+        assert refreshed["validation_error"] is None
+    finally:
+        conn.close()
+
+
 def test_provider_discovery_reports_external_stubs(tmp_path):
     conn, service = _service(tmp_path)
     try:
@@ -204,6 +229,49 @@ def test_litellm_routing_mirrors_remote_memory_locally(tmp_path):
         conn.close()
 
 
+def test_remote_provider_recovery_clears_local_fallback_error(tmp_path):
+    conn, service = _service(tmp_path)
+    item = MemoryItem(
+        id="abc",
+        content="Recover provider memory.",
+        type="workflow_note",
+        scope="session",
+        source_metadata=MemorySourceMetadata.manual(),
+    )
+
+    def failing_urlopen(_request, timeout):
+        raise OSError("provider offline")
+
+    def successful_urlopen(request, timeout):
+        if request.get_method() == "GET":
+            return _FakeHTTPResponse('{"memories": [], "total": 0}')
+        return _FakeHTTPResponse(
+            '{"memory_id": "remote-healthy", "key": "reflect:session:workflow_note:abc", "value": "Recover provider memory."}'
+        )
+
+    try:
+        with (
+            patch.dict("os.environ", {"LITELLM_MEMORY_URL": "http://litellm.local", "LITELLM_API_KEY": "sk-test"}),
+            patch("reflect.memory.registry.urllib_request.urlopen", failing_urlopen),
+        ):
+            fallback = service.remember(item, provider="litellm")
+
+        assert fallback["provider_status"] == "local_fallback"
+        assert "provider offline" in fallback["validation_error"]
+
+        with (
+            patch.dict("os.environ", {"LITELLM_MEMORY_URL": "http://litellm.local", "LITELLM_API_KEY": "sk-test"}),
+            patch("reflect.memory.registry.urllib_request.urlopen", successful_urlopen),
+        ):
+            recovered = service.remember(item, provider="litellm")
+
+        assert recovered["provider_status"] == "mirrored"
+        assert recovered["provider_memory_id"] == "remote-healthy"
+        assert recovered["validation_error"] is None
+    finally:
+        conn.close()
+
+
 def test_generic_agent_session_routes_to_litellm_when_configured(tmp_path):
     conn, service = _service(tmp_path)
 
@@ -233,6 +301,56 @@ def test_generic_agent_session_routes_to_litellm_when_configured(tmp_path):
         assert row["provider"] == "litellm"
         assert row["provider_status"] == "mirrored"
         assert row["provider_memory_id"] == "remote-2"
+    finally:
+        conn.close()
+
+
+def test_graph_candidate_id_is_stable_when_support_changes(tmp_path):
+    conn, service = _service(tmp_path)
+
+    def add_graph_edge(session_id: str) -> None:
+        now = "2026-01-01T00:00:00+00:00"
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO graph_nodes(
+              id, kind, label, session_id, first_seen_at, last_seen_at, attrs_json, created_at, updated_at
+            ) VALUES (?, 'Session', ?, ?, ?, ?, '{}', ?, ?)
+            """,
+            (f"session:{session_id}", session_id, session_id, now, now, now, now),
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO graph_nodes(
+              id, kind, label, session_id, first_seen_at, last_seen_at, attrs_json, created_at, updated_at
+            ) VALUES ('tool:Read', 'Tool', 'Read', NULL, ?, ?, '{}', ?, ?)
+            """,
+            (now, now, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO graph_edges(
+              id, source_node_id, target_node_id, kind, session_id, weight,
+              first_seen_at, last_seen_at, attrs_json, created_at, updated_at
+            ) VALUES (?, ?, 'tool:Read', 'used_tool', ?, 1, ?, ?, '{}', ?, ?)
+            """,
+            (f"edge:{session_id}", f"session:{session_id}", session_id, now, now, now, now),
+        )
+        conn.commit()
+
+    try:
+        add_graph_edge("sess-a")
+        add_graph_edge("sess-b")
+        candidates = service.candidates(path=tmp_path)
+        read_candidate = next(item for item in candidates if "Read" in item["content"])
+        first_id = read_candidate["id"]
+
+        add_graph_edge("sess-c")
+        candidates = service.candidates(path=tmp_path)
+        read_candidates = [item for item in candidates if "Read" in item["content"]]
+
+        assert len(read_candidates) == 1
+        assert read_candidates[0]["id"] == first_id
+        assert read_candidates[0]["evidence"]["session_support"] == 3
     finally:
         conn.close()
 

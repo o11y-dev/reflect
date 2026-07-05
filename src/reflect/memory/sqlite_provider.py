@@ -141,6 +141,13 @@ class LocalSQLiteMemoryProvider:
               provider = excluded.provider,
               provider_memory_id = excluded.provider_memory_id,
               provider_status = excluded.provider_status,
+              validation_status = excluded.validation_status,
+              validated_at = CASE
+                WHEN excluded.validation_status = 'validated' THEN COALESCE(memories.validated_at, excluded.updated_at)
+                ELSE NULL
+              END,
+              validation_error = NULL,
+              stale_reason = NULL,
               source_metadata_json = excluded.source_metadata_json,
               updated_at = excluded.updated_at
             """,

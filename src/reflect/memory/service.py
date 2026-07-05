@@ -46,6 +46,7 @@ class MemoryService:
                 SET provider = ?,
                     provider_memory_id = COALESCE(NULLIF(?, ''), provider_memory_id),
                     provider_status = 'mirrored',
+                    validation_error = NULL,
                     updated_at = ?
                 WHERE id = ?
                 """,
@@ -272,7 +273,15 @@ class MemoryService:
                 f"Recurring Reflect graph pattern: {edge_kind} -> {node_kind} {label} "
                 f"across {support} session(s)."
             )
-            candidate_id = f"candidate_{hashlib.sha1(content.encode('utf-8')).hexdigest()}"
+            identity = json.dumps(
+                {
+                    "edge_kind": edge_kind,
+                    "target_kind": node_kind,
+                    "target_label": label,
+                },
+                sort_keys=True,
+            )
+            candidate_id = f"candidate_{hashlib.sha1(identity.encode('utf-8')).hexdigest()}"
             source_metadata = {
                 "source_kind": "graph_candidate",
                 "source_ref": candidate_id,
