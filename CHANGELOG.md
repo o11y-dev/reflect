@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.6 (unreleased)
+## 0.8.6 (2026-07-07)
 
 ### Added
 - Added a SQLite-first Reflect Memory provider subsystem with evidence validation, folder-scoped sync/list/search/inspect/forget/validate commands, provider discovery, graph-derived memory candidates, and local MCP-style memory tool handlers.
