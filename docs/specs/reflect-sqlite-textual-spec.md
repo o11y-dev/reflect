@@ -29,7 +29,7 @@ reflect
 Starts the default Textual TUI.
 
 ```bash
-reflect report
+reflect
 ```
 
 Starts the browser-served Textual app and replaces the current live local HTML dashboard server.
@@ -927,7 +927,7 @@ reflect
 Starts terminal Textual UI.
 
 ```bash
-reflect report
+reflect
 ```
 
 Starts browser-served Textual UI.
@@ -1272,7 +1272,7 @@ PR 7. Add Textual shell and Overview screen from SQLite.
 PR 8. Add Sessions and Session Detail screens.
 PR 9. Add Agents, Models, Tools, MCP, Costs screens.
 PR 10. Add Specs, Memory, Privacy screens.
-PR 11. Change `reflect` and `reflect report` command behavior.
+PR 11. Change `reflect report` and `reflect` command behavior.
 PR 12. Add static export from SQLite and remove live JSON dashboard path.
 ```
 

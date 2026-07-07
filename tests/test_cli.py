@@ -62,8 +62,8 @@ class TestHelp:
         assert result.exit_code == 0
         assert "update" in result.output.lower() or "Usage" in result.output
 
-    def test_report_help(self, runner):
-        result = runner.invoke(main, ["report", "--help"])
+    def test_memory_help(self, runner):
+        result = runner.invoke(main, ["memory", "--help"])
         assert result.exit_code == 0
         assert "Usage" in result.output
 
@@ -94,7 +94,7 @@ class TestHelp:
         result = runner.invoke(main, ["db", "doctor", "--db-path", str(db_path)])
 
         assert result.exit_code != 0
-        assert "Pending migrations: 1, 2, 3, 4, 5" in result.output
+        assert "Pending migrations: 1, 2, 3, 4, 5, 6" in result.output
         assert "SQLite store health: needs attention" in result.output
 
     def test_ingest_requires_one_source(self, runner, tmp_path):
@@ -332,7 +332,7 @@ class TestHelp:
         assert result.exit_code == 0
         assert "processed=0" in result.output
 
-    def test_db_sync_instructions(self, runner, tmp_path):
+    def test_memory_sync_lists_and_searches_instructions(self, runner, tmp_path):
         db_path = tmp_path / "reflect.db"
         workspace = tmp_path / "repo"
         home = tmp_path / "home"
@@ -349,22 +349,38 @@ class TestHelp:
         with patch.dict(os.environ, {"HOME": str(home)}, clear=False):
             result = runner.invoke(
                 main,
-                ["db", "sync-instructions", "--db-path", str(db_path), "--workspace-root", str(workspace)],
+                ["memory", "sync", str(workspace), "--db-path", str(db_path)],
             )
 
         assert result.exit_code == 0
-        assert "Synced instruction memories" in result.output
+        assert "Synced memories" in result.output
         assert "discovered=4" in result.output
+
+        list_result = runner.invoke(
+            main,
+            ["memory", "list", str(workspace), "--db-path", str(db_path), "--json"],
+        )
+        assert list_result.exit_code == 0
+        assert "AGENTS.md" in list_result.output
+
+        search_result = runner.invoke(
+            main,
+            ["memory", "search", "workflow", str(workspace), "--db-path", str(db_path), "--json"],
+        )
+        assert search_result.exit_code == 0
+        assert "workflow.instructions.md" in search_result.output
 
         conn = sqlite3.connect(db_path)
         try:
-            rows = conn.execute("SELECT scope, type, source FROM memories ORDER BY type, scope").fetchall()
+            rows = conn.execute(
+                "SELECT scope, type, source, provider FROM memories ORDER BY type, scope"
+            ).fetchall()
         finally:
             conn.close()
-        assert ("project", "agent_instruction", "filesystem_instruction_scan") in rows
-        assert ("path", "copilot_instruction", "filesystem_instruction_scan") in rows
-        assert ("user", "claude_memory", "filesystem_instruction_scan") in rows
-        assert ("user", "cursor_plan", "filesystem_instruction_scan") in rows
+        assert ("project", "agent_instruction", "filesystem_instruction_scan", "local_sqlite") in rows
+        assert ("path", "copilot_instruction", "filesystem_instruction_scan", "local_sqlite") in rows
+        assert ("user", "claude_memory", "filesystem_instruction_scan", "local_sqlite") in rows
+        assert ("user", "cursor_plan", "filesystem_instruction_scan", "local_sqlite") in rows
 
     def test_db_rebuild_graph(self, runner, tmp_path):
         db_path = tmp_path / "reflect.db"
@@ -439,47 +455,29 @@ class TestTerminalMode:
             mock_render.assert_not_called()
             assert mock_server.call_args.kwargs["db_path"] == db_path
 
-    def test_explicit_terminal_mode_is_deprecated(self, runner, otlp_file, tmp_path):
-        with patch("reflect.core._render_terminal") as mock_render:
-            result = runner.invoke(main, [
-                "--otlp-traces", str(otlp_file),
-                "--sessions-dir", str(tmp_path / "s"),
-                "--spans-dir", str(tmp_path / "sp"),
-                "--terminal",
-            ])
-            assert result.exit_code == 0
-            assert "terminal and markdown modes are deprecated" in result.output
-            mock_render.assert_called_once()
-
-    def test_no_terminal_saves_report(self, runner, otlp_file, tmp_path):
-        output_path = tmp_path / "report.md"
-        with patch("reflect.core.render_report") as mock_report:
-            mock_report.return_value = "# report"
-            result = runner.invoke(main, [
-                "--otlp-traces", str(otlp_file),
-                "--sessions-dir", str(tmp_path / "s"),
-                "--spans-dir", str(tmp_path / "sp"),
-                "--no-terminal",
-                "--output", str(output_path),
-            ])
-            assert result.exit_code == 0
-            assert "terminal and markdown modes are deprecated" in result.output
-            mock_report.assert_called_once()
+    @pytest.mark.parametrize("flag", ["--terminal", "--no-terminal", "--sql-only"])
+    def test_removed_legacy_flags_fail(self, runner, flag):
+        result = runner.invoke(main, [flag])
+        assert result.exit_code != 0
+        assert "No such option" in result.output
 
 
 class TestReportSubcommand:
-    def test_report_starts_server(self, runner, otlp_file, tmp_path):
+    def test_report_subcommand_is_removed(self, runner):
+        result = runner.invoke(main, ["report", "--help"])
+        assert result.exit_code != 0
+        assert "No such command" in result.output
+
+    def test_default_command_starts_server(self, runner, otlp_file, tmp_path):
         with patch("reflect.core._start_publish_server") as mock_server:
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
-                "report",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
                 "--db-path", str(db_path),
             ])
         assert result.exit_code == 0
-        assert "`reflect report` is deprecated" in result.output
         assert "REFLECT" in result.output
         assert mock_server.call_args.kwargs["db_path"] == db_path
         assert mock_server.call_args.kwargs["sql_only"] is False
@@ -489,31 +487,7 @@ class TestReportSubcommand:
         finally:
             conn.close()
 
-    def test_report_sql_only_passes_migration_guard(self, runner, otlp_file, tmp_path):
-        with patch("reflect.core._start_publish_server") as mock_server, \
-             patch("reflect.core._resolve_and_analyze", side_effect=AssertionError("legacy analysis")):
-            db_path = tmp_path / "reflect.db"
-            result = runner.invoke(main, [
-                "report",
-                "--otlp-traces", str(otlp_file),
-                "--sessions-dir", str(tmp_path / "s"),
-                "--spans-dir", str(tmp_path / "sp"),
-                "--db-path", str(db_path),
-                "--sql-only",
-            ])
-        assert result.exit_code == 0
-        assert "--sql-only is deprecated" in result.output
-        assert "REFLECT" in result.output
-        assert mock_server.call_args.kwargs["db_path"] == db_path
-        assert mock_server.call_args.kwargs["sql_only"] is False
-        conn = sqlite3.connect(db_path)
-        try:
-            assert conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0] > 0
-            assert conn.execute("SELECT COALESCE(SUM(total_cost), 0) FROM session_rollups").fetchone()[0] > 0
-        finally:
-            conn.close()
-
-    def test_report_sql_only_ingests_inferred_otlp_logs(self, runner, tmp_path):
+    def test_default_report_ingests_inferred_otlp_logs(self, runner, tmp_path):
         otlp_file = tmp_path / "otel-traces.json"
         otlp_file.write_text(json.dumps({"resourceSpans": []}) + "\n", encoding="utf-8")
         (tmp_path / "otel-logs.json").write_text(json.dumps({
@@ -541,10 +515,8 @@ class TestReportSubcommand:
         with patch("reflect.core._start_publish_server"):
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
-                "report",
                 "--otlp-traces", str(otlp_file),
                 "--db-path", str(db_path),
-                "--sql-only",
             ])
 
         assert result.exit_code == 0
@@ -600,7 +572,6 @@ class TestReportSubcommand:
              patch("reflect.core._discover_rich_session_files", return_value=[("cursor", cursor_file)]):
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
-                "report",
                 "--db-path", str(db_path),
             ])
 
@@ -634,7 +605,6 @@ class TestReportSubcommand:
         with patch("reflect.core._start_publish_server"):
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
-                "report",
                 "--otlp-traces", str(otlp_file),
                 "--db-path", str(db_path),
             ])
@@ -666,7 +636,6 @@ class TestReportSubcommand:
             mock_report.return_value = "# report"
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
-                "report",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -681,7 +650,6 @@ class TestReportSubcommand:
         with patch("reflect.core._start_publish_server"):
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
-                "report",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1788,6 +1756,24 @@ class TestSetup:
         )
         assert distribute_skills.call_args.kwargs["selected_agent_names"] == {"claude-code"}
 
+    def test_setup_accepts_codex_alias_for_codex_cli(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        home_dir = tmp_path / "home"
+        codex_home = home_dir / ".codex"
+        codex_home.mkdir(parents=True)
+
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call"), \
+             patch("reflect.core._distribute_skills") as distribute_skills, \
+             patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
+            result = runner.invoke(main, ["setup", "--agent", "codex"])
+
+        assert result.exit_code == 0
+        assert distribute_skills.call_args.kwargs["selected_agent_names"] == {"openai-codex-cli"}
+
     def test_setup_local_agent_is_explicit_opt_in(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
         hook_home = tmp_path / ".otel-hook-home"
@@ -1973,6 +1959,25 @@ class TestSetup:
         assert (tmp_path / ".claude" / "skills" / "reflect" / "SKILL.md").exists()
         assert (tmp_path / ".claude" / "skills" / "reflect-skills" / "SKILL.md").exists()
         assert not (tmp_path / ".claude" / "skills" / "skills").exists()
+
+    def test_distribute_skills_writes_codex_global_path(self, tmp_path):
+        from rich.console import Console
+
+        console = Console(file=io.StringIO())
+        codex_skill_dir = tmp_path / ".codex" / "skills"
+        agent = {
+            "name": "OpenAI Codex CLI",
+            "detected": True,
+            "global_path": str(codex_skill_dir),
+            "local_skill_path": ".codex/skills/",
+        }
+
+        with patch("reflect.core._detect_agents", return_value=[agent]), \
+             patch("reflect.core._fetch_opentelemetry_skill", return_value=None):
+            core._distribute_skills(console, selected_agent_names={"openai-codex-cli"})
+
+        assert (codex_skill_dir / "reflect" / "SKILL.md").exists()
+        assert (codex_skill_dir / "reflect-skills" / "SKILL.md").exists()
 
 
     def test_setup_seeds_config_from_example_on_fresh_install(self, runner, tmp_path):

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "o11y-reflect"
-version = "0.8.5"
+version = "0.8.6"
 description = "See why your AI coding agents fail, stall, or burn budget — local-first telemetry for Claude, Copilot, Gemini, and Cursor"
 requires-python = ">=3.11"
 readme = "README.md"
@@ -28,6 +28,7 @@ dependencies = [
     "uvicorn>=0.20",
     "grpcio>=1.60",
     "opentelemetry-proto>=1.20",
+    "pydantic>=2.0",
 ]
 
 [project.urls]
@@ -39,6 +40,7 @@ Changelog = "https://github.com/o11y-dev/reflect/blob/main/CHANGELOG.md"
 
 [project.scripts]
 reflect = "reflect.core:main"
+reflect-mcp = "reflect.mcp:main"
 
 [project.optional-dependencies]
 test = ["pytest>=7.0", "pytest-cov>=4.0", "httpx>=0.24"]

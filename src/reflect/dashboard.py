@@ -3433,7 +3433,7 @@ def _build_dashboard_app(
             return JSONResponse(_cached)
         return JSONResponse(
             {
-                "error": "Filtered report views require the local SQLite report store. Re-run `reflect report` to prepare it.",
+                "error": "Filtered report views require the local SQLite report store. Re-run `reflect` to prepare it.",
                 "sql_backed": False,
             },
             status_code=409,
@@ -3521,7 +3521,7 @@ def _start_publish_server_inline(
     db_path: Path | None = None,
     sql_only: bool = False,
 ) -> None:
-    """Inline FastAPI server for `reflect report`."""
+    """Inline FastAPI server for the local `reflect` browser report."""
     import threading
     import webbrowser
 

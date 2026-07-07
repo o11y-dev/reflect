@@ -45,13 +45,10 @@ jobs:
           pip install pipx
           pipx install .
 
-      - name: reflect --demo (terminal dashboard)
-        run: reflect --demo --no-terminal
-
-      - name: reflect report --demo (dashboard server starts)
+      - name: reflect --demo (dashboard server starts)
         run: |
-          timeout 5 reflect report --demo || code=$?
-          # timeout exit code 124 means it ran and we killed it — success
+          timeout 5 reflect --demo --db-path "$RUNNER_TEMP/reflect-smoke.db" || code=$?
+          # timeout exit code 124 means it ran and we killed it - success
           if [ "${code:-0}" -eq 124 ]; then
             echo "Server started successfully"
           elif [ "${code:-0}" -eq 0 ]; then

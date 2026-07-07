@@ -26,7 +26,7 @@ Usage:
 
     # Legacy markdown report
     python3 src/reflect/core.py \\
-        --otlp-traces ~/.reflect/state/otlp/otel-traces.json --no-terminal
+        --otlp-traces ~/.reflect/state/otlp/otel-traces.json --output reports/my-report.md
 
     # From local hook state (legacy)
     python3 src/reflect/core.py \\
@@ -228,6 +228,7 @@ def _default_vscode_copilot_dir() -> Path:
 _AGENT_SPECS = [
     {
         "name": "Claude Code",
+        "setup_aliases": ["claude"],
         "env": "CLAUDE_HOME",
         "default": lambda: Path.home() / ".claude",
         "path_kind": "home",
@@ -238,6 +239,7 @@ _AGENT_SPECS = [
     },
     {
         "name": "Cursor",
+        "setup_aliases": ["cursor-agent"],
         "env": "CURSOR_HOME",
         "default": lambda: Path.home() / ".cursor",
         "path_kind": "home",
@@ -248,6 +250,7 @@ _AGENT_SPECS = [
     },
     {
         "name": "Gemini CLI",
+        "setup_aliases": ["gemini"],
         "env": "GEMINI_HOME",
         "env_aliases": ["GEMINI_DIR"],
         "default": lambda: Path.home() / ".gemini",
@@ -259,6 +262,7 @@ _AGENT_SPECS = [
     },
     {
         "name": "GitHub Copilot",
+        "setup_aliases": ["copilot"],
         "env": "COPILOT_HOME",
         "default": lambda: Path.home() / ".copilot",
         "path_kind": "home",
@@ -269,6 +273,7 @@ _AGENT_SPECS = [
     },
     {
         "name": "OpenAI Codex CLI",
+        "setup_aliases": ["codex", "codex-cli", "openai-codex"],
         "env": "CODEX_HOME",
         "default": lambda: Path.home() / ".codex",
         "path_kind": "home",
@@ -900,7 +905,7 @@ def _resolve_and_analyze(
     "--output",
     type=click.Path(path_type=Path),
     default=None,
-    help="Output markdown file path. Defaults to ~/.reflect/reports/ai-usage-telemetry-report-<date>.md.",
+    help="Also save a markdown report to this file.",
 )
 @click.option(
     "--otlp-traces",
@@ -909,26 +914,16 @@ def _resolve_and_analyze(
     help="OTLP JSON traces file from the collector file exporter.",
 )
 @click.option(
-    "--terminal/--no-terminal",
-    default=None,
-    help="Deprecated. Use --terminal for the legacy Rich terminal view or --no-terminal for the legacy markdown report.",
-)
-@click.option(
     "--dashboard-artifact",
     type=click.Path(path_type=Path),
     default=None,
-    help="Deprecated. Write the legacy dashboard JSON artifact to a file.",
+    help="Also write the dashboard JSON artifact to a file.",
 )
 @click.option(
     "--db-path",
     type=click.Path(path_type=Path),
     default=REFLECT_HOME / "state" / "reflect.db",
     help="SQLite store used for SQL-backed browser report endpoints.",
-)
-@click.option(
-    "--sql-only",
-    is_flag=True,
-    help="Deprecated no-op; SQLite-backed report data is now the default.",
 )
 @click.option(
     "--demo",
@@ -946,10 +941,8 @@ def main(
     spans_dir: Path | None,
     output: Path | None,
     otlp_traces: Path | None,
-    terminal: bool | None,
     dashboard_artifact: Path | None,
     db_path: Path,
-    sql_only: bool,
     demo: bool,
     time_range: str,
 ) -> None:
@@ -957,66 +950,16 @@ def main(
     if ctx.invoked_subcommand is not None:
         return
 
-    if sql_only:
-        click.echo("Note: --sql-only is deprecated; SQLite-backed report data is now the default.")
-
-    if terminal is None:
-        _run_browser_report(
-            otlp_traces=otlp_traces,
-            sessions_dir=sessions_dir,
-            spans_dir=spans_dir,
-            time_range=time_range,
-            demo=demo,
-            dashboard_artifact=dashboard_artifact,
-            output=output,
-            db_path=db_path,
-        )
-        return
-
-    click.echo(
-        "Note: terminal and markdown modes are deprecated. Run `reflect` with no terminal flags to open the browser report."
-    )
-
-    stats, otlp_traces, sessions_dir, spans_dir, time_range, since = _resolve_and_analyze(
+    _run_browser_report(
         otlp_traces=otlp_traces,
         sessions_dir=sessions_dir,
         spans_dir=spans_dir,
-        demo=demo,
         time_range=time_range,
+        demo=demo,
+        dashboard_artifact=dashboard_artifact,
+        output=output,
+        db_path=db_path,
     )
-
-    # Resolve output path (main-specific)
-    if output is None:
-        out_dir = REFLECT_HOME / "reports"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        output = out_dir / f"ai-usage-telemetry-report-{datetime.now().strftime('%Y-%m-%d')}.md"
-
-    update_notice = _build_startup_update_notice()
-    if update_notice:
-        click.echo(f"reflect notice: {update_notice}")
-    if dashboard_artifact is not None:
-        click.echo("Note: --dashboard-artifact is deprecated; the browser report is served from SQLite by default.")
-        _write_dashboard_artifact(stats, dashboard_artifact)
-
-    if terminal:
-        _render_terminal(
-            stats,
-            publish_url=None,
-            time_range=time_range,
-            since=since,
-        )
-
-    if not terminal:
-        render_report(stats, sessions_dir, spans_dir, output)
-
-        print(f"Report saved to:   {output}")
-        if dashboard_artifact is not None:
-            print(f"Dashboard JSON:    {dashboard_artifact}")
-        print(f"Analyzed events:   {stats.total_events:,}")
-        print(f"Sessions:          {len(stats.sessions_seen)} unique")
-        print(f"Active days:       {stats.days_active}")
-        print(f"Top model:         {stats.models_by_count.most_common(1)[0][0] if stats.models_by_count else 'N/A'}")
-        print(f"Tool-to-prompt:    {_safe_ratio(stats.events_by_type.get('PreToolUse', 0), stats.events_by_type.get('UserPromptSubmit', 0)):.1f}:1")
 
 
 # ---------------------------------------------------------------------------
@@ -1134,84 +1077,6 @@ def _run_browser_report(
             encoding="utf-8",
         )
     _start_publish_server(stats, db_path=db_path, sql_only=False)
-
-
-@main.command()
-@click.option(
-    "--otlp-traces",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="OTLP JSON traces file from the collector file exporter.",
-)
-@click.option(
-    "--sessions-dir",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="Directory containing session metadata JSON files.",
-)
-@click.option(
-    "--spans-dir",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="Directory containing local span JSONL files.",
-)
-@click.option("--day", "time_range", flag_value="day", help="Analyze last 24 hours.")
-@click.option("--week", "time_range", flag_value="week", default=True, help="Analyze last 7 days (default).")
-@click.option("--month", "time_range", flag_value="month", help="Analyze last 30 days.")
-@click.option("--all", "time_range", flag_value="all", help="Analyze all available data.")
-@click.option(
-    "--demo",
-    is_flag=True,
-    help="Run with bundled sample data.",
-)
-@click.option(
-    "--dashboard-artifact",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="Also write the dashboard JSON artifact to a file.",
-)
-@click.option(
-    "--output",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="Also save a markdown report to this file.",
-)
-@click.option(
-    "--db-path",
-    type=click.Path(path_type=Path),
-    default=REFLECT_HOME / "state" / "reflect.db",
-    help="SQLite store used for SQL-backed browser report endpoints.",
-)
-@click.option(
-    "--sql-only",
-    is_flag=True,
-    help="Deprecated no-op; SQLite-backed report data is now the default.",
-)
-def report(
-    otlp_traces: Path | None,
-    sessions_dir: Path | None,
-    spans_dir: Path | None,
-    time_range: str,
-    demo: bool,
-    dashboard_artifact: Path | None,
-    output: Path | None,
-    db_path: Path,
-    sql_only: bool,
-) -> None:
-    """Deprecated alias for `reflect`."""
-    click.echo("Note: `reflect report` is deprecated. Run `reflect` to open the browser report.")
-    if sql_only:
-        click.echo("Note: --sql-only is deprecated; SQLite-backed report data is now the default.")
-    _run_browser_report(
-        otlp_traces=otlp_traces,
-        sessions_dir=sessions_dir,
-        spans_dir=spans_dir,
-        time_range=time_range,
-        demo=demo,
-        dashboard_artifact=dashboard_artifact,
-        output=output,
-        db_path=db_path,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1817,6 +1682,38 @@ def _agent_key(name: str) -> str:
     return name.lower().replace(" ", "-")
 
 
+def _agent_selection_keys(agent: dict) -> set[str]:
+    keys = {_agent_key(str(agent["name"]))}
+    keys.update(_agent_key(str(alias)) for alias in agent.get("setup_aliases", []))
+    return keys
+
+
+def _setup_agent_alias_map(agents: list[dict]) -> dict[str, str]:
+    alias_map: dict[str, str] = {}
+    for agent in agents:
+        canonical = _agent_key(str(agent["name"]))
+        for key in _agent_selection_keys(agent):
+            alias_map[key] = canonical
+    return alias_map
+
+
+def _resolve_setup_agent_name_keys(
+    agent_names: tuple[str, ...],
+    detected_agents: list[dict],
+) -> tuple[set[str], set[str]]:
+    alias_map = _setup_agent_alias_map(detected_agents)
+    selected: set[str] = set()
+    unknown: set[str] = set()
+    for name in agent_names:
+        key = _agent_key(name)
+        canonical = alias_map.get(key)
+        if canonical is None:
+            unknown.add(key)
+        else:
+            selected.add(canonical)
+    return selected, unknown
+
+
 def _filter_agents_by_keys(agents: list[dict], keys: set[str] | None) -> list[dict]:
     if keys is None:
         return agents
@@ -1945,10 +1842,8 @@ def _resolve_setup_agent_selection(
     all_agents: bool,
 ) -> set[str] | None:
     detected = [agent for agent in _detect_agents() if agent.get("detected")]
-    detected_keys = {_agent_key(str(agent["name"])) for agent in detected}
     if agent_names:
-        selected = {_agent_key(name) for name in agent_names}
-        unknown = selected - detected_keys
+        selected, unknown = _resolve_setup_agent_name_keys(agent_names, detected)
         if unknown:
             raise click.ClickException(
                 "Agent(s) not detected: " + ", ".join(sorted(unknown))
@@ -2049,7 +1944,15 @@ def setup(
             capture_text = True
             mask_captured_text = False
     selected_agent_keys = _resolve_setup_agent_selection(console, agent_names=agent_names, all_agents=all_agents)
-    local_agent_keys = {_agent_key(name) for name in local_agent_names}
+    detected_agents = [agent for agent in _detect_agents() if agent.get("detected")]
+    local_agent_keys, unknown_local_agent_keys = _resolve_setup_agent_name_keys(
+        local_agent_names,
+        detected_agents,
+    )
+    if unknown_local_agent_keys:
+        raise click.ClickException(
+            "Agent(s) not detected: " + ", ".join(sorted(unknown_local_agent_keys))
+        )
     unknown_local = local_agent_keys - selected_agent_keys if selected_agent_keys is not None else set()
     if unknown_local:
         raise click.ClickException(
@@ -2479,6 +2382,309 @@ def gateway_status() -> None:
     console.print(f"  traces: {status['traces_path']} ({_summarize_file(Path(status['traces_path']))})")
     console.print(f"  logs:   {status['logs_path']} ({_summarize_file(Path(status['logs_path']))})")
     console.print(f"  log:    {status['log_file']}")
+
+
+@main.group()
+def memory() -> None:
+    """Evidence-backed local and provider memory commands."""
+
+
+def _open_memory_service(db_path: Path):
+    from reflect.memory import MemoryService
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    migrate(conn)
+    return conn, MemoryService(conn)
+
+
+def _memory_filters(
+    *,
+    type: str | None = None,
+    scope: str | None = None,
+    source: str | None = None,
+    provider: str | None = None,
+    stale: bool = False,
+    validated: bool = False,
+    unvalidated: bool = False,
+) -> dict[str, object]:
+    return {
+        key: value
+        for key, value in {
+            "type": type,
+            "scope": scope,
+            "source": source,
+            "provider": provider,
+            "stale": stale,
+            "validated": validated,
+            "unvalidated": unvalidated,
+        }.items()
+        if value
+    }
+
+
+def _echo_json(payload: object) -> None:
+    click.echo(_json_stdlib.dumps(payload, indent=2, sort_keys=True))
+
+
+@memory.command("providers")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+@click.option("--json", "as_json", is_flag=True, help="Print provider health as JSON.")
+def memory_providers(db_path: Path, as_json: bool) -> None:
+    """List memory providers and health."""
+    conn, service = _open_memory_service(db_path)
+    try:
+        health = service.provider_health()
+    finally:
+        conn.close()
+    if as_json:
+        _echo_json(health)
+        return
+    table = Table(title="Memory Providers")
+    table.add_column("Provider")
+    table.add_column("Available")
+    table.add_column("Status")
+    table.add_column("Detail")
+    for item in health:
+        table.add_row(
+            str(item["name"]),
+            "yes" if item["available"] else "no",
+            str(item["status"]),
+            str(item.get("detail") or ""),
+        )
+    Console().print(table)
+
+
+@memory.command("sync")
+@click.argument("path", type=click.Path(path_type=Path), required=False)
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+@click.option("--json", "as_json", is_flag=True, help="Print sync result as JSON.")
+def memory_sync(path: Path | None, db_path: Path, as_json: bool) -> None:
+    """Sync local folder instruction memories. PATH defaults to the current directory."""
+    target = path or Path.cwd()
+    conn, service = _open_memory_service(db_path)
+    try:
+        result = service.sync_path(target, home_root=Path.home())
+    finally:
+        conn.close()
+    if as_json:
+        _echo_json(result)
+        return
+    click.echo(
+        "Synced memories "
+        f"(path={target}, discovered={result['discovered']}, inserted={result['inserted']}, updated={result['updated']})"
+    )
+
+
+@memory.command("list")
+@click.argument("path", type=click.Path(path_type=Path), required=False)
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+@click.option("--all", "all_memories", is_flag=True, help="List all memories instead of scoping to PATH.")
+@click.option("--type", "memory_type", default=None, help="Filter by memory type.")
+@click.option("--scope", default=None, help="Filter by memory scope.")
+@click.option("--source", default=None, help="Filter by memory source.")
+@click.option("--provider", default=None, help="Filter by provider.")
+@click.option("--stale", is_flag=True, help="Only show stale memories.")
+@click.option("--validated", is_flag=True, help="Only show validated memories.")
+@click.option("--unvalidated", is_flag=True, help="Only show unvalidated memories.")
+@click.option("--limit", type=int, default=100, show_default=True)
+@click.option("--json", "as_json", is_flag=True, help="Print memories as JSON.")
+def memory_list(
+    path: Path | None,
+    db_path: Path,
+    all_memories: bool,
+    memory_type: str | None,
+    scope: str | None,
+    source: str | None,
+    provider: str | None,
+    stale: bool,
+    validated: bool,
+    unvalidated: bool,
+    limit: int,
+    as_json: bool,
+) -> None:
+    """List memories for PATH. PATH defaults to the current directory."""
+    conn, service = _open_memory_service(db_path)
+    try:
+        rows = service.list_memories(
+            path=path or Path.cwd(),
+            all_memories=all_memories,
+            filters=_memory_filters(
+                type=memory_type,
+                scope=scope,
+                source=source,
+                provider=provider,
+                stale=stale,
+                validated=validated,
+                unvalidated=unvalidated,
+            ),
+            limit=limit,
+        )
+    finally:
+        conn.close()
+    if as_json:
+        _echo_json(rows)
+        return
+    table = Table(title="Reflect Memories")
+    for column in ("ID", "Type", "Scope", "Source", "Validation", "Path"):
+        table.add_column(column)
+    for row in rows:
+        metadata = row.get("source_metadata") or {}
+        raw_attrs = row.get("raw_attrs") or {}
+        table.add_row(
+            str(row.get("id") or ""),
+            str(row.get("type") or ""),
+            str(row.get("scope") or ""),
+            str(row.get("source") or ""),
+            str(row.get("validation_status") or ""),
+            str(metadata.get("path") or raw_attrs.get("path") or ""),
+        )
+    Console().print(table)
+
+
+@memory.command("search")
+@click.argument("query")
+@click.argument("path", type=click.Path(path_type=Path), required=False)
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+@click.option("--type", "memory_type", default=None, help="Filter by memory type.")
+@click.option("--scope", default=None, help="Filter by memory scope.")
+@click.option("--provider", default="local_sqlite", show_default=True, help="Provider to search.")
+@click.option("--limit", type=int, default=20, show_default=True)
+@click.option("--json", "as_json", is_flag=True, help="Print search results as JSON.")
+def memory_search(
+    query: str,
+    path: Path | None,
+    db_path: Path,
+    memory_type: str | None,
+    scope: str | None,
+    provider: str,
+    limit: int,
+    as_json: bool,
+) -> None:
+    """Search memories, optionally scoped to PATH."""
+    conn, service = _open_memory_service(db_path)
+    try:
+        rows = service.search(
+            query,
+            path=path or Path.cwd(),
+            filters=_memory_filters(type=memory_type, scope=scope),
+            provider=provider,
+            limit=limit,
+        )
+    finally:
+        conn.close()
+    if as_json:
+        _echo_json(rows)
+        return
+    table = Table(title=f"Memory Search: {query}")
+    for column in ("ID", "Type", "Scope", "Provider", "Preview"):
+        table.add_column(column)
+    for row in rows:
+        table.add_row(
+            str(row.get("id") or row.get("memory_id") or ""),
+            str(row.get("type") or ""),
+            str(row.get("scope") or ""),
+            str(row.get("provider") or provider),
+            str(row.get("content_preview_redacted") or row.get("content") or "")[:100],
+        )
+    Console().print(table)
+
+
+@memory.command("inspect")
+@click.argument("memory_id")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+@click.option("--json", "as_json", is_flag=True, help="Print memory as JSON.")
+def memory_inspect(memory_id: str, db_path: Path, as_json: bool) -> None:
+    """Inspect one memory by ID."""
+    conn, service = _open_memory_service(db_path)
+    try:
+        row = service.inspect(memory_id)
+    finally:
+        conn.close()
+    if row is None:
+        raise click.ClickException(f"Memory not found: {memory_id}")
+    if as_json:
+        _echo_json(row)
+        return
+    Console().print(Panel(_json_stdlib.dumps(row, indent=2, sort_keys=True), title=memory_id))
+
+
+@memory.command("forget")
+@click.argument("memory_id")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+def memory_forget(memory_id: str, db_path: Path) -> None:
+    """Delete one local memory by ID."""
+    conn, service = _open_memory_service(db_path)
+    try:
+        removed = service.forget(memory_id)
+    finally:
+        conn.close()
+    if not removed:
+        raise click.ClickException(f"Memory not found: {memory_id}")
+    click.echo(f"Forgot memory {memory_id}")
+
+
+@memory.command("validate")
+@click.argument("memory_id", required=False)
+@click.option("--candidate", "candidate_id", default=None, help="Promote and validate a graph-derived candidate.")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+@click.option("--json", "as_json", is_flag=True, help="Print validation result as JSON.")
+def memory_validate(memory_id: str | None, candidate_id: str | None, db_path: Path, as_json: bool) -> None:
+    """Validate a memory or promote a candidate."""
+    if not memory_id and not candidate_id:
+        raise click.ClickException("Pass MEMORY_ID or --candidate CANDIDATE_ID")
+    conn, service = _open_memory_service(db_path)
+    try:
+        if candidate_id:
+            promoted = service.promote_candidate(candidate_id)
+            result = service.validate(str(promoted["id"]))
+        else:
+            result = service.validate(str(memory_id))
+    finally:
+        conn.close()
+    if as_json:
+        _echo_json(result)
+        return
+    click.echo(
+        f"Memory {result['memory_id']}: {result['status']}"
+        + (f" ({result['stale_reason']})" if result.get("stale_reason") else "")
+    )
+
+
+@memory.command("candidates")
+@click.argument("path", type=click.Path(path_type=Path), required=False)
+@click.option("--session", "session_id", default="", help="Limit candidates to one session ID.")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+@click.option("--limit", type=int, default=50, show_default=True)
+@click.option("--json", "as_json", is_flag=True, help="Print candidates as JSON.")
+def memory_candidates(
+    path: Path | None,
+    session_id: str,
+    db_path: Path,
+    limit: int,
+    as_json: bool,
+) -> None:
+    """List graph-derived memory candidates for PATH."""
+    conn, service = _open_memory_service(db_path)
+    try:
+        rows = service.candidates(path=path or Path.cwd(), session_id=session_id, limit=limit)
+    finally:
+        conn.close()
+    if as_json:
+        _echo_json(rows)
+        return
+    table = Table(title="Memory Candidates")
+    for column in ("ID", "Type", "Confidence", "Content"):
+        table.add_column(column)
+    for row in rows:
+        table.add_row(
+            str(row.get("id") or ""),
+            str(row.get("type") or ""),
+            f"{float(row.get('confidence') or 0):.2f}",
+            str(row.get("content") or "")[:120],
+        )
+    Console().print(table)
 
 
 @main.group()
@@ -2921,33 +3127,6 @@ def db_normalize(db_path: Path, limit: int | None) -> None:
     click.echo(
         "Normalized raw_events "
         f"(processed={result['processed']}, failed={result['failed']}, skipped={result['skipped']})"
-    )
-
-
-@db.command("sync-instructions")
-@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
-@click.option(
-    "--workspace-root",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="Workspace root to scan for instruction files.",
-)
-def db_sync_instructions(db_path: Path, workspace_root: Path | None) -> None:
-    """Discover AGENTS.md, CLAUDE.md, GEMINI.md, and similar instruction files into memories."""
-    from reflect.store.instruction_memory import upsert_instruction_memories
-    from reflect.store.migrate import migrate
-    from reflect.store.sqlite import connect_sqlite
-
-    workspace_root = workspace_root or Path.cwd()
-    conn = connect_sqlite(db_path)
-    try:
-        migrate(conn)
-        result = upsert_instruction_memories(conn, workspace_root=workspace_root, home_root=Path.home())
-    finally:
-        conn.close()
-    click.echo(
-        "Synced instruction memories "
-        f"(discovered={result['discovered']}, inserted={result['inserted']}, updated={result['updated']})"
     )
 
 

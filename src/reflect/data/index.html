@@ -6606,7 +6606,7 @@ function initGraphs() {
   const tip = document.getElementById('semantic-graph-tip');
   if (!shell || !svgEl || !filter || !legend || !tip) return;
   if (!graph.nodes.length) {
-    shell.outerHTML = '<div class="semantic-graph-empty">No semantic graph rows found. Run reflect db rebuild-graph after ingesting telemetry.</div>';
+    shell.outerHTML = '<div class="semantic-graph-empty">No semantic graph rows found. Run reflect, then use reflect memory sync . to add local folder memories.</div>';
     filter.innerHTML = '<option value="">All sessions</option>';
     legend.innerHTML = '';
     return;
