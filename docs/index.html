@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>reflect — Behavioral Memory for Developer-Agent Workflow</title>
-  <meta name="description" content="Reflect continuously builds a living operational graph of your engineering system. It connects code, telemetry, incidents, deployments, ownership, and architecture into one explainable intelligence layer.">
+  <title>reflect — Local-first observability for AI coding agents</title>
+  <meta name="description" content="Reflect is a local-first flight recorder for AI coding agents. See token waste, tool failures, context blowouts, cost, and reusable skills across Claude, Codex, Copilot, Cursor, and Gemini.">
   <link rel="canonical" href="https://reflect.o11y.dev/">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <meta name="color-scheme" content="dark">
@@ -12,16 +12,16 @@
 
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="reflect.o11y.dev">
-  <meta property="og:title" content="reflect — Behavioral Memory for Developer-Agent Workflow">
-  <meta property="og:description" content="Reflect continuously builds a living operational graph of your engineering system. It connects code, telemetry, incidents, deployments, ownership, and architecture into one explainable intelligence layer.">
+  <meta property="og:title" content="reflect — Local-first observability for AI coding agents">
+  <meta property="og:description" content="A local flight recorder for AI coding agents. See token waste, tool failures, context blowouts, cost, and reusable skills across Claude, Codex, Copilot, Cursor, and Gemini.">
   <meta property="og:url" content="https://reflect.o11y.dev/">
   <meta property="og:image" content="https://reflect.o11y.dev/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="reflect — Behavioral Memory for Developer-Agent Workflow">
-  <meta name="twitter:description" content="Reflect continuously builds a living operational graph of your engineering system. It connects code, telemetry, incidents, deployments, ownership, and architecture into one explainable intelligence layer.">
+  <meta name="twitter:title" content="reflect — Local-first observability for AI coding agents">
+  <meta name="twitter:description" content="A local flight recorder for AI coding agents. See token waste, tool failures, context blowouts, cost, and reusable skills across Claude, Codex, Copilot, Cursor, and Gemini.">
   <meta name="twitter:image" content="https://reflect.o11y.dev/og-image.png">
 
   <script type="application/ld+json">
@@ -33,7 +33,7 @@
         "name": "reflect",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "macOS, Linux, Windows",
-        "description": "Behavioral memory for developer-agent workflow. Turns local coding-agent session data and OpenTelemetry GenAI spans into patterns about prompts, tools, context, budget burn, and enterprise handoff.",
+        "description": "Local-first observability for AI coding agents. Turns local coding-agent sessions and OpenTelemetry data into visibility about tokens, tools, failures, context, cost, and reusable skills.",
         "url": "https://reflect.o11y.dev/",
         "downloadUrl": "https://pypi.org/project/o11y-reflect/",
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
@@ -56,6 +56,7 @@
   'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
   })(window,document,'script','dataLayer','GTM-MDT7FMNC');</script>
   <!-- End Google Tag Manager -->
+
   <style>
     :root{
       --bg:#050505;
@@ -66,18 +67,19 @@
       --panel:#10100f;
       --signal:#f28a1a;
       --signal-2:#ffb156;
+      --green:#94e2b0;
       --shadow:0 28px 90px rgba(0,0,0,.52);
     }
     *{box-sizing:border-box}
     html,body{margin:0;min-height:100%;background:var(--bg);color:var(--ink)}
-    html{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}
-    html{scroll-behavior:smooth}
+    html{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;scroll-behavior:smooth}
     body{
       font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text','Helvetica Neue',system-ui,sans-serif;
       padding:28px 20px 64px;
       background:
-        radial-gradient(circle at 70% -10%, rgba(242,138,26,.18), transparent 42%),
-        linear-gradient(180deg, #0a0a09 0%, #050505 62%);
+        radial-gradient(circle at 74% -10%, rgba(242,138,26,.18), transparent 42%),
+        radial-gradient(circle at 0% 20%, rgba(255,177,86,.08), transparent 28%),
+        linear-gradient(180deg, #0a0a09 0%, #050505 64%);
     }
     a{color:inherit}
     .shell{max-width:1180px;margin:0 auto}
@@ -86,23 +88,24 @@
     .mark{width:42px;height:42px;position:relative;display:grid;place-items:center;filter:drop-shadow(0 0 18px rgba(242,138,26,.28))}
     .mark::before{content:"";position:absolute;inset:-1px -2px 0;clip-path:polygon(50% 0,100% 92%,0 92%);background:var(--ink)}
     .mark::after{content:"";position:absolute;left:50%;top:60%;transform:translate(-50%,-50%);width:14px;height:14px;border:5px solid var(--signal);border-radius:999px;background:#050505;z-index:1;box-shadow:0 0 22px rgba(242,138,26,.55)}
-    .brand span{font-size:15px;font-weight:700;letter-spacing:.01em}
+    .brand span:last-child{font-size:15px;font-weight:800;letter-spacing:.01em}
     .nav-links{display:flex;flex-wrap:wrap;gap:10px;color:var(--muted);font-size:13px}
     .nav-links a{display:inline-flex;align-items:center;min-height:32px;padding:6px 10px;border-radius:6px;border:1px solid transparent;text-decoration:none;transition:background .16s ease,color .16s ease,border-color .16s ease}
     .nav-links a:hover{color:var(--ink);background:rgba(245,242,234,.06);border-color:rgba(245,242,234,.2)}
     .nav-links a:focus-visible,.cta:focus-visible,.ghost:focus-visible,.star:focus-visible,.footer a:focus-visible{outline:2px solid var(--signal-2);outline-offset:2px}
-    .hero{display:grid;grid-template-columns:minmax(0,1.04fr) minmax(360px,.96fr);gap:24px;align-items:stretch}
+    .hero{display:grid;grid-template-columns:minmax(0,1.06fr) minmax(360px,.94fr);gap:24px;align-items:stretch}
     .panel{border:1px solid var(--line);background:linear-gradient(180deg, rgba(24,24,22,.95), rgba(12,12,11,.92));backdrop-filter:saturate(140%) blur(12px);-webkit-backdrop-filter:saturate(140%) blur(12px);box-shadow:var(--shadow)}
     .hero-copy{padding:38px;border-radius:8px;position:relative;overflow:hidden}
     .hero-copy::after{content:"";position:absolute;right:-140px;bottom:-180px;width:420px;height:420px;border:1px solid rgba(242,138,26,.18);border-radius:999px;box-shadow:inset 0 0 90px rgba(242,138,26,.06);pointer-events:none}
-    .eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:22px;color:var(--signal-2);font-size:12px;letter-spacing:.18em;text-transform:uppercase;font-weight:800}
+    .eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:22px;color:var(--signal-2);font-size:12px;letter-spacing:.18em;text-transform:uppercase;font-weight:900}
     .eyebrow::before{content:"";width:9px;height:9px;border-radius:999px;background:var(--signal);box-shadow:0 0 22px rgba(242,138,26,.9)}
-    h1{margin:0 0 18px;max-width:880px;font-size:clamp(2.8rem,6vw,5.9rem);line-height:.9;letter-spacing:-.045em;font-weight:900;text-wrap:balance}
-    .lede{margin:0;max-width:690px;color:#e7e1d6;font-size:18px;line-height:1.62}
+    h1{margin:0 0 18px;max-width:900px;font-size:clamp(2.7rem,6vw,5.8rem);line-height:.92;letter-spacing:-.045em;font-weight:950;text-wrap:balance}
+    .lede{margin:0;max-width:720px;color:#e7e1d6;font-size:18px;line-height:1.62}
+    .sublede{margin:18px 0 0;max-width:700px;color:var(--muted);font-size:15px;line-height:1.65}
     .pain-strip{display:flex;flex-wrap:wrap;gap:10px;margin-top:24px}
     .pain{border:1px solid rgba(245,242,234,.2);background:rgba(245,242,234,.06);padding:8px 11px;border-radius:4px;color:var(--muted-2);font-size:13px}
     .cta-row{display:flex;flex-wrap:wrap;gap:12px;margin-top:30px}
-    .cta,.ghost,.star{display:inline-flex;align-items:center;justify-content:center;gap:9px;min-height:48px;padding:13px 17px;border-radius:6px;text-decoration:none;font-weight:800;transition:transform .16s ease,border-color .16s ease,background .16s ease}
+    .cta,.ghost,.star{display:inline-flex;align-items:center;justify-content:center;gap:9px;min-height:48px;padding:13px 17px;border-radius:6px;text-decoration:none;font-weight:900;transition:transform .16s ease,border-color .16s ease,background .16s ease}
     .cta{background:var(--signal);color:#100903;box-shadow:0 16px 40px rgba(242,138,26,.24)}
     .ghost{border:1px solid var(--line);color:var(--ink);background:rgba(245,242,234,.035)}
     .star{border:1px solid rgba(242,138,26,.45);color:var(--signal-2);background:rgba(242,138,26,.09)}
@@ -110,9 +113,9 @@
     .cta:hover,.ghost:hover,.star:hover{transform:translateY(-1px)}
     .autopsy{border-radius:8px;padding:22px;display:flex;flex-direction:column;gap:16px}
     .autopsy-head{display:flex;justify-content:space-between;gap:16px;align-items:start}
-    .label{margin:0;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.14em;font-weight:800}
-    .score{font-size:44px;line-height:1;font-weight:900;color:var(--signal)}
-    .score small{display:block;margin-top:6px;color:var(--muted);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+    .label{margin:0;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.14em;font-weight:900}
+    .score{font-size:44px;line-height:1;font-weight:950;color:var(--signal)}
+    .score small{display:block;margin-top:6px;color:var(--muted);font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
     .trace-card{border:1px solid rgba(245,242,234,.12);background:#0b0b0a;border-radius:6px;padding:14px}
     .trace-card h2{margin:0 0 10px;font-size:18px;letter-spacing:-.01em}
     .rows{display:grid;gap:8px}
@@ -124,21 +127,27 @@
     .finding{display:grid;grid-template-columns:10px minmax(0,1fr);gap:10px;align-items:start;color:#e2dbd0;font-size:14px;line-height:1.5}
     .finding::before{content:"";width:9px;height:9px;margin-top:6px;background:var(--signal)}
     .section{margin-top:24px}
-    .section-title{margin:0 0 12px;color:var(--signal-2);font-size:13px;letter-spacing:.17em;text-transform:uppercase;font-weight:900}
+    .section-title{margin:0 0 12px;color:var(--signal-2);font-size:13px;letter-spacing:.17em;text-transform:uppercase;font-weight:950}
     .grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+    .grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
     .card{border:1px solid var(--line);background:rgba(16,16,15,.88);border-radius:8px;padding:20px}
     .card h3{margin:0 0 8px;font-size:18px}
     .card p{margin:0;color:var(--muted-2);font-size:14px;line-height:1.62}
-    .badge{display:inline-flex;margin-bottom:12px;padding:4px 8px;border-radius:4px;background:rgba(242,138,26,.12);color:var(--signal-2);font-size:11px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}
+    .badge{display:inline-flex;margin-bottom:12px;padding:4px 8px;border-radius:4px;background:rgba(242,138,26,.12);color:var(--signal-2);font-size:11px;font-weight:950;letter-spacing:.12em;text-transform:uppercase}
     .install{padding:24px;border-radius:8px}
     .install p{margin:0 0 14px;color:#e2dbd0;line-height:1.6}
     pre{margin:0;border:1px solid rgba(245,242,234,.14);background:#080807;border-radius:6px;padding:18px;overflow:auto;color:#f8e7d0;font:500 14px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace}
+    .steps{counter-reset:step;display:grid;gap:12px}
+    .step{position:relative;padding:18px 18px 18px 54px;border:1px solid var(--line);border-radius:8px;background:rgba(16,16,15,.76)}
+    .step::before{counter-increment:step;content:counter(step);position:absolute;left:18px;top:18px;width:24px;height:24px;border-radius:999px;background:var(--signal);color:#100903;display:grid;place-items:center;font-weight:950;font-size:13px}
+    .step h3{margin:0 0 6px;font-size:17px}
+    .step p{margin:0;color:var(--muted-2);font-size:14px;line-height:1.58}
     .footer{margin-top:24px;border:1px solid var(--line);border-radius:8px;padding:18px 20px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;color:var(--muted-2);font-size:14px;background:rgba(16,16,15,.72)}
     .footer a{color:var(--signal-2);text-decoration:none}
     code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
     @media (max-width:940px){
       body{padding:20px 14px 48px}
-      .hero,.grid-3{grid-template-columns:1fr}
+      .hero,.grid-3,.grid-2{grid-template-columns:1fr}
       .hero-copy{padding:28px}
       .autopsy{padding:18px}
       .nav{align-items:flex-start;flex-direction:column}
@@ -165,25 +174,28 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
       <div class="nav-links">
         <a href="./report.html?report=reports/showcase.json">Live Demo</a>
         <a href="https://github.com/o11y-dev/reflect">GitHub</a>
+        <a href="#how">How It Works</a>
         <a href="#install">Install</a>
       </div>
     </nav>
 
     <section class="hero">
       <article class="panel hero-copy">
-        <p class="eyebrow">Behavioral Memory</p>
-        <h1>Behavioral Memory Graph for engineering systems.</h1>
+        <p class="eyebrow">Local-first agent observability</p>
+        <h1>A flight recorder for AI coding agents.</h1>
         <p class="lede">
-          Reflect continuously builds a living operational graph of your engineering system.
-          It connects code, telemetry, incidents, deployments, ownership, and architecture into
-          one explainable intelligence layer.
+          Reflect shows what Claude, Codex, Copilot, Cursor, and Gemini actually do on your machine:
+          token waste, tool failures, context blowouts, model cost, MCP calls, and workflows that should become reusable skills.
+        </p>
+        <p class="sublede">
+          No hosted backend. No account. Metadata-first by default. Run it locally, inspect the report, and turn repeated agent behavior into better future runs.
         </p>
         <div class="pain-strip" aria-label="Common AI workflow failure modes">
-          <span class="pain">message limits</span>
-          <span class="pain">overloaded sessions</span>
-          <span class="pain">runaway tool loops</span>
-          <span class="pain">unclear token burn</span>
-          <span class="pain">bad context handoff</span>
+          <span class="pain">token burn</span>
+          <span class="pain">failed tool loops</span>
+          <span class="pain">context blowouts</span>
+          <span class="pain">silent retries</span>
+          <span class="pain">lost workflow memory</span>
         </div>
         <div class="cta-row">
           <a class="cta" href="./report.html?report=reports/showcase.json">Open Live Demo</a>
@@ -212,7 +224,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         </div>
 
         <div class="trace-card">
-          <h2>What reflect flags</h2>
+          <h2>What Reflect flags</h2>
           <div class="finding-list">
             <div class="finding">16,007 tool calls and 691 tool failures show where agent work turned into operational drag.</div>
             <div class="finding">1,554 MCP calls expose hidden backend dependency and context-fetch cost.</div>
@@ -227,18 +239,36 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
       <div class="grid-3">
         <article class="card">
           <span class="badge">Observe</span>
-          <h3>One graph across the stack</h3>
-          <p>Compare sessions, tool usage, failures, model mix, token volume, MCP calls, and estimated cost across Claude Code, Cursor, Copilot, Gemini CLI, OpenCode, and Antigravity.</p>
+          <h3>One local view across agents</h3>
+          <p>Normalize sessions, tool calls, failures, model mix, token usage, MCP calls, and estimated cost across the coding agents developers already use.</p>
         </article>
         <article class="card">
-          <span class="badge">Understand</span>
+          <span class="badge">Diagnose</span>
           <h3>Session autopsies</h3>
-          <p>Move from "the agent got stuck" to the specific sequence: retries, broad scans, shell failures, context churn, quota pressure, or tool loops.</p>
+          <p>Move from "the agent got stuck" to the exact pattern: retries, broad scans, shell failures, context churn, expensive prompts, or looping tools.</p>
         </article>
         <article class="card">
           <span class="badge">Improve</span>
-          <h3>Better future runs</h3>
-          <p>Use the Behavioral Memory Graph to turn real workflow patterns into reusable skills, validated memories, context guardrails, and helper-tool playbooks.</p>
+          <h3>Behavior becomes memory</h3>
+          <p>Turn repeated workflow evidence into approved skills, local memories, repo guardrails, and playbooks that make future agent sessions less wasteful.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="how">
+      <h2 class="section-title">How It Works</h2>
+      <div class="steps">
+        <article class="step">
+          <h3>Wire agents to local signal paths</h3>
+          <p><code>reflect setup</code> configures supported native OpenTelemetry exporters, hook paths, and local session adapters. The local gateway receives traces and logs on your machine.</p>
+        </article>
+        <article class="step">
+          <h3>Normalize behavior into one model</h3>
+          <p>Claude tool calls, Codex logs, Copilot traces, Cursor sessions, and Gemini telemetry become comparable sessions with cost, tool, model, and workflow signals.</p>
+        </article>
+        <article class="step">
+          <h3>Find what should change</h3>
+          <p>Reflect highlights context blowouts, high-cost sessions, repeated failures, missing instructions, and skill candidates backed by real session evidence.</p>
         </article>
       </div>
     </section>
@@ -246,50 +276,45 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
     <section class="panel install section" id="install">
       <h2 class="section-title">60-Second Local Path</h2>
       <p>
-        Start with reflect. It wires supported agents, reads local telemetry, and opens the same browser dashboard used by this showcase.
-        Use <code>reflect</code> for the Behavioral Memory Graph, <code>reflect memory sync .</code> for local folder memories, and <code>reflect skills</code> to extract reusable skills from your session history.
-        Calculations are based on actual agent spans and dependency edges, so let your agent run for a bit to generate telemetry before opening the report or running skills extraction.
+        Start locally. Run the demo first if you have no telemetry yet, then wire your agents and open the browser report backed by your local SQLite store.
       </p>
       <pre><code>pipx install o11y-reflect
+reflect --demo
+
+# then wire your local agents
 reflect setup
 reflect
-reflect memory sync .
-reflect memory list .
-reflect memory candidates .
-reflect skills
 
-# no telemetry yet?
-reflect --demo</code></pre>
+# turn repeated behavior into memory and skills
+reflect memory sync .
+reflect memory candidates .
+reflect skills</code></pre>
     </section>
 
     <section class="section">
-      <h2 class="section-title">Mission</h2>
-      <div class="grid-3">
+      <h2 class="section-title">Why Teams Care</h2>
+      <div class="grid-2">
         <article class="card">
-          <h3>Agent Agnostic</h3>
-          <p>Observe the workflow across Claude Code, Cursor, Copilot, Gemini CLI, OpenCode, Antigravity, and future agents without tying the product story to one vendor.</p>
+          <h3>Developer productivity without guessing</h3>
+          <p>See whether AI coding agents are improving delivery or just burning tokens, retrying bad commands, and hiding workflow debt inside local sessions.</p>
         </article>
         <article class="card">
-          <h3>Governance at the Edge</h3>
-          <p>Keep control close to the hook boundary, where sessions can be inspected, denied, asked about, or mutated before waste and risk compound.</p>
+          <h3>Governance at the edge</h3>
+          <p>Keep sensitive details local, capture metadata first, and add policy near the hook and telemetry boundary instead of sending everything to a hosted backend.</p>
         </article>
         <article class="card">
-          <h3>Behavioral Memory Graph</h3>
-          <p>Turn sessions, tools, folders, skills, memories, outcomes, code, telemetry, incidents, deployments, ownership, and architecture into one explainable intelligence layer teams can query to improve future agent runs.</p>
+          <h3>Agent benchmarking on real work</h3>
+          <p>Compare agents by outcomes that matter: completion patterns, retry rate, tool failure rate, token burn, MCP dependency, cache behavior, and cost concentration.</p>
         </article>
         <article class="card">
-          <h3>Vendor Neutral</h3>
-          <p>Build on OpenTelemetry GenAI conventions and local session data so teams can bring their own backend, dashboard, and retention model.</p>
-        </article>
-        <article class="card">
-          <h3>Agent Benchmarking</h3>
-          <p>Compare agents by real workflow outcomes: completion, retries, tool loops, failure rate, token burn, MCP dependency, and operational quality.</p>
+          <h3>From observability to better behavior</h3>
+          <p>Reflect closes the loop: observe sessions, detect repeatable patterns, propose skills, approve memories, and make the next run better than the last.</p>
         </article>
       </div>
     </section>
 
     <footer class="footer">
-      <span>Built on OpenTelemetry GenAI semantic conventions. Vendor-neutral. Open source (Apache 2.0).</span>
+      <span>Built on local session data and OpenTelemetry. Vendor-neutral. Open source under Apache 2.0.</span>
       <span><a href="./report.html?report=reports/showcase.json">Live dashboard</a> &middot; <a href="https://github.com/o11y-dev/reflect">GitHub</a></span>
     </footer>
   </main>
