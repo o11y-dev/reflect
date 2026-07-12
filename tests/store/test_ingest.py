@@ -437,6 +437,28 @@ def test_ingest_native_cursor_session_file_extracts_tool_and_mcp_calls(tmp_path)
         conn.close()
 
 
+def test_ingest_file_can_skip_unchanged_source_without_parsing(tmp_path, monkeypatch):
+    db = tmp_path / "reflect.db"
+    spans = tmp_path / "spans.jsonl"
+    _write_spans_file(spans)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        first = ingest_local_spans_file(conn, file_path=spans, skip_unchanged=True)
+
+        def fail_if_parsed(_path):
+            raise AssertionError("unchanged source should not be parsed")
+
+        monkeypatch.setattr("reflect.store.ingest._load_json_lines", fail_if_parsed)
+        second = ingest_local_spans_file(conn, file_path=spans, skip_unchanged=True)
+
+        assert first == {"inserted": 1, "skipped": 0, "unchanged": 0}
+        assert second == {"inserted": 0, "skipped": 0, "unchanged": 1}
+    finally:
+        conn.close()
+
+
 def test_ingest_otlp_logs_normalizes_gemini_records(tmp_path):
     db = tmp_path / "reflect.db"
     logs = tmp_path / "otel-logs.json"

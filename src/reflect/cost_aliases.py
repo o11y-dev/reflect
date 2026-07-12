@@ -29,6 +29,7 @@ def ensure_cost_aliases(
     *,
     alias_path: Path | None = None,
     pricing_table: PricingTable | None = None,
+    session_ids: set[str] | None = None,
 ) -> CostAliasResult:
     """Append missing model aliases inferred from observed SQL model names."""
 
@@ -36,7 +37,7 @@ def ensure_cost_aliases(
     target_path = alias_path or cfg.model_aliases_path
     table = pricing_table or load_pricing_table()
     existing_aliases = load_model_aliases(target_path)
-    observed_models = _observed_sql_models(conn)
+    observed_models = _observed_sql_models(conn, session_ids=session_ids)
 
     additions: dict[str, str] = {}
     resolved_count = 0
@@ -94,12 +95,23 @@ def infer_pricing_alias(model: str, pricing_table: PricingTable) -> str:
     return ""
 
 
-def _observed_sql_models(conn: sqlite3.Connection) -> list[str]:
+def _observed_sql_models(
+    conn: sqlite3.Connection,
+    *,
+    session_ids: set[str] | None = None,
+) -> list[str]:
     previous_row_factory = conn.row_factory
     conn.row_factory = sqlite3.Row
     try:
+        scoped_ids = sorted(session_ids) if session_ids is not None else None
+        if scoped_ids is not None and not scoped_ids:
+            return []
+        placeholders = ", ".join("?" for _ in scoped_ids or [])
+        llm_scope = f"AND session_id IN ({placeholders})" if scoped_ids is not None else ""
+        step_scope = f"AND session_id IN ({placeholders})" if scoped_ids is not None else ""
+        params = [*(scoped_ids or []), *(scoped_ids or [])]
         rows = conn.execute(
-            """
+            f"""
             SELECT model, SUM(count) AS count
             FROM (
               SELECT
@@ -107,6 +119,7 @@ def _observed_sql_models(conn: sqlite3.Connection) -> list[str]:
                 COUNT(*) AS count
               FROM llm_calls
               WHERE COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) IS NOT NULL
+                {llm_scope}
               GROUP BY model
               UNION ALL
               SELECT
@@ -120,12 +133,14 @@ def _observed_sql_models(conn: sqlite3.Connection) -> list[str]:
                 NULLIF(json_extract(raw_attrs_json, '$."gen_ai.response.model"'), ''),
                 NULLIF(json_extract(raw_attrs_json, '$."gen_ai.request.model"'), '')
               ) IS NOT NULL
+                {step_scope}
               GROUP BY model
             )
             WHERE model IS NOT NULL
             GROUP BY model
             ORDER BY count DESC, model ASC
-            """
+            """,
+            params,
         ).fetchall()
     finally:
         conn.row_factory = previous_row_factory

@@ -1198,3 +1198,50 @@ def rebuild_graph(conn: sqlite3.Connection) -> dict[str, int]:
         return {"nodes": nodes, "edges": edges}
     finally:
         conn.row_factory = previous_row_factory
+
+
+def refresh_graph(
+    conn: sqlite3.Connection,
+    session_ids: set[str],
+) -> dict[str, int]:
+    """Reuse the graph builder with high-volume canonical tables scoped to changed sessions."""
+    scoped_ids = sorted(str(session_id) for session_id in session_ids if session_id)
+    if not scoped_ids:
+        return {"nodes": 0, "edges": 0, "refreshed_sessions": 0}
+
+    conn.execute(
+        "CREATE TEMP TABLE IF NOT EXISTS reflect_changed_sessions(session_id TEXT PRIMARY KEY)"
+    )
+    conn.execute("DELETE FROM reflect_changed_sessions")
+    conn.executemany(
+        "INSERT INTO reflect_changed_sessions(session_id) VALUES (?)",
+        ((session_id,) for session_id in scoped_ids),
+    )
+    scoped_tables = {
+        "sessions": "id",
+        "steps": "session_id",
+        "tool_calls": "session_id",
+        "mcp_calls": "session_id",
+        "memories": "session_id",
+        "evidence": "session_id",
+    }
+    try:
+        for table, session_column in scoped_tables.items():
+            conn.execute(
+                f"""
+                CREATE TEMP VIEW {table} AS
+                SELECT source.*
+                FROM main.{table} source
+                JOIN reflect_changed_sessions changed
+                  ON changed.session_id = source.{session_column}
+                """
+            )
+        result = rebuild_graph(conn)
+        return {
+            **result,
+            "refreshed_sessions": len(scoped_ids),
+        }
+    finally:
+        for table in reversed(scoped_tables):
+            conn.execute(f"DROP VIEW IF EXISTS temp.{table}")
+        conn.execute("DROP TABLE IF EXISTS reflect_changed_sessions")

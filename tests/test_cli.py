@@ -8,6 +8,7 @@ import subprocess
 import tomllib
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import call, patch
 
 import pytest
@@ -284,6 +285,69 @@ class TestHelp:
         assert child[1] == 500
         assert child[2] > 0
 
+    def test_reprice_can_scope_updates_to_changed_sessions(self, tmp_path):
+        from reflect.store.migrate import migrate
+        from reflect.store.sqlite import connect_sqlite
+
+        db_path = tmp_path / "reflect.db"
+        conn = connect_sqlite(db_path)
+        try:
+            migrate(conn)
+            now = "2026-01-01T00:00:00+00:00"
+            conn.execute(
+                """
+                INSERT INTO agents(id, name, raw_json, created_at, updated_at)
+                VALUES ('agent-scope', 'codex', '{}', ?, ?)
+                """,
+                (now, now),
+            )
+            for index, session_id in enumerate(("sess-changed", "sess-untouched")):
+                step_id = f"step-{index}"
+                conn.execute(
+                    """
+                    INSERT INTO sessions(
+                      id, agent_id, started_at, ended_at, status, created_at, updated_at
+                    ) VALUES (?, 'agent-scope', ?, ?, 'ok', ?, ?)
+                    """,
+                    (session_id, now, now, now, now),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO steps(
+                      id, session_id, seq, type, started_at, ended_at, status,
+                      raw_attrs_json, created_at, updated_at
+                    ) VALUES (?, ?, 0, 'llm_call', ?, ?, 'ok',
+                      '{"gen_ai.request.model":"gpt-4o-mini"}', ?, ?)
+                    """,
+                    (step_id, session_id, now, now, now, now),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO llm_calls(
+                      id, step_id, session_id, request_model, input_tokens, output_tokens,
+                      raw_attrs_json, created_at, updated_at
+                    ) VALUES (?, ?, ?, 'gpt-4o-mini', 100, 50, '{}', ?, ?)
+                    """,
+                    (f"llm-{index}", step_id, session_id, now, now),
+                )
+            conn.commit()
+
+            core._reprice_sql_store(conn, session_ids={"sess-changed"})
+
+            costs = dict(conn.execute(
+                "SELECT session_id, estimated_cost_usd FROM llm_calls ORDER BY session_id"
+            ).fetchall())
+            session_costs = dict(conn.execute(
+                "SELECT id, estimated_cost_usd FROM sessions ORDER BY id"
+            ).fetchall())
+        finally:
+            conn.close()
+
+        assert costs["sess-changed"] > 0
+        assert costs["sess-untouched"] == 0
+        assert session_costs["sess-changed"] > 0
+        assert session_costs["sess-untouched"] == 0
+
     def test_db_ingest_spans_alias(self, runner, tmp_path):
         db_path = tmp_path / "reflect.db"
         spans_file = tmp_path / "spans.jsonl"
@@ -439,12 +503,13 @@ class TestHelp:
         assert "sessions=1" in result.output
 
 
-class TestTerminalMode:
-    def test_default_opens_browser_report(self, runner, otlp_file, tmp_path):
+class TestBrowserMode:
+    def test_foreground_opens_browser_report(self, runner, otlp_file, tmp_path):
         with patch("reflect.core._start_publish_server") as mock_server, \
              patch("reflect.core._render_terminal") as mock_render:
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
+                "--foreground",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -462,16 +527,17 @@ class TestTerminalMode:
         assert "No such option" in result.output
 
 
-class TestReportSubcommand:
+class TestBrowserReportCommandSurface:
     def test_report_subcommand_is_removed(self, runner):
         result = runner.invoke(main, ["report", "--help"])
         assert result.exit_code != 0
         assert "No such command" in result.output
 
-    def test_default_command_starts_server(self, runner, otlp_file, tmp_path):
+    def test_foreground_command_starts_server(self, runner, otlp_file, tmp_path):
         with patch("reflect.core._start_publish_server") as mock_server:
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
+                "--foreground",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -487,7 +553,30 @@ class TestReportSubcommand:
         finally:
             conn.close()
 
-    def test_default_report_ingests_inferred_otlp_logs(self, runner, tmp_path):
+    def test_existing_snapshot_refreshes_in_background(self, runner, otlp_file, tmp_path):
+        db_path = tmp_path / "reflect.db"
+        core._prepare_sql_report_db(
+            db_path,
+            otlp_traces=otlp_file,
+            include_native_sessions=False,
+        )
+        with patch("reflect.core._start_publish_server") as mock_server, \
+             patch("reflect.core._prepare_sql_report_db", return_value={"refreshed": True}) as mock_prepare:
+            result = runner.invoke(main, [
+                "--foreground",
+                "--otlp-traces", str(otlp_file),
+                "--db-path", str(db_path),
+            ])
+            assert result.exit_code == 0
+            assert "refreshing telemetry in the background" in result.output
+            mock_prepare.assert_not_called()
+            worker = mock_server.call_args.kwargs["preparation_worker"]
+            assert worker is not None
+            assert worker.start() is True
+            assert worker.wait(timeout=2) is True
+            mock_prepare.assert_called_once()
+
+    def test_foreground_report_ingests_inferred_otlp_logs(self, runner, tmp_path):
         otlp_file = tmp_path / "otel-traces.json"
         otlp_file.write_text(json.dumps({"resourceSpans": []}) + "\n", encoding="utf-8")
         (tmp_path / "otel-logs.json").write_text(json.dumps({
@@ -515,6 +604,7 @@ class TestReportSubcommand:
         with patch("reflect.core._start_publish_server"):
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
+                "--foreground",
                 "--otlp-traces", str(otlp_file),
                 "--db-path", str(db_path),
             ])
@@ -572,6 +662,7 @@ class TestReportSubcommand:
              patch("reflect.core._discover_rich_session_files", return_value=[("cursor", cursor_file)]):
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
+                "--foreground",
                 "--db-path", str(db_path),
             ])
 
@@ -605,6 +696,7 @@ class TestReportSubcommand:
         with patch("reflect.core._start_publish_server"):
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
+                "--foreground",
                 "--otlp-traces", str(otlp_file),
                 "--db-path", str(db_path),
             ])
@@ -645,7 +737,9 @@ class TestReportSubcommand:
         assert result.exit_code == 0
         mock_report.assert_called_once()
 
-    def test_report_with_dashboard_artifact_writes_json(self, runner, otlp_file, tmp_path):
+    def test_deprecated_dashboard_artifact_remains_compatible_until_removal(
+        self, runner, otlp_file, tmp_path
+    ):
         artifact_path = tmp_path / "docs" / "reports" / "latest.json"
         with patch("reflect.core._start_publish_server"):
             db_path = tmp_path / "reflect.db"
@@ -1077,6 +1171,7 @@ class TestNoDataNoCrash:
     def test_empty_dirs_no_crash(self, runner, tmp_path):
         with patch("reflect.core._start_publish_server"):
             result = runner.invoke(main, [
+                "--foreground",
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
                 "--db-path", str(tmp_path / "reflect.db"),
@@ -1085,10 +1180,11 @@ class TestNoDataNoCrash:
 
 
 class TestUpdateAdvisor:
-    def test_default_run_surfaces_startup_notice(self, runner, otlp_file, tmp_path):
+    def test_foreground_run_surfaces_startup_notice(self, runner, otlp_file, tmp_path):
         with patch("reflect.core._start_publish_server"), \
              patch("reflect.core._build_startup_update_notice", return_value="v9.9.9 is available. Run reflect doctor for details."):
             result = runner.invoke(main, [
+                "--foreground",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1338,6 +1434,99 @@ class TestUpdateAdvisor:
         finally:
             conn.close()
 
+    def test_prepare_sql_report_db_reuses_derived_state_for_unchanged_sources(
+        self,
+        tmp_path,
+        monkeypatch,
+        otlp_file,
+    ):
+        from reflect.store.migrate import migrate
+        from reflect.store.sqlite import connect_sqlite
+
+        db_path = tmp_path / "reflect.db"
+        otlp_traces = otlp_file
+        conn = connect_sqlite(db_path)
+        try:
+            migrate(conn)
+            conn.execute(
+                """
+                INSERT INTO source_ingestion_state(
+                  source_id, source_type, size_bytes, modified_ns, updated_at
+                ) VALUES (?, 'otlp_traces_json', ?, ?, '2026-01-01T00:00:00+00:00')
+                """,
+                (
+                    str(otlp_traces),
+                    otlp_traces.stat().st_size,
+                    otlp_traces.stat().st_mtime_ns,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        monkeypatch.setattr(core, "_infer_otlp_logs_file", lambda *_args, **_kwargs: None)
+
+        def fail_if_rebuilt(*_args, **_kwargs):
+            raise AssertionError("unchanged preparation should reuse derived state")
+
+        monkeypatch.setattr(core, "_ensure_sql_costs", fail_if_rebuilt)
+        monkeypatch.setattr("reflect.store.graph_normalize.rebuild_graph", fail_if_rebuilt)
+        monkeypatch.setattr("reflect.store.rollups.rebuild_rollups", fail_if_rebuilt)
+
+        result = core._prepare_sql_report_db(
+            db_path,
+            otlp_traces=otlp_traces,
+            include_native_sessions=False,
+        )
+
+        assert result["ingest_sources"]["otlp_traces"]["unchanged"] == 1
+        assert result["normalize"] == {"processed": 0, "failed": 0, "skipped": 0}
+        assert result["graph"]["skipped"] == 1
+        assert result["rollups"]["skipped"] == 1
+
+    def test_prepare_sql_report_db_refreshes_only_changed_session_rollups(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        db_path = tmp_path / "reflect.db"
+        otlp_traces = tmp_path / "otel-traces.json"
+        initial_span = make_span(
+            "UserPromptSubmit",
+            session="sess-incremental",
+            input_tokens=100,
+            output_tokens=50,
+        )
+        otlp_traces.write_text(wrap_otlp([initial_span]) + "\n", encoding="utf-8")
+        monkeypatch.setattr(core, "_infer_otlp_logs_file", lambda *_args, **_kwargs: None)
+
+        core._prepare_sql_report_db(
+            db_path,
+            otlp_traces=otlp_traces,
+            include_native_sessions=False,
+        )
+        changed_span = make_span(
+            "PreToolUse",
+            session="sess-incremental",
+            tool="Read",
+            start_ns=initial_span["start_time_ns"] + 1_000_000_000,
+        )
+        otlp_traces.write_text(
+            wrap_otlp([initial_span, changed_span]) + "\n",
+            encoding="utf-8",
+        )
+
+        result = core._prepare_sql_report_db(
+            db_path,
+            otlp_traces=otlp_traces,
+            include_native_sessions=False,
+        )
+
+        assert result["ingest"]["inserted"] == 1
+        assert result["normalize"]["processed"] == 1
+        assert result["graph"]["refreshed_sessions"] == 1
+        assert result["rollups"]["refreshed_sessions"] == 1
+
     def test_update_apply_uses_pipx_upgrade(self, runner):
         advisor = {
             "release": {
@@ -1529,18 +1718,40 @@ class TestUpdateAdvisor:
         assert drift is not None
         assert "unsupported value" in drift["summary"]
 
-    def test_publish_url_for_artifact_uses_docs_relative_ref(self, tmp_path):
-        docs_dir = tmp_path / "docs"
-        artifact_path = docs_dir / "reports" / "latest.json"
-        artifact_path.parent.mkdir(parents=True)
-        artifact_path.write_text("{}")
-
-        publish_url = core._publish_url_for_artifact(artifact_path)
-
-        assert publish_url == f"{(docs_dir / 'index.html').resolve().as_uri()}?report=reports/latest.json"
-
-
 class TestDoctor:
+    def test_doctor_reports_managed_report_server_status(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        (reflect_home / "state").mkdir(parents=True)
+        hook_home.mkdir(parents=True)
+        advisor = {
+            "release": {
+                "current_version": "1.0.0",
+                "latest_version": None,
+                "checked_at": None,
+                "update_available": False,
+                "source": "unknown",
+            },
+            "local_issues": [],
+        }
+        report_status = SimpleNamespace(
+            running=True,
+            pid=4321,
+            port_in_use=True,
+            url="http://127.0.0.1:8877/?report=api/data",
+        )
+        daemon = SimpleNamespace(status=lambda: report_status)
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core._collect_update_advisor", return_value=advisor), \
+             patch("reflect.core._report_server_daemon", return_value=daemon):
+            result = runner.invoke(main, ["doctor"])
+
+        assert result.exit_code == 0
+        assert "report server" in result.output
+        assert "running (PID 4321)" in result.output
+        assert "127.0.0.1:8877" in result.output
+
     def test_doctor_reports_detected_agents_and_files(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
         hook_home = tmp_path / ".otel-hook-home"

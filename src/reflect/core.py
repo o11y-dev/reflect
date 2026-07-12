@@ -651,23 +651,6 @@ def _bundled_reflect_skill_dir() -> Path | None:
     return None
 
 
-def _default_publish_artifact_path() -> Path:
-    docs_root = Path.cwd() / "reflect" / "docs"
-    if not docs_root.exists():
-        docs_root = Path.cwd() / "docs"
-    return docs_root / "reports" / "latest.json"
-
-
-def _publish_url_for_artifact(path: Path) -> str | None:
-    report_ref = _artifact_report_ref(path)
-    if not report_ref:
-        return None
-    for parent in [path.resolve().parent, *path.resolve().parents]:
-        if parent.name == "docs":
-            return f"{(parent / 'index.html').resolve().as_uri()}?report={report_ref}"
-    return None
-
-
 def _detect_skill_drift(agents: list[dict]) -> dict | None:
     source_dir = _bundled_reflect_skill_dir()
     if source_dir is None:
@@ -930,6 +913,7 @@ def _resolve_and_analyze(
     is_flag=True,
     help="Run with bundled sample data. Great for first-time users or screenshots.",
 )
+@click.option("--foreground", is_flag=True, help="Keep the browser report server attached to this terminal.")
 @click.option("--day", "time_range", flag_value="day", help="Analyze last 24 hours.")
 @click.option("--week", "time_range", flag_value="week", default=True, help="Analyze last 7 days (default).")
 @click.option("--month", "time_range", flag_value="month", help="Analyze last 30 days.")
@@ -944,10 +928,15 @@ def main(
     dashboard_artifact: Path | None,
     db_path: Path,
     demo: bool,
+    foreground: bool,
     time_range: str,
 ) -> None:
     """Open the local Reflect browser report."""
     if ctx.invoked_subcommand is not None:
+        return
+
+    if not foreground and output is None and dashboard_artifact is None and not demo:
+        _start_background_report_server(db_path=db_path, otlp_traces=otlp_traces)
         return
 
     _run_browser_report(
@@ -962,9 +951,120 @@ def main(
     )
 
 
+def _report_server_daemon(*, db_path: Path, otlp_traces: Path | None = None):
+    from reflect.report_server import ReportServerConfig, ReportServerDaemon
+
+    port = int(os.environ.get("REFLECT_PORT", "8765"))
+    config = ReportServerConfig(
+        port=port,
+        db_path=db_path.expanduser().resolve(),
+        otlp_traces=otlp_traces.expanduser().resolve() if otlp_traces is not None else None,
+    )
+    return ReportServerDaemon(config, state_dir=REFLECT_HOME / "state")
+
+
+def _start_background_report_server(*, db_path: Path, otlp_traces: Path | None = None) -> None:
+    import webbrowser
+
+    from rich.console import Console
+
+    daemon = _report_server_daemon(db_path=db_path, otlp_traces=otlp_traces)
+    console = Console(force_terminal=True)
+    try:
+        pid, started = daemon.start()
+    except RuntimeError as exc:
+        status = daemon.status()
+        console.print(f"[yellow]{exc}.[/]")
+        console.print(f"  Existing address: [link={status.url}]{status.url}[/link]")
+        console.print("  Choose another port with REFLECT_PORT=<port> reflect")
+        return
+    status = daemon.status()
+    if started:
+        console.print(f"[green]\u2713[/] Reflect dashboard started in the background (PID {pid})")
+    else:
+        console.print(f"[green]\u2713[/] Reflect dashboard is already running (PID {pid})")
+        webbrowser.open(status.url)
+    console.print(f"  Dashboard: [link={status.url}]{status.url}[/link]")
+    console.print(f"  Log:       {status.log_file}")
+    console.print("  Manage:    reflect server status | reflect server stop")
+
+
 # ---------------------------------------------------------------------------
 # Report command
 # ---------------------------------------------------------------------------
+
+
+def _has_sql_report_snapshot(db_path: Path) -> bool:
+    if not db_path.exists():
+        return False
+    try:
+        uri = f"file:{db_path.expanduser().resolve()}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True)
+        try:
+            tables = {
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            if not {"sessions", "session_rollups"} <= tables:
+                return False
+            return bool(conn.execute("SELECT 1 FROM session_rollups LIMIT 1").fetchone())
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+
+
+def _render_preparation_summary(console: Console, preparation: dict[str, object]) -> None:
+    ingest = preparation["ingest"]
+    normalize = preparation["normalize"]
+    rollups = preparation["rollups"]
+    assert isinstance(ingest, dict)
+    assert isinstance(normalize, dict)
+    assert isinstance(rollups, dict)
+    ingest_sources = preparation.get("ingest_sources") or {}
+    assert isinstance(ingest_sources, dict)
+    summary = Table.grid(padding=(0, 2))
+    summary.add_column(style="bold")
+    summary.add_column(justify="right")
+    summary.add_row("Inserted", f"{int(ingest['inserted']):,}")
+    summary.add_row("Skipped", f"{int(ingest['skipped']):,}")
+    summary.add_row("Normalized", f"{int(normalize['processed']):,}")
+    summary.add_row("Sessions", f"{int(rollups['session_rollups']):,}")
+    if ingest_sources:
+        summary.add_row("", "")
+        for name, result in ingest_sources.items():
+            assert isinstance(result, dict)
+            source_type = str(result.get("source_type") or "")
+            native_events = sum(
+                int(counts.get("native_events") or 0)
+                for counts in (result.get("agents") or {}).values()
+            )
+            hook_events = sum(
+                int(counts.get("hook_events") or 0)
+                for counts in (result.get("agents") or {}).values()
+            )
+            source_detail = (
+                f"{int(result['inserted']):,} inserted / "
+                f"{int(result['skipped']):,} skipped"
+            )
+            if source_type in {"otlp_traces_json", "otlp_logs_json"}:
+                source_detail += f" / {native_events:,} native / {hook_events:,} hook event(s)"
+            elif hook_events:
+                source_detail += f" / {hook_events:,} hook event(s)"
+            summary.add_row(str(name).replace("_", " ").title(), source_detail)
+            for agent, counts in sorted((result.get("agents") or {}).items()):
+                agent_detail = f"{int(counts['events']):,} event(s)"
+                if source_type in {"otlp_traces_json", "otlp_logs_json"}:
+                    agent_detail += (
+                        f" / {int(counts.get('native_events') or 0):,} native"
+                        f" / {int(counts.get('hook_events') or 0):,} hook"
+                    )
+                elif counts.get("hook_events"):
+                    agent_detail += f" / {int(counts['hook_events']):,} hook"
+                summary.add_row(f"  {agent}", agent_detail)
+    console.print(Panel(summary, title="[bold orange3]REFLECT[/bold orange3]", border_style="orange3"))
 
 
 def _run_browser_report(
@@ -1000,55 +1100,31 @@ def _run_browser_report(
             default_otlp is not None
             and otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
         )
-    with console.status("[bold orange3]reflecting...[/bold orange3]", spinner="dots"):
-        preparation = _prepare_sql_report_db(
-            db_path,
-            otlp_traces=otlp_traces,
-            include_native_sessions=include_native_sessions,
+    preparation_worker = None
+    requires_fresh_snapshot = bool(
+        output is not None
+        or dashboard_artifact is not None
+        or not _has_sql_report_snapshot(db_path)
+    )
+    if requires_fresh_snapshot:
+        with console.status("[bold orange3]reflecting...[/bold orange3]", spinner="dots"):
+            preparation = _prepare_sql_report_db(
+                db_path,
+                otlp_traces=otlp_traces,
+                include_native_sessions=include_native_sessions,
+            )
+        _render_preparation_summary(console, preparation)
+    else:
+        from reflect.preparation import BackgroundPreparationWorker
+
+        preparation_worker = BackgroundPreparationWorker(
+            lambda: _prepare_sql_report_db(
+                db_path,
+                otlp_traces=otlp_traces,
+                include_native_sessions=include_native_sessions,
+            )
         )
-    ingest_sources = preparation.get("ingest_sources") or {}
-    summary = Table.grid(padding=(0, 2))
-    summary.add_column(style="bold")
-    summary.add_column(justify="right")
-    summary.add_row("Inserted", f"{preparation['ingest']['inserted']:,}")
-    summary.add_row("Skipped", f"{preparation['ingest']['skipped']:,}")
-    summary.add_row("Normalized", f"{preparation['normalize']['processed']:,}")
-    summary.add_row("Sessions", f"{preparation['rollups']['session_rollups']:,}")
-    if ingest_sources:
-        summary.add_row("", "")
-        for name, result in ingest_sources.items():
-            source_type = str(result.get("source_type") or "")
-            native_events = sum(
-                int(counts.get("native_events") or 0)
-                for counts in (result.get("agents") or {}).values()
-            )
-            hook_events = sum(
-                int(counts.get("hook_events") or 0)
-                for counts in (result.get("agents") or {}).values()
-            )
-            source_detail = f"{result['inserted']:,} inserted / {result['skipped']:,} skipped"
-            if source_type in {"otlp_traces_json", "otlp_logs_json"}:
-                source_detail += f" / {native_events:,} native / {hook_events:,} hook event(s)"
-            elif hook_events:
-                source_detail += f" / {hook_events:,} hook event(s)"
-            summary.add_row(
-                name.replace("_", " ").title(),
-                source_detail,
-            )
-            for agent, counts in sorted((result.get("agents") or {}).items()):
-                agent_detail = f"{counts['events']:,} event(s)"
-                if source_type in {"otlp_traces_json", "otlp_logs_json"}:
-                    agent_detail += (
-                        f" / {int(counts.get('native_events') or 0):,} native"
-                        f" / {int(counts.get('hook_events') or 0):,} hook"
-                    )
-                elif counts.get("hook_events"):
-                    agent_detail += f"{' / ' if agent_detail else ''}{counts['hook_events']:,} hook"
-                summary.add_row(
-                    f"  {agent}",
-                    agent_detail,
-                )
-    console.print(Panel(summary, title="[bold orange3]REFLECT[/bold orange3]", border_style="orange3"))
+        click.echo("Serving the current snapshot; refreshing telemetry in the background.")
 
     stats = TelemetryStats(
         session_files=0,
@@ -1076,7 +1152,12 @@ def _run_browser_report(
             _json_stdlib.dumps(_sql_dashboard_payload(db_path)),
             encoding="utf-8",
         )
-    _start_publish_server(stats, db_path=db_path, sql_only=False)
+    _start_publish_server(
+        stats,
+        db_path=db_path,
+        sql_only=False,
+        preparation_worker=preparation_worker,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2033,6 +2114,21 @@ def _run_doctor() -> None:
         "otlp gateway",
         _status_markup(gw_pid is not None, present=f"running (PID {gw_pid})", missing="stopped"),
     )
+    try:
+        report_server = _report_server_daemon(
+            db_path=REFLECT_HOME / "state" / "reflect.db"
+        ).status()
+    except (OSError, ValueError):
+        report_server = None
+    if report_server is not None and report_server.running:
+        report_server_status = (
+            f"[green]running (PID {report_server.pid})[/]  [dim]{report_server.url}[/]"
+        )
+    elif report_server is not None and report_server.port_in_use:
+        report_server_status = f"[yellow]unmanaged listener[/]  [dim]{report_server.url}[/]"
+    else:
+        report_server_status = "[red]stopped[/]"
+    summary.add_row("report server", report_server_status)
     console.print(Panel(summary, title="Overview", border_style="blue"))
     _render_update_advisor_panel(console, update_advisor)
 
@@ -2307,6 +2403,92 @@ def update(apply: bool) -> None:
         if advisor["local_issues"]:
             console.print("For local hook or skill drift, run [bold]reflect setup[/] to refresh global wiring.")
     console.print()
+
+
+@main.group(invoke_without_command=True)
+@click.option("--port", type=int, default=8765, help="Dashboard listen port (default 8765).")
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+    help="SQLite store used by the dashboard.",
+)
+@click.option(
+    "--otlp-traces",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="OTLP JSON traces file to ingest during refresh.",
+)
+@click.pass_context
+def server(ctx: click.Context, port: int, db_path: Path, otlp_traces: Path | None) -> None:
+    """Manage the background browser report server."""
+    ctx.ensure_object(dict)
+    ctx.obj.update({"port": port, "db_path": db_path, "otlp_traces": otlp_traces})
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(server_start)
+
+
+@server.command("start")
+@click.pass_context
+def server_start(ctx: click.Context) -> None:
+    """Start or open the background browser report server."""
+    previous_port = os.environ.get("REFLECT_PORT")
+    os.environ["REFLECT_PORT"] = str(ctx.obj["port"])
+    try:
+        _start_background_report_server(
+            db_path=ctx.obj["db_path"],
+            otlp_traces=ctx.obj["otlp_traces"],
+        )
+    finally:
+        if previous_port is None:
+            os.environ.pop("REFLECT_PORT", None)
+        else:
+            os.environ["REFLECT_PORT"] = previous_port
+
+
+@server.command("stop")
+@click.pass_context
+def server_stop(ctx: click.Context) -> None:
+    """Stop the background browser report server."""
+    from rich.console import Console
+
+    previous_port = os.environ.get("REFLECT_PORT")
+    os.environ["REFLECT_PORT"] = str(ctx.obj["port"])
+    try:
+        daemon = _report_server_daemon(db_path=ctx.obj["db_path"])
+        stopped = daemon.stop()
+    finally:
+        if previous_port is None:
+            os.environ.pop("REFLECT_PORT", None)
+        else:
+            os.environ["REFLECT_PORT"] = previous_port
+    console = Console(force_terminal=True)
+    console.print("[green]\u2713[/] Reflect dashboard stopped" if stopped else "[yellow]Reflect dashboard is not running[/]")
+
+
+@server.command("status")
+@click.pass_context
+def server_status(ctx: click.Context) -> None:
+    """Show browser report server status."""
+    from rich.console import Console
+
+    previous_port = os.environ.get("REFLECT_PORT")
+    os.environ["REFLECT_PORT"] = str(ctx.obj["port"])
+    try:
+        status = _report_server_daemon(db_path=ctx.obj["db_path"]).status()
+    finally:
+        if previous_port is None:
+            os.environ.pop("REFLECT_PORT", None)
+        else:
+            os.environ["REFLECT_PORT"] = previous_port
+    console = Console(force_terminal=True)
+    if status.running:
+        console.print(f"[green]running[/] (PID {status.pid})")
+    else:
+        console.print("[red]stopped[/]")
+    console.print(f"  dashboard: {status.url}")
+    console.print(f"  database:  {status.db_path}")
+    console.print(f"  log:       {status.log_file}")
 
 
 @main.group(invoke_without_command=True)
@@ -2722,11 +2904,24 @@ def _ingest_into_db(
     return result
 
 
-def _ensure_sql_costs(conn, *, alias_path: Path | None = None):
+def _ensure_sql_costs(
+    conn,
+    *,
+    alias_path: Path | None = None,
+    session_ids: set[str] | None = None,
+):
     from reflect.cost_aliases import ensure_cost_aliases
 
-    alias_result = ensure_cost_aliases(conn, alias_path=alias_path)
-    _reprice_sql_store(conn, alias_path=alias_result.alias_path)
+    alias_result = ensure_cost_aliases(
+        conn,
+        alias_path=alias_path,
+        session_ids=session_ids,
+    )
+    _reprice_sql_store(
+        conn,
+        alias_path=alias_result.alias_path,
+        session_ids=session_ids,
+    )
     return alias_result
 
 
@@ -2742,15 +2937,15 @@ def _prepare_sql_report_db(
     include_native_sessions: bool = False,
 ) -> dict[str, object]:
     from reflect.store.cursor_adapter import apply_cursor_transcript_usage_estimates
-    from reflect.store.graph_normalize import rebuild_graph
+    from reflect.store.graph_normalize import rebuild_graph, refresh_graph
     from reflect.store.ingest import (
         ingest_native_session_file,
         ingest_otlp_logs_file,
         ingest_otlp_traces_file,
     )
     from reflect.store.migrate import migrate
-    from reflect.store.normalize import normalize_pending_raw_events, repair_telemetry_provenance
-    from reflect.store.rollups import rebuild_rollups
+    from reflect.store.normalize import normalize_pending_raw_events
+    from reflect.store.rollups import rebuild_rollups, refresh_rollups
     from reflect.store.sqlite import connect_sqlite
 
     conn = connect_sqlite(db_path)
@@ -2762,7 +2957,11 @@ def _prepare_sql_report_db(
         source_types: dict[str, str] = {}
         cursor_native_files: list[Path] = []
         if otlp_traces is not None and otlp_traces.exists():
-            traces_result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
+            traces_result = ingest_otlp_traces_file(
+                conn,
+                file_path=otlp_traces,
+                skip_unchanged=True,
+            )
             ingest_sources["otlp_traces"] = traces_result
             ingest_sources["otlp_traces"]["source_type"] = "otlp_traces_json"
             source_refs["otlp_traces"] = [str(otlp_traces)]
@@ -2771,7 +2970,11 @@ def _prepare_sql_report_db(
             ingest_result["skipped"] += traces_result["skipped"]
             otlp_logs = _infer_otlp_logs_file(otlp_traces)
             if otlp_logs is not None and otlp_logs.exists():
-                logs_result = ingest_otlp_logs_file(conn, file_path=otlp_logs)
+                logs_result = ingest_otlp_logs_file(
+                    conn,
+                    file_path=otlp_logs,
+                    skip_unchanged=True,
+                )
                 ingest_sources["otlp_logs"] = logs_result
                 ingest_sources["otlp_logs"]["source_type"] = "otlp_logs_json"
                 source_refs["otlp_logs"] = [str(otlp_logs)]
@@ -2779,45 +2982,94 @@ def _prepare_sql_report_db(
                 ingest_result["inserted"] += logs_result["inserted"]
                 ingest_result["skipped"] += logs_result["skipped"]
         if include_native_sessions:
-            native_result = {"inserted": 0, "skipped": 0}
+            native_result = {"inserted": 0, "skipped": 0, "unchanged": 0}
             native_refs: list[str] = []
             for agent, session_file in _discover_rich_session_files():
                 source_ref = f"native_session:{agent}:{session_file}"
                 native_refs.append(source_ref)
-                if agent == "cursor":
-                    cursor_native_files.append(session_file)
                 result = ingest_native_session_file(
                     conn,
                     file_path=session_file,
                     agent=agent,
                     source_id=source_ref,
                     skip_existing_sessions=True,
+                    skip_unchanged=True,
                 )
                 native_result["inserted"] += result["inserted"]
                 native_result["skipped"] += result["skipped"]
-            if native_result["inserted"] or native_result["skipped"]:
+                native_result["unchanged"] += result.get("unchanged", 0)
+                if agent == "cursor" and not result.get("unchanged"):
+                    cursor_native_files.append(session_file)
+            if any(native_result.values()):
                 ingest_sources["native_sessions"] = native_result
                 ingest_sources["native_sessions"]["source_type"] = "native_session"
                 source_refs["native_sessions"] = native_refs
                 source_types["native_sessions"] = "native_session"
                 ingest_result["inserted"] += native_result["inserted"]
                 ingest_result["skipped"] += native_result["skipped"]
-        repair_telemetry_provenance(conn)
+        needs_normalize = bool(
+            ingest_result["inserted"]
+            or conn.execute(
+                "SELECT 1 FROM raw_events WHERE normalized_status = 'pending' LIMIT 1"
+            ).fetchone()
+            or conn.execute(
+                "SELECT 1 FROM raw_events WHERE origin_kind IS NULL LIMIT 1"
+            ).fetchone()
+        )
+        changed_session_ids: set[str] = set()
+        normalize_result = (
+            normalize_pending_raw_events(
+                conn,
+                changed_session_ids=changed_session_ids,
+            )
+            if needs_normalize
+            else {"processed": 0, "failed": 0, "skipped": 0}
+        )
         for name, refs in source_refs.items():
             if name in ingest_sources:
+                if ingest_sources[name].get("unchanged"):
+                    continue
                 source_type = source_types.get(name, "")
                 ingest_sources[name]["agents"] = _raw_event_agent_breakdown(
                     conn, source_ids_by_type={source_type: refs} if source_type else {}
                 )
-        normalize_result = normalize_pending_raw_events(conn)
         cursor_adapter_result = (
             apply_cursor_transcript_usage_estimates(conn, cursor_native_files)
             if cursor_native_files
             else {"updated": 0, "skipped": 0, "missing": 0}
         )
-        _ensure_sql_costs(conn)
-        graph_result = rebuild_graph(conn)
-        rollup_result = rebuild_rollups(conn)
+        session_count = int(conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0])
+        rollup_count = int(conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0])
+        graph_count = int(conn.execute("SELECT COUNT(*) FROM graph_nodes").fetchone()[0])
+        canonical_changed = bool(
+            normalize_result["processed"]
+            or cursor_adapter_result["updated"]
+        )
+        derived_state_missing = bool(
+            session_count != rollup_count
+            or (session_count and not graph_count)
+        )
+        incremental_refresh = bool(
+            canonical_changed
+            and 0 < len(changed_session_ids) <= 400
+            and not cursor_adapter_result["updated"]
+        )
+        if derived_state_missing or (canonical_changed and not incremental_refresh):
+            _ensure_sql_costs(conn)
+            graph_result = rebuild_graph(conn)
+            rollup_result = rebuild_rollups(conn)
+        elif incremental_refresh:
+            _ensure_sql_costs(conn, session_ids=changed_session_ids)
+            graph_result = refresh_graph(conn, changed_session_ids)
+            rollup_result = refresh_rollups(conn, changed_session_ids)
+        else:
+            graph_result = {"nodes": 0, "edges": 0, "skipped": 1}
+            rollup_result = {
+                "session_rollups": rollup_count,
+                "daily_rollups": int(conn.execute("SELECT COUNT(*) FROM daily_rollups").fetchone()[0]),
+                "tool_rollups": int(conn.execute("SELECT COUNT(*) FROM tool_rollups").fetchone()[0]),
+                "skipped": 1,
+            }
     finally:
         conn.close()
     return {
@@ -2872,7 +3124,12 @@ def _raw_event_agent_breakdown(conn, *, source_ids_by_type: dict[str, list[str]]
     )
 
 
-def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
+def _reprice_sql_store(
+    conn,
+    *,
+    alias_path: Path | None = None,
+    session_ids: set[str] | None = None,
+) -> None:
     from reflect.config import load_model_aliases
     from reflect.pricing import calculate_cost, load_pricing_table
 
@@ -2883,8 +3140,30 @@ def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
     previous_row_factory = conn.row_factory
     conn.row_factory = sqlite3.Row
     try:
+        scoped_ids = sorted(session_ids) if session_ids is not None else None
+        if scoped_ids is not None and not scoped_ids:
+            return
+        placeholders = ", ".join("?" for _ in scoped_ids or [])
+        llm_scope = f"WHERE session_id IN ({placeholders})" if scoped_ids is not None else ""
+        selected_session_scope = f"WHERE id IN ({placeholders})" if scoped_ids is not None else ""
+        selected_session_rows = conn.execute(
+            f"SELECT id, source_ref FROM sessions {selected_session_scope}",
+            scoped_ids or [],
+        ).fetchall()
+        model_scope_ids = set(scoped_ids or [])
+        for selected_session in selected_session_rows:
+            parent_id = _cursor_native_parent_session_id(str(selected_session["source_ref"] or ""))
+            if parent_id:
+                model_scope_ids.add(parent_id)
+        model_scope_values = sorted(model_scope_ids)
+        model_placeholders = ", ".join("?" for _ in model_scope_values)
+        model_scope = (
+            f"AND session_id IN ({model_placeholders})"
+            if scoped_ids is not None
+            else ""
+        )
         rows = conn.execute(
-            """
+            f"""
             SELECT
               id,
               session_id,
@@ -2895,10 +3174,12 @@ def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
               cache_read_input_tokens,
               reasoning_output_tokens
             FROM llm_calls
-            """
+            {llm_scope}
+            """,
+            scoped_ids or [],
         ).fetchall()
         model_rows = conn.execute(
-            """
+            f"""
             SELECT
               session_id,
               COALESCE(
@@ -2911,9 +3192,11 @@ def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
               NULLIF(json_extract(raw_attrs_json, '$."gen_ai.response.model"'), ''),
               NULLIF(json_extract(raw_attrs_json, '$."gen_ai.request.model"'), '')
             ) IS NOT NULL
+              {model_scope}
             GROUP BY session_id, model
             ORDER BY session_id ASC, count DESC
-            """
+            """,
+            model_scope_values if scoped_ids is not None else [],
         ).fetchall()
         session_models: dict[str, str] = {}
         for model_row in model_rows:
@@ -2984,8 +3267,9 @@ def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
                 ),
             )
         timestamp = datetime.now(tz=UTC).isoformat()
+        session_scope = f"AND id IN ({placeholders})" if scoped_ids is not None else ""
         session_level_rows = conn.execute(
-            """
+            f"""
             SELECT
               id,
               source_ref,
@@ -3000,7 +3284,9 @@ def _reprice_sql_store(conn, *, alias_path: Path | None = None) -> None:
                 + COALESCE(cache_creation_tokens, 0)
                 + COALESCE(cache_read_tokens, 0)
                 + COALESCE(reasoning_tokens, 0) > 0
-            """
+              {session_scope}
+            """,
+            scoped_ids or [],
         ).fetchall()
         for session_row in session_level_rows:
             session_id = session_row["id"]
