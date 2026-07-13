@@ -155,7 +155,7 @@ def test_dashboard_html_builds_agent_filters_from_data_without_allowlist(path: P
     assert "Object.keys(D.models_by_count || {})" in text
     assert "D.session_list_total || sessions.length || D.unique_sessions" in text
     assert "fetch(reportUrlWithCurrentFilters()" in text
-    assert "['q','agents','agent','model','status','range','session']" in text
+    assert "['q','agents','agent','model','status','range','session','tab']" in text
     assert "scheduleDashboardReload();" in text
     assert "urlParams.delete('session');" in text
     assert "selectedIdx = filtered[0]._idx;" in text

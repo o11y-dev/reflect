@@ -2113,8 +2113,6 @@ def _sql_report_payload(
     offset: int = 0,
     include_tabs: bool = True,
 ) -> dict[str, object]:
-    from reflect.store.migrate import migrate
-    from reflect.store.normalize import repair_telemetry_provenance
     from reflect.store.sqlite import connect_sqlite
     from reflect.views.overview import build_overview
     from reflect.views.report_tabs import build_report_tabs
@@ -2122,11 +2120,41 @@ def _sql_report_payload(
 
     conn = connect_sqlite(db_path)
     try:
-        migrate(conn)
-        repair_telemetry_provenance(conn)
+        if include_tabs:
+            overview = build_overview(conn).model_dump()
+        else:
+            totals = conn.execute(
+                """
+                SELECT
+                  COUNT(*),
+                  COUNT(DISTINCT NULLIF(agent, '')),
+                  COALESCE(SUM(tool_call_count), 0),
+                  COALESCE(SUM(input_tokens), 0),
+                  COALESCE(SUM(output_tokens), 0),
+                  COALESCE(SUM(total_cost), 0),
+                  COALESCE(SUM(error_count), 0)
+                FROM session_rollups
+                """
+            ).fetchone()
+            overview = {
+                "session_count": totals[0],
+                "agent_count": totals[1],
+                "model_count": 0,
+                "tool_call_count": totals[2],
+                "input_tokens": totals[3],
+                "output_tokens": totals[4],
+                "estimated_cost_usd": totals[5],
+                "failure_count": totals[6],
+                "recovered_failure_count": 0,
+                "source_provenance": [],
+                "agent_cost_over_time": [],
+                "top_sessions": [],
+                "top_models": [],
+                "top_tools": [],
+            }
         return {
             "db_path": str(db_path),
-            "overview": build_overview(conn).model_dump(),
+            "overview": overview,
             "sessions": list_sessions(conn, limit=limit, offset=offset).model_dump(),
             "tabs": (
                 build_report_tabs(conn).model_dump()
@@ -2206,14 +2234,12 @@ def _filter_sql_session_rows(
 def _sql_session_primary_models(db_path: Path, session_ids: set[str]) -> dict[str, str]:
     if not session_ids:
         return {}
-    from reflect.store.migrate import migrate
     from reflect.store.sqlite import connect_sqlite
 
     ids = sorted(session_ids)
     placeholders = ", ".join("?" for _ in ids)
     conn = connect_sqlite(db_path)
     try:
-        migrate(conn)
         rows = _dict_rows(conn.execute(
             f"""
             SELECT
@@ -2241,14 +2267,12 @@ def _sql_session_primary_models(db_path: Path, session_ids: set[str]) -> dict[st
 def _sql_session_first_prompts(db_path: Path, session_ids: set[str]) -> dict[str, str]:
     if not session_ids:
         return {}
-    from reflect.store.migrate import migrate
     from reflect.store.sqlite import connect_sqlite
 
     ids = sorted(session_ids)
     placeholders = ", ".join("?" for _ in ids)
     conn = connect_sqlite(db_path)
     try:
-        migrate(conn)
         rows = _dict_rows(conn.execute(
             f"""
             SELECT session_id, raw_attrs_json
@@ -2372,9 +2396,8 @@ def _sql_dashboard_compat_payload(
     session_ids: set[str] | None = None,
     include_heavy: bool = True,
     include_base: bool = True,
+    base_tab_names: set[str] | None = None,
 ) -> dict[str, object]:
-    from reflect.store.migrate import migrate
-    from reflect.store.normalize import repair_telemetry_provenance
     from reflect.store.sqlite import connect_sqlite
     from reflect.views.overview import list_source_provenance
     from reflect.views.report_tabs import build_report_tab, build_report_tabs
@@ -2384,31 +2407,30 @@ def _sql_dashboard_compat_payload(
 
     conn = connect_sqlite(db_path)
     try:
-        migrate(conn)
         selected_session_ids = set(scoped_ids) if scoped else None
         if not include_base:
             tab_views = _empty_sql_lazy_tabs()
             source_provenance = []
         elif include_heavy:
-            repair_telemetry_provenance(conn)
             tab_views = build_report_tabs(conn, session_ids=selected_session_ids).model_dump()
             source_provenance = list_source_provenance(
                 conn,
                 session_ids=selected_session_ids,
             )
         else:
-            repair_telemetry_provenance(conn)
             tab_views = _empty_sql_lazy_tabs()
-            for tab_name in ("activity", "models", "costs", "tools", "mcp", "agents"):
+            selected_base_tabs = (
+                base_tab_names
+                if base_tab_names is not None
+                else {"activity", "models", "costs", "tools", "mcp", "agents"}
+            )
+            for tab_name in selected_base_tabs:
                 tab_views[tab_name] = build_report_tab(
                     conn,
                     tab_name,
                     session_ids=selected_session_ids,
                 )
-            source_provenance = list_source_provenance(
-                conn,
-                session_ids=selected_session_ids,
-            )
+            source_provenance = []
     finally:
         conn.close()
 
@@ -3345,6 +3367,8 @@ def _sql_dashboard_payload(
     range_name: str = "all",
     lazy_heavy_tabs: bool = False,
     lazy_all_tabs: bool = False,
+    include_comparison: bool = True,
+    base_tab_names: set[str] | None = None,
 ) -> dict[str, object]:
     has_scope_filter = bool(q or session_id or agents or model != "all" or status != "all" or range_name != "all")
     sqlite_payload = _sql_report_payload(
@@ -3356,13 +3380,21 @@ def _sql_dashboard_payload(
     overview = sqlite_payload["overview"]
     sessions_page = sqlite_payload["sessions"]
     session_rows = sessions_page["rows"]
-    primary_models = _sql_session_primary_models(
-        db_path,
-        {str(row["session_id"]) for row in session_rows},
+    primary_models = (
+        {}
+        if (lazy_heavy_tabs or lazy_all_tabs) and model == "all"
+        else _sql_session_primary_models(
+            db_path,
+            {str(row["session_id"]) for row in session_rows},
+        )
     )
-    first_prompts = _sql_session_first_prompts(
-        db_path,
-        {str(row["session_id"]) for row in session_rows},
+    first_prompts = (
+        {}
+        if lazy_heavy_tabs or lazy_all_tabs
+        else _sql_session_first_prompts(
+            db_path,
+            {str(row["session_id"]) for row in session_rows},
+        )
     )
     sessions = []
     for row in session_rows:
@@ -3503,6 +3535,7 @@ def _sql_dashboard_payload(
         session_ids=scoped_session_ids if has_scope_filter else None,
         include_heavy=not (lazy_heavy_tabs or lazy_all_tabs),
         include_base=not lazy_all_tabs,
+        base_tab_names=base_tab_names,
     )
     scoped_overview["source_provenance"] = compat["source_provenance"]
     cost_breakdown = compat["cost_breakdown"]
@@ -3618,7 +3651,7 @@ def _sql_dashboard_payload(
         "token_economy": insight_payload["token_economy"],
     }
     comparison_payload = None
-    if agents and not session_id:
+    if include_comparison and agents and not session_id:
         comparison_payload = _sql_comparison_payload(
             db_path,
             all_sessions,
@@ -4173,6 +4206,15 @@ def _build_dashboard_app(
         model = params.get("model") or "all"
         status = params.get("status") or "all"
         range_name = params.get("range") or "all"
+        active_tab = (params.get("tab") or "sessions").strip().lower()
+        filtered_base_tabs = {
+            "overview": {"activity", "models", "costs", "mcp"},
+            "tools": {"tools"},
+            "compare": {"agents"},
+            "observations": {"activity", "models", "costs", "tools", "mcp", "agents"},
+        }.get(active_tab, set())
+        if session_id:
+            filtered_base_tabs = {"activity", "models", "costs", "tools", "mcp", "agents"}
         has_filter = any([q, session_id, agents, model != "all", status != "all", range_name != "all"])
         try:
             if db_path is not None:
@@ -4193,6 +4235,9 @@ def _build_dashboard_app(
                     model=model,
                     status=status,
                     range_name=range_name,
+                    lazy_heavy_tabs=True,
+                    include_comparison=active_tab == "compare",
+                    base_tab_names=filtered_base_tabs,
                 ))
             if not has_filter:
                 perf_kind = "cached-no-sql"

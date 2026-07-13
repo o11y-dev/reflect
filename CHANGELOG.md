@@ -10,6 +10,8 @@
 - Added a managed background browser-report server with `reflect server start`, `stop`, and `status` commands plus a `--foreground` debugging mode.
 
 ### Fixed
+
+- Keep filtered dashboard requests responsive during background ingestion by preserving concurrent WAL reads and deferring heavy tab queries.
 - Added a focused SQLite fast path for single-session dashboard filters so `/api/data?session=<id>` avoids broad session payload and tab graph builders.
 - Added SQL-backed lazy tab endpoints for dashboard graphs, data, memory, privacy, specs, and exports so session-scoped heavy panels can load on demand.
 - Reused current cost, graph, and rollup state when report preparation produces no canonical telemetry changes.

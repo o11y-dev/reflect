@@ -599,6 +599,39 @@ def test_dashboard_api_serves_current_snapshot_during_background_preparation(tmp
     assert worker.wait(timeout=2) is True
 
 
+def test_dashboard_filtered_bootstrap_skips_heavy_tabs(tmp_path, monkeypatch):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    original = __import__("reflect.dashboard", fromlist=["_sql_dashboard_payload"])._sql_dashboard_payload
+    calls = []
+
+    def capture_payload(*args, **kwargs):
+        calls.append(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr("reflect.dashboard._sql_dashboard_payload", capture_payload)
+
+    response = TestClient(app).get("/api/data", params={"agents": "codex"})
+
+    assert response.status_code == 200
+    assert calls[-1]["lazy_heavy_tabs"] is True
+    assert calls[-1]["include_comparison"] is False
+    assert calls[-1]["base_tab_names"] == set()
+    assert response.json()["graph_tool_transitions"] == []
+    assert response.json()["comparison"] is None
+
+    calls.clear()
+    overview = TestClient(app).get(
+        "/api/data",
+        params={"agents": "codex", "tab": "overview"},
+    )
+
+    assert overview.status_code == 200
+    assert calls[-1]["base_tab_names"] == {"activity", "models", "costs", "mcp"}
+
+
 def test_dashboard_session_filter_uses_focused_fast_path(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
@@ -816,7 +849,13 @@ def test_dashboard_api_applies_sql_filters_and_comparison(tmp_path):
 
     response = TestClient(app).get(
         "/api/data",
-        params={"agents": "codex", "status": "completed", "model": "gpt-5.4", "range": "7d"},
+        params={
+            "agents": "codex",
+            "status": "completed",
+            "model": "gpt-5.4",
+            "range": "7d",
+            "tab": "compare",
+        },
     )
 
     assert response.status_code == 200

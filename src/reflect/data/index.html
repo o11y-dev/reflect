@@ -3372,7 +3372,7 @@ function reportUrlWithCurrentFilters(){
   const params = new URLSearchParams(window.location.search);
   const report = params.get('report') || '/api/data';
   const url = new URL(report, window.location.href);
-  ['q','agents','agent','model','status','range','session'].forEach(key => {
+  ['q','agents','agent','model','status','range','session','tab'].forEach(key => {
     const value = params.get(key);
     if (value) url.searchParams.set(key, value);
   });
