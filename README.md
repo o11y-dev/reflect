@@ -168,6 +168,19 @@ reflect skills                 # extract reusable skills from your sessions
 reflect --demo                 # instant demo with Claude/Codex/Copilot/Cursor/Gemini data
 ```
 
+### Browser report server
+
+Running `reflect` starts or reuses the local browser report server in the background and returns the terminal to you. Manage that server explicitly with:
+
+```bash
+reflect server start           # start the browser report in the background
+reflect server status          # show its PID, URL, database, and log path
+reflect server stop            # stop the background server
+reflect --foreground           # run in the foreground for debugging
+```
+
+The default dashboard is served at `http://127.0.0.1:8765/?report=api/data`. The background server reads the SQLite store under `~/.reflect/state/`; `reflect doctor` reports whether it is running.
+
 ## Memory providers
 
 Reflect keeps local SQLite as the source of truth and can mirror writes into optional memory backends. Remote provider failures do not block the local memory row; the local record is marked with provider status so you can inspect what was mirrored versus stored locally only. Reflect operational memories stay local by default; generic agent-session memory routes to `agentmemory`, `litellm`, or `memorypalace` when the matching provider is configured.
