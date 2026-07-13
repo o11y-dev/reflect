@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.7 (unreleased)
+## 0.8.7 (2026-07-13)
 
 ### Added
 - Added `REFLECT_DEBUG_PERF=1` route timing logs for dashboard data and lazy tab API requests.
