@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import threading
 from collections import Counter
 
 from fastapi.testclient import TestClient
 
 from reflect.dashboard import _build_dashboard_app
 from reflect.models import TelemetryStats
+from reflect.preparation import BackgroundPreparationWorker
 from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite
 
@@ -520,6 +522,199 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path, monkeypatch):
     assert tool_inventory["mcp_tools"][0]["name"].endswith("/jira_search")
 
 
+def test_dashboard_api_reports_background_preparation_status(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    worker = BackgroundPreparationWorker(lambda: {"refreshed_sessions": 1})
+    app = _build_dashboard_app(
+        _stats(),
+        docs_dir=tmp_path,
+        db_path=db_path,
+        preparation_worker=worker,
+    )
+    client = TestClient(app)
+
+    assert client.get("/api/status").json()["preparation"]["state"] == "idle"
+    assert worker.start() is True
+    assert worker.wait(timeout=2) is True
+
+    status = client.get("/api/status").json()["preparation"]
+    assert status["state"] == "complete"
+    assert status["generation"] == 1
+    assert status["result"] == {"refreshed_sessions": 1}
+
+
+def test_dashboard_minimal_snapshot_skips_all_tab_builders(tmp_path, monkeypatch):
+    from reflect.dashboard import _sql_dashboard_payload
+
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+
+    def fail_if_built(*_args, **_kwargs):
+        raise AssertionError("minimal snapshot should not build report tabs")
+
+    monkeypatch.setattr("reflect.views.report_tabs.build_report_tabs", fail_if_built)
+    monkeypatch.setattr("reflect.views.report_tabs.build_report_tab", fail_if_built)
+
+    payload = _sql_dashboard_payload(db_path, lazy_all_tabs=True)
+
+    assert payload["sessions"][0]["id"] == "sess-sql"
+    assert payload["unique_sessions"] == 1
+    assert payload["graph_semantic"] == {
+        "nodes": [],
+        "edges": [],
+        "sessions": [],
+        "legend": [],
+    }
+
+
+def test_dashboard_api_serves_current_snapshot_during_background_preparation(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    started = threading.Event()
+    release = threading.Event()
+
+    def prepare():
+        started.set()
+        release.wait(timeout=2)
+        return {"refreshed_sessions": 1}
+
+    worker = BackgroundPreparationWorker(prepare)
+    app = _build_dashboard_app(
+        _stats(),
+        docs_dir=tmp_path,
+        db_path=db_path,
+        preparation_worker=worker,
+    )
+    client = TestClient(app)
+
+    assert worker.start() is True
+    assert started.wait(timeout=1) is True
+    response = client.get("/api/data")
+
+    assert response.status_code == 200
+    assert response.json()["sessions"][0]["id"] == "sess-sql"
+    assert client.get("/api/status").json()["preparation"]["state"] == "running"
+    release.set()
+    assert worker.wait(timeout=2) is True
+
+
+def test_dashboard_filtered_bootstrap_skips_heavy_tabs(tmp_path, monkeypatch):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    original = __import__("reflect.dashboard", fromlist=["_sql_dashboard_payload"])._sql_dashboard_payload
+    calls = []
+
+    def capture_payload(*args, **kwargs):
+        calls.append(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr("reflect.dashboard._sql_dashboard_payload", capture_payload)
+
+    response = TestClient(app).get("/api/data", params={"agents": "codex"})
+
+    assert response.status_code == 200
+    assert calls[-1]["lazy_heavy_tabs"] is True
+    assert calls[-1]["include_comparison"] is False
+    assert calls[-1]["base_tab_names"] == set()
+    assert response.json()["graph_tool_transitions"] == []
+    assert response.json()["comparison"] is None
+
+    calls.clear()
+    overview = TestClient(app).get(
+        "/api/data",
+        params={"agents": "codex", "tab": "overview"},
+    )
+
+    assert overview.status_code == 200
+    assert calls[-1]["base_tab_names"] == {"activity", "models", "costs", "mcp"}
+
+
+def test_dashboard_session_filter_uses_focused_fast_path(tmp_path, monkeypatch):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    _add_sql_codex_sibling_session(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    def _raise_broad_payload(*args, **kwargs):
+        raise AssertionError("session-only filter should not build the broad dashboard payload")
+
+    monkeypatch.setattr("reflect.dashboard._sql_dashboard_payload", _raise_broad_payload)
+    monkeypatch.setattr("reflect.dashboard._sql_dashboard_compat_payload", _raise_broad_payload)
+
+    response = TestClient(app).get("/api/data?session=sess-sql")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["sql_backed"] is True
+    assert payload["focused_session_id"] == "sess-sql"
+    assert payload["unique_sessions"] == 1
+    assert payload["session_list_total"] == 2
+    assert {session["id"] for session in payload["sessions"]} == {"sess-sql", "sess-codex-2"}
+    selected_session = next(session for session in payload["sessions"] if session["id"] == "sess-sql")
+    assert selected_session["first_prompt"].startswith("Fix the failing SQL dashboard tests")
+    assert selected_session["primary_model"] == "gpt-5.4"
+    assert selected_session["skills"] == {"review-skill": 1, "sql-review": 1}
+    assert payload["tools_by_count"] == {"exec_command": 1}
+    assert payload["skills_by_count"] == {"review-skill": 1, "sql-review": 1}
+    assert payload["subagent_types_by_count"] == {"research-helper": 1}
+    assert payload["mcp_servers_by_count"] == {"mcp-issue-tracker": 1}
+    assert "docker run" not in next(iter(payload["mcp_servers_by_count"]))
+    assert payload["sqlite"]["tabs"]["tools"]["skills_by_count"] == payload["skills_by_count"]
+    assert payload["sqlite"]["tabs"]["overview"]["unique_sessions"] == 1
+    assert payload["sqlite"]["tabs"]["activity"]["events_by_type"] == payload["events_by_type"]
+    assert payload["sqlite"]["tabs"]["models"]["models_by_count"] == {"gpt-5.4": 1}
+    assert payload["sqlite"]["tabs"]["agents"]["agent_comparison"][0]["sessions"] == 1
+    assert payload["graph_semantic"] == {"nodes": [], "edges": [], "sessions": [], "legend": []}
+    assert {row["session_id"] for row in payload["sqlite"]["sessions"]["rows"]} == {
+        "sess-sql",
+        "sess-codex-2",
+    }
+    assert payload["sqlite"]["tabs"]["graphs"]["graph_semantic"] == {
+        "nodes": [],
+        "edges": [],
+        "sessions": [],
+        "legend": [],
+    }
+    assert payload["sqlite"]["tabs"]["exports"]["scoped"] is True
+
+
+def test_dashboard_lazy_tab_endpoint_builds_only_requested_scoped_tab(tmp_path, monkeypatch):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    def _raise_all_tabs(*args, **kwargs):
+        raise AssertionError("lazy tab endpoint should not build every report tab")
+
+    monkeypatch.setattr("reflect.views.report_tabs.build_report_tabs", _raise_all_tabs)
+
+    response = TestClient(app).get("/api/tabs/tools?session=sess-sql")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["sql_backed"] is True
+    assert payload["tab"] == "tools"
+    assert payload["scoped"] is True
+    assert payload["session_id"] == "sess-sql"
+    assert payload["tools_by_count"] == {"exec_command": 1}
+    assert payload["skills_by_count"] == {"review-skill": 1, "sql-review": 1}
+    assert payload["subagent_types_by_count"] == {"research-helper": 1}
+
+
+def test_dashboard_lazy_tab_endpoint_rejects_unknown_tab(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    response = TestClient(app).get("/api/tabs/not-a-tab?session=sess-sql")
+
+    assert response.status_code == 404
+    assert "Unknown report tab" in response.json()["error"]
+
+
 def test_dashboard_session_detail_shows_metadata_only_llm_prompt_turns(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
@@ -654,7 +849,13 @@ def test_dashboard_api_applies_sql_filters_and_comparison(tmp_path):
 
     response = TestClient(app).get(
         "/api/data",
-        params={"agents": "codex", "status": "completed", "model": "gpt-5.4", "range": "7d"},
+        params={
+            "agents": "codex",
+            "status": "completed",
+            "model": "gpt-5.4",
+            "range": "7d",
+            "tab": "compare",
+        },
     )
 
     assert response.status_code == 200

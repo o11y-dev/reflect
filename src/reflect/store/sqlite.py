@@ -18,7 +18,9 @@ def connect_sqlite(db_path: str | Path, *, strict_durability: bool = False) -> s
 
 def _apply_runtime_pragmas(conn: sqlite3.Connection, *, strict_durability: bool) -> None:
     conn.execute("PRAGMA foreign_keys = ON;")
-    conn.execute("PRAGMA journal_mode = WAL;")
+    journal_mode = str(conn.execute("PRAGMA journal_mode;").fetchone()[0]).lower()
+    if journal_mode != "wal":
+        conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute(
         f"PRAGMA synchronous = {'FULL' if strict_durability else 'NORMAL'};"
     )

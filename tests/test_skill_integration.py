@@ -59,6 +59,7 @@ class TestCliInvocable:
         runner = CliRunner()
         with patch("reflect.core._start_publish_server"):
             result = runner.invoke(main, [
+                "--foreground",
                 "--otlp-traces", str(p),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),

@@ -1,13 +1,13 @@
 import json
 
-from reflect.store.graph_normalize import rebuild_graph
+from reflect.store.graph_normalize import rebuild_graph, refresh_graph
 from reflect.store.ingest import ingest_local_spans_file
 from reflect.store.migrate import migrate
 from reflect.store.normalize import normalize_pending_raw_events
 from reflect.store.sqlite import connect_sqlite
 
 
-def _write_spans(path):
+def _write_spans(path, session_id="sess-graph"):
     spans = [
         {
             "name": "UserPromptSubmit",
@@ -17,7 +17,7 @@ def _write_spans(path):
             "end_time_ns": 200,
             "attributes": {
                 "gen_ai.client.name": "claude",
-                "gen_ai.client.session_id": "sess-graph",
+                "gen_ai.client.session_id": session_id,
                 "gen_ai.request.model": "claude-4.6-opus",
             },
         },
@@ -29,7 +29,7 @@ def _write_spans(path):
             "end_time_ns": 500,
             "attributes": {
                 "gen_ai.client.name": "claude",
-                "gen_ai.client.session_id": "sess-graph",
+                "gen_ai.client.session_id": session_id,
                 "gen_ai.client.tool_name": "Read",
             },
         },
@@ -41,7 +41,7 @@ def _write_spans(path):
             "end_time_ns": 800,
             "attributes": {
                 "gen_ai.client.name": "claude",
-                "gen_ai.client.session_id": "sess-graph",
+                "gen_ai.client.session_id": session_id,
                 "gen_ai.client.mcp_server": "mcp-github",
                 "gen_ai.client.mcp_tool": "get_issue",
             },
@@ -54,7 +54,7 @@ def _write_spans(path):
             "end_time_ns": 1000,
             "attributes": {
                 "gen_ai.client.name": "claude",
-                "gen_ai.client.session_id": "sess-graph",
+                "gen_ai.client.session_id": session_id,
                 "gen_ai.memory.id": "mem-graph",
                 "gen_ai.memory.scope": "repo",
                 "gen_ai.memory.type": "repo_convention",
@@ -85,6 +85,64 @@ def test_rebuild_graph_from_canonical_tables_is_idempotent(tmp_path):
         assert {"Session", "Step", "Agent", "Tool", "MCPServer", "Memory"} <= node_kinds
         edge_kinds = {row[0] for row in conn.execute("SELECT DISTINCT kind FROM graph_edges")}
         assert {"ran_session", "has_step", "used_tool", "used_mcp", "recorded_memory"} <= edge_kinds
+    finally:
+        conn.close()
+
+
+def test_refresh_graph_scopes_high_volume_tables_to_changed_sessions(tmp_path):
+    db = tmp_path / "reflect.db"
+    first_spans = tmp_path / "first.jsonl"
+    second_spans = tmp_path / "second.jsonl"
+    _write_spans(first_spans)
+    _write_spans(second_spans, session_id="sess-other")
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        ingest_local_spans_file(conn, file_path=first_spans)
+        ingest_local_spans_file(conn, file_path=second_spans)
+        normalize_pending_raw_events(conn)
+        rebuild_graph(conn)
+        other_nodes_before = conn.execute(
+            "SELECT COUNT(*) FROM graph_nodes WHERE session_id = 'sess-other'"
+        ).fetchone()[0]
+
+        changed_spans = tmp_path / "changed.jsonl"
+        changed_spans.write_text(
+            json.dumps(
+                {
+                    "name": "PreToolUse",
+                    "traceId": "trace-changed",
+                    "spanId": "span-changed",
+                    "start_time_ns": 1_000,
+                    "end_time_ns": 1_100,
+                    "attributes": {
+                        "gen_ai.client.name": "claude",
+                        "gen_ai.client.session_id": "sess-graph",
+                        "gen_ai.client.tool_name": "Write",
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        ingest_local_spans_file(conn, file_path=changed_spans)
+        changed_session_ids: set[str] = set()
+        normalize_pending_raw_events(conn, changed_session_ids=changed_session_ids)
+
+        result = refresh_graph(conn, changed_session_ids)
+
+        assert result["refreshed_sessions"] == 1
+        assert changed_session_ids == {"sess-graph"}
+        assert conn.execute(
+            "SELECT COUNT(*) FROM graph_nodes WHERE session_id = 'sess-other'"
+        ).fetchone()[0] == other_nodes_before
+        assert conn.execute(
+            "SELECT COUNT(*) FROM graph_nodes WHERE kind = 'Tool' AND label = 'Write'"
+        ).fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sqlite_temp_master WHERE type = 'view' AND name = 'sessions'"
+        ).fetchone()[0] == 0
     finally:
         conn.close()
 

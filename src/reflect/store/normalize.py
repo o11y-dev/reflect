@@ -594,21 +594,31 @@ def _refresh_session_statuses(conn: sqlite3.Connection, session_ids: set[str], t
         )
 
 
-def refresh_all_session_statuses(conn: sqlite3.Connection) -> dict[str, int]:
+def refresh_session_statuses(
+    conn: sqlite3.Connection,
+    session_ids: set[str],
+) -> dict[str, int]:
     previous_row_factory = conn.row_factory
     conn.row_factory = sqlite3.Row
     try:
-        session_ids = {
-            str(row["id"])
-            for row in conn.execute("SELECT id FROM sessions").fetchall()
-        }
-        _refresh_session_statuses(conn, session_ids, _now())
-        return {"sessions": len(session_ids)}
+        normalized_ids = {str(session_id) for session_id in session_ids if session_id}
+        _refresh_session_statuses(conn, normalized_ids, _now())
+        return {"sessions": len(normalized_ids)}
     finally:
         conn.row_factory = previous_row_factory
 
 
-def normalize_pending_raw_events(conn: sqlite3.Connection, *, limit: int | None = None) -> dict[str, int]:
+def refresh_all_session_statuses(conn: sqlite3.Connection) -> dict[str, int]:
+    session_ids = {str(row[0]) for row in conn.execute("SELECT id FROM sessions").fetchall()}
+    return refresh_session_statuses(conn, session_ids)
+
+
+def normalize_pending_raw_events(
+    conn: sqlite3.Connection,
+    *,
+    limit: int | None = None,
+    changed_session_ids: set[str] | None = None,
+) -> dict[str, int]:
     previous_row_factory = conn.row_factory
     conn.row_factory = sqlite3.Row
     try:
@@ -702,6 +712,8 @@ def normalize_pending_raw_events(conn: sqlite3.Connection, *, limit: int | None 
                 failed += 1
         _backfill_parent_step_ids(conn, processed_session_ids)
         _refresh_session_statuses(conn, processed_session_ids, timestamp)
+        if changed_session_ids is not None:
+            changed_session_ids.update(processed_session_ids)
         conn.commit()
         return {"processed": processed, "failed": failed, "skipped": 0}
     finally:

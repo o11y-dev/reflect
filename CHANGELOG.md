@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.8.7 (unreleased)
+
+### Added
+- Added `REFLECT_DEBUG_PERF=1` route timing logs for dashboard data and lazy tab API requests.
+- Added SQLite hot-path indexes for session-scoped dashboard tab, graph, detail, and export queries.
+- Added persisted source fingerprints so repeated report preparation skips unchanged telemetry files.
+- Added an observable background report-preparation worker and `/api/status` lifecycle endpoint.
+- Added a managed background browser-report server with `reflect server start`, `stop`, and `status` commands plus a `--foreground` debugging mode.
+
+### Fixed
+
+- Keep filtered dashboard requests responsive during background ingestion by preserving concurrent WAL reads and deferring heavy tab queries.
+- Added a focused SQLite fast path for single-session dashboard filters so `/api/data?session=<id>` avoids broad session payload and tab graph builders.
+- Added SQL-backed lazy tab endpoints for dashboard graphs, data, memory, privacy, specs, and exports so session-scoped heavy panels can load on demand.
+- Reused current cost, graph, and rollup state when report preparation produces no canonical telemetry changes.
+- Scoped repricing and aggregate rollup refreshes to sessions changed during telemetry normalization.
+- Scoped graph normalization to changed sessions while reusing the canonical graph builder.
+- Served existing SQLite report snapshots immediately while telemetry refresh runs in the background.
+- Preserved the full session navigation when opening a selected session while keeping dashboard calculations scoped to that session.
+- Kept Tools skill inventory and the other operational tabs consistent with session detail data, and added visible loading states for lazy Graphs and Data tabs.
+- Made bare `reflect` start or reuse the browser report in the background so the terminal returns immediately with the dashboard URL and management commands.
+- Added managed, unmanaged-listener, and stopped browser report server status to `reflect doctor`.
+
 ## 0.8.6 (2026-07-07)
 
 ### Added

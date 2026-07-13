@@ -1,5 +1,6 @@
 import sqlite3
 
+import reflect.store.sqlite as sqlite_store
 from reflect.store.sqlite import DEFAULT_BUSY_TIMEOUT_MS, connect_sqlite, optimize
 
 
@@ -25,6 +26,24 @@ def test_connect_sqlite_strict_durability(tmp_path):
         assert _pragma(conn, "synchronous") == 2  # FULL
     finally:
         conn.close()
+
+
+def test_connect_sqlite_reads_while_wal_writer_is_active(tmp_path, monkeypatch):
+    db_path = tmp_path / "concurrent.db"
+    writer = connect_sqlite(db_path)
+    writer.execute("CREATE TABLE values_table(value INTEGER)")
+    writer.commit()
+    writer.execute("BEGIN IMMEDIATE")
+    writer.execute("INSERT INTO values_table VALUES (1)")
+    monkeypatch.setattr(sqlite_store, "DEFAULT_BUSY_TIMEOUT_MS", 50)
+
+    reader = connect_sqlite(db_path)
+    try:
+        assert reader.execute("SELECT COUNT(*) FROM values_table").fetchone()[0] == 0
+    finally:
+        reader.close()
+        writer.rollback()
+        writer.close()
 
 
 def test_optimize_runs(tmp_path):

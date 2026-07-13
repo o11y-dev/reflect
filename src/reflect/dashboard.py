@@ -4,7 +4,10 @@ import hashlib
 import json
 import os
 import re
+import threading
+import time
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -24,6 +27,7 @@ from reflect.insights import (
 )
 from reflect.insights.renderers import insights_to_example_tuples, insights_to_strings
 from reflect.models import AgentStats, TelemetryStats
+from reflect.preparation import BackgroundPreparationWorker, PreparationSnapshot, PreparationState
 from reflect.utils import (
     _json_dumps,
     _safe_ratio,
@@ -31,6 +35,44 @@ from reflect.utils import (
     _sanitize_command_display,
     logger,
 )
+
+
+def _perf_start() -> float:
+    return time.perf_counter() if os.environ.get("REFLECT_DEBUG_PERF") else 0.0
+
+
+def _perf_finish(name: str, start: float, **fields: object) -> None:
+    if not start:
+        return
+    duration_ms = (time.perf_counter() - start) * 1000
+    field_text = " ".join(f"{key}={value}" for key, value in fields.items() if value not in (None, ""))
+    suffix = f" {field_text}" if field_text else ""
+    logger.info("reflect.dashboard.perf %s duration_ms=%.1f%s", name, duration_ms, suffix)
+
+
+class DashboardDataCache:
+    """Thread-safe dashboard snapshot cache refreshed after background preparation."""
+
+    def __init__(
+        self,
+        loader: Callable[[], dict[str, object]],
+        *,
+        refresh_loader: Callable[[], dict[str, object]] | None = None,
+    ) -> None:
+        self._loader = loader
+        self._refresh_loader = refresh_loader or loader
+        self._lock = threading.Lock()
+        self._payload = loader()
+
+    def get(self) -> dict[str, object]:
+        with self._lock:
+            return self._payload
+
+    def refresh(self) -> dict[str, object]:
+        payload = self._refresh_loader()
+        with self._lock:
+            self._payload = payload
+        return payload
 
 
 def _rough_token_count(text: str) -> int:
@@ -2064,9 +2106,13 @@ def _load_session_detail(session_id: str, stats: TelemetryStats) -> dict | None:
     return detail
 
 
-def _sql_report_payload(db_path: Path, *, limit: int = 50, offset: int = 0) -> dict[str, object]:
-    from reflect.store.migrate import migrate
-    from reflect.store.normalize import repair_telemetry_provenance
+def _sql_report_payload(
+    db_path: Path,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    include_tabs: bool = True,
+) -> dict[str, object]:
     from reflect.store.sqlite import connect_sqlite
     from reflect.views.overview import build_overview
     from reflect.views.report_tabs import build_report_tabs
@@ -2074,13 +2120,47 @@ def _sql_report_payload(db_path: Path, *, limit: int = 50, offset: int = 0) -> d
 
     conn = connect_sqlite(db_path)
     try:
-        migrate(conn)
-        repair_telemetry_provenance(conn)
+        if include_tabs:
+            overview = build_overview(conn).model_dump()
+        else:
+            totals = conn.execute(
+                """
+                SELECT
+                  COUNT(*),
+                  COUNT(DISTINCT NULLIF(agent, '')),
+                  COALESCE(SUM(tool_call_count), 0),
+                  COALESCE(SUM(input_tokens), 0),
+                  COALESCE(SUM(output_tokens), 0),
+                  COALESCE(SUM(total_cost), 0),
+                  COALESCE(SUM(error_count), 0)
+                FROM session_rollups
+                """
+            ).fetchone()
+            overview = {
+                "session_count": totals[0],
+                "agent_count": totals[1],
+                "model_count": 0,
+                "tool_call_count": totals[2],
+                "input_tokens": totals[3],
+                "output_tokens": totals[4],
+                "estimated_cost_usd": totals[5],
+                "failure_count": totals[6],
+                "recovered_failure_count": 0,
+                "source_provenance": [],
+                "agent_cost_over_time": [],
+                "top_sessions": [],
+                "top_models": [],
+                "top_tools": [],
+            }
         return {
             "db_path": str(db_path),
-            "overview": build_overview(conn).model_dump(),
+            "overview": overview,
             "sessions": list_sessions(conn, limit=limit, offset=offset).model_dump(),
-            "tabs": build_report_tabs(conn).model_dump(),
+            "tabs": (
+                build_report_tabs(conn).model_dump()
+                if include_tabs
+                else _empty_sql_lazy_tabs()
+            ),
         }
     finally:
         conn.close()
@@ -2154,14 +2234,12 @@ def _filter_sql_session_rows(
 def _sql_session_primary_models(db_path: Path, session_ids: set[str]) -> dict[str, str]:
     if not session_ids:
         return {}
-    from reflect.store.migrate import migrate
     from reflect.store.sqlite import connect_sqlite
 
     ids = sorted(session_ids)
     placeholders = ", ".join("?" for _ in ids)
     conn = connect_sqlite(db_path)
     try:
-        migrate(conn)
         rows = _dict_rows(conn.execute(
             f"""
             SELECT
@@ -2189,14 +2267,12 @@ def _sql_session_primary_models(db_path: Path, session_ids: set[str]) -> dict[st
 def _sql_session_first_prompts(db_path: Path, session_ids: set[str]) -> dict[str, str]:
     if not session_ids:
         return {}
-    from reflect.store.migrate import migrate
     from reflect.store.sqlite import connect_sqlite
 
     ids = sorted(session_ids)
     placeholders = ", ".join("?" for _ in ids)
     conn = connect_sqlite(db_path)
     try:
-        migrate(conn)
         rows = _dict_rows(conn.execute(
             f"""
             SELECT session_id, raw_attrs_json
@@ -2314,22 +2390,47 @@ def _sql_response_preview(attrs: dict[str, object], call: dict[str, object]) -> 
     return f"Assistant turn completed{status_text}; captured {token_text}."
 
 
-def _sql_dashboard_compat_payload(db_path: Path, *, session_ids: set[str] | None = None) -> dict[str, object]:
-    from reflect.store.migrate import migrate
-    from reflect.store.normalize import repair_telemetry_provenance
+def _sql_dashboard_compat_payload(
+    db_path: Path,
+    *,
+    session_ids: set[str] | None = None,
+    include_heavy: bool = True,
+    include_base: bool = True,
+    base_tab_names: set[str] | None = None,
+) -> dict[str, object]:
     from reflect.store.sqlite import connect_sqlite
     from reflect.views.overview import list_source_provenance
-    from reflect.views.report_tabs import build_report_tabs
+    from reflect.views.report_tabs import build_report_tab, build_report_tabs
 
     scoped = session_ids is not None
     scoped_ids = sorted(session_ids or [])
 
     conn = connect_sqlite(db_path)
     try:
-        migrate(conn)
-        repair_telemetry_provenance(conn)
-        tab_views = build_report_tabs(conn, session_ids=set(scoped_ids) if scoped else None).model_dump()
-        source_provenance = list_source_provenance(conn, session_ids=set(scoped_ids) if scoped else None)
+        selected_session_ids = set(scoped_ids) if scoped else None
+        if not include_base:
+            tab_views = _empty_sql_lazy_tabs()
+            source_provenance = []
+        elif include_heavy:
+            tab_views = build_report_tabs(conn, session_ids=selected_session_ids).model_dump()
+            source_provenance = list_source_provenance(
+                conn,
+                session_ids=selected_session_ids,
+            )
+        else:
+            tab_views = _empty_sql_lazy_tabs()
+            selected_base_tabs = (
+                base_tab_names
+                if base_tab_names is not None
+                else {"activity", "models", "costs", "tools", "mcp", "agents"}
+            )
+            for tab_name in selected_base_tabs:
+                tab_views[tab_name] = build_report_tab(
+                    conn,
+                    tab_name,
+                    session_ids=selected_session_ids,
+                )
+            source_provenance = []
     finally:
         conn.close()
 
@@ -2621,6 +2722,638 @@ def _sql_comparison_payload(
     }
 
 
+def _empty_sql_lazy_tabs() -> dict[str, object]:
+    return {
+        "overview": {
+            "avg_quality_score": 0.0,
+            "unique_sessions": 0,
+            "first_event_ts": "",
+            "prompt_submits": 0,
+            "tool_calls": 0,
+            "tool_to_prompt_ratio": "0.0",
+            "failure_rate_pct": 0,
+            "tool_failures": 0,
+            "mcp_calls": 0,
+            "mcp_servers_by_count": {},
+            "subagent_launches": 0,
+            "subagent_types_by_count": {},
+            "file_edits": 0,
+            "shell_executions": 0,
+            "unique_commands": 0,
+            "signature_command": "",
+            "signature_command_count": 0,
+            "peak_hour": -1,
+            "peak_hour_count": 0,
+            "unique_models": 0,
+            "models_by_count": {},
+            "events_by_type": {},
+            "source_provenance": [],
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_cache_creation_tokens": 0,
+            "total_cache_read_tokens": 0,
+            "total_cost_usd": 0.0,
+            "input_cost_usd": 0.0,
+            "output_cost_usd": 0.0,
+            "cache_creation_cost_usd": 0.0,
+            "cache_read_cost_usd": 0.0,
+            "pricing_source": "local",
+            "model_costs": {},
+        },
+        "activity": {
+            "events_by_type": {},
+            "activity_by_day": {},
+            "activity_by_hour": {str(hour): 0 for hour in range(24)},
+            "peak_hour": -1,
+            "peak_hour_count": 0,
+        },
+        "models": {"models_by_count": {}, "unique_models": 0},
+        "costs": {
+            "model_costs": {},
+            "model_costs_usd": {},
+            "cost_breakdown": {
+                "total_cost_usd": 0.0,
+                "input_cost_usd": 0.0,
+                "output_cost_usd": 0.0,
+                "cache_creation_cost_usd": 0.0,
+                "cache_read_cost_usd": 0.0,
+            },
+            "total_cache_creation_tokens": 0,
+            "total_cache_read_tokens": 0,
+        },
+        "tools": {
+            "tools_by_count": {},
+            "tool_percentiles": [],
+            "skills_by_count": {},
+            "subagent_types_by_count": {},
+            "subagent_stops_by_type": {},
+            "subagent_launches": 0,
+            "subagent_total_starts": 0,
+            "subagent_total_stops": 0,
+            "top_commands": [],
+            "unique_commands": 0,
+            "signature_command": "",
+            "signature_command_count": 0,
+            "shell_executions": 0,
+            "file_edits": 0,
+            "file_reads": 0,
+        },
+        "mcp": {
+            "mcp_calls": 0,
+            "mcp_servers_by_count": {},
+            "mcp_server_before": {},
+            "mcp_server_after": {},
+        },
+        "agents": {"agent_comparison": [], "agents": {}},
+        "graphs": {
+            "graph_tool_transitions": [],
+            "graph_cooccurrence": {"tools": [], "matrix": []},
+            "graph_dep": {"nodes": [], "edges": [], "top_mcp_servers": []},
+            "graph_session_timeline": [],
+            "graph_semantic": {"nodes": [], "edges": [], "sessions": [], "legend": []},
+        },
+        "specs": {
+            "total_specs": 0,
+            "specs_by_status": {},
+            "requirements_by_status": {},
+            "evidence_by_kind": {},
+            "specs": [],
+        },
+        "memory": {
+            "total_memories": 0,
+            "memories_by_scope": {},
+            "memories_by_type": {},
+            "memories_by_sensitivity": {},
+            "memories_by_source": {},
+            "recent_memories": [],
+        },
+        "privacy": {
+            "total_findings": 0,
+            "findings_by_type": {},
+            "findings_by_severity": {},
+            "findings_by_action": {},
+            "recent_findings": [],
+        },
+        "exports": {
+            "row_counts": {
+                "sessions": 0,
+                "steps": 0,
+                "llm_calls": 0,
+                "tool_calls": 0,
+                "mcp_calls": 0,
+                "memories": 0,
+                "privacy_findings": 0,
+                "evidence": 0,
+            },
+            "scoped": True,
+        },
+    }
+
+
+def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+    from reflect.views.report_tabs import _display_mcp_server_name, build_report_tab
+    from reflect.views.sessions import list_sessions
+
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        row = _dict_rows(conn.execute(
+            """
+            SELECT
+              s.id AS session_id,
+              COALESCE(a.name, sr.agent, 'unknown') AS agent,
+              s.status,
+              s.title,
+              CASE
+                WHEN (s.started_at IS NULL OR s.started_at = '' OR substr(s.started_at, 1, 4) < '2000')
+                  AND s.ended_at IS NOT NULL AND s.ended_at <> '' AND substr(s.ended_at, 1, 4) >= '2000'
+                THEN s.ended_at
+                ELSE s.started_at
+              END AS started_at,
+              s.ended_at,
+              COALESCE(
+                sr.duration_ms,
+                CASE
+                  WHEN s.started_at IS NOT NULL AND s.ended_at IS NOT NULL
+                  THEN CAST((julianday(s.ended_at) - julianday(s.started_at)) * 86400000 AS INTEGER)
+                  ELSE 0
+                END,
+                0
+              ) AS duration_ms,
+              COALESCE(sr.prompt_count, 0) AS prompt_count,
+              COALESCE(sr.tool_call_count, 0) AS tool_call_count,
+              COALESCE(sr.error_count, s.failure_count, 0) AS failure_count,
+              COALESCE(sr.input_tokens, s.input_tokens, 0) AS input_tokens,
+              COALESCE(sr.output_tokens, s.output_tokens, 0) AS output_tokens,
+              COALESCE(sr.cache_write_tokens, s.cache_creation_tokens, 0) AS cache_creation_tokens,
+              COALESCE(sr.cache_read_tokens, s.cache_read_tokens, 0) AS cache_read_tokens,
+              COALESCE(sr.total_cost, s.estimated_cost_usd, 0) AS estimated_cost_usd
+            FROM sessions s
+            LEFT JOIN agents a ON a.id = s.agent_id
+            LEFT JOIN session_rollups sr ON sr.session_id = s.id
+            WHERE s.id = ?
+            """,
+            (session_id,),
+        ))
+        if not row:
+            return {
+                "sql_backed": True,
+                "focused_session_id": session_id,
+                "unique_sessions": 0,
+                "sessions": [],
+                "sqlite": {
+                    "db_path": str(db_path),
+                    "overview": {"session_count": 0},
+                    "sessions": {"rows": [], "total": 0, "limit": 1, "offset": 0},
+                    "tabs": _empty_sql_lazy_tabs(),
+                },
+            }
+        session_row = row[0]
+        primary_model = ""
+        model_row = conn.execute(
+            """
+            SELECT COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) AS model
+            FROM llm_calls
+            WHERE session_id = ?
+              AND COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) IS NOT NULL
+            GROUP BY model
+            ORDER BY COUNT(*) DESC, model ASC
+            LIMIT 1
+            """,
+            (session_id,),
+        ).fetchone()
+        if model_row:
+            primary_model = str(model_row[0] or "")
+        first_prompt = ""
+        for prompt_row in _dict_rows(conn.execute(
+            """
+            SELECT raw_attrs_json
+            FROM steps
+            WHERE session_id = ?
+            ORDER BY seq
+            LIMIT 50
+            """,
+            (session_id,),
+        )):
+            attrs = _load_json_dict(prompt_row["raw_attrs_json"])
+            first_prompt = str(_sql_attr(
+                attrs,
+                "gen_ai.client.prompt",
+                "gen_ai.client.prompt.text",
+                "prompt",
+                "input",
+            ) or "").strip()
+            if first_prompt:
+                break
+        tool_rows = _dict_rows(conn.execute(
+            """
+            SELECT tool_name, COUNT(*) AS count
+            FROM tool_calls
+            WHERE session_id = ?
+            GROUP BY tool_name
+            ORDER BY count DESC, tool_name ASC
+            LIMIT 10
+            """,
+            (session_id,),
+        ))
+        mcp_rows = _dict_rows(conn.execute(
+            """
+            SELECT server_name, COUNT(*) AS count
+            FROM mcp_calls
+            WHERE session_id = ? AND server_name IS NOT NULL AND server_name <> ''
+            GROUP BY server_name
+            ORDER BY count DESC, server_name ASC
+            LIMIT 10
+            """,
+            (session_id,),
+        ))
+        event_rows = _dict_rows(conn.execute(
+            """
+            SELECT type, COUNT(*) AS count
+            FROM steps
+            WHERE session_id = ?
+            GROUP BY type
+            ORDER BY count DESC, type ASC
+            """,
+            (session_id,),
+        ))
+        operational_tabs = {
+            tab_name: build_report_tab(conn, tab_name, session_ids={session_id})
+            for tab_name in ("activity", "models", "costs", "tools", "mcp", "agents")
+        }
+        navigation_page = list_sessions(conn, limit=100, offset=0).model_dump()
+    finally:
+        conn.close()
+
+    quality_breakdown = _sql_quality_breakdown(session_row)
+    quality_score = sum(float(item["earned"]) for item in quality_breakdown)
+    total_tokens = (
+        int(session_row["input_tokens"] or 0)
+        + int(session_row["output_tokens"] or 0)
+        + int(session_row["cache_creation_tokens"] or 0)
+        + int(session_row["cache_read_tokens"] or 0)
+    )
+    tools_by_count = {str(row["tool_name"]): int(row["count"] or 0) for row in tool_rows}
+    mcp_servers: Counter[str] = Counter()
+    for row in mcp_rows:
+        server = _display_mcp_server_name(row["server_name"])
+        if server:
+            mcp_servers[server] += int(row["count"] or 0)
+    mcp_servers_by_count = dict(mcp_servers)
+    events_by_type = {str(row["type"]): int(row["count"] or 0) for row in event_rows}
+    cost = float(session_row["estimated_cost_usd"] or 0.0)
+    session_card = {
+        "id": session_id,
+        "full_id": session_id,
+        "agent": session_row.get("agent") or "unknown",
+        "status": session_row["status"],
+        "title": session_row.get("title"),
+        "first_prompt": first_prompt or session_row.get("title") or "",
+        "started_at": session_row["started_at"],
+        "ended_at": session_row.get("ended_at"),
+        "created_at": session_row["started_at"],
+        "duration_ms": session_row.get("duration_ms") or 0,
+        "event_count": int(session_row["prompt_count"] or 0) + int(session_row["tool_call_count"] or 0),
+        "prompt_count": session_row["prompt_count"],
+        "tool_calls": session_row["tool_call_count"],
+        "failures": session_row["failure_count"],
+        "failure_count": session_row["failure_count"],
+        "quality_score": quality_score,
+        "quality_available": True,
+        "quality_missing_reason": "",
+        "quality_breakdown": quality_breakdown,
+        "is_completed": session_row["status"] in {"ok", "completed", "success"},
+        "recovered_failures": 0,
+        "input_tokens": session_row["input_tokens"],
+        "output_tokens": session_row["output_tokens"],
+        "cache_creation_tokens": session_row["cache_creation_tokens"],
+        "cache_read_tokens": session_row["cache_read_tokens"],
+        "total_tokens": total_tokens,
+        "total_cost": cost,
+        "total_cost_usd": cost,
+        "pricing_unit": "usd",
+        "primary_model": primary_model,
+        "models": {primary_model: 1} if primary_model else {},
+        "tools": tools_by_count,
+        "skills": {},
+        "conversation": [],
+        "telemetry": [],
+    }
+    navigation_cards: list[dict[str, object]] = []
+    for navigation_row in navigation_page["rows"]:
+        navigation_id = str(navigation_row["session_id"])
+        if navigation_id == session_id:
+            navigation_cards.append(session_card)
+            continue
+        navigation_quality = _sql_quality_breakdown(dict(navigation_row))
+        navigation_cards.append({
+            "id": navigation_id,
+            "full_id": navigation_id,
+            "agent": navigation_row.get("agent") or "unknown",
+            "status": navigation_row["status"],
+            "title": navigation_row.get("title"),
+            "first_prompt": navigation_row.get("title") or "",
+            "started_at": navigation_row["started_at"],
+            "ended_at": navigation_row.get("ended_at"),
+            "created_at": navigation_row["started_at"],
+            "duration_ms": navigation_row.get("duration_ms") or 0,
+            "event_count": int(navigation_row["prompt_count"] or 0)
+                + int(navigation_row["tool_call_count"] or 0),
+            "prompt_count": navigation_row["prompt_count"],
+            "tool_calls": navigation_row["tool_call_count"],
+            "failures": navigation_row["failure_count"],
+            "failure_count": navigation_row["failure_count"],
+            "quality_score": sum(float(item["earned"]) for item in navigation_quality),
+            "quality_available": True,
+            "quality_missing_reason": "",
+            "quality_breakdown": navigation_quality,
+            "is_completed": navigation_row["status"] in {"ok", "completed", "success"},
+            "recovered_failures": 0,
+            "input_tokens": navigation_row["input_tokens"],
+            "output_tokens": navigation_row["output_tokens"],
+            "cache_creation_tokens": navigation_row["cache_creation_tokens"],
+            "cache_read_tokens": navigation_row["cache_read_tokens"],
+            "total_tokens": (
+                int(navigation_row["input_tokens"] or 0)
+                + int(navigation_row["output_tokens"] or 0)
+                + int(navigation_row["cache_creation_tokens"] or 0)
+                + int(navigation_row["cache_read_tokens"] or 0)
+            ),
+            "total_cost": navigation_row["estimated_cost_usd"],
+            "total_cost_usd": navigation_row["estimated_cost_usd"],
+            "pricing_unit": "usd",
+            "primary_model": "",
+            "models": {},
+            "tools": {},
+            "skills": {},
+            "conversation": [],
+            "telemetry": [],
+        })
+    if not any(str(card["id"]) == session_id for card in navigation_cards):
+        navigation_cards.insert(0, session_card)
+    scoped_overview = {
+        "session_count": 1,
+        "prompt_count": int(session_row["prompt_count"] or 0),
+        "tool_call_count": int(session_row["tool_call_count"] or 0),
+        "failure_count": int(session_row["failure_count"] or 0),
+        "input_tokens": int(session_row["input_tokens"] or 0),
+        "output_tokens": int(session_row["output_tokens"] or 0),
+        "estimated_cost_usd": cost,
+        "source_provenance": [],
+    }
+    tabs = _empty_sql_lazy_tabs()
+    tabs["overview"].update({
+        "avg_quality_score": quality_score,
+        "unique_sessions": 1,
+        "first_event_ts": session_row["started_at"] or "",
+        "prompt_submits": scoped_overview["prompt_count"],
+        "tool_calls": scoped_overview["tool_call_count"],
+        "tool_to_prompt_ratio": (
+            f"{scoped_overview['tool_call_count'] / scoped_overview['prompt_count']:.1f}"
+            if scoped_overview["prompt_count"] else "0.0"
+        ),
+        "failure_rate_pct": 0,
+        "tool_failures": scoped_overview["failure_count"],
+        "mcp_calls": sum(mcp_servers_by_count.values()),
+        "mcp_servers_by_count": mcp_servers_by_count,
+        "subagent_launches": 0,
+        "subagent_types_by_count": {},
+        "file_edits": 0,
+        "shell_executions": 0,
+        "unique_commands": 0,
+        "signature_command": "",
+        "signature_command_count": 0,
+        "peak_hour": -1,
+        "peak_hour_count": 0,
+        "unique_models": 1 if primary_model else 0,
+        "models_by_count": {primary_model: 1} if primary_model else {},
+        "events_by_type": events_by_type,
+        "source_provenance": [],
+        "total_input_tokens": scoped_overview["input_tokens"],
+        "total_output_tokens": scoped_overview["output_tokens"],
+        "total_cache_creation_tokens": int(session_row["cache_creation_tokens"] or 0),
+        "total_cache_read_tokens": int(session_row["cache_read_tokens"] or 0),
+        "total_cost_usd": cost,
+        "input_cost_usd": 0.0,
+        "output_cost_usd": 0.0,
+        "cache_creation_cost_usd": 0.0,
+        "cache_read_cost_usd": 0.0,
+        "pricing_source": "local",
+        "model_costs": {primary_model: cost} if primary_model else {},
+    })
+    tabs["activity"]["events_by_type"] = events_by_type
+    tabs["models"] = {"models_by_count": {primary_model: 1} if primary_model else {}, "unique_models": 1 if primary_model else 0}
+    tabs["costs"].update({
+        "model_costs": {primary_model: cost} if primary_model else {},
+        "model_costs_usd": {primary_model: cost} if primary_model else {},
+        "total_cache_creation_tokens": int(session_row["cache_creation_tokens"] or 0),
+        "total_cache_read_tokens": int(session_row["cache_read_tokens"] or 0),
+    })
+    tabs["tools"]["tools_by_count"] = tools_by_count
+    tabs["mcp"].update({
+        "mcp_calls": sum(mcp_servers_by_count.values()),
+        "mcp_servers_by_count": mcp_servers_by_count,
+        "mcp_server_before": mcp_servers_by_count,
+        "mcp_server_after": mcp_servers_by_count,
+    })
+    agent = str(session_card["agent"] or "unknown")
+    agent_payload = {
+        "name": agent,
+        "sessions": 1,
+        "events": int(session_card["event_count"] or 0),
+        "prompts": scoped_overview["prompt_count"],
+        "tools": scoped_overview["tool_call_count"],
+        "failures": scoped_overview["failure_count"],
+        "tokens": total_tokens,
+        "total_cost": cost,
+        "total_cost_usd": cost,
+        "avg_quality": quality_score,
+        "completed": 1 if session_card["is_completed"] else 0,
+        "recovered": 0,
+    }
+    tabs["agents"] = {
+        "agent_comparison": [agent_payload],
+        "agents": {
+            agent: {
+                "total_events": int(session_card["event_count"] or 0),
+                "sessions": 1,
+                "prompts": scoped_overview["prompt_count"],
+                "tool_calls": scoped_overview["tool_call_count"],
+                "failures": scoped_overview["failure_count"],
+                "input_tokens": scoped_overview["input_tokens"],
+                "output_tokens": scoped_overview["output_tokens"],
+                "total_cost_usd": cost,
+                "top_model": primary_model,
+                "top_tools": tools_by_count,
+                "top_skills": {},
+                "percentiles": [],
+            }
+        },
+    }
+    tabs.update(operational_tabs)
+    tools_view = tabs["tools"]
+    mcp_view = tabs["mcp"]
+    activity_view = tabs["activity"]
+    models_view = tabs["models"]
+    costs_view = tabs["costs"]
+    agents_view = tabs["agents"]
+    session_card["skills"] = tools_view["skills_by_count"]
+    tabs["overview"].update({
+        "mcp_calls": mcp_view["mcp_calls"],
+        "mcp_servers_by_count": mcp_view["mcp_servers_by_count"],
+        "subagent_launches": tools_view["subagent_launches"],
+        "subagent_types_by_count": tools_view["subagent_types_by_count"],
+        "file_edits": tools_view["file_edits"],
+        "shell_executions": tools_view["shell_executions"],
+        "unique_commands": tools_view["unique_commands"],
+        "signature_command": tools_view["signature_command"],
+        "signature_command_count": tools_view["signature_command_count"],
+        "peak_hour": activity_view["peak_hour"],
+        "peak_hour_count": activity_view["peak_hour_count"],
+        "unique_models": models_view["unique_models"],
+        "models_by_count": models_view["models_by_count"],
+        "events_by_type": activity_view["events_by_type"],
+        "total_cache_creation_tokens": costs_view["total_cache_creation_tokens"],
+        "total_cache_read_tokens": costs_view["total_cache_read_tokens"],
+        "input_cost_usd": costs_view["cost_breakdown"]["input_cost_usd"],
+        "output_cost_usd": costs_view["cost_breakdown"]["output_cost_usd"],
+        "cache_creation_cost_usd": costs_view["cost_breakdown"]["cache_creation_cost_usd"],
+        "cache_read_cost_usd": costs_view["cost_breakdown"]["cache_read_cost_usd"],
+        "model_costs": costs_view["model_costs"],
+    })
+    insight_payload = _sql_insight_payload(scoped_overview, [session_card], {
+        "total_cache_creation_tokens": int(session_row["cache_creation_tokens"] or 0),
+        "total_cache_read_tokens": int(session_row["cache_read_tokens"] or 0),
+        "mcp_calls": mcp_view["mcp_calls"],
+        "mcp_servers_by_count": mcp_view["mcp_servers_by_count"],
+        "subagent_total_starts": tools_view["subagent_total_starts"],
+        "file_reads": tools_view["file_reads"],
+        "unique_models": models_view["unique_models"],
+        "unique_commands": tools_view["unique_commands"],
+    })
+    tabs["observations"] = {
+        "strengths": insight_payload["strengths"],
+        "observations": insight_payload["observations"],
+        "recommendations": insight_payload["recommendations"],
+        "practical_examples": insight_payload["practical_examples"],
+        "achievements": insight_payload["achievements"],
+        "token_economy": insight_payload["token_economy"],
+    }
+    tabs["compare"] = {"comparison": None, "agent_comparison": [agent_payload]}
+    return {
+        "sql_backed": True,
+        "sqlite": {
+            "db_path": str(db_path),
+            "overview": scoped_overview,
+            "sessions": navigation_page,
+            "tabs": tabs,
+        },
+        "comparison": None,
+        "sessions": navigation_cards,
+        "quality_rules": _quality_rules_payload(),
+        "session_list_total": navigation_page["total"],
+        "focused_session_id": session_id,
+        "unique_sessions": 1,
+        "first_event_ts": session_row["started_at"] or "",
+        "last_event_ts": session_row["started_at"] or "",
+        "avg_quality_score": quality_score,
+        "prompt_submits": scoped_overview["prompt_count"],
+        "tool_calls": scoped_overview["tool_call_count"],
+        "tool_to_prompt_ratio": tabs["overview"]["tool_to_prompt_ratio"],
+        "events_by_type": activity_view["events_by_type"],
+        "source_provenance": [],
+        "failure_rate_pct": 0,
+        "file_edits": tools_view["file_edits"],
+        "file_reads": tools_view["file_reads"],
+        "total_input_tokens": scoped_overview["input_tokens"],
+        "total_output_tokens": scoped_overview["output_tokens"],
+        "total_cache_creation_tokens": int(session_row["cache_creation_tokens"] or 0),
+        "total_cache_read_tokens": int(session_row["cache_read_tokens"] or 0),
+        "total_tokens": total_tokens,
+        "total_cost": cost,
+        "total_cost_usd": cost,
+        "input_cost": costs_view["cost_breakdown"]["input_cost_usd"],
+        "input_cost_usd": costs_view["cost_breakdown"]["input_cost_usd"],
+        "output_cost": costs_view["cost_breakdown"]["output_cost_usd"],
+        "output_cost_usd": costs_view["cost_breakdown"]["output_cost_usd"],
+        "cache_creation_cost": costs_view["cost_breakdown"]["cache_creation_cost_usd"],
+        "cache_creation_cost_usd": costs_view["cost_breakdown"]["cache_creation_cost_usd"],
+        "cache_read_cost": costs_view["cost_breakdown"]["cache_read_cost_usd"],
+        "cache_read_cost_usd": costs_view["cost_breakdown"]["cache_read_cost_usd"],
+        "pricing_unit": "usd",
+        "pricing_source": "local",
+        "tools_by_count": tools_view["tools_by_count"],
+        "models_by_count": models_view["models_by_count"],
+        "unique_models": models_view["unique_models"],
+        "skills_by_count": tools_view["skills_by_count"],
+        "activity_by_day": activity_view["activity_by_day"],
+        "activity_by_hour": activity_view["activity_by_hour"],
+        "peak_hour": activity_view["peak_hour"],
+        "peak_hour_count": activity_view["peak_hour_count"],
+        "weekly_trends": [],
+        "graph_tool_transitions": [],
+        "graph_cooccurrence": {"tools": [], "matrix": []},
+        "graph_latency_histograms": {},
+        "graph_dep": {"nodes": [], "edges": [], "top_mcp_servers": []},
+        "graph_session_timeline": [],
+        "graph_semantic": {"nodes": [], "edges": [], "sessions": [], "legend": []},
+        "agents": agents_view["agents"],
+        "agent_comparison": agents_view["agent_comparison"],
+        "mcp_calls": mcp_view["mcp_calls"],
+        "mcp_servers_by_count": mcp_view["mcp_servers_by_count"],
+        "mcp_server_before": mcp_view["mcp_server_before"],
+        "mcp_server_after": mcp_view["mcp_server_after"],
+        "subagent_types_by_count": tools_view["subagent_types_by_count"],
+        "subagent_stops_by_type": tools_view["subagent_stops_by_type"],
+        "subagent_launches": tools_view["subagent_launches"],
+        "subagent_total_starts": tools_view["subagent_total_starts"],
+        "subagent_total_stops": tools_view["subagent_total_stops"],
+        "top_commands": tools_view["top_commands"],
+        "unique_commands": tools_view["unique_commands"],
+        "signature_command": tools_view["signature_command"],
+        "signature_command_count": tools_view["signature_command_count"],
+        "tool_percentiles": tools_view["tool_percentiles"],
+        "model_costs": costs_view["model_costs"],
+        "model_costs_usd": costs_view["model_costs_usd"],
+        "strengths": insight_payload["strengths"],
+        "observations": insight_payload["observations"],
+        "recommendations": insight_payload["recommendations"],
+        "practical_examples": insight_payload["practical_examples"],
+        "achievements": insight_payload["achievements"],
+        "token_economy": insight_payload["token_economy"],
+        "tool_failures": scoped_overview["failure_count"],
+        "shell_executions": tools_view["shell_executions"],
+    }
+
+
+def _sql_dashboard_tab_payload(
+    db_path: Path,
+    tab_name: str,
+    *,
+    session_id: str = "",
+) -> dict[str, object]:
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+    from reflect.views.report_tabs import build_report_tab
+
+    scoped_ids = {session_id} if session_id else None
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        payload = build_report_tab(conn, tab_name, session_ids=scoped_ids)
+    finally:
+        conn.close()
+    return {
+        "sql_backed": True,
+        "tab": tab_name.strip().lower().replace("-", "_"),
+        "scoped": scoped_ids is not None,
+        "session_id": session_id,
+        **payload,
+    }
+
+
 def _sql_dashboard_payload(
     db_path: Path,
     *,
@@ -2632,19 +3365,36 @@ def _sql_dashboard_payload(
     model: str = "all",
     status: str = "all",
     range_name: str = "all",
+    lazy_heavy_tabs: bool = False,
+    lazy_all_tabs: bool = False,
+    include_comparison: bool = True,
+    base_tab_names: set[str] | None = None,
 ) -> dict[str, object]:
     has_scope_filter = bool(q or session_id or agents or model != "all" or status != "all" or range_name != "all")
-    sqlite_payload = _sql_report_payload(db_path, limit=500, offset=0)
+    sqlite_payload = _sql_report_payload(
+        db_path,
+        limit=500,
+        offset=0,
+        include_tabs=not (lazy_heavy_tabs or lazy_all_tabs),
+    )
     overview = sqlite_payload["overview"]
     sessions_page = sqlite_payload["sessions"]
     session_rows = sessions_page["rows"]
-    primary_models = _sql_session_primary_models(
-        db_path,
-        {str(row["session_id"]) for row in session_rows},
+    primary_models = (
+        {}
+        if (lazy_heavy_tabs or lazy_all_tabs) and model == "all"
+        else _sql_session_primary_models(
+            db_path,
+            {str(row["session_id"]) for row in session_rows},
+        )
     )
-    first_prompts = _sql_session_first_prompts(
-        db_path,
-        {str(row["session_id"]) for row in session_rows},
+    first_prompts = (
+        {}
+        if lazy_heavy_tabs or lazy_all_tabs
+        else _sql_session_first_prompts(
+            db_path,
+            {str(row["session_id"]) for row in session_rows},
+        )
     )
     sessions = []
     for row in session_rows:
@@ -2780,7 +3530,13 @@ def _sql_dashboard_payload(
         first_event_ts = min(row["started_at"] for row in scoped_session_rows if row.get("started_at"))
     prompt_count = sum(row["prompt_count"] for row in scoped_session_rows)
     scoped_session_ids = {str(row["session_id"]) for row in scoped_session_rows}
-    compat = _sql_dashboard_compat_payload(db_path, session_ids=scoped_session_ids if has_scope_filter else None)
+    compat = _sql_dashboard_compat_payload(
+        db_path,
+        session_ids=scoped_session_ids if has_scope_filter else None,
+        include_heavy=not (lazy_heavy_tabs or lazy_all_tabs),
+        include_base=not lazy_all_tabs,
+        base_tab_names=base_tab_names,
+    )
     scoped_overview["source_provenance"] = compat["source_provenance"]
     cost_breakdown = compat["cost_breakdown"]
     total_cost_usd = float(scoped_overview["estimated_cost_usd"] or cost_breakdown["total_cost_usd"] or 0)
@@ -2895,7 +3651,7 @@ def _sql_dashboard_payload(
         "token_economy": insight_payload["token_economy"],
     }
     comparison_payload = None
-    if agents and not session_id:
+    if include_comparison and agents and not session_id:
         comparison_payload = _sql_comparison_payload(
             db_path,
             all_sessions,
@@ -3368,6 +4124,7 @@ def _start_publish_server(
     *,
     db_path: Path | None = None,
     sql_only: bool = False,
+    preparation_worker: BackgroundPreparationWorker | None = None,
 ) -> None:
     """Start a local FastAPI server and open the dashboard in a browser.
 
@@ -3376,7 +4133,14 @@ def _start_publish_server(
     """
     port = int(os.environ.get("REFLECT_PORT", "8765"))
     docs_dir = _dashboard_docs_dir()
-    _start_publish_server_inline(stats, port, docs_dir, db_path=db_path, sql_only=sql_only)
+    _start_publish_server_inline(
+        stats,
+        port,
+        docs_dir,
+        db_path=db_path,
+        sql_only=sql_only,
+        preparation_worker=preparation_worker,
+    )
 
 
 def _build_dashboard_app(
@@ -3385,6 +4149,7 @@ def _build_dashboard_app(
     docs_dir: Path,
     db_path: Path | None = None,
     sql_only: bool = False,
+    preparation_worker: BackgroundPreparationWorker | None = None,
 ):
     from fastapi import FastAPI, Request
     from fastapi.responses import FileResponse, JSONResponse
@@ -3394,17 +4159,43 @@ def _build_dashboard_app(
 
     app = FastAPI(title="reflect dashboard", docs_url=None, redoc_url=None)
     if db_path is not None:
-        _cached = _sql_dashboard_payload(db_path, limit=50, offset=0)
+        if preparation_worker is not None:
+            dashboard_cache = DashboardDataCache(
+                lambda: _sql_dashboard_payload(
+                    db_path,
+                    limit=50,
+                    offset=0,
+                    lazy_all_tabs=True,
+                ),
+                refresh_loader=lambda: _sql_dashboard_payload(
+                    db_path,
+                    limit=50,
+                    offset=0,
+                    lazy_heavy_tabs=True,
+                ),
+            )
+        else:
+            dashboard_cache = DashboardDataCache(
+                lambda: _sql_dashboard_payload(db_path, limit=50, offset=0)
+            )
     elif sql_only:
         raise ValueError("sql_only requires db_path")
     else:
         import json as _json
 
-        _cached = _json.loads(_build_dashboard_json(stats))
-        _cached["comparison"] = None
+        def load_stats_payload() -> dict[str, object]:
+            payload = _json.loads(_build_dashboard_json(stats))
+            payload["comparison"] = None
+            return payload
+
+        dashboard_cache = DashboardDataCache(load_stats_payload)
+    if preparation_worker is not None:
+        preparation_worker.add_completion_callback(lambda _result: dashboard_cache.refresh())
 
     @app.get("/api/data")
     def api_data(request: Request):
+        perf_start = _perf_start()
+        perf_kind = "unknown"
         params = request.query_params
         q = (params.get("q") or "").strip()
         session_id = (params.get("session") or "").strip()
@@ -3415,29 +4206,58 @@ def _build_dashboard_app(
         model = params.get("model") or "all"
         status = params.get("status") or "all"
         range_name = params.get("range") or "all"
-        if db_path is not None:
-            if not any([q, session_id, agents, model != "all", status != "all", range_name != "all"]):
-                return JSONResponse(_cached)
-            return JSONResponse(_sql_dashboard_payload(
-                db_path,
-                limit=50,
-                offset=0,
-                q=q,
-                session_id=session_id,
-                agents=agents,
-                model=model,
-                status=status,
-                range_name=range_name,
-            ))
-        if not any([q, session_id, agents, model != "all", status != "all", range_name != "all"]):
-            return JSONResponse(_cached)
-        return JSONResponse(
-            {
-                "error": "Filtered report views require the local SQLite report store. Re-run `reflect` to prepare it.",
-                "sql_backed": False,
-            },
-            status_code=409,
-        )
+        active_tab = (params.get("tab") or "sessions").strip().lower()
+        filtered_base_tabs = {
+            "overview": {"activity", "models", "costs", "mcp"},
+            "tools": {"tools"},
+            "compare": {"agents"},
+            "observations": {"activity", "models", "costs", "tools", "mcp", "agents"},
+        }.get(active_tab, set())
+        if session_id:
+            filtered_base_tabs = {"activity", "models", "costs", "tools", "mcp", "agents"}
+        has_filter = any([q, session_id, agents, model != "all", status != "all", range_name != "all"])
+        try:
+            if db_path is not None:
+                if not has_filter:
+                    perf_kind = "cached"
+                    return JSONResponse(dashboard_cache.get())
+                if session_id and not any([q, agents, model != "all", status != "all", range_name != "all"]):
+                    perf_kind = "session"
+                    return JSONResponse(_sql_dashboard_session_payload(db_path, session_id))
+                perf_kind = "filtered"
+                return JSONResponse(_sql_dashboard_payload(
+                    db_path,
+                    limit=50,
+                    offset=0,
+                    q=q,
+                    session_id=session_id,
+                    agents=agents,
+                    model=model,
+                    status=status,
+                    range_name=range_name,
+                    lazy_heavy_tabs=True,
+                    include_comparison=active_tab == "compare",
+                    base_tab_names=filtered_base_tabs,
+                ))
+            if not has_filter:
+                perf_kind = "cached-no-sql"
+                return JSONResponse(dashboard_cache.get())
+            perf_kind = "filter-no-sql"
+            return JSONResponse(
+                {
+                    "error": "Filtered report views require the local SQLite report store. Re-run `reflect` to prepare it.",
+                    "sql_backed": False,
+                },
+                status_code=409,
+            )
+        finally:
+            _perf_finish(
+                "api.data",
+                perf_start,
+                kind=perf_kind,
+                session=bool(session_id),
+                agents=",".join(sorted(agents)),
+            )
 
     @app.get("/api/sql/overview")
     def api_sql_overview():
@@ -3480,6 +4300,24 @@ def _build_dashboard_app(
             conn.close()
         return JSONResponse(page.model_dump())
 
+    @app.get("/api/tabs/{tab_name}")
+    def api_tab(tab_name: str, request: Request):
+        perf_start = _perf_start()
+        if db_path is None:
+            try:
+                return JSONResponse({"error": "SQLite report view is not configured"}, status_code=404)
+            finally:
+                _perf_finish("api.tabs", perf_start, tab=tab_name, status=404)
+        session_id = (request.query_params.get("session") or "").strip()
+        try:
+            return JSONResponse(_sql_dashboard_tab_payload(db_path, tab_name, session_id=session_id))
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc), "tab": tab_name}, status_code=404)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc), "db_path": str(db_path)}, status_code=500)
+        finally:
+            _perf_finish("api.tabs", perf_start, tab=tab_name, session=bool(session_id))
+
     @app.get("/api/session/{session_id:path}")
     def api_session(session_id: str):
         if db_path is not None:
@@ -3491,6 +4329,15 @@ def _build_dashboard_app(
         if detail is None:
             return JSONResponse({"error": f"Session {session_id} not found"}, status_code=404)
         return JSONResponse(detail, headers={"Access-Control-Allow-Origin": "*"})
+
+    @app.get("/api/status")
+    def api_status():
+        snapshot = (
+            preparation_worker.snapshot()
+            if preparation_worker is not None
+            else PreparationSnapshot(state=PreparationState.IDLE, generation=0)
+        )
+        return JSONResponse({"preparation": snapshot.as_dict()})
 
     @app.get("/")
     def index():
@@ -3520,6 +4367,7 @@ def _start_publish_server_inline(
     *,
     db_path: Path | None = None,
     sql_only: bool = False,
+    preparation_worker: BackgroundPreparationWorker | None = None,
 ) -> None:
     """Inline FastAPI server for the local `reflect` browser report."""
     import threading
@@ -3539,12 +4387,24 @@ def _start_publish_server_inline(
         print(f"Wrote: {artifact}")
         return
 
-    app = _build_dashboard_app(stats, docs_dir=docs_dir, db_path=db_path, sql_only=sql_only)
+    app = _build_dashboard_app(
+        stats,
+        docs_dir=docs_dir,
+        db_path=db_path,
+        sql_only=sql_only,
+        preparation_worker=preparation_worker,
+    )
     url = f"http://127.0.0.1:{port}/?report=api/data"
     threading.Timer(0.5, webbrowser.open, args=[url]).start()
     print(f"\n  Serving at: {url}")
     print("  Press Ctrl-C to stop\n")
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    if preparation_worker is not None:
+        preparation_worker.start()
+    try:
+        uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    finally:
+        if preparation_worker is not None:
+            preparation_worker.close()
 
 
 def _update_dashboard_data(stats: TelemetryStats, html_path: Path) -> None:

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -19,6 +22,59 @@ from reflect.parsing import (
     _load_otlp_traces,
 )
 from reflect.store.provenance import apply_origin_kind, classify_origin_kind, stable_hash_attrs
+
+
+@dataclass(frozen=True)
+class SourceFingerprint:
+    size_bytes: int
+    modified_ns: int
+
+    @classmethod
+    def from_path(cls, path: Path) -> SourceFingerprint:
+        stat = path.stat()
+        return cls(size_bytes=stat.st_size, modified_ns=stat.st_mtime_ns)
+
+
+class SourceIngestionState:
+    """Persist cheap file fingerprints so repeated report preparation can skip unchanged inputs."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def matches(self, source_id: str, source_type: str, fingerprint: SourceFingerprint) -> bool:
+        row = self._conn.execute(
+            """
+            SELECT size_bytes, modified_ns
+            FROM source_ingestion_state
+            WHERE source_id = ? AND source_type = ?
+            """,
+            (source_id, source_type),
+        ).fetchone()
+        return bool(
+            row
+            and int(row[0]) == fingerprint.size_bytes
+            and int(row[1]) == fingerprint.modified_ns
+        )
+
+    def record(self, source_id: str, source_type: str, fingerprint: SourceFingerprint) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO source_ingestion_state(
+              source_id, source_type, size_bytes, modified_ns, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(source_id, source_type) DO UPDATE SET
+              size_bytes = excluded.size_bytes,
+              modified_ns = excluded.modified_ns,
+              updated_at = excluded.updated_at
+            """,
+            (
+                source_id,
+                source_type,
+                fingerprint.size_bytes,
+                fingerprint.modified_ns,
+                datetime.now(tz=UTC).isoformat(),
+            ),
+        )
 
 
 def _iso8601_from_ns(value_ns: int) -> str:
@@ -125,40 +181,90 @@ def _ingest_spans(
     return {"inserted": inserted, "skipped": skipped}
 
 
-def ingest_otlp_traces_file(db_conn, *, file_path: Path, source_id: str | None = None) -> dict[str, int]:
-    source = source_id or str(file_path)
-    return _ingest_spans(
+def _ingest_file_spans(
+    db_conn: sqlite3.Connection,
+    *,
+    file_path: Path,
+    source: str,
+    source_type: str,
+    spans_factory: Callable[[], Iterable[dict]],
+    skip_unchanged: bool,
+) -> dict[str, int]:
+    fingerprint = SourceFingerprint.from_path(file_path)
+    state = SourceIngestionState(db_conn)
+    if skip_unchanged and state.matches(source, source_type, fingerprint):
+        return {"inserted": 0, "skipped": 0, "unchanged": 1}
+    result = _ingest_spans(
         db_conn,
-        spans=_load_otlp_traces(file_path),
+        spans=spans_factory(),
+        source=source,
+        source_type=source_type,
+    )
+    state.record(source, source_type, fingerprint)
+    db_conn.commit()
+    if skip_unchanged:
+        result["unchanged"] = 0
+    return result
+
+
+def ingest_otlp_traces_file(
+    db_conn,
+    *,
+    file_path: Path,
+    source_id: str | None = None,
+    skip_unchanged: bool = False,
+) -> dict[str, int]:
+    source = source_id or str(file_path)
+    return _ingest_file_spans(
+        db_conn,
+        file_path=file_path,
         source=source,
         source_type="otlp_traces_json",
+        spans_factory=lambda: _load_otlp_traces(file_path),
+        skip_unchanged=skip_unchanged,
     )
 
 
-def ingest_otlp_logs_file(db_conn, *, file_path: Path, source_id: str | None = None) -> dict[str, int]:
+def ingest_otlp_logs_file(
+    db_conn,
+    *,
+    file_path: Path,
+    source_id: str | None = None,
+    skip_unchanged: bool = False,
+) -> dict[str, int]:
     source = source_id or str(file_path)
-    records = list(_load_otlp_logs(file_path))
 
     def spans():
+        records = list(_load_otlp_logs(file_path))
         yield from _iter_claude_log_spans(records)
         yield from _iter_codex_log_spans(records)
         yield from _iter_gemini_log_spans(records)
 
-    return _ingest_spans(
+    return _ingest_file_spans(
         db_conn,
-        spans=spans(),
+        file_path=file_path,
         source=source,
         source_type="otlp_logs_json",
+        spans_factory=spans,
+        skip_unchanged=skip_unchanged,
     )
 
 
-def ingest_local_spans_file(db_conn, *, file_path: Path, source_id: str | None = None) -> dict[str, int]:
+def ingest_local_spans_file(
+    db_conn,
+    *,
+    file_path: Path,
+    source_id: str | None = None,
+    skip_unchanged: bool = False,
+) -> dict[str, int]:
     source = source_id or str(file_path)
-    return _ingest_spans(
+    return _ingest_file_spans(
         db_conn,
-        spans=_load_json_lines(file_path),
+        file_path=file_path,
         source=source,
         source_type="local_spans_jsonl",
+        spans_factory=lambda: _load_json_lines(file_path),
+        skip_unchanged=skip_unchanged,
     )
 
 
@@ -169,6 +275,7 @@ def ingest_native_session_file(
     agent: str,
     source_id: str | None = None,
     skip_existing_sessions: bool = False,
+    skip_unchanged: bool = False,
 ) -> dict[str, int]:
     source = source_id or f"native_session:{agent}:{file_path}"
     if agent == "codex":
@@ -183,9 +290,11 @@ def ingest_native_session_file(
         spans = _iter_gemini_session_spans(file_path)
     else:
         spans = ()
-    return _ingest_spans(
+    return _ingest_file_spans(
         db_conn,
-        spans=spans,
+        file_path=file_path,
         source=source,
         source_type="native_session",
+        spans_factory=lambda: spans,
+        skip_unchanged=skip_unchanged,
     )

@@ -147,6 +147,45 @@ def build_report_tabs(conn: sqlite3.Connection, *, session_ids: set[str] | None 
     )
 
 
+def build_report_tab(
+    conn: sqlite3.Connection,
+    tab_name: str,
+    *,
+    session_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    """Build one SQL-backed report tab for lazy dashboard loading."""
+    scoped_ids = sorted(session_ids or [])
+    scoped = scoped_ids if session_ids is not None else None
+    normalized = tab_name.strip().lower().replace("-", "_")
+    if normalized == "activity":
+        return _build_activity(conn, scoped).model_dump()
+    if normalized in {"models", "costs"}:
+        models, costs = _build_models_and_costs(conn, scoped)
+        return (models if normalized == "models" else costs).model_dump()
+    if normalized == "tools":
+        skill_subagent = _skill_subagent_counts(conn, scoped)
+        return _build_tools(conn, scoped, skill_subagent).model_dump()
+    if normalized == "mcp":
+        return _build_mcp(conn, scoped).model_dump()
+    if normalized == "agents":
+        skill_subagent = _skill_subagent_counts(conn, scoped)
+        return _build_agents(conn, scoped, skill_subagent).model_dump()
+    if normalized == "graphs":
+        skill_subagent = _skill_subagent_counts(conn, scoped)
+        tools = _build_tools(conn, scoped, skill_subagent)
+        mcp = _build_mcp(conn, scoped)
+        return _build_graphs(conn, scoped, tools.tools_by_count, mcp.mcp_servers_by_count).model_dump()
+    if normalized == "specs":
+        return _build_specs(conn, scoped).model_dump()
+    if normalized == "memory":
+        return _build_memory(conn, scoped).model_dump()
+    if normalized == "privacy":
+        return _build_privacy(conn, scoped).model_dump()
+    if normalized == "exports":
+        return _build_exports(conn, scoped).model_dump()
+    raise ValueError(f"Unknown report tab: {tab_name}")
+
+
 def _scope_clause(column: str, scoped_ids: list[str] | None, *, prefix: str = "WHERE") -> tuple[str, list[str]]:
     if scoped_ids is None:
         return "", []

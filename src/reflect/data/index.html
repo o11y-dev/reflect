@@ -3372,7 +3372,7 @@ function reportUrlWithCurrentFilters(){
   const params = new URLSearchParams(window.location.search);
   const report = params.get('report') || '/api/data';
   const url = new URL(report, window.location.href);
-  ['q','agents','agent','model','status','range','session'].forEach(key => {
+  ['q','agents','agent','model','status','range','session','tab'].forEach(key => {
     const value = params.get(key);
     if (value) url.searchParams.set(key, value);
   });
@@ -3508,6 +3508,65 @@ function sqlTab(name){
   return ((D.sqlite && D.sqlite.tabs) || {})[name] || {};
 }
 
+let filteredDashboardSessions = (D.sessions || []).slice();
+let dashboardFilterActive = false;
+let dashboardSelectedSessionId = currentParams().get('session') || '';
+const lazySqlTabRequests = new Map();
+
+function lazySqlTabUrl(tabName){
+  const url = new URL(`/api/tabs/${encodeURIComponent(tabName)}`, window.location.href);
+  const sessionId = currentParams().get('session') || dashboardSelectedSessionId || '';
+  if (sessionId) url.searchParams.set('session', sessionId);
+  return {url, sessionId};
+}
+
+async function loadSqlTab(tabName){
+  if (!D.sql_backed || !reportSupportsServerFiltering()) return null;
+  if (!D.sqlite) D.sqlite = {};
+  if (!D.sqlite.tabs) D.sqlite.tabs = {};
+  const {url, sessionId} = lazySqlTabUrl(tabName);
+  const cacheKey = `${tabName}:${sessionId || 'all'}`;
+  if (lazySqlTabRequests.has(cacheKey)) return lazySqlTabRequests.get(cacheKey);
+  const request = fetch(url.toString(), {headers: {Accept: 'application/json'}})
+    .then(response => {
+      if (!response.ok) throw new Error(`tab-fetch-failed:${tabName}`);
+      return response.json();
+    })
+    .then(payload => {
+      D.sqlite.tabs[tabName] = payload;
+      return payload;
+    })
+    .finally(() => lazySqlTabRequests.delete(cacheKey));
+  lazySqlTabRequests.set(cacheKey, request);
+  return request;
+}
+
+async function hydrateSqlTabForActiveTab(tabName){
+  if (tabName === 'graphs') {
+    showReportLoader(dashboardSelectedSessionId ? 'Loading session graphs...' : 'Loading graphs...');
+    try {
+      await loadSqlTab('graphs');
+    } finally {
+      hideReportLoader();
+    }
+    return;
+  }
+  if (tabName === 'data') {
+    showReportLoader(dashboardSelectedSessionId ? 'Loading session data...' : 'Loading data...');
+    try {
+      await Promise.all([
+        loadSqlTab('specs'),
+        loadSqlTab('memory'),
+        loadSqlTab('privacy'),
+        loadSqlTab('exports'),
+      ]);
+      renderSqlTabPayloads();
+    } finally {
+      hideReportLoader();
+    }
+  }
+}
+
 /* ── Tabs ── */
 let _graphsInited = false;
 const tabButtons = Array.from(document.querySelectorAll('.tab'));
@@ -3549,9 +3608,15 @@ function activateTab(tabName, {updateUrl = true, focusButton = false} = {}){
   });
   updateTabIndicator(activeButton);
   animateTabIndicator();
-  if (activeTab === 'graphs' && !_graphsInited) {
-    _graphsInited = true;
-    requestAnimationFrame(initGraphs);
+  if (activeTab === 'graphs') {
+    hydrateSqlTabForActiveTab(activeTab)
+      .catch(() => {})
+      .finally(() => {
+        _graphsInited = true;
+        requestAnimationFrame(initGraphs);
+      });
+  } else {
+    hydrateSqlTabForActiveTab(activeTab).catch(() => {});
   }
   if (updateUrl) {
     updateUrlParams(params => params.set('tab', activeTab));
@@ -3580,9 +3645,6 @@ activateTab(currentParams().get('tab') || 'sessions', {updateUrl: false});
 /* ── Header ── */
 document.getElementById('hdr-range').textContent = D.first_event_ts + ' — ' + D.last_event_ts;
 document.getElementById('hdr-ts').textContent = 'Refreshed ' + new Date().toLocaleString();
-let filteredDashboardSessions = (D.sessions || []).slice();
-let dashboardFilterActive = false;
-let dashboardSelectedSessionId = currentParams().get('session') || '';
 
 /* ════════════════════ SESSION BROWSER ════════════════════ */
 (function initSessionBrowser(){

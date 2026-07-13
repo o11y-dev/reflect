@@ -3,11 +3,11 @@ import json
 from reflect.store.ingest import ingest_local_spans_file
 from reflect.store.migrate import migrate
 from reflect.store.normalize import normalize_pending_raw_events
-from reflect.store.rollups import rebuild_rollups
+from reflect.store.rollups import rebuild_rollups, refresh_rollups
 from reflect.store.sqlite import connect_sqlite
 
 
-def _write_spans(path):
+def _write_spans(path, session_id="sess-rollup"):
     spans = [
         {
             "name": "UserPromptSubmit",
@@ -17,7 +17,7 @@ def _write_spans(path):
             "end_time_ns": 1_700_000_000_100_000_000,
             "attributes": {
                 "gen_ai.client.name": "claude",
-                "gen_ai.client.session_id": "sess-rollup",
+                "gen_ai.client.session_id": session_id,
                 "gen_ai.client.hook.event": "UserPromptSubmit",
                 "gen_ai.client.generation_id": "gen-1",
                 "gen_ai.request.model": "claude-4.6-opus",
@@ -33,7 +33,7 @@ def _write_spans(path):
             "end_time_ns": 1_700_000_000_110_000_000,
             "attributes": {
                 "gen_ai.client.name": "claude",
-                "gen_ai.client.session_id": "sess-rollup",
+                "gen_ai.client.session_id": session_id,
                 "gen_ai.client.hook.event": "UserPromptSubmit",
                 "gen_ai.client.generation_id": "gen-1",
                 "gen_ai.request.model": "claude-4.6-opus",
@@ -47,7 +47,7 @@ def _write_spans(path):
             "end_time_ns": 1_700_000_000_120_000_000,
             "attributes": {
                 "gen_ai.client.name": "claude",
-                "gen_ai.client.session_id": "sess-rollup",
+                "gen_ai.client.session_id": session_id,
                 "gen_ai.client.hook.event": "UserPromptSubmit",
                 "gen_ai.client.generation_id": "gen-1",
                 "gen_ai.request.model": "claude-4.6-opus",
@@ -61,7 +61,7 @@ def _write_spans(path):
             "end_time_ns": 1_700_000_001_250_000_000,
             "attributes": {
                 "gen_ai.client.name": "claude",
-                "gen_ai.client.session_id": "sess-rollup",
+                "gen_ai.client.session_id": session_id,
                 "gen_ai.client.tool_name": "Read",
             },
         },
@@ -73,7 +73,7 @@ def _write_spans(path):
             "end_time_ns": 1_700_000_002_050_000_000,
             "attributes": {
                 "gen_ai.client.name": "claude",
-                "gen_ai.client.session_id": "sess-rollup",
+                "gen_ai.client.session_id": session_id,
                 "gen_ai.client.hook.event": "PostToolUseFailure",
                 "gen_ai.client.tool_name": "Read",
                 "gen_ai.client.tool_use_id": "tool-failed-1",
@@ -87,7 +87,7 @@ def _write_spans(path):
             "end_time_ns": 1_700_000_002_050_000_000,
             "attributes": {
                 "gen_ai.client.name": "claude",
-                "gen_ai.client.session_id": "sess-rollup",
+                "gen_ai.client.session_id": session_id,
                 "gen_ai.client.hook.event": "PostToolUseFailure",
                 "gen_ai.client.tool_name": "Read",
                 "gen_ai.client.tool_use_id": "tool-failed-1",
@@ -156,5 +156,71 @@ def test_rebuild_rollups_uses_valid_end_time_when_start_is_epoch(tmp_path):
             "SELECT started_at FROM session_rollups WHERE session_id = 'sess-rollup'"
         ).fetchone()[0] == "2026-03-25T06:40:50+00:00"
         assert conn.execute("SELECT day FROM daily_rollups").fetchone()[0] == "2026-03-25"
+    finally:
+        conn.close()
+
+
+def test_refresh_rollups_only_updates_changed_sessions_and_affected_aggregates(tmp_path):
+    db = tmp_path / "reflect.db"
+    first_spans = tmp_path / "first.jsonl"
+    second_spans = tmp_path / "second.jsonl"
+    _write_spans(first_spans)
+    _write_spans(second_spans, session_id="sess-other")
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        ingest_local_spans_file(conn, file_path=first_spans)
+        ingest_local_spans_file(conn, file_path=second_spans)
+        normalize_pending_raw_events(conn)
+        rebuild_rollups(conn)
+        other_updated_at = conn.execute(
+            "SELECT updated_at FROM session_rollups WHERE session_id = 'sess-other'"
+        ).fetchone()[0]
+
+        changed_spans = tmp_path / "changed.jsonl"
+        changed_spans.write_text(
+            json.dumps(
+                {
+                    "name": "PreToolUse",
+                    "traceId": "trace-changed",
+                    "spanId": "span-changed",
+                    "start_time_ns": 1_700_000_003_000_000_000,
+                    "end_time_ns": 1_700_000_003_100_000_000,
+                    "attributes": {
+                        "gen_ai.client.name": "claude",
+                        "gen_ai.client.session_id": "sess-rollup",
+                        "gen_ai.client.tool_name": "Write",
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        ingest_local_spans_file(conn, file_path=changed_spans)
+        changed_session_ids: set[str] = set()
+        normalize_pending_raw_events(conn, changed_session_ids=changed_session_ids)
+
+        result = refresh_rollups(conn, changed_session_ids)
+
+        assert changed_session_ids == {"sess-rollup"}
+        assert result == {
+            "session_rollups": 2,
+            "daily_rollups": 1,
+            "tool_rollups": 2,
+            "refreshed_sessions": 1,
+        }
+        assert conn.execute(
+            "SELECT updated_at FROM session_rollups WHERE session_id = 'sess-other'"
+        ).fetchone()[0] == other_updated_at
+        assert conn.execute(
+            "SELECT tool_call_count FROM session_rollups WHERE session_id = 'sess-rollup'"
+        ).fetchone()[0] == 4
+        assert tuple(conn.execute(
+            "SELECT session_count, prompt_count, tool_call_count FROM daily_rollups"
+        ).fetchone()) == (2, 2, 7)
+        assert dict(conn.execute(
+            "SELECT tool_name, call_count FROM tool_rollups ORDER BY tool_name"
+        ).fetchall()) == {"Read": 3, "Write": 1}
     finally:
         conn.close()
