@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added an accessible bidirectional session conversation playhead with draggable event snapping, keyboard navigation, compact event context, focused conversation highlighting, and timeline updates while manually scrolling the thread.
 - Added object-oriented Session Rules with typed definitions, normalized telemetry and summary contexts, a validated registry, a shared scorer, and a documented extension path for per-session quality dimensions.
 - Added a public object-oriented `BaseImprovementRule`, typed observation builder, validated `RuleRegistry`, and documented custom-rule extension path.
 - Added typed, rule-owned `WorkflowDefinition` proposals so custom and built-in rules explicitly opt into workflow creation while observation-only rules remain supported.
@@ -24,6 +25,7 @@
 
 ### Changed
 
+- Reframed Measurements as a plain-language Impact view that groups snapshots by applied workflow, shows evidence-collection progress before making claims, hides premature deltas and confidence, retains history under disclosure, and links each result to stored or explicitly reconstructed comparison-session cohorts.
 - Redesigned observation-evidence and workflow-review dialogs around compact decision briefs, professional section hierarchy, human-readable session rows, bounded evidence disclosure, and anchored review actions.
 - Restructured the browser report around Inbox, Sessions, Workflows, Skills, Measurements, and Explore while preserving the existing usage, cost, comparison, tools, graph, context, memory, privacy, export, and achievement widgets.
 - Moved observed loops into the evidence-first Inbox, gave Workflows an independent review and delivery surface, and limited Skills to durable package versions, installations, usage, provenance, and measurements.
@@ -44,6 +46,8 @@
 
 ### Fixed
 
+- Populated prompt summaries for every session-sidebar navigation card and stopped token-bearing LLM generations from appearing as synthetic metadata-only user prompts in Conversation.
+- Prevented session-filtered dashboards from remaining on the loading screen by keeping improvement GET endpoints read-only and bounding non-critical improvement-data startup requests.
 - Displayed telemetry-observed skill-use sessions in Skills review, separately from the source sessions that produced generated skills.
 - Grouped scope- and tool-specific observation rows into durable Inbox findings, excluded archived telemetry-only skill identities from the default Skills surface, and replaced page-length badge counts with explicit API totals.
 - Reduced loop false positives by requiring consecutive same-input runs, excluding approval and wait/poll transport events, requiring cross-session recurrence for failure-free patterns, hiding resolved loops by default, and replacing expensive windowed detection with a bounded streaming pass.

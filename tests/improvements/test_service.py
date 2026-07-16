@@ -830,6 +830,8 @@ def test_refresh_automatically_measures_new_comparable_sessions_once(tmp_path):
 
         result = service.refresh()
         measurement = service.measurements.list()[0]
+        assert "before_session_ids" not in measurement["cohort"]
+        assert "after_session_ids" not in measurement["cohort"]
         count_after_first_refresh = conn.execute("SELECT COUNT(*) FROM measurements").fetchone()[0]
         second = service.refresh()
 
@@ -838,6 +840,17 @@ def test_refresh_automatically_measures_new_comparable_sessions_once(tmp_path):
         assert measurement["before_count"] >= 5
         assert measurement["after_count"] >= 5
         assert measurement["verdict"] == "regressed"
+        cohorts = service.measurements.sessions(measurement["id"])
+        assert cohorts["candidate_id"] == candidate.id
+        assert cohorts["snapshot_exact"] is True
+        assert cohorts["before_count"] == measurement["before_count"]
+        assert cohorts["after_count"] == measurement["after_count"]
+        assert len(cohorts["before_sessions"]) == measurement["before_count"]
+        assert len(cohorts["after_sessions"]) == measurement["after_count"]
+        assert {item["session_id"] for item in cohorts["after_sessions"]} >= {
+            "measure-session-6",
+            "measure-session-10",
+        }
         skill = service.skills.skill_for_candidate(candidate.id)
         assert skill.measurement_count == 1
         assert service.skills.show(skill.id).measurements[0].verdict == "regressed"

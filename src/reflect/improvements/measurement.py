@@ -9,6 +9,13 @@ from typing import Any
 from reflect.improvements.repository import utc_now
 
 
+def _public_cohort(raw: str) -> dict[str, Any]:
+    cohort = json.loads(raw)
+    cohort.pop("before_session_ids", None)
+    cohort.pop("after_session_ids", None)
+    return cohort
+
+
 class MeasurementService:
     """Compute conservative before/after results for active interventions."""
 
@@ -69,6 +76,24 @@ class MeasurementService:
             "minimum_after_sessions": 5,
             "minimum_before_sessions": 5,
             "metric_direction": metric_direction,
+            "before_session_ids": [
+                item["session_id"]
+                for item in self._cohort_sessions(
+                    str(metric_name),
+                    repo_id,
+                    task_archetype_id=archetype_id,
+                    before=exposed_at,
+                )
+            ],
+            "after_session_ids": [
+                item["session_id"]
+                for item in self._cohort_sessions(
+                    str(metric_name),
+                    repo_id,
+                    task_archetype_id=archetype_id,
+                    after=exposed_at,
+                )
+            ],
         }
         latest = self.conn.execute(
             """
@@ -186,7 +211,7 @@ class MeasurementService:
                 "id": row[0],
                 "candidate_id": row[1],
                 "metric_name": row[2],
-                "cohort": json.loads(row[3]),
+                "cohort": _public_cohort(row[3]),
                 "before_value": row[4],
                 "after_value": row[5],
                 "before_count": row[6],
@@ -197,6 +222,145 @@ class MeasurementService:
                 "measured_at": row[11],
             }
             for row in rows
+        ]
+
+    def sessions(self, measurement_id: str) -> dict[str, Any]:
+        """Return the bounded session cohorts used for a measurement snapshot."""
+        row = self.conn.execute(
+            """
+            SELECT m.id, wv.candidate_id, m.metric_name, m.cohort_json,
+                   m.before_count, m.after_count, i.exposure_started_at,
+                   o.repo_id, wc.task_archetype_id
+            FROM measurements m
+            JOIN interventions i ON i.id = m.intervention_id
+            JOIN workflow_versions wv ON wv.id = i.workflow_version_id
+            JOIN workflow_candidates wc ON wc.id = wv.candidate_id
+            JOIN observations o ON o.id = wc.observation_id
+            WHERE m.id = ?
+            """,
+            (measurement_id,),
+        ).fetchone()
+        if not row:
+            raise KeyError(f"Measurement not found: {measurement_id}")
+        (
+            stored_id,
+            candidate_id,
+            metric_name,
+            cohort_json,
+            before_count,
+            after_count,
+            exposed_at,
+            repo_id,
+            archetype_id,
+        ) = row
+        cohort = json.loads(cohort_json)
+        before_ids = [str(item) for item in cohort.get("before_session_ids") or []]
+        after_ids = [str(item) for item in cohort.get("after_session_ids") or []]
+        snapshot_exact = "before_session_ids" in cohort and "after_session_ids" in cohort
+        before_sessions = (
+            self._sessions_by_ids(before_ids)
+            if snapshot_exact
+            else self._cohort_sessions(
+                str(metric_name),
+                repo_id,
+                task_archetype_id=archetype_id,
+                before=exposed_at,
+            )[: int(before_count)]
+        )
+        after_sessions = (
+            self._sessions_by_ids(after_ids)
+            if snapshot_exact
+            else self._cohort_sessions(
+                str(metric_name),
+                repo_id,
+                task_archetype_id=archetype_id,
+                after=exposed_at,
+            )[: int(after_count)]
+        )
+        return {
+            "id": stored_id,
+            "candidate_id": candidate_id,
+            "metric_name": metric_name,
+            "before_count": int(before_count),
+            "after_count": int(after_count),
+            "snapshot_exact": snapshot_exact,
+            "before_sessions": before_sessions,
+            "after_sessions": after_sessions,
+        }
+
+    def _sessions_by_ids(self, session_ids: list[str]) -> list[dict[str, Any]]:
+        if not session_ids:
+            return []
+        placeholders = ", ".join("?" for _ in session_ids)
+        rows = self.conn.execute(
+            f"""
+            SELECT s.id, s.title, a.name, s.started_at, s.status
+            FROM sessions s
+            LEFT JOIN agents a ON a.id = s.agent_id
+            WHERE s.id IN ({placeholders})
+            """,
+            session_ids,
+        ).fetchall()
+        by_id = {
+            str(item[0]): {
+                "session_id": item[0],
+                "title": item[1],
+                "agent": item[2],
+                "started_at": item[3],
+                "status": item[4],
+            }
+            for item in rows
+        }
+        return [by_id[session_id] for session_id in session_ids if session_id in by_id]
+
+    def _cohort_sessions(
+        self,
+        metric_name: str,
+        repo_id: str | None,
+        *,
+        task_archetype_id: str | None,
+        before: str | None = None,
+        after: str | None = None,
+        through: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = [repo_id]
+        if before:
+            clauses.append("s.started_at < ?")
+            params.append(before)
+        if after:
+            clauses.append("s.started_at >= ?")
+            params.append(after)
+        if through:
+            clauses.append("s.started_at <= ?")
+            params.append(through)
+        clauses.append(
+            "(? IS NULL OR EXISTS (SELECT 1 FROM session_task_archetypes sta "
+            "WHERE sta.session_id = s.id AND sta.task_archetype_id = ?))"
+        )
+        params.extend((task_archetype_id, task_archetype_id))
+        if metric_name == "tool_failure_rate":
+            clauses.append("EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.session_id = s.id)")
+        rows = self.conn.execute(
+            f"""
+            SELECT s.id, s.title, a.name, s.started_at, s.status
+            FROM sessions s
+            LEFT JOIN agents a ON a.id = s.agent_id
+            WHERE COALESCE(s.repo_id, '') = COALESCE(?, '')
+              AND {' AND '.join(clauses)}
+            ORDER BY s.started_at DESC LIMIT 50
+            """,
+            params,
+        ).fetchall()
+        return [
+            {
+                "session_id": item[0],
+                "title": item[1],
+                "agent": item[2],
+                "started_at": item[3],
+                "status": item[4],
+            }
+            for item in rows
         ]
 
     def _session_values(

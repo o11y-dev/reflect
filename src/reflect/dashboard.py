@@ -2787,6 +2787,11 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
     finally:
         conn.close()
 
+    navigation_first_prompts = _sql_session_first_prompts(
+        db_path,
+        {str(row["session_id"]) for row in navigation_page["rows"]},
+    )
+
     quality_breakdown = _sql_quality_breakdown(session_row)
     quality_score = sum(float(item["earned"]) for item in quality_breakdown)
     total_tokens = (
@@ -2854,7 +2859,9 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
             "agent": navigation_row.get("agent") or "unknown",
             "status": navigation_row["status"],
             "title": navigation_row.get("title"),
-            "first_prompt": navigation_row.get("title") or "",
+            "first_prompt": navigation_first_prompts.get(navigation_id, "")
+            or navigation_row.get("title")
+            or "",
             "started_at": navigation_row["started_at"],
             "ended_at": navigation_row.get("ended_at"),
             "created_at": navigation_row["started_at"],
@@ -3702,7 +3709,6 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
         if span_id:
             step_id_by_span_id[span_id] = step["id"]
     seen_prompts: set[tuple[str, str]] = set()
-    seen_prompt_generations: set[str] = set()
     seen_responses: set[tuple[str, str, int, int]] = set()
     seen_tools: set[tuple[str, str, str]] = set()
     for step in steps:
@@ -3721,31 +3727,17 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
             "input",
             limit=5000,
         )
-        prompt_added = False
         if is_prompt_event:
             prompt_key = (generation_id or str(_sql_attr(attrs, "gen_ai.client.prompt.sha256") or ""), prompt)
             if prompt_key not in seen_prompts:
                 seen_prompts.add(prompt_key)
-                if generation_id:
-                    seen_prompt_generations.add(generation_id)
                 conversation.append({
                     "type": "prompt",
                     "ts": base_ts,
                     "preview": prompt or "Prompt text was not captured for this turn; metadata is available.",
                 })
-                prompt_added = True
         if step["id"] in llm_by_step:
             call = llm_by_step[step["id"]]
-            has_prompt_for_call = prompt_added or (bool(generation_id) and generation_id in seen_prompt_generations)
-            if call["input_tokens"] and not has_prompt_for_call:
-                if generation_id:
-                    seen_prompt_generations.add(generation_id)
-                conversation.append({
-                    "type": "prompt",
-                    "ts": base_ts,
-                    "input_tokens": call["input_tokens"],
-                    "preview": "Prompt text was not captured for this turn; token metadata is available.",
-                })
             if is_response_event or call["output_tokens"]:
                 model = call["response_model"] or call["request_model"] or ""
                 response_key = (
@@ -4258,8 +4250,6 @@ def _build_dashboard_app(
             behavior_type = request.query_params.get("type")
             status = request.query_params.get("status")
             service = ImprovementService(conn)
-            service.skills.sync_workflow_candidates()
-            conn.commit()
             candidates = service.workflows.list(
                 behavior_types={behavior_type} if behavior_type else None,
                 statuses={status} if status else None,
@@ -4289,7 +4279,6 @@ def _build_dashboard_app(
         conn = connect_sqlite(db_path)
         try:
             service = ImprovementService(conn)
-            refresh = service.loops.refresh()
             kind = request.query_params.get("kind")
             status = request.query_params.get("status")
             records = service.loops.list(
@@ -4299,7 +4288,6 @@ def _build_dashboard_app(
             )
             return JSONResponse(
                 {
-                    "refresh": refresh,
                     "loops": [record.model_dump(mode="json") for record in records],
                 }
             )
@@ -4318,7 +4306,6 @@ def _build_dashboard_app(
         conn = connect_sqlite(db_path)
         try:
             service = ImprovementService(conn)
-            service.loops.refresh()
             return JSONResponse(service.loops.show(loop_id).model_dump(mode="json"))
         except KeyError as exc:
             return JSONResponse({"error": str(exc)}, status_code=404)
@@ -4336,7 +4323,6 @@ def _build_dashboard_app(
         conn = connect_sqlite(db_path)
         try:
             service = ImprovementService(conn)
-            refresh = service.skills.refresh()
             status = request.query_params.get("status")
             include_stale = (
                 request.query_params.get("include_stale") or ""
@@ -4359,7 +4345,6 @@ def _build_dashboard_app(
                 )
             return JSONResponse(
                 {
-                    "refresh": refresh,
                     "skills": [record.model_dump(mode="json") for record in records],
                     "total_count": total_count,
                     "archived_count": counts_by_lifecycle.get(SkillLifecycleState.STALE.value, 0),
@@ -4381,7 +4366,6 @@ def _build_dashboard_app(
         conn = connect_sqlite(db_path)
         try:
             service = ImprovementService(conn)
-            service.skills.refresh()
             return JSONResponse(service.skills.show(skill_id).model_dump(mode="json"))
         except KeyError as exc:
             return JSONResponse({"error": str(exc)}, status_code=404)
@@ -4549,6 +4533,21 @@ def _build_dashboard_app(
         conn = connect_sqlite(db_path)
         try:
             return JSONResponse({"measurements": ImprovementService(conn).measurements.list()})
+        finally:
+            conn.close()
+
+    @app.get("/api/measurements/{measurement_id}/sessions")
+    def api_measurement_sessions(measurement_id: str):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            return JSONResponse(ImprovementService(conn).measurements.sessions(measurement_id))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
         finally:
             conn.close()
 

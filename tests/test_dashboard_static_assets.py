@@ -343,7 +343,7 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert 'data-tab="sessions">Sessions</button>' in text
     assert 'data-tab="workflows">Workflows</button>' in text
     assert 'data-tab="skills">Skills</button>' in text
-    assert 'data-tab="compare">Measurements</button>' in text
+    assert 'data-tab="compare">Impact</button>' in text
     assert 'data-tab="overview">Explore</button>' in text
     assert 'id="improvement-inbox"' in text
     assert 'id="workflow-ledger"' in text
@@ -360,6 +360,10 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "fetch('/api/loops'" in text
     assert "fetch('/api/skills'" in text
     assert "fetch('/api/measurements'" in text
+    assert "groupImpactMeasurements(measurements)" in text
+    assert 'data-ledger-action="review-impact-sessions"' in text
+    assert "View Compared Sessions" in text
+    assert "Post-application session collection progress" in text
     assert 'id="ledger-dialog"' in text
     assert 'data-ledger-action="evidence"' in text
     assert 'data-ledger-action="review-loop"' in text
@@ -372,7 +376,7 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert 'data-session-feedback="no-change-correct"' in text
     assert "Approve this workflow and package it as a skill at" in text
     assert "Exact File Diff" in text
-    assert "Review regression &amp; rollback" in text
+    assert "Review &amp; Roll Back" in text
     assert "const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length ? 'observations' : 'sessions';" in text
 
 
@@ -464,6 +468,37 @@ def test_dashboard_session_detail_uses_shared_timeline_above_tabs(path: Path):
     assert "title=\"${safeTip}\"" not in text
     assert "Trace waterfall" in text
     assert "<span>Trace timeline</span>" not in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_session_timeline_controls_conversation_playhead(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "class SessionConversationPlayhead" in text
+    assert 'class="session-timeline-playhead" role="slider"' in text
+    assert 'aria-label="Conversation position"' in text
+    assert 'data-timeline-event-index="${ev._conversationIndex}"' in text
+    assert 'data-timeline-summary="${tooltipAttr(summary)}"' in text
+    assert 'data-conversation-event-index="${index}"' in text
+    assert 'data-conversation-event-index="${ev._conversationIndex}"' in text
+    assert "this.track.setPointerCapture?.(event.pointerId)" in text
+    assert "key === 'ArrowLeft' || key === 'ArrowUp'" in text
+    assert "key === 'ArrowRight' || key === 'ArrowDown'" in text
+    assert "this.syncFromConversation()" in text
+    assert "Drag to scan conversation" in text
+    assert ".chat-msg.is-playhead-active .chat-bubble{" in text
+    assert ".session-timeline-playhead:focus-visible{" in text
+    assert "this.reducedMotion" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_supplementary_data_cannot_block_initial_render(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "const controller = new AbortController();" in text
+    assert "window.setTimeout(() => controller.abort(), 3000)" in text
+    assert "signal: controller.signal" in text
+    assert "window.clearTimeout(timeout);" in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)

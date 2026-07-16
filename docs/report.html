@@ -537,6 +537,10 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .inbox-list,.workflow-list,.measurement-list{display:grid;gap:12px}
 .inbox-card,.workflow-card,.measurement-card{content-visibility:auto;contain-intrinsic-size:auto 180px;border:1px solid var(--border);border-radius:8px;background:var(--surface);padding:17px;box-shadow:0 12px 28px rgba(0,0,0,.18)}
 .inbox-card-head,.workflow-card-head,.measurement-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:8px}
+.impact-card{position:relative;min-width:0;overflow:hidden;border-color:rgba(242,138,26,.2);background:linear-gradient(145deg,rgba(242,138,26,.055),rgba(18,17,15,.92) 34%,rgba(12,12,11,.98))}.impact-card::before{content:"";position:absolute;inset:0 auto 0 0;width:2px;background:var(--impact-color,var(--blue))}.impact-card[data-verdict="improved"]{--impact-color:var(--green)}.impact-card[data-verdict="regressed"]{--impact-color:var(--red)}.impact-card[data-verdict="unchanged"]{--impact-color:var(--text-3)}
+.impact-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.impact-head-main{min-width:0}.impact-eyebrow{margin-bottom:6px;color:var(--text-3);font-size:10px;font-weight:750;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.impact-title{margin:0;color:var(--text);font-size:17px;line-height:1.35;letter-spacing:-.01em;text-wrap:balance}.impact-status{flex:0 0 auto;border:1px solid rgba(242,138,26,.3);border-radius:999px;padding:5px 9px;background:rgba(242,138,26,.08);color:var(--blue);font-size:10px;font-weight:750}.impact-status.improved{border-color:rgba(50,215,75,.28);background:rgba(50,215,75,.07);color:var(--green)}.impact-status.regressed{border-color:rgba(255,69,58,.3);background:rgba(255,69,58,.07);color:#ff8b84}.impact-status.unchanged{border-color:var(--border2);background:var(--surface2);color:var(--text-2)}
+.impact-summary{max-width:820px;margin:11px 0 0;color:var(--text-2);font-size:13px;line-height:1.58;text-wrap:pretty}.impact-progress{display:grid;gap:8px;margin-top:15px}.impact-progress-copy{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--text-3);font-size:11px}.impact-progress-copy strong{color:var(--text-2);font-weight:750}.impact-progress progress{appearance:none;width:100%;height:6px;border:0;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.06)}.impact-progress progress::-webkit-progress-bar{background:rgba(255,255,255,.06)}.impact-progress progress::-webkit-progress-value{border-radius:999px;background:linear-gradient(90deg,#b85c12,var(--blue))}.impact-progress progress::-moz-progress-bar{border-radius:999px;background:linear-gradient(90deg,#b85c12,var(--blue))}
+.impact-comparison{display:grid;grid-template-columns:minmax(0,1fr) 24px minmax(0,1fr);gap:10px;align-items:stretch;margin-top:15px}.impact-period{min-width:0;padding:12px 13px;border:1px solid var(--border);border-radius:7px;background:rgba(255,255,255,.018)}.impact-period-label{color:var(--text-3);font-size:9px;font-weight:750;letter-spacing:.08em;text-transform:uppercase}.impact-period-value{margin-top:5px;color:var(--text);font-size:14px;font-weight:760;font-variant-numeric:tabular-nums}.impact-period-note{margin-top:3px;color:var(--text-3);font-size:10px}.impact-arrow{display:grid;place-items:center;color:var(--blue);font-size:15px}.impact-scope{margin-top:12px;color:var(--text-3);font-size:10px;line-height:1.45}.impact-history{margin-top:13px;border-top:1px solid var(--border);padding-top:11px}.impact-history>summary{cursor:pointer;color:var(--text-3);font-size:10px;font-weight:700}.impact-history>summary:hover{color:var(--blue)}.impact-history>summary:focus-visible{outline:2px solid var(--blue);outline-offset:3px}.impact-history-list{display:grid;gap:6px;margin:10px 0 0;padding:0;list-style:none}.impact-history-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 9px;border-radius:6px;background:rgba(255,255,255,.018);color:var(--text-3);font-size:10px;font-variant-numeric:tabular-nums}.impact-explainer{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;margin-bottom:14px;border:1px solid var(--border);border-radius:8px;background:var(--border);overflow:hidden}.impact-step{min-width:0;padding:13px 14px;background:var(--surface)}.impact-step strong{display:block;margin-bottom:4px;color:var(--text);font-size:11px}.impact-step span{color:var(--text-3);font-size:10px;line-height:1.45}
 .workflow-toolbar{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin:-6px 0 16px;padding:13px 15px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.workflow-filter-field{display:grid;gap:5px;min-width:170px}.workflow-filter-field label{color:var(--text-3);font-size:10px;font-weight:750;letter-spacing:.07em;text-transform:uppercase}.workflow-filter-field select{border:1px solid var(--border2);border-radius:6px;background:#070604;color:var(--text);padding:9px 34px 9px 10px}.workflow-filter-field select:focus-visible{outline:2px solid var(--blue);outline-offset:2px}.workflow-filter-summary{margin-left:auto;padding-bottom:9px;color:var(--text-3);font-size:11px}
 .inbox-title,.workflow-title,.measurement-title{font-size:15px;font-weight:750;color:var(--text)}
 .inbox-copy,.workflow-copy,.measurement-copy{font-size:13px;color:var(--text-2);line-height:1.55}
@@ -553,7 +557,7 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .rule-registry{margin:0 0 18px;border:1px solid var(--border);border-radius:8px;background:var(--surface);overflow:hidden}.rule-registry>summary{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px 17px;cursor:pointer;color:var(--text);font-weight:750}.rule-registry>summary::marker{color:var(--blue)}.rule-registry-copy{font-size:12px;color:var(--text-3);font-weight:500}.rule-registry-note{margin:0;padding:0 17px 14px;color:var(--text-2);font-size:12px;line-height:1.5}.rule-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:0 15px 15px}.rule-card{min-width:0;padding:13px;border:1px solid var(--border);border-radius:7px;background:var(--surface2)}.rule-card code,.workflow-target code{overflow-wrap:anywhere}.rule-config{margin-top:8px;color:var(--text-3);font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
 .review-lead{position:relative;margin:0 0 18px;padding:17px 18px 17px 20px;border:1px solid var(--border);border-radius:8px;background:linear-gradient(135deg,rgba(242,138,26,.09),rgba(255,255,255,.018) 48%,rgba(255,255,255,.008))}.review-lead::before{content:"";position:absolute;inset:14px auto 14px 0;width:2px;border-radius:2px;background:var(--blue)}.review-eyebrow{margin-bottom:7px;color:var(--blue);font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.review-lead p{max-width:760px;margin:0;color:var(--text-2);font-size:14px;line-height:1.58;text-wrap:pretty}.review-kpi-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:18px;border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.015);overflow:hidden}.review-kpi{min-width:0;padding:13px 15px}.review-kpi+.review-kpi{border-left:1px solid var(--border)}.review-kpi-label{color:var(--text-3);font-size:9px;font-weight:750;letter-spacing:.09em;text-transform:uppercase}.review-kpi-value{margin-top:5px;color:var(--text);font-size:14px;font-weight:760;line-height:1.35;overflow-wrap:anywhere}.review-kpi-value.signal{color:var(--blue)}.review-grid{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(280px,.8fr);gap:14px;align-items:start}.review-stack{display:grid;gap:14px;min-width:0}.review-panel{min-width:0;padding:16px;border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.018)}.review-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.review-panel-title{margin:0;color:var(--text);font-size:13px;font-weight:800;letter-spacing:.01em}.review-panel-copy{margin:-4px 0 12px;color:var(--text-3);font-size:11px;line-height:1.5}.review-facts{display:grid;gap:0;margin:0}.review-fact{display:grid;grid-template-columns:95px minmax(0,1fr);gap:12px;padding:9px 0;border-top:1px solid var(--border)}.review-fact:first-child{padding-top:0;border-top:0}.review-fact:last-child{padding-bottom:0}.review-fact dt{color:var(--text-3);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}.review-fact dd{min-width:0;margin:0;color:var(--text-2);font-size:12px;line-height:1.45;overflow-wrap:anywhere}.review-section{margin:0}.review-section h3{margin:0 0 11px;font-size:13px}.workflow-readable{margin:0;padding-left:21px;color:var(--text-2);font-size:12px;line-height:1.58}.workflow-readable li::marker{color:var(--blue);font-weight:800}.workflow-readable li+li{margin-top:7px}.workflow-support-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.workflow-target{display:grid;gap:8px;margin:0}.workflow-target label{font-size:11px;font-weight:750;color:var(--text)}.workflow-target-row{display:flex;gap:8px;align-items:center}.workflow-target-input{min-width:0;flex:1;border:1px solid var(--border2);border-radius:6px;background:#070604;color:var(--text);padding:10px 11px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace}.workflow-target-input:focus-visible{outline:2px solid var(--blue);outline-offset:2px}.workflow-target-file{min-width:0;padding:9px 11px;border:1px solid var(--border);border-radius:6px;background:#090806;color:var(--text-3);font:10px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-check{display:flex;align-items:flex-start;gap:8px;margin-top:9px;padding:9px 11px;border:1px solid rgba(50,215,75,.22);border-radius:6px;background:rgba(50,215,75,.055);color:var(--green);font-size:11px;line-height:1.45}.review-check::before{content:"✓";font-weight:900}.review-check.blocked{border-color:rgba(255,69,58,.28);background:rgba(255,69,58,.055);color:#ff8b84}.review-check.blocked::before{content:"!"}.review-warning{margin-top:9px;padding:9px 11px;border:1px solid rgba(242,138,26,.24);border-radius:6px;background:rgba(242,138,26,.055);color:#e6b46e;font-size:11px;line-height:1.45}.advanced-review{margin:0;border:1px solid var(--border);border-radius:7px;background:rgba(0,0,0,.12);overflow:hidden}.advanced-review+.advanced-review{margin-top:8px}.advanced-review>summary{padding:11px 12px;cursor:pointer;color:var(--text-2);font-size:11px;font-weight:750;list-style-position:inside}.advanced-review[open]>summary{border-bottom:1px solid var(--border);color:var(--text)}.advanced-review>.ledger-diff,.advanced-review>.ledger-editor,.advanced-review>.evidence-list,.advanced-review>label{margin:12px}.advanced-review>label{display:block;color:var(--text-3);font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase}.advanced-review>.ledger-editor{width:calc(100% - 24px)}.session-ledger{display:grid;gap:7px}.session-ledger-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;content-visibility:auto;contain-intrinsic-size:84px;padding:11px 12px;border:1px solid var(--border);border-radius:7px;background:rgba(255,255,255,.018)}.session-ledger-item:hover{border-color:rgba(242,138,26,.28);background:rgba(242,138,26,.025)}.session-ledger-main{min-width:0}.session-ledger-head{display:flex;align-items:center;gap:8px;min-width:0}.session-ledger-title{min-width:0;color:var(--text);font-size:12px;font-weight:760;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.session-ledger-id{margin-top:4px;color:#77736b;font:9px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.session-ledger-meta{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px;color:var(--text-3);font-size:10px}.session-ledger-summary{margin-top:7px;color:var(--text-3);font-size:11px;line-height:1.45;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.session-ledger-side{display:grid;justify-items:end;gap:7px}.session-ledger-side .ledger-button{padding:6px 9px;font-size:10px}.session-more{margin-top:8px}.session-more>summary{cursor:pointer;color:var(--blue);font-size:11px;font-weight:700}.session-more[open]>summary{margin-bottom:8px}.session-ledger-empty{padding:12px;border:1px dashed var(--border);border-radius:7px;color:var(--text-3);font-size:11px;line-height:1.5}.ledger-status{min-height:16px;color:var(--text-3);font-size:10px;line-height:1.45}.ledger-status code{overflow-wrap:anywhere}.review-panel .ledger-status{margin-top:8px}
 @media(max-width:860px){.review-grid{grid-template-columns:1fr}.review-kpi-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.review-kpi:nth-child(3){border-left:0;border-top:1px solid var(--border)}.review-kpi:nth-child(4){border-top:1px solid var(--border)}.ledger-dialog{width:calc(100vw - 24px);max-height:calc(100vh - 24px)}.workflow-support-grid{grid-template-columns:1fr}}
-@media(max-width:600px){.product-hero,.product-section-head{align-items:flex-start;flex-direction:column}.product-count,.product-section-count{align-self:flex-start}.product-count small,.product-section-count small{text-align:left}.rule-grid{grid-template-columns:1fr}.ledger-dialog{width:calc(100vw - 12px);max-height:calc(100vh - 12px);border-radius:8px}.ledger-dialog-head{padding:19px 17px 16px}.ledger-dialog-body{padding:17px}.ledger-dialog-actions{padding-inline:17px;overflow-x:auto}.ledger-dialog-title{font-size:18px}.workflow-target-row{align-items:stretch;flex-direction:column}.workflow-toolbar{align-items:stretch}.workflow-filter-field{min-width:100%}.workflow-filter-summary{margin-left:0;padding:0}.ledger-action-spacer{display:none}.session-ledger-item{grid-template-columns:1fr}.session-ledger-side{display:flex;align-items:center;justify-content:space-between}.review-fact{grid-template-columns:82px minmax(0,1fr)}}
+@media(max-width:600px){.product-hero,.product-section-head{align-items:flex-start;flex-direction:column}.product-count,.product-section-count{align-self:flex-start}.product-count small,.product-section-count small{text-align:left}.rule-grid{grid-template-columns:1fr}.ledger-dialog{width:calc(100vw - 12px);max-height:calc(100vh - 12px);border-radius:8px}.ledger-dialog-head{padding:19px 17px 16px}.ledger-dialog-body{padding:17px}.ledger-dialog-actions{padding-inline:17px;overflow-x:auto}.ledger-dialog-title{font-size:18px}.workflow-target-row{align-items:stretch;flex-direction:column}.workflow-toolbar{align-items:stretch}.workflow-filter-field{min-width:100%}.workflow-filter-summary{margin-left:0;padding:0}.ledger-action-spacer{display:none}.session-ledger-item{grid-template-columns:1fr}.session-ledger-side{display:flex;align-items:center;justify-content:space-between}.review-fact{grid-template-columns:82px minmax(0,1fr)}.impact-head{align-items:flex-start;flex-direction:column;gap:10px}.impact-status{align-self:flex-start}.impact-comparison{grid-template-columns:1fr}.impact-arrow{transform:rotate(90deg)}.impact-explainer{grid-template-columns:1fr}}
 .explore-subnav{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 18px;padding:6px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}
 .explore-link{appearance:none;border:0;border-radius:6px;background:transparent;color:var(--text-2);padding:8px 12px;font:600 12px inherit;cursor:pointer}.explore-link:hover,.explore-link.active{background:rgba(242,138,26,.12);color:var(--blue)}
 .badge-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
@@ -1599,6 +1603,7 @@ body.rail-overlay-open{overflow:hidden}
   color:var(--text-2);
 }
 .session-timeline-meta{
+  margin-left:auto;
   font-size:11px;
   color:var(--text-3);
   white-space:nowrap;
@@ -1610,6 +1615,9 @@ body.rail-overlay-open{overflow:hidden}
   overflow:visible;
   background:rgba(255,255,255,.04);
   border:1px solid rgba(255,255,255,.055);
+  cursor:ew-resize;
+  touch-action:none;
+  user-select:none;
 }
 .session-timeline-track::before{
   content:'';
@@ -1621,6 +1629,7 @@ body.rail-overlay-open{overflow:hidden}
   background:rgba(255,255,255,.08);
 }
 .session-timeline-span{
+  appearance:none;
   position:absolute;
   top:8px;
   height:18px;
@@ -1629,7 +1638,8 @@ body.rail-overlay-open{overflow:hidden}
   border-radius:3px;
   background:var(--span-color, var(--signal));
   opacity:.78;
-  cursor:default;
+  cursor:pointer;
+  padding:0;
   transition:opacity .15s ease, transform .15s ease, box-shadow .15s ease;
 }
 .session-timeline-span:hover{
@@ -1646,6 +1656,12 @@ body.rail-overlay-open{overflow:hidden}
   background:var(--red);
   box-shadow:0 0 0 2px rgba(255,107,92,.28),0 0 18px rgba(255,107,92,.48);
   z-index:3;
+}
+.session-timeline-span.is-active{
+  opacity:1;
+  transform:scaleY(1.16);
+  box-shadow:0 0 0 2px rgba(5,5,5,.88),0 0 0 3px rgba(242,138,26,.72),0 0 18px rgba(242,138,26,.34);
+  z-index:5;
 }
 .session-timeline-gap{
   position:absolute;
@@ -1761,6 +1777,201 @@ body.rail-overlay-open{overflow:hidden}
   border:1px dashed rgba(255,255,255,.08);
   color:var(--text-3);
   font-size:13px;
+}
+.session-timeline-playhead{
+  appearance:none;
+  position:absolute;
+  left:var(--playhead-left,0%);
+  top:-7px;
+  z-index:10;
+  width:28px;
+  height:48px;
+  padding:0;
+  border:0;
+  background:transparent;
+  color:var(--signal);
+  cursor:grab;
+  transform:translateX(-50%);
+  touch-action:none;
+}
+.session-timeline-playhead:active,
+.session-timeline-panel.is-scrubbing .session-timeline-playhead{cursor:grabbing}
+.session-playhead-line{
+  position:absolute;
+  left:50%;
+  top:10px;
+  bottom:0;
+  width:1px;
+  background:linear-gradient(180deg,var(--signal),rgba(242,138,26,.28));
+  box-shadow:0 0 10px rgba(242,138,26,.55);
+  transform:translateX(-50%);
+  pointer-events:none;
+}
+.session-playhead-grip{
+  position:absolute;
+  left:50%;
+  top:1px;
+  width:14px;
+  height:14px;
+  border:2px solid #050505;
+  border-radius:50%;
+  background:var(--signal);
+  box-shadow:0 0 0 1px rgba(242,138,26,.76),0 4px 14px rgba(242,138,26,.42);
+  transform:translateX(-50%);
+  pointer-events:none;
+}
+.session-playhead-grip::after{
+  content:'';
+  position:absolute;
+  inset:-7px;
+  border:1px solid rgba(242,138,26,.38);
+  border-radius:50%;
+  opacity:0;
+  transform:scale(.72);
+  transition:opacity .16s ease,transform .16s ease;
+}
+.session-timeline-playhead:hover .session-playhead-grip::after,
+.session-timeline-playhead:focus-visible .session-playhead-grip::after,
+.session-timeline-panel.is-scrubbing .session-playhead-grip::after{
+  opacity:1;
+  transform:scale(1);
+}
+.session-playhead-bubble{
+  position:absolute;
+  left:50%;
+  bottom:calc(100% + 4px);
+  display:flex;
+  align-items:center;
+  gap:7px;
+  width:max-content;
+  max-width:min(300px,calc(100vw - 64px));
+  padding:7px 9px;
+  border:1px solid rgba(242,138,26,.3);
+  border-radius:7px;
+  background:rgba(12,12,11,.97);
+  box-shadow:0 12px 30px rgba(0,0,0,.46),0 0 0 1px rgba(255,255,255,.025) inset;
+  color:var(--text);
+  opacity:0;
+  pointer-events:none;
+  transform:translateX(-50%) translateY(4px);
+  transition:opacity .14s ease,transform .14s ease;
+}
+.session-playhead-bubble::after{
+  content:'';
+  position:absolute;
+  left:50%;
+  top:100%;
+  border:5px solid transparent;
+  border-top-color:rgba(242,138,26,.3);
+  transform:translateX(-50%);
+}
+.session-timeline-playhead[data-edge="left"] .session-playhead-bubble{
+  left:50%;
+  transform:translateX(0) translateY(4px);
+}
+.session-timeline-playhead[data-edge="left"] .session-playhead-bubble::after{
+  left:0;
+  transform:translateX(-50%);
+}
+.session-timeline-playhead[data-edge="right"] .session-playhead-bubble{
+  left:auto;
+  right:50%;
+  transform:translateX(0) translateY(4px);
+}
+.session-timeline-playhead[data-edge="right"] .session-playhead-bubble::after{
+  left:auto;
+  right:0;
+  transform:translateX(50%);
+}
+.session-playhead-time{
+  color:var(--signal-2);
+  font:700 11px/1 'SF Mono',ui-monospace,monospace;
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap;
+}
+.session-playhead-copy{
+  display:flex;
+  min-width:0;
+  flex-direction:column;
+  gap:2px;
+}
+.session-playhead-label{
+  max-width:220px;
+  overflow:hidden;
+  color:var(--text-2);
+  font-size:12px;
+  font-weight:650;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.session-playhead-summary{
+  max-width:220px;
+  overflow:hidden;
+  color:var(--text-3);
+  font-size:10px;
+  line-height:1.25;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.session-timeline-playhead:hover .session-playhead-bubble,
+.session-timeline-playhead:focus-visible .session-playhead-bubble,
+.session-timeline-panel.is-scrubbing .session-playhead-bubble{
+  opacity:1;
+  transform:translateX(-50%) translateY(0);
+}
+.session-timeline-playhead[data-edge="left"]:hover .session-playhead-bubble,
+.session-timeline-playhead[data-edge="left"]:focus-visible .session-playhead-bubble,
+.session-timeline-panel.is-scrubbing .session-timeline-playhead[data-edge="left"] .session-playhead-bubble,
+.session-timeline-playhead[data-edge="right"]:hover .session-playhead-bubble,
+.session-timeline-playhead[data-edge="right"]:focus-visible .session-playhead-bubble,
+.session-timeline-panel.is-scrubbing .session-timeline-playhead[data-edge="right"] .session-playhead-bubble{
+  transform:translateX(0) translateY(0);
+}
+.session-timeline-playhead:focus-visible{
+  outline:2px solid rgba(255,177,86,.9);
+  outline-offset:3px;
+  border-radius:7px;
+}
+.session-timeline-hint{
+  color:var(--text-3);
+  font-size:10px;
+  font-weight:650;
+  letter-spacing:.02em;
+  white-space:nowrap;
+}
+[data-conversation-event-index]{
+  scroll-margin-block:42%;
+  transition:filter .16s ease,opacity .16s ease;
+}
+.chat-msg.is-playhead-active .chat-bubble{
+  border-color:rgba(242,138,26,.66);
+  box-shadow:0 0 0 1px rgba(242,138,26,.16),0 16px 38px rgba(0,0,0,.28),-3px 0 0 var(--signal);
+}
+.chat-msg.is-playhead-active .ev-dot,
+.chat-activity.is-playhead-active .ev-dot{
+  box-shadow:0 0 0 4px rgba(242,138,26,.14),0 0 18px rgba(242,138,26,.48);
+}
+.chat-activity.is-playhead-active .chat-activity-chip{
+  border-color:rgba(242,138,26,.58);
+  background:linear-gradient(90deg,rgba(242,138,26,.12),rgba(255,255,255,.03));
+  box-shadow:-3px 0 0 var(--signal);
+}
+.chat-divider.is-playhead-active .chat-divider-label{
+  color:var(--signal-2);
+}
+.chat-divider.is-playhead-active .chat-divider-line{
+  background:linear-gradient(90deg,transparent,rgba(242,138,26,.55),transparent);
+}
+
+@media(max-width:900px){
+  .session-timeline-panel{padding-inline:14px}
+  .session-timeline-hint{display:none}
+}
+@media(max-width:560px){
+  .session-timeline-panel{padding:9px 10px 11px}
+  .session-timeline-head{align-items:flex-start;gap:6px}
+  .session-timeline-meta{max-width:62%;overflow:hidden;text-overflow:ellipsis}
+  .session-playhead-label{max-width:150px}
 }
 
 /* Loading state for auto-load */
@@ -2743,7 +2954,11 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   .timeline-span,
   .hist-bar,
   .bar-fill,
-  .ev-preview{
+  .ev-preview,
+  .session-timeline-span,
+  .session-playhead-grip::after,
+  .session-playhead-bubble,
+  [data-conversation-event-index]{
     transition:none!important;
   }
   .hm-cell:hover,
@@ -2796,7 +3011,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   <button class="tab" id="tab-button-sessions" type="button" role="tab" aria-selected="false" aria-controls="tab-sessions" tabindex="-1" data-tab="sessions">Sessions</button>
   <button class="tab" id="tab-button-workflows" type="button" role="tab" aria-selected="false" aria-controls="tab-workflows" tabindex="-1" data-tab="workflows">Workflows</button>
   <button class="tab" id="tab-button-skills" type="button" role="tab" aria-selected="false" aria-controls="tab-skills" tabindex="-1" data-tab="skills">Skills</button>
-  <button class="tab" id="tab-button-compare" type="button" role="tab" aria-selected="false" aria-controls="tab-compare" tabindex="-1" data-tab="compare">Measurements</button>
+  <button class="tab" id="tab-button-compare" type="button" role="tab" aria-selected="false" aria-controls="tab-compare" tabindex="-1" data-tab="compare">Impact</button>
   <button class="tab" id="tab-button-overview" type="button" role="tab" aria-selected="false" aria-controls="tab-overview" tabindex="-1" data-tab="overview">Explore</button>
 </nav>
 
@@ -2959,11 +3174,16 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 </div>
 
-<!-- ════════════════════ MEASUREMENTS ════════════════════ -->
+<!-- ════════════════════ IMPACT ════════════════════ -->
 <div class="tab-panel" id="tab-compare" role="tabpanel" aria-labelledby="tab-button-compare" hidden>
   <div class="product-hero">
-    <div><h2>Measurements</h2><p>Before-and-after evidence for applied workflows, using comparable repository sessions and conservative sample thresholds.</p></div>
-    <div class="product-count" id="measurement-count">0<small>measured changes</small></div>
+    <div><h2>Impact</h2><p>See whether applied workflows improve later, comparable sessions. Reflect waits for enough evidence before making a claim.</p></div>
+    <div class="product-count" id="measurement-count">0<small>impact checks</small></div>
+  </div>
+  <div class="impact-explainer" aria-label="How impact checks work">
+    <div class="impact-step"><strong>1. Apply</strong><span>Approve a workflow and package it as a skill.</span></div>
+    <div class="impact-step"><strong>2. Collect</strong><span>Capture at least 5 comparable sessions after activation.</span></div>
+    <div class="impact-step"><strong>3. Compare</strong><span>Review improvement, regression, or no clear change.</span></div>
   </div>
   <div class="measurement-list" id="measurement-ledger"></div>
 
@@ -3388,16 +3608,21 @@ async function loadDashboardData(){
 
 async function loadImprovementData(){
   if (!D || !D.sql_backed || !reportSupportsServerFiltering()) return IMPROVEMENT_DATA;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 3000);
+  const requestOptions = {headers: {Accept: 'application/json'}, signal: controller.signal};
   try {
     const [inboxResponse, workflowResponse, measurementResponse, ruleResponse] = await Promise.all([
-      fetch('/api/improvements', {headers: {Accept: 'application/json'}}),
-      fetch('/api/workflows', {headers: {Accept: 'application/json'}}),
-      fetch('/api/measurements', {headers: {Accept: 'application/json'}}),
-      fetch('/api/rules', {headers: {Accept: 'application/json'}}),
+      fetch('/api/improvements', requestOptions),
+      fetch('/api/workflows', requestOptions),
+      fetch('/api/measurements', requestOptions),
+      fetch('/api/rules', requestOptions),
     ]);
     if (!inboxResponse.ok || !workflowResponse.ok || !measurementResponse.ok || !ruleResponse.ok) return IMPROVEMENT_DATA;
-    const loopResponse = await fetch('/api/loops', {headers: {Accept: 'application/json'}});
-    const skillResponse = await fetch('/api/skills', {headers: {Accept: 'application/json'}});
+    const [loopResponse, skillResponse] = await Promise.all([
+      fetch('/api/loops', requestOptions),
+      fetch('/api/skills', requestOptions),
+    ]);
     const inbox = await inboxResponse.json();
     const workflows = await workflowResponse.json();
     const measurements = await measurementResponse.json();
@@ -3418,6 +3643,8 @@ async function loadImprovementData(){
     };
   } catch {
     return IMPROVEMENT_DATA;
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
 
@@ -3884,10 +4111,16 @@ async function showSkillReview(skillId){
       <div class="inbox-card-head"><div class="inbox-title" translate="no">${escHtml(item.path || item.target_ref || 'Installation')}</div><span class="ledger-pill ${item.status === 'active' ? 'signal' : ''}">${escHtml(humanizeLedgerLabel(item.status || 'unknown'))}</span></div>
       <div class="inbox-copy">${escHtml(humanizeLedgerLabel(item.target_kind || 'repository'))} · last seen ${escHtml(fmtWorkflowDate(item.last_seen_at))}</div>
     </article>`).join('');
-    const measurementRows = measurements.map(item => `<article class="evidence-item">
-      <div class="inbox-card-head"><div class="inbox-title">${escHtml(humanizeLedgerLabel(item.metric_name || 'Measurement'))}</div><span class="ledger-pill ${item.verdict === 'improved' ? 'signal' : ''}">${escHtml(humanizeLedgerLabel(item.verdict || 'insufficient data'))}</span></div>
-      <div class="inbox-copy">Before ${item.before_value == null ? '—' : Number(item.before_value).toFixed(2)} · after ${item.after_value == null ? '—' : Number(item.after_value).toFixed(2)} · ${Math.round(Number(item.confidence || 0) * 100)}% confidence</div>
-    </article>`).join('');
+    const measurementRows = measurements.map(item => {
+      const metric = impactMetricPresentation(item.metric_name);
+      const verdict = impactVerdictPresentation(item.verdict);
+      const ready = item.verdict !== 'insufficient_data';
+      const afterCount = Number(item.details?.after_count || 0);
+      return `<article class="evidence-item">
+        <div class="inbox-card-head"><div class="inbox-title">${escHtml(metric.goal)}</div><span class="ledger-pill ${item.verdict === 'improved' ? 'signal' : ''}">${escHtml(verdict.label)}</span></div>
+        <div class="inbox-copy">${ready ? `${escHtml(formatImpactValue(metric, item.before_value))} before → ${escHtml(formatImpactValue(metric, item.after_value))} after · ${Math.round(Number(item.confidence || 0) * 100)}% confidence` : `${fmt(afterCount)} of ${fmt(Number(item.details?.cohort?.minimum_after_sessions || 5))} post-application sessions collected`}</div>
+      </article>`;
+    }).join('');
     const sessionEvidence = evidence.filter(item => item.entity_type === 'session');
     const evidenceRows = sessionEvidence.slice(0, 20).map(item => `<article class="session-ledger-item">
       <div class="session-ledger-main"><div class="session-ledger-title">Source Session</div><div class="session-ledger-id" title="${escHtml(item.entity_id)}" translate="no">${escHtml(compactLedgerId(item.entity_id))}</div><div class="session-ledger-meta"><span>${escHtml(humanizeLedgerLabel(item.relationship || 'source evidence'))}</span><span>${Math.round(Number(item.confidence || 0) * 100)}% confidence</span></div></div>
@@ -3933,7 +4166,7 @@ async function showSkillReview(skillId){
               <div class="session-ledger">${evidenceRows || '<div class="session-ledger-empty">This imported skill was not generated from Reflect source sessions.</div>'}</div>
               ${sessionEvidence.length > 20 ? `<div class="ledger-status">Showing 20 of ${fmt(sessionEvidence.length)} source sessions.</div>` : ''}
             </section>
-            <section class="review-panel"><div class="review-panel-head"><h3 class="review-panel-title">Measurements</h3><span class="ledger-pill">${fmt(measurements.length)} results</span></div><div class="evidence-list">${measurementRows || '<div class="session-ledger-empty">No before/after measurement is available yet.</div>'}</div></section>
+            <section class="review-panel"><div class="review-panel-head"><h3 class="review-panel-title">Impact Results</h3><span class="ledger-pill">${fmt(measurements.length)} checks</span></div><div class="evidence-list">${measurementRows || '<div class="session-ledger-empty">No before/after impact check is available yet.</div>'}</div></section>
           </aside>
         </div>`,
       actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div>${workflowCandidateId ? `<button type="button" class="ledger-button primary" data-ledger-action="review-workflow" data-candidate-id="${escHtml(workflowCandidateId)}">Review Source Workflow</button>` : ''}`,
@@ -4089,6 +4322,53 @@ async function submitSessionFeedback(sessionId, outcome, button){
   }
 }
 
+async function showImpactSessions(measurementId){
+  openLedgerDialog({title:'Loading comparison sessions…'});
+  try {
+    const ledger = await ledgerRequest(`/api/measurements/${encodeURIComponent(measurementId)}/sessions`);
+    const metric = impactMetricPresentation(ledger.metric_name);
+    const cohortCopy = ledger.snapshot_exact
+      ? 'These are the stored session cohorts behind this impact snapshot.'
+      : 'This older snapshot predates stored cohort IDs, so Reflect reconstructed the closest bounded session cohorts.';
+    const prepare = (items, relationship) => (items || []).map(item => ({
+      ...item,
+      relationship,
+      evidence_count:0,
+      evidence_summaries:[],
+    }));
+    const beforeSessions = renderWorkflowSessionLedger(prepare(ledger.before_sessions, 'baseline'), {
+      empty:'No baseline sessions remain available for this snapshot.',
+      total:ledger.before_count,
+      initial:5,
+    });
+    const afterSessions = renderWorkflowSessionLedger(prepare(ledger.after_sessions, 'after activation'), {
+      empty:'No post-application sessions have been collected yet.',
+      total:ledger.after_count,
+      initial:5,
+    });
+    openLedgerDialog({
+      title:`Sessions Compared for ${metric.goal}`,
+      subtitle:cohortCopy,
+      body:`<div class="review-lead"><div class="review-eyebrow">Impact Evidence</div><p>${escHtml(cohortCopy)} Open any session to inspect the underlying conversation, tools, and outcome.</p></div>
+        <div class="review-grid">
+          <section class="review-panel">
+            <div class="review-panel-head"><h3 class="review-panel-title">Before Activation</h3><span class="ledger-pill">${fmt(Number(ledger.before_count || 0))} sessions</span></div>
+            <p class="review-panel-copy">Baseline sessions used to establish the earlier behavior.</p>
+            ${beforeSessions}
+          </section>
+          <section class="review-panel">
+            <div class="review-panel-head"><h3 class="review-panel-title">After Activation</h3><span class="ledger-pill signal">${fmt(Number(ledger.after_count || 0))} sessions</span></div>
+            <p class="review-panel-copy">Comparable sessions available after the workflow was applied.</p>
+            ${afterSessions}
+          </section>
+        </div>`,
+      actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div><button type="button" class="ledger-button primary" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(ledger.candidate_id || ''))}">Review Applied Workflow</button>`,
+    });
+  } catch (error) {
+    openLedgerDialog({title:'Comparison sessions unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`});
+  }
+}
+
 document.addEventListener('click', async event => {
   const trigger = event.target.closest('[data-ledger-action]');
   if (!trigger) return;
@@ -4099,6 +4379,7 @@ document.addEventListener('click', async event => {
   if (action === 'review-loop') return showLoopReview(trigger.dataset.loopId || '');
   if (action === 'review-skill') return showSkillReview(trigger.dataset.skillId || '');
   if (action === 'review-workflow') return showWorkflowReview(candidateId);
+  if (action === 'review-impact-sessions') return showImpactSessions(trigger.dataset.measurementId || '');
   if (action === 'review-target') {
     const root = document.getElementById('workflow-project-root')?.value || '';
     return showWorkflowReview(candidateId, root);
@@ -4286,6 +4567,209 @@ document.getElementById('hdr-range').textContent = D.first_event_ts + ' — ' + 
 document.getElementById('hdr-ts').textContent = 'Refreshed ' + new Date().toLocaleString();
 
 /* ════════════════════ SESSION BROWSER ════════════════════ */
+class SessionConversationPlayhead {
+  constructor(panel, options = {}) {
+    this.panel = panel;
+    this.track = panel?.querySelector('.session-timeline-track') || null;
+    this.playhead = panel?.querySelector('.session-timeline-playhead') || null;
+    this.scroller = options.scroller || null;
+    this.onSelectionChange = options.onSelectionChange || (() => {});
+    this.onRequireConversation = options.onRequireConversation || (() => {});
+    this.initialConversationIndex = Number.isInteger(options.initialConversationIndex)
+      ? options.initialConversationIndex
+      : null;
+    this.points = this.track
+      ? [...this.track.querySelectorAll('[data-timeline-event-index]')].map(element => ({
+          element,
+          conversationIndex: Number(element.dataset.timelineEventIndex),
+          position: Number(element.dataset.timelinePosition || 0),
+          label: element.dataset.timelineLabel || 'Event',
+          summary: element.dataset.timelineSummary || '',
+          time: element.dataset.timelineTime || '+0:00',
+        }))
+      : [];
+    this.rows = this.scroller
+      ? [...this.scroller.querySelectorAll('[data-conversation-event-index]')]
+      : [];
+    this.pointByConversationIndex = new Map(this.points.map((point, index) => [point.conversationIndex, index]));
+    this.abortController = new AbortController();
+    this.selectedPointIndex = 0;
+    this.dragging = false;
+    this.scrollFrame = 0;
+    this.programmaticScrollUntil = 0;
+    this.reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false;
+  }
+
+  mount() {
+    if (!this.panel || !this.track || !this.playhead || !this.points.length) return false;
+    const signal = this.abortController.signal;
+    this.track.addEventListener('pointerdown', event => this.startDrag(event), {signal});
+    this.track.addEventListener('pointermove', event => this.moveDrag(event), {signal});
+    this.track.addEventListener('pointerup', event => this.finishDrag(event), {signal});
+    this.track.addEventListener('pointercancel', event => this.finishDrag(event), {signal});
+    this.playhead.addEventListener('keydown', event => this.handleKeydown(event), {signal});
+    this.points.forEach((point, index) => {
+      point.element.addEventListener('click', event => {
+        if (event.detail !== 0) return;
+        this.selectPoint(index, {scroll: true, behavior: 'smooth'});
+        this.openConversationIfNeeded();
+      }, {signal});
+    });
+    if (this.scroller && this.rows.length) {
+      this.scroller.addEventListener('scroll', () => this.scheduleConversationSync(), {passive: true, signal});
+    }
+    const initialPoint = this.initialConversationIndex === null
+      ? 0
+      : (this.pointByConversationIndex.get(this.initialConversationIndex) ?? 0);
+    this.selectPoint(initialPoint, {scroll: false});
+    if (this.initialConversationIndex !== null && this.rows.length) {
+      requestAnimationFrame(() => this.selectPoint(initialPoint, {scroll: true, behavior: 'auto'}));
+    }
+    return true;
+  }
+
+  destroy() {
+    this.abortController.abort();
+    if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame);
+  }
+
+  pointIndexAt(clientX) {
+    const bounds = this.track.getBoundingClientRect();
+    const percent = bounds.width > 0
+      ? Math.max(0, Math.min(100, ((clientX - bounds.left) / bounds.width) * 100))
+      : 0;
+    let nearest = 0;
+    let distance = Number.POSITIVE_INFINITY;
+    this.points.forEach((point, index) => {
+      const nextDistance = Math.abs(point.position - percent);
+      if (nextDistance < distance) {
+        distance = nextDistance;
+        nearest = index;
+      }
+    });
+    return nearest;
+  }
+
+  startDrag(event) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    this.dragging = true;
+    this.panel.classList.add('is-scrubbing');
+    this.track.setPointerCapture?.(event.pointerId);
+    const eventButton = event.target.closest?.('[data-timeline-event-index]');
+    const directIndex = eventButton
+      ? this.points.findIndex(point => point.element === eventButton)
+      : -1;
+    this.selectPoint(directIndex >= 0 ? directIndex : this.pointIndexAt(event.clientX), {scroll: true, behavior: 'auto'});
+  }
+
+  moveDrag(event) {
+    if (!this.dragging) return;
+    event.preventDefault();
+    this.selectPoint(this.pointIndexAt(event.clientX), {scroll: true, behavior: 'auto'});
+  }
+
+  finishDrag(event) {
+    if (!this.dragging) return;
+    this.dragging = false;
+    this.panel.classList.remove('is-scrubbing');
+    if (this.track.hasPointerCapture?.(event.pointerId)) this.track.releasePointerCapture(event.pointerId);
+    this.selectPoint(this.selectedPointIndex, {scroll: true, behavior: 'smooth'});
+    this.openConversationIfNeeded();
+  }
+
+  handleKeydown(event) {
+    const key = event.key;
+    let next = this.selectedPointIndex;
+    if (key === 'ArrowLeft' || key === 'ArrowUp') next -= 1;
+    else if (key === 'ArrowRight' || key === 'ArrowDown') next += 1;
+    else if (key === 'PageUp') next -= 5;
+    else if (key === 'PageDown') next += 5;
+    else if (key === 'Home') next = 0;
+    else if (key === 'End') next = this.points.length - 1;
+    else return;
+    event.preventDefault();
+    this.selectPoint(Math.max(0, Math.min(this.points.length - 1, next)), {scroll: true, behavior: 'smooth'});
+    this.openConversationIfNeeded();
+  }
+
+  openConversationIfNeeded() {
+    if (this.rows.length) return;
+    const point = this.points[this.selectedPointIndex];
+    if (point) this.onRequireConversation(point.conversationIndex);
+  }
+
+  selectPoint(index, options = {}) {
+    const point = this.points[index];
+    if (!point) return;
+    this.selectedPointIndex = index;
+    this.playhead.style.setProperty('--playhead-left', `${point.position}%`);
+    this.playhead.dataset.edge = point.position < 12 ? 'left' : (point.position > 88 ? 'right' : 'center');
+    this.playhead.setAttribute('aria-valuenow', String(index + 1));
+    this.playhead.setAttribute('aria-valuetext', `${point.time} · ${point.label}${point.summary ? ` · ${point.summary}` : ''}`);
+    this.playhead.querySelector('.session-playhead-time').textContent = point.time;
+    this.playhead.querySelector('.session-playhead-label').textContent = point.label;
+    const summary = this.playhead.querySelector('.session-playhead-summary');
+    summary.textContent = point.summary;
+    summary.hidden = !point.summary;
+    this.points.forEach((item, itemIndex) => item.element.classList.toggle('is-active', itemIndex === index));
+    this.rows.forEach(row => row.classList.toggle(
+      'is-playhead-active',
+      Number(row.dataset.conversationEventIndex) === point.conversationIndex,
+    ));
+    this.onSelectionChange(point.conversationIndex);
+    if (options.scroll) this.scrollToConversationEvent(point.conversationIndex, options.behavior || 'auto');
+  }
+
+  scrollToConversationEvent(conversationIndex, behavior) {
+    if (!this.scroller) return;
+    const row = this.rows.find(item => Number(item.dataset.conversationEventIndex) === conversationIndex);
+    if (!row) return;
+    const group = row.closest('details');
+    if (group && !group.open) group.open = true;
+    const scrollerBounds = this.scroller.getBoundingClientRect();
+    const rowBounds = row.getBoundingClientRect();
+    const targetTop = this.scroller.scrollTop
+      + rowBounds.top
+      - scrollerBounds.top
+      - Math.max(0, (this.scroller.clientHeight - rowBounds.height) / 2);
+    const finalBehavior = this.reducedMotion ? 'auto' : behavior;
+    this.programmaticScrollUntil = performance.now() + (finalBehavior === 'smooth' ? 520 : 100);
+    this.scroller.scrollTo({top: Math.max(0, targetTop), behavior: finalBehavior});
+  }
+
+  scheduleConversationSync() {
+    if (this.dragging || performance.now() < this.programmaticScrollUntil || this.scrollFrame) return;
+    this.scrollFrame = requestAnimationFrame(() => {
+      this.scrollFrame = 0;
+      this.syncFromConversation();
+    });
+  }
+
+  syncFromConversation() {
+    if (!this.scroller || !this.rows.length) return;
+    const scrollerBounds = this.scroller.getBoundingClientRect();
+    const center = scrollerBounds.top + scrollerBounds.height / 2;
+    let nearestPoint = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    this.rows.forEach(row => {
+      const conversationIndex = Number(row.dataset.conversationEventIndex);
+      const pointIndex = this.pointByConversationIndex.get(conversationIndex);
+      if (pointIndex === undefined) return;
+      const bounds = row.getBoundingClientRect();
+      if (!bounds.height || bounds.bottom < scrollerBounds.top || bounds.top > scrollerBounds.bottom) return;
+      const distance = Math.abs((bounds.top + bounds.height / 2) - center);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestPoint = pointIndex;
+      }
+    });
+    if (nearestPoint !== null && nearestPoint !== this.selectedPointIndex) {
+      this.selectPoint(nearestPoint, {scroll: false});
+    }
+  }
+}
+
 (function initSessionBrowser(){
   const sessions = D.sessions || [];
   if (!sessions.length) return;
@@ -4294,6 +4778,7 @@ document.getElementById('hdr-ts').textContent = 'Refreshed ' + new Date().toLoca
   const initialSessionId = params.get('session');
   let selectedIdx = initialSessionId ? sessions.findIndex(s => (s.full_id || s.id) === initialSessionId || s.id === initialSessionId) : -1;
   if (selectedIdx < 0) selectedIdx = null;
+  let activeConversationPlayhead = null;
   const legacyAgent = params.get('agent');
   const filterState = {
     q: (params.get('q') || '').trim(),
@@ -4667,6 +5152,8 @@ document.getElementById('hdr-ts').textContent = 'Refreshed ' + new Date().toLoca
 
   function renderSessionDetail(session){
     const detailEl = document.getElementById('sb-detail');
+    activeConversationPlayhead?.destroy();
+    activeConversationPlayhead = null;
     if (!session) {
       detailEl.innerHTML = `<div class="sb-empty"><div class="sb-empty-icon" aria-hidden="true">&#9776;</div><div>Select a session to view its conversation timeline</div></div>`;
       return;
@@ -4829,6 +5316,27 @@ document.getElementById('hdr-ts').textContent = 'Refreshed ' + new Date().toLoca
       });
     });
 
+    const timelinePanel = detailEl.querySelector('.session-timeline-panel');
+    if (timelinePanel?.querySelector('.session-timeline-playhead')) {
+      activeConversationPlayhead = new SessionConversationPlayhead(timelinePanel, {
+        scroller: detailEl.querySelector('.sb-detail-body'),
+        initialConversationIndex: Number.isInteger(session._playheadEventIndex)
+          ? session._playheadEventIndex
+          : null,
+        onSelectionChange: conversationIndex => {
+          session._playheadEventIndex = conversationIndex;
+        },
+        onRequireConversation: conversationIndex => {
+          session._playheadEventIndex = conversationIndex;
+          if (session._detailTab === 'conversation') return;
+          session._detailTab = 'conversation';
+          renderSessionDetail(session);
+          requestAnimationFrame(() => activeConversationPlayhead?.playhead?.focus({preventScroll: true}));
+        },
+      });
+      activeConversationPlayhead.mount();
+    }
+
     // Auto-load full detail silently on selection — no button required
     if (session.full_id && !session._fullLoaded && !session._loadingDetail) {
       tryLoadFullDetail(session.full_id || session.id, null);
@@ -4907,7 +5415,7 @@ document.getElementById('hdr-ts').textContent = 'Refreshed ' + new Date().toLoca
     const isUser = ev.type === 'prompt';
     const who = isUser ? 'User' : (ev.model ? ev.model.replace(/^claude-/,'').replace(/-\d{8}$/,'') : 'Agent');
     const meta = getEventMeta(ev);
-    return `<div class="chat-msg ${isUser ? 'is-user' : 'is-agent'}" data-kind="${escHtml(eventKind)}" style="--node-color:${nodeColor}">${rail}<div class="chat-bubble"><div class="chat-header"><span class="chat-who">${escHtml(who)}</span>${meta ? `<span class="chat-header-meta">${escHtml(meta)}</span>` : ''}</div>${preview ? `<div class="chat-content"><button type="button" class="ev-preview${session._fullLoaded ? ' full-content' : ''}${isLong ? ' expandable' : ''}" data-eidx="${index}" aria-expanded="false">${preview}</button>${isLong ? `<div class="ev-preview-hint">Tap to expand</div>` : ''}</div>` : `<div class="chat-content" style="color:var(--text-3);font-size:13px;font-style:italic">No content captured</div>`}</div></div>`;
+    return `<div class="chat-msg ${isUser ? 'is-user' : 'is-agent'}" data-kind="${escHtml(eventKind)}" data-conversation-event-index="${index}" style="--node-color:${nodeColor}">${rail}<div class="chat-bubble"><div class="chat-header"><span class="chat-who">${escHtml(who)}</span>${meta ? `<span class="chat-header-meta">${escHtml(meta)}</span>` : ''}</div>${preview ? `<div class="chat-content"><button type="button" class="ev-preview${session._fullLoaded ? ' full-content' : ''}${isLong ? ' expandable' : ''}" data-eidx="${index}" aria-expanded="false">${preview}</button>${isLong ? `<div class="ev-preview-hint">Tap to expand</div>` : ''}</div>` : `<div class="chat-content" style="color:var(--text-3);font-size:13px;font-style:italic">No content captured</div>`}</div></div>`;
   }
 
   function renderConversationActivity(ev, sessionStartTs){
@@ -4930,7 +5438,7 @@ document.getElementById('hdr-ts').textContent = 'Refreshed ' + new Date().toLoca
       icon = '⬡'; name = (ev.tool_name || 'MCP') + ' ↩';
       meta2 = ev.server || '';
     }
-    return `<div class="chat-activity" data-kind="${escHtml(eventKind)}" style="--node-color:${nodeColor}"><div class="ev-rail"><span class="ev-ts">${relTime}</span><span class="ev-dot" aria-hidden="true"></span></div><div class="chat-activity-chip"><em class="chip-icon">${icon}</em><span class="chip-name">${escHtml(name)}</span>${meta2 ? `<span class="chip-meta">${escHtml(meta2)}</span>` : ''}${dur}${statusHtml}</div></div>`;
+    return `<div class="chat-activity" data-kind="${escHtml(eventKind)}" data-conversation-event-index="${ev._conversationIndex}" style="--node-color:${nodeColor}"><div class="ev-rail"><span class="ev-ts">${relTime}</span><span class="ev-dot" aria-hidden="true"></span></div><div class="chat-activity-chip"><em class="chip-icon">${icon}</em><span class="chip-name">${escHtml(name)}</span>${meta2 ? `<span class="chip-meta">${escHtml(meta2)}</span>` : ''}${dur}${statusHtml}</div></div>`;
   }
 
   function renderConversationDivider(ev, sessionStartTs){
@@ -4942,7 +5450,7 @@ document.getElementById('hdr-ts').textContent = 'Refreshed ' + new Date().toLoca
       : ev.type === 'subagent_start' ? `subagent · ${ev.subagent_type || 'start'}`
       : ev.type === 'subagent_stop' ? 'subagent done'
       : (ev.type || 'event');
-    return `<div class="chat-divider" data-kind="${escHtml(eventKind)}" style="--node-color:${nodeColor}"><div class="ev-rail"><span class="ev-ts" style="font-size:10px">${relTime}</span></div><div class="chat-divider-inner"><div class="chat-divider-line"></div><span class="chat-divider-label">${escHtml(label)}</span><div class="chat-divider-line"></div></div></div>`;
+    return `<div class="chat-divider" data-kind="${escHtml(eventKind)}" data-conversation-event-index="${ev._conversationIndex}" style="--node-color:${nodeColor}"><div class="ev-rail"><span class="ev-ts" style="font-size:10px">${relTime}</span></div><div class="chat-divider-inner"><div class="chat-divider-line"></div><span class="chat-divider-label">${escHtml(label)}</span><div class="chat-divider-line"></div></div></div>`;
   }
 
   function renderActivityGroup(events, sessionStartTs, turnIndex){
@@ -5245,9 +5753,11 @@ document.getElementById('hdr-ts').textContent = 'Refreshed ' + new Date().toLoca
   }
 
   function renderSessionTimelinePanel(session, conversation){
-    const events = (conversation || []).filter(ev =>
-      ['prompt','response','tool_call','tool_result','mcp_call','mcp_result','subagent_start','subagent_stop'].includes(ev.type)
-    );
+    const events = (conversation || [])
+      .map((ev, index) => ({...ev, _conversationIndex: index}))
+      .filter(ev =>
+        ['prompt','response','tool_call','tool_result','mcp_call','mcp_result','subagent_start','subagent_stop'].includes(ev.type)
+      );
     const totalShown = events.length;
     const totalKnown = Math.max(
       totalShown,
@@ -5294,9 +5804,10 @@ document.getElementById('hdr-ts').textContent = 'Refreshed ' + new Date().toLoca
       const preview = ev.preview ? ` - ${String(ev.preview).slice(0, 220)}` : '';
       const compressedNote = ev._displayRel !== ev._rel ? ' · pauses compressed' : '';
       const title = `${label} at ${fmtRelTime(ev._rel)}${compressedNote}${ev.duration_ms ? `, ${fmtDur(ev.duration_ms)}` : ''}${preview}`;
+      const summary = String(ev.preview || '').replace(/\s+/g, ' ').trim().slice(0, 96);
       const safeTip = tooltipAttr(title);
       const failureClass = ev.type === 'tool_result' && ev.success === false ? ' is-failure' : '';
-      return `<span class="session-timeline-span${failureClass}" data-tip-align="${tooltipAlign(left)}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;--span-color:${getEventNodeColor(ev)}" data-tip="${safeTip}" aria-label="${safeTip}" tabindex="0"></span>`;
+      return `<button type="button" class="session-timeline-span${failureClass}" data-timeline-event-index="${ev._conversationIndex}" data-timeline-position="${left.toFixed(3)}" data-timeline-time="${fmtRelTime(ev._rel)}" data-timeline-label="${tooltipAttr(label)}" data-timeline-summary="${tooltipAttr(summary)}" data-tip-align="${tooltipAlign(left)}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;--span-color:${getEventNodeColor(ev)}" data-tip="${safeTip}" aria-label="${safeTip}"></button>`;
     }).join('');
     const gaps = gapMarkers.map(gap => {
       const left = Math.max(0, Math.min(100, (Number(gap.rel || 0) / maxRel) * 100));
@@ -5307,12 +5818,27 @@ document.getElementById('hdr-ts').textContent = 'Refreshed ' + new Date().toLoca
     const rangeLabel = `${fmtRelTime(rawPositioned[rawPositioned.length - 1]?._rel || maxRel)}${gapMarkers.length ? ` · ${fmt(gapMarkers.length)} pauses compressed` : ''}`;
     const countLabel = totalKnown > totalShown ? `${fmt(totalShown)} shown / ${fmt(totalKnown)} events` : `${fmt(totalShown)} events`;
     const errorLabel = failureTotal ? ` · ${fmt(failureTotal)} shown failed` : '';
+    const initialPointIndex = Number.isInteger(session._playheadEventIndex)
+      ? Math.max(0, positioned.findIndex(ev => ev._conversationIndex === session._playheadEventIndex))
+      : 0;
+    const initialPoint = positioned[initialPointIndex] || positioned[0];
+    const initialLeft = Math.max(0, Math.min(100, (Number(initialPoint._displayRel || 0) / maxRel) * 100));
+    const initialLabel = sessionTimelineEventLabel(initialPoint);
+    const initialSummary = String(initialPoint.preview || '').replace(/\s+/g, ' ').trim().slice(0, 96);
+    const initialTime = fmtRelTime(initialPoint._rel);
+    const initialEdge = initialLeft < 12 ? 'left' : (initialLeft > 88 ? 'right' : 'center');
+    const initialValueText = `${initialTime} · ${initialLabel}${initialSummary ? ` · ${initialSummary}` : ''}`;
+    const playhead = `<button type="button" class="session-timeline-playhead" role="slider" aria-label="Conversation position" aria-valuemin="1" aria-valuemax="${positioned.length}" aria-valuenow="${initialPointIndex + 1}" aria-valuetext="${tooltipAttr(initialValueText)}" data-edge="${initialEdge}" style="--playhead-left:${initialLeft.toFixed(3)}%">
+      <span class="session-playhead-bubble" aria-hidden="true"><span class="session-playhead-time">${initialTime}</span><span class="session-playhead-copy"><span class="session-playhead-label">${escHtml(initialLabel)}</span><span class="session-playhead-summary"${initialSummary ? '' : ' hidden'}>${escHtml(initialSummary)}</span></span></span>
+      <span class="session-playhead-line" aria-hidden="true"></span><span class="session-playhead-grip" aria-hidden="true"></span>
+    </button>`;
     return `<div class="session-timeline-panel">
       <div class="session-timeline-head">
         <div class="session-timeline-title">Session Timeline</div>
         <div class="session-timeline-meta">${countLabel}${errorLabel} · ${rangeLabel}</div>
+        <div class="session-timeline-hint">Drag to scan conversation</div>
       </div>
-      <div class="session-timeline-track" aria-label="Session timeline">${gaps}${bars}</div>
+      <div class="session-timeline-track" aria-label="Session timeline">${gaps}${bars}${playhead}</div>
     </div>`;
   }
 
@@ -6402,6 +6928,83 @@ if (modelCostEl) {
     : `<div style="color:var(--text-3);padding:12px 0">No model cost data available. Run reflect doctor to inspect pricing status.</div>`;
 }
 
+const IMPACT_METRIC_PRESENTATION = Object.freeze({
+  tool_failure_rate:{goal:'Reduce Failed Tool Calls',measure:'Failed tool call rate',format:'percent'},
+  identical_retry_calls:{goal:'Reduce Identical Retries',measure:'Identical retry calls',format:'number'},
+  unverified_change_sessions:{goal:'Finish Changes With Verification',measure:'Unverified change sessions',format:'percent'},
+  context_outlier_sessions:{goal:'Reduce Oversized Context',measure:'Average context size',format:'tokens'},
+  read_only_exploration_calls:{goal:'Shorten Unproductive Exploration',measure:'Read-only exploration calls',format:'number'},
+  operator_correction_rate:{goal:'Reduce Operator Corrections',measure:'Operator correction rate',format:'percent'},
+  constraint_violation_rate:{goal:'Reduce Constraint Violations',measure:'Constraint violations',format:'number'},
+  recovered_failure_sessions:{goal:'Improve Failure Recovery',measure:'Recovered failure sessions',format:'percent'},
+  successful_workflow_sessions:{goal:'Increase Successful Workflow Runs',measure:'Successful workflow sessions',format:'percent'},
+  correct_no_change_sessions:{goal:'Recognize Correct No-Change Outcomes',measure:'Correct no-change sessions',format:'percent'},
+});
+
+function impactMetricPresentation(metricName){
+  const name = String(metricName || 'workflow_outcome');
+  return IMPACT_METRIC_PRESENTATION[name] || {
+    goal:humanizeLedgerLabel(name),
+    measure:humanizeLedgerLabel(name),
+    format:'number',
+  };
+}
+
+function groupImpactMeasurements(measurements){
+  const groups = new Map();
+  (measurements || []).forEach(item => {
+    const key = String(item.candidate_id || item.id || 'unknown');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  });
+  return [...groups.values()].map(items => items.sort((a,b) => String(b.measured_at || '').localeCompare(String(a.measured_at || ''))));
+}
+
+function formatImpactValue(metric, value){
+  if (value == null || !Number.isFinite(Number(value))) return 'Not available';
+  const number = Number(value);
+  if (metric.format === 'percent') return `${fmt(number * 100)}%`;
+  if (metric.format === 'tokens') return `${fmt(Math.round(number))} tokens/session`;
+  return `${fmt(Number(number.toFixed(2)))} per session`;
+}
+
+function impactVerdictPresentation(verdict){
+  if (verdict === 'improved') return {label:'Improved',className:'improved'};
+  if (verdict === 'regressed') return {label:'Needs Attention',className:'regressed'};
+  if (verdict === 'unchanged') return {label:'No Clear Change',className:'unchanged'};
+  return {label:'Collecting Evidence',className:'collecting'};
+}
+
+function impactSummary(item, metric){
+  const verdict = String(item.verdict || 'insufficient_data');
+  const before = Number(item.before_value);
+  const after = Number(item.after_value);
+  const afterCount = Number(item.after_count || 0);
+  const minimumAfter = Number(item.cohort?.minimum_after_sessions || 5);
+  const minimumBefore = Number(item.cohort?.minimum_before_sessions || 5);
+  if (verdict === 'insufficient_data') {
+    const afterNeeded = Math.max(0, minimumAfter - afterCount);
+    const beforeNeeded = Math.max(0, minimumBefore - Number(item.before_count || 0));
+    if (beforeNeeded > 0) return `Reflect still needs ${fmt(beforeNeeded)} baseline and ${fmt(afterNeeded)} post-application session${afterNeeded === 1 ? '' : 's'} before evaluating this change.`;
+    if (afterNeeded > 0) return `${fmt(afterCount)} of ${fmt(minimumAfter)} post-application sessions collected. Reflect needs ${fmt(afterNeeded)} more before evaluating this change.`;
+    return 'The minimum sample is available. Reflect will publish a result on the next impact refresh.';
+  }
+  const percent = Number.isFinite(before) && Number.isFinite(after) && before !== 0
+    ? Math.abs((after - before) / before) * 100
+    : null;
+  const movement = after > before ? 'increased' : after < before ? 'decreased' : 'did not change';
+  const amount = percent == null ? '' : ` by ${fmt(Number(percent.toFixed(1)))}%`;
+  if (verdict === 'unchanged') return `${metric.measure} stayed within the 10% decision threshold across ${fmt(afterCount)} post-application sessions.`;
+  return `${metric.measure} ${movement}${amount} across ${fmt(afterCount)} post-application sessions.`;
+}
+
+function impactScope(item){
+  const cohort = item.cohort || {};
+  const task = cohort.task_archetype_id ? `${humanizeLedgerLabel(cohort.task_archetype_id)} tasks` : 'All task types';
+  const repository = cohort.repo_id ? 'Same attributed repository' : 'Sessions without repository attribution';
+  return `${task} · ${repository}`;
+}
+
 /* Product operating surfaces */
 function buildImprovementSurfaces(){
   const observations = IMPROVEMENT_DATA.observations || [];
@@ -6409,6 +7012,7 @@ function buildImprovementSurfaces(){
   const skills = IMPROVEMENT_DATA.skills || [];
   const workflows = IMPROVEMENT_DATA.workflows || [];
   const measurements = IMPROVEMENT_DATA.measurements || [];
+  const measurementGroups = groupImpactMeasurements(measurements);
   const rules = IMPROVEMENT_DATA.rules || [];
   const inboxCount = document.getElementById('inbox-count');
   const loopCount = document.getElementById('loop-count');
@@ -6421,7 +7025,7 @@ function buildImprovementSurfaces(){
   if (loopCount) loopCount.firstChild.textContent = String(loops.length);
   if (workflowCount) workflowCount.firstChild.textContent = String(workflows.length);
   if (skillCount) skillCount.firstChild.textContent = String(skillTotal);
-  if (measurementCount) measurementCount.firstChild.textContent = String(measurements.length);
+  if (measurementCount) measurementCount.firstChild.textContent = String(measurementGroups.length);
 
   const ruleCount = document.getElementById('rule-count');
   const ruleGrid = document.getElementById('rule-grid');
@@ -6477,7 +7081,7 @@ function buildImprovementSurfaces(){
   if (skillRegistry) {
     skillRegistry.innerHTML = skills.length ? skills.map(item => `<article class="workflow-card">
       <div class="workflow-card-head"><div><div class="workflow-title">${escHtml(humanizeLedgerLabel(item.slug || item.name || 'Skill'))}</div><div class="workflow-copy">${escHtml(String(item.description || ''))}</div></div><span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(item.lifecycle_state || 'pending'))}</span></div>
-      <div class="ledger-meta"><span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.origin || 'imported'))}</span><span class="ledger-pill">version ${fmt(Number(item.current_version || 0))}</span><span class="ledger-pill">${fmt(Number(item.evidence_count || 0))} evidence</span><span class="ledger-pill">${fmt(Number(item.installation_count || 0))} installs</span><span class="ledger-pill">${fmt(Number(item.usage_count || 0))} uses</span><span class="ledger-pill">${fmt(Number(item.measurement_count || 0))} measurements</span></div>
+      <div class="ledger-meta"><span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.origin || 'imported'))}</span><span class="ledger-pill">version ${fmt(Number(item.current_version || 0))}</span><span class="ledger-pill">${fmt(Number(item.evidence_count || 0))} evidence</span><span class="ledger-pill">${fmt(Number(item.installation_count || 0))} installs</span><span class="ledger-pill">${fmt(Number(item.usage_count || 0))} uses</span><span class="ledger-pill">${fmt(Number(item.measurement_count || 0))} impact checks</span></div>
       <div class="ledger-command">reflect skills show ${escHtml(String(item.id))}</div>
       <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-skill" data-skill-id="${escHtml(String(item.id))}">Inspect Versions &amp; Usage</button></div>
     </article>`).join('') : `<div class="session-ledger-empty">No current skills are registered. Run <code>reflect skills</code> to reconcile installed skills or <code>reflect skills discover</code> to stage evidence-backed drafts.</div>`;
@@ -6528,11 +7132,33 @@ function buildImprovementSurfaces(){
 
   const measurementLedger = document.getElementById('measurement-ledger');
   if (measurementLedger) {
-    measurementLedger.innerHTML = measurements.length ? measurements.map(item => `<article class="measurement-card">
-      <div class="measurement-card-head"><div><div class="measurement-title">${escHtml(String(item.metric_name || 'Measurement'))}</div><div class="measurement-copy">${escHtml(String(item.verdict || 'insufficient_data').replaceAll('_',' '))}</div></div><span class="ledger-pill signal">${Math.round(Number(item.confidence || 0)*100)}% confidence</span></div>
-      <div class="ledger-meta"><span class="ledger-pill">before ${item.before_value == null ? '--' : Number(item.before_value).toFixed(2)} (${fmt(Number(item.before_count || 0))})</span><span class="ledger-pill">after ${item.after_value == null ? '--' : Number(item.after_value).toFixed(2)} (${fmt(Number(item.after_count || 0))})</span><span class="ledger-pill">delta ${item.delta == null ? '--' : Number(item.delta).toFixed(2)}</span></div>
-      ${item.verdict === 'regressed' ? `<div class="ledger-actions"><button type="button" class="ledger-button danger" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.candidate_id))}">Review regression &amp; rollback</button></div>` : ''}
-    </article>`).join('') : `<div class="panel"><div class="panel-title">Waiting for post-application evidence</div><div class="measurement-copy">Apply a reviewed workflow, then gather at least five comparable sessions for a directional result. Ten or more sessions raises confidence.</div></div>`;
+    measurementLedger.innerHTML = measurementGroups.length ? measurementGroups.map(history => {
+      const item = history[0];
+      const metric = impactMetricPresentation(item.metric_name);
+      const verdict = impactVerdictPresentation(item.verdict);
+      const workflow = workflows.find(candidate => candidate.id === item.candidate_id);
+      const workflowName = humanizeLedgerLabel(workflow?.content?.slug || 'Applied workflow');
+      const minimumAfter = Number(item.cohort?.minimum_after_sessions || 5);
+      const afterCount = Number(item.after_count || 0);
+      const ready = item.verdict !== 'insufficient_data';
+      const historyRows = history.slice(1).map(previous => `<li class="impact-history-item"><span>${escHtml(fmtWorkflowDate(previous.measured_at))}</span><span>${fmt(Number(previous.after_count || 0))} of ${fmt(Number(previous.cohort?.minimum_after_sessions || 5))} sessions · ${escHtml(impactVerdictPresentation(previous.verdict).label)}</span></li>`).join('');
+      return `<article class="measurement-card impact-card" data-verdict="${escHtml(String(item.verdict || 'insufficient_data'))}">
+        <div class="impact-head">
+          <div class="impact-head-main"><div class="impact-eyebrow">Applied Workflow · ${escHtml(workflowName)}</div><h3 class="impact-title">${escHtml(metric.goal)}</h3></div>
+          <span class="impact-status ${escHtml(verdict.className)}">${escHtml(verdict.label)}</span>
+        </div>
+        <p class="impact-summary">${escHtml(impactSummary(item, metric))}</p>
+        ${ready ? '' : `<div class="impact-progress"><div class="impact-progress-copy"><strong>${fmt(afterCount)} of ${fmt(minimumAfter)} sessions collected</strong><span>${fmt(Math.max(0, minimumAfter - afterCount))} remaining</span></div><progress value="${Math.min(afterCount, minimumAfter)}" max="${minimumAfter}" aria-label="Post-application session collection progress"></progress></div>`}
+        <div class="impact-comparison">
+          <div class="impact-period"><div class="impact-period-label">Before Activation</div><div class="impact-period-value">${ready ? escHtml(formatImpactValue(metric, item.before_value)) : `${fmt(Number(item.before_count || 0))} sessions`}</div><div class="impact-period-note">${ready ? `${fmt(Number(item.before_count || 0))} baseline sessions` : 'Baseline ready'}</div></div>
+          <div class="impact-arrow" aria-hidden="true">→</div>
+          <div class="impact-period"><div class="impact-period-label">After Activation</div><div class="impact-period-value">${ready ? escHtml(formatImpactValue(metric, item.after_value)) : `${fmt(afterCount)} sessions`}</div><div class="impact-period-note">${ready ? `${fmt(afterCount)} comparable sessions` : 'Collecting comparable sessions'}</div></div>
+        </div>
+        <div class="impact-scope">${escHtml(impactScope(item))}${ready ? ` · ${Math.round(Number(item.confidence || 0) * 100)}% confidence` : ''}</div>
+        <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-impact-sessions" data-measurement-id="${escHtml(String(item.id))}">View Compared Sessions</button><button type="button" class="ledger-button${item.verdict === 'regressed' ? ' danger' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.candidate_id))}">${item.verdict === 'regressed' ? 'Review &amp; Roll Back' : 'Review Applied Workflow'}</button></div>
+        ${historyRows ? `<details class="impact-history"><summary>${fmt(history.length - 1)} Previous Check${history.length === 2 ? '' : 's'}</summary><ol class="impact-history-list">${historyRows}</ol></details>` : ''}
+      </article>`;
+    }).join('') : `<div class="panel"><div class="panel-title">No Impact Checks Yet</div><div class="measurement-copy">Apply a reviewed workflow to start collecting comparable sessions. Reflect waits for at least 5 baseline and 5 post-application sessions before reporting a result.</div></div>`;
   }
 
   const linkedWorkflow = currentParams().get('workflow') || '';

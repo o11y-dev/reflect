@@ -14,6 +14,7 @@ from reflect.improvements.models import (
     WorkflowProposal,
 )
 from reflect.improvements.repository import ImprovementRepository
+from reflect.improvements.skills import SkillRegistryService
 from reflect.models import TelemetryStats
 from reflect.preparation import BackgroundPreparationWorker
 from reflect.store.migrate import migrate
@@ -355,6 +356,7 @@ def _seed_improvement_ledger(db_path):
             ),
             now="2026-05-01T11:00:00+00:00",
         )
+        SkillRegistryService(conn).sync_workflow_candidates()
         conn.commit()
         return observation_id
     finally:
@@ -618,6 +620,7 @@ def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
     loops = client.get("/api/loops")
     skills = client.get("/api/skills")
     measurements = client.get("/api/measurements")
+    missing_measurement_sessions = client.get("/api/measurements/missing/sessions")
     rules = client.get("/api/rules")
 
     assert inbox.status_code == 200
@@ -650,6 +653,8 @@ def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
     assert skill_detail.json()["usage_sessions"] == []
     assert measurements.status_code == 200
     assert measurements.json() == {"measurements": []}
+    assert missing_measurement_sessions.status_code == 404
+    assert "Measurement not found" in missing_measurement_sessions.json()["error"]
     assert rules.status_code == 200
     assert rules.json()["rules"][0]["id"] == "test_rule"
     assert rules.json()["rules"][0]["open_observation_count"] == 1
@@ -725,6 +730,34 @@ def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
     assert rolled_back.status_code == 200
     assert rejected.status_code == 200
     assert rejected.json()["status"] == "rejected"
+
+
+def test_dashboard_improvement_get_endpoints_are_read_only(tmp_path, monkeypatch):
+    from reflect.improvements.loops import LoopService
+
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    _seed_improvement_ledger(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    def reject_refresh(*_args, **_kwargs):
+        raise AssertionError("dashboard GET endpoint attempted a registry refresh")
+
+    monkeypatch.setattr(SkillRegistryService, "refresh", reject_refresh)
+    monkeypatch.setattr(SkillRegistryService, "sync_workflow_candidates", reject_refresh)
+    monkeypatch.setattr(LoopService, "refresh", reject_refresh)
+
+    client = TestClient(app)
+    workflows = client.get("/api/workflows")
+    loops = client.get("/api/loops")
+    skills = client.get("/api/skills")
+    skill_id = skills.json()["skills"][0]["id"]
+    skill_detail = client.get(f"/api/skills/{skill_id}")
+
+    assert workflows.status_code == 200
+    assert loops.status_code == 200
+    assert skills.status_code == 200
+    assert skill_detail.status_code == 200
 
 
 def test_dashboard_api_reports_background_preparation_status(tmp_path):
@@ -920,7 +953,7 @@ def test_dashboard_lazy_tab_endpoint_rejects_unknown_tab(tmp_path):
     assert "Unknown report tab" in response.json()["error"]
 
 
-def test_dashboard_session_detail_shows_metadata_only_llm_prompt_turns(tmp_path):
+def test_dashboard_session_detail_keeps_llm_input_tokens_on_response_turns(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
     now = "2026-05-01T10:01:30+00:00"
@@ -963,10 +996,62 @@ def test_dashboard_session_detail_shows_metadata_only_llm_prompt_turns(tmp_path)
 
     assert detail.status_code == 200
     prompts = [event for event in detail.json()["conversation"] if event["type"] == "prompt"]
-    assert len(prompts) == 2
+    responses = [event for event in detail.json()["conversation"] if event["type"] == "response"]
+    assert len(prompts) == 1
     assert prompts[0]["preview"].startswith("Fix the failing SQL dashboard tests")
-    assert prompts[1]["preview"] == "Prompt text was not captured for this turn; token metadata is available."
-    assert prompts[1]["input_tokens"] == 44
+    metadata_response = next(event for event in responses if event["input_tokens"] == 44)
+    assert metadata_response["output_tokens"] == 11
+
+
+def test_dashboard_session_detail_keeps_one_placeholder_for_explicit_prompt_event(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    now = "2026-05-01T10:01:30+00:00"
+    conn = connect_sqlite(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status, summary,
+              raw_attrs_json, created_at, updated_at
+            )
+            VALUES (
+              'metadata-only-prompt-step', 'sess-sql', 4, 'conversation',
+              ?, 'completed', 'gen_ai.client.hook.UserPromptSubmit',
+              '{"gen_ai.client.generation_id":"gen-prompt-metadata"}',
+              ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    detail = TestClient(app).get("/api/session/sess-sql")
+
+    assert detail.status_code == 200
+    prompts = [event for event in detail.json()["conversation"] if event["type"] == "prompt"]
+    assert len(prompts) == 2
+    assert prompts[1]["preview"] == (
+        "Prompt text was not captured for this turn; metadata is available."
+    )
+
+
+def test_dashboard_session_filter_navigation_cards_include_first_prompts(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    _add_sql_codex_sibling_session(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    response = TestClient(app).get("/api/data", params={"session": "sess-codex-2"})
+
+    assert response.status_code == 200
+    sessions = {session["id"]: session for session in response.json()["sessions"]}
+    assert sessions["sess-sql"]["first_prompt"].startswith(
+        "Fix the failing SQL dashboard tests"
+    )
 
 
 def test_dashboard_session_detail_shows_tokenless_stop_response_turns(tmp_path):
