@@ -1,13 +1,13 @@
 ---
 name: reflect
-description: Use when the user wants to analyze AI coding agent telemetry, generate a Reflect dashboard, investigate tool/model/MCP/subagent patterns, understand Claude, Copilot, or Gemini usage/limit behavior, or decide between local-first and central gateway-based telemetry flows. Start with local OTLP/span analysis, then optionally enrich the explanation with provider-side admin APIs, exports, or quota views when available.
+description: Use when the user wants task-specific guidance from prior AI coding sessions, actionable workflow improvements, a Reflect dashboard, telemetry analysis, tool/model/MCP/subagent investigation, provider usage explanations, or local-first versus gateway architecture advice. Query approved local workflows before recurring repository work, keep analysis read-only by default, and distinguish local evidence from provider evidence and inference.
 ---
 
 # reflect skill
 
-You are the `reflect` skill: a telemetry-first analyst for AI coding agent sessions.
+You are the `reflect` skill: an evidence-backed improvement and telemetry interface for AI coding agent sessions.
 
-Your job is to explain what happened in the user's AI sessions using **local telemetry first** and **provider APIs second**.
+Your job is to retrieve proven local workflows before work, identify the best improvement after work, and explain what happened using **local telemetry first** and **provider APIs second**.
 
 `reflect` remains the analysis surface whether the telemetry was captured locally in `~/.reflect/state/` or routed through a central OTLP gateway.
 
@@ -19,6 +19,8 @@ Use this skill when the user asks for any of the following:
 - AI usage analysis
 - model/tool/MCP/subagent patterns
 - prompt efficiency or agent workflow quality
+- task-specific repository guidance from approved workflows
+- repeated failures that should become a reusable workflow
 - "why did Claude hit its limit?"
 - "why did Gemini say capacity was exhausted?"
 - "what reset am I waiting for?"
@@ -28,17 +30,28 @@ Use this skill when the user asks for any of the following:
 
 Always follow this order:
 
-0. **Auto-initialize capture when the skill starts**
+0. **Check capture without mutating configuration**
    - Before analysis, check whether telemetry capture is already wired for the current workspace.
-   - If hooks are not yet set up, run `reflect setup` (or `python3 -m reflect.core setup` if `reflect` is not yet on PATH).
-   - Keep setup global/user-scoped by default:
-     - do not install or merge repo-local hook files such as `.github/hooks/otel-hooks.json` unless the user explicitly asks for local/project instrumentation
-     - use global agent config and global skill directories by default
-     - if local/project instrumentation is requested, use the explicit `reflect setup --agent <name> --local-agent <name>` path
-   - Do not block analysis on setup. If hooks cannot be initialized, continue with the telemetry that already exists and explain the limitation.
-   - When setup succeeds, tell the user that only **new** agent runs will emit the newly initialized traces.
+   - Do not run `reflect setup`, install hooks, or mutate agent configuration merely because the skill was invoked.
+   - If capture is missing, continue with existing evidence, explain the limitation, and offer the explicit `reflect setup` command.
+   - Only run setup after the operator explicitly authorizes it. Keep setup global/user-scoped unless project-local instrumentation was requested.
 
-1. **Baseline from local telemetry**
+1. **Retrieve task guidance before recurring work**
+   - For a concrete repository task, run `reflect ask "<task question>" --json` before acting.
+   - Pass `--task-file <path>` when the task is written down and `--path <path>` when a specific artifact is in scope.
+   - Follow an approved or active workflow only when its constraints and preconditions match.
+   - Treat pending workflow guidance as unapproved evidence: do not install or apply it automatically.
+   - Stop and ask the operator when the answer's fallback applies.
+
+2. **Find actionable improvements after work**
+   - Run `reflect improve` to inspect the highest-impact durable observations.
+   - Use `reflect improve <observation-id>` for bounded problem evidence.
+   - Run `reflect loops` to inspect repeated stalled or productive behavior; use `reflect loops build <loop-id>` only when the operator wants one selected loop turned into a pending workflow packaged as a skill.
+   - Run `reflect skills` to inspect the durable skill registry and `reflect skills show <skill-id>` for versions, evidence, installations, and observed usage.
+   - Use `reflect workflows list|show` to inspect reusable procedures and `reflect workflows add <SKILL.md>` to import an existing procedure; importing does not install the skill package.
+   - Never run `reflect skills apply` or `reflect workflows apply` without explicit operator approval.
+
+3. **Baseline from local telemetry**
    - Prefer OTLP JSON traces such as `~/.reflect/state/otlp/otel-traces.json`.
    - Use the existing `reflect` CLI or `python3 src/reflect/core.py`.
     - Remember the current CLI behavior:
@@ -48,19 +61,19 @@ Always follow this order:
       - `reflect memory providers`: report local SQLite plus optional LiteLLM, Memory Palace, Agent Memory, Mem0, Graphiti, and TencentDB-Agent-Memory adapters
    - If local traces are unavailable, fall back to legacy local state such as Cursor hook directories when present.
 
-2. **Explain what local telemetry can prove**
+4. **Explain what local telemetry can prove**
    - Separate confirmed facts from inference.
    - Use spans to identify model mix, tool intensity, session bursts, token usage seen in telemetry, failures, and time windows.
    - If a provider-side reset or quota reason is **not** present in local spans, say so explicitly.
    - For quota errors such as Gemini's "You have exhausted your capacity on this model" message, explain the workflow behavior leading into the failure even when the provider's exact quota accounting is unavailable locally.
 
-3. **Optional provider enrichment**
+5. **Optional provider enrichment**
    - Only attempt this when the user asks about provider limits, reset windows, quota, spend, or reconciliation.
    - Anthropic enrichment is optional and should never block the baseline local analysis.
    - Other providers such as Cursor or Gemini may later add admin/account-side usage sources, but local analysis must remain useful without them.
    - If the API is unavailable, credentials are missing, or the account type is unsupported, return the local analysis with a clear note about what could not be confirmed.
 
-4. **Merge with provenance**
+6. **Merge with provenance**
      - Label conclusions as:
        - `Local telemetry`
        - `Provider API / export / dashboard`

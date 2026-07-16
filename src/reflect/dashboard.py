@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import threading
 import time
 from collections import Counter, defaultdict
@@ -28,6 +29,7 @@ from reflect.insights import (
 from reflect.insights.renderers import insights_to_example_tuples, insights_to_strings
 from reflect.models import AgentStats, TelemetryStats
 from reflect.preparation import BackgroundPreparationWorker, PreparationSnapshot, PreparationState
+from reflect.session_rules import DEFAULT_SESSION_RULE_SCORER, context_from_summary
 from reflect.utils import (
     _json_dumps,
     _safe_ratio,
@@ -130,215 +132,13 @@ def _cursor_estimate_note(has_full_transcript: bool = True) -> str:
 
 def _quality_rules_payload() -> list[dict[str, object]]:
     """Dashboard copy for the session quality scoring rubric."""
-    return [
-        {
-            "name": "Completion",
-            "points": 25,
-            "signals": ["Stop", "SessionEnd", "SubagentStop"],
-            "description": "Full credit when the session emits a normal completion event; partial credit for subagent-only completion.",
-        },
-        {
-            "name": "Efficiency",
-            "points": 20,
-            "signals": ["tokens per tool", "tool count", "session token volume"],
-            "description": "Penalizes high token-per-tool usage and unusually large tool counts, using local distribution thresholds when available.",
-        },
-        {
-            "name": "Tool reliability",
-            "points": 15,
-            "signals": ["PostToolUseFailure", "tool failure rate"],
-            "description": "Rewards clean tool execution and scales down as failed tool calls exceed the expected local failure rate.",
-        },
-        {
-            "name": "Loop detection",
-            "points": 10,
-            "signals": ["repeated consecutive tool calls"],
-            "description": "Penalizes repeated use of the same tool in adjacent steps, which usually indicates stalled exploration or retry loops.",
-        },
-        {
-            "name": "Duration health",
-            "points": 10,
-            "signals": ["session span timestamps"],
-            "description": "Gives partial credit when timing data is sparse, penalizes very short sessions and long outliers.",
-        },
-        {
-            "name": "Error recovery",
-            "points": 10,
-            "signals": ["failure followed by successful PostToolUse"],
-            "description": "Rewards sessions that recover after failed tool calls; sessions without failures receive baseline credit.",
-        },
-        {
-            "name": "Tool diversity",
-            "points": 5,
-            "signals": ["distinct tools"],
-            "description": "Rewards sessions that use a reasonable mix of tools instead of a single repeated action.",
-        },
-        {
-            "name": "Edit productivity",
-            "points": 5,
-            "signals": ["AfterFileEdit", "BeforeReadFile"],
-            "description": "Rewards sessions that convert exploration into edits, using the edit-to-read ratio when available.",
-        },
-    ]
-
-
-def _summary_breakdown_item(
-    name: str,
-    earned: float,
-    max_points: float,
-    summary: str,
-    metrics: dict[str, object],
-) -> dict[str, object]:
-    return {
-        "name": name,
-        "earned": round(max(0.0, min(max_points, earned)), 2),
-        "max": max_points,
-        "summary": summary,
-        "metrics": metrics,
-        "inputs": [
-            {"name": key.replace("_", " "), "value": value}
-            for key, value in metrics.items()
-        ],
-    }
+    return DEFAULT_SESSION_RULE_SCORER.rules_payload()
 
 
 def _sql_quality_breakdown(row: dict[str, object], recovered: int = 0) -> list[dict[str, object]]:
-    status = str(row.get("status") or "unknown")
-    failures = int(row.get("failure_count") or row.get("failures") or 0)
-    tool_uses = int(row.get("tool_call_count") or row.get("tool_calls") or 0)
-    duration_ms = int(row.get("duration_ms") or 0)
-    input_tokens = int(row.get("input_tokens") or 0)
-    output_tokens = int(row.get("output_tokens") or 0)
-    total_tokens = input_tokens + output_tokens
-    completed = status in {"ok", "completed", "success"}
-
-    efficiency = 20.0
-    if tool_uses > 0:
-        tokens_per_tool = total_tokens / tool_uses
-        if tokens_per_tool > 25_000:
-            efficiency -= 15.0
-            efficiency_summary = "Tokens per tool exceeded the severe threshold."
-        elif tokens_per_tool > 10_000:
-            efficiency -= 7.0
-            efficiency_summary = "Tokens per tool exceeded the mild threshold."
-        else:
-            efficiency_summary = "Tokens per tool stayed within the expected range."
-        if tool_uses > 30:
-            efficiency -= 5.0
-            efficiency_summary += " Tool count exceeded the cold-start threshold."
-    else:
-        tokens_per_tool = 0.0
-        efficiency_summary = "No tool calls were present; scoring used total token volume."
-        if total_tokens > 50_000:
-            efficiency -= 10.0
-            efficiency_summary = "No tool calls were present and total tokens exceeded 50k."
-        elif total_tokens > 20_000:
-            efficiency -= 5.0
-            efficiency_summary = "No tool calls were present and total tokens exceeded 20k."
-
-    if tool_uses > 0:
-        failure_rate = failures / tool_uses
-        if failure_rate > 0.15:
-            reliability = max(0.0, 15.0 - failure_rate * 100)
-            reliability_summary = "Failure rate exceeded the threshold."
-        elif failures == 0:
-            reliability = 15.0
-            reliability_summary = "No failed tool calls were observed."
-        else:
-            reliability = 15.0 * (1.0 - failure_rate / 0.15)
-            reliability_summary = "Failures were present but stayed under the threshold."
-    else:
-        failure_rate = 0.0
-        reliability = 15.0
-        reliability_summary = "No tool calls were present, so no tool failures were observed."
-
-    duration_score = 10.0
-    if duration_ms <= 0:
-        duration_score = 5.0
-        duration_summary = "Only partial timing data was available."
-    elif duration_ms < 30_000:
-        duration_score -= 3.0
-        duration_summary = "Session was very short, so duration health was reduced."
-    elif duration_ms > 1_800_000:
-        duration_score -= 5.0
-        duration_summary = "Session exceeded the 30 minute cold-start duration threshold."
-    else:
-        duration_summary = "Duration stayed within the expected range."
-
-    if failures == 0:
-        recovery = 7.0
-        recovery_summary = "No failures were observed, so recovery gets baseline credit."
-    elif recovered > 0:
-        recovery = 10.0 * min(1.0, recovered / failures)
-        recovery_summary = "Failures were followed by successful tool results."
-    else:
-        recovery = 0.0
-        recovery_summary = "Failures were observed without a matching successful recovery."
-
-    return [
-        _summary_breakdown_item(
-            "Completion",
-            25.0 if completed else 0.0,
-            25.0,
-            "Session status indicates completion." if completed else "Session status does not indicate completion.",
-            {"status": status, "completed": completed},
-        ),
-        _summary_breakdown_item(
-            "Efficiency",
-            efficiency,
-            20.0,
-            efficiency_summary,
-            {
-                "tool_uses": tool_uses,
-                "total_tokens": total_tokens,
-                "tokens_per_tool": round(tokens_per_tool, 2),
-                "mild_threshold": 10_000,
-                "severe_threshold": 25_000,
-            },
-        ),
-        _summary_breakdown_item(
-            "Tool reliability",
-            reliability,
-            15.0,
-            reliability_summary,
-            {"failures": failures, "tool_uses": tool_uses, "failure_rate": round(failure_rate, 4), "threshold": 0.15},
-        ),
-        _summary_breakdown_item(
-            "Loop detection",
-            10.0,
-            10.0,
-            "No repeated-tool loop signal was present in the session summary.",
-            {"tool_sequence_available": False},
-        ),
-        _summary_breakdown_item(
-            "Duration health",
-            duration_score,
-            10.0,
-            duration_summary,
-            {"duration_ms": duration_ms},
-        ),
-        _summary_breakdown_item(
-            "Error recovery",
-            recovery,
-            10.0,
-            recovery_summary,
-            {"failures": failures, "recovered": recovered},
-        ),
-        _summary_breakdown_item(
-            "Tool diversity",
-            0.0,
-            5.0,
-            "Distinct per-session tool count was not present in the session summary.",
-            {"distinct_tools_available": False},
-        ),
-        _summary_breakdown_item(
-            "Edit productivity",
-            0.0,
-            5.0,
-            "Read/edit productivity events were not present in the session summary.",
-            {"edit_events_available": False},
-        ),
-    ]
+    return DEFAULT_SESSION_RULE_SCORER.breakdown(
+        context_from_summary(row, recovered=recovered)
+    )
 
 
 def _extract_skill_name_from_preview(preview: str) -> str:
@@ -4150,6 +3950,7 @@ def _build_dashboard_app(
     db_path: Path | None = None,
     sql_only: bool = False,
     preparation_worker: BackgroundPreparationWorker | None = None,
+    project_root: Path | None = None,
 ):
     from fastapi import FastAPI, Request
     from fastapi.responses import FileResponse, JSONResponse
@@ -4158,6 +3959,12 @@ def _build_dashboard_app(
     globals()["Request"] = Request
 
     app = FastAPI(title="reflect dashboard", docs_url=None, redoc_url=None)
+    workflow_project_root = (project_root or Path.cwd()).expanduser().resolve()
+
+    def resolve_workflow_project_root(value: object = None) -> Path:
+        requested = str(value or "").strip()
+        return Path(requested).expanduser().resolve() if requested else workflow_project_root
+
     if db_path is not None:
         if preparation_worker is not None:
             dashboard_cache = DashboardDataCache(
@@ -4338,6 +4145,412 @@ def _build_dashboard_app(
             else PreparationSnapshot(state=PreparationState.IDLE, generation=0)
         )
         return JSONResponse({"preparation": snapshot.as_dict()})
+
+    @app.get("/api/improvements")
+    def api_improvements(request: Request):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        params = request.query_params
+        conn = connect_sqlite(db_path)
+        try:
+            service = ImprovementService(conn)
+            status = (params.get("status") or "").strip() or None
+            include_resolved = (params.get("include_resolved") or "").lower() in {
+                "1",
+                "true",
+                "yes",
+            }
+            limit = min(500, max(1, int(params.get("limit") or 100)))
+            findings = service.list_inbox_findings(
+                limit=500,
+                status=status,
+                include_resolved=include_resolved,
+            )
+            summary = service.repository.summary(limit=0)
+            if status:
+                raw_observation_count = summary.counts_by_status.get(status, 0)
+            elif include_resolved:
+                raw_observation_count = sum(summary.counts_by_status.values())
+            else:
+                raw_observation_count = sum(
+                    summary.counts_by_status.get(item, 0)
+                    for item in (
+                        "new",
+                        "acknowledged",
+                        "proposal_ready",
+                        "approved",
+                        "active",
+                        "regressed",
+                    )
+                )
+            return JSONResponse(
+                {
+                    "generated_at": summary.generated_at,
+                    "observations": [
+                        item.model_dump(mode="json") for item in findings[:limit]
+                    ],
+                    "inbox_total_count": len(findings),
+                    "raw_observation_count": raw_observation_count,
+                    "counts_by_status": summary.counts_by_status,
+                    "pending_workflows": summary.pending_workflows,
+                    "active_interventions": summary.active_interventions,
+                    "verified_improvement_rate": summary.verified_improvement_rate,
+                }
+            )
+        except (ValueError, sqlite3.Error) as exc:
+            return JSONResponse({"error": str(exc), "db_path": str(db_path)}, status_code=500)
+        finally:
+            conn.close()
+
+    @app.get("/api/rules")
+    def api_improvement_rules():
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            rules = ImprovementService(conn).repository.list_rule_summaries()
+            return JSONResponse(
+                {
+                    "rules": [rule.model_dump(mode="json") for rule in rules],
+                    "extension": {
+                        "kind": "code_backed",
+                        "module": "reflect.improvements",
+                        "base_class": "BaseImprovementRule",
+                        "registry": "DEFAULT_RULE_REGISTRY",
+                        "registration": "RuleRegistry.register",
+                    },
+                }
+            )
+        finally:
+            conn.close()
+
+    @app.get("/api/improvements/{observation_id}")
+    def api_improvement_detail(observation_id: str):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            observation = ImprovementService(conn).repository.get_observation(observation_id)
+            if observation is None:
+                return JSONResponse({"error": f"Observation {observation_id} not found"}, status_code=404)
+            return JSONResponse(observation.model_dump(mode="json"))
+        finally:
+            conn.close()
+
+    @app.get("/api/workflows")
+    def api_workflows(request: Request):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            behavior_type = request.query_params.get("type")
+            status = request.query_params.get("status")
+            service = ImprovementService(conn)
+            service.skills.sync_workflow_candidates()
+            conn.commit()
+            candidates = service.workflows.list(
+                behavior_types={behavior_type} if behavior_type else None,
+                statuses={status} if status else None,
+            )
+            serialized = []
+            for candidate in candidates:
+                item = candidate.model_dump(mode="json")
+                try:
+                    item["skill_id"] = service.skills.skill_for_candidate(candidate.id).id
+                except KeyError:
+                    item["skill_id"] = None
+                serialized.append(item)
+            return JSONResponse(
+                {"workflows": serialized}
+            )
+        finally:
+            conn.close()
+
+    @app.get("/api/loops")
+    def api_loops(request: Request):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.models import LoopKind, LoopStatus
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            service = ImprovementService(conn)
+            refresh = service.loops.refresh()
+            kind = request.query_params.get("kind")
+            status = request.query_params.get("status")
+            records = service.loops.list(
+                kind=LoopKind(kind) if kind else None,
+                status=LoopStatus(status) if status else None,
+                limit=min(500, max(1, int(request.query_params.get("limit") or 100))),
+            )
+            return JSONResponse(
+                {
+                    "refresh": refresh,
+                    "loops": [record.model_dump(mode="json") for record in records],
+                }
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
+        finally:
+            conn.close()
+
+    @app.get("/api/loops/{loop_id}")
+    def api_loop_detail(loop_id: str):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            service = ImprovementService(conn)
+            service.loops.refresh()
+            return JSONResponse(service.loops.show(loop_id).model_dump(mode="json"))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        finally:
+            conn.close()
+
+    @app.get("/api/skills")
+    def api_skills(request: Request):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.models import SkillLifecycleState
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            service = ImprovementService(conn)
+            refresh = service.skills.refresh()
+            status = request.query_params.get("status")
+            include_stale = (
+                request.query_params.get("include_stale") or ""
+            ).lower() in {"1", "true", "yes"}
+            lifecycle = SkillLifecycleState(status) if status else None
+            counts_by_lifecycle = service.skills.counts_by_lifecycle()
+            records = service.skills.list(
+                lifecycle=lifecycle,
+                include_stale=include_stale,
+                limit=min(500, max(1, int(request.query_params.get("limit") or 100))),
+            )
+            if lifecycle:
+                total_count = counts_by_lifecycle.get(lifecycle.value, 0)
+            elif include_stale:
+                total_count = sum(counts_by_lifecycle.values())
+            else:
+                total_count = sum(
+                    counts_by_lifecycle.get(item.value, 0)
+                    for item in (SkillLifecycleState.ACTIVE, SkillLifecycleState.PENDING)
+                )
+            return JSONResponse(
+                {
+                    "refresh": refresh,
+                    "skills": [record.model_dump(mode="json") for record in records],
+                    "total_count": total_count,
+                    "archived_count": counts_by_lifecycle.get(SkillLifecycleState.STALE.value, 0),
+                    "counts_by_lifecycle": counts_by_lifecycle,
+                }
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
+        finally:
+            conn.close()
+
+    @app.get("/api/skills/{skill_id}")
+    def api_skill_detail(skill_id: str):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            service = ImprovementService(conn)
+            service.skills.refresh()
+            return JSONResponse(service.skills.show(skill_id).model_dump(mode="json"))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        finally:
+            conn.close()
+
+    @app.get("/api/workflows/{candidate_id}/sessions")
+    def api_workflow_sessions(candidate_id: str, request: Request):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            ledger = ImprovementService(conn).repository.workflow_session_ledger(
+                candidate_id,
+                limit=min(200, max(1, int(request.query_params.get("limit") or 50))),
+            )
+            return JSONResponse(ledger.model_dump(mode="json"))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        finally:
+            conn.close()
+
+    @app.get("/api/workflows/{candidate_id}/preview")
+    def api_workflow_preview(candidate_id: str, request: Request):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            return JSONResponse(
+                ImprovementService(conn).workflows.preview(
+                    candidate_id,
+                    project_root=resolve_workflow_project_root(
+                        request.query_params.get("project_root")
+                    ),
+                )
+            )
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except (RuntimeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        finally:
+            conn.close()
+
+    @app.put("/api/workflows/{candidate_id}")
+    def api_workflow_edit(candidate_id: str, body: dict):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        content = body.get("content")
+        if not isinstance(content, dict):
+            return JSONResponse({"error": "A structured workflow content object is required"}, status_code=422)
+        conn = connect_sqlite(db_path)
+        try:
+            candidate = ImprovementService(conn).workflows.edit(candidate_id, content=content)
+            return JSONResponse(candidate.model_dump(mode="json"))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except (RuntimeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        finally:
+            conn.close()
+
+    @app.post("/api/workflows/{candidate_id}/apply")
+    def api_workflow_apply(candidate_id: str, body: dict | None = None):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            return JSONResponse(
+                ImprovementService(conn).workflows.apply(
+                    candidate_id,
+                    project_root=resolve_workflow_project_root((body or {}).get("project_root")),
+                )
+            )
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except (RuntimeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        finally:
+            conn.close()
+
+    @app.post("/api/workflows/{candidate_id}/rollback")
+    def api_workflow_rollback(candidate_id: str):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            return JSONResponse(ImprovementService(conn).workflows.rollback(candidate_id))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except (RuntimeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        finally:
+            conn.close()
+
+    @app.post("/api/workflows/{candidate_id}/reject")
+    def api_workflow_reject(candidate_id: str, body: dict | None = None):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            candidate = ImprovementService(conn).workflows.reject(
+                candidate_id,
+                reason=str((body or {}).get("reason") or "operator_rejected")[:200],
+            )
+            return JSONResponse(candidate.model_dump(mode="json"))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except (RuntimeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        finally:
+            conn.close()
+
+    @app.post("/api/feedback/{session_id:path}")
+    def api_session_feedback(session_id: str, body: dict):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        outcome = str(body.get("outcome") or "")
+        reason = body.get("reason")
+        conn = connect_sqlite(db_path)
+        try:
+            feedback_id = ImprovementService(conn).repository.record_feedback(
+                session_id,
+                outcome,
+                reason_redacted=str(reason) if reason is not None else None,
+            )
+            return JSONResponse(
+                {"id": feedback_id, "session_id": session_id, "outcome": outcome},
+                status_code=201,
+            )
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
+        finally:
+            conn.close()
+
+    @app.get("/api/measurements")
+    def api_measurements():
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            return JSONResponse({"measurements": ImprovementService(conn).measurements.list()})
+        finally:
+            conn.close()
 
     @app.get("/")
     def index():

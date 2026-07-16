@@ -137,7 +137,7 @@ When you run `reflect`, it:
 2. **Normalizes** them into a single cross-agent data model — so a Claude tool call and a Copilot tool call look the same
 3. **Aggregates** per-session and cross-session metrics: token totals, tool failure rates, latency percentiles, subagent delegation patterns
 4. **Serves** the browser report locally from SQLite
-5. **Builds** an evidence-backed Behavioral Memory Graph from sessions, folders, tools, skills, specs, outcomes, and local instruction memories
+5. **Builds** an evidence-backed Behavioral Memory Graph from sessions, canonical workspaces, repositories, shared folders and paths, tools, skills, specs, outcomes, and local instruction memories
 
 Nothing leaves your machine. There's no cloud backend, no account, no API key.
 
@@ -150,12 +150,21 @@ Nothing leaves your machine. There's no cloud backend, no account, no API key.
 - **Model breakdown** — which models you're actually using and how much
 - **MCP server tracking** — observed usage counts and completion gaps from recorded MCP events
 - **Subagent patterns** — delegation frequency and types
-- **Behavioral Memory Graph** — evidence-backed links between sessions, repositories, folders, tools, skills, specs, outcomes, and local memories
+- **Behavioral Memory Graph** — evidence-backed links between sessions, canonical workspaces, repositories, shared workspace-relative folders and paths, tools, skills, specs, outcomes, and local memories; select a session to switch between its own relationships and same-workspace peers
 - **Memory providers** — local SQLite memory by default, with provider discovery and optional routing for LiteLLM Proxy memory, Memory Palace, Agent Memory, Mem0, Graphiti, and TencentDB-Agent-Memory
 - **Activity heatmaps** — by hour and day of week
 - **Actionable recommendations** — based on your actual usage patterns
 
 ## Commands
+
+Reflect keeps four concepts separate:
+
+- **Observations** are evidence-backed problems or opportunities found in sessions.
+- **Loops** are repeated behavior: stalled retries with no relevant state change, or productive routines that repeatedly reach a good outcome.
+- **Workflows** are reusable, reviewable procedures with ordered steps, stop conditions, recovery, and verification. They can come from a rule blueprint, an authoring agent, or an imported procedure.
+- **Skills** are durable, versioned improvements with evidence, installations, usage, and measurement history.
+
+A loop can motivate a workflow, and a workflow can be packaged as a skill, but neither conversion is automatic. A workflow may also become guidance, a checklist, an evaluation, or a future nudge as more renderers are added.
 
 ```bash
 reflect                        # open local browser report (default)
@@ -164,9 +173,137 @@ reflect memory list .          # list memories for this folder
 reflect memory search "query" . # search local SQLite memory
 reflect memory candidates .    # derive evidence-backed memory candidates from the graph
 reflect memory providers       # inspect configured memory providers
-reflect skills                 # extract reusable skills from your sessions
+reflect improve                # show highest-impact recurring problems and proposals
+reflect improve OBSERVATION_ID # inspect one finding and its exact evidence
+reflect ask "How should I debug CI here?" # retrieve bounded local guidance
+reflect loops                  # list stalled and productive repeated behavior
+reflect loops show LOOP_ID     # inspect bounded source-session evidence
+reflect loops build LOOP_ID --agent codex # author one pending workflow packaged as a skill
+reflect workflows list         # list reusable procedures and review states
+reflect workflows show WORKFLOW_ID # inspect steps, evidence, target, and exact diff
+reflect workflows apply WORKFLOW_ID # approve and package the workflow as a repo-local skill
+reflect workflows rollback WORKFLOW_ID # restore the prior repo-local file state
+reflect skills                 # reconcile and list the durable Skills v2 registry
+reflect skills show SKILL_ID   # inspect versions, evidence, installs, and usage
+reflect skills discover --week # discover evidence-backed drafts with an agent
+reflect skills apply SKILL_ID  # explicitly install a reviewed repo-local version
+reflect skills rollback SKILL_ID # restore the prior repo-local file state
+reflect workflows add SKILL.md # import a procedure from an existing skill file
+reflect feedback SESSION_ID --outcome corrected --reason "why"
 reflect --demo                 # instant demo with Claude/Codex/Copilot/Cursor/Gemini data
 ```
+
+The browser uses the same SQLite ledger as the CLI and follows one evidence-to-value path. **Inbox** contains only findings and observed loops. **Workflows** contains reusable procedures with source evidence, exact review, delivery target, and rollback. **Skills** contains only durable packages, versions, installations, observed usage, and measurements. Improvement Rule definitions and extension guidance live under **Explore → Context & system**, away from daily triage. A selected loop remains evidence until `reflect loops build LOOP_ID` asks an agent to author one pending workflow packaged as a skill; no loop is installed or converted automatically.
+
+Skill review links both the sessions that produced a draft and sessions that used it after activation. Selecting a repository chooses where `.agents/skills/<slug>/SKILL.md` will be created and does not change the evidence scope. Reflect records one active owner for that exact repository path so apply and rollback are hash-guarded and safe—this is ledger ownership, not a Git lock or filesystem lock. Session detail can record `good`, `bad`, `corrected`, or `no-change-correct` outcomes. Applying the same active version twice is idempotent. As comparable sessions arrive, Reflect records a new measurement only when the before/after cohort changes and surfaces regressions with a rollback path.
+
+#### Session rules
+
+Session rules are object-oriented quality dimensions that score one normalized session context. The default `SessionRuleRegistry` contains the eight 100-point dimensions shown in session detail: completion, efficiency, tool reliability, loop detection, duration health, error recovery, tool diversity, and edit productivity. Both detailed telemetry and SQLite dashboard summaries run through the same `SessionRuleScorer`; unavailable summary signals are marked as unavailable instead of being inferred.
+
+Subclass `BaseSessionRule` to replace or add a dimension. A rule declares stable metadata and returns one bounded `SessionRuleResult` through the base `result()` helper:
+
+```python
+from reflect.session_rules import (
+    BaseSessionRule,
+    DEFAULT_SESSION_RULE_REGISTRY,
+    SessionRuleDefinition,
+    SessionRuleScorer,
+)
+
+
+class FocusedChangeSessionRule(BaseSessionRule):
+    definition = SessionRuleDefinition(
+        id="edit_productivity",
+        version=2,
+        name="Focused change",
+        description="Rewards a session that turns exploration into a concrete edit.",
+        max_points=5.0,
+        signals=("AfterFileEdit", "BeforeReadFile"),
+    )
+
+    def score(self, context):
+        changed = context.edits is not None and context.edits > 0
+        return self.result(
+            5.0 if changed else 0.0,
+            "The session made a change." if changed else "No edit signal was present.",
+            {"edit_present": changed},
+        )
+
+
+session_scorer = SessionRuleScorer(
+    DEFAULT_SESSION_RULE_REGISTRY.extended(
+        FocusedChangeSessionRule(),
+        replace=True,
+    )
+)
+```
+
+Session rules calculate session quality only; they do not create observations or workflow candidates. Improvement rules analyze repeated/cohort evidence and turn actionable patterns—including aggregated session-rule results—into recommendations.
+
+#### Custom improvement rules
+
+Improvement rules are object-oriented, deterministic extensions over canonical Reflect SQLite data. Subclass `BaseImprovementRule`, declare a versioned `RuleDefinition`, and implement `detect()`. The base class provides `make_observation()` so rule identity, scope, fingerprinting, category, and severity remain consistent.
+
+```python
+from reflect.improvements import (
+    BaseImprovementRule,
+    DEFAULT_RULE_REGISTRY,
+    ImprovementService,
+    RuleDefinition,
+)
+
+
+class RepeatedFailedSessionRule(BaseImprovementRule):
+    definition = RuleDefinition(
+        id="repeated_failed_sessions",
+        version=1,
+        category="outcome",
+        title="Repeated failed sessions",
+        description="Finds repositories with several failed sessions.",
+        detector_config={"minimum_sessions": 3},
+        required_signals=["sessions.status"],
+    )
+
+    def detect(self, conn):
+        rows = conn.execute(
+            """
+            SELECT repo_id, COUNT(*)
+            FROM sessions
+            WHERE status = 'error'
+            GROUP BY repo_id
+            HAVING COUNT(*) >= 3
+            """
+        ).fetchall()
+        return [
+            self.make_observation(
+                identity=(repo_id or "local",),
+                repo_id=repo_id,
+                title="Sessions repeatedly end in error",
+                summary=f"{count} sessions ended in error.",
+                metric_name="failed_sessions",
+                metric_value=count,
+                metric_unit="sessions",
+                metric_direction="lower_is_better",
+                impact_score=min(100, 30 + count * 5),
+                confidence=0.9,
+                occurrence_count=count,
+                affected_session_count=count,
+            )
+            for repo_id, count in rows
+        ]
+
+
+def improvement_service(conn):
+    rules = DEFAULT_RULE_REGISTRY.extended(RepeatedFailedSessionRule())
+    return ImprovementService(conn, rules=rules)
+```
+
+`RuleRegistry` rejects duplicate rule IDs unless replacement is explicit, and `ImprovementService` validates every emitted draft before persistence. Reflect does not automatically execute arbitrary Python files from a repository; integrations pass an explicit registry when constructing the service.
+
+`reflect ask --json` returns at most one approved or active workflow plus freshness, constraints, verification, fallback, confidence, and evidence. Pending candidates can inform review but are labeled unapproved and are never applied automatically.
+
+Live nudges remain intentionally unwired. Reflect packages a disabled metadata-only contract for a future local exchange under `~/.reflect/state/nudges/`; no current setup command creates that directory or configures `opentelemetry-hooks` to read it.
 
 ### Browser report server
 
@@ -379,14 +516,25 @@ Commands:
   setup    Install hooks, wire agents, configure telemetry, start gateway
   doctor   Check installation health and agent status
   update   Check release drift and optional package upgrade
+  improve  Calculate or inspect durable, evidence-backed observations
+  ask      Retrieve approved local guidance and linked evidence
+  loops    Inspect stalled retries and productive repeated routines
+  workflows Review, package, apply, and roll back reusable workflows
+  feedback Record a cheap session outcome label
   memory   Sync, search, validate, and route evidence-backed memories
-  skills   Extract reusable skills from your session history
+  skills   Reconcile, discover, version, apply, and inspect durable skills
   gateway  Manage the local OTLP gateway (start/stop/status)
 ```
 
 ## Skills
 
-`reflect skills` feeds the extraction agent a deterministic evidence bundle built from session scores, recurring tool flows, shell commands, recovery chains, and bounded deep context from selected high-signal sessions. Proposed skills are tied to concrete improvement opportunities instead of loose pattern matching.
+`reflect skills` is the Skills v2 registry. It reconciles staged candidates, known skill directories, and telemetry-observed skill usage into stable skill identities. Each skill keeps immutable content versions plus source-agent, source-loop, source-session, installation-path, usage, and measurement links. If a tracked file disappears, its installation is marked missing rather than deleting its history.
+
+Discovery is now explicit: `reflect skills discover` feeds the selected coding agent a deterministic evidence bundle built from session scores, recurring tool flows, shell commands, recovery chains, graph relationships, and bounded context from high-signal sessions. Valid output is stored as a pending skill version with its authoring agent and evidence. Older invocations such as `reflect skills --agent codex --week` still run in compatibility mode, but new scripts should use the `discover` subcommand.
+
+`reflect loops` is independent from workflow and skill discovery. It records stalled loops from consecutive same-input runs with no intervening state change, excluding approval metadata and wait/poll transport events; single-session patterns require recorded failure evidence, while failure-free patterns must recur across sessions. Productive loops require repeated routines with positive outcome evidence. `reflect loops build LOOP_ID` passes only the selected loop's bounded evidence to an agent and requires exactly one pending workflow packaged as a skill, with explicit state, iteration, exit, recovery, verification, and handoff contracts. The workflow and skill version remain linked to the loop and are never applied automatically.
+
+Nothing is installed until an operator runs `reflect skills apply SKILL_ID` or `reflect workflows apply WORKFLOW_ID` from a Git repository, or approves the same target in the local browser. `reflect workflows show WORKFLOW_ID` reviews the procedure and exact delivery diff; `reflect skills show SKILL_ID` reviews the durable package history. `reflect workflows add path/to/SKILL.md` imports an existing skill file as a reviewable workflow. The current workflow renderer packages approved workflows under `.agents/skills/`; future renderers may target guidance, checklists, evaluations, or opt-in nudges without redefining the workflow itself.
 
 ## Data flow
 

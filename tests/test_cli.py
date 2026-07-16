@@ -764,6 +764,18 @@ _R = lambda code, out, err="": type("R", (), {"returncode": code, "stdout": out,
 
 
 class TestSkillsSubcommand:
+    @pytest.fixture(autouse=True)
+    def _isolated_skills_db(self, tmp_path):
+        parameter = next(
+            item for item in main.commands["skills"].params if item.name == "db_path"
+        )
+        original = parameter.default
+        parameter.default = tmp_path / "skills-reflect.db"
+        try:
+            yield
+        finally:
+            parameter.default = original
+
     def _agent_fixture(self, skill_dest, fake_skills=None):
         return [{
             "name": "Claude Code",
@@ -771,8 +783,9 @@ class TestSkillsSubcommand:
             "global_path": str(skill_dest),
         }]
 
-    def test_skills_writes_all_with_yes(self, runner, otlp_file, tmp_path):
+    def test_skills_stages_all_with_yes_without_installing(self, runner, otlp_file, tmp_path):
         skill_dest = tmp_path / "skills"
+        db_path = tmp_path / "reflect.db"
         fake_output = json.dumps([_FAKE_SKILLS[0]])
         with patch("subprocess.run", return_value=_R(0, fake_output)), \
              patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
@@ -781,10 +794,26 @@ class TestSkillsSubcommand:
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
+                "--db-path", str(db_path),
             ])
         assert result.exit_code == 0
-        assert (skill_dest / "debug-loop" / "SKILL.md").exists()
-        assert "name: debug-loop" in (skill_dest / "debug-loop" / "SKILL.md").read_text()
+        assert not skill_dest.exists()
+        conn = sqlite3.connect(db_path)
+        try:
+            row = conn.execute(
+                """
+                SELECT status,
+                       json_extract(content_json, '$.slug'),
+                       json_extract(content_json, '$.source.kind'),
+                       json_extract(content_json, '$.source.agent'),
+                       json_extract(content_json, '$.suggested_artifact')
+                FROM workflow_candidates
+                """
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row == ("pending", "debug-loop", "agent_authored", "claude", "skill")
+        assert "Nothing was installed" in result.output
 
     def test_skills_passes_evidence_bundle_to_agent(self, runner, otlp_file, tmp_path):
         fake_output = json.dumps([_FAKE_SKILLS[0]])
@@ -862,10 +891,7 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]), \
              patch("reflect.core._prepare_sql_report_db"), \
-             patch("reflect.store.sqlite.connect_sqlite") as mock_connect, \
              patch("reflect.core._build_skill_evidence_bundle_from_sql", return_value=sql_bundle):
-            mock_conn = sqlite3.connect(":memory:")
-            mock_connect.return_value = mock_conn
             result = runner.invoke(main, [
                 "skills", "--yes", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
@@ -879,9 +905,10 @@ class TestSkillsSubcommand:
         assert '"graph_evidence"' in prompt
         assert '"source": "sql-graph"' in prompt
 
-    def test_skills_partial_selection(self, runner, otlp_file, tmp_path):
+    def test_skills_partial_selection_stages_only_selected(self, runner, otlp_file, tmp_path):
         """User selects only skill #1 from a list of 3."""
         skill_dest = tmp_path / "skills"
+        db_path = tmp_path / "reflect.db"
         fake_output = json.dumps(_FAKE_SKILLS)
         with patch("subprocess.run", return_value=_R(0, fake_output)), \
              patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
@@ -891,13 +918,21 @@ class TestSkillsSubcommand:
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
-            ], input="1\ny\n")
+                "--db-path", str(db_path),
+            ], input="1\n")
         assert result.exit_code == 0
-        assert (skill_dest / "debug-loop" / "SKILL.md").exists()
-        assert not (skill_dest / "context-reset").exists()
-        assert not (skill_dest / "test-first").exists()
+        assert not skill_dest.exists()
+        conn = sqlite3.connect(db_path)
+        try:
+            slugs = {
+                row[0]
+                for row in conn.execute("SELECT json_extract(content_json, '$.slug') FROM workflow_candidates")
+            }
+        finally:
+            conn.close()
+        assert slugs == {"debug-loop"}
 
-    def test_skills_interactive_agent_selection_limits_install_targets(self, runner, otlp_file, tmp_path):
+    def test_skills_does_not_select_or_write_agent_install_targets(self, runner, otlp_file, tmp_path):
         skill_output = json.dumps([_FAKE_SKILLS[0]])
         first_dest = tmp_path / "agent-one"
         second_dest = tmp_path / "agent-two"
@@ -908,19 +943,19 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", return_value=_R(0, skill_output)), \
              patch("reflect.core._detect_agents", return_value=agents), \
              patch("reflect.core._select_skills", return_value=[_FAKE_SKILLS[0]]), \
-             patch("reflect.core._select_skill_install_agents", return_value=[agents[1]]) as selector, \
-             patch("reflect.core.click.confirm", return_value=True):
+             patch("reflect.core._select_skill_install_agents") as selector:
             result = runner.invoke(main, [
                 "skills", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
+                "--db-path", str(tmp_path / "reflect.db"),
             ])
 
         assert result.exit_code == 0
-        assert selector.called
+        assert not selector.called
         assert not (first_dest / "debug-loop" / "SKILL.md").exists()
-        assert (second_dest / "debug-loop" / "SKILL.md").exists()
+        assert not (second_dest / "debug-loop" / "SKILL.md").exists()
 
     def test_skills_gemini_uses_p_flag(self, runner, otlp_file, tmp_path):
         """gemini agent uses -p flag, not --print."""
@@ -1104,7 +1139,7 @@ class TestSkillsSubcommand:
                 "--spans-dir", str(tmp_path / "sp"),
             ])
         assert result.exit_code == 0
-        assert (skill_dest / "debug-loop" / "SKILL.md").exists()
+        assert not skill_dest.exists()
 
     def test_skills_strips_plain_fences(self, runner, otlp_file, tmp_path):
         """Agent output wrapped in ``` fences (no language tag) is parsed correctly."""
@@ -1119,7 +1154,7 @@ class TestSkillsSubcommand:
                 "--spans-dir", str(tmp_path / "sp"),
             ])
         assert result.exit_code == 0
-        assert (skill_dest / "debug-loop" / "SKILL.md").exists()
+        assert not skill_dest.exists()
 
     def test_skills_accepts_trailing_text_after_json(self, runner, otlp_file, tmp_path):
         """Valid JSON followed by trailing prose should still parse."""
@@ -1134,7 +1169,7 @@ class TestSkillsSubcommand:
                 "--spans-dir", str(tmp_path / "sp"),
             ])
         assert result.exit_code == 0
-        assert (skill_dest / "debug-loop" / "SKILL.md").exists()
+        assert not skill_dest.exists()
 
 
 def test_strip_json_fences_variants():
@@ -1169,7 +1204,9 @@ def test_strip_json_fences_variants():
 
 class TestNoDataNoCrash:
     def test_empty_dirs_no_crash(self, runner, tmp_path):
-        with patch("reflect.core._start_publish_server"):
+        with patch("reflect.core._start_publish_server"), \
+             patch("reflect.core._default_otlp_traces", return_value=None), \
+             patch("reflect.core._discover_rich_session_files", return_value=[]):
             result = runner.invoke(main, [
                 "--foreground",
                 "--sessions-dir", str(tmp_path / "s"),
@@ -2115,6 +2152,7 @@ class TestSetup:
 
         assert (global_skill_dir / "reflect" / "SKILL.md").exists()
         assert (global_skill_dir / "reflect-skills" / "SKILL.md").exists()
+        assert not (global_skill_dir / "reflect-loops").exists()
         assert not (global_skill_dir / "skills").exists()
         assert not (tmp_path / ".claude" / "skills" / "reflect" / "SKILL.md").exists()
 
@@ -2144,6 +2182,7 @@ class TestSetup:
 
         assert (shared_skill_dir / "reflect" / "SKILL.md").exists()
         assert (shared_skill_dir / "reflect-skills" / "SKILL.md").exists()
+        assert not (shared_skill_dir / "reflect-loops").exists()
         assert "already populated" in console.file.getvalue()
 
     def test_distribute_skills_can_opt_into_local_project_path(self, tmp_path):
@@ -2167,6 +2206,7 @@ class TestSetup:
 
         assert (global_skill_dir / "reflect" / "SKILL.md").exists()
         assert (global_skill_dir / "reflect-skills" / "SKILL.md").exists()
+        assert not (global_skill_dir / "reflect-loops").exists()
         assert (tmp_path / ".claude" / "skills" / "reflect" / "SKILL.md").exists()
         assert (tmp_path / ".claude" / "skills" / "reflect-skills" / "SKILL.md").exists()
         assert not (tmp_path / ".claude" / "skills" / "skills").exists()
@@ -2189,6 +2229,7 @@ class TestSetup:
 
         assert (codex_skill_dir / "reflect" / "SKILL.md").exists()
         assert (codex_skill_dir / "reflect-skills" / "SKILL.md").exists()
+        assert not (codex_skill_dir / "reflect-loops").exists()
 
 
     def test_setup_seeds_config_from_example_on_fresh_install(self, runner, tmp_path):

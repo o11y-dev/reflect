@@ -76,11 +76,22 @@ def test_rebuild_graph_from_canonical_tables_is_idempotent(tmp_path):
         normalize_pending_raw_events(conn)
 
         first = rebuild_graph(conn)
+        first_state = {
+            "nodes": conn.execute("SELECT COUNT(*) FROM graph_nodes").fetchone()[0],
+            "edges": conn.execute("SELECT COUNT(*) FROM graph_edges").fetchone()[0],
+            "weight": conn.execute("SELECT COALESCE(SUM(weight), 0) FROM graph_edges").fetchone()[0],
+        }
         second = rebuild_graph(conn)
+        second_state = {
+            "nodes": conn.execute("SELECT COUNT(*) FROM graph_nodes").fetchone()[0],
+            "edges": conn.execute("SELECT COUNT(*) FROM graph_edges").fetchone()[0],
+            "weight": conn.execute("SELECT COALESCE(SUM(weight), 0) FROM graph_edges").fetchone()[0],
+        }
 
         assert first["nodes"] >= 8
         assert first["edges"] >= 7
-        assert second == {"nodes": 0, "edges": 0}
+        assert second == first
+        assert second_state == first_state
         node_kinds = {row[0] for row in conn.execute("SELECT DISTINCT kind FROM graph_nodes")}
         assert {"Session", "Step", "Agent", "Tool", "MCPServer", "Memory"} <= node_kinds
         edge_kinds = {row[0] for row in conn.execute("SELECT DISTINCT kind FROM graph_edges")}

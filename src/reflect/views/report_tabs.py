@@ -1066,14 +1066,15 @@ def _build_graphs(
 
 
 def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> dict[str, Any]:
+    graph_scoped_ids = _workspace_peer_session_ids(conn, scoped_ids)
     node_filters: list[str] = []
     node_params: list[str] = []
-    if scoped_ids is not None:
-        if not scoped_ids:
+    if graph_scoped_ids is not None:
+        if not graph_scoped_ids:
             return {"nodes": [], "edges": [], "sessions": [], "legend": []}
-        placeholders = ", ".join("?" for _ in scoped_ids)
+        placeholders = ", ".join("?" for _ in graph_scoped_ids)
         node_filters.append(f"(session_id IS NULL OR session_id IN ({placeholders}))")
-        node_params.extend(scoped_ids)
+        node_params.extend(graph_scoped_ids)
     where = f"WHERE {' AND '.join(node_filters)}" if node_filters else ""
     node_rows = _dict_rows(conn.execute(
         f"""
@@ -1096,6 +1097,7 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
         WHERE kind_rank <= CASE kind
           WHEN 'Agent' THEN 10
           WHEN 'Session' THEN 40
+          WHEN 'Workspace' THEN 30
           WHEN 'Repo' THEN 20
           WHEN 'Spec' THEN 35
           WHEN 'Folder' THEN 75
@@ -1114,17 +1116,18 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
           CASE kind
             WHEN 'Agent' THEN 0
             WHEN 'Session' THEN 1
-            WHEN 'Skill' THEN 2
-            WHEN 'Subagent' THEN 3
-            WHEN 'Outcome' THEN 4
-            WHEN 'Repo' THEN 5
-            WHEN 'Spec' THEN 6
-            WHEN 'Folder' THEN 7
-            WHEN 'Tool' THEN 8
-            WHEN 'MCPServer' THEN 9
-            WHEN 'Path' THEN 10
-            WHEN 'ToolCall' THEN 11
-            WHEN 'Memory' THEN 12
+            WHEN 'Workspace' THEN 2
+            WHEN 'Skill' THEN 3
+            WHEN 'Subagent' THEN 4
+            WHEN 'Outcome' THEN 5
+            WHEN 'Repo' THEN 6
+            WHEN 'Spec' THEN 7
+            WHEN 'Folder' THEN 8
+            WHEN 'Tool' THEN 9
+            WHEN 'MCPServer' THEN 10
+            WHEN 'Path' THEN 11
+            WHEN 'ToolCall' THEN 12
+            WHEN 'Memory' THEN 13
             ELSE 99
           END,
           COALESCE(last_seen_at, first_seen_at, '') DESC,
@@ -1142,10 +1145,10 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
         f"target_node_id IN ({', '.join('?' for _ in selected_ids)})",
     ]
     edge_params = [*selected_ids, *selected_ids]
-    if scoped_ids is not None:
-        placeholders = ", ".join("?" for _ in scoped_ids)
+    if graph_scoped_ids is not None:
+        placeholders = ", ".join("?" for _ in graph_scoped_ids)
         edge_filters.append(f"(session_id IS NULL OR session_id IN ({placeholders}))")
-        edge_params.extend(scoped_ids)
+        edge_params.extend(graph_scoped_ids)
     edge_rows = _dict_rows(conn.execute(
         f"""
         SELECT source_node_id, target_node_id, kind, session_id, weight, attrs_json, first_seen_at, last_seen_at
@@ -1156,6 +1159,117 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
         """,
         edge_params,
     ))
+    if graph_scoped_ids is not None:
+        scope_placeholders = ", ".join("?" for _ in graph_scoped_ids)
+        scoped_context_rows = _dict_rows(conn.execute(
+            f"""
+            SELECT source_node_id, target_node_id, kind, session_id, weight,
+                   attrs_json, first_seen_at, last_seen_at
+            FROM graph_edges
+            WHERE session_id IN ({scope_placeholders})
+              AND kind IN (
+                'ran_in_workspace', 'ran_session', 'spawned_session',
+                'worked_in_repo'
+              )
+            ORDER BY
+              CASE kind
+                WHEN 'ran_in_workspace' THEN 0
+                WHEN 'ran_session' THEN 1
+                WHEN 'spawned_session' THEN 2
+                ELSE 3
+              END,
+              COALESCE(last_seen_at, first_seen_at, '') DESC
+            """,
+            graph_scoped_ids,
+        ))
+        scoped_bridge_rows = _dict_rows(conn.execute(
+            f"""
+            SELECT source_node_id, target_node_id, kind, session_id, weight,
+                   attrs_json, first_seen_at, last_seen_at
+            FROM graph_edges
+            WHERE session_id IN ({scope_placeholders})
+              AND kind IN (
+                'touched_folder', 'touched_path', 'used_skill',
+                'achieved_outcome', 'recorded_memory'
+              )
+            ORDER BY
+              CASE kind
+                WHEN 'touched_folder' THEN 0
+                ELSE 1
+              END,
+              weight DESC,
+              COALESCE(last_seen_at, first_seen_at, '') DESC
+            LIMIT 600
+            """,
+            graph_scoped_ids,
+        ))
+        scoped_bridge_rows = [*scoped_context_rows, *scoped_bridge_rows]
+        if scoped_bridge_rows:
+            bridge_node_ids = {
+                str(node_id)
+                for row in scoped_bridge_rows
+                for node_id in (row["source_node_id"], row["target_node_id"])
+            }
+            missing_ids = [node_id for node_id in bridge_node_ids if node_id not in selected]
+            if missing_ids:
+                placeholders = ", ".join("?" for _ in missing_ids)
+                node_rows.extend(
+                    _dict_rows(conn.execute(
+                        f"""
+                        SELECT id, kind, label, session_id, attrs_json, first_seen_at, last_seen_at
+                        FROM graph_nodes
+                        WHERE id IN ({placeholders})
+                        """,
+                        missing_ids,
+                    ))
+                )
+                selected_ids.extend(missing_ids)
+                selected.update(missing_ids)
+            edge_rows.extend(scoped_bridge_rows)
+    session_node_ids = [
+        str(row["id"])
+        for row in node_rows
+        if str(row.get("kind") or "") == "Session"
+    ]
+    if session_node_ids:
+        session_placeholders = ", ".join("?" for _ in session_node_ids)
+        lineage_rows = _dict_rows(conn.execute(
+            f"""
+            SELECT source_node_id, target_node_id, kind, session_id, weight,
+                   attrs_json, first_seen_at, last_seen_at
+            FROM graph_edges
+            WHERE kind = 'spawned_session'
+              AND (
+                source_node_id IN ({session_placeholders})
+                OR target_node_id IN ({session_placeholders})
+              )
+            ORDER BY COALESCE(last_seen_at, first_seen_at, '') DESC
+            LIMIT 120
+            """,
+            [*session_node_ids, *session_node_ids],
+        ))
+        if lineage_rows:
+            lineage_node_ids = {
+                str(node_id)
+                for row in lineage_rows
+                for node_id in (row["source_node_id"], row["target_node_id"])
+            }
+            missing_ids = [node_id for node_id in lineage_node_ids if node_id not in selected]
+            if missing_ids:
+                placeholders = ", ".join("?" for _ in missing_ids)
+                node_rows.extend(
+                    _dict_rows(conn.execute(
+                        f"""
+                        SELECT id, kind, label, session_id, attrs_json, first_seen_at, last_seen_at
+                        FROM graph_nodes
+                        WHERE id IN ({placeholders})
+                        """,
+                        missing_ids,
+                    ))
+                )
+                selected_ids.extend(missing_ids)
+                selected.update(missing_ids)
+            edge_rows.extend(lineage_rows)
     if scoped_ids is None:
         bridge_ids = [
             str(row["id"])
@@ -1215,7 +1329,7 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
         context_ids = [
             str(row["id"])
             for row in node_rows
-            if str(row.get("kind") or "") in {"Memory", "Spec", "Repo"}
+            if str(row.get("kind") or "") in {"Memory", "Spec", "Repo", "Workspace"}
         ]
         if context_ids:
             context_placeholders = ", ".join("?" for _ in context_ids)
@@ -1225,7 +1339,10 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
                 FROM graph_edges ge
                 JOIN graph_nodes gs ON gs.id = ge.source_node_id
                 JOIN graph_nodes gt ON gt.id = ge.target_node_id
-                WHERE ge.kind IN ('recorded_memory', 'planned_spec', 'addressed_spec', 'worked_in_repo')
+                WHERE ge.kind IN (
+                  'recorded_memory', 'planned_spec', 'addressed_spec',
+                  'worked_in_repo', 'ran_in_workspace'
+                )
                   AND (
                     (ge.source_node_id IN ({context_placeholders}) AND gt.kind = 'Session')
                     OR (ge.target_node_id IN ({context_placeholders}) AND gs.kind = 'Session')
@@ -1270,9 +1387,23 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
                         deduped[key] = row
                 edge_rows = list(deduped.values())
 
+    deduped_edges: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for row in edge_rows:
+        key = (
+            str(row["source_node_id"]),
+            str(row["target_node_id"]),
+            str(row["kind"]),
+            str(row.get("session_id") or ""),
+        )
+        existing = deduped_edges.get(key)
+        if existing is None or float(row.get("weight") or 0) > float(existing.get("weight") or 0):
+            deduped_edges[key] = row
+    edge_rows = list(deduped_edges.values())
+
     colors = {
         "Agent": "#ffb156",
         "Session": "#f5f2ea",
+        "Workspace": "#f28a1a",
         "Step": "#8f887d",
         "Tool": "#48d597",
         "ToolCall": "#2fa66f",
@@ -1301,11 +1432,12 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
             row for row in edge_rows
             if str(row["source_node_id"]) in connected_ids and str(row["target_node_id"]) in connected_ids
         ]
-    if scoped_ids is not None:
+    if graph_scoped_ids is not None:
         session_roots = {
             str(row["id"])
             for row in node_rows
-            if str(row["kind"] or "") == "Session" and str(row["session_id"] or "") in set(scoped_ids)
+            if str(row["kind"] or "") == "Session"
+            and str(row["session_id"] or "") in set(graph_scoped_ids)
         }
         adjacency: dict[str, set[str]] = {}
         for row in edge_rows:
@@ -1362,6 +1494,29 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
         "sessions": sorted({str(node["session_id"]) for node in nodes if node["session_id"]}),
         "legend": [{"kind": kind, "color": colors.get(kind, "#d7d1c6")} for kind in sorted(kinds)],
     }
+
+
+def _workspace_peer_session_ids(
+    conn: sqlite3.Connection,
+    scoped_ids: list[str] | None,
+) -> list[str] | None:
+    """Expand a semantic-graph session scope to every canonical workspace peer."""
+    if scoped_ids is None or not scoped_ids:
+        return scoped_ids
+    placeholders = ", ".join("?" for _ in scoped_ids)
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT peer.id
+        FROM sessions selected
+        JOIN sessions peer
+          ON peer.workspace_id = selected.workspace_id
+        WHERE selected.id IN ({placeholders})
+          AND COALESCE(selected.workspace_id, '') <> ''
+        ORDER BY peer.id
+        """,
+        scoped_ids,
+    )
+    return sorted({*scoped_ids, *(str(row[0]) for row in rows)})
 
 
 def _cooccurrence_matrix(conn: sqlite3.Connection, scoped_ids: list[str] | None, co_tools: list[str]) -> list[list[int]]:

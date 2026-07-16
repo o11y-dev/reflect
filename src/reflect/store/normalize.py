@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from reflect.store.provenance import apply_origin_kind, classify_origin_kind
+from reflect.store.workspaces import backfill_session_context
 
 
 def _now() -> str:
@@ -62,6 +63,50 @@ def _first_hash(attrs: dict[str, Any], text: str | None, *keys: str) -> str | No
         if isinstance(value, str) and value:
             return value
     return hashlib.sha256(text.encode("utf-8")).hexdigest() if text else None
+
+
+def backfill_tool_call_hashes(conn: sqlite3.Connection) -> dict[str, int]:
+    """Fill privacy-safe fingerprints from already-redacted tool previews.
+
+    Older canonical rows predate tool input/output fingerprint persistence. The
+    preview is already the local, redacted value used by the dashboard, so this
+    repair stores only its SHA-256 digest and never introduces new raw content.
+    """
+    rows = conn.execute(
+        """
+        SELECT id, input_preview_redacted, output_preview_redacted
+        FROM tool_calls
+        WHERE (NULLIF(input_hash, '') IS NULL AND NULLIF(input_preview_redacted, '') IS NOT NULL)
+           OR (NULLIF(output_hash, '') IS NULL AND NULLIF(output_preview_redacted, '') IS NOT NULL)
+        """
+    ).fetchall()
+    updated = 0
+    for tool_call_id, input_preview, output_preview in rows:
+        input_hash = (
+            hashlib.sha256(str(input_preview).encode("utf-8")).hexdigest()
+            if input_preview not in (None, "")
+            else None
+        )
+        output_hash = (
+            hashlib.sha256(str(output_preview).encode("utf-8")).hexdigest()
+            if output_preview not in (None, "")
+            else None
+        )
+        cursor = conn.execute(
+            """
+            UPDATE tool_calls
+            SET input_hash = COALESCE(NULLIF(input_hash, ''), ?),
+                output_hash = COALESCE(NULLIF(output_hash, ''), ?),
+                updated_at = CASE
+                  WHEN (NULLIF(input_hash, '') IS NULL AND ? IS NOT NULL)
+                    OR (NULLIF(output_hash, '') IS NULL AND ? IS NOT NULL)
+                  THEN ? ELSE updated_at END
+            WHERE id = ?
+            """,
+            (input_hash, output_hash, input_hash, output_hash, _now(), tool_call_id),
+        )
+        updated += max(0, cursor.rowcount)
+    return {"updated": updated}
 
 
 def _extract_mcp_server_and_tool(attrs: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -381,13 +426,15 @@ def _insert_call_record(
         )
     elif step_type == "tool_call":
         tool_name = str(attrs.get("gen_ai.client.tool_name") or attrs.get("gen_ai.client.command") or raw_event["event_type"])
+        input_preview = _first_text(attrs, "gen_ai.client.tool.input", "tool.input")
+        output_preview = _first_text(attrs, "gen_ai.client.tool.output", "tool.output")
         conn.execute(
             """
             INSERT OR IGNORE INTO tool_calls(
               id, step_id, session_id, tool_name, tool_type, status, duration_ms,
-              input_preview_redacted, output_preview_redacted, error_type,
+              input_hash, output_hash, input_preview_redacted, output_preview_redacted, error_type,
               error_message_redacted, raw_attrs_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 _stable_id("tool", raw_event["id"]),
@@ -397,8 +444,22 @@ def _insert_call_record(
                 attrs.get("gen_ai.client.tool_type"),
                 status,
                 duration,
-                attrs.get("gen_ai.client.tool.input"),
-                attrs.get("gen_ai.client.tool.output"),
+                _first_hash(
+                    attrs,
+                    input_preview,
+                    "gen_ai.client.tool.input.sha256",
+                    "gen_ai.client.tool.input_hash",
+                    "tool.input.sha256",
+                ),
+                _first_hash(
+                    attrs,
+                    output_preview,
+                    "gen_ai.client.tool.output.sha256",
+                    "gen_ai.client.tool.output_hash",
+                    "tool.output.sha256",
+                ),
+                input_preview,
+                output_preview,
                 attrs.get("error.type"),
                 attrs.get("error.message"),
                 raw_event["attrs_json"],
@@ -711,6 +772,13 @@ def normalize_pending_raw_events(
                 )
                 failed += 1
         _backfill_parent_step_ids(conn, processed_session_ids)
+        backfill_session_context(
+            conn,
+            timestamp=timestamp,
+            changed_session_ids=processed_session_ids,
+            session_ids=processed_session_ids,
+        )
+        backfill_tool_call_hashes(conn)
         _refresh_session_statuses(conn, processed_session_ids, timestamp)
         if changed_session_ids is not None:
             changed_session_ids.update(processed_session_ids)

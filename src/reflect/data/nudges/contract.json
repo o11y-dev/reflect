@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "enabled": false,
+  "hook_integration": "not_configured",
+  "writer": "reflect",
+  "future_reader": "opentelemetry-hooks",
+  "session_key": {
+    "algorithm": "sha256-utf8-prefix-32",
+    "source": "agent session id",
+    "raw_value_persisted": false
+  },
+  "directories": {
+    "outbox": "outbox",
+    "acknowledged": "acknowledged",
+    "rejected": "rejected"
+  },
+  "payload": {
+    "metadata_only": true,
+    "allowed_fields": [
+      "schema_version",
+      "session_key",
+      "nudge.id",
+      "nudge.observation_id",
+      "nudge.message_redacted",
+      "nudge.created_at"
+    ],
+    "forbidden_fields": [
+      "session_id",
+      "prompt",
+      "response",
+      "content",
+      "file_path",
+      "cwd",
+      "tool_input",
+      "tool_output",
+      "credentials",
+      "token"
+    ]
+  },
+  "delivery": {
+    "format": "one-json-file-per-nudge",
+    "write": "atomic-rename",
+    "directory_mode": "0700",
+    "file_mode": "0600",
+    "acknowledgement": "future-reader-moves-file"
+  }
+}

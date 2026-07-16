@@ -2,6 +2,8 @@
 
 Date: 12 July 2026
 
+Implementation alignment update: 16 July 2026. The shipped model now treats loops as observed cycles, workflows as first-class reusable procedures, and skills as durable package outputs. The browser information architecture below was revised to preserve those boundaries.
+
 Repository reviewed: [o11y-dev/reflect](https://github.com/o11y-dev/reflect), release v0.8.6 at commit `5dd7d2f`
 
 Public surface reviewed: [reflect.o11y.dev](https://reflect.o11y.dev/)
@@ -59,10 +61,10 @@ Most adjacent products stop at Observe or Explain. Reflect can own the last five
 Reflect has unusually strong foundations for this direction.
 
 - Local-first collection across multiple coding agents.
-- A canonical SQLite schema for sessions, steps, LLM calls, tool calls, MCP calls, files, repositories, evidence, memories, and graph relationships.
+- A canonical SQLite schema for sessions, steps, LLM calls, tool calls, MCP calls, files, workspaces, repositories, evidence, memories, and graph relationships. Workspace identity is resolved independently from optional Git repository identity so sessions can share workspace-relative folder/path nodes without false cross-repository merges.
 - Session-level token, cost, tool failure, loop, completion, recovery, and quality signals.
 - Distribution-aware baselines instead of only fixed thresholds.
-- A graph linking sessions, tools, paths, skills, memories, outcomes, and other entities.
+- A graph linking sessions, parent/child session lineage, canonical workspaces, shared workspace-relative folders and paths, tools, skills, memories, outcomes, and other entities through weighted evidence relationships.
 - Evidence bundles for extracting skills from session history.
 - A bundled Reflect skill that agents can receive during setup.
 - Memory candidates, validation, provenance, and provider routing.
@@ -392,30 +394,58 @@ reflect ask "Why is this implemented this way?" --path src/reflect/store/normali
 
 Answers should combine validated memory, successful workflows, recent failures, repository rules, current git context, and evidence links. They should never present weak graph frequency as a fact.
 
-### 4. `reflect workflows`
+### 4. `reflect loops`, first-class workflows, and Skills v2
 
-Manage discovered behavior as durable workflow artifacts.
+Keep observed repetition separate from durable intervention artifacts.
 
 ```bash
-reflect workflows candidates
-reflect workflows inspect <id>
-reflect workflows approve <id>
-reflect workflows apply <id> --scope project
-reflect workflows rollback <id>
-reflect workflows measure <id>
+reflect loops
+reflect loops show <loop-id>
+reflect loops build <loop-id> [--agent NAME]
+reflect workflows list
+reflect workflows show <workflow-id>
+reflect workflows add <SKILL.md>
+reflect workflows apply <workflow-id>
+reflect workflows rollback <workflow-id>
+reflect skills
+reflect skills show <skill-id>
+reflect skills discover [--agent NAME]
+reflect skills apply <skill-id>
+reflect skills rollback <skill-id>
 ```
 
-Skills are one renderer for a workflow. Other renderers can include AGENTS.md guidance, a checklist, a hook nudge, an evaluation, or a policy. This prevents Reflect from equating every repeated pattern with a skill.
+The public concepts are deliberately separate:
+
+- **Observations** describe evidence-backed problems or opportunities.
+- **Loops** describe observed repeated cycles and are classified as stalled or productive. A loop is evidence, not an intervention.
+- **Workflows** are reusable, reviewable procedures with ordered steps, state, iteration, exit, recovery, verification, and handoff contracts. They can exist independently and can be proposed by deterministic rules, authored from bounded evidence by an agent, or imported by an operator.
+- **Skills** are durable, versioned, installable packages with provenance, installations, observed usage, and measurement history. A skill is one delivery format for a workflow, not the definition of a workflow.
+
+`reflect loops build` promotes only one operator-selected loop by giving its bounded evidence to an authoring agent and requiring exactly one pending workflow packaged as a skill. This creates a reviewable workflow candidate and a linked pending skill version; it does not approve or install either one automatically.
+
+Stalled-loop detection uses consecutive same-input runs, not repeated frequency anywhere in a session. Approval metadata and wait/poll transport events are excluded; failure-free patterns require recurrence across sessions, while a single-session pattern must carry recorded failure evidence.
+
+The Workflows surface is the decision boundary. It shows source evidence, ordered behavior, stop conditions, verification, the selected delivery target, the exact diff, and the before/after metric. Selecting a repository chooses where the current renderer will package the workflow; it does not change the evidence scope. The first renderer targets `.agents/skills/<slug>/SKILL.md`, but the domain model must remain ready for guidance, checklist, evaluation, policy, and opt-in nudge renderers.
+
+The Skills v2 registry keeps stable identities, immutable versions, source-agent and source-loop provenance, source-session evidence, installations, telemetry-observed usage, and measurements. The explicit `skills apply` and `workflows apply` commands are approval boundaries for the current skill renderer. Reflect records one active owner for the exact target to protect apply and rollback; this is ledger ownership, not a Git or filesystem lock.
+
+`reflect workflows list|show|add|apply|rollback` is therefore a first-class product surface, not merely a compatibility layer. New user journeys should still start from evidence in the Inbox or from an intentional import; repeated frequency alone must never create an implied recommendation.
+
+The initial implementation intentionally leaves live nudges unwired. It may prepare a disabled, metadata-only local `nudges/` exchange contract for a future hook reader, but `reflect setup` must not configure `opentelemetry-hooks` to consume it until the operator-facing policy flow is designed and explicitly enabled.
+
+Skills are durable intervention packages and can contain an agentic workflow. Other workflow outputs can include AGENTS.md guidance, a checklist, a future hook nudge, an evaluation, or a policy. This prevents Reflect from converting every repeated pattern into a skill.
+
+Every workflow candidate records its authorship boundary and suggested artifact. A `rule_blueprint` is deterministic known remediation and can be rendered without an agent. An `agent_authored` draft was synthesized from a bounded evidence bundle and records the selected agent. A `manual_skill_file` was imported by the operator. These origins share review, application, rollback, and measurement infrastructure but must never be presented as equivalent authorship.
 
 ### 5. `reflect feedback`
 
 Provide cheap outcome labels.
 
 ```bash
-reflect feedback <session-id> --good
-reflect feedback <session-id> --bad --reason "ignored existing implementation"
-reflect feedback <session-id> --no-change-correct
-reflect feedback <session-id> --corrected
+reflect feedback <session-id> --outcome good
+reflect feedback <session-id> --outcome bad --reason "ignored existing implementation"
+reflect feedback <session-id> --outcome no-change-correct
+reflect feedback <session-id> --outcome corrected
 ```
 
 The TUI and browser session view should expose the same actions.
@@ -556,7 +586,7 @@ The bundled skill should become a thin client over local Reflect knowledge.
 ### Agent workflow
 
 1. Resolve current repository, branch, task, and privacy mode.
-2. Run a read-only `reflect ask` or `reflect brief` query.
+2. Run a read-only `reflect ask` query.
 3. Return only the top relevant workflow, constraints, stop conditions, and evidence.
 4. During execution, record whether the workflow was used.
 5. At completion, emit outcome and verification signals.
@@ -730,24 +760,27 @@ Sessions / Activity / Compare / Observations / Tools / Graphs / Context
 With a smaller product-oriented navigation:
 
 ```text
-Inbox / Sessions / Workflows / Measurements / Explore
+Inbox / Sessions / Workflows / Skills / Measurements / Explore
 ```
 
 | Area | Purpose |
 | --- | --- |
-| Inbox | Findings, proposed improvements, regressions, and review work requiring attention |
+| Inbox | Findings and observed loops requiring evidence review |
 | Sessions | Searchable session history and evidence drilldown |
-| Workflows | Candidate, approved, active, stale, rejected, and rolled-back workflows |
+| Workflows | Reusable procedure proposals, exact review, delivery targets, activation state, and rollback |
+| Skills | Durable package identities, versions, installations, usage, provenance, and measurements |
 | Measurements | Before and after results for applied interventions |
 | Explore | Cross-agent, model, tool, MCP, cost, activity, graph, and advanced comparison analysis |
 
-The default screen should be Inbox when actionable work exists. When the inbox is empty, it should show recent sessions, recently measured improvements, and capture health rather than a blank state.
+The default screen should be Inbox when an open observation or detected loop exists. When the inbox is empty, it should show recent sessions, recently measured improvements, and capture health rather than a blank state.
 
 Existing Activity, Compare, Tools, Graphs, and Context functionality moves under Explore. Existing Observations become durable Inbox items.
 
+Inbox must not become a second analytics dashboard. Generic telemetry summaries, prompt examples, token-economy guidance, and rule-administration controls stay under Explore. The current Improvement Rule registry belongs under Explore → Context & system so users can still inspect thresholds and extension contracts without adding implementation detail to daily triage.
+
 ### Inbox
 
-The Inbox is the primary human-operator surface.
+The Inbox is the primary human-operator surface. It contains only durable findings and observed loops that need evidence review.
 
 Each row or card should show:
 
@@ -1318,7 +1351,7 @@ Goal: a coding agent can retrieve proven task guidance and Reflect can discover 
 
 #### Week 7. Agent answer surface
 
-- Implement `reflect ask` and `reflect brief`.
+- Implement `reflect ask` with optional task-file and path context.
 - Add human and JSON renderers.
 - Update the bundled Reflect skill to query these commands.
 - Keep default answer packets concise and source-linked.

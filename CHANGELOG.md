@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.8.8 (unreleased)
+
+### Added
+
+- Added object-oriented Session Rules with typed definitions, normalized telemetry and summary contexts, a validated registry, a shared scorer, and a documented extension path for per-session quality dimensions.
+- Added a public object-oriented `BaseImprovementRule`, typed observation builder, validated `RuleRegistry`, and documented custom-rule extension path.
+- Added typed, rule-owned `WorkflowDefinition` proposals so custom and built-in rules explicitly opt into workflow creation while observation-only rules remain supported.
+- Added the SQLite-backed Improvement Ledger with versioned rules, durable observations, redacted evidence links, session outcomes, workflow candidates and versions, interventions, measurements, feedback, bounded nudges, and signed team-bundle imports.
+- Added all ten deterministic P0 detector families, including explicit correction and correct-no-change outcomes, enforced-boundary violations, successful recovery sequences, and repeated high-performing routines.
+- Added the simplified `reflect improve`, `reflect ask`, `reflect loops`, `reflect skills`, compatibility `reflect workflows`, and `reflect feedback` command contracts.
+- Added Recovery, Verification, Exploration, and Proven Pattern workflow behavior types with CLI and browser filtering, while retaining Loop as compatibility metadata for imported historical candidates.
+- Added exact workflow diff previews, audited candidate editing and rejection, idempotent hash-guarded application, safe rollback under `.agents/skills/`, automatic conservative before/after measurements, and aggregate-only signed team bundles.
+- Added deterministic task archetypes, task-scoped measurement cohorts, workflow exposure/adherence states, and rendered-artifact integrity evaluations.
+- Added browser APIs and controls for evidence drill-down, workflow review/edit/apply/reject/rollback, session outcome feedback, and regression review.
+- Added a browser-visible detector registry plus source-session and post-activation workflow session ledgers.
+- Added a disabled, metadata-only nudge filesystem contract with private permissions, hashed session routing, and atomic JSON writes for a future `opentelemetry-hooks` reader; current setup does not configure or poll it.
+- Added canonical workspace identity, optional local Git repository resolution, historical session-context backfill, and parent/child session lineage for the Behavioral Memory Graph.
+- Added a first-class `reflect loops [show|build]` behavior ledger for stalled retries and productive repeated routines, with bounded source-session evidence and deliberate promotion into one pending workflow packaged as a skill.
+- Added the Skills v2 SQLite registry with stable skill identities, immutable content versions, evidence provenance, installation reconciliation, telemetry-observed usage, measurement storage, and `reflect skills [discover|show|apply|rollback]` commands.
+- Added browser APIs and dedicated product surfaces for observed loops, reusable workflows, and the durable skill registry.
+- Added typed workflow source and suggested-artifact contracts so deterministic rule blueprints, coding-agent drafts, and imported skills retain distinct provenance.
+
+### Changed
+
+- Redesigned observation-evidence and workflow-review dialogs around compact decision briefs, professional section hierarchy, human-readable session rows, bounded evidence disclosure, and anchored review actions.
+- Restructured the browser report around Inbox, Sessions, Workflows, Skills, Measurements, and Explore while preserving the existing usage, cost, comparison, tools, graph, context, memory, privacy, export, and achievement widgets.
+- Moved observed loops into the evidence-first Inbox, gave Workflows an independent review and delivery surface, and limited Skills to durable package versions, installations, usage, provenance, and measurements.
+- Removed legacy telemetry summaries, prompt examples, and rule administration from Inbox; Improvement Rules now live under Explore → Context & system.
+- Restructured session detail into Summary, Conversation, Execution, Changes, and Evidence views.
+- Changed `reflect skills` to reconcile and list the durable registry by default; agent-assisted extraction is explicit under `reflect skills discover`, and generated skills remain pending until operator approval.
+- Made deterministic, versioned SQLite rules the durable observation source while retaining the existing telemetry insight analysis as supporting context.
+- Changed the packaged Reflect skill to query approved `reflect ask` guidance before recurring work and to keep setup/configuration mutation explicitly operator-authorized.
+- Changed workflow review to lead with a readable change summary, repository target, proposed steps, abstention criteria, verification, and session provenance while keeping raw file diff and JSON editing under advanced disclosure.
+- Clarified workflow repository selection as the repo-local skill application destination and replaced ambiguous lock language with explicit active-target ownership and rollback semantics.
+- Tightened deterministic workflow discovery by requiring repeated failures across multiple sessions, using non-saturating failure impact scoring, and rejecting repeated single-tool sequences as reusable workflows.
+- Changed graph Folder and Path identity to workspace-relative shared nodes, kept activity on session-scoped weighted edges, and added Same workspace versus Selected session browser views with on-demand complete workspace expansion and cross-agent session labels.
+- Grouped evidence-specific workflow rows into one versioned reusable skill per slug, with unique supporting sessions, evidence-pattern counts, and scopes retained behind the skill.
+- Separated loops, workflows, and skills: loops represent observed repeated behavior, workflows represent reusable reviewable procedures, and skills represent durable installable packages produced by the current workflow renderer.
+- Removed the bundled `reflect-loops` helper skill because the real `reflect loops` command now owns detection, evidence review, and selected-loop skill generation.
+- Labeled workflow suggestions as Rule blueprint, Agent-authored draft, or Imported skill in the CLI and browser, and recorded the selected extraction agent on new agent-authored drafts.
+- Extended `reflect workflows add` with optional source-agent and source-workflow provenance so agent-authored loop skills retain their author and bounded source sessions without adding another top-level command.
+
+### Fixed
+
+- Displayed telemetry-observed skill-use sessions in Skills review, separately from the source sessions that produced generated skills.
+- Grouped scope- and tool-specific observation rows into durable Inbox findings, excluded archived telemetry-only skill identities from the default Skills surface, and replaced page-length badge counts with explicit API totals.
+- Reduced loop false positives by requiring consecutive same-input runs, excluding approval and wait/poll transport events, requiring cross-session recurrence for failure-free patterns, hiding resolved loops by default, and replacing expensive windowed detection with a bounded streaming pass.
+- Prevented evidence-specific workflow rows, tool-specific trigger descriptions, and volatile observation IDs from appearing as duplicate skill versions; Skills v2 now reports semantic workflow versions with distinct evidence while retaining the full provenance ledger.
+- Kept intrinsic-width dashboard tables and heatmaps inside the report content grid so Subagent Effectiveness no longer overflows beneath the session filter rail.
+- Removed the duplicate SQLite dashboard quality rubric and scoring formulas so telemetry and summary-backed session detail use the same registered Session Rules implementation.
+- Marked pending workflow candidates stale when their source observation resolves, and reopened them if the same evidence-backed finding returns.
+- Preserved observation identity and review state across refreshes, resolved vanished findings instead of deleting them, and kept generated evidence redacted and traceable to canonical entities.
+- Prevented workflow rollback from overwriting operator edits made after Reflect applied a generated skill.
+- Prevented repeated workflow application from creating duplicate active interventions, detected missing or modified applied artifacts as stale, and avoided duplicate measurements when cohort sizes have not changed.
+- Prevented browser workflow application outside a selected Git repository and blocked different active candidates from writing the same workflow target.
+- Populated privacy-safe tool input/output hashes during normalization and backfilled hashes from existing redacted previews so identical-input retry loops produce observations and workflow candidates.
+- Bounded retry-loop detection to one grouped canonical query and added a partial tool-input fingerprint index so large local stores refresh without one full scan per detected tool.
+- Fixed disconnected same-folder sessions, discarded repeated-edge strength, stale derived graph state, missing Cursor child-session links, and preview parsing that produced folder noise such as glob or prose fragments.
+- Serialized first-time SQLite WAL initialization and pending migrations across concurrent dashboard requests so background preparation and session-detail reads cannot race on database setup, while fully migrated requests use a read-only fast path that does not contend with graph rebuilds.
+- Made workflow source-session navigation use direct session links that clear conflicting workflow and filter state while preserving the focused evidence ID.
+- Kept grouped workflow evidence-pattern counts aligned with the same current, non-rejected evidence set used by the source-session ledger.
+
 ## 0.8.7 (2026-07-13)
 
 ### Added

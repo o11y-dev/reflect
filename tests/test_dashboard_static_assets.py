@@ -101,6 +101,22 @@ def test_dashboard_html_uses_persistent_session_and_filter_rails(path: Path):
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_semantic_graph_exposes_workspace_relationship_mode(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert 'id="semantic-graph-mode"' in text
+    assert '<option value="workspace">Same workspace</option>' in text
+    assert "function workspaceSessionIds(sessionId)" in text
+    assert "edge.kind !== 'ran_in_workspace'" in text
+    assert "function useGraphData(nextGraph, selectedSession = '')" in text
+    assert "url.searchParams.set('session', selectedSession)" in text
+    assert "Loading every session in this canonical workspace" in text
+    assert "edge.kind !== 'ran_session'" in text
+    assert "connected through the same canonical workspace" in text
+    assert "Workspace:.29" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_session_filters_reload_sql_reports(path: Path):
     text = path.read_text(encoding="utf-8")
     match = re.search(r"function scheduleDashboardReload\(\)\{\s*(.*?)\s*\}", text, re.S)
@@ -178,6 +194,16 @@ def test_dashboard_tools_tab_spaces_event_distribution_from_top_widgets(path: Pa
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_grids_and_subagent_table_stay_inside_report_content(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert ".cols-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))" in text
+    assert re.search(r"\.panel\s*\{[^}]*min-width\s*:\s*0\s*;", text)
+    assert "#subagent-effectiveness{min-width:0;overflow-x:auto" in text
+    assert "#subagent-effectiveness .data-table{min-width:340px;table-layout:fixed}" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_agent_tool_network_supports_sql_graph_value_shapes(path: Path):
     text = path.read_text(encoding="utf-8")
 
@@ -187,11 +213,18 @@ def test_dashboard_agent_tool_network_supports_sql_graph_value_shapes(path: Path
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
-def test_dashboard_session_detail_has_quality_rules_tab(path: Path):
+def test_dashboard_session_detail_restructures_quality_and_telemetry_as_product_views(path: Path):
     text = path.read_text(encoding="utf-8")
 
-    assert 'data-tab="quality">Quality</button>' in text
+    assert 'data-tab="summary">Summary</button>' in text
+    assert 'data-tab="conversation">Conversation</button>' in text
+    assert 'data-tab="execution">Execution</button>' in text
+    assert 'data-tab="changes">Changes</button>' in text
+    assert 'data-tab="evidence">Evidence</button>' in text
+    assert 'data-tab="quality">Quality</button>' not in text
+    assert 'data-tab="telemetry">Telemetry</button>' not in text
     assert "function renderQualityPanel(session)" in text
+    assert "function renderSessionChangesPanel(session)" in text
     assert "D.quality_rules || []" in text
     assert "Score Breakdown" in text
     assert "quality_breakdown" in text
@@ -212,7 +245,7 @@ def test_dashboard_session_detail_has_quality_rules_tab(path: Path):
 def test_dashboard_html_wires_sql_data_tab_surfaces(path: Path):
     text = path.read_text(encoding="utf-8")
 
-    assert 'data-tab="data">Context</button>' in text
+    assert 'data-explore-tab="data">Context &amp; system</button>' in text
     assert 'id="tab-data"' in text
     assert 'id="sql-specs-panel"' in text
     assert 'id="sql-memory-panel"' in text
@@ -224,8 +257,8 @@ def test_dashboard_html_wires_sql_data_tab_surfaces(path: Path):
     assert "tabs.memory" in text
     assert "tabs.privacy" in text
     assert "tabs.exports" in text
-    assert "const obsTab = sqlTab('observations');" in text
-    assert "obsTab.token_economy || D.token_economy || {}" in text
+    assert text.index('id="tab-data"') < text.index('id="rule-registry"')
+    assert "Improvement Rules create durable findings" in text
     assert "SQLite Store" not in text
     assert "SQL Sessions" not in text
     assert "Top SQL" not in text
@@ -237,10 +270,62 @@ def test_dashboard_html_wires_sql_data_tab_surfaces(path: Path):
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert 'id="rule-registry"' in text
+    assert "fetch('/api/rules'" in text
+    assert "BaseImprovementRule" in text
+    assert "RuleRegistry" in text
+    assert "DEFAULT_RULE_REGISTRY" in text
+    assert "Session Rules score one session" in text
+    assert "View Source Sessions" in text
+    assert "Source Evidence" in text
+    assert "Related Sessions" in text
+    assert "Observed Uses" in text
+    assert "After Activation" in text
+    assert "Review Agent Draft & Diff" in text
+    assert "Review Blueprint & Diff" in text
+    assert "Rule blueprint" in text
+    assert "Agent-authored draft" in text
+    assert "Imported skill" in text
+    assert "suggested_artifact" in text
+    assert "Exact File Diff" in text
+    assert "Edit Structured Workflow" in text
+    assert 'id="workflow-project-root"' in text
+    assert "Choose Git Repository" in text
+    assert "Check Repository" in text
+    assert 'id="workflow-type-filter"' in text
+    assert 'id="workflow-status-filter"' in text
+    assert "not a Git or filesystem lock" in text
+    assert "Package as Repo-local Skill" in text
+    assert "it does not change the source evidence" in text
+    assert "content.source?.rule_id" in text
+    assert "content.behavior_type" in text
+    assert "workflow_type" in text
+    assert 'class="review-kpi-strip"' in text
+    assert 'class="review-grid"' in text
+    assert 'class="ledger-action-spacer"' in text
+    assert "Show ${fmt(items.length - initial)} More Sessions" in text
+    assert "/sessions`" in text
+    assert "function sessionInspectionUrl(session)" in text
+    assert "data-related-session-link" in text
+    assert "url.searchParams.set('tab', 'sessions')" in text
+    assert "url.searchParams.set('session', session.session_id || '')" in text
+    assert "supporting_observation_count" in text
+    assert "evidence patterns" in text
+    assert "inbox_total_count" in text
+    assert "skill_total_count" in text
+    assert "current skills" in text
+    assert "linked session(s)" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_activity_widgets_live_on_overview_tab(path: Path):
     text = path.read_text(encoding="utf-8")
 
-    assert 'data-tab="overview">Activity</button>' in text
+    assert 'data-tab="overview">Explore</button>' in text
+    assert 'data-explore-tab="overview">Usage</button>' in text
     assert 'data-tab="activity"' not in text
     assert 'id="tab-activity"' not in text
     assert 'id="hm-grid"' in text
@@ -248,6 +333,47 @@ def test_dashboard_activity_widgets_live_on_overview_tab(path: Path):
     assert 'id="weekly-trends-table"' in text
     assert "if (tabName === 'activity') tabName = 'overview';" in text
     assert "if (tabName === 'context') tabName = 'data';" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert 'data-tab="observations">Inbox</button>' in text
+    assert 'data-tab="sessions">Sessions</button>' in text
+    assert 'data-tab="workflows">Workflows</button>' in text
+    assert 'data-tab="skills">Skills</button>' in text
+    assert 'data-tab="compare">Measurements</button>' in text
+    assert 'data-tab="overview">Explore</button>' in text
+    assert 'id="improvement-inbox"' in text
+    assert 'id="workflow-ledger"' in text
+    assert 'id="loop-ledger"' in text
+    assert 'id="skill-registry"' in text
+    assert 'id="tab-skills"' in text
+    assert 'id="measurement-ledger"' in text
+    assert "Supporting telemetry analysis" not in text
+    assert 'id="obs-hero-grid"' not in text
+    assert 'id="obs-signals"' not in text
+    assert 'id="obs-next-moves"' not in text
+    assert "fetch('/api/improvements'" in text
+    assert "fetch('/api/workflows'" in text
+    assert "fetch('/api/loops'" in text
+    assert "fetch('/api/skills'" in text
+    assert "fetch('/api/measurements'" in text
+    assert 'id="ledger-dialog"' in text
+    assert 'data-ledger-action="evidence"' in text
+    assert 'data-ledger-action="review-loop"' in text
+    assert 'data-ledger-action="review-skill"' in text
+    assert 'data-ledger-action="review-workflow"' in text
+    assert "showLoopReview(trigger.dataset.loopId || '')" in text
+    assert "showSkillReview(trigger.dataset.skillId || '')" in text
+    assert "showWorkflowReview(candidateId)" in text
+    assert "submitSessionFeedback(sessionId, outcome, button)" in text
+    assert 'data-session-feedback="no-change-correct"' in text
+    assert "Approve this workflow and package it as a skill at" in text
+    assert "Exact File Diff" in text
+    assert "Review regression &amp; rollback" in text
+    assert "const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length ? 'observations' : 'sessions';" in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
@@ -295,10 +421,10 @@ def test_dashboard_graph_tab_renders_semantic_force_graph(path: Path):
     assert "d3.forceManyBody" in text
     assert "d3.zoom" in text
     assert "d3.drag" in text
-    assert "visibleIdsForSession" in text
-    assert "const adjacency = new Map();" in text
+    assert "visibleIdsForSessions" in text
+    assert "let adjacency = new Map();" in text
     assert "while (frontier.length)" in text
-    assert "if (edge.session_id && edge.session_id !== sessionId) continue;" in text
+    assert "if (edge.session_id && !sessionIds.has(edge.session_id)) continue;" in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)

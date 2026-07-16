@@ -6,6 +6,14 @@ from collections import Counter
 from fastapi.testclient import TestClient
 
 from reflect.dashboard import _build_dashboard_app
+from reflect.improvements.models import (
+    EvidenceRef,
+    ObservationDraft,
+    RuleDefinition,
+    Severity,
+    WorkflowProposal,
+)
+from reflect.improvements.repository import ImprovementRepository
 from reflect.models import TelemetryStats
 from reflect.preparation import BackgroundPreparationWorker
 from reflect.store.migrate import migrate
@@ -287,6 +295,72 @@ def _seed_sql_report_db(db_path):
         conn.close()
 
 
+def _seed_improvement_ledger(db_path):
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        repository = ImprovementRepository(conn)
+        rule = RuleDefinition(
+            id="test_rule",
+            version=1,
+            category="verification",
+            title="Test rule",
+            description="Deterministic test rule",
+        )
+        repository.sync_rule_definitions((rule,), now="2026-05-01T11:00:00+00:00")
+        observation_id = repository.upsert_observation(
+            ObservationDraft(
+                rule_id=rule.id,
+                rule_version=rule.version,
+                scope_type="user",
+                scope_id="local",
+                fingerprint="test-fingerprint",
+                category=rule.category,
+                title="Verification is missing",
+                summary="One test session changed code without verification.",
+                metric_name="unverified_change_sessions",
+                metric_value=1,
+                metric_unit="sessions",
+                metric_direction="lower_is_better",
+                impact_score=60,
+                severity=Severity.MEDIUM,
+                confidence=0.8,
+                evidence=[
+                    EvidenceRef(
+                        entity_type="session",
+                        entity_id="sess-sql",
+                        session_id="sess-sql",
+                        summary_redacted="Test session evidence",
+                    )
+                ],
+            ),
+            now="2026-05-01T11:00:00+00:00",
+        )
+        repository.ensure_candidate(
+            observation_id,
+            proposal=WorkflowProposal(
+                title="Workflow: Verification is missing",
+                hypothesis="A reviewed verification workflow will reduce missing verification.",
+                risk="low",
+                content={
+                    "schema_version": 1,
+                    "slug": "verify-before-done",
+                    "behavior_type": "verification",
+                    "description": "Verify changes before completion.",
+                    "steps": ["Run the focused test."],
+                    "source": {"rule_id": rule.id},
+                },
+                target_metric="unverified_change_sessions",
+                target_value=0.7,
+            ),
+            now="2026-05-01T11:00:00+00:00",
+        )
+        conn.commit()
+        return observation_id
+    finally:
+        conn.close()
+
+
 def _add_sql_baseline_session(db_path):
     now = "2026-05-01T12:00:00+00:00"
     conn = connect_sqlite(db_path)
@@ -520,6 +594,137 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path, monkeypatch):
     assert {skill["name"] for skill in tool_inventory["skills"]} >= {"review-skill", "sql-review"}
     assert {subagent["name"] for subagent in tool_inventory["subagents"]} >= {"research-helper"}
     assert tool_inventory["mcp_tools"][0]["name"].endswith("/jira_search")
+
+
+def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    observation_id = _seed_improvement_ledger(db_path)
+    project_root = tmp_path / "project"
+    (project_root / ".git").mkdir(parents=True)
+    app = _build_dashboard_app(
+        _stats(),
+        docs_dir=tmp_path,
+        db_path=db_path,
+        project_root=project_root,
+    )
+    client = TestClient(app)
+
+    inbox = client.get("/api/improvements")
+    detail = client.get(f"/api/improvements/{observation_id}")
+    workflows = client.get("/api/workflows")
+    verification_workflows = client.get("/api/workflows?type=verification&status=pending")
+    loop_workflows = client.get("/api/workflows?type=loop")
+    loops = client.get("/api/loops")
+    skills = client.get("/api/skills")
+    measurements = client.get("/api/measurements")
+    rules = client.get("/api/rules")
+
+    assert inbox.status_code == 200
+    assert inbox.json()["observations"][0]["id"] == observation_id
+    assert inbox.json()["inbox_total_count"] == 1
+    assert inbox.json()["raw_observation_count"] == 1
+    assert detail.status_code == 200
+    assert detail.json()["evidence"][0]["session_id"] == "sess-sql"
+    assert workflows.status_code == 200
+    assert workflows.json()["workflows"][0]["status"] == "pending"
+    assert workflows.json()["workflows"][0]["skill_id"].startswith("skill_")
+    assert verification_workflows.status_code == 200
+    assert verification_workflows.json()["workflows"][0]["content"]["behavior_type"] == "verification"
+    assert loop_workflows.json() == {"workflows": []}
+    assert loops.status_code == 200
+    assert loops.json()["loops"] == []
+    assert skills.status_code == 200
+    assert skills.json()["skills"][0]["slug"] == "verify-before-done"
+    assert skills.json()["total_count"] == len(skills.json()["skills"])
+    assert all(
+        item["lifecycle_state"] != "stale"
+        for item in skills.json()["skills"]
+    )
+    assert "archived_count" in skills.json()
+    assert "counts_by_lifecycle" in skills.json()
+    skill_id = skills.json()["skills"][0]["id"]
+    skill_detail = client.get(f"/api/skills/{skill_id}")
+    assert skill_detail.status_code == 200
+    assert skill_detail.json()["versions"][0]["status"] == "pending"
+    assert skill_detail.json()["usage_sessions"] == []
+    assert measurements.status_code == 200
+    assert measurements.json() == {"measurements": []}
+    assert rules.status_code == 200
+    assert rules.json()["rules"][0]["id"] == "test_rule"
+    assert rules.json()["rules"][0]["open_observation_count"] == 1
+    assert rules.json()["extension"]["kind"] == "code_backed"
+    assert rules.json()["extension"]["base_class"] == "BaseImprovementRule"
+    assert rules.json()["extension"]["registry"] == "DEFAULT_RULE_REGISTRY"
+
+    workflow = workflows.json()["workflows"][0]
+    candidate_id = workflow["id"]
+    preview = client.get(f"/api/workflows/{candidate_id}/preview")
+    sessions = client.get(f"/api/workflows/{candidate_id}/sessions")
+    assert preview.status_code == 200
+    assert preview.json()["would_change"] is True
+    assert preview.json()["diff"].startswith("--- ")
+    assert preview.json()["change_kind"] == "create"
+    assert preview.json()["checks"]["apply_allowed"] is True
+    assert preview.json()["application_repository"] == str(project_root)
+    assert preview.json()["target_relative_path"] == ".agents/skills/verify-before-done/SKILL.md"
+    assert sessions.status_code == 200
+    assert sessions.json()["source_session_count"] == 1
+    assert sessions.json()["source_sessions"][0]["session_id"] == "sess-sql"
+
+    unsafe_root = tmp_path / "not-a-repository"
+    unsafe_root.mkdir()
+    unsafe_preview = client.get(
+        f"/api/workflows/{candidate_id}/preview",
+        params={"project_root": str(unsafe_root)},
+    )
+    unsafe_apply = client.post(
+        f"/api/workflows/{candidate_id}/apply",
+        json={"project_root": str(unsafe_root)},
+    )
+    assert unsafe_preview.status_code == 200
+    assert unsafe_preview.json()["checks"]["apply_allowed"] is False
+    assert unsafe_apply.status_code == 409
+    assert "containing .git" in unsafe_apply.json()["error"]
+
+    edited_content = {
+        **workflow["content"],
+        "steps": ["Inspect exact evidence.", "Run focused verification."],
+    }
+    edited = client.put(
+        f"/api/workflows/{candidate_id}",
+        json={"content": edited_content},
+    )
+    assert edited.status_code == 200
+    assert edited.json()["content"]["steps"] == edited_content["steps"]
+
+    applied = client.post(f"/api/workflows/{candidate_id}/apply")
+    applied_again = client.post(f"/api/workflows/{candidate_id}/apply")
+    assert applied.status_code == 200
+    assert applied.json()["idempotent"] is False
+    assert applied_again.json()["idempotent"] is True
+    assert applied_again.json()["intervention_id"] == applied.json()["intervention_id"]
+
+    feedback = client.post(
+        "/api/feedback/sess-sql",
+        json={"outcome": "corrected", "reason": "Missed the requested verification"},
+    )
+    invalid_feedback = client.post(
+        "/api/feedback/sess-sql",
+        json={"outcome": "invented"},
+    )
+    assert feedback.status_code == 201
+    assert feedback.json()["outcome"] == "corrected"
+    assert invalid_feedback.status_code == 422
+
+    rolled_back = client.post(f"/api/workflows/{candidate_id}/rollback")
+    rejected = client.post(
+        f"/api/workflows/{candidate_id}/reject",
+        json={"reason": "Not appropriate for this repository"},
+    )
+    assert rolled_back.status_code == 200
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "rejected"
 
 
 def test_dashboard_api_reports_background_preparation_status(tmp_path):

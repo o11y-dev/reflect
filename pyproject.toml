@@ -79,8 +79,10 @@ reflect = [
     "data/otel-logs.json",
     "data/index.html",
     "data/skills-extraction-prompt.md",
+    "data/loop-skill-prompt.md",
     "data/skills/reflect/SKILL.md",
     "data/skills/reflect-skills/SKILL.md",
+    "data/nudges/contract.json",
     "store/migrations/*.sql",
 ]
 

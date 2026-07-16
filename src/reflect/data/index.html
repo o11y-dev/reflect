@@ -411,16 +411,17 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .tab-panel[hidden]{display:none!important}
 
 /* Grid systems */
-.cols-golden{display:grid;grid-template-columns:1.618fr 1fr;gap:16px;margin-bottom:16px}
-.cols-golden-rev{display:grid;grid-template-columns:1fr 1.618fr;gap:16px;margin-bottom:16px}
-.cols-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
-.cols-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:16px}
-.cols-4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:16px}
-@media(max-width:1100px){.cols-3{grid-template-columns:1fr 1fr}.cols-4{grid-template-columns:repeat(2,1fr)}.cols-golden,.cols-golden-rev{grid-template-columns:1fr}}
+.cols-golden{display:grid;grid-template-columns:minmax(0,1.618fr) minmax(0,1fr);gap:16px;margin-bottom:16px}
+.cols-golden-rev{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.618fr);gap:16px;margin-bottom:16px}
+.cols-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:16px}
+.cols-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-bottom:16px}
+.cols-4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-bottom:16px}
+@media(max-width:1100px){.cols-3{grid-template-columns:repeat(2,minmax(0,1fr))}.cols-4{grid-template-columns:repeat(2,minmax(0,1fr))}.cols-golden,.cols-golden-rev{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:720px){.cols-2,.cols-3,.cols-4{grid-template-columns:1fr}}
 
 /* ── Panel — frosted glass ──────────────────────────────── */
 .panel{
+  min-width:0;
   background:linear-gradient(180deg,rgba(24,24,22,.92),rgba(12,12,11,.9));
   backdrop-filter:saturate(140%) blur(var(--glass-blur));
   -webkit-backdrop-filter:saturate(140%) blur(var(--glass-blur));
@@ -529,81 +530,39 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .badge-sub{font-size:12px;color:var(--text-3);margin-top:2px}
 
 /* ── Observations tab ──────────────────────────────────────── */
-.obs-hero-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-bottom:16px}
-.obs-hero{
-  background:linear-gradient(180deg,rgba(245,242,234,.045),rgba(245,242,234,.015));
-  border:1px solid var(--glass-border);
-  border-radius:var(--radius);
-  padding:20px;
-  min-height:180px;
-  position:relative;
-  overflow:hidden;
-}
-.obs-hero::after{
-  content:'';
-  position:absolute;
-  inset:auto -10% -35% auto;
-  width:140px;
-  height:140px;
-  border-radius:999px;
-  background:radial-gradient(circle, rgba(242,138,26,.16), transparent 70%);
-  pointer-events:none;
-}
-.obs-hero-kicker{font-size:12px;text-transform:uppercase;letter-spacing:.14em;color:var(--text-3);margin-bottom:10px}
-.obs-hero-value{font-size:34px;font-weight:700;letter-spacing:-1.2px;line-height:1;color:var(--text)}
-.obs-hero-copy{margin-top:12px;font-size:14px;line-height:1.6;color:var(--text-2)}
-.obs-stack{display:flex;flex-direction:column;gap:12px}
-.obs-item{
-  padding:14px 16px;
-  border-radius:var(--radius-sm);
-  border:1px solid var(--glass-border);
-  background:rgba(255,255,255,.025);
-}
-.obs-item[data-tone="strength"]{border-left:3px solid rgba(48,209,88,.85)}
-.obs-item[data-tone="observation"]{border-left:3px solid rgba(255,214,10,.85)}
-.obs-item[data-tone="recommendation"]{border-left:3px solid rgba(242,138,26,.85)}
-.obs-item-label{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--text-3);margin-bottom:8px}
-.obs-item-body{font-size:14px;line-height:1.65;color:var(--text-2)}
-.obs-item-body strong{color:var(--text)}
+.product-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:20px;padding:22px;border:1px solid rgba(242,138,26,.2);border-radius:8px;background:linear-gradient(135deg,rgba(242,138,26,.11),rgba(18,17,15,.78))}
+.product-hero h2{margin:0 0 7px;font-size:25px;letter-spacing:-.03em}.product-hero p{margin:0;color:var(--text-2);max-width:720px;line-height:1.55}
+.product-count{font-size:34px;font-weight:800;color:var(--blue);white-space:nowrap}.product-count small{display:block;font-size:10px;color:var(--text-3);letter-spacing:.1em;text-transform:uppercase;text-align:right}
+.product-section{margin-top:18px}.product-section.panel{padding:18px}.product-section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:14px}.product-section-title{margin:0 0 4px;color:var(--text);font-size:16px;font-weight:800}.product-section-copy{margin:0;max-width:760px;color:var(--text-3);font-size:12px;line-height:1.55}.product-section-count{flex:0 0 auto;color:var(--blue);font-size:22px;font-weight:800}.product-section-count small{display:block;color:var(--text-3);font-size:9px;font-weight:700;letter-spacing:.09em;text-align:right;text-transform:uppercase}
+.inbox-list,.workflow-list,.measurement-list{display:grid;gap:12px}
+.inbox-card,.workflow-card,.measurement-card{content-visibility:auto;contain-intrinsic-size:auto 180px;border:1px solid var(--border);border-radius:8px;background:var(--surface);padding:17px;box-shadow:0 12px 28px rgba(0,0,0,.18)}
+.inbox-card-head,.workflow-card-head,.measurement-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:8px}
+.workflow-toolbar{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin:-6px 0 16px;padding:13px 15px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.workflow-filter-field{display:grid;gap:5px;min-width:170px}.workflow-filter-field label{color:var(--text-3);font-size:10px;font-weight:750;letter-spacing:.07em;text-transform:uppercase}.workflow-filter-field select{border:1px solid var(--border2);border-radius:6px;background:#070604;color:var(--text);padding:9px 34px 9px 10px}.workflow-filter-field select:focus-visible{outline:2px solid var(--blue);outline-offset:2px}.workflow-filter-summary{margin-left:auto;padding-bottom:9px;color:var(--text-3);font-size:11px}
+.inbox-title,.workflow-title,.measurement-title{font-size:15px;font-weight:750;color:var(--text)}
+.inbox-copy,.workflow-copy,.measurement-copy{font-size:13px;color:var(--text-2);line-height:1.55}
+.ledger-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;font-size:11px;color:var(--text-3)}
+.ledger-pill{border:1px solid var(--border);border-radius:999px;padding:4px 8px;background:var(--surface2)}
+.ledger-pill.signal{border-color:rgba(242,138,26,.32);color:var(--blue);background:rgba(242,138,26,.08)}
+.ledger-command{margin-top:12px;padding:9px 11px;border:1px solid rgba(242,138,26,.2);border-radius:6px;background:#090806;color:#f6c47b;font:11px ui-monospace,SFMono-Regular,Menlo,monospace;overflow:auto}
+.ledger-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:13px}
+.ledger-button{display:inline-flex;align-items:center;justify-content:center;appearance:none;border:1px solid var(--border);border-radius:6px;background:var(--surface2);color:var(--text-2);padding:8px 11px;font:650 12px inherit;text-decoration:none;cursor:pointer}.ledger-button:hover{border-color:rgba(242,138,26,.5);color:var(--blue)}.ledger-button:focus-visible{border-color:rgba(242,138,26,.5);color:var(--blue);outline:2px solid var(--blue);outline-offset:2px}.ledger-button:disabled{cursor:not-allowed;opacity:.52}.ledger-button.primary{background:var(--blue);border-color:var(--blue);color:#100903}.ledger-button.danger{border-color:rgba(255,69,58,.35);color:var(--red)}
+.feedback-row{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:10px}.feedback-label{font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em}
+.ledger-dialog{position:fixed;inset:0;width:min(980px,calc(100vw - 48px));height:auto;max-width:none;max-height:min(820px,calc(100vh - 48px));margin:auto;padding:0;border:1px solid rgba(242,138,26,.38);border-radius:10px;background:linear-gradient(180deg,#11100e 0%,#0b0b09 100%);color:var(--text);box-shadow:0 34px 110px rgba(0,0,0,.78),0 0 0 1px rgba(255,255,255,.025);overflow:hidden}.ledger-dialog:not([open]){display:none}.ledger-dialog[open]{display:grid;grid-template-rows:auto minmax(0,1fr) auto;overscroll-behavior:contain}.ledger-dialog::backdrop{background:rgba(0,0,0,.76);backdrop-filter:blur(6px)}
+.ledger-dialog-head{position:relative;display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding:22px 24px 19px;border-bottom:1px solid var(--border);background:rgba(5,5,5,.72)}.ledger-dialog-head::before{content:"";position:absolute;inset:0 0 auto;height:2px;background:linear-gradient(90deg,var(--blue),rgba(242,138,26,.08) 42%,transparent)}.ledger-dialog-title{max-width:760px;margin:0;color:var(--text);font-size:20px;line-height:1.25;letter-spacing:-.02em;text-wrap:balance}.ledger-dialog-head .inbox-copy{margin-top:6px;color:var(--text-3);font-size:12px}.ledger-dialog-close{display:grid;place-items:center;flex:0 0 34px;width:34px;height:34px;padding:0;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--text-3);font-size:23px;line-height:1;cursor:pointer;touch-action:manipulation}.ledger-dialog-close:hover{border-color:var(--border2);background:var(--surface2);color:var(--text)}.ledger-dialog-close:focus-visible{outline:2px solid var(--blue);outline-offset:2px}.ledger-dialog-body{min-height:0;padding:24px;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable}.ledger-dialog-actions{display:flex;align-items:center;gap:9px;min-height:66px;padding:13px 24px calc(13px + env(safe-area-inset-bottom));border-top:1px solid var(--border);background:rgba(8,8,7,.96)}.ledger-dialog-actions .ledger-button{min-height:38px}.ledger-action-spacer{flex:1}
+.ledger-diff{margin:12px 0 0;padding:14px;border:1px solid var(--border);border-radius:6px;background:#070604;color:#d7d1c6;font:11px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow:auto;max-height:300px}.ledger-editor{width:100%;min-height:240px;margin-top:12px;padding:12px;border:1px solid var(--border);border-radius:6px;background:#070604;color:var(--text);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}.evidence-list{display:grid;gap:9px;margin-top:12px}.evidence-item{padding:11px;border:1px solid var(--border);border-radius:6px;background:var(--surface2)}
+.rule-registry{margin:0 0 18px;border:1px solid var(--border);border-radius:8px;background:var(--surface);overflow:hidden}.rule-registry>summary{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px 17px;cursor:pointer;color:var(--text);font-weight:750}.rule-registry>summary::marker{color:var(--blue)}.rule-registry-copy{font-size:12px;color:var(--text-3);font-weight:500}.rule-registry-note{margin:0;padding:0 17px 14px;color:var(--text-2);font-size:12px;line-height:1.5}.rule-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:0 15px 15px}.rule-card{min-width:0;padding:13px;border:1px solid var(--border);border-radius:7px;background:var(--surface2)}.rule-card code,.workflow-target code{overflow-wrap:anywhere}.rule-config{margin-top:8px;color:var(--text-3);font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
+.review-lead{position:relative;margin:0 0 18px;padding:17px 18px 17px 20px;border:1px solid var(--border);border-radius:8px;background:linear-gradient(135deg,rgba(242,138,26,.09),rgba(255,255,255,.018) 48%,rgba(255,255,255,.008))}.review-lead::before{content:"";position:absolute;inset:14px auto 14px 0;width:2px;border-radius:2px;background:var(--blue)}.review-eyebrow{margin-bottom:7px;color:var(--blue);font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.review-lead p{max-width:760px;margin:0;color:var(--text-2);font-size:14px;line-height:1.58;text-wrap:pretty}.review-kpi-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:18px;border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.015);overflow:hidden}.review-kpi{min-width:0;padding:13px 15px}.review-kpi+.review-kpi{border-left:1px solid var(--border)}.review-kpi-label{color:var(--text-3);font-size:9px;font-weight:750;letter-spacing:.09em;text-transform:uppercase}.review-kpi-value{margin-top:5px;color:var(--text);font-size:14px;font-weight:760;line-height:1.35;overflow-wrap:anywhere}.review-kpi-value.signal{color:var(--blue)}.review-grid{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(280px,.8fr);gap:14px;align-items:start}.review-stack{display:grid;gap:14px;min-width:0}.review-panel{min-width:0;padding:16px;border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.018)}.review-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.review-panel-title{margin:0;color:var(--text);font-size:13px;font-weight:800;letter-spacing:.01em}.review-panel-copy{margin:-4px 0 12px;color:var(--text-3);font-size:11px;line-height:1.5}.review-facts{display:grid;gap:0;margin:0}.review-fact{display:grid;grid-template-columns:95px minmax(0,1fr);gap:12px;padding:9px 0;border-top:1px solid var(--border)}.review-fact:first-child{padding-top:0;border-top:0}.review-fact:last-child{padding-bottom:0}.review-fact dt{color:var(--text-3);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}.review-fact dd{min-width:0;margin:0;color:var(--text-2);font-size:12px;line-height:1.45;overflow-wrap:anywhere}.review-section{margin:0}.review-section h3{margin:0 0 11px;font-size:13px}.workflow-readable{margin:0;padding-left:21px;color:var(--text-2);font-size:12px;line-height:1.58}.workflow-readable li::marker{color:var(--blue);font-weight:800}.workflow-readable li+li{margin-top:7px}.workflow-support-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.workflow-target{display:grid;gap:8px;margin:0}.workflow-target label{font-size:11px;font-weight:750;color:var(--text)}.workflow-target-row{display:flex;gap:8px;align-items:center}.workflow-target-input{min-width:0;flex:1;border:1px solid var(--border2);border-radius:6px;background:#070604;color:var(--text);padding:10px 11px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace}.workflow-target-input:focus-visible{outline:2px solid var(--blue);outline-offset:2px}.workflow-target-file{min-width:0;padding:9px 11px;border:1px solid var(--border);border-radius:6px;background:#090806;color:var(--text-3);font:10px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-check{display:flex;align-items:flex-start;gap:8px;margin-top:9px;padding:9px 11px;border:1px solid rgba(50,215,75,.22);border-radius:6px;background:rgba(50,215,75,.055);color:var(--green);font-size:11px;line-height:1.45}.review-check::before{content:"✓";font-weight:900}.review-check.blocked{border-color:rgba(255,69,58,.28);background:rgba(255,69,58,.055);color:#ff8b84}.review-check.blocked::before{content:"!"}.review-warning{margin-top:9px;padding:9px 11px;border:1px solid rgba(242,138,26,.24);border-radius:6px;background:rgba(242,138,26,.055);color:#e6b46e;font-size:11px;line-height:1.45}.advanced-review{margin:0;border:1px solid var(--border);border-radius:7px;background:rgba(0,0,0,.12);overflow:hidden}.advanced-review+.advanced-review{margin-top:8px}.advanced-review>summary{padding:11px 12px;cursor:pointer;color:var(--text-2);font-size:11px;font-weight:750;list-style-position:inside}.advanced-review[open]>summary{border-bottom:1px solid var(--border);color:var(--text)}.advanced-review>.ledger-diff,.advanced-review>.ledger-editor,.advanced-review>.evidence-list,.advanced-review>label{margin:12px}.advanced-review>label{display:block;color:var(--text-3);font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase}.advanced-review>.ledger-editor{width:calc(100% - 24px)}.session-ledger{display:grid;gap:7px}.session-ledger-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;content-visibility:auto;contain-intrinsic-size:84px;padding:11px 12px;border:1px solid var(--border);border-radius:7px;background:rgba(255,255,255,.018)}.session-ledger-item:hover{border-color:rgba(242,138,26,.28);background:rgba(242,138,26,.025)}.session-ledger-main{min-width:0}.session-ledger-head{display:flex;align-items:center;gap:8px;min-width:0}.session-ledger-title{min-width:0;color:var(--text);font-size:12px;font-weight:760;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.session-ledger-id{margin-top:4px;color:#77736b;font:9px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.session-ledger-meta{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px;color:var(--text-3);font-size:10px}.session-ledger-summary{margin-top:7px;color:var(--text-3);font-size:11px;line-height:1.45;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.session-ledger-side{display:grid;justify-items:end;gap:7px}.session-ledger-side .ledger-button{padding:6px 9px;font-size:10px}.session-more{margin-top:8px}.session-more>summary{cursor:pointer;color:var(--blue);font-size:11px;font-weight:700}.session-more[open]>summary{margin-bottom:8px}.session-ledger-empty{padding:12px;border:1px dashed var(--border);border-radius:7px;color:var(--text-3);font-size:11px;line-height:1.5}.ledger-status{min-height:16px;color:var(--text-3);font-size:10px;line-height:1.45}.ledger-status code{overflow-wrap:anywhere}.review-panel .ledger-status{margin-top:8px}
+@media(max-width:860px){.review-grid{grid-template-columns:1fr}.review-kpi-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.review-kpi:nth-child(3){border-left:0;border-top:1px solid var(--border)}.review-kpi:nth-child(4){border-top:1px solid var(--border)}.ledger-dialog{width:calc(100vw - 24px);max-height:calc(100vh - 24px)}.workflow-support-grid{grid-template-columns:1fr}}
+@media(max-width:600px){.product-hero,.product-section-head{align-items:flex-start;flex-direction:column}.product-count,.product-section-count{align-self:flex-start}.product-count small,.product-section-count small{text-align:left}.rule-grid{grid-template-columns:1fr}.ledger-dialog{width:calc(100vw - 12px);max-height:calc(100vh - 12px);border-radius:8px}.ledger-dialog-head{padding:19px 17px 16px}.ledger-dialog-body{padding:17px}.ledger-dialog-actions{padding-inline:17px;overflow-x:auto}.ledger-dialog-title{font-size:18px}.workflow-target-row{align-items:stretch;flex-direction:column}.workflow-toolbar{align-items:stretch}.workflow-filter-field{min-width:100%}.workflow-filter-summary{margin-left:0;padding:0}.ledger-action-spacer{display:none}.session-ledger-item{grid-template-columns:1fr}.session-ledger-side{display:flex;align-items:center;justify-content:space-between}.review-fact{grid-template-columns:82px minmax(0,1fr)}}
+.explore-subnav{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 18px;padding:6px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}
+.explore-link{appearance:none;border:0;border-radius:6px;background:transparent;color:var(--text-2);padding:8px 12px;font:600 12px inherit;cursor:pointer}.explore-link:hover,.explore-link.active{background:rgba(242,138,26,.12);color:var(--blue)}
 .badge-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .badge-grid .badge{white-space:normal;align-items:flex-start;height:100%}
-.obs-playbook-grid,.obs-examples-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.obs-playbook-card,.obs-example-card{
-  border:1px solid var(--glass-border);
-  border-radius:var(--radius-sm);
-  background:rgba(255,255,255,.025);
-  padding:16px;
-}
-.obs-playbook-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px}
-.obs-playbook-title{font-size:15px;font-weight:600;color:var(--text)}
-.obs-playbook-tag{
-  flex-shrink:0;
-  font-size:11px;
-  text-transform:uppercase;
-  letter-spacing:.12em;
-  padding:4px 8px;
-  border-radius:999px;
-  border:1px solid rgba(255,255,255,.08);
-  color:var(--text-3);
-}
-.obs-playbook-copy{font-size:14px;line-height:1.6;color:var(--text-2)}
-.obs-example-title{font-size:15px;font-weight:600;color:var(--text);margin-bottom:10px}
-.obs-example-label{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--text-3);margin-bottom:6px}
-.obs-example-box{
-  font-size:13px;
-  line-height:1.55;
-  color:var(--text-2);
-  background:rgba(0,0,0,.18);
-  border:1px solid rgba(255,255,255,.05);
-  border-radius:8px;
-  padding:10px 12px;
-  white-space:pre-wrap;
-}
 @media(max-width:1100px){
-  .obs-hero-grid,.badge-grid,.obs-playbook-grid,.obs-examples-grid{grid-template-columns:1fr 1fr}
+  .badge-grid{grid-template-columns:1fr 1fr}
 }
 @media(max-width:720px){
-  .obs-hero-grid,.badge-grid,.obs-playbook-grid,.obs-examples-grid{grid-template-columns:1fr}
+  .badge-grid{grid-template-columns:1fr}
 }
 
 /* ── Chart wrappers ──────────────────────────────────────── */
@@ -662,6 +621,10 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .tbl tr:last-child td,.data-table tbody tr:last-child td{border-bottom:none}
 .tbl tbody tr,.data-table tbody tr{transition:background .1s ease;cursor:default}
 .tbl tbody tr:hover td,.data-table tbody tr:hover td{background:rgba(255,255,255,.03)}
+#subagent-effectiveness{min-width:0;overflow-x:auto;overscroll-behavior-inline:contain}
+#subagent-effectiveness .data-table{min-width:340px;table-layout:fixed}
+#subagent-effectiveness .data-table th,#subagent-effectiveness .data-table td{padding-inline:8px;font-variant-numeric:tabular-nums}
+#subagent-effectiveness .data-table th:first-child,#subagent-effectiveness .data-table td:first-child{width:35%;overflow-wrap:anywhere}
 .tbl th.sortable{cursor:pointer;user-select:none;position:relative}
 .tbl th.sortable:hover{color:var(--text)}
 .tbl th.sortable::after{content:'';margin-left:4px;opacity:.3}
@@ -2711,7 +2674,9 @@ body.rail-overlay-open{overflow:hidden}
 .dep-node text{pointer-events:none;font-size:12px;fill:rgba(255,255,255,.7)}
 .semantic-graph-shell{position:relative;height:620px;border:1px solid var(--glass-border);border-radius:8px;overflow:hidden;background:radial-gradient(circle at 50% 45%,rgba(255,255,255,.045),rgba(255,255,255,.012) 42%,rgba(0,0,0,.22))}
 .semantic-graph-toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap}
+.semantic-graph-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .semantic-graph-toolbar select{min-height:32px;border:1px solid var(--glass-border);border-radius:6px;background:rgba(0,0,0,.24);color:var(--text-1);padding:4px 8px;font:inherit;font-size:12px}
+.semantic-graph-context{margin:-4px 0 12px;color:var(--text-3);font-size:11px;line-height:1.5}
 .semantic-graph-svg{display:block;width:100%;height:100%;cursor:grab}
 .semantic-graph-svg:active{cursor:grabbing}
 .semantic-graph-link{stroke:rgba(245,242,234,.15);stroke-width:1.1;stroke-linecap:round}
@@ -2827,13 +2792,12 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 <!-- ── Nav tabs ── -->
 <nav id="tabs" role="tablist" aria-label="Dashboard sections">
-  <button class="tab active" id="tab-button-sessions" type="button" role="tab" aria-selected="true" aria-controls="tab-sessions" tabindex="0" data-tab="sessions">Sessions</button>
-  <button class="tab" id="tab-button-overview" type="button" role="tab" aria-selected="false" aria-controls="tab-overview" tabindex="-1" data-tab="overview">Activity</button>
-  <button class="tab" id="tab-button-compare" type="button" role="tab" aria-selected="false" aria-controls="tab-compare" tabindex="-1" data-tab="compare">Compare</button>
-  <button class="tab" id="tab-button-observations" type="button" role="tab" aria-selected="false" aria-controls="tab-observations" tabindex="-1" data-tab="observations">Observations</button>
-  <button class="tab" id="tab-button-tools" type="button" role="tab" aria-selected="false" aria-controls="tab-tools" tabindex="-1" data-tab="tools">Tools</button>
-  <button class="tab" id="tab-button-graphs" type="button" role="tab" aria-selected="false" aria-controls="tab-graphs" tabindex="-1" data-tab="graphs">Graphs</button>
-  <button class="tab" id="tab-button-data" type="button" role="tab" aria-selected="false" aria-controls="tab-data" tabindex="-1" data-tab="data">Context</button>
+  <button class="tab active" id="tab-button-observations" type="button" role="tab" aria-selected="true" aria-controls="tab-observations" tabindex="0" data-tab="observations">Inbox</button>
+  <button class="tab" id="tab-button-sessions" type="button" role="tab" aria-selected="false" aria-controls="tab-sessions" tabindex="-1" data-tab="sessions">Sessions</button>
+  <button class="tab" id="tab-button-workflows" type="button" role="tab" aria-selected="false" aria-controls="tab-workflows" tabindex="-1" data-tab="workflows">Workflows</button>
+  <button class="tab" id="tab-button-skills" type="button" role="tab" aria-selected="false" aria-controls="tab-skills" tabindex="-1" data-tab="skills">Skills</button>
+  <button class="tab" id="tab-button-compare" type="button" role="tab" aria-selected="false" aria-controls="tab-compare" tabindex="-1" data-tab="compare">Measurements</button>
+  <button class="tab" id="tab-button-overview" type="button" role="tab" aria-selected="false" aria-controls="tab-overview" tabindex="-1" data-tab="overview">Explore</button>
 </nav>
 
 <main id="main-content">
@@ -2863,7 +2827,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
     </div>
 
 <!-- ════════════════════ SESSIONS BROWSER ════════════════════ -->
-<div class="tab-panel active" id="tab-sessions" role="tabpanel" aria-labelledby="tab-button-sessions">
+<div class="tab-panel" id="tab-sessions" role="tabpanel" aria-labelledby="tab-button-sessions" hidden>
   <div class="session-browser">
     <div class="sb-right">
       <div id="sb-detail">
@@ -2878,8 +2842,19 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 <!-- ════════════════════ OVERVIEW ════════════════════ -->
 <div class="tab-panel" id="tab-overview" role="tabpanel" aria-labelledby="tab-button-overview" hidden>
+  <div class="explore-subnav" aria-label="Explore telemetry views">
+    <button class="explore-link active" type="button" data-explore-tab="overview">Usage</button>
+    <button class="explore-link" type="button" data-explore-tab="tools">Tools</button>
+    <button class="explore-link" type="button" data-explore-tab="graphs">Graph</button>
+    <button class="explore-link" type="button" data-explore-tab="data">Context &amp; system</button>
+  </div>
   <!-- Row 1: 4 headline stats -->
   <div class="stat-row" id="stat-row"></div>
+
+  <div class="panel">
+    <div class="panel-title">Outcomes &amp; Achievements</div>
+    <div class="badge-grid" id="obs-badges"></div>
+  </div>
 
   <!-- Row 4: 8 metric tiles -->
   <div class="metric-row" id="metric-row"></div>
@@ -2984,10 +2959,16 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 </div>
 
-<!-- ════════════════════ COMPARE ════════════════════ -->
+<!-- ════════════════════ MEASUREMENTS ════════════════════ -->
 <div class="tab-panel" id="tab-compare" role="tabpanel" aria-labelledby="tab-button-compare" hidden>
+  <div class="product-hero">
+    <div><h2>Measurements</h2><p>Before-and-after evidence for applied workflows, using comparable repository sessions and conservative sample thresholds.</p></div>
+    <div class="product-count" id="measurement-count">0<small>measured changes</small></div>
+  </div>
+  <div class="measurement-list" id="measurement-ledger"></div>
+
   <div class="panel" id="compare-panel-main">
-    <div class="panel-title">Compare Cohorts</div>
+    <div class="panel-title">Explore comparable cohorts</div>
     <div id="compare-summary"></div>
   </div>
 
@@ -3023,40 +3004,59 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   </div>
 </div>
 
-<!-- ════════════════════ OBSERVATIONS ════════════════════ -->
-<div class="tab-panel" id="tab-observations" role="tabpanel" aria-labelledby="tab-button-observations" hidden>
-  <div class="obs-hero-grid" id="obs-hero-grid"></div>
-
-  <div class="cols-2">
-    <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Signals</div>
-      <div class="obs-stack" id="obs-signals"></div>
-    </div>
-    <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Achievements</div>
-      <div class="badge-grid" id="obs-badges"></div>
-    </div>
+<!-- ════════════════════ IMPROVEMENT INBOX ════════════════════ -->
+<div class="tab-panel active" id="tab-observations" role="tabpanel" aria-labelledby="tab-button-observations">
+  <div class="product-hero">
+    <div><h2>Improvement Inbox</h2><p>Start with evidence: recurring failures, verification gaps, and repeated behavior that may deserve a better procedure.</p></div>
+    <div class="product-count" id="inbox-count">0<small>needs attention</small></div>
   </div>
+  <div class="inbox-list" id="improvement-inbox"></div>
 
-  <div class="cols-2">
-    <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Token Economy Playbook</div>
-      <div class="obs-playbook-grid" id="obs-playbook"></div>
+  <section class="panel product-section" aria-labelledby="observed-loops-title">
+    <div class="product-section-head">
+      <div><h3 class="product-section-title" id="observed-loops-title">Observed Loops</h3><p class="product-section-copy">Repeated action cycles found in source sessions. Inspect the evidence first; build only a loop that would benefit from an agentic workflow.</p></div>
+      <div class="product-section-count" id="loop-count">0<small>detected loops</small></div>
     </div>
-    <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Prompt Examples</div>
-      <div class="obs-examples-grid" id="obs-examples"></div>
-    </div>
+    <div class="workflow-list" id="loop-ledger" aria-live="polite"></div>
+  </section>
+</div>
+
+<!-- ════════════════════ WORKFLOWS ════════════════════ -->
+<div class="tab-panel" id="tab-workflows" role="tabpanel" aria-labelledby="tab-button-workflows" hidden>
+  <div class="product-hero">
+    <div><h2>Workflows</h2><p>Review reusable procedures before they change a repository. See the exact steps, stop conditions, verification, source sessions, target, and diff in one place.</p></div>
+    <div class="product-count" id="workflow-count">0<small>reviewable workflows</small></div>
   </div>
+  <div class="workflow-toolbar" aria-label="Workflow filters">
+    <div class="workflow-filter-field"><label for="workflow-type-filter">Behavior</label><select id="workflow-type-filter"><option value="all">All behavior types</option><option value="recovery">Recovery</option><option value="verification">Verification</option><option value="exploration">Exploration</option><option value="proven_pattern">Proven Pattern</option></select></div>
+    <div class="workflow-filter-field"><label for="workflow-status-filter">State</label><select id="workflow-status-filter"><option value="all">All states</option><option value="pending">Pending</option><option value="active">Active</option><option value="stale">Stale</option><option value="rejected">Rejected</option><option value="rolled_back">Rolled Back</option></select></div>
+    <div class="workflow-filter-summary" id="workflow-filter-summary" aria-live="polite"></div>
+  </div>
+  <div class="workflow-list" id="workflow-ledger" aria-live="polite"></div>
+</div>
 
-  <div class="panel" style="margin-bottom:0">
-    <div class="panel-title">Next Moves</div>
-    <div class="obs-stack" id="obs-next-moves"></div>
+<!-- ════════════════════ SKILLS ════════════════════ -->
+<div class="tab-panel" id="tab-skills" role="tabpanel" aria-labelledby="tab-button-skills" hidden>
+  <div class="product-hero">
+    <div><h2>Skills</h2><p>Durable, versioned packages that can be installed and observed across future sessions. Skills retain their source evidence without mixing evidence, procedures, and installations together.</p></div>
+    <div class="product-count" id="skill-count">0<small>current skills</small></div>
+  </div>
+  <div class="panel product-section" style="margin-top:0">
+    <div class="product-section-head">
+      <div><h3 class="product-section-title">Skill Registry</h3><p class="product-section-copy">Stable identities reconciled from pending drafts, repo-local installations, and telemetry-observed usage. Open a skill to inspect its versions and provenance.</p></div>
+    </div>
+    <div class="workflow-list" id="skill-registry" aria-live="polite"></div>
   </div>
 </div>
 
 <!-- ════════════════════ TOOLS (merged with Latency) ════════════════════ -->
-<div class="tab-panel" id="tab-tools" role="tabpanel" aria-labelledby="tab-button-tools" hidden>
+<div class="tab-panel" id="tab-tools" role="tabpanel" aria-labelledby="tab-button-overview" hidden>
+  <div class="explore-subnav" aria-label="Explore telemetry views">
+    <button class="explore-link" type="button" data-explore-tab="overview">Usage</button>
+    <button class="explore-link active" type="button" data-explore-tab="tools">Tools</button>
+    <button class="explore-link" type="button" data-explore-tab="graphs">Graph</button>
+    <button class="explore-link" type="button" data-explore-tab="data">Context &amp; system</button>
+  </div>
 
   <div class="tools-summary-grid">
     <div class="panel" style="margin-bottom:0">
@@ -3110,14 +3110,27 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 </div>
 
 <!-- ════════════════════ GRAPHS ════════════════════ -->
-<div class="tab-panel" id="tab-graphs" role="tabpanel" aria-labelledby="tab-button-graphs" hidden>
+<div class="tab-panel" id="tab-graphs" role="tabpanel" aria-labelledby="tab-button-overview" hidden>
+  <div class="explore-subnav" aria-label="Explore telemetry views">
+    <button class="explore-link" type="button" data-explore-tab="overview">Usage</button>
+    <button class="explore-link" type="button" data-explore-tab="tools">Tools</button>
+    <button class="explore-link active" type="button" data-explore-tab="graphs">Graph</button>
+    <button class="explore-link" type="button" data-explore-tab="data">Context &amp; system</button>
+  </div>
 
   <!-- 1. Behavioral Memory Graph -->
   <div class="panel">
     <div class="semantic-graph-toolbar">
-      <div class="panel-title" style="margin-bottom:0">Behavioral Memory Graph <span class="panel-title-count">(sessions, folders, tools, skills, memories, outcomes)</span></div>
-      <select id="semantic-session-filter" aria-label="Filter behavioral memory graph by session"></select>
+      <div class="panel-title" style="margin-bottom:0">Behavioral Memory Graph <span class="panel-title-count">(sessions, workspaces, folders, tools, skills, memories, outcomes)</span></div>
+      <div class="semantic-graph-controls">
+        <select id="semantic-graph-mode" aria-label="Choose behavioral memory graph relationship scope">
+          <option value="workspace">Same workspace</option>
+          <option value="session">Selected session only</option>
+        </select>
+        <select id="semantic-session-filter" aria-label="Filter behavioral memory graph by session"></select>
+      </div>
     </div>
+    <p class="semantic-graph-context" id="semantic-graph-context">All bounded graph relationships. Select a session to inspect its workspace peers.</p>
     <div class="semantic-graph-shell" id="semantic-graph-shell">
       <svg class="semantic-graph-svg" id="semantic-graph-svg" role="img" aria-label="Behavioral memory graph"></svg>
       <div class="semantic-graph-tip" id="semantic-graph-tip"></div>
@@ -3166,8 +3179,20 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 </div>
 
 <!-- ════════════════════ CONTEXT ════════════════════ -->
-<div class="tab-panel" id="tab-data" role="tabpanel" aria-labelledby="tab-button-data" hidden>
+<div class="tab-panel" id="tab-data" role="tabpanel" aria-labelledby="tab-button-overview" hidden>
+  <div class="explore-subnav" aria-label="Explore telemetry views">
+    <button class="explore-link" type="button" data-explore-tab="overview">Usage</button>
+    <button class="explore-link" type="button" data-explore-tab="tools">Tools</button>
+    <button class="explore-link" type="button" data-explore-tab="graphs">Graph</button>
+    <button class="explore-link active" type="button" data-explore-tab="data">Context &amp; system</button>
+  </div>
   <div class="stat-row" id="data-stat-row"></div>
+
+  <details class="rule-registry" id="rule-registry">
+    <summary><span>Improvement Rules</span><span class="rule-registry-copy" id="rule-count">Loading rules…</span></summary>
+    <p class="rule-registry-note">Improvement Rules create durable findings and may propose workflows. Session Rules score one session for review and comparison; they do not create recommendations.</p>
+    <div class="rule-grid" id="rule-grid" aria-live="polite"></div>
+  </details>
 
   <div class="cols-2">
     <div class="panel" style="margin-bottom:0">
@@ -3267,11 +3292,21 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 </main>
 
+<dialog class="ledger-dialog" id="ledger-dialog" aria-labelledby="ledger-dialog-title" aria-describedby="ledger-dialog-subtitle">
+  <div class="ledger-dialog-head">
+    <div><h2 class="ledger-dialog-title" id="ledger-dialog-title">Improvement detail</h2><div class="inbox-copy" id="ledger-dialog-subtitle"></div></div>
+    <button class="ledger-dialog-close" id="ledger-dialog-close" type="button" aria-label="Close">&times;</button>
+  </div>
+  <div class="ledger-dialog-body" id="ledger-dialog-body"></div>
+  <div class="ledger-dialog-actions" id="ledger-dialog-actions"></div>
+</dialog>
+
 <footer>Powered by <a href="https://github.com/o11y-dev/reflect" style="color:var(--text-2);text-decoration:none"><code>reflect</code></a> — report data stays local and private</footer>
 
 <script>
 // ════════════════════ DATA LOADING ════════════════════
 let D;
+let IMPROVEMENT_DATA = {observations:[], loops:[], skills:[], workflows:[], measurements:[], rules:[], counts_by_status:{}, inbox_total_count:0, raw_observation_count:0, skill_total_count:0, skill_archived_count:0};
 function renderDashboardError(kind, message){
   if (kind === 'no-data') {
     document.body.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:24px;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:rgba(255,255,255,.9)">'
@@ -3351,6 +3386,41 @@ async function loadDashboardData(){
   }
 }
 
+async function loadImprovementData(){
+  if (!D || !D.sql_backed || !reportSupportsServerFiltering()) return IMPROVEMENT_DATA;
+  try {
+    const [inboxResponse, workflowResponse, measurementResponse, ruleResponse] = await Promise.all([
+      fetch('/api/improvements', {headers: {Accept: 'application/json'}}),
+      fetch('/api/workflows', {headers: {Accept: 'application/json'}}),
+      fetch('/api/measurements', {headers: {Accept: 'application/json'}}),
+      fetch('/api/rules', {headers: {Accept: 'application/json'}}),
+    ]);
+    if (!inboxResponse.ok || !workflowResponse.ok || !measurementResponse.ok || !ruleResponse.ok) return IMPROVEMENT_DATA;
+    const loopResponse = await fetch('/api/loops', {headers: {Accept: 'application/json'}});
+    const skillResponse = await fetch('/api/skills', {headers: {Accept: 'application/json'}});
+    const inbox = await inboxResponse.json();
+    const workflows = await workflowResponse.json();
+    const measurements = await measurementResponse.json();
+    const rules = await ruleResponse.json();
+    const loops = loopResponse.ok ? await loopResponse.json() : {loops:[]};
+    const skills = skillResponse.ok ? await skillResponse.json() : {skills:[]};
+    return {
+      ...inbox,
+      loops: loops.loops || [],
+      skills: skills.skills || [],
+      skill_total_count: Number(skills.total_count ?? (skills.skills || []).length),
+      skill_archived_count: Number(skills.archived_count || 0),
+      skill_counts_by_lifecycle: skills.counts_by_lifecycle || {},
+      workflows: workflows.workflows || [],
+      measurements: measurements.measurements || [],
+      rules: rules.rules || [],
+      rule_extension: rules.extension || {},
+    };
+  } catch {
+    return IMPROVEMENT_DATA;
+  }
+}
+
 function updateUrlParams(mutator){
   const url = new URL(window.location.href);
   mutator(url.searchParams);
@@ -3385,6 +3455,7 @@ async function initApp(){
     hideReportLoader();
     return;
   }
+  IMPROVEMENT_DATA = await loadImprovementData();
   const demoBadge = document.getElementById('demo-badge');
   const reportParam = new URLSearchParams(window.location.search).get('report') || '';
   const isLocalApiReport = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
@@ -3495,14 +3566,575 @@ function agentIconSvg(agent){
 
 function escHtml(s){
   if(!s) return '';
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
-function fmtNarrative(s){
-  return escHtml(s || '')
-    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
-    .replace(/\n/g,'<br/>');
+const ledgerDialog = document.getElementById('ledger-dialog');
+const ledgerDialogTitle = document.getElementById('ledger-dialog-title');
+const ledgerDialogSubtitle = document.getElementById('ledger-dialog-subtitle');
+const ledgerDialogBody = document.getElementById('ledger-dialog-body');
+const ledgerDialogActions = document.getElementById('ledger-dialog-actions');
+
+function openLedgerDialog({title, subtitle = '', body = '', actions = ''}){
+  ledgerDialogTitle.textContent = title;
+  ledgerDialogSubtitle.textContent = subtitle;
+  ledgerDialogBody.innerHTML = body;
+  ledgerDialogActions.innerHTML = actions;
+  ledgerDialogBody.scrollTop = 0;
+  if (!ledgerDialog.open) ledgerDialog.showModal();
 }
+
+function closeLedgerDialog(){
+  if (ledgerDialog?.open) ledgerDialog.close();
+  updateUrlParams(params => {
+    params.delete('workflow');
+    params.delete('workflow_root');
+    params.delete('loop');
+    params.delete('skill');
+  });
+}
+
+document.getElementById('ledger-dialog-close')?.addEventListener('click', closeLedgerDialog);
+ledgerDialog?.addEventListener('click', event => {
+  if (event.target === ledgerDialog) closeLedgerDialog();
+});
+
+async function ledgerRequest(url, {method = 'GET', body} = {}){
+  const response = await fetch(url, {
+    method,
+    headers: {Accept: 'application/json', ...(body === undefined ? {} : {'Content-Type': 'application/json'})},
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+  return payload;
+}
+
+async function refreshImprovementSurfaces(){
+  IMPROVEMENT_DATA = await loadImprovementData();
+  buildImprovementSurfaces();
+}
+
+const workflowDateFormatter = new Intl.DateTimeFormat(navigator.language || undefined, {
+  dateStyle:'medium',
+  timeStyle:'short',
+});
+
+function fmtWorkflowDate(value){
+  if (!value) return 'Time unavailable';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : workflowDateFormatter.format(date);
+}
+
+function humanizeLedgerLabel(value){
+  return String(value || '')
+    .replaceAll('_',' ')
+    .replaceAll('-',' ')
+    .replace(/\b\w/g, character => character.toUpperCase());
+}
+
+function humanizeLedgerText(value){
+  return String(value || '').replace(/\b[a-z0-9]+(?:_[a-z0-9]+)+\b/gi, token => token.replaceAll('_',' '));
+}
+
+function workflowSourcePresentation(content, provenance = {}){
+  const source = content?.source || {};
+  const rawKind = String(source.kind || provenance.source || '');
+  const kind = rawKind === 'skill_extraction' ? 'agent_authored' : rawKind;
+  if (kind === 'agent_authored' || source.rule_id === 'discovered_reusable_workflow') {
+    const agent = source.agent ? ` · ${humanizeLedgerLabel(source.agent)}` : '';
+    return {
+      kind:'agent_authored',
+      label:`Agent-authored draft${agent}`,
+      detail:'A coding agent drafted this workflow from a bounded Reflect evidence bundle. Reflect recorded the evidence and confidence; the agent did not approve or validate its own draft.',
+      reviewLabel:'Review Agent Draft & Diff',
+      sectionLabel:'Agent-authored Workflow',
+    };
+  }
+  if (kind === 'manual_skill_file') {
+    return {
+      kind,
+      label:'Imported skill',
+      detail:'An existing SKILL.md supplied this workflow. Reflect imported its instructions without claiming authorship.',
+      reviewLabel:'Review Imported Skill & Diff',
+      sectionLabel:'Imported Workflow',
+    };
+  }
+  return {
+    kind:'rule_blueprint',
+    label:'Rule blueprint',
+    detail:'A deterministic Improvement Rule matched evidence to a known remediation workflow. No coding agent authored this text. The current apply renderer can package the reviewed workflow as a repo-local skill.',
+    reviewLabel:'Review Blueprint & Diff',
+    sectionLabel:'Suggested Workflow',
+  };
+}
+
+function compactLedgerId(value){
+  const id = String(value || '');
+  return id.length > 22 ? `${id.slice(0,8)}…${id.slice(-6)}` : id;
+}
+
+function ledgerWorkspaceName(value){
+  const parts = String(value || '').split('/').filter(Boolean);
+  return parts.at(-1) || '';
+}
+
+function sessionInspectionUrl(session){
+  const url = new URL(window.location.href);
+  ['workflow','workflow_root','workflow_type','workflow_status','loop','skill','q','agents','agent','model','status','range'].forEach(key => url.searchParams.delete(key));
+  url.searchParams.set('tab', 'sessions');
+  url.searchParams.set('session', session.session_id || '');
+  if (session.evidence_focus_id) url.searchParams.set('evidence', session.evidence_focus_id);
+  else url.searchParams.delete('evidence');
+  return `${url.pathname}?${url.searchParams.toString()}${url.hash}`;
+}
+
+function renderWorkflowSessionLedger(sessions, {empty, total, initial = 5} = {}){
+  const items = sessions || [];
+  if (!items.length) return `<div class="session-ledger-empty">${escHtml(empty || 'No linked sessions yet.')}</div>`;
+  const renderRow = session => {
+    const agent = humanizeLedgerLabel(session.agent || 'Agent');
+    const workspace = ledgerWorkspaceName(session.workspace);
+    const displayTitle = session.title || `${agent}${workspace ? ` · ${workspace}` : ' Session'}`;
+    const summary = (session.evidence_summaries || [])[0] || '';
+    const signalCount = Number(session.evidence_count || 0);
+    return `<article class="session-ledger-item">
+      <div class="session-ledger-main">
+        <div class="session-ledger-head">
+          <div class="session-ledger-title">${escHtml(displayTitle)}</div>
+          <span class="ledger-pill">${escHtml(humanizeLedgerLabel(session.status || 'unknown'))}</span>
+        </div>
+        <div class="session-ledger-meta"><span>${escHtml(fmtWorkflowDate(session.started_at))}</span>${session.workspace ? `<span title="${escHtml(session.workspace)}" translate="no">${escHtml(workspace)}</span>` : ''}</div>
+        ${summary ? `<div class="session-ledger-summary" title="${escHtml(summary)}">${escHtml(summary)}</div>` : ''}
+        <div class="session-ledger-id" title="${escHtml(session.session_id)}" translate="no">${escHtml(compactLedgerId(session.session_id))}</div>
+      </div>
+      <div class="session-ledger-side">
+        ${session.exposure_state ? `<span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(session.exposure_state))}</span>` : `<span class="ledger-pill">${fmt(signalCount)} ${signalCount === 1 ? 'signal' : 'signals'}</span>`}
+        <a class="ledger-button" data-related-session-link href="${escHtml(sessionInspectionUrl(session))}">Open Session</a>
+      </div>
+    </article>`;
+  };
+  const visibleRows = items.slice(0, initial).map(renderRow).join('');
+  const remainingRows = items.slice(initial).map(renderRow).join('');
+  const count = Number(total || items.length);
+  const more = remainingRows
+    ? `<details class="session-more"><summary>Show ${fmt(items.length - initial)} More Sessions</summary><div class="session-ledger">${remainingRows}</div></details>`
+    : '';
+  const countNote = count > items.length
+    ? `<div class="ledger-status">Showing ${fmt(items.length)} bounded examples from ${fmt(count)} linked sessions.</div>`
+    : '';
+  return `<div class="session-ledger">${visibleRows}</div>${more}${countNote}`;
+}
+
+async function showObservationEvidence(observationId){
+  openLedgerDialog({title:'Loading evidence…'});
+  try {
+    const item = await ledgerRequest(`/api/improvements/${encodeURIComponent(observationId)}`);
+    const ledger = item.candidate_id
+      ? await ledgerRequest(`/api/workflows/${encodeURIComponent(item.candidate_id)}/sessions`)
+      : null;
+    const rawEvidence = (item.evidence || []).map(entry => `<div class="evidence-item">
+      <div class="ledger-meta" style="margin-top:0"><span class="ledger-pill" translate="no">${escHtml(entry.entity_type)}:${escHtml(entry.entity_id)}</span><span class="ledger-pill">${Math.round(Number(entry.confidence || 0)*100)}% confidence</span></div>
+      <div class="inbox-copy" style="margin-top:8px">${escHtml(entry.summary_redacted || '')}</div>
+    </div>`).join('');
+    const sourceSessions = ledger
+      ? renderWorkflowSessionLedger(ledger.source_sessions, {
+          empty:'No source sessions are linked to this observation.',
+          total:ledger.source_session_count,
+          initial:6,
+        })
+      : '<div class="session-ledger-empty">This observation has no workflow session ledger.</div>';
+    const confidence = Math.round(Number(item.confidence || 0) * 100);
+    const metricValue = Number(item.metric_value);
+    const metricDisplay = Number.isFinite(metricValue) ? fmt(metricValue) : String(item.metric_value ?? '—');
+    const ruleLabel = humanizeLedgerLabel(item.category || item.rule_id || 'Improvement');
+    openLedgerDialog({
+      title:item.title || 'Observation evidence',
+      subtitle:`${ruleLabel} Rule · Version ${item.rule_version} · ${confidence}% confidence`,
+      body:`<div class="review-lead">
+          <div class="review-eyebrow">Why This Matters</div>
+          <p>${escHtml(item.summary || '')}</p>
+        </div>
+        <div class="review-kpi-strip">
+          <div class="review-kpi"><div class="review-kpi-label">Affected Sessions</div><div class="review-kpi-value signal">${fmt(Number(item.affected_session_count || 0))}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">Evidence Examples</div><div class="review-kpi-value">${fmt(Number(ledger?.source_session_count || 0))}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">${escHtml(humanizeLedgerLabel(item.metric_name || 'Metric'))}</div><div class="review-kpi-value">${escHtml(metricDisplay)} ${escHtml(item.metric_unit || '')}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">Impact Score</div><div class="review-kpi-value">${fmt(Number(item.impact_score || 0))} / 100</div></div>
+        </div>
+        <div class="review-grid">
+          <section class="review-panel">
+            <div class="review-panel-head"><h3 class="review-panel-title">Source Sessions</h3><span class="ledger-pill signal">${fmt(Number(ledger?.source_session_count || 0))} linked</span></div>
+            <p class="review-panel-copy">Bounded examples that directly support this finding. Inspect a session to see the highlighted evidence in context.</p>
+            ${sourceSessions}
+          </section>
+          <aside class="review-stack">
+            <section class="review-panel">
+              <div class="review-panel-head"><h3 class="review-panel-title">Finding Details</h3><span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.status || 'new'))}</span></div>
+              <dl class="review-facts">
+                <div class="review-fact"><dt>Rule</dt><dd translate="no">${escHtml(item.rule_id)} v${fmt(Number(item.rule_version || 1))}</dd></div>
+                <div class="review-fact"><dt>Scope</dt><dd>${escHtml(humanizeLedgerLabel(item.scope_type || 'user'))} · ${escHtml(item.scope_id || 'local')}</dd></div>
+                <div class="review-fact"><dt>Metric</dt><dd>${escHtml(humanizeLedgerLabel(item.metric_name || 'Unavailable'))}</dd></div>
+                <div class="review-fact"><dt>Confidence</dt><dd>${confidence}%</dd></div>
+              </dl>
+            </section>
+            <details class="advanced-review"><summary>Raw Evidence Links · ${fmt((item.evidence || []).length)}</summary><div class="evidence-list">${rawEvidence || '<div class="session-ledger-empty">No bounded evidence is available.</div>'}</div></details>
+          </aside>
+        </div>`,
+      actions:'<div class="ledger-action-spacer"></div><button type="button" class="ledger-button primary" data-ledger-action="close">Done</button>',
+    });
+  } catch (error) {
+    openLedgerDialog({title:'Evidence unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`});
+  }
+}
+
+async function showLoopReview(loopId){
+  openLedgerDialog({title:'Loading loop evidence…'});
+  try {
+    const detail = await ledgerRequest(`/api/loops/${encodeURIComponent(loopId)}`);
+    const loop = detail.loop || {};
+    const occurrences = detail.occurrences || [];
+    updateUrlParams(params => {
+      params.delete('workflow');
+      params.delete('workflow_root');
+      params.delete('skill');
+      params.set('loop', loopId);
+    });
+    const sourceSessions = renderWorkflowSessionLedger(occurrences.map(item => ({
+      session_id:item.session_id,
+      title:`${humanizeLedgerLabel(item.tool_name || loop.tool_name || 'Tool')} · ${fmt(Number(item.repeat_count || 0))} repeats`,
+      status:item.outcome || (item.state_changed ? 'state changed' : 'no state change'),
+      evidence_count:Number(item.repeat_count || 0),
+      evidence_summaries:[
+        `${fmt(Number(item.error_count || 0))} errors · ${item.state_changed ? 'relevant state changed' : 'no relevant state change'}${item.evidence?.retry_run_count ? ` · ${fmt(Number(item.evidence.retry_run_count))} retry runs` : ''}`,
+      ],
+    })), {
+      empty:'No source sessions are linked to this loop.',
+      total:loop.affected_session_count,
+      initial:8,
+    });
+    const evidenceFacts = Object.entries(loop.evidence || {}).map(([key, value]) => `
+      <div class="review-fact"><dt>${escHtml(humanizeLedgerLabel(key))}</dt><dd>${escHtml(Array.isArray(value) ? value.join(', ') : String(value))}</dd></div>
+    `).join('');
+    const canBuild = loop.status === 'detected' || loop.status === 'acknowledged';
+    openLedgerDialog({
+      title:loop.title || 'Observed loop',
+      subtitle:`${humanizeLedgerLabel(loop.kind || 'loop')} · ${humanizeLedgerLabel(loop.status || 'detected')} · ${Math.round(Number(loop.confidence || 0) * 100)}% confidence`,
+      body:`<div class="review-lead">
+          <div class="review-eyebrow">Observed Behavior</div>
+          <p>${escHtml(loop.summary || '')}</p>
+        </div>
+        <div class="review-kpi-strip">
+          <div class="review-kpi"><div class="review-kpi-label">Source Sessions</div><div class="review-kpi-value signal">${fmt(Number(loop.affected_session_count || 0))}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">Repeated Actions</div><div class="review-kpi-value">${fmt(Number(loop.occurrence_count || 0))}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">State Changes</div><div class="review-kpi-value">${fmt(Number(loop.state_change_count || 0))}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">Confidence</div><div class="review-kpi-value">${Math.round(Number(loop.confidence || 0) * 100)}%</div></div>
+        </div>
+        <div class="review-grid">
+          <section class="review-panel">
+            <div class="review-panel-head"><h3 class="review-panel-title">Source Sessions</h3><span class="ledger-pill signal">${fmt(occurrences.length)} shown</span></div>
+            <p class="review-panel-copy">Inspect the repeated behavior in context before deciding whether it deserves a reusable workflow.</p>
+            ${sourceSessions}
+          </section>
+          <aside class="review-stack">
+            <section class="review-panel">
+              <div class="review-panel-head"><h3 class="review-panel-title">Loop Details</h3><span class="ledger-pill">${escHtml(humanizeLedgerLabel(loop.scope_type || 'user'))}</span></div>
+              <dl class="review-facts">
+                <div class="review-fact"><dt>Tool</dt><dd>${escHtml(loop.tool_name || 'Multiple tools')}</dd></div>
+                <div class="review-fact"><dt>Scope</dt><dd>${escHtml(loop.scope_id || 'local')}</dd></div>
+                ${evidenceFacts}
+              </dl>
+            </section>
+            <section class="review-panel">
+              <div class="review-panel-head"><h3 class="review-panel-title">Next Step</h3></div>
+              <p class="review-panel-copy">A loop is evidence, not yet a workflow or skill. If it is worth standardizing, ask an authoring agent to create one bounded pending skill for review.</p>
+              <div class="ledger-command">reflect loops build ${escHtml(loopId)} --agent codex</div>
+            </section>
+          </aside>
+        </div>`,
+      actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div>${canBuild ? `<span class="ledger-status">Build from the CLI after reviewing the source sessions.</span>` : ''}`,
+    });
+  } catch (error) {
+    openLedgerDialog({title:'Loop evidence unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`});
+  }
+}
+
+async function showSkillReview(skillId){
+  openLedgerDialog({title:'Loading skill history…'});
+  try {
+    const detail = await ledgerRequest(`/api/skills/${encodeURIComponent(skillId)}`);
+    const skill = detail.skill || {};
+    const versions = detail.versions || [];
+    const installations = detail.installations || [];
+    const measurements = detail.measurements || [];
+    const evidence = detail.evidence || [];
+    const usageSessions = detail.usage_sessions || [];
+    const workflowCandidateId = versions.find(item => item.workflow_candidate_id)?.workflow_candidate_id || '';
+    updateUrlParams(params => {
+      params.delete('workflow');
+      params.delete('workflow_root');
+      params.delete('loop');
+      params.set('skill', skillId);
+    });
+    const versionRows = versions.map(item => `<article class="evidence-item">
+      <div class="inbox-card-head"><div class="inbox-title">Version ${fmt(Number(item.version || 0))}</div><span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(item.status || 'pending'))}</span></div>
+      <div class="ledger-meta"><span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.source_kind || skill.origin || 'imported'))}</span>${item.source_agent ? `<span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.source_agent))}</span>` : ''}${item.source_loop_id ? `<span class="ledger-pill">from loop</span>` : ''}<span class="ledger-pill">${escHtml(fmtWorkflowDate(item.created_at))}</span></div>
+      ${item.content_markdown ? `<details class="advanced-review" style="margin-top:10px"><summary>View Package Content</summary><pre class="ledger-diff">${escHtml(item.content_markdown)}</pre></details>` : ''}
+    </article>`).join('');
+    const installationRows = installations.map(item => `<article class="evidence-item">
+      <div class="inbox-card-head"><div class="inbox-title" translate="no">${escHtml(item.path || item.target_ref || 'Installation')}</div><span class="ledger-pill ${item.status === 'active' ? 'signal' : ''}">${escHtml(humanizeLedgerLabel(item.status || 'unknown'))}</span></div>
+      <div class="inbox-copy">${escHtml(humanizeLedgerLabel(item.target_kind || 'repository'))} · last seen ${escHtml(fmtWorkflowDate(item.last_seen_at))}</div>
+    </article>`).join('');
+    const measurementRows = measurements.map(item => `<article class="evidence-item">
+      <div class="inbox-card-head"><div class="inbox-title">${escHtml(humanizeLedgerLabel(item.metric_name || 'Measurement'))}</div><span class="ledger-pill ${item.verdict === 'improved' ? 'signal' : ''}">${escHtml(humanizeLedgerLabel(item.verdict || 'insufficient data'))}</span></div>
+      <div class="inbox-copy">Before ${item.before_value == null ? '—' : Number(item.before_value).toFixed(2)} · after ${item.after_value == null ? '—' : Number(item.after_value).toFixed(2)} · ${Math.round(Number(item.confidence || 0) * 100)}% confidence</div>
+    </article>`).join('');
+    const sessionEvidence = evidence.filter(item => item.entity_type === 'session');
+    const evidenceRows = sessionEvidence.slice(0, 20).map(item => `<article class="session-ledger-item">
+      <div class="session-ledger-main"><div class="session-ledger-title">Source Session</div><div class="session-ledger-id" title="${escHtml(item.entity_id)}" translate="no">${escHtml(compactLedgerId(item.entity_id))}</div><div class="session-ledger-meta"><span>${escHtml(humanizeLedgerLabel(item.relationship || 'source evidence'))}</span><span>${Math.round(Number(item.confidence || 0) * 100)}% confidence</span></div></div>
+      <div class="session-ledger-side"><a class="ledger-button" href="${escHtml(sessionInspectionUrl({session_id:item.entity_id}))}">Open Session</a></div>
+    </article>`).join('');
+    const usageSessionRows = renderWorkflowSessionLedger(usageSessions.map(item => ({
+      session_id:item.session_id,
+      title:item.title,
+      agent:item.agent,
+      started_at:item.started_at,
+      status:item.status,
+      workspace:item.workspace,
+      exposure_state:item.state,
+      evidence_count:1,
+      evidence_summaries:[`Skill use observed ${fmtWorkflowDate(item.observed_at)}${item.outcome ? ` · outcome ${humanizeLedgerLabel(item.outcome)}` : ''}`],
+    })), {
+      empty:'No telemetry-observed use sessions are linked yet.',
+      total:Number(skill.usage_count || usageSessions.length),
+      initial:5,
+    });
+    openLedgerDialog({
+      title:humanizeLedgerLabel(skill.name || skill.slug || 'Skill'),
+      subtitle:`${humanizeLedgerLabel(skill.lifecycle_state || 'pending')} · ${humanizeLedgerLabel(skill.origin || 'imported')} · ${fmt(Number(skill.version_count || versions.length))} versions`,
+      body:`<div class="review-lead"><div class="review-eyebrow">Durable Package</div><p>${escHtml(skill.description || 'No description is available.')}</p></div>
+        <div class="review-kpi-strip">
+          <div class="review-kpi"><div class="review-kpi-label">Versions</div><div class="review-kpi-value signal">${fmt(Number(skill.version_count || versions.length))}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">Evidence Links</div><div class="review-kpi-value">${fmt(Number(skill.evidence_count || evidence.length))}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">Active Installs</div><div class="review-kpi-value">${fmt(Number(skill.installation_count || installations.length))}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">Observed Uses</div><div class="review-kpi-value">${fmt(Number(skill.usage_count || 0))}</div></div>
+        </div>
+        <div class="review-grid">
+          <main class="review-stack">
+            <section class="review-panel"><div class="review-panel-head"><h3 class="review-panel-title">Version History</h3><span class="ledger-pill signal">${fmt(versions.length)} semantic versions</span></div><div class="evidence-list">${versionRows || '<div class="session-ledger-empty">No versions are registered.</div>'}</div></section>
+            <section class="review-panel"><div class="review-panel-head"><h3 class="review-panel-title">Installations</h3><span class="ledger-pill">${fmt(installations.length)} tracked</span></div><div class="evidence-list">${installationRows || '<div class="session-ledger-empty">This skill is not installed in a tracked repository.</div>'}</div></section>
+          </main>
+          <aside class="review-stack">
+            <section class="review-panel">
+              <div class="review-panel-head"><h3 class="review-panel-title">Related Sessions</h3><span class="ledger-pill signal">${fmt(Number(skill.usage_count || usageSessions.length))} observed uses</span></div>
+              <p class="review-panel-copy">Observed uses show sessions where telemetry linked this skill. Source evidence separately shows sessions that produced a Reflect-generated version.</p>
+              <div class="review-eyebrow" style="margin:16px 0 8px">Observed Uses</div>
+              ${usageSessionRows}
+              <div class="review-eyebrow" style="margin:18px 0 8px">Source Evidence</div>
+              <div class="session-ledger">${evidenceRows || '<div class="session-ledger-empty">This imported skill was not generated from Reflect source sessions.</div>'}</div>
+              ${sessionEvidence.length > 20 ? `<div class="ledger-status">Showing 20 of ${fmt(sessionEvidence.length)} source sessions.</div>` : ''}
+            </section>
+            <section class="review-panel"><div class="review-panel-head"><h3 class="review-panel-title">Measurements</h3><span class="ledger-pill">${fmt(measurements.length)} results</span></div><div class="evidence-list">${measurementRows || '<div class="session-ledger-empty">No before/after measurement is available yet.</div>'}</div></section>
+          </aside>
+        </div>`,
+      actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div>${workflowCandidateId ? `<button type="button" class="ledger-button primary" data-ledger-action="review-workflow" data-candidate-id="${escHtml(workflowCandidateId)}">Review Source Workflow</button>` : ''}`,
+    });
+  } catch (error) {
+    openLedgerDialog({title:'Skill history unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`});
+  }
+}
+
+async function showWorkflowReview(candidateId, requestedRoot = ''){
+  openLedgerDialog({title:'Preparing workflow review…'});
+  try {
+    const candidate = (IMPROVEMENT_DATA.workflows || []).find(item => item.id === candidateId);
+    if (!candidate) throw new Error('Workflow candidate is no longer available.');
+    const previewUrl = new URL(`/api/workflows/${encodeURIComponent(candidateId)}/preview`, window.location.origin);
+    if (requestedRoot) previewUrl.searchParams.set('project_root', requestedRoot);
+    const [preview, ledger] = await Promise.all([
+      ledgerRequest(previewUrl.pathname + previewUrl.search),
+      ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/sessions`),
+    ]);
+    updateUrlParams(params => {
+      params.delete('loop');
+      params.delete('skill');
+      params.set('workflow', candidateId);
+      if (preview.project_root) params.set('workflow_root', preview.project_root);
+    });
+    const active = candidate.status === 'active';
+    const reviewable = !['rejected','stale','rolled_back'].includes(candidate.status);
+    const applyAllowed = Boolean(preview.checks?.apply_allowed);
+    const reviewActions = active
+      ? `<button type="button" class="ledger-button danger" data-ledger-action="rollback" data-candidate-id="${escHtml(candidateId)}">Roll Back</button>`
+      : !reviewable
+        ? ''
+        : `<button type="button" class="ledger-button" data-ledger-action="save-edit" data-candidate-id="${escHtml(candidateId)}">Save Draft</button><button type="button" class="ledger-button danger" data-ledger-action="reject" data-candidate-id="${escHtml(candidateId)}">Reject</button><button type="button" class="ledger-button primary" data-ledger-action="apply" data-candidate-id="${escHtml(candidateId)}" ${applyAllowed ? '' : 'disabled'}>${applyAllowed ? 'Approve &amp; Package as Skill' : 'Choose Git Repository'}</button>`;
+    const content = candidate.content || {};
+    const suggestions = (preview.suggested_project_roots || []).map(item => `<option value="${escHtml(item.path)}">${fmt(Number(item.source_sessions || 0))} source sessions${item.is_repository ? ' · repository' : ''}</option>`).join('');
+    const issues = preview.checks?.issues || [];
+    const checkClass = applyAllowed ? 'review-check' : 'review-check blocked';
+    const checkCopy = applyAllowed
+      ? `Git repository validated. Apply will ${preview.change_kind === 'create' ? 'create' : preview.change_kind === 'update' ? 'update' : 'keep'} ${preview.target_relative_path || 'the repo-local skill file'}.`
+      : issues.join(' ') || 'Choose a Git repository before applying.';
+    const advisories = preview.checks?.advisories || [];
+    const targetOwner = preview.checks?.target_owner;
+    const evidenceVariantNotice = Number(candidate.variant_count || 1) > 1
+      ? `<div class="review-warning">${fmt(Number(candidate.variant_count || 1))} evidence-specific findings are aggregated into this one workflow proposal. Source sessions below combine those findings.</div>`
+      : '';
+    const ownerNotice = targetOwner
+      ? `<div class="review-warning">Active target owner: ${escHtml(targetOwner.title || targetOwner.candidate_id)}. This is ownership recorded by Reflect for safe rollback, not a Git or filesystem lock.</div>`
+      : '';
+    const advisoryNotice = advisories.map(item => `<div class="review-warning">${escHtml(item)}</div>`).join('');
+    const sourceSessions = renderWorkflowSessionLedger(ledger.source_sessions, {
+      empty:'No source sessions are linked to this workflow.',
+      total:ledger.source_session_count,
+      initial:3,
+    });
+    const exposureSessions = renderWorkflowSessionLedger(ledger.exposure_sessions, {
+      empty:'No sessions have been exposed to this workflow yet. Exposure begins after approval and application.',
+      total:ledger.exposure_session_count,
+      initial:3,
+    });
+    const projectRoot = String(preview.project_root || '').replace(/\/$/, '');
+    const targetPath = String(preview.target_path || '');
+    const targetFile = projectRoot && targetPath.startsWith(`${projectRoot}/`)
+      ? targetPath.slice(projectRoot.length + 1)
+      : targetPath;
+    const reviewTitle = humanizeLedgerLabel(content.slug || candidate.title || candidate.id);
+    const targetMetric = humanizeLedgerLabel(candidate.target_metric || 'Unavailable');
+    const behaviorType = humanizeLedgerLabel(content.behavior_type || 'proven_pattern');
+    const sourceRule = content.source?.rule_id || candidate.provenance?.source || 'manual';
+    const origin = workflowSourcePresentation(content, candidate.provenance || {});
+    const sourceMarkdown = String(content.source_markdown || '').trim();
+    const proposedWorkflow = sourceMarkdown
+      ? `<pre class="ledger-diff">${escHtml(sourceMarkdown)}</pre>`
+      : `<ol class="workflow-readable">${(content.steps || []).map(step => `<li>${escHtml(step)}</li>`).join('') || '<li>No workflow steps are defined.</li>'}</ol>`;
+    const proposedSize = sourceMarkdown ? 'SKILL.md draft' : `${fmt((content.steps || []).length)} steps`;
+    ledgerDialog.dataset.projectRoot = preview.project_root || '';
+    ledgerDialog.dataset.targetPath = preview.target_path || '';
+    openLedgerDialog({
+      title:reviewTitle,
+      subtitle:`${origin.label} · ${behaviorType} · ${humanizeLedgerLabel(candidate.status)} · Rule ${humanizeLedgerLabel(sourceRule)}`,
+      body:`<div class="review-lead">
+          <div class="review-eyebrow">Decision Brief</div>
+          <p>${escHtml(humanizeLedgerText(candidate.hypothesis || 'Review the linked evidence and proposed workflow before applying it.'))}</p>
+          <p class="review-panel-copy">${escHtml(origin.detail)}</p>
+        </div>
+        <div class="review-kpi-strip">
+          <div class="review-kpi"><div class="review-kpi-label">Behavior</div><div class="review-kpi-value signal">${escHtml(behaviorType)}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">Target Metric</div><div class="review-kpi-value">${escHtml(targetMetric)}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">Supporting Sessions</div><div class="review-kpi-value">${fmt(Number(candidate.support_count || 0))}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">After Activation</div><div class="review-kpi-value">${active ? `${fmt(Number(ledger.exposure_session_count || 0))} sessions` : 'Not active'}</div></div>
+        </div>
+        <div class="review-grid">
+          <main class="review-stack">
+            <section class="review-panel">
+              <div class="review-panel-head"><h3 class="review-panel-title">Package as Repo-local Skill</h3><span class="ledger-pill">${escHtml(humanizeLedgerLabel(preview.change_kind || 'change'))}</span></div>
+              <p class="review-panel-copy">The workflow stays the reviewed procedure. This delivery target chooses where Reflect will render its current skill package; it does not change the source evidence.</p>
+              <div class="workflow-target">
+                <label for="workflow-project-root">Git Repository Root</label>
+                <div class="workflow-target-row"><input class="workflow-target-input" id="workflow-project-root" name="workflow-project-root" value="${escHtml(preview.project_root || '')}" list="workflow-project-root-options" autocomplete="off" spellcheck="false"><button type="button" class="ledger-button" data-ledger-action="review-target" data-candidate-id="${escHtml(candidateId)}">Check Repository</button></div>
+                <datalist id="workflow-project-root-options">${suggestions}</datalist>
+                <div class="workflow-target-file" title="${escHtml(preview.target_path || '')}" translate="no">${escHtml(targetFile || 'Target file unavailable')}</div>
+              </div>
+              <div class="${checkClass}" aria-live="polite">${escHtml(checkCopy)}</div>${advisoryNotice}${evidenceVariantNotice}${ownerNotice}
+            </section>
+            <section class="review-panel review-section">
+              <div class="review-panel-head"><h3 class="review-panel-title">${escHtml(origin.sectionLabel)}</h3><span class="ledger-pill signal">${escHtml(proposedSize)}</span></div>
+              ${proposedWorkflow}
+            </section>
+            <div class="workflow-support-grid">
+              <section class="review-panel review-section"><h3>Stop Conditions</h3><ul class="workflow-readable">${(content.abstain_when || []).map(item => `<li>${escHtml(item)}</li>`).join('') || '<li>No stop conditions are defined.</li>'}</ul></section>
+              <section class="review-panel review-section"><h3>Verification</h3><ul class="workflow-readable">${(content.verification || []).map(item => `<li>${escHtml(item)}</li>`).join('') || '<li>No verification steps are defined.</li>'}</ul></section>
+            </div>
+            <details class="advanced-review"><summary>Exact File Diff</summary><pre class="ledger-diff">${escHtml(preview.diff || 'No filesystem change; rendered content already matches.')}</pre></details>
+            <details class="advanced-review"><summary>Edit Structured Workflow</summary><label class="review-summary-label" for="workflow-content-editor">Workflow JSON</label><textarea class="ledger-editor" id="workflow-content-editor" name="workflow-content" autocomplete="off" spellcheck="false" ${active ? 'readonly' : ''}>${escHtml(JSON.stringify(content, null, 2))}</textarea></details>
+          </main>
+          <aside class="review-stack">
+            <section class="review-panel">
+              <div class="review-panel-head"><h3 class="review-panel-title">Source Evidence</h3><span class="ledger-pill signal">${fmt(Number(ledger.source_session_count || 0))} examples</span></div>
+              <p class="review-panel-copy">Representative sessions behind this proposal. ${fmt(Number(candidate.support_count || 0))} sessions support the aggregate finding.</p>
+              ${sourceSessions}
+            </section>
+            <section class="review-panel">
+              <div class="review-panel-head"><h3 class="review-panel-title">After Activation</h3><span class="ledger-pill">${fmt(Number(ledger.exposure_session_count || 0))} sessions</span></div>
+              <p class="review-panel-copy">Sessions where Reflect observed this workflow after it was applied.</p>
+              ${exposureSessions}
+            </section>
+          </aside>
+        </div>`,
+      actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div>${reviewActions}`,
+    });
+  } catch (error) {
+    openLedgerDialog({title:'Workflow review unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`});
+  }
+}
+
+async function submitSessionFeedback(sessionId, outcome, button){
+  const reason = ['bad','corrected'].includes(outcome)
+    ? window.prompt('Optional local reason (avoid secrets or sensitive source content):', '')
+    : null;
+  if (reason === null && ['bad','corrected'].includes(outcome)) return;
+  button.disabled = true;
+  try {
+    await ledgerRequest(`/api/feedback/${encodeURIComponent(sessionId)}`, {
+      method:'POST',
+      body:{outcome, ...(reason ? {reason} : {})},
+    });
+    const status = button.closest('.feedback-row')?.querySelector('[data-feedback-status]');
+    if (status) status.textContent = `Recorded: ${outcome.replaceAll('-',' ')}`;
+  } catch (error) {
+    window.alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+document.addEventListener('click', async event => {
+  const trigger = event.target.closest('[data-ledger-action]');
+  if (!trigger) return;
+  const action = trigger.dataset.ledgerAction;
+  const candidateId = trigger.dataset.candidateId || '';
+  if (action === 'close') return closeLedgerDialog();
+  if (action === 'evidence') return showObservationEvidence(trigger.dataset.observationId || '');
+  if (action === 'review-loop') return showLoopReview(trigger.dataset.loopId || '');
+  if (action === 'review-skill') return showSkillReview(trigger.dataset.skillId || '');
+  if (action === 'review-workflow') return showWorkflowReview(candidateId);
+  if (action === 'review-target') {
+    const root = document.getElementById('workflow-project-root')?.value || '';
+    return showWorkflowReview(candidateId, root);
+  }
+  if (action === 'open-session') {
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', 'sessions');
+    url.searchParams.set('session', trigger.dataset.sessionId || '');
+    if (trigger.dataset.evidenceId) url.searchParams.set('evidence', trigger.dataset.evidenceId);
+    window.location.assign(url.toString());
+    return;
+  }
+  try {
+    if (action === 'save-edit') {
+      const content = JSON.parse(document.getElementById('workflow-content-editor')?.value || '{}');
+      await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}`, {method:'PUT', body:{content}});
+    } else if (action === 'apply') {
+      const projectRoot = document.getElementById('workflow-project-root')?.value || ledgerDialog.dataset.projectRoot || '';
+      const targetPath = ledgerDialog.dataset.targetPath || projectRoot;
+      if (!window.confirm(`Approve this workflow and package it as a skill at ${targetPath}?`)) return;
+      await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/apply`, {method:'POST', body:{project_root:projectRoot}});
+    } else if (action === 'reject') {
+      if (!window.confirm('Reject this workflow proposal?')) return;
+      await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/reject`, {method:'POST', body:{reason:'browser_review'}});
+    } else if (action === 'rollback') {
+      if (!window.confirm('Roll back the active workflow to its previous file state?')) return;
+      await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/rollback`, {method:'POST'});
+    } else {
+      return;
+    }
+    closeLedgerDialog();
+    await refreshImprovementSurfaces();
+  } catch (error) {
+    window.alert(error.message);
+  }
+});
 
 function sqlTab(name){
   return ((D.sqlite && D.sqlite.tabs) || {})[name] || {};
@@ -3592,8 +4224,10 @@ function animateTabIndicator(){
 function activateTab(tabName, {updateUrl = true, focusButton = false} = {}){
   if (tabName === 'activity') tabName = 'overview';
   if (tabName === 'context') tabName = 'data';
-  const activeButton = document.querySelector(`.tab[data-tab="${tabName}"]`) || tabButtons[0];
-  const activeTab = activeButton.dataset.tab;
+  const requestedPanel = document.getElementById('tab-' + tabName) ? tabName : 'observations';
+  const topTab = ['tools','graphs','data'].includes(requestedPanel) ? 'overview' : requestedPanel;
+  const activeButton = document.querySelector(`.tab[data-tab="${topTab}"]`) || tabButtons[0];
+  const activeTab = requestedPanel;
   tabButtons.forEach(button => {
     const isActive = button === activeButton;
     button.classList.toggle('active', isActive);
@@ -3638,9 +4272,14 @@ tabButtons.forEach((button, index) => {
     activateTab(nextButton.dataset.tab, {focusButton: true});
   });
 });
+document.querySelectorAll('[data-explore-tab]').forEach(button => {
+  button.addEventListener('click', () => activateTab(button.dataset.exploreTab || 'overview'));
+});
 window.addEventListener('resize', () => updateTabIndicator(document.querySelector('.tab.active')));
 
-activateTab(currentParams().get('tab') || 'sessions', {updateUrl: false});
+const requestedInitialTab = currentParams().get('tab');
+const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length ? 'observations' : 'sessions';
+activateTab(requestedInitialTab || defaultProductTab, {updateUrl: false});
 
 /* ── Header ── */
 document.getElementById('hdr-range').textContent = D.first_event_ts + ' — ' + D.last_event_ts;
@@ -4049,7 +4688,13 @@ document.getElementById('hdr-ts').textContent = 'Refreshed ' + new Date().toLoca
         ? 'Token counts are estimated from Cursor transcript text because exact per-session usage is not present in local telemetry.'
         : 'Token counts are estimated from the available Cursor transcript preview because exact per-session usage is not present in local telemetry. Load the full transcript to refine this estimate.')
       : (session.token_note || '');
-    const activeDetailTab = session._detailTab || 'conversation';
+    const linkedEvidenceId = currentParams().get('evidence') || '';
+    if (linkedEvidenceId && !session._linkedEvidenceInitialized) {
+      session._linkedEvidenceInitialized = true;
+      session._detailTab = 'evidence';
+      session._telemetryFocusId = linkedEvidenceId;
+    }
+    const activeDetailTab = session._detailTab || 'summary';
 
     let headerHtml = `<div class="sb-detail-header">
       <div class="sb-detail-header-row">
@@ -4066,6 +4711,14 @@ document.getElementById('hdr-ts').textContent = 'Refreshed ' + new Date().toLoca
         <span title="Cost basis: ${escHtml(session.pricing_source || D.pricing_source || 'unknown')}">Cost: <strong>${fmtCost(sessionCost)} ${escHtml(sessionUnit)}</strong></span>
         ${session.failure_count > 0 ? `<span style="color:var(--red)">Failures: <strong>${session.failure_count}</strong></span>` : ''}
       </div>
+      <div class="feedback-row" aria-label="Record session outcome">
+        <span class="feedback-label">Outcome</span>
+        <button type="button" class="ledger-button" data-session-feedback="good">Good</button>
+        <button type="button" class="ledger-button" data-session-feedback="bad">Bad</button>
+        <button type="button" class="ledger-button" data-session-feedback="no-change-correct">No change was correct</button>
+        <button type="button" class="ledger-button" data-session-feedback="corrected">Corrected</button>
+        <span class="inbox-copy" data-feedback-status></span>
+      </div>
       ${tokenNote ? `<div class="sb-detail-model" style="margin-top:8px">${escHtml(tokenNote)}</div>` : ''}
     </div>`;
 
@@ -4078,19 +4731,22 @@ document.getElementById('hdr-ts').textContent = 'Refreshed ' + new Date().toLoca
     const timelineHtml = renderConversationThread(session, conversation, sessionStartTs, isActivityType);
 
     const detailTabsHtml = `<div class="sb-detail-tabs">
+      <button type="button" class="sb-detail-tab${activeDetailTab === 'summary' ? ' active' : ''}" data-tab="summary">Summary</button>
       <button type="button" class="sb-detail-tab${activeDetailTab === 'conversation' ? ' active' : ''}" data-tab="conversation">Conversation</button>
-      <button type="button" class="sb-detail-tab${activeDetailTab === 'tools' ? ' active' : ''}" data-tab="tools">Tools</button>
-      <button type="button" class="sb-detail-tab${activeDetailTab === 'quality' ? ' active' : ''}" data-tab="quality">Quality</button>
-      <button type="button" class="sb-detail-tab${activeDetailTab === 'telemetry' ? ' active' : ''}" data-tab="telemetry">Telemetry</button>
+      <button type="button" class="sb-detail-tab${activeDetailTab === 'execution' ? ' active' : ''}" data-tab="execution">Execution</button>
+      <button type="button" class="sb-detail-tab${activeDetailTab === 'changes' ? ' active' : ''}" data-tab="changes">Changes</button>
+      <button type="button" class="sb-detail-tab${activeDetailTab === 'evidence' ? ' active' : ''}" data-tab="evidence">Evidence</button>
     </div>`;
     const sessionTimelineHtml = renderSessionTimelinePanel(session, conversation);
-    const bodyHtml = activeDetailTab === 'telemetry'
+    const bodyHtml = activeDetailTab === 'evidence'
       ? renderTelemetryCockpit(session)
-      : activeDetailTab === 'quality'
+      : activeDetailTab === 'summary'
         ? renderQualityPanel(session)
-        : activeDetailTab === 'tools'
+        : activeDetailTab === 'execution'
           ? renderSessionToolsPanel(session)
-          : renderConversationCasefile(session, conversation, loadBtnHtml, timelineHtml);
+          : activeDetailTab === 'changes'
+            ? renderSessionChangesPanel(session)
+            : renderConversationCasefile(session, conversation, loadBtnHtml, timelineHtml);
 
     detailEl.innerHTML = headerHtml
       + sessionTimelineHtml
@@ -4099,12 +4755,20 @@ document.getElementById('hdr-ts').textContent = 'Refreshed ' + new Date().toLoca
 
     detailEl.querySelectorAll('.sb-detail-tab').forEach(tab => {
       tab.addEventListener('click', () => {
-        session._detailTab = tab.dataset.tab || 'conversation';
+        session._detailTab = tab.dataset.tab || 'summary';
         renderSessionDetail(session);
-        if ((session._detailTab === 'telemetry' || session._detailTab === 'tools') && session.full_id && !session._fullLoaded && !session._loadingDetail) {
+        if ((session._detailTab === 'evidence' || session._detailTab === 'execution' || session._detailTab === 'changes') && session.full_id && !session._fullLoaded && !session._loadingDetail) {
           tryLoadFullDetail(session.full_id || session.id, null);
         }
       });
+    });
+
+    detailEl.querySelectorAll('[data-session-feedback]').forEach(button => {
+      button.addEventListener('click', () => submitSessionFeedback(
+        session.full_id || session.id,
+        button.dataset.sessionFeedback || '',
+        button,
+      ));
     });
 
     // Expand/collapse previews
@@ -4513,6 +5177,28 @@ document.getElementById('hdr-ts').textContent = 'Refreshed ' + new Date().toLoca
         <table class="tool-inventory-table"><thead><tr><th>Server / tool</th><th style="text-align:right">Calls</th></tr></thead><tbody>${renderSimpleRows(inventory.mcp_tools)}</tbody></table>
       </section>
     </div>`;
+  }
+
+  function renderSessionChangesPanel(session){
+    const events = [...(session.conversation || []), ...(session.spans || [])];
+    const changes = events.filter(event => {
+      const name = String(event.tool_name || event.name || event.type || '').toLowerCase();
+      const attrs = event.attrs || {};
+      const path = attrs['gen_ai.client.file_path'] || attrs['gen_ai.client.tool.input.file_path'] || event.file_path || '';
+      return name.includes('write') || name.includes('edit') || name.includes('patch') || Boolean(path);
+    }).map(event => {
+      const attrs = event.attrs || {};
+      return {
+        action: event.tool_name || event.name || event.type || 'file event',
+        path: attrs['gen_ai.client.file_path'] || attrs['gen_ai.client.tool.input.file_path'] || event.file_path || 'path unavailable',
+        status: event.status || (event.success === false ? 'failed' : 'observed'),
+      };
+    });
+    const unique = Array.from(new Map(changes.map(item => [`${item.action}:${item.path}:${item.status}`, item])).values());
+    if (!unique.length) {
+      return `<div class="tool-inventory-shell"><section class="tool-inventory-section"><h4>Changes</h4><div style="color:var(--text-3)">No file-change evidence was captured for this session. This does not prove that no change occurred.</div></section></div>`;
+    }
+    return `<div class="tool-inventory-shell"><section class="tool-inventory-section"><h4>Observed changes</h4><table class="tool-inventory-table"><thead><tr><th>Action</th><th>Path</th><th>Status</th></tr></thead><tbody>${unique.slice(0,100).map(item => `<tr><td>${escHtml(String(item.action))}</td><td><code>${escHtml(String(item.path))}</code></td><td>${escHtml(String(item.status))}</td></tr>`).join('')}</tbody></table></section></div>`;
   }
 
   function renderConversationCasefile(session, conversation, loadBtnHtml, timelineHtml){
@@ -5716,58 +6402,164 @@ if (modelCostEl) {
     : `<div style="color:var(--text-3);padding:12px 0">No model cost data available. Run reflect doctor to inspect pricing status.</div>`;
 }
 
-/* Insights */
-/* Observations */
-(function buildObservationsTab(){
+/* Product operating surfaces */
+function buildImprovementSurfaces(){
+  const observations = IMPROVEMENT_DATA.observations || [];
+  const loops = IMPROVEMENT_DATA.loops || [];
+  const skills = IMPROVEMENT_DATA.skills || [];
+  const workflows = IMPROVEMENT_DATA.workflows || [];
+  const measurements = IMPROVEMENT_DATA.measurements || [];
+  const rules = IMPROVEMENT_DATA.rules || [];
+  const inboxCount = document.getElementById('inbox-count');
+  const loopCount = document.getElementById('loop-count');
+  const workflowCount = document.getElementById('workflow-count');
+  const skillCount = document.getElementById('skill-count');
+  const measurementCount = document.getElementById('measurement-count');
+  const findingTotal = Number(IMPROVEMENT_DATA.inbox_total_count ?? observations.length);
+  const skillTotal = Number(IMPROVEMENT_DATA.skill_total_count ?? skills.length);
+  if (inboxCount) inboxCount.firstChild.textContent = String(findingTotal + loops.length);
+  if (loopCount) loopCount.firstChild.textContent = String(loops.length);
+  if (workflowCount) workflowCount.firstChild.textContent = String(workflows.length);
+  if (skillCount) skillCount.firstChild.textContent = String(skillTotal);
+  if (measurementCount) measurementCount.firstChild.textContent = String(measurements.length);
+
+  const ruleCount = document.getElementById('rule-count');
+  const ruleGrid = document.getElementById('rule-grid');
+  if (ruleCount) ruleCount.textContent = `${fmt(rules.length)} deterministic rules · ${fmt(rules.reduce((sum, rule) => sum + Number(rule.open_observation_count || 0), 0))} open findings`;
+  if (ruleGrid) {
+    ruleGrid.innerHTML = rules.length ? rules.map(rule => {
+      const config = Object.entries(rule.detector_config || {}).map(([key,value]) => `${key.replaceAll('_',' ')}: ${Array.isArray(value) ? value.join(', ') : value}`).join(' · ');
+      return `<article class="rule-card">
+        <div class="inbox-card-head"><div class="inbox-title">${escHtml(rule.title || rule.id)}</div><span class="ledger-pill signal">${fmt(Number(rule.open_observation_count || 0))} open</span></div>
+        <div class="inbox-copy">${escHtml(rule.description || '')}</div>
+        <div class="ledger-meta"><span class="ledger-pill">${escHtml(rule.category || 'uncategorized')}</span><span class="ledger-pill">version ${fmt(Number(rule.version || 1))}</span><span class="ledger-pill">${escHtml(rule.lifecycle_state || 'active')}</span><span class="ledger-pill">${fmt(Number(rule.candidate_count || 0))} candidates</span></div>
+        ${config ? `<div class="rule-config">${escHtml(config)}</div>` : ''}
+      </article>`;
+    }).join('') + `<div class="rule-card"><div class="inbox-title">Adding Rules</div><div class="inbox-copy">Rules are deterministic, versioned objects—not free-form prompts. Extend <code translate="no">BaseImprovementRule</code>, build findings with its typed helpers, and add the instance through <code translate="no">RuleRegistry</code>. Built-ins are collected in <code translate="no">DEFAULT_RULE_REGISTRY</code>.</div></div>` : '<div class="session-ledger-empty">No rule definitions are available yet. Wait for preparation to finish, then refresh this page.</div>';
+  }
+
+  const inbox = document.getElementById('improvement-inbox');
+  if (inbox) {
+    inbox.innerHTML = observations.length ? observations.map(item => {
+      const proposedWorkflow = workflows.find(workflow => workflow.id === item.candidate_id);
+      const candidate = proposedWorkflow
+        ? `<div class="ledger-command">reflect workflows show ${escHtml(String(proposedWorkflow.id))}</div>`
+        : '';
+      return `<article class="inbox-card">
+        <div class="inbox-card-head">
+          <div><div class="inbox-title">${escHtml(String(item.title || 'Observation'))}</div><div class="inbox-copy">${escHtml(String(item.summary || ''))}</div></div>
+          <span class="ledger-pill signal">impact ${Math.round(Number(item.impact_score || 0))}</span>
+        </div>
+        <div class="ledger-meta">
+          <span class="ledger-pill">${escHtml(String(item.status || 'new').replaceAll('_',' '))}</span>
+          <span class="ledger-pill">${escHtml(String(item.severity || 'low'))} severity</span>
+          <span class="ledger-pill">${Math.round(Number(item.confidence || 0) * 100)}% confidence</span>
+          <span class="ledger-pill">${fmt(Number(item.affected_session_count || 0))} linked session(s)</span>
+          <span class="ledger-pill">${fmt(Number(item.observation_count || 1))} evidence pattern(s)</span>
+          <span class="ledger-pill">${fmt(Number(item.source_scope_count || 1))} scope(s)</span>
+        </div>${candidate}
+        <div class="ledger-actions"><button type="button" class="ledger-button" data-ledger-action="evidence" data-observation-id="${escHtml(String(item.id))}">View Source Sessions</button>${proposedWorkflow ? `<button type="button" class="ledger-button primary" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(proposedWorkflow.id))}">Review Proposed Workflow</button>` : ''}</div>
+      </article>`;
+    }).join('') : `<div class="panel"><div class="panel-title">Inbox clear</div><div class="inbox-copy">No actionable recurring finding is currently open. Review recent sessions or capture health in Explore while Reflect gathers more comparable evidence.</div></div>`;
+  }
+
+  const loopLedger = document.getElementById('loop-ledger');
+  if (loopLedger) {
+    loopLedger.innerHTML = loops.length ? loops.map(item => `<article class="workflow-card">
+      <div class="workflow-card-head"><div><div class="workflow-title">${escHtml(String(item.title || 'Observed loop'))}</div><div class="workflow-copy">${escHtml(String(item.summary || ''))}</div></div><span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(item.kind || 'stalled'))}</span></div>
+      <div class="ledger-meta"><span class="ledger-pill">${fmt(Number(item.affected_session_count || 0))} sessions</span><span class="ledger-pill">${fmt(Number(item.occurrence_count || 0))} occurrences</span><span class="ledger-pill">${fmt(Number(item.state_change_count || 0))} state changes</span><span class="ledger-pill">${Math.round(Number(item.confidence || 0)*100)}% confidence</span><span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.status || 'detected'))}</span></div>
+      <div class="ledger-command">reflect loops show ${escHtml(String(item.id))}</div>
+      <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-loop" data-loop-id="${escHtml(String(item.id))}">Review Loop Evidence</button></div>
+    </article>`).join('') : `<div class="session-ledger-empty">No repeated loop behavior is currently detected. Run <code>reflect loops</code> after more sessions are captured.</div>`;
+  }
+
+  const skillRegistry = document.getElementById('skill-registry');
+  if (skillRegistry) {
+    skillRegistry.innerHTML = skills.length ? skills.map(item => `<article class="workflow-card">
+      <div class="workflow-card-head"><div><div class="workflow-title">${escHtml(humanizeLedgerLabel(item.slug || item.name || 'Skill'))}</div><div class="workflow-copy">${escHtml(String(item.description || ''))}</div></div><span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(item.lifecycle_state || 'pending'))}</span></div>
+      <div class="ledger-meta"><span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.origin || 'imported'))}</span><span class="ledger-pill">version ${fmt(Number(item.current_version || 0))}</span><span class="ledger-pill">${fmt(Number(item.evidence_count || 0))} evidence</span><span class="ledger-pill">${fmt(Number(item.installation_count || 0))} installs</span><span class="ledger-pill">${fmt(Number(item.usage_count || 0))} uses</span><span class="ledger-pill">${fmt(Number(item.measurement_count || 0))} measurements</span></div>
+      <div class="ledger-command">reflect skills show ${escHtml(String(item.id))}</div>
+      <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-skill" data-skill-id="${escHtml(String(item.id))}">Inspect Versions &amp; Usage</button></div>
+    </article>`).join('') : `<div class="session-ledger-empty">No current skills are registered. Run <code>reflect skills</code> to reconcile installed skills or <code>reflect skills discover</code> to stage evidence-backed drafts.</div>`;
+  }
+
+  const workflowLedger = document.getElementById('workflow-ledger');
+  if (workflowLedger) {
+    const typeFilter = document.getElementById('workflow-type-filter');
+    const statusFilter = document.getElementById('workflow-status-filter');
+    const filterSummary = document.getElementById('workflow-filter-summary');
+    const workflowParams = currentParams();
+    if (typeFilter) typeFilter.value = workflowParams.get('workflow_type') || 'all';
+    if (statusFilter) statusFilter.value = workflowParams.get('workflow_status') || 'all';
+    const renderWorkflowLedger = () => {
+      const selectedType = typeFilter?.value || 'all';
+      const selectedStatus = statusFilter?.value || 'all';
+      const visible = workflows.filter(item => {
+        const behavior = String((item.content || {}).behavior_type || 'proven_pattern');
+        return (selectedType === 'all' || behavior === selectedType)
+          && (selectedStatus === 'all' || item.status === selectedStatus);
+      });
+      updateUrlParams(params => {
+        selectedType === 'all' ? params.delete('workflow_type') : params.set('workflow_type', selectedType);
+        selectedStatus === 'all' ? params.delete('workflow_status') : params.set('workflow_status', selectedStatus);
+      });
+      if (filterSummary) filterSummary.textContent = `Showing ${fmt(visible.length)} of ${fmt(workflows.length)} workflows`;
+      workflowLedger.innerHTML = visible.length ? visible.map(item => {
+        const content = item.content || {};
+        const steps = (content.steps || []).slice(0,4);
+        const slug = String(content.slug || item.id);
+        const sourceRule = content.source?.rule_id || item.provenance?.source || 'manual';
+        const behaviorType = String(content.behavior_type || 'proven_pattern');
+        const origin = workflowSourcePresentation(content, item.provenance || {});
+        const artifact = humanizeLedgerLabel(content.suggested_artifact || 'skill');
+        return `<article class="workflow-card">
+          <div class="workflow-card-head"><div><div class="workflow-title">${escHtml(humanizeLedgerLabel(slug))}</div><div class="workflow-copy">${escHtml(String(content.description || item.hypothesis || ''))}</div></div><span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(item.status || 'pending'))}</span></div>
+          <div class="ledger-meta"><span class="ledger-pill signal">${escHtml(origin.label)}</span><span class="ledger-pill">suggested ${escHtml(artifact)}</span><span class="ledger-pill">${escHtml(humanizeLedgerLabel(behaviorType))}</span><span class="ledger-pill">rule ${escHtml(humanizeLedgerLabel(sourceRule))}</span><span class="ledger-pill">${fmt(Number(item.support_count || 0))} sessions</span><span class="ledger-pill">${fmt(Number(item.supporting_observation_count || 1))} evidence patterns</span><span class="ledger-pill">${fmt((item.source_scopes || []).length)} scopes</span><span class="ledger-pill">${Math.round(Number(item.confidence || 0)*100)}% confidence</span></div>
+          ${steps.length ? `<ol class="workflow-copy">${steps.map(step => `<li>${escHtml(String(step))}</li>`).join('')}</ol>` : ''}
+          <div class="ledger-command">reflect workflows show ${escHtml(String(item.id))}</div>
+          <div class="ledger-actions"><button type="button" class="ledger-button${item.status === 'pending' ? ' primary' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.id))}">${item.status === 'active' ? 'Review Application' : escHtml(origin.reviewLabel)}</button></div>
+        </article>`;
+      }).join('') : `<div class="panel"><div class="panel-title">No workflows match these filters</div><div class="workflow-copy">Clear the behavior or state filter, run <code>reflect improve</code> for deterministic proposals, build one reviewed loop with <code>reflect loops build LOOP_ID</code>, or import an existing procedure with <code>reflect workflows add SKILL.md</code>.</div></div>`;
+    };
+    typeFilter?.addEventListener('change', renderWorkflowLedger);
+    statusFilter?.addEventListener('change', renderWorkflowLedger);
+    renderWorkflowLedger();
+  }
+
+  const measurementLedger = document.getElementById('measurement-ledger');
+  if (measurementLedger) {
+    measurementLedger.innerHTML = measurements.length ? measurements.map(item => `<article class="measurement-card">
+      <div class="measurement-card-head"><div><div class="measurement-title">${escHtml(String(item.metric_name || 'Measurement'))}</div><div class="measurement-copy">${escHtml(String(item.verdict || 'insufficient_data').replaceAll('_',' '))}</div></div><span class="ledger-pill signal">${Math.round(Number(item.confidence || 0)*100)}% confidence</span></div>
+      <div class="ledger-meta"><span class="ledger-pill">before ${item.before_value == null ? '--' : Number(item.before_value).toFixed(2)} (${fmt(Number(item.before_count || 0))})</span><span class="ledger-pill">after ${item.after_value == null ? '--' : Number(item.after_value).toFixed(2)} (${fmt(Number(item.after_count || 0))})</span><span class="ledger-pill">delta ${item.delta == null ? '--' : Number(item.delta).toFixed(2)}</span></div>
+      ${item.verdict === 'regressed' ? `<div class="ledger-actions"><button type="button" class="ledger-button danger" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.candidate_id))}">Review regression &amp; rollback</button></div>` : ''}
+    </article>`).join('') : `<div class="panel"><div class="panel-title">Waiting for post-application evidence</div><div class="measurement-copy">Apply a reviewed workflow, then gather at least five comparable sessions for a directional result. Ten or more sessions raises confidence.</div></div>`;
+  }
+
+  const linkedWorkflow = currentParams().get('workflow') || '';
+  if (linkedWorkflow && !window._linkedWorkflowInitialized && workflows.some(item => item.id === linkedWorkflow)) {
+    window._linkedWorkflowInitialized = true;
+    queueMicrotask(() => showWorkflowReview(linkedWorkflow, currentParams().get('workflow_root') || ''));
+  }
+  const linkedLoop = currentParams().get('loop') || '';
+  if (!linkedWorkflow && linkedLoop && !window._linkedLoopInitialized && loops.some(item => item.id === linkedLoop)) {
+    window._linkedLoopInitialized = true;
+    queueMicrotask(() => showLoopReview(linkedLoop));
+  }
+  const linkedSkill = currentParams().get('skill') || '';
+  if (!linkedWorkflow && !linkedLoop && linkedSkill && !window._linkedSkillInitialized && skills.some(item => item.id === linkedSkill)) {
+    window._linkedSkillInitialized = true;
+    queueMicrotask(() => showSkillReview(linkedSkill));
+  }
+}
+buildImprovementSurfaces();
+
+/* Explore achievements */
+(function buildAchievements(){
   const obsTab = sqlTab('observations');
-  const strengths = obsTab.strengths || D.strengths || [];
-  const observations = obsTab.observations || D.observations || [];
-  const recommendations = obsTab.recommendations || D.recommendations || [];
-  const examples = obsTab.practical_examples || D.practical_examples || [];
   const achievements = obsTab.achievements || D.achievements || [];
-  const economy = obsTab.token_economy || D.token_economy || {};
-  const cacheSummary = Number(economy.cache_reuse_ratio || 0) > 1
-    ? `${Number(economy.cache_reuse_ratio || 0).toFixed(1)}x cached reuse`
-    : `${Number(economy.cache_hit_pct || 0).toFixed(1)}% effective hit rate`;
-
-  const heroCards = [
-    {
-      kicker: 'Token economy',
-      value: fmtTokenShort((D.total_input_tokens || 0) + (D.total_output_tokens || 0)),
-      copy: `One session drives ${Number(economy.top_session_share || 0).toFixed(1)}% of observed token volume. ${economy.high_context_sessions || 0} session(s) already look context-heavy.`
-    },
-    {
-      kicker: 'Execution profile',
-      value: `${Number(D.tool_to_prompt_ratio || 0).toFixed(1)}:1`,
-      copy: `${fmt(D.tool_calls || 0)} tool calls, ${fmt(D.tool_failures || 0)} failures, ${fmt(D.subagent_launches || 0)} subagents. This is your real planning-vs-execution fingerprint.`
-    },
-    {
-      kicker: 'Context pressure',
-      value: fmtTokenShort(economy.avg_input_per_prompt || 0),
-      copy: `Average input tokens per prompt. Cache signal is ${cacheSummary}, with ${Number(economy.reads_per_prompt || 0).toFixed(1)} file reads per prompt and ${Number(economy.mcp_per_prompt || 0).toFixed(1)} MCP calls per prompt.`
-    }
-  ];
-
-  document.getElementById('obs-hero-grid').innerHTML = heroCards.map(card => `
-    <div class="obs-hero">
-      <div class="obs-hero-kicker">${card.kicker}</div>
-      <div class="obs-hero-value">${card.value}</div>
-      <div class="obs-hero-copy">${escHtml(card.copy)}</div>
-    </div>
-  `).join('');
-
-  const signalItems = [
-    ...strengths.slice(0, 5).map(text => ({tone:'strength', label:'Strength', text})),
-    ...observations.slice(0, 7).map(text => ({tone:'observation', label:'Observation', text}))
-  ];
-  document.getElementById('obs-signals').innerHTML = signalItems.map(item => `
-    <div class="obs-item" data-tone="${item.tone}">
-      <div class="obs-item-label">${item.label}</div>
-      <div class="obs-item-body">${fmtNarrative(item.text)}</div>
-    </div>
-  `).join('');
-
-  document.getElementById('obs-badges').innerHTML = achievements.map(b => `
+  const badgeGrid = document.getElementById('obs-badges');
+  if (!badgeGrid) return;
+  badgeGrid.innerHTML = achievements.map(b => `
     <div class="badge">
       <span class="badge-icon">${b.icon}</span>
       <div>
@@ -5777,73 +6569,6 @@ if (modelCostEl) {
     </div>
   `).join('');
 
-  const playbook = [
-    {
-      title: 'Choose the right model for the job',
-      tag: Number(economy.heavy_model_share || 0) >= 50 ? 'Premium-heavy' : 'Balanced',
-      copy: Number(economy.heavy_model_share || 0) >= 50
-        ? `Heavy models drive ${Number(economy.heavy_model_share || 0).toFixed(1)}% of model events. Keep that for planning, architecture, or multi-repo analysis — not repetitive implementation loops.`
-        : `Premium model share is ${Number(economy.heavy_model_share || 0).toFixed(1)}%, which suggests heavier models are being used selectively rather than everywhere.`
-    },
-    {
-      title: 'Plan heavy, execute balanced',
-      tag: 'Mode mix',
-      copy: 'The token-economy playbook is consistent: spend more on design, narrowing, and hard analysis — then reset context and implement with a cheaper balanced model.'
-    },
-    {
-      title: 'Split tasks before context snowballs',
-      tag: Number(economy.high_context_sessions || 0) > 0 ? 'Needed' : 'Healthy',
-      copy: Number(economy.high_context_sessions || 0) > 0
-        ? `${economy.high_context_sessions} session(s) already look context-heavy. Break work into user stories and stop carrying the whole history forward.`
-        : 'Large runaway contexts are not dominating yet. Keep shipping in milestones so context accumulation stays under control.'
-    },
-    {
-      title: 'Compact or clear context between milestones',
-      tag: Number(economy.top_session_share || 0) >= 25 ? 'High ROI' : 'Routine',
-      copy: Number(economy.top_session_share || 0) >= 25
-        ? `A single session owns ${Number(economy.top_session_share || 0).toFixed(1)}% of token volume. That is the classic signal to summarize, compact, or restart between milestones.`
-        : 'Even without a giant outlier session, periodic summarization keeps context clean and improves cache reuse.'
-    },
-    {
-      title: 'Keep context hygiene strict',
-      tag: Number(economy.reads_per_prompt || 0) >= 3 || Number(economy.mcp_per_prompt || 0) >= 0.5 ? 'Pressure' : 'Controlled',
-      copy: `You are averaging ${Number(economy.reads_per_prompt || 0).toFixed(1)} file reads/prompt and ${Number(economy.mcp_per_prompt || 0).toFixed(1)} MCP calls/prompt. MCP/tool descriptions and broad repo scans quietly inflate spend before implementation starts.`
-    },
-    {
-      title: 'Use skills, tools, and subagents deliberately',
-      tag: D.subagent_launches > 0 ? 'Active' : 'Available',
-      copy: D.subagent_launches > 0
-        ? `${fmt(D.subagent_launches)} subagent launches already help contain main-context bloat. Pair that with scoped tests and precise file pinning to reduce waste further.`
-        : 'Subagents, skills, and focused tooling are one of the cleanest ways to prevent huge logs, tool responses, and exploratory reads from bloating the main session.'
-    }
-  ];
-
-  document.getElementById('obs-playbook').innerHTML = playbook.map(card => `
-    <div class="obs-playbook-card">
-      <div class="obs-playbook-top">
-        <div class="obs-playbook-title">${escHtml(card.title)}</div>
-        <div class="obs-playbook-tag">${escHtml(card.tag)}</div>
-      </div>
-      <div class="obs-playbook-copy">${escHtml(card.copy)}</div>
-    </div>
-  `).join('');
-
-  document.getElementById('obs-examples').innerHTML = examples.slice(0, 6).map(example => `
-    <div class="obs-example-card">
-      <div class="obs-example-title">${escHtml(example[0] || '')}</div>
-      <div class="obs-example-label">Instead of</div>
-      <div class="obs-example-box">${escHtml(example[1] || '')}</div>
-      <div class="obs-example-label" style="margin-top:12px">Try</div>
-      <div class="obs-example-box">${escHtml(example[2] || '')}</div>
-    </div>
-  `).join('');
-
-  document.getElementById('obs-next-moves').innerHTML = recommendations.map(text => `
-    <div class="obs-item" data-tone="recommendation">
-      <div class="obs-item-label">Recommendation</div>
-      <div class="obs-item-body">${fmtNarrative(text)}</div>
-    </div>
-  `).join('');
 })();
 
 /* ════════════════════ ACTIVITY ════════════════════ */
@@ -6660,32 +7385,33 @@ function initGraphs() {
 
 /* ── 3. Behavioral Memory Graph ── */
 (function buildSemanticGraph(){
-  const graph = sqlTab('graphs').graph_semantic || D.graph_semantic || { nodes: [], edges: [], sessions: [], legend: [] };
+  const initialGraph = sqlTab('graphs').graph_semantic || D.graph_semantic || { nodes: [], edges: [], sessions: [], legend: [] };
   const shell = document.getElementById('semantic-graph-shell');
   const svgEl = document.getElementById('semantic-graph-svg');
   const filter = document.getElementById('semantic-session-filter');
+  const mode = document.getElementById('semantic-graph-mode');
+  const context = document.getElementById('semantic-graph-context');
   const legend = document.getElementById('semantic-graph-legend');
   const tip = document.getElementById('semantic-graph-tip');
-  if (!shell || !svgEl || !filter || !legend || !tip) return;
-  if (!graph.nodes.length) {
+  if (!shell || !svgEl || !filter || !mode || !context || !legend || !tip) return;
+  if (!initialGraph.nodes.length) {
     shell.outerHTML = '<div class="semantic-graph-empty">No semantic graph rows found. Run reflect, then use reflect memory sync . to add local folder memories.</div>';
     filter.innerHTML = '<option value="">All sessions</option>';
+    mode.disabled = true;
     legend.innerHTML = '';
     return;
   }
 
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-  const allNodes = graph.nodes.map(node => ({...node}));
-  const allEdges = graph.edges.map(edge => ({...edge}));
-  const nodeById = new Map(allNodes.map(node => [node.id, node]));
-  const adjacency = new Map();
-  for (const edge of allEdges) {
-    if (!adjacency.has(edge.source)) adjacency.set(edge.source, []);
-    if (!adjacency.has(edge.target)) adjacency.set(edge.target, []);
-    adjacency.get(edge.source).push(edge);
-    adjacency.get(edge.target).push(edge);
-  }
+  let allNodes = [];
+  let allEdges = [];
+  let nodeById = new Map();
+  let adjacency = new Map();
+  const knownSessions = new Set(initialGraph.sessions || []);
   const edgeColor = {
+    ran_in_workspace: 'rgba(242,138,26,.58)',
+    ran_session: 'rgba(255,177,86,.42)',
+    spawned_session: 'rgba(255,209,102,.48)',
     touched_folder: 'rgba(100,199,161,.34)',
     contains_touched_path: 'rgba(149,213,178,.26)',
     touched_path: 'rgba(149,213,178,.24)',
@@ -6695,23 +7421,80 @@ function initGraphs() {
     achieved_outcome: 'rgba(255,107,107,.38)',
   };
 
-  filter.innerHTML = ['<option value="">All sessions</option>', ...(graph.sessions || []).map(session => `<option value="${esc(session)}">${esc(session)}</option>`)].join('');
-  legend.innerHTML = (graph.legend || []).map(item =>
-    `<div class="graph-legend-item"><div class="graph-legend-dot" style="background:${esc(item.color)}"></div>${esc(item.kind)}</div>`
-  ).join('');
+  function sessionAgentName(sessionId) {
+    const sessionNode = allNodes.find(node => node.kind === 'Session' && node.session_id === sessionId);
+    if (!sessionNode) return '';
+    for (const edge of adjacency.get(sessionNode.id) || []) {
+      if (edge.kind !== 'ran_session') continue;
+      const neighbor = nodeById.get(edge.source === sessionNode.id ? edge.target : edge.source);
+      if (neighbor?.kind === 'Agent') return String(neighbor.label || '');
+    }
+    return '';
+  }
 
-  function visibleIdsForSession(sessionId) {
-    if (!sessionId) return new Set(allNodes.map(node => node.id));
+  function syncSessionOptions(selectedSession = '') {
+    const options = [...knownSessions].sort().map(session => {
+      const agent = sessionAgentName(session);
+      const label = agent ? `${agent} · ${session}` : session;
+      return `<option value="${esc(session)}">${esc(label)}</option>`;
+    });
+    filter.innerHTML = ['<option value="">All sessions</option>', ...options].join('');
+    filter.value = knownSessions.has(selectedSession) ? selectedSession : '';
+  }
+
+  function useGraphData(nextGraph, selectedSession = '') {
+    allNodes = (nextGraph.nodes || []).map(node => ({...node}));
+    allEdges = (nextGraph.edges || []).map(edge => ({...edge}));
+    nodeById = new Map(allNodes.map(node => [node.id, node]));
+    adjacency = new Map();
+    for (const edge of allEdges) {
+      if (!adjacency.has(edge.source)) adjacency.set(edge.source, []);
+      if (!adjacency.has(edge.target)) adjacency.set(edge.target, []);
+      adjacency.get(edge.source).push(edge);
+      adjacency.get(edge.target).push(edge);
+    }
+    for (const session of nextGraph.sessions || []) knownSessions.add(session);
+    syncSessionOptions(selectedSession);
+    legend.innerHTML = (nextGraph.legend || []).map(item =>
+      `<div class="graph-legend-item"><div class="graph-legend-dot" style="background:${esc(item.color)}"></div>${esc(item.kind)}</div>`
+    ).join('');
+  }
+
+  useGraphData(initialGraph);
+
+  function workspaceSessionIds(sessionId) {
+    const sessionIds = new Set([sessionId]);
+    const sessionNodes = allNodes.filter(node => node.kind === 'Session' && node.session_id === sessionId);
+    const workspaceIds = new Set();
+    for (const sessionNode of sessionNodes) {
+      for (const edge of adjacency.get(sessionNode.id) || []) {
+        if (edge.kind !== 'ran_in_workspace') continue;
+        workspaceIds.add(edge.source === sessionNode.id ? edge.target : edge.source);
+      }
+    }
+    for (const workspaceId of workspaceIds) {
+      for (const edge of adjacency.get(workspaceId) || []) {
+        if (edge.kind !== 'ran_in_workspace') continue;
+        const neighborId = edge.source === workspaceId ? edge.target : edge.source;
+        const neighbor = nodeById.get(neighborId);
+        if (neighbor?.kind === 'Session' && neighbor.session_id) sessionIds.add(neighbor.session_id);
+      }
+    }
+    return sessionIds;
+  }
+
+  function visibleIdsForSessions(sessionIds) {
+    if (!sessionIds.size) return new Set(allNodes.map(node => node.id));
     const nodeIds = new Set();
     const frontier = [];
     for (const node of allNodes) {
-      if (node.session_id === sessionId) {
+      if (sessionIds.has(node.session_id)) {
         nodeIds.add(node.id);
         frontier.push(node.id);
       }
     }
     for (const edge of allEdges) {
-      if (edge.session_id === sessionId) {
+      if (sessionIds.has(edge.session_id)) {
         if (!nodeIds.has(edge.source)) frontier.push(edge.source);
         if (!nodeIds.has(edge.target)) frontier.push(edge.target);
         nodeIds.add(edge.source);
@@ -6721,7 +7504,7 @@ function initGraphs() {
     while (frontier.length) {
       const current = frontier.pop();
       for (const edge of adjacency.get(current) || []) {
-        if (edge.session_id && edge.session_id !== sessionId) continue;
+        if (edge.session_id && !sessionIds.has(edge.session_id)) continue;
         const neighbor = edge.source === current ? edge.target : edge.source;
         if (nodeIds.has(neighbor)) continue;
         nodeIds.add(neighbor);
@@ -6731,12 +7514,24 @@ function initGraphs() {
     return nodeIds;
   }
 
+  function agentSummary(sessionIds) {
+    const counts = new Map();
+    for (const sessionId of sessionIds) {
+      const agent = sessionAgentName(sessionId);
+      if (agent) counts.set(agent, (counts.get(agent) || 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([agent, count]) => `${agent} ${count}`)
+      .join(' · ');
+  }
+
   function nodeRadius(kind) {
-    return {Agent:12, Session:9, Repo:10, Folder:9, Path:5, Memory:10, Tool:9, ToolCall:5, MCPServer:10, Skill:11, Subagent:11, Outcome:12, Step:4}[kind] || 7;
+    return {Agent:12, Session:9, Workspace:11, Repo:10, Folder:9, Path:5, Memory:10, Tool:9, ToolCall:5, MCPServer:10, Skill:11, Subagent:11, Outcome:12, Step:4}[kind] || 7;
   }
 
   function nodeCharge(kind) {
-    return {Agent:-520, Session:-360, Repo:-420, Folder:-260, Path:-80, Memory:-300, Tool:-260, ToolCall:-70, MCPServer:-280, Skill:-340, Subagent:-340, Outcome:-360}[kind] || -160;
+    return {Agent:-520, Session:-360, Workspace:-460, Repo:-420, Folder:-260, Path:-80, Memory:-300, Tool:-260, ToolCall:-70, MCPServer:-280, Skill:-340, Subagent:-340, Outcome:-360}[kind] || -160;
   }
 
   function shortLabel(node) {
@@ -6751,6 +7546,8 @@ function initGraphs() {
     const rows = [
       ['kind', node.kind],
       ['session', node.session_id],
+      ['workspace', attrs.workspace_id],
+      ['relative path', attrs.relative_path],
       ['type', attrs.type || attrs.kind || attrs.tool_type],
       ['status', attrs.status],
       ['scope', attrs.scope],
@@ -6776,17 +7573,29 @@ function initGraphs() {
 
   let simulation = null;
   let activeSession = '';
+  let activeMode = 'workspace';
 
-  function render(sessionId) {
+  function render(sessionId, relationshipMode = activeMode) {
     activeSession = sessionId || '';
-    const selectedIds = visibleIdsForSession(activeSession);
+    activeMode = relationshipMode || 'workspace';
+    const focusedSessionIds = !activeSession
+      ? new Set()
+      : activeMode === 'workspace'
+        ? workspaceSessionIds(activeSession)
+        : new Set([activeSession]);
+    const selectedIds = visibleIdsForSessions(focusedSessionIds);
     const nodes = allNodes.filter(node => selectedIds.has(node.id));
     const visibleNodeIds = new Set(nodes.map(node => node.id));
     const links = allEdges
       .filter(edge => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target))
-      .filter(edge => !activeSession || !edge.session_id || edge.session_id === activeSession)
+      .filter(edge => !activeSession || !edge.session_id || focusedSessionIds.has(edge.session_id))
       .map(edge => ({...edge, source: nodeById.get(edge.source), target: nodeById.get(edge.target)}))
       .filter(edge => edge.source && edge.target);
+    context.textContent = !activeSession
+      ? 'All bounded graph relationships. Select a session to inspect its workspace peers.'
+      : activeMode === 'workspace'
+        ? `${focusedSessionIds.size} session(s) connected through the same canonical workspace${agentSummary(focusedSessionIds) ? ` · ${agentSummary(focusedSessionIds)}` : ''}.`
+        : 'Only relationships attributed to the selected session are shown.';
 
     const rect = shell.getBoundingClientRect();
     const W = Math.max(rect.width, 640);
@@ -6830,7 +7639,7 @@ function initGraphs() {
       .attr('r', d => nodeRadius(d.kind))
       .attr('fill', d => d.color || '#d7d1c6');
 
-    nodeSel.filter(d => ['Agent','Session','Repo','Folder','Skill','Subagent','Outcome','Memory'].includes(d.kind))
+    nodeSel.filter(d => ['Agent','Session','Workspace','Repo','Folder','Skill','Subagent','Outcome','Memory'].includes(d.kind))
       .append('text')
       .attr('x', d => nodeRadius(d.kind) + 5)
       .attr('y', 4)
@@ -6859,7 +7668,7 @@ function initGraphs() {
       .force('center', d3.forceCenter(W / 2, H / 2))
       .force('collide', d3.forceCollide().radius(d => nodeRadius(d.kind) + 8).iterations(2))
       .force('x', d3.forceX(d => {
-        const lanes = {Agent:.12, Session:.23, Repo:.34, Folder:.42, Path:.50, Memory:.58, Tool:.66, ToolCall:.72, MCPServer:.78, Skill:.84, Subagent:.90, Outcome:.94};
+        const lanes = {Agent:.09, Session:.19, Workspace:.29, Repo:.37, Folder:.44, Path:.51, Memory:.58, Tool:.66, ToolCall:.72, MCPServer:.78, Skill:.84, Subagent:.90, Outcome:.94};
         return W * (lanes[d.kind] || .5);
       }).strength(.045))
       .force('y', d3.forceY(H / 2).strength(.035))
@@ -6882,8 +7691,37 @@ function initGraphs() {
     }, 380);
   }
 
-  filter.addEventListener('change', event => render(event.target.value));
-  window.addEventListener('resize', () => render(activeSession));
+  let workspaceRequest = 0;
+  filter.addEventListener('change', async event => {
+    const selectedSession = event.target.value;
+    const requestId = ++workspaceRequest;
+    mode.disabled = !selectedSession;
+    if (!selectedSession || !D.sql_backed || !reportSupportsServerFiltering()) {
+      useGraphData(initialGraph, selectedSession);
+      render(selectedSession, mode.value);
+      return;
+    }
+    context.textContent = 'Loading every session in this canonical workspace...';
+    try {
+      const url = new URL('/api/tabs/graphs', window.location.href);
+      url.searchParams.set('session', selectedSession);
+      const response = await fetch(url.toString(), {headers: {Accept: 'application/json'}});
+      if (!response.ok) throw new Error('workspace-graph-fetch-failed');
+      const payload = await response.json();
+      if (requestId !== workspaceRequest) return;
+      useGraphData(payload.graph_semantic || initialGraph, selectedSession);
+      mode.disabled = false;
+      render(selectedSession, mode.value);
+    } catch (error) {
+      if (requestId !== workspaceRequest) return;
+      useGraphData(initialGraph, selectedSession);
+      render(selectedSession, mode.value);
+      context.textContent = 'Workspace expansion was unavailable; showing the bounded local graph snapshot.';
+    }
+  });
+  mode.addEventListener('change', event => render(activeSession, event.target.value));
+  mode.disabled = true;
+  window.addEventListener('resize', () => render(activeSession, activeMode));
   render('');
 })();
 /* ── 3. Session Timeline ── */

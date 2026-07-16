@@ -1,9 +1,11 @@
+import hashlib
 import json
 
 from reflect.store import normalize as normalize_mod
 from reflect.store.ingest import ingest_local_spans_file
 from reflect.store.migrate import migrate
 from reflect.store.normalize import (
+    backfill_tool_call_hashes,
     normalize_pending_raw_events,
     refresh_all_session_statuses,
     repair_telemetry_provenance,
@@ -41,6 +43,8 @@ def _write_spans(path):
                 "gen_ai.client.name": "claude",
                 "gen_ai.client.session_id": "sess-1",
                 "gen_ai.client.tool_name": "Read",
+                "gen_ai.client.tool.input": '{"path":"src/reflect/core.py"}',
+                "gen_ai.client.tool.output": "[redacted file preview]",
             },
         },
         {
@@ -110,8 +114,56 @@ def test_normalize_pending_raw_events_populates_canonical_tables(tmp_path):
         assert llm_call[1]
         assert llm_call[2] == "Review the graph normalization"
         assert llm_call[3] == "I will inspect the graph normalizer."
-        assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 1
+        tool_call = conn.execute(
+            "SELECT input_hash, output_hash, input_preview_redacted, output_preview_redacted FROM tool_calls"
+        ).fetchone()
+        assert tuple(tool_call) == (
+            hashlib.sha256(b'{"path":"src/reflect/core.py"}').hexdigest(),
+            hashlib.sha256(b"[redacted file preview]").hexdigest(),
+            '{"path":"src/reflect/core.py"}',
+            "[redacted file preview]",
+        )
         assert conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_backfill_tool_call_hashes_repairs_existing_rows_idempotently(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        conn.execute(
+            """
+            INSERT INTO agents(id, name, created_at, updated_at)
+            VALUES ('agent-1', 'codex', '2026-07-01', '2026-07-01')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO sessions(id, agent_id, started_at, status, created_at, updated_at)
+            VALUES ('session-1', 'agent-1', '2026-07-01', 'completed', '2026-07-01', '2026-07-01')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO steps(id, session_id, seq, type, started_at, status, raw_attrs_json, created_at, updated_at)
+            VALUES ('step-1', 'session-1', 1, 'tool_call', '2026-07-01', 'ok', '{}', '2026-07-01', '2026-07-01')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO tool_calls(
+              id, step_id, session_id, tool_name, status,
+              input_preview_redacted, output_preview_redacted, raw_attrs_json, created_at, updated_at
+            ) VALUES ('tool-1', 'step-1', 'session-1', 'Read', 'ok', 'same input', 'safe output', '{}', '2026-07-01', '2026-07-01')
+            """
+        )
+
+        assert backfill_tool_call_hashes(conn) == {"updated": 1}
+        assert backfill_tool_call_hashes(conn) == {"updated": 0}
+        assert conn.execute("SELECT input_hash FROM tool_calls").fetchone()[0] == hashlib.sha256(
+            b"same input"
+        ).hexdigest()
     finally:
         conn.close()
 

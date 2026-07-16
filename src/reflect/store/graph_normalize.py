@@ -5,7 +5,7 @@ import json
 import re
 import sqlite3
 from datetime import UTC, datetime
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from reflect.views.report_tabs import (
     _attr,
@@ -118,7 +118,7 @@ def _infer_repo_id_for_memory(
     return ""
 
 
-def _path_candidates(*values: object) -> list[str]:
+def _path_candidates(*values: object, preview: str = "") -> list[str]:
     paths: list[str] = []
     seen: set[str] = set()
 
@@ -145,7 +145,7 @@ def _path_candidates(*values: object) -> list[str]:
             return
         if len(cleaned) > 260:
             return
-        if any(char in cleaned for char in "{}[]"):
+        if any(char in cleaned for char in "{}[]*?<>|") or any(char.isspace() for char in cleaned):
             return
         if not (
             "/" in cleaned
@@ -160,11 +160,22 @@ def _path_candidates(*values: object) -> list[str]:
 
     for value in values:
         add(value)
-        if isinstance(value, str):
-            for match in re.finditer(r"(?<![A-Za-z0-9_./-])((?:\.{0,2}/)?[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+)", value):
-                add(match.group(1))
-            for match in re.finditer(r"(?<![A-Za-z0-9_./-])([A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,8})(?![A-Za-z0-9_./-])", value):
-                add(match.group(1))
+    if preview:
+        for match in re.finditer(
+            r"(?<![A-Za-z0-9_./-])((?:\.{0,2}/)?[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+)",
+            preview,
+        ):
+            candidate = match.group(1)
+            if candidate.startswith(("/", "./", "../")) or re.search(
+                r"\.[A-Za-z0-9]{1,8}$",
+                candidate,
+            ):
+                add(candidate)
+        for match in re.finditer(
+            r"(?<![A-Za-z0-9_./-])([A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,8})(?![A-Za-z0-9_./-])",
+            preview,
+        ):
+            add(match.group(1))
     return paths
 
 
@@ -186,9 +197,24 @@ def _folder_candidates(path: str) -> list[str]:
         if folder not in seen:
             seen.add(folder)
             folders.append(folder)
-    if len(folders) > 6:
-        folders = [folders[0], *folders[-5:]]
+    if absolute:
+        generic_roots = {"/Users", "/home", Path.home().as_posix()}
+        folders = [folder for folder in folders[-3:] if folder not in generic_roots]
+    elif len(folders) > 6:
+        folders = folders[-6:]
     return folders
+
+
+def _workspace_relative_path(path: str, workspace_root: str) -> str:
+    normalized = PurePosixPath(path.replace("\\", "/")).as_posix().strip()
+    if not normalized or normalized in {".", "/"}:
+        return ""
+    if normalized.startswith("/"):
+        return _relative_repo_path(normalized, workspace_root) or ""
+    relative = normalized.removeprefix("./").strip("/")
+    if not relative or relative == ".." or relative.startswith("../"):
+        return ""
+    return relative
 
 
 def _outcomes_for_tool(tool_name: str, text: str, status: str) -> list[dict]:
@@ -227,15 +253,20 @@ def _insert_node(
     attrs: dict | None = None,
     first_seen_at: str | None = None,
     last_seen_at: str | None = None,
+    identity_key: str = "",
     timestamp: str,
 ) -> tuple[str, bool]:
-    node_id = _stable_id("node", kind, label, session_id or "")
+    node_id = (
+        _stable_id("node", kind, identity_key)
+        if identity_key
+        else _stable_id("node", kind, label, session_id or "")
+    )
     cursor = conn.execute(
         """
         INSERT OR IGNORE INTO graph_nodes(
           id, kind, label, session_id, first_seen_at, last_seen_at,
-          attrs_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          attrs_json, identity_key, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             node_id,
@@ -245,6 +276,7 @@ def _insert_node(
             first_seen_at,
             last_seen_at,
             json.dumps(attrs or {}, sort_keys=True),
+            identity_key,
             timestamp,
             timestamp,
         ),
@@ -265,6 +297,23 @@ def _insert_edge(
     timestamp: str,
 ) -> tuple[str, bool]:
     edge_id = _stable_id("edge", kind, source_node_id, target_node_id, session_id or "")
+    first_in_rebuild = conn.execute(
+        "INSERT OR IGNORE INTO reflect_graph_seen_edges(edge_id) VALUES (?)",
+        (edge_id,),
+    ).rowcount != 0
+    if not first_in_rebuild:
+        conn.execute(
+            """
+            UPDATE graph_edges
+            SET weight = weight + 1,
+                last_seen_at = COALESCE(?, last_seen_at),
+                attrs_json = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (last_seen_at, json.dumps(attrs or {}, sort_keys=True), timestamp, edge_id),
+        )
+        return edge_id, False
     cursor = conn.execute(
         """
         INSERT OR IGNORE INTO graph_edges(
@@ -317,13 +366,21 @@ def _refresh_node(
     )
 
 
-def rebuild_graph(conn: sqlite3.Connection) -> dict[str, int]:
+def rebuild_graph(conn: sqlite3.Connection, *, reset: bool = True) -> dict[str, int]:
     previous_row_factory = conn.row_factory
     conn.row_factory = sqlite3.Row
     try:
         timestamp = _now()
         nodes = 0
         edges = 0
+
+        if reset:
+            conn.execute("DELETE FROM graph_edges")
+            conn.execute("DELETE FROM graph_nodes")
+        conn.execute(
+            "CREATE TEMP TABLE IF NOT EXISTS reflect_graph_seen_edges(edge_id TEXT PRIMARY KEY)"
+        )
+        conn.execute("DELETE FROM reflect_graph_seen_edges")
 
         conn.execute(
             """
@@ -334,18 +391,105 @@ def rebuild_graph(conn: sqlite3.Connection) -> dict[str, int]:
         )
         conn.execute("DELETE FROM graph_nodes WHERE kind = 'Folder' AND (label LIKE '{%' OR label LIKE '[%')")
 
+        session_contexts: dict[str, dict[str, str]] = {}
         for session in conn.execute("SELECT * FROM sessions ORDER BY started_at, id"):
+            session_id = str(session["id"])
+            workspace_id = str(session["workspace_id"] or "")
+            repo_id = str(session["repo_id"] or "")
+            parent_session_id = str(session["parent_session_id"] or "")
             session_node, inserted = _insert_node(
                 conn,
                 kind="Session",
-                label=session["id"],
-                session_id=session["id"],
-                attrs={"status": session["status"], "agent_id": session["agent_id"]},
+                label=session_id,
+                session_id=session_id,
+                attrs={
+                    "status": session["status"],
+                    "agent_id": session["agent_id"],
+                    "workspace_id": workspace_id,
+                    "repo_id": repo_id,
+                    "parent_session_id": parent_session_id,
+                },
                 first_seen_at=session["started_at"],
                 last_seen_at=session["ended_at"],
                 timestamp=timestamp,
             )
             nodes += int(inserted)
+
+            workspace = None
+            if workspace_id:
+                workspace = conn.execute(
+                    "SELECT * FROM workspaces WHERE id = ?",
+                    (workspace_id,),
+                ).fetchone()
+            if workspace:
+                workspace_node, inserted = _insert_node(
+                    conn,
+                    kind="Workspace",
+                    label=workspace["root_path"],
+                    attrs={
+                        "workspace_id": workspace["id"],
+                        "label": workspace["label"],
+                        "repo_id": workspace["repo_id"],
+                        "source": workspace["source_key"],
+                        "confidence": workspace["confidence"],
+                    },
+                    identity_key=str(workspace["id"]),
+                    timestamp=timestamp,
+                )
+                nodes += int(inserted)
+                _, inserted = _insert_edge(
+                    conn,
+                    source_node_id=session_node,
+                    target_node_id=workspace_node,
+                    kind="ran_in_workspace",
+                    session_id=session_id,
+                    attrs={"confidence": workspace["confidence"]},
+                    first_seen_at=session["started_at"],
+                    last_seen_at=session["ended_at"],
+                    timestamp=timestamp,
+                )
+                edges += int(inserted)
+                session_contexts[session_id] = {
+                    "workspace_id": workspace_id,
+                    "workspace_root": str(workspace["root_path"] or ""),
+                    "repo_id": repo_id,
+                }
+
+            if parent_session_id:
+                parent = conn.execute(
+                    "SELECT * FROM sessions WHERE id = ?",
+                    (parent_session_id,),
+                ).fetchone()
+                if parent:
+                    parent_node, inserted = _insert_node(
+                        conn,
+                        kind="Session",
+                        label=parent_session_id,
+                        session_id=parent_session_id,
+                        attrs={
+                            "status": parent["status"],
+                            "agent_id": parent["agent_id"],
+                            "workspace_id": parent["workspace_id"],
+                            "repo_id": parent["repo_id"],
+                            "parent_session_id": parent["parent_session_id"],
+                        },
+                        first_seen_at=parent["started_at"],
+                        last_seen_at=parent["ended_at"],
+                        timestamp=timestamp,
+                    )
+                    nodes += int(inserted)
+                    _, inserted = _insert_edge(
+                        conn,
+                        source_node_id=parent_node,
+                        target_node_id=session_node,
+                        kind="spawned_session",
+                        session_id=session_id,
+                        attrs={"source": "canonical_parent_session"},
+                        first_seen_at=session["started_at"],
+                        last_seen_at=session["ended_at"],
+                        timestamp=timestamp,
+                    )
+                    edges += int(inserted)
 
             if session["agent_id"]:
                 agent = conn.execute("SELECT * FROM agents WHERE id = ?", (session["agent_id"],)).fetchone()
@@ -596,8 +740,7 @@ def rebuild_graph(conn: sqlite3.Connection) -> dict[str, int]:
                 skill_name = _extract_skill_name_from_preview(preview)
                 if skill_name:
                     skill_names.add(skill_name)
-            for path in _path_candidates(
-                _attr(
+            explicit_path = _attr(
                     tool_attrs,
                     "gen_ai.client.file_path",
                     "gen_ai.client.tool.input.file_path",
@@ -606,18 +749,40 @@ def rebuild_graph(conn: sqlite3.Connection) -> dict[str, int]:
                     "tool.input.path",
                     "file.path",
                     "path",
-                ),
-                preview,
-            ):
+                )
+            for path in _path_candidates(explicit_path, preview=preview):
                 path_skill = _extract_skill_name_from_path(path)
                 if path_skill:
                     skill_names.add(path_skill)
+                context = session_contexts.get(str(tool["session_id"]), {})
+                workspace_id = context.get("workspace_id", "")
+                workspace_root = context.get("workspace_root", "")
+                relative_path = (
+                    _workspace_relative_path(path, workspace_root)
+                    if workspace_id and workspace_root
+                    else ""
+                )
+                shared_path = bool(relative_path)
+                path_label = relative_path or path
+                path_session_id = None if shared_path else tool["session_id"]
+                path_identity = (
+                    f"workspace:{workspace_id}:path:{relative_path}"
+                    if shared_path
+                    else ""
+                )
                 path_node, inserted = _insert_node(
                     conn,
                     kind="Path",
-                    label=path,
-                    session_id=tool["session_id"],
-                    attrs={"source": "tool_call", "tool_name": tool["tool_name"]},
+                    label=path_label,
+                    session_id=path_session_id,
+                    attrs={
+                        "source": "tool_call",
+                        "tool_name": tool["tool_name"],
+                        "workspace_id": workspace_id,
+                        "repo_id": context.get("repo_id", ""),
+                        "relative_path": relative_path,
+                    },
+                    identity_key=path_identity,
                     timestamp=timestamp,
                 )
                 nodes += int(inserted)
@@ -633,13 +798,30 @@ def rebuild_graph(conn: sqlite3.Connection) -> dict[str, int]:
                     timestamp=timestamp,
                 )
                 edges += int(inserted)
-                for folder in _folder_candidates(path):
+                folder_paths = (
+                    _folder_candidates(relative_path)
+                    if shared_path
+                    else ([] if workspace_id else _folder_candidates(path))
+                )
+                for folder in folder_paths:
+                    folder_identity = (
+                        f"workspace:{workspace_id}:folder:{folder}"
+                        if shared_path
+                        else ""
+                    )
                     folder_node, inserted = _insert_node(
                         conn,
                         kind="Folder",
                         label=folder,
-                        session_id=tool["session_id"],
-                        attrs={"source": "tool_call_path", "tool_name": tool["tool_name"]},
+                        session_id=None if shared_path else tool["session_id"],
+                        attrs={
+                            "source": "tool_call_path",
+                            "tool_name": tool["tool_name"],
+                            "workspace_id": workspace_id,
+                            "repo_id": context.get("repo_id", ""),
+                            "relative_path": folder if shared_path else "",
+                        },
+                        identity_key=folder_identity,
                         timestamp=timestamp,
                     )
                     nodes += int(inserted)
@@ -1197,6 +1379,7 @@ def rebuild_graph(conn: sqlite3.Connection) -> dict[str, int]:
         conn.commit()
         return {"nodes": nodes, "edges": edges}
     finally:
+        conn.execute("DROP TABLE IF EXISTS temp.reflect_graph_seen_edges")
         conn.row_factory = previous_row_factory
 
 
@@ -1209,6 +1392,22 @@ def refresh_graph(
     if not scoped_ids:
         return {"nodes": 0, "edges": 0, "refreshed_sessions": 0}
 
+    placeholders = ", ".join("?" for _ in scoped_ids)
+    descendants = conn.execute(
+        f"""
+        WITH RECURSIVE child_sessions(id) AS (
+          SELECT id FROM main.sessions WHERE parent_session_id IN ({placeholders})
+          UNION
+          SELECT sessions.id
+          FROM main.sessions sessions
+          JOIN child_sessions parent ON sessions.parent_session_id = parent.id
+        )
+        SELECT id FROM child_sessions
+        """,
+        scoped_ids,
+    ).fetchall()
+    scoped_ids = sorted({*scoped_ids, *(str(row[0]) for row in descendants)})
+
     conn.execute(
         "CREATE TEMP TABLE IF NOT EXISTS reflect_changed_sessions(session_id TEXT PRIMARY KEY)"
     )
@@ -1216,6 +1415,25 @@ def refresh_graph(
     conn.executemany(
         "INSERT INTO reflect_changed_sessions(session_id) VALUES (?)",
         ((session_id,) for session_id in scoped_ids),
+    )
+    placeholders = ", ".join("?" for _ in scoped_ids)
+    conn.execute(
+        f"DELETE FROM graph_edges WHERE session_id IN ({placeholders})",
+        scoped_ids,
+    )
+    conn.execute(
+        f"DELETE FROM graph_nodes WHERE session_id IN ({placeholders})",
+        scoped_ids,
+    )
+    conn.execute(
+        """
+        DELETE FROM graph_nodes
+        WHERE kind IN ('Workspace', 'Folder', 'Path')
+          AND NOT EXISTS (
+            SELECT 1 FROM graph_edges
+            WHERE source_node_id = graph_nodes.id OR target_node_id = graph_nodes.id
+          )
+        """
     )
     scoped_tables = {
         "sessions": "id",
@@ -1236,7 +1454,7 @@ def refresh_graph(
                   ON changed.session_id = source.{session_column}
                 """
             )
-        result = rebuild_graph(conn)
+        result = rebuild_graph(conn, reset=False)
         return {
             **result,
             "refreshed_sessions": len(scoped_ids),
