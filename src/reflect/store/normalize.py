@@ -269,6 +269,14 @@ def _upsert_session(
             WHEN sessions.status IN ('ok', 'active') THEN sessions.status
             ELSE excluded.status
           END,
+          source_kind = CASE
+            WHEN excluded.source_kind = 'native_session' THEN excluded.source_kind
+            ELSE COALESCE(sessions.source_kind, excluded.source_kind)
+          END,
+          source_ref = CASE
+            WHEN excluded.source_kind = 'native_session' THEN excluded.source_ref
+            ELSE COALESCE(sessions.source_ref, excluded.source_ref)
+          END,
           updated_at = excluded.updated_at
         """,
         (
@@ -387,7 +395,9 @@ def _insert_call_record(
         )
         response_preview = _first_text(
             attrs,
+            "gen_ai.client.output",
             "gen_ai.response.text",
+            "gen_ai.response.content",
             "gen_ai.output.messages",
             "response",
         )

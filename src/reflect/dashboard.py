@@ -1626,6 +1626,19 @@ def _artifact_report_ref(path: Path) -> str | None:
 
 def _load_detail_from_native(session_id: str, agent: str, file_path: Path) -> dict:
     """Read a native session file and return full conversation events."""
+    from reflect.session_adapters import DEFAULT_SESSION_ADAPTERS
+
+    if DEFAULT_SESSION_ADAPTERS.supports(agent):
+        try:
+            return DEFAULT_SESSION_ADAPTERS.load(session_id, agent, file_path).as_dict()
+        except (OSError, ValueError, TypeError) as exc:
+            logger.warning(
+                "Conversation adapter %s failed for %s; using compatibility parser: %s",
+                agent,
+                file_path,
+                exc,
+            )
+
     import json as _json
     try:
         import orjson
@@ -3804,6 +3817,19 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
             """,
             (session_id,),
         ).fetchone()[0]
+        native_source = conn.execute(
+            """
+            SELECT source_id
+            FROM raw_events
+            WHERE session_id = ? AND source_type = 'native_session'
+            ORDER BY observed_at DESC
+            LIMIT 1
+            """,
+            (session_id,),
+        ).fetchone()
+        if native_source and native_source[0]:
+            session_row["source_kind"] = "native_session"
+            session_row["source_ref"] = native_source[0]
         tool_inventory = _build_tool_inventory(
             [
                 {
@@ -4034,13 +4060,44 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
     errors = sum(1 for step in steps if step["status"] == "error") + sum(
         1 for log in telemetry_logs if log.get("severity") in {"ERROR", "FATAL"}
     )
+    conversation_source = "telemetry"
+    conversation_warnings: list[str] = []
+    native_path = _native_session_path(session_row)
+    if native_path is not None:
+        from reflect.session_adapters import DEFAULT_SESSION_ADAPTERS
+
+        agent = str(session_row.get("agent") or "")
+        if DEFAULT_SESSION_ADAPTERS.supports(agent):
+            try:
+                native_transcript = DEFAULT_SESSION_ADAPTERS.load(session_id, agent, native_path)
+                native_events = [event.as_dict() for event in native_transcript.events]
+                if any(
+                    event.get("type") == "response" and str(event.get("content") or "").strip()
+                    for event in native_events
+                ):
+                    conversation = native_events
+                    conversation_source = native_transcript.source
+                    conversation_warnings.extend(native_transcript.warnings)
+            except (OSError, ValueError, TypeError) as exc:
+                logger.warning(
+                    "Native conversation adapter failed for session %s (%s): %s",
+                    session_id,
+                    agent,
+                    exc,
+                )
+                conversation_warnings.append(
+                    "The local native transcript could not be loaded; showing telemetry-derived events."
+                )
+
     tool_inventory = _add_skill_hints_to_inventory(
         tool_inventory,
         {
             skill_name
             for event in conversation
             if event.get("type") in {"prompt", "response"}
-            for skill_name in _extract_skill_names_from_text(str(event.get("preview") or ""))
+            for skill_name in _extract_skill_names_from_text(
+                str(event.get("preview") or event.get("content") or "")
+            )
         },
     )
     tool_inventory = _add_subagent_hints_to_inventory(
@@ -4049,12 +4106,15 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
             subagent_name
             for event in conversation
             if event.get("type") in {"prompt", "response"}
-            for subagent_name in _extract_subagent_names_from_text(str(event.get("preview") or ""))
+            for subagent_name in _extract_subagent_names_from_text(
+                str(event.get("preview") or event.get("content") or "")
+            )
         },
     )
     return {
         "session_id": session_id,
         "conversation": conversation,
+        "conversation_source": conversation_source,
         "tool_inventory": tool_inventory,
         "telemetry": {
             "summary": {
@@ -4071,8 +4131,23 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
             "logs": telemetry_logs,
             "warnings": [],
         },
-        "warnings": [],
+        "warnings": conversation_warnings,
     }
+
+
+def _native_session_path(session_row: dict[str, object]) -> Path | None:
+    """Resolve a local native transcript path from canonical session provenance."""
+    if str(session_row.get("source_kind") or "") != "native_session":
+        return None
+    source_ref = str(session_row.get("source_ref") or "")
+    prefix, separator, remainder = source_ref.partition(":")
+    if prefix != "native_session" or not separator:
+        return None
+    _agent, separator, path_text = remainder.partition(":")
+    if not separator or not path_text:
+        return None
+    path = Path(path_text).expanduser()
+    return path if path.is_file() else None
 
 
 def _start_publish_server(

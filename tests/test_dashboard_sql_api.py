@@ -1162,6 +1162,39 @@ def test_dashboard_sql_sessions_endpoint_filters_from_sql(tmp_path):
     assert sessions.json()["rows"][0]["duration_ms"] == 120000
 
 
+def test_dashboard_sql_session_detail_prefers_native_assistant_responses(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    native_session = tmp_path / "codex-session.jsonl"
+    native_session.write_text(
+        "\n".join([
+            '{"type":"session_meta","payload":{"id":"sess-sql","model":"gpt-5.4"}}',
+            '{"type":"response_item","timestamp":"2026-05-01T10:00:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Fix it"}]}}',
+            '{"type":"response_item","timestamp":"2026-05-01T10:00:30Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The native response is visible."}]}}',
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    conn = connect_sqlite(db_path)
+    try:
+        conn.execute(
+            "UPDATE sessions SET source_kind = 'native_session', source_ref = ? WHERE id = 'sess-sql'",
+            (f"native_session:codex:{native_session}",),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    response = TestClient(app).get("/api/session/sess-sql")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assistant = next(event for event in payload["conversation"] if event["type"] == "response")
+    assert assistant["content"] == "The native response is visible."
+    assert payload["conversation_source"] == "native"
+    assert payload["telemetry"]["summary"]["spans"] == 3
+
+
 def test_dashboard_api_filters_by_session_param_from_sql(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)

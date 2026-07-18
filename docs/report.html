@@ -1431,13 +1431,14 @@ body.rail-overlay-open{overflow:hidden}
   width:100%;
   border-radius:8px;
 }
-.ev-preview.expanded{max-height:none}
 .ev-preview:hover{color:var(--text);background:rgba(255,255,255,.045)}
 .ev-preview:focus-visible{
   outline:2px solid rgba(255,177,86,.45);
   outline-offset:2px;
 }
 .ev-preview.full-content{max-height:12.8em}
+.ev-preview.expanded,
+.ev-preview.full-content.expanded{max-height:none}
 .ev-preview-hint{
   margin-top:8px;
   font-size:12px;
@@ -1580,6 +1581,125 @@ body.rail-overlay-open{overflow:hidden}
 .conv-stat-item{display:flex;align-items:center;gap:4px}
 .conv-stat-num{font-weight:700;color:var(--text);font-size:13px}
 .conv-stat-sep{color:rgba(255,255,255,.15);padding:0 4px}
+
+/* Adapter-neutral transcript controls */
+.conversation-reader-toolbar{
+  position:sticky;
+  top:0;
+  z-index:8;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+  padding:8px;
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:8px;
+  background:rgba(8,8,9,.94);
+  box-shadow:0 10px 24px rgba(0,0,0,.24);
+  backdrop-filter:blur(14px);
+}
+.conversation-mode-switch{
+  display:inline-flex;
+  align-items:center;
+  gap:2px;
+  padding:3px;
+  border-radius:7px;
+  background:rgba(255,255,255,.045);
+  border:1px solid rgba(255,255,255,.065);
+}
+.conversation-mode-button,
+.conversation-nav-button{
+  appearance:none;
+  border:0;
+  border-radius:6px;
+  min-height:30px;
+  padding:5px 9px;
+  color:var(--text-2);
+  background:transparent;
+  font:inherit;
+  font-size:12px;
+  font-weight:700;
+  cursor:pointer;
+}
+.conversation-mode-button:hover,
+.conversation-nav-button:hover{color:var(--text);background:rgba(255,255,255,.06)}
+.conversation-mode-button.is-active{
+  color:#170d03;
+  background:var(--signal);
+  box-shadow:0 4px 12px rgba(242,138,26,.2);
+}
+.conversation-mode-button:focus-visible,
+.conversation-nav-button:focus-visible,
+.conversation-search:focus-visible,
+.chat-copy-button:focus-visible{
+  outline:2px solid rgba(242,138,26,.65);
+  outline-offset:2px;
+}
+.conversation-search-wrap{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  flex:1 1 260px;
+  min-width:200px;
+}
+.conversation-search{
+  width:100%;
+  min-width:0;
+  min-height:34px;
+  border-radius:7px;
+  border:1px solid rgba(255,255,255,.09);
+  padding:6px 10px;
+  color:var(--text);
+  background:rgba(255,255,255,.035);
+  font:inherit;
+  font-size:13px;
+}
+.conversation-search::placeholder{color:var(--text-3)}
+.conversation-search-count{
+  min-width:58px;
+  color:var(--text-3);
+  font-family:'SF Mono',ui-monospace,monospace;
+  font-size:11px;
+  text-align:center;
+  white-space:nowrap;
+}
+.conversation-nav-button{
+  border:1px solid rgba(255,255,255,.07);
+  background:rgba(255,255,255,.025);
+}
+.conversation-nav-button:disabled{opacity:.35;cursor:not-allowed}
+.conversation-mark{
+  padding:0 .12em;
+  border-radius:3px;
+  color:#170d03;
+  background:#ffb04a;
+  box-shadow:0 0 0 1px rgba(255,176,74,.18);
+}
+.chat-turn-label{
+  color:var(--text-3);
+  font-family:'SF Mono',ui-monospace,monospace;
+  font-size:10px;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+}
+.chat-copy-button{
+  appearance:none;
+  border:0;
+  border-radius:5px;
+  padding:3px 6px;
+  color:var(--text-3);
+  background:transparent;
+  font:inherit;
+  font-size:11px;
+  cursor:pointer;
+}
+.chat-copy-button:hover{color:var(--signal-2);background:rgba(242,138,26,.08)}
+.chat-msg.is-search-match .chat-bubble,
+.chat-activity.is-search-match .chat-activity-chip{
+  border-color:rgba(242,138,26,.42);
+  box-shadow:0 0 0 1px rgba(242,138,26,.09),0 10px 24px rgba(0,0,0,.18);
+}
+.chat-activity-summary-note{color:var(--text-3);font-size:11px;white-space:nowrap}
 
 /* Session detail timeline */
 .session-timeline-panel{
@@ -4812,6 +4932,90 @@ class SessionConversationPlayhead {
   let selectedIdx = initialSessionId ? sessions.findIndex(s => (s.full_id || s.id) === initialSessionId || s.id === initialSessionId) : -1;
   if (selectedIdx < 0) selectedIdx = null;
   let activeConversationPlayhead = null;
+
+  function conversationSearchText(event){
+    return [
+      event?.preview,
+      event?.tool_name,
+      event?.server,
+      event?.model,
+      event?.type,
+      event?.subagent_type,
+    ].filter(Boolean).join('\n');
+  }
+
+  function conversationMatchIndexes(conversation, query){
+    const needle = String(query || '').trim().toLocaleLowerCase();
+    if (!needle) return [];
+    const matches = [];
+    (conversation || []).forEach((event, index) => {
+      if (conversationSearchText(event).toLocaleLowerCase().includes(needle)) matches.push(index);
+    });
+    return matches;
+  }
+
+  function highlightConversationText(value, query){
+    const text = String(value || '');
+    const needle = String(query || '').trim();
+    if (!text || !needle) return escHtml(text);
+    const lowerText = text.toLocaleLowerCase();
+    const lowerNeedle = needle.toLocaleLowerCase();
+    let cursor = 0;
+    let output = '';
+    let matches = 0;
+    while (cursor < text.length && matches < 100) {
+      const index = lowerText.indexOf(lowerNeedle, cursor);
+      if (index < 0) break;
+      output += escHtml(text.slice(cursor, index));
+      output += `<mark class="conversation-mark">${escHtml(text.slice(index, index + needle.length))}</mark>`;
+      cursor = index + needle.length;
+      matches += 1;
+    }
+    return output + escHtml(text.slice(cursor));
+  }
+
+  function selectConversationEvent(session, conversationIndex, behavior = 'smooth'){
+    if (!Number.isInteger(conversationIndex) || conversationIndex < 0) return;
+    session._playheadEventIndex = conversationIndex;
+    session._detailTab = 'conversation';
+    renderSessionDetail(session);
+    requestAnimationFrame(() => {
+      const pointIndex = activeConversationPlayhead?.pointByConversationIndex?.get(conversationIndex);
+      if (pointIndex !== undefined) {
+        activeConversationPlayhead.selectPoint(pointIndex, {scroll:true, behavior});
+      }
+    });
+  }
+
+  function renderConversationReaderToolbar(session, conversation){
+    const query = String(session._conversationQuery || '');
+    const matches = conversationMatchIndexes(conversation, query);
+    const mode = session._conversationMode === 'full' ? 'full' : 'focused';
+    const activeCursor = matches.indexOf(session._playheadEventIndex);
+    const storedCursor = Number(session._conversationMatchCursor || 0);
+    const cursor = activeCursor >= 0
+      ? activeCursor
+      : (matches.length ? Math.max(0, Math.min(matches.length - 1, storedCursor)) : 0);
+    session._conversationMatchCursor = cursor;
+    const resultLabel = query
+      ? (activeCursor >= 0 ? `${activeCursor + 1} / ${matches.length}` : `${matches.length} ${matches.length === 1 ? 'match' : 'matches'}`)
+      : 'Find';
+    const hasFailures = conversation.some(event => event.type === 'tool_result' && event.success === false);
+    return `<div class="conversation-reader-toolbar" role="region" aria-label="Conversation controls">
+      <div class="conversation-mode-switch" role="group" aria-label="Conversation detail">
+        <button type="button" class="conversation-mode-button${mode === 'focused' ? ' is-active' : ''}" data-conversation-mode="focused" aria-pressed="${mode === 'focused'}">Readable</button>
+        <button type="button" class="conversation-mode-button${mode === 'full' ? ' is-active' : ''}" data-conversation-mode="full" aria-pressed="${mode === 'full'}">Full activity</button>
+      </div>
+      <div class="conversation-search-wrap">
+        <input class="conversation-search" type="search" value="${escHtml(query)}" placeholder="Search prompts, responses, tools…" aria-label="Search this conversation" aria-keyshortcuts="Meta+f Control+f /" autocomplete="off" spellcheck="false">
+        <span class="conversation-search-count" aria-live="polite">${resultLabel}</span>
+        <button type="button" class="conversation-nav-button" data-conversation-search-nav="previous" aria-label="Previous conversation match" ${matches.length ? '' : 'disabled'}>↑</button>
+        <button type="button" class="conversation-nav-button" data-conversation-search-nav="next" aria-label="Next conversation match" ${matches.length ? '' : 'disabled'}>↓</button>
+        ${query ? '<button type="button" class="conversation-nav-button" data-conversation-search-clear aria-label="Clear conversation search">Clear</button>' : ''}
+      </div>
+      ${hasFailures ? '<button type="button" class="conversation-nav-button" data-conversation-failure>Next failure</button>' : ''}
+    </div>`;
+  }
   const legacyAgent = params.get('agent');
   const filterState = {
     q: (params.get('q') || '').trim(),
@@ -4822,6 +5026,20 @@ class SessionConversationPlayhead {
     sort: params.get('sort') || 'recent',
   };
   if (!filterState.agents.size && legacyAgent && legacyAgent !== 'all') filterState.agents.add(legacyAgent);
+
+  document.addEventListener('keydown', event => {
+    const session = selectedIdx === null ? null : sessions[selectedIdx];
+    if (!session || session._detailTab !== 'conversation') return;
+    const target = event.target;
+    const isEditable = target instanceof HTMLInputElement
+      || target instanceof HTMLTextAreaElement
+      || target?.isContentEditable;
+    const findShortcut = (event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === 'f';
+    const slashShortcut = event.key === '/' && !isEditable && !event.metaKey && !event.ctrlKey && !event.altKey;
+    if (!findShortcut && !slashShortcut) return;
+    event.preventDefault();
+    document.querySelector('#sb-detail .conversation-search')?.focus({preventScroll:true});
+  });
 
   // Detect which agents exist
   const agentSet = new Set([
@@ -5291,11 +5509,112 @@ class SessionConversationPlayhead {
       ));
     });
 
+    detailEl.querySelectorAll('[data-conversation-mode]').forEach(button => {
+      button.addEventListener('click', () => {
+        session._conversationMode = button.dataset.conversationMode === 'full' ? 'full' : 'focused';
+        renderSessionDetail(session);
+      });
+    });
+
+    const conversationSearch = detailEl.querySelector('.conversation-search');
+    if (conversationSearch) {
+      conversationSearch.addEventListener('input', () => {
+        session._conversationQuery = conversationSearch.value;
+        session._conversationMatchCursor = 0;
+        const cursor = conversationSearch.selectionStart ?? conversationSearch.value.length;
+        renderSessionDetail(session);
+        requestAnimationFrame(() => {
+          const nextInput = detailEl.querySelector('.conversation-search');
+          nextInput?.focus({preventScroll:true});
+          nextInput?.setSelectionRange(cursor, cursor);
+        });
+      });
+      conversationSearch.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && session._conversationQuery) {
+          event.preventDefault();
+          session._conversationQuery = '';
+          session._conversationMatchCursor = 0;
+          renderSessionDetail(session);
+          return;
+        }
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        const matches = conversationMatchIndexes(conversation, session._conversationQuery);
+        if (!matches.length) return;
+        const direction = event.shiftKey ? -1 : 1;
+        const active = matches.indexOf(session._playheadEventIndex);
+        const current = active >= 0 ? active : (direction > 0 ? -1 : 0);
+        session._conversationMatchCursor = (current + direction + matches.length) % matches.length;
+        selectConversationEvent(session, matches[session._conversationMatchCursor]);
+      });
+    }
+
+    detailEl.querySelectorAll('[data-conversation-search-nav]').forEach(button => {
+      button.addEventListener('click', () => {
+        const matches = conversationMatchIndexes(conversation, session._conversationQuery);
+        if (!matches.length) return;
+        const direction = button.dataset.conversationSearchNav === 'previous' ? -1 : 1;
+        const active = matches.indexOf(session._playheadEventIndex);
+        const current = active >= 0 ? active : (direction > 0 ? -1 : 0);
+        session._conversationMatchCursor = (current + direction + matches.length) % matches.length;
+        selectConversationEvent(session, matches[session._conversationMatchCursor]);
+      });
+    });
+
+    detailEl.querySelector('[data-conversation-search-clear]')?.addEventListener('click', () => {
+      session._conversationQuery = '';
+      session._conversationMatchCursor = 0;
+      renderSessionDetail(session);
+      requestAnimationFrame(() => detailEl.querySelector('.conversation-search')?.focus({preventScroll:true}));
+    });
+
+    detailEl.querySelector('[data-conversation-failure]')?.addEventListener('click', () => {
+      const failures = conversation
+        .map((event, index) => ({event, index}))
+        .filter(item => item.event.type === 'tool_result' && item.event.success === false)
+        .map(item => item.index);
+      if (!failures.length) return;
+      const current = Number.isInteger(session._playheadEventIndex) ? session._playheadEventIndex : -1;
+      selectConversationEvent(session, failures.find(index => index > current) ?? failures[0]);
+    });
+
+    detailEl.querySelectorAll('[data-copy-conversation]').forEach(button => {
+      button.addEventListener('click', async event => {
+        event.stopPropagation();
+        const index = Number(button.dataset.copyConversation);
+        const text = String(conversation[index]?.preview || '');
+        if (!text) return;
+        try {
+          await navigator.clipboard.writeText(text);
+          button.textContent = 'Copied';
+          window.setTimeout(() => { button.textContent = 'Copy'; }, 1200);
+        } catch (_) {
+          button.textContent = 'Unavailable';
+        }
+      });
+    });
+
     // Expand/collapse previews
-    detailEl.querySelectorAll('.ev-preview').forEach(el => {
+    detailEl.querySelectorAll('.ev-preview.expandable').forEach(el => {
       el.addEventListener('click', () => {
-        el.classList.toggle('expanded');
-        el.setAttribute('aria-expanded', el.classList.contains('expanded') ? 'true' : 'false');
+        if (!(session._expandedConversationEvents instanceof Set)) {
+          session._expandedConversationEvents = new Set();
+        }
+        const index = Number(el.dataset.eidx);
+        const expanded = !session._expandedConversationEvents.has(index);
+        if (expanded) session._expandedConversationEvents.add(index);
+        else session._expandedConversationEvents.delete(index);
+        const fullText = String(conversation[index]?.preview || '');
+        el.innerHTML = highlightConversationText(
+          fullText.slice(0, expanded ? 20000 : 280),
+          session._conversationQuery,
+        );
+        el.classList.toggle('expanded', expanded);
+        el.setAttribute('aria-expanded', String(expanded));
+        const hint = el.nextElementSibling;
+        if (hint?.classList.contains('ev-preview-hint')) {
+          hint.textContent = expanded ? 'Tap to collapse' : 'Tap to expand';
+        }
       });
     });
 
@@ -5436,25 +5755,36 @@ class SessionConversationPlayhead {
     return 'Details';
   }
 
-  function renderConversationMessage(session, ev, index, sessionStartTs){
+  function renderConversationMessage(session, ev, index, sessionStartTs, turnIndex){
     const relTime = fmtRelTime(ev.ts - sessionStartTs);
     const nodeColor = getEventNodeColor(ev);
     const eventKind = `${ev.type || 'event'}${ev.type === 'tool_result' && ev.success === false ? ' fail' : ''}`;
-    const previewLimit = session._fullLoaded ? 5000 : 280;
+    if (!(session._expandedConversationEvents instanceof Set)) {
+      session._expandedConversationEvents = new Set();
+    }
+    const isExpanded = session._expandedConversationEvents.has(index);
+    const previewLimit = isExpanded ? 20000 : 280;
     const rawPreview = ev.preview ? ev.preview.slice(0, previewLimit) : '';
-    const preview = rawPreview ? escHtml(rawPreview) : '';
+    const query = String(session._conversationQuery || '').trim();
+    const preview = rawPreview ? highlightConversationText(rawPreview, query) : '';
     const isLong = ev.preview && ev.preview.length > 280;
     const rail = `<div class="ev-rail"><span class="ev-ts">${relTime}</span><span class="ev-dot" aria-hidden="true"></span></div>`;
     const isUser = ev.type === 'prompt';
     const who = isUser ? 'User' : (ev.model ? ev.model.replace(/^claude-/,'').replace(/-\d{8}$/,'') : 'Agent');
     const meta = getEventMeta(ev);
-    return `<div class="chat-msg ${isUser ? 'is-user' : 'is-agent'}" data-kind="${escHtml(eventKind)}" data-conversation-event-index="${index}" style="--node-color:${nodeColor}">${rail}<div class="chat-bubble"><div class="chat-header"><span class="chat-who">${escHtml(who)}</span>${meta ? `<span class="chat-header-meta">${escHtml(meta)}</span>` : ''}</div>${preview ? `<div class="chat-content"><button type="button" class="ev-preview${session._fullLoaded ? ' full-content' : ''}${isLong ? ' expandable' : ''}" data-eidx="${index}" aria-expanded="false">${preview}</button>${isLong ? `<div class="ev-preview-hint">Tap to expand</div>` : ''}</div>` : `<div class="chat-content" style="color:var(--text-3);font-size:13px;font-style:italic">No content captured</div>`}</div></div>`;
+    const matches = query && conversationSearchText(ev).toLocaleLowerCase().includes(query.toLocaleLowerCase());
+    const copyButton = rawPreview
+      ? `<button type="button" class="chat-copy-button" data-copy-conversation="${index}" aria-label="Copy ${isUser ? 'prompt' : 'response'}">Copy</button>`
+      : '';
+    return `<div class="chat-msg ${isUser ? 'is-user' : 'is-agent'}${matches ? ' is-search-match' : ''}" data-kind="${escHtml(eventKind)}" data-conversation-event-index="${index}" style="--node-color:${nodeColor}">${rail}<div class="chat-bubble"><div class="chat-header"><span class="chat-who">${escHtml(who)}</span><span class="chat-turn-label">Turn ${turnIndex + 1}</span>${meta ? `<span class="chat-header-meta">${escHtml(meta)}</span>` : '<span class="chat-header-meta"></span>'}${copyButton}</div>${preview ? `<div class="chat-content"><button type="button" class="ev-preview${session._fullLoaded ? ' full-content' : ''}${isLong ? ' expandable' : ''}${isExpanded ? ' expanded' : ''}" data-eidx="${index}" aria-expanded="${isExpanded}">${preview}</button>${isLong ? `<div class="ev-preview-hint">${isExpanded ? 'Tap to collapse' : 'Tap to expand'}</div>` : ''}</div>` : `<div class="chat-content" style="color:var(--text-3);font-size:13px;font-style:italic">No content captured</div>`}</div></div>`;
   }
 
-  function renderConversationActivity(ev, sessionStartTs){
+  function renderConversationActivity(session, ev, sessionStartTs){
     const relTime = fmtRelTime(ev.ts - sessionStartTs);
     const nodeColor = getEventNodeColor(ev);
     const eventKind = `${ev.type || 'event'}${ev.type === 'tool_result' && ev.success === false ? ' fail' : ''}`;
+    const query = String(session._conversationQuery || '').trim();
+    const matches = query && conversationSearchText(ev).toLocaleLowerCase().includes(query.toLocaleLowerCase());
     let icon = '→', name = '', meta2 = '', statusHtml = '';
     const dur = ev.duration_ms ? `<span class="chip-dur">${fmtDur(ev.duration_ms)}</span>` : '';
     if (ev.type === 'tool_call') {
@@ -5471,7 +5801,7 @@ class SessionConversationPlayhead {
       icon = '⬡'; name = (ev.tool_name || 'MCP') + ' ↩';
       meta2 = ev.server || '';
     }
-    return `<div class="chat-activity" data-kind="${escHtml(eventKind)}" data-conversation-event-index="${ev._conversationIndex}" style="--node-color:${nodeColor}"><div class="ev-rail"><span class="ev-ts">${relTime}</span><span class="ev-dot" aria-hidden="true"></span></div><div class="chat-activity-chip"><em class="chip-icon">${icon}</em><span class="chip-name">${escHtml(name)}</span>${meta2 ? `<span class="chip-meta">${escHtml(meta2)}</span>` : ''}${dur}${statusHtml}</div></div>`;
+    return `<div class="chat-activity${matches ? ' is-search-match' : ''}" data-kind="${escHtml(eventKind)}" data-conversation-event-index="${ev._conversationIndex}" style="--node-color:${nodeColor}"><div class="ev-rail"><span class="ev-ts">${relTime}</span><span class="ev-dot" aria-hidden="true"></span></div><div class="chat-activity-chip"><em class="chip-icon">${icon}</em><span class="chip-name">${highlightConversationText(name, query)}</span>${meta2 ? `<span class="chip-meta">${highlightConversationText(meta2, query)}</span>` : ''}${dur}${statusHtml}</div></div>`;
   }
 
   function renderConversationDivider(ev, sessionStartTs){
@@ -5486,8 +5816,11 @@ class SessionConversationPlayhead {
     return `<div class="chat-divider" data-kind="${escHtml(eventKind)}" data-conversation-event-index="${ev._conversationIndex}" style="--node-color:${nodeColor}"><div class="ev-rail"><span class="ev-ts" style="font-size:10px">${relTime}</span></div><div class="chat-divider-inner"><div class="chat-divider-line"></div><span class="chat-divider-label">${escHtml(label)}</span><div class="chat-divider-line"></div></div></div>`;
   }
 
-  function renderActivityGroup(events, sessionStartTs, turnIndex){
-    if (!events.length) return '';
+  function renderActivityGroup(session, events, sessionStartTs, turnIndex, hiddenResponses = 0){
+    if (!events.length && !hiddenResponses) return '';
+    if (!events.length) {
+      return `<div class="chat-activity-summary-note" style="margin-left:62px">${fmt(hiddenResponses)} intermediate ${hiddenResponses === 1 ? 'response' : 'responses'} hidden · use Full activity to inspect</div>`;
+    }
     const failures = events.filter(ev => ev.type === 'tool_result' && ev.success === false).length;
     const tools = events.filter(ev => ev.type === 'tool_call' || ev.type === 'mcp_call').length;
     const toolNames = [...new Set(events
@@ -5510,16 +5843,17 @@ class SessionConversationPlayhead {
       ? `<span class="chip-fail">${escHtml(failureSummaries[0])}${failureSummaries.length > 1 ? ` +${failureSummaries.length - 1} more` : ''}</span>`
       : '';
     const failedLabel = failures ? `<span class="chip-fail">${fmt(failures)} failed</span>` : '';
-    const openAttr = failures ? ' open' : '';
+    const openAttr = failures || session._conversationMode === 'full' || session._conversationQuery ? ' open' : '';
     return `<details class="chat-activity-group"${openAttr}>
       <summary class="chat-activity-summary">
         <span>Turn activity</span>
         <span class="chip-meta">${fmt(tools)} calls · ${fmt(events.length)} events${toolSummary ? ` · ${escHtml(toolSummary)}` : ''}</span>
+        ${hiddenResponses ? `<span class="chat-activity-summary-note">${fmt(hiddenResponses)} intermediate ${hiddenResponses === 1 ? 'response' : 'responses'} hidden</span>` : ''}
         ${failedLabel}
         ${failureSummary}
       </summary>
       <div class="chat-activity-list">
-        ${events.map(ev => renderConversationActivity(ev, sessionStartTs)).join('')}
+        ${events.map(ev => renderConversationActivity(session, ev, sessionStartTs)).join('')}
       </div>
     </details>`;
   }
@@ -5543,15 +5877,23 @@ class SessionConversationPlayhead {
       else current.events.push(event);
     });
     if (current.events.length || current.activity.length) turns.push(current);
-    return `<div class="chat-thread">${turns.map((turn, turnIndex) => `
-      <section class="chat-turn">
-        ${turn.events.map(ev => {
-          if (ev.type === 'prompt' || ev.type === 'response') return renderConversationMessage(session, ev, ev._conversationIndex, sessionStartTs);
+    const showFull = session._conversationMode === 'full' || Boolean(String(session._conversationQuery || '').trim());
+    return `<div class="chat-thread">${turns.map((turn, turnIndex) => {
+      const lastResponseIndex = turn.events.findLastIndex(ev => ev.type === 'response');
+      const visibleEvents = showFull
+        ? turn.events
+        : turn.events.filter((ev, index) => ev.type !== 'response' || index === lastResponseIndex);
+      const hiddenResponses = turn.events.filter(ev => ev.type === 'response').length
+        - visibleEvents.filter(ev => ev.type === 'response').length;
+      return `
+      <section class="chat-turn" data-turn-index="${turnIndex}">
+        ${visibleEvents.map(ev => {
+          if (ev.type === 'prompt' || ev.type === 'response') return renderConversationMessage(session, ev, ev._conversationIndex, sessionStartTs, turnIndex);
           return renderConversationDivider(ev, sessionStartTs);
         }).join('')}
-        ${renderActivityGroup(turn.activity, sessionStartTs, turnIndex)}
+        ${renderActivityGroup(session, turn.activity, sessionStartTs, turnIndex, hiddenResponses)}
       </section>
-    `).join('')}</div>`;
+    `;}).join('')}</div>`;
   }
 
   function extractSkillFromPreview(preview){
@@ -5770,7 +6112,8 @@ class SessionConversationPlayhead {
       <div class="conv-stat-item">${toolLabel}</div>
       ${failPart}
     </div>`;
-    return `<div class="conversation-shell">${statsBar}${timelineHtml}</div>`;
+    const readerToolbar = renderConversationReaderToolbar(session, conversation);
+    return `<div class="conversation-shell">${readerToolbar}${statsBar}${timelineHtml}</div>`;
   }
 
   function sessionTimelineEventLabel(ev){

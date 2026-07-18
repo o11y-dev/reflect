@@ -807,6 +807,13 @@ def _iter_copilot_session_spans(file_path: Path) -> Iterable[dict]:
                 **attrs,
                 "gen_ai.client.hook.event": "Stop",
             }
+            response_text = _flatten_text_content(data.get("content"))
+            if not response_text and isinstance(data.get("content"), str):
+                response_text = data["content"]
+            if not response_text and isinstance(data.get("message"), str):
+                response_text = data["message"]
+            if response_text:
+                span_attrs["gen_ai.client.output"] = response_text
             if model:
                 span_attrs["gen_ai.request.model"] = model
             yield _make_flat_span("gen_ai.client.hook.Stop", ts_ns, ts_ns, span_attrs, trace_id, f"{index}:assistant.message")
@@ -905,7 +912,7 @@ def _iter_claude_session_spans(file_path: Path) -> Iterable[dict]:
             usage = message.get("usage", {}) or {}
             model = message.get("model", "")
             content = message.get("content") or []
-            yield _make_flat_span("gen_ai.client.hook.Stop", ts_ns, ts_ns, {
+            response_attrs = {
                 **attrs,
                 "gen_ai.client.hook.event": "Stop",
                 "gen_ai.request.model": model,
@@ -913,7 +920,14 @@ def _iter_claude_session_spans(file_path: Path) -> Iterable[dict]:
                 "gen_ai.usage.output_tokens": int(usage.get("output_tokens", 0) or 0),
                 "gen_ai.usage.cache_creation.input_tokens": int(usage.get("cache_creation_input_tokens", 0) or 0),
                 "gen_ai.usage.cache_read.input_tokens": int(usage.get("cache_read_input_tokens", 0) or 0),
-            }, trace_id, f"{index}:assistant")
+            }
+            response_text = _flatten_text_content(content)
+            if response_text:
+                response_attrs["gen_ai.client.output"] = response_text
+            yield _make_flat_span(
+                "gen_ai.client.hook.Stop", ts_ns, ts_ns,
+                response_attrs, trace_id, f"{index}:assistant",
+            )
             for tool_idx, item in enumerate(content):
                 if not isinstance(item, dict) or item.get("type") != "tool_use":
                     continue
@@ -1069,6 +1083,9 @@ def _iter_gemini_session_spans(file_path: Path) -> Iterable[dict]:
                 "gen_ai.usage.input_tokens": int(tokens.get("input", 0) or 0),
                 "gen_ai.usage.output_tokens": int(tokens.get("output", 0) or 0),
             }
+            response_text = message.get("content")
+            if isinstance(response_text, str) and response_text:
+                span_attrs["gen_ai.client.output"] = response_text
             yield _make_flat_span("gen_ai.client.hook.Stop", ts_ns, ts_ns, span_attrs, trace_id, f"{index}:gemini")
             for tool_idx, call in enumerate(message.get("toolCalls") or []):
                 if not isinstance(call, dict):

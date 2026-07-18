@@ -29,7 +29,7 @@ def _write_spans(path):
                 "gen_ai.usage.input_tokens": 100,
                 "gen_ai.usage.output_tokens": 50,
                 "gen_ai.client.prompt.text": "Review the graph normalization",
-                "gen_ai.response.text": "I will inspect the graph normalizer.",
+                "gen_ai.client.output": "I will inspect the graph normalizer.",
             },
         },
         {

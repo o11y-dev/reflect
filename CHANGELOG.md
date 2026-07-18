@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added an adapter-neutral conversation reader with readable and full-activity modes, in-session search and result navigation, synchronized timeline jumps, failure navigation, turn labels, and prompt/response copy actions.
+- Added a typed native-session conversation adapter registry for Claude, Codex, Copilot, Cursor, and Gemini, including common CLI-name aliases and a narrow extension contract for additional agent formats.
 - Added an accessible bidirectional session conversation playhead with draggable event snapping, keyboard navigation, compact event context, focused conversation highlighting, and timeline updates while manually scrolling the thread.
 - Added object-oriented Session Rules with typed definitions, normalized telemetry and summary contexts, a validated registry, a shared scorer, and a documented extension path for per-session quality dimensions.
 - Added a public object-oriented `BaseImprovementRule`, typed observation builder, validated `RuleRegistry`, and documented custom-rule extension path.
@@ -48,6 +50,8 @@
 
 ### Fixed
 
+- Preserved assistant response text from native Claude, Codex, Copilot, Cursor, and Gemini sessions, preferred those high-fidelity transcripts in SQL-backed session detail, and retained native source provenance when telemetry and local-session records merge.
+- Fixed Conversation preview expansion so it reveals the stored response or prompt body, persists across detail rerenders, and is not overridden after full session detail loads.
 - Migrated Codex native telemetry setup to the current `exporter` and `trace_exporter` schema while preserving user-owned OTel settings, and made doctor report prompt-content capture truthfully.
 - Prevented setup tests and stale daemons from sharing the local OTLP ports, added gateway ownership metadata, startup readiness checks, and sandbox-safe PID probing, and surfaced unmanaged listeners with their actual trace destination.
 - Kept lazy Graph loading responsive on large stores by deriving its tool and MCP summaries from bounded aggregate queries instead of rescanning skill, command, duration, and file telemetry that the graph does not render.

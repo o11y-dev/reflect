@@ -518,6 +518,40 @@ def test_dashboard_session_timeline_controls_conversation_playhead(path: Path):
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_conversation_reader_supports_focus_search_and_actions(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "function conversationMatchIndexes(conversation, query)" in text
+    assert "function highlightConversationText(value, query)" in text
+    assert "function renderConversationReaderToolbar(session, conversation)" in text
+    assert 'data-conversation-mode="focused"' in text
+    assert 'data-conversation-mode="full"' in text
+    assert 'aria-label="Search this conversation"' in text
+    assert 'aria-keyshortcuts="Meta+f Control+f /"' in text
+    assert 'data-conversation-search-nav="previous"' in text
+    assert 'data-conversation-search-nav="next"' in text
+    assert "session._conversationMode === 'full' || Boolean" in text
+    assert "const lastResponseIndex = turn.events.findLastIndex" in text
+    assert 'data-conversation-failure' in text
+    assert 'data-copy-conversation="${index}"' in text
+    assert "selectConversationEvent(session, matches[session._conversationMatchCursor])" in text
+    assert "const findShortcut = (event.metaKey || event.ctrlKey)" in text
+    assert ".conversation-reader-toolbar{" in text
+    assert ".chat-msg.is-search-match .chat-bubble" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_conversation_preview_expands_real_content(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "session._expandedConversationEvents instanceof Set" in text
+    assert "const previewLimit = isExpanded ? 20000 : 280;" in text
+    assert "fullText.slice(0, expanded ? 20000 : 280)" in text
+    assert ".ev-preview.full-content.expanded{max-height:none}" in text
+    assert "hint.textContent = expanded ? 'Tap to collapse' : 'Tap to expand';" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_supplementary_data_cannot_block_initial_render(path: Path):
     text = path.read_text(encoding="utf-8")
 

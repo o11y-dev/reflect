@@ -8,9 +8,12 @@ from conftest import DAY1, HOUR, make_span, wrap_otlp
 from reflect.core import (
     _flatten_otlp_attributes,
     _iter_claude_log_spans,
+    _iter_claude_session_spans,
     _iter_codex_log_spans,
     _iter_codex_session_spans,
+    _iter_copilot_session_spans,
     _iter_cursor_session_spans,
+    _iter_gemini_session_spans,
     _load_json_lines,
     _load_otlp_logs,
     _load_otlp_traces,
@@ -350,6 +353,69 @@ class TestCursorNativeSessions:
         assert "reflect.token.source" not in user_span["attributes"]
         assert "reflect.token.estimate_algorithm" not in assistant_span["attributes"]
         assert all(span["start_time_ns"] >= 946_684_800_000_000_000 for span in spans)
+
+
+@pytest.mark.parametrize(
+    ("agent", "payload", "expected"),
+    [
+        (
+            "claude",
+            [{
+                "type": "assistant",
+                "sessionId": "session-1",
+                "timestamp": "2026-05-08T00:42:20.256Z",
+                "message": {
+                    "content": [{"type": "text", "text": "Claude response"}],
+                    "usage": {},
+                },
+            }],
+            "Claude response",
+        ),
+        (
+            "copilot",
+            [{
+                "type": "assistant.message",
+                "timestamp": "2026-05-08T00:42:20.256Z",
+                "data": {"content": "Copilot response"},
+            }],
+            "Copilot response",
+        ),
+    ],
+)
+def test_jsonl_native_session_spans_preserve_assistant_output(tmp_path, agent, payload, expected):
+    session = tmp_path / f"{agent}.jsonl"
+    session.write_text("\n".join(json.dumps(record) for record in payload) + "\n", encoding="utf-8")
+
+    parser = _iter_claude_session_spans if agent == "claude" else _iter_copilot_session_spans
+    spans = list(parser(session))
+    response = next(
+        span for span in spans if span["attributes"].get("gen_ai.client.hook.event") == "Stop"
+    )
+
+    assert response["attributes"]["gen_ai.client.output"] == expected
+
+
+def test_gemini_native_session_spans_preserve_assistant_output(tmp_path):
+    session = tmp_path / "gemini.json"
+    session.write_text(
+        json.dumps({
+            "sessionId": "session-1",
+            "messages": [{
+                "type": "gemini",
+                "timestamp": "2026-05-08T00:42:20.256Z",
+                "content": "Gemini response",
+                "tokens": {},
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    spans = list(_iter_gemini_session_spans(session))
+    response = next(
+        span for span in spans if span["attributes"].get("gen_ai.client.hook.event") == "Stop"
+    )
+
+    assert response["attributes"]["gen_ai.client.output"] == "Gemini response"
 
 
 class TestCodexSessionFiles:

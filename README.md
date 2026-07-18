@@ -320,6 +320,10 @@ reflect --foreground           # run in the foreground for debugging
 
 The default dashboard is served at `http://127.0.0.1:8765/?report=api/data`. The background server reads the SQLite store under `~/.reflect/state/`; `reflect doctor` reports whether it is running.
 
+Session detail uses one normalized conversation contract across native Claude, Codex, Copilot, Cursor, and Gemini adapters, with telemetry-derived events as the fallback when a native transcript is unavailable. The SQL-backed dashboard follows each session's local source provenance and prefers the native transcript when it contains assistant responses, while keeping normalized telemetry for execution and diagnostics. Common agent aliases such as `claude-code`, `openai-codex`, `github-copilot`, and `gemini-cli` resolve through the same registry; integrations can add formats by implementing `SessionConversationAdapter` and registering it with `SessionConversationAdapterRegistry`.
+
+The Conversation view defaults to a readable turn-focused transcript, keeps tool and MCP activity grouped beneath the relevant turn, and can switch to Full activity when every intermediate response is needed. Search matches prompts, responses, tools, models, servers, and subagents; result and failure navigation stay synchronized with the session timeline.
+
 ## Memory providers
 
 Reflect keeps local SQLite as the source of truth and can mirror writes into optional memory backends. Remote provider failures do not block the local memory row; the local record is marked with provider status so you can inspect what was mirrored versus stored locally only. Reflect operational memories stay local by default; generic agent-session memory routes to `agentmemory`, `litellm`, or `memorypalace` when the matching provider is configured.
