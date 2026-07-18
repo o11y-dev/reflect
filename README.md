@@ -36,6 +36,7 @@ Requires Python 3.11+ and [pipx](https://pipx.pypa.io/stable/installation/).
 ```bash
 pipx install o11y-reflect
 reflect setup
+reflect completion --install
 ```
 
 `reflect setup` detects supported agents, asks which ones to connect, starts the local OTLP gateway, configures verified telemetry paths, and installs Reflect's agent skills. Use your coding agents normally for a few sessions, then open the local report:
@@ -46,6 +47,8 @@ reflect
 ```
 
 `reflect doctor` checks capture health. `reflect` ingests new local evidence, starts or reuses the background report server, opens `http://127.0.0.1:8765`, and returns your terminal.
+
+`reflect completion --install` detects Bash, Zsh, or Fish, writes [Click's generated completion script](https://click.palletsprojects.com/en/stable/shell-completion/), and activates it idempotently. Interactive `reflect setup` also installs completion automatically. Restart your shell once; command names, nested commands, flags, choices, paths, and local workflow, loop, skill, session, observation, and memory IDs will then complete with Tab. To inspect a script without changing shell files, run `reflect completion --shell zsh` (or `bash` / `fish`) without `--install`.
 
 No telemetry yet? Open the bundled cross-agent dataset immediately:
 
@@ -482,6 +485,7 @@ Options:
   --help                       Show help
 
 Commands:
+  completion Generate or install autocomplete for every Reflect command
   setup    Install hooks, wire agents, configure telemetry, start gateway
   doctor   Check installation health and agent status
   update   Check release drift and optional package upgrade

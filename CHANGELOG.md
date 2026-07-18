@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added Click-native Bash, Zsh, and Fish autocomplete across the full command tree, including idempotent installation and privacy-safe local ID suggestions for observations, workflows, loops, sessions, skills, and memories.
 - Added an adapter-neutral conversation reader with readable and full-activity modes, in-session search and result navigation, synchronized timeline jumps, failure navigation, turn labels, and prompt/response copy actions.
 - Added a typed native-session conversation adapter registry for Claude, Codex, Copilot, Cursor, and Gemini, including common CLI-name aliases and a narrow extension contract for additional agent formats.
 - Added an accessible bidirectional session conversation playhead with draggable event snapping, keyboard navigation, compact event context, focused conversation highlighting, and timeline updates while manually scrolling the thread.

@@ -161,6 +161,21 @@ from reflect.parsing import (  # noqa: F401
 )
 from reflect.processing import _process_span, analyze_telemetry  # noqa: F401
 from reflect.report import render_report  # noqa: F401
+from reflect.shell_completion import (
+    SUPPORTED_SHELLS,
+    ShellCompletionManager,
+    complete_loop_id,
+    complete_memory_candidate_id,
+    complete_memory_id,
+    complete_memory_provider,
+    complete_memory_scope,
+    complete_memory_source,
+    complete_memory_type,
+    complete_observation_id,
+    complete_session_id,
+    complete_skill_id,
+    complete_workflow_id,
+)
 from reflect.skill_extraction import (  # noqa: F401
     _build_graph_evidence,
     _build_skill_evidence_bundle,
@@ -401,6 +416,33 @@ _AGENT_SPECS = [
         "recommendation": "Use opencode run for skill extraction; opencode export for session telemetry.",
     },
 ]
+
+_SKILL_AGENT_CLI_NAMES = ("claude", "codex", "copilot", "cursor-agent", "gemini", "opencode")
+
+
+def _complete_setup_agent(
+    _ctx: click.Context,
+    _param: click.Parameter,
+    incomplete: str,
+) -> list[str]:
+    """Complete supported setup display names and stable aliases."""
+    candidates = {
+        value
+        for spec in _AGENT_SPECS
+        for value in (str(spec["name"]), *map(str, spec.get("setup_aliases", [])))
+    }
+    lowered = incomplete.lower()
+    return sorted(value for value in candidates if value.lower().startswith(lowered))
+
+
+def _complete_skill_agent_cli(
+    _ctx: click.Context,
+    _param: click.Parameter,
+    incomplete: str,
+) -> list[str]:
+    """Complete supported coding-agent executables used for skill authoring."""
+    lowered = incomplete.lower()
+    return [name for name in _SKILL_AGENT_CLI_NAMES if name.startswith(lowered)]
 
 _IMPLEMENTED_AGENT_SUPPORT: dict[str, tuple[str, str]] = {
     "Claude Code": ("Native OTel + hooks", "High"),
@@ -951,6 +993,38 @@ def main(
     )
 
 
+@main.command("completion")
+@click.option(
+    "--shell",
+    type=click.Choice(SUPPORTED_SHELLS, case_sensitive=False),
+    default=None,
+    help="Shell to target. Defaults to the current $SHELL.",
+)
+@click.option(
+    "--install",
+    is_flag=True,
+    help="Install and activate completion for the selected shell.",
+)
+def completion(shell: str | None, install: bool) -> None:
+    """Generate or install autocomplete for every Reflect command."""
+    manager = ShellCompletionManager(main)
+    selected_shell = shell.lower() if shell else manager.detect_shell()
+    if selected_shell is None:
+        supported = ", ".join(SUPPORTED_SHELLS)
+        raise click.ClickException(
+            f"Could not detect a supported shell from $SHELL; pass --shell ({supported})."
+        )
+    if not install:
+        click.echo(manager.source(selected_shell), nl=False)
+        return
+    result = manager.install(selected_shell)
+    state = "Installed" if result.changed else "Already current"
+    click.echo(f"{state}: {result.script_path}")
+    if result.config_path is not None:
+        click.echo(f"Activated from: {result.config_path}")
+    click.echo("Restart the shell or source its configuration to enable autocomplete.")
+
+
 def _demo_otlp_traces() -> Path:
     bundled = Path(__file__).parent / "data" / "demo-traces.json"
     if not bundled.exists():
@@ -969,7 +1043,7 @@ def _open_improvement_service(db_path: Path):
 
 
 @main.command("improve")
-@click.argument("observation_id", required=False)
+@click.argument("observation_id", required=False, shell_complete=complete_observation_id)
 @click.option("--demo", is_flag=True, help="Use bundled sample telemetry in an isolated database.")
 @click.option("--json", "as_json", is_flag=True, help="Print the result as JSON.")
 @click.option(
@@ -1207,12 +1281,14 @@ def _read_workflow_skill(path: Path, behavior_type: str) -> dict[str, str]:
     "--source-agent",
     metavar="NAME",
     help="Record NAME as the coding agent that authored this draft.",
+    shell_complete=_complete_skill_agent_cli,
 )
 @click.option(
     "--from-workflow",
     "source_workflow_id",
     metavar="ID",
     help="Link the draft to an existing workflow's bounded source-session evidence.",
+    shell_complete=complete_workflow_id,
 )
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def workflows_add(
@@ -1260,7 +1336,7 @@ def workflows_add(
 
 
 @workflows.command("show")
-@click.argument("candidate_id")
+@click.argument("candidate_id", shell_complete=complete_workflow_id)
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def workflows_show(candidate_id: str, as_json: bool, db_path: Path) -> None:
@@ -1302,7 +1378,7 @@ def workflows_show(candidate_id: str, as_json: bool, db_path: Path) -> None:
 
 
 @workflows.command("apply")
-@click.argument("candidate_id")
+@click.argument("candidate_id", shell_complete=complete_workflow_id)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def workflows_apply(candidate_id: str, db_path: Path) -> None:
     """Approve and apply CANDIDATE_ID as a repo-local skill."""
@@ -1319,7 +1395,7 @@ def workflows_apply(candidate_id: str, db_path: Path) -> None:
 
 
 @workflows.command("rollback")
-@click.argument("candidate_id")
+@click.argument("candidate_id", shell_complete=complete_workflow_id)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def workflows_rollback(candidate_id: str, db_path: Path) -> None:
     """Roll back the active application of CANDIDATE_ID."""
@@ -1428,7 +1504,7 @@ def _prepare_improvement_store_if_empty(db_path: Path) -> None:
 
 
 @loops.command("show")
-@click.argument("loop_id")
+@click.argument("loop_id", shell_complete=complete_loop_id)
 @click.option("--json", "as_json", is_flag=True)
 @click.option(
     "--db-path",
@@ -1470,8 +1546,13 @@ def loops_show(loop_id: str, as_json: bool, db_path: Path) -> None:
 
 
 @loops.command("build")
-@click.argument("loop_id")
-@click.option("--agent", default=None, help="Coding-agent CLI used to author the skill draft.")
+@click.argument("loop_id", shell_complete=complete_loop_id)
+@click.option(
+    "--agent",
+    default=None,
+    help="Coding-agent CLI used to author the skill draft.",
+    shell_complete=_complete_skill_agent_cli,
+)
 @click.option("--json", "as_json", is_flag=True)
 @click.option(
     "--db-path",
@@ -1560,7 +1641,7 @@ def loops_build(loop_id: str, agent: str | None, as_json: bool, db_path: Path) -
 
 
 @main.command("feedback")
-@click.argument("session_id")
+@click.argument("session_id", shell_complete=complete_session_id)
 @click.option(
     "--outcome",
     type=click.Choice(["good", "bad", "no-change-correct", "corrected"], case_sensitive=False),
@@ -2145,6 +2226,7 @@ def _validate_skill_name(name: object) -> str:
         "Agent CLI binary to use for skill extraction "
         "(e.g. claude, gemini, codex). Auto-detected if not set."
     ),
+    shell_complete=_complete_skill_agent_cli,
 )
 @click.option(
     "--yes",
@@ -2449,7 +2531,7 @@ def _print_skill_registry(records, *, refresh: dict[str, int] | None = None) -> 
 @click.option("--month", "time_range", flag_value="month")
 @click.option("--all", "time_range", flag_value="all")
 @click.option("--demo", is_flag=True)
-@click.option("--agent", default=None)
+@click.option("--agent", default=None, shell_complete=_complete_skill_agent_cli)
 @click.option("--yes", "yes", is_flag=True)
 @click.option(
     "--db-path",
@@ -2480,7 +2562,7 @@ def skills_discover(
 
 
 @skills.command("show")
-@click.argument("skill_id")
+@click.argument("skill_id", shell_complete=complete_skill_id)
 @click.option("--json", "as_json", is_flag=True)
 @click.option(
     "--db-path",
@@ -2519,7 +2601,7 @@ def skills_show(skill_id: str, as_json: bool, db_path: Path) -> None:
 
 
 @skills.command("apply")
-@click.argument("skill_id")
+@click.argument("skill_id", shell_complete=complete_skill_id)
 @click.option("--project-root", type=click.Path(path_type=Path), default=Path.cwd)
 @click.option(
     "--db-path",
@@ -2544,7 +2626,7 @@ def skills_apply(skill_id: str, project_root: Path, db_path: Path) -> None:
 
 
 @skills.command("rollback")
-@click.argument("skill_id")
+@click.argument("skill_id", shell_complete=complete_skill_id)
 @click.option(
     "--db-path",
     type=click.Path(path_type=Path),
@@ -2848,6 +2930,7 @@ def _resolve_setup_agent_selection(
     "agent_names",
     multiple=True,
     help="Agent to instrument by name/key. Repeat to select multiple. Defaults to an interactive choice in a TTY, otherwise all detected agents.",
+    shell_complete=_complete_setup_agent,
 )
 @click.option(
     "--all-agents",
@@ -2859,6 +2942,12 @@ def _resolve_setup_agent_selection(
     "local_agent_names",
     multiple=True,
     help="Also install project-scoped hooks and skills for this selected agent. Repeat to select multiple.",
+    shell_complete=_complete_setup_agent,
+)
+@click.option(
+    "--shell-completion/--no-shell-completion",
+    default=None,
+    help="Install autocomplete during interactive setup; automation defaults to no shell changes.",
 )
 def setup(
     capture_text: bool | None,
@@ -2868,6 +2957,7 @@ def setup(
     agent_names: tuple[str, ...],
     all_agents: bool,
     local_agent_names: tuple[str, ...],
+    shell_completion: bool | None,
 ) -> None:
     """Install opentelemetry-hooks, configure local data export, and suggest agent enablement."""
     from rich.console import Console
@@ -2916,6 +3006,21 @@ def setup(
         selected_agent_names=selected_agent_keys,
         local_agent_names=local_agent_keys,
     )
+    install_completion = shell_completion is True or (
+        shell_completion is None and sys.stdin.isatty()
+    )
+    if install_completion:
+        manager = ShellCompletionManager(main)
+        selected_shell = manager.detect_shell()
+        if selected_shell is None:
+            console.print(
+                "[yellow]Shell autocomplete was not installed because $SHELL is unsupported. "
+                "Run `reflect completion --help` for supported shells.[/yellow]"
+            )
+        else:
+            result = manager.install(selected_shell)
+            state = "installed" if result.changed else "already current"
+            console.print(f"[green]✓[/] Shell autocomplete {state}: {result.script_path}")
 
 
 @main.group("doctor", invoke_without_command=True)
@@ -3544,10 +3649,10 @@ def memory_sync(path: Path | None, db_path: Path, as_json: bool) -> None:
 @click.argument("path", type=click.Path(path_type=Path), required=False)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 @click.option("--all", "all_memories", is_flag=True, help="List all memories instead of scoping to PATH.")
-@click.option("--type", "memory_type", default=None, help="Filter by memory type.")
-@click.option("--scope", default=None, help="Filter by memory scope.")
-@click.option("--source", default=None, help="Filter by memory source.")
-@click.option("--provider", default=None, help="Filter by provider.")
+@click.option("--type", "memory_type", default=None, help="Filter by memory type.", shell_complete=complete_memory_type)
+@click.option("--scope", default=None, help="Filter by memory scope.", shell_complete=complete_memory_scope)
+@click.option("--source", default=None, help="Filter by memory source.", shell_complete=complete_memory_source)
+@click.option("--provider", default=None, help="Filter by provider.", shell_complete=complete_memory_provider)
 @click.option("--stale", is_flag=True, help="Only show stale memories.")
 @click.option("--validated", is_flag=True, help="Only show validated memories.")
 @click.option("--unvalidated", is_flag=True, help="Only show unvalidated memories.")
@@ -3610,9 +3715,9 @@ def memory_list(
 @click.argument("query")
 @click.argument("path", type=click.Path(path_type=Path), required=False)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
-@click.option("--type", "memory_type", default=None, help="Filter by memory type.")
-@click.option("--scope", default=None, help="Filter by memory scope.")
-@click.option("--provider", default="local_sqlite", show_default=True, help="Provider to search.")
+@click.option("--type", "memory_type", default=None, help="Filter by memory type.", shell_complete=complete_memory_type)
+@click.option("--scope", default=None, help="Filter by memory scope.", shell_complete=complete_memory_scope)
+@click.option("--provider", default="local_sqlite", show_default=True, help="Provider to search.", shell_complete=complete_memory_provider)
 @click.option("--limit", type=int, default=20, show_default=True)
 @click.option("--json", "as_json", is_flag=True, help="Print search results as JSON.")
 def memory_search(
@@ -3655,7 +3760,7 @@ def memory_search(
 
 
 @memory.command("inspect")
-@click.argument("memory_id")
+@click.argument("memory_id", shell_complete=complete_memory_id)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 @click.option("--json", "as_json", is_flag=True, help="Print memory as JSON.")
 def memory_inspect(memory_id: str, db_path: Path, as_json: bool) -> None:
@@ -3674,7 +3779,7 @@ def memory_inspect(memory_id: str, db_path: Path, as_json: bool) -> None:
 
 
 @memory.command("forget")
-@click.argument("memory_id")
+@click.argument("memory_id", shell_complete=complete_memory_id)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def memory_forget(memory_id: str, db_path: Path) -> None:
     """Delete one local memory by ID."""
@@ -3689,8 +3794,8 @@ def memory_forget(memory_id: str, db_path: Path) -> None:
 
 
 @memory.command("validate")
-@click.argument("memory_id", required=False)
-@click.option("--candidate", "candidate_id", default=None, help="Promote and validate a graph-derived candidate.")
+@click.argument("memory_id", required=False, shell_complete=complete_memory_id)
+@click.option("--candidate", "candidate_id", default=None, help="Promote and validate a graph-derived candidate.", shell_complete=complete_memory_candidate_id)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 @click.option("--json", "as_json", is_flag=True, help="Print validation result as JSON.")
 def memory_validate(memory_id: str | None, candidate_id: str | None, db_path: Path, as_json: bool) -> None:
@@ -3717,7 +3822,7 @@ def memory_validate(memory_id: str | None, candidate_id: str | None, db_path: Pa
 
 @memory.command("candidates")
 @click.argument("path", type=click.Path(path_type=Path), required=False)
-@click.option("--session", "session_id", default="", help="Limit candidates to one session ID.")
+@click.option("--session", "session_id", default="", help="Limit candidates to one session ID.", shell_complete=complete_session_id)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 @click.option("--limit", type=int, default=50, show_default=True)
 @click.option("--json", "as_json", is_flag=True, help="Print candidates as JSON.")
