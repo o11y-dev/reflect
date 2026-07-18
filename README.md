@@ -1,159 +1,122 @@
-```
-░▒▓███████▓▒░░▒▓████████▓▒░▒▓████████▓▒░▒▓█▓▒░      ░▒▓████████▓▒░▒▓██████▓▒░▒▓████████▓▒░
-░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓█▓▒░     ░▒▓█▓▒░░▒▓█▓▒░ ░▒▓█▓▒░
-░▒▓███████▓▒░░▒▓██████▓▒░ ░▒▓██████▓▒░ ░▒▓█▓▒░      ░▒▓██████▓▒░░▒▓█▓▒░        ░▒▓█▓▒░
-░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓█▓▒░      ░▒▓█▓▒░     ░▒▓█▓▒░░▒▓█▓▒░ ░▒▓█▓▒░
-░▒▓█▓▒░░▒▓█▓▒░▒▓████████▓▒░▒▓█▓▒░      ░▒▓████████▓▒░▒▓████████▓▒░▒▓██████▓▒░  ░▒▓█▓▒░
-```
-# 
+<p align="center">
+  <a href="https://reflect.o11y.dev/">
+    <img src="docs/favicon.svg" width="72" height="72" alt="Reflect logo">
+  </a>
+</p>
 
-[![PyPI](https://img.shields.io/pypi/v/o11y-reflect)](https://pypi.org/project/o11y-reflect/)
-[![Python](https://img.shields.io/pypi/pyversions/o11y-reflect)](https://pypi.org/project/o11y-reflect/)
-[![License](https://img.shields.io/github/license/o11y-dev/reflect)](LICENSE)
-[![CI](https://github.com/o11y-dev/reflect/actions/workflows/test.yml/badge.svg)](https://github.com/o11y-dev/reflect/actions/workflows/test.yml)
+<h1 align="center">reflect</h1>
 
-**Behavioral memory for developer-agent behavior and workflow.**
+<p align="center">
+  <strong>Evidence, Not Vibes.</strong><br>
+  Local-first observability for failures, loops, context, cost, workflows, and skills across your AI coding-agent sessions.
+</p>
 
-Reflect turns agent telemetry into patterns about how developer-agent behavior and workflow actually work: prompt shape, tool loops, model mix, context breakage, token burn, and the mission shift happening across teams.
+<p align="center">
+  <a href="https://pypi.org/project/o11y-reflect/"><img src="https://img.shields.io/pypi/v/o11y-reflect" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/o11y-reflect/"><img src="https://img.shields.io/pypi/pyversions/o11y-reflect" alt="Supported Python versions"></a>
+  <a href="https://github.com/o11y-dev/reflect/actions/workflows/test.yml"><img src="https://github.com/o11y-dev/reflect/actions/workflows/test.yml/badge.svg" alt="CI status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/o11y-dev/reflect" alt="Apache 2.0 license"></a>
+</p>
 
-No hosted backend. No account. Runs on your machine.
+<p align="center">
+  <a href="https://reflect.o11y.dev/">Website</a> ·
+  <a href="https://reflect.o11y.dev/report.html?report=reports/showcase.json">Live dashboard</a> ·
+  <a href="https://pypi.org/project/o11y-reflect/">PyPI</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
 
-```
-$ reflect --demo
+Reflect turns local AI coding-agent sessions and OpenTelemetry signals into evidence you can act on. It shows where agents fail, stall, repeat work, lose context, or burn budget; preserves successful procedures as reviewable workflows and skills; and measures whether later sessions improve.
 
-reflecting...
-REFLECT
-Inserted     0
-Skipped      0
-Normalized   0
-Sessions     9
+No hosted backend. No Reflect account. Your telemetry and SQLite ledger stay on your machine.
 
-Serving browser report at http://127.0.0.1:8765
-```
+## Quick Start
 
-> Run this yourself: `pipx install o11y-reflect && reflect --demo`
-
-## Quickstart
+Requires Python 3.11+ and [pipx](https://pipx.pypa.io/stable/installation/).
 
 ```bash
 pipx install o11y-reflect
 reflect setup
-# use your AI tool normally for a bit, then:
+```
+
+`reflect setup` detects supported agents, asks which ones to connect, starts the local OTLP gateway, configures verified telemetry paths, and installs Reflect's agent skills. Use your coding agents normally for a few sessions, then open the local report:
+
+```bash
+reflect doctor
 reflect
 ```
 
-`reflect setup` starts a local OTLP gateway and wires the supported agents you select. It edits global user-level agent config files, points native OpenTelemetry exporters at the local gateway, installs hook-based capture where that path is supported, and writes everything under `~/.reflect/state/`. In an interactive terminal, setup asks which detected agents to instrument. In scripts, use `--agent <name>` repeatedly or `--all-agents`.
+`reflect doctor` checks capture health. `reflect` ingests new local evidence, starts or reuses the background report server, opens `http://127.0.0.1:8765`, and returns your terminal.
 
-Global/user-scoped setup is the default. Project-local hook and skill installs are available only by explicit opt-in, for agents or workflows that need repo-local instrumentation:
-
-```bash
-reflect setup --agent "Claude Code" --local-agent "Claude Code"
-```
-
-All `reflect setup` data is local and private to your machine: hook config, local spans, OTLP gateway files, and the SQLite report store live under local paths such as `~/.reflect/state/` and the opentelemetry-hooks state directory. `reflect` does not send this data to a hosted reflect service.
-
-By default, hook spans keep prompt/response text out of telemetry and store metadata such as models, token counts, lengths, and hashes. In an interactive terminal, `reflect setup` offers a short local capture-mode prompt:
-
-- **Metadata only** — no prompt/response text
-- **Masked text** — capture local text with email/token/home-path masking
-- **Full text** — capture local unmasked prompt/response text
-
-For scripted setup, use `reflect setup --text-capture-mode metadata|masked|full`. The lower-level flags `--capture-text`, `--no-capture-text`, `--mask-captured-text`, `--no-mask-captured-text`, and `--text-max-chars` are also available.
-
-Then use your AI tools normally and run `reflect`. The default command opens the local browser report backed by the SQLite store under `~/.reflect/state/`.
-
-Local folder memory is also SQLite-backed. Sync a repo's instruction files and inspect them through the memory commands:
-
-```bash
-reflect memory sync .
-reflect memory list .
-reflect memory search "changelog" .
-reflect memory candidates .
-```
-
-If you already have a lot of local telemetry and want to see `reflect` load real sessions, a run will print the ingest summary before opening the browser report. For example:
-
-```text
-╭───────────────────────────────────────────────────────────────────── REFLECT ──────────────────────────────────────────────────────────────────────╮
-│ Inserted                                                                              5                                                            │
-│ Skipped                                                                         266,370                                                            │
-│ Normalized                                                                            5                                                            │
-│ Sessions                                                                            583                                                            │
-│                                                                                                                                                    │
-│ Otlp Traces         0 inserted / 167,868 skipped / 3,024 native / 226,081 hook event(s)                                                            │
-│   claude                                   53,549 event(s) / 1,652 native / 51,897 hook                                                            │
-│   codex                                          6,741 event(s) / 0 native / 6,741 hook                                                            │
-│ Otlp Logs                 0 inserted / 18,678 skipped / 18,678 native / 0 hook event(s)                                                            │
-│   codex                                        17,788 event(s) / 17,788 native / 0 hook                                                            │
-│ Native Sessions                                             5 inserted / 79,824 skipped                                                            │
-│   codex                                                                 22,927 event(s)                                                            │
-╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-```
-
-That is the same default `reflect` path used for bundled demo data and for live local session stores. The exact counts depend on what is present under `~/.reflect/state/`, `~/.codex/sessions/`, `~/.claude/projects/`, `~/.cursor/projects/`, and the other local agent stores on your machine.
-
-## Demo
-
-No telemetry yet? Try the bundled sample data:
+No telemetry yet? Open the bundled cross-agent dataset immediately:
 
 ```bash
 reflect --demo
 ```
 
-The demo includes Claude, Codex, Copilot, Cursor, and Gemini data. Codex is represented the same way it appears in real native OTel today: useful session/model/tool/token records are in a sibling `otel-logs.json` file, while low-level runtime trace spans are filtered out of the agent analytics.
+The demo includes Claude, Codex, Copilot, Cursor, and Gemini sessions.
 
-## Requirements
+### Private by default
 
-- Python 3.11+
-- [pipx](https://pipx.pypa.io/stable/installation/) (recommended) or pip
+Setup keeps hook prompt and response text out of telemetry unless you opt in. Interactive setup offers three local capture modes: metadata only, masked text, or full text. For automation, choose explicitly:
 
-## What people actually find
+```bash
+reflect setup --text-capture-mode metadata
+```
 
-Running `reflect` for the first time is usually surprising:
+Global, user-scoped setup is the default. Project-local hooks and skills require an explicit `--local-agent` selection:
 
-- One session consumed 30–40% of your total tokens (almost always a context blowout, not useful work)
-- Your tool failure rate is higher than you thought — Bash failures often go unnoticed because the agent silently retries
-- Cache hit rate varies dramatically by agent; switching prompt style can cut costs 30–50%
-- If you use multiple agents, one is almost always measurably more efficient than the others for the same class of task
+```bash
+reflect setup --agent "Claude Code" --local-agent "Claude Code"
+```
 
-## How it works
+Local traces, logs, session data, and the report database live under `~/.reflect/state/` and supported agent-owned local stores. Reflect does not send them to a hosted Reflect service.
 
-`reflect` takes care of instrumentation and session data collection for the integrations that are implemented today. AI coding agents expose local signal in three ways, and `reflect setup` uses whichever verified path each agent supports:
+## From Sessions to Improvement
 
-- **Hooks** (Claude Code today) — scripts that fire at key lifecycle moments (session start, tool call, prompt, stop). `reflect setup` installs a small [opentelemetry-hooks](https://github.com/o11y-dev/opentelemetry-hooks) instrumentation layer into the agent's config file where that path is verified.
-- **Native OpenTelemetry** (Claude Code, OpenAI Codex CLI, GitHub Copilot, Gemini CLI) — the agent has built-in OTLP export that just needs to be pointed at the local collector. `reflect setup` writes the relevant settings for each:
-  - Claude Code: `env` block in `~/.claude/settings.json` (logs locally; traces still come from hooks/session stores)
-  - OpenAI Codex CLI: `[otel]` section in `~/.codex/config.toml` with explicit trace/log exporters (interactive mode only)
-  - GitHub Copilot VS Code: `github.copilot.chat.otel.*` keys in VS Code `settings.json`
-  - GitHub Copilot CLI: `COPILOT_OTEL_ENABLED` / `COPILOT_OTEL_OTLP_ENDPOINT` env vars
-  - Gemini CLI: `telemetry.*` keys in `~/.gemini/settings.json` (e.g. `telemetry.enabled`, `telemetry.otlpEndpoint`)
-- **Session/log adapters** (Codex CLI, Cursor, Claude Code, Copilot, Gemini) — local transcript/session files fill gaps when native spans are absent or incomplete.
+The browser is organized around one evidence-to-value path:
 
-`reflect` records whichever verified local signal path is available. Hook-based flows emit OTLP spans for tool calls, token usage events, and session boundaries. Native OTel flows write traces and/or logs depending on the agent. Codex currently puts the useful agent-level records in OTLP logs (`codex.conversation_starts`, `codex.user_prompt`, `codex.tool_decision`, `codex.tool_result`, `codex.sse_event`), so `reflect` normalizes those records and ignores noisy low-level Rust runtime trace spans.
+| Surface | What it answers |
+|---|---|
+| **Inbox** | What recurring problems or loops need attention? |
+| **Sessions** | What happened in one run, and how does it compare with another? |
+| **Workflows** | Which reusable procedure is proposed, what evidence supports it, and what exact file will change? |
+| **Skills** | Which durable skill versions exist, where are they installed, and when were they used? |
+| **Impact** | Did sessions improve after a workflow or skill was applied? |
+| **Explore** | How do usage, tools, cost, context, and graph relationships change across filters? |
 
-When you run `reflect`, it:
+Reflect keeps observations, loops, workflows, and skills separate. A repeated loop can motivate a workflow, and an approved workflow can be packaged as a skill, but neither conversion happens automatically.
 
-1. **Reads local telemetry** from `~/.reflect/state/otlp/`, local hook spans, or supported session stores
-2. **Normalizes** them into a single cross-agent data model — so a Claude tool call and a Copilot tool call look the same
-3. **Aggregates** per-session and cross-session metrics: token totals, tool failure rates, latency percentiles, subagent delegation patterns
-4. **Serves** the browser report locally from SQLite
-5. **Builds** an evidence-backed Behavioral Memory Graph from sessions, canonical workspaces, repositories, shared folders and paths, tools, skills, specs, outcomes, and local instruction memories
+## What Reflect Measures
 
-Nothing leaves your machine. There's no cloud backend, no account, no API key.
+- Session quality, outcomes, conversation, execution, changes, and source evidence
+- Token usage, cache behavior, estimated cost, model mix, and large-session concentration
+- Tool and MCP reliability, latency percentiles, retries, recovery, and verification behavior
+- Subagent delegation, completion, and effectiveness signals
+- Cross-agent, workspace, repository, folder, path, session, skill, and outcome relationships
+- Evidence-backed observations, reviewable workflow proposals, skill usage, and post-application measurements
 
-## What you get
+## How It Works
 
-- **Token economy** — input, output, cache hits, largest-session concentration
-- **Estimated cost analytics** — per-session/model/agent USD estimates, model cost concentration, pricing-source provenance
-- **Tool efficiency** — failure rates, latency percentiles (p50/p90/p95/p99), tool-to-prompt ratio
-- **Agent comparison** — side-by-side across Claude, Copilot, Gemini, Cursor
-- **Model breakdown** — which models you're actually using and how much
-- **MCP server tracking** — observed usage counts and completion gaps from recorded MCP events
-- **Subagent patterns** — delegation frequency and types
-- **Behavioral Memory Graph** — evidence-backed links between sessions, canonical workspaces, repositories, shared workspace-relative folders and paths, tools, skills, specs, outcomes, and local memories; select a session to switch between its own relationships and same-workspace peers
-- **Memory providers** — local SQLite memory by default, with provider discovery and optional routing for LiteLLM Proxy memory, Memory Palace, Agent Memory, Mem0, Graphiti, and TencentDB-Agent-Memory
-- **Activity heatmaps** — by hour and day of week
-- **Actionable recommendations** — based on your actual usage patterns
+Reflect combines the strongest verified local signal available for each agent:
+
+- **Native OpenTelemetry** for supported agent OTLP traces and logs
+- **Hooks** from [opentelemetry-hooks](https://github.com/o11y-dev/opentelemetry-hooks) for lifecycle and tool activity
+- **Session adapters** for native local conversations and execution records when telemetry is incomplete
+
+Each source is normalized into one cross-agent model and stored in local SQLite. The browser, CLI, session rules, improvement rules, graph, workflows, and Skills v2 registry all derive from that shared evidence rather than independent summaries.
+
+```mermaid
+flowchart LR
+    A[Agent sessions] --> D[Normalize]
+    B[Native OTLP] --> D
+    C[Local hooks] --> D
+    D --> E[(Local SQLite)]
+    E --> F[Sessions and graph]
+    E --> G[Observations and loops]
+    G --> H[Reviewed workflows]
+    H --> I[Versioned skills]
+    I --> J[Measured impact]
+```
 
 ## Commands
 
@@ -583,9 +546,11 @@ flowchart LR
 
 `reflect setup` wires both hook-based and native OTLP paths into the local gateway. The gateway persists a shared OTLP traces/logs cache under `~/.reflect/state/otlp/`, while local session stores are ingested alongside that OTLP cache into the SQLite-backed browser report.
 
-## Skill package
+## Packaged Agent Skills
 
-`reflect` ships with a portable skill for Claude Code. After `reflect setup`, the `/reflect` skill is available in your Claude Code session for in-session telemetry analysis.
+`reflect setup` distributes the packaged `reflect` and `reflect-skills` helpers to the global skill roots of the detected agents you select, including Codex, Claude Code, Cursor, Copilot, Gemini, and compatible shared-agent roots. It also installs the OpenTelemetry skill when that package is available. Run `reflect doctor` to detect missing or stale copies and rerun setup to refresh them.
+
+Project-local copies are opt-in through `reflect setup --local-agent <agent>`. These operator helpers are separate from the durable Skills v2 registry: generated or imported skills remain pending until you review and apply them explicitly.
 
 ## Development
 

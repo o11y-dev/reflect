@@ -27,6 +27,8 @@
 
 ### Changed
 
+- Rebuilt the README around the "Evidence, Not Vibes." product promise, a short verified setup-to-dashboard quick start, the current evidence-to-improvement product model, local privacy defaults, and accurate cross-agent skill distribution guidance.
+- Redesigned the public landing page around a clear capture, understand, and improve journey with current showcase evidence and priced-cost coverage, a branded agent rail, a progressively enhanced GitHub release/star/fork proof strip, a product capability grid, local-first trust details, a focused install path, stronger responsive behavior, and accessible navigation and motion states.
 - Redesigned Workflows and Skills as responsive tile grids with clearer status, provenance, evidence, usage, installation, and impact hierarchy; workflow steps now render as numbered readable tiles in both cards and review dialogs.
 - Distinguished Codex-visible, workspace-scoped, other-agent, pending, telemetry-only, archived, and uninstalled skill records in the Skills registry and review dialog.
 - Marked imported skill identities stale when their final active filesystem installation disappears, while preserving their version and installation history and reactivating them if the package returns.
