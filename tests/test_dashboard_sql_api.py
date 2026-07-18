@@ -612,23 +612,28 @@ def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
     )
     client = TestClient(app)
 
-    inbox = client.get("/api/improvements")
-    detail = client.get(f"/api/improvements/{observation_id}")
+    inbox = client.get("/api/inbox")
+    detail = client.get(f"/api/inbox/{observation_id}")
+    legacy_inbox = client.get("/api/improvements")
+    legacy_detail = client.get(f"/api/improvements/{observation_id}")
     workflows = client.get("/api/workflows")
     verification_workflows = client.get("/api/workflows?type=verification&status=pending")
     loop_workflows = client.get("/api/workflows?type=loop")
     loops = client.get("/api/loops")
     skills = client.get("/api/skills")
-    measurements = client.get("/api/measurements")
-    missing_measurement_sessions = client.get("/api/measurements/missing/sessions")
+    measurements = client.get("/api/impact")
+    missing_measurement_sessions = client.get("/api/impact/missing/sessions")
+    legacy_measurements = client.get("/api/measurements")
     rules = client.get("/api/rules")
 
     assert inbox.status_code == 200
-    assert inbox.json()["observations"][0]["id"] == observation_id
+    assert inbox.json()["findings"][0]["id"] == observation_id
     assert inbox.json()["inbox_total_count"] == 1
     assert inbox.json()["raw_observation_count"] == 1
     assert detail.status_code == 200
     assert detail.json()["evidence"][0]["session_id"] == "sess-sql"
+    assert legacy_inbox.json()["observations"][0]["id"] == observation_id
+    assert legacy_detail.json() == detail.json()
     assert workflows.status_code == 200
     assert workflows.json()["workflows"][0]["status"] == "pending"
     assert workflows.json()["workflows"][0]["skill_id"].startswith("skill_")
@@ -652,7 +657,8 @@ def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
     assert skill_detail.json()["versions"][0]["status"] == "pending"
     assert skill_detail.json()["usage_sessions"] == []
     assert measurements.status_code == 200
-    assert measurements.json() == {"measurements": []}
+    assert measurements.json() == {"impact_checks": []}
+    assert legacy_measurements.json() == {"measurements": []}
     assert missing_measurement_sessions.status_code == 404
     assert "Measurement not found" in missing_measurement_sessions.json()["error"]
     assert rules.status_code == 200
@@ -861,13 +867,14 @@ def test_dashboard_filtered_bootstrap_skips_heavy_tabs(tmp_path, monkeypatch):
     assert response.json()["comparison"] is None
 
     calls.clear()
-    overview = TestClient(app).get(
+    usage = TestClient(app).get(
         "/api/data",
-        params={"agents": "codex", "tab": "overview"},
+        params={"agents": "codex", "tab": "explore", "view": "usage"},
     )
 
-    assert overview.status_code == 200
-    assert calls[-1]["base_tab_names"] == {"activity", "models", "costs", "mcp"}
+    assert usage.status_code == 200
+    assert calls[-1]["base_tab_names"] == {"activity", "models", "costs", "mcp", "agents"}
+    assert calls[-1]["include_comparison"] is True
 
 
 def test_dashboard_session_filter_uses_focused_fast_path(tmp_path, monkeypatch):
@@ -951,6 +958,43 @@ def test_dashboard_lazy_tab_endpoint_rejects_unknown_tab(tmp_path):
 
     assert response.status_code == 404
     assert "Unknown report tab" in response.json()["error"]
+
+
+def test_dashboard_explore_api_uses_product_view_names(tmp_path, monkeypatch):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+    client = TestClient(app)
+
+    usage = client.get("/api/explore/usage?session=sess-sql")
+    tools = client.get("/api/explore/tools?session=sess-sql")
+
+    def _reject_expensive_graph_dependency(*_args, **_kwargs):
+        raise AssertionError("lazy graph loading must not scan skill and subagent telemetry")
+
+    monkeypatch.setattr(
+        "reflect.views.report_tabs._skill_subagent_counts",
+        _reject_expensive_graph_dependency,
+    )
+    graph = client.get("/api/explore/graph?session=sess-sql")
+    context = client.get("/api/explore/context?session=sess-sql")
+    legacy_usage_name = client.get("/api/explore/overview?session=sess-sql")
+    missing = client.get("/api/explore/not-a-view")
+
+    assert usage.status_code == 200
+    assert usage.json()["view"] == "usage"
+    assert usage.json()["scoped"] is True
+    assert usage.json()["events_by_type"]["llm_call"] == 2
+    assert usage.json()["events_by_type"]["tool_call"] == 1
+    assert tools.json()["view"] == "tools"
+    assert tools.json()["tools_by_count"] == {"exec_command": 1}
+    assert graph.json()["view"] == "graph"
+    assert "graph_semantic" in graph.json()
+    assert context.json()["view"] == "context"
+    assert {"specs", "memory", "privacy", "exports"} <= set(context.json())
+    assert legacy_usage_name.json()["view"] == "usage"
+    assert missing.status_code == 404
+    assert "Unknown Explore view" in missing.json()["error"]
 
 
 def test_dashboard_session_detail_keeps_llm_input_tokens_on_response_turns(tmp_path):
@@ -1131,11 +1175,20 @@ def test_dashboard_api_filters_by_session_param_from_sql(tmp_path):
     assert [session["id"] for session in payload["sessions"]] == ["sess-sql"]
 
 
-def test_dashboard_api_applies_sql_filters_and_comparison(tmp_path):
+def test_dashboard_api_applies_sql_filters_and_comparison(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
     _add_sql_baseline_session(db_path)
     app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+    dashboard_module = __import__("reflect.dashboard", fromlist=["_sql_dashboard_compat_payload"])
+    original_compat = dashboard_module._sql_dashboard_compat_payload
+    compat_calls = []
+
+    def capture_compat(*args, **kwargs):
+        compat_calls.append(kwargs)
+        return original_compat(*args, **kwargs)
+
+    monkeypatch.setattr("reflect.dashboard._sql_dashboard_compat_payload", capture_compat)
 
     response = TestClient(app).get(
         "/api/data",
@@ -1144,7 +1197,8 @@ def test_dashboard_api_applies_sql_filters_and_comparison(tmp_path):
             "status": "completed",
             "model": "gpt-5.4",
             "range": "7d",
-            "tab": "compare",
+            "tab": "explore",
+            "view": "usage",
         },
     )
 
@@ -1155,10 +1209,11 @@ def test_dashboard_api_applies_sql_filters_and_comparison(tmp_path):
     assert payload["comparison"]["primary"]["avg_quality"] == 87
     assert payload["comparison"]["baseline"]["avg_quality"] == 65
     assert payload["comparison"]["baseline_agents"][0]["avg_quality"] == 65
-    assert payload["sqlite"]["tabs"]["compare"]["comparison"] == payload["comparison"]
-    assert payload["sqlite"]["tabs"]["compare"]["agent_comparison"] == payload["agent_comparison"]
+    assert payload["sqlite"]["tabs"]["cohort_comparison"]["comparison"] == payload["comparison"]
+    assert payload["sqlite"]["tabs"]["cohort_comparison"]["agent_comparison"] == payload["agent_comparison"]
     assert {item["name"] for item in payload["sessions"][0]["quality_breakdown"]} >= {"Completion", "Efficiency"}
     assert payload["sessions"][0]["quality_breakdown"][0]["inputs"]
+    assert len(compat_calls) == 1
 
     active = TestClient(app).get("/api/data", params={"agents": "codex", "status": "active"})
     assert active.status_code == 200

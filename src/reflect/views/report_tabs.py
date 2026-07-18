@@ -171,10 +171,12 @@ def build_report_tab(
         skill_subagent = _skill_subagent_counts(conn, scoped)
         return _build_agents(conn, scoped, skill_subagent).model_dump()
     if normalized == "graphs":
-        skill_subagent = _skill_subagent_counts(conn, scoped)
-        tools = _build_tools(conn, scoped, skill_subagent)
-        mcp = _build_mcp(conn, scoped)
-        return _build_graphs(conn, scoped, tools.tools_by_count, mcp.mcp_servers_by_count).model_dump()
+        return _build_graphs(
+            conn,
+            scoped,
+            _top_tool_counts(conn, scoped),
+            _graph_mcp_server_counts(conn, scoped),
+        ).model_dump()
     if normalized == "specs":
         return _build_specs(conn, scoped).model_dump()
     if normalized == "memory":
@@ -350,29 +352,7 @@ def _build_tools(
     scoped_ids: list[str] | None,
     skill_subagent: dict[str, Any],
 ) -> ToolsViewModel:
-    if scoped_ids is None:
-        tool_rows = _dict_rows(conn.execute(
-            """
-            SELECT tool_name, COALESCE(SUM(call_count), 0) AS call_count
-            FROM tool_rollups
-            GROUP BY tool_name
-            ORDER BY call_count DESC, tool_name ASC
-            LIMIT 25
-            """
-        ))
-    else:
-        tool_scope, tool_params = _scope_clause("tc.session_id", scoped_ids)
-        tool_rows = _dict_rows(conn.execute(
-            f"""
-            SELECT tc.tool_name, COUNT(*) AS call_count
-            FROM tool_calls tc
-            {tool_scope}
-            GROUP BY tool_name
-            ORDER BY call_count DESC, tool_name ASC
-            LIMIT 25
-            """,
-            tool_params,
-        ))
+    tools_by_count = _top_tool_counts(conn, scoped_ids)
     duration_rows = _dict_rows(conn.execute(
         f"""
         SELECT tool_name, duration_ms
@@ -401,7 +381,7 @@ def _build_tools(
     signature = top_commands[0] if top_commands else {"command": "", "count": 0}
     file_counts = _file_counts(conn, scoped_ids)
     return ToolsViewModel(
-        tools_by_count=_counter(tool_rows, "tool_name", "call_count"),
+        tools_by_count=tools_by_count,
         tool_percentiles=percentiles,
         skills_by_count=dict(skill_subagent["skills"].most_common()),
         subagent_types_by_count=dict(skill_subagent["subagent_starts"].most_common()),
@@ -417,6 +397,61 @@ def _build_tools(
         file_edits=file_counts["edits"],
         file_reads=file_counts["reads"],
     )
+
+
+def _top_tool_counts(
+    conn: sqlite3.Connection,
+    scoped_ids: list[str] | None,
+) -> dict[str, int]:
+    if scoped_ids is None:
+        rows = _dict_rows(conn.execute(
+            """
+            SELECT tool_name, COALESCE(SUM(call_count), 0) AS call_count
+            FROM tool_rollups
+            GROUP BY tool_name
+            ORDER BY call_count DESC, tool_name ASC
+            LIMIT 25
+            """
+        ))
+    else:
+        scope, params = _scope_clause("tc.session_id", scoped_ids)
+        rows = _dict_rows(conn.execute(
+            f"""
+            SELECT tc.tool_name, COUNT(*) AS call_count
+            FROM tool_calls tc
+            {scope}
+            GROUP BY tool_name
+            ORDER BY call_count DESC, tool_name ASC
+            LIMIT 25
+            """,
+            params,
+        ))
+    return _counter(rows, "tool_name", "call_count")
+
+
+def _graph_mcp_server_counts(
+    conn: sqlite3.Connection,
+    scoped_ids: list[str] | None,
+) -> dict[str, int]:
+    scope, params = _scope_clause("session_id", scoped_ids, prefix="AND")
+    rows = _dict_rows(conn.execute(
+        f"""
+        SELECT server_name, COUNT(*) AS call_count
+        FROM mcp_calls
+        WHERE server_name IS NOT NULL AND server_name <> ''
+        {scope}
+        GROUP BY server_name
+        ORDER BY call_count DESC, server_name ASC
+        LIMIT 25
+        """,
+        params,
+    ))
+    counts: Counter[str] = Counter()
+    for row in rows:
+        server = _display_mcp_server_name(row["server_name"])
+        if server:
+            counts[server] += int(row["call_count"] or 0)
+    return dict(counts)
 
 
 def _skill_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> dict[str, Any]:

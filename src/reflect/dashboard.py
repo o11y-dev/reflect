@@ -1956,7 +1956,7 @@ def _sql_report_payload(
             "db_path": str(db_path),
             "overview": overview,
             "sessions": list_sessions(conn, limit=limit, offset=offset).model_dump(),
-            "tabs": (
+            "tabs": _add_canonical_dashboard_tab_aliases(
                 build_report_tabs(conn).model_dump()
                 if include_tabs
                 else _empty_sql_lazy_tabs()
@@ -2479,8 +2479,8 @@ def _sql_comparison_payload(
         return None
     primary_ids = {str(session["id"]) for session in primary_sessions}
     baseline_ids = {str(session["id"]) for session in baseline_sessions}
-    primary_compat = _sql_dashboard_compat_payload(db_path, session_ids=primary_ids)
-    baseline_compat = _sql_dashboard_compat_payload(db_path, session_ids=baseline_ids)
+    primary_compat = _sql_cohort_compat_payload(db_path, primary_ids)
+    baseline_compat = _sql_cohort_compat_payload(db_path, baseline_ids)
     primary_summary = _sql_cohort_summary(
         primary_sessions,
         primary_compat,
@@ -2493,7 +2493,7 @@ def _sql_comparison_payload(
         label="All other agents in scope",
     )
     baseline_agents = sorted(
-        baseline_compat.get("agent_comparison") or [],
+        _cohort_agent_comparison(baseline_sessions),
         key=lambda item: (-int(item.get("sessions") or 0), str(item.get("name") or "")),
     )
     quality_by_agent: dict[str, list[float]] = {}
@@ -2520,6 +2520,103 @@ def _sql_comparison_payload(
             "subagent_launches": _comparison_delta(primary_summary["subagent_launches"], baseline_summary["subagent_launches"]),
         },
     }
+
+
+def _sql_cohort_compat_payload(
+    db_path: Path,
+    session_ids: set[str],
+) -> dict[str, object]:
+    """Load only the aggregates rendered by cohort comparison cards."""
+    from reflect.store.sqlite import connect_sqlite
+
+    if not session_ids:
+        return {
+            "tools_by_count": {},
+            "top_commands": [],
+            "shell_executions": 0,
+            "mcp_calls": 0,
+            "subagent_launches": 0,
+        }
+    ordered_ids = sorted(session_ids)
+    placeholders = ", ".join("?" for _ in ordered_ids)
+    conn = connect_sqlite(db_path)
+    try:
+        tool_rows = _dict_rows(conn.execute(
+            f"""
+            SELECT tool_name, COUNT(*) AS call_count
+            FROM tool_calls
+            WHERE session_id IN ({placeholders})
+            GROUP BY tool_name
+            ORDER BY call_count DESC, tool_name ASC
+            LIMIT 5
+            """,
+            ordered_ids,
+        ))
+        shell_runs = conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM tool_calls
+            WHERE session_id IN ({placeholders})
+              AND LOWER(tool_name) IN ('shell', 'bash', 'exec_command')
+            """,
+            ordered_ids,
+        ).fetchone()[0]
+        mcp_calls = conn.execute(
+            f"SELECT COUNT(*) FROM mcp_calls WHERE session_id IN ({placeholders})",
+            ordered_ids,
+        ).fetchone()[0]
+        subagent_launches = conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM steps
+            WHERE session_id IN ({placeholders})
+              AND (
+                type = 'subagent_start'
+                OR summary = 'SubagentStart'
+                OR summary LIKE '%.SubagentStart'
+              )
+            """,
+            ordered_ids,
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    return {
+        "tools_by_count": {
+            str(row["tool_name"]): int(row["call_count"] or 0)
+            for row in tool_rows
+            if row.get("tool_name")
+        },
+        "top_commands": [],
+        "shell_executions": int(shell_runs or 0),
+        "mcp_calls": int(mcp_calls or 0),
+        "subagent_launches": int(subagent_launches or 0),
+    }
+
+
+def _cohort_agent_comparison(
+    sessions: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    grouped: dict[str, list[dict[str, object]]] = {}
+    for session in sessions:
+        grouped.setdefault(str(session.get("agent") or "unknown"), []).append(session)
+    rows = []
+    for name, agent_sessions in grouped.items():
+        quality = [float(item.get("quality_score") or 0) for item in agent_sessions]
+        rows.append({
+            "name": name,
+            "sessions": len(agent_sessions),
+            "prompts": sum(int(item.get("prompt_count") or 0) for item in agent_sessions),
+            "tools": sum(int(item.get("tool_calls") or 0) for item in agent_sessions),
+            "failures": sum(int(item.get("failure_count") or 0) for item in agent_sessions),
+            "tokens": sum(
+                int(item.get("input_tokens") or 0) + int(item.get("output_tokens") or 0)
+                for item in agent_sessions
+            ),
+            "total_cost": sum(float(item.get("total_cost_usd") or 0) for item in agent_sessions),
+            "total_cost_usd": sum(float(item.get("total_cost_usd") or 0) for item in agent_sessions),
+            "avg_quality": sum(quality) / len(quality) if quality else 0.0,
+        })
+    return rows
 
 
 def _empty_sql_lazy_tabs() -> dict[str, object]:
@@ -2648,6 +2745,20 @@ def _empty_sql_lazy_tabs() -> dict[str, object]:
             "scoped": True,
         },
     }
+
+
+def _add_canonical_dashboard_tab_aliases(tabs: dict[str, object]) -> dict[str, object]:
+    """Expose product-language keys while retaining legacy payload compatibility."""
+    aliases = {
+        "usage": "overview",
+        "graph": "graphs",
+        "cohort_comparison": "compare",
+        "inbox": "observations",
+    }
+    for canonical, legacy in aliases.items():
+        if canonical not in tabs and legacy in tabs:
+            tabs[canonical] = tabs[legacy]
+    return tabs
 
 
 def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
@@ -3049,6 +3160,7 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
         "token_economy": insight_payload["token_economy"],
     }
     tabs["compare"] = {"comparison": None, "agent_comparison": [agent_payload]}
+    _add_canonical_dashboard_tab_aliases(tabs)
     return {
         "sql_backed": True,
         "sqlite": {
@@ -3159,6 +3271,57 @@ def _sql_dashboard_tab_payload(
         "session_id": session_id,
         **payload,
     }
+
+
+_EXPLORE_VIEW_TABS: dict[str, tuple[str, ...]] = {
+    "usage": ("activity", "models", "costs", "mcp"),
+    "tools": ("tools",),
+    "graph": ("graphs",),
+    "context": ("specs", "memory", "privacy", "exports"),
+}
+
+_EXPLORE_VIEW_ALIASES = {
+    "overview": "usage",
+    "activity": "usage",
+    "graphs": "graph",
+    "data": "context",
+}
+
+
+def _canonical_explore_view(view_name: str) -> str:
+    normalized = view_name.strip().lower().replace("-", "_")
+    return _EXPLORE_VIEW_ALIASES.get(normalized, normalized)
+
+
+def _sql_dashboard_explore_payload(
+    db_path: Path,
+    view_name: str,
+    *,
+    session_id: str = "",
+) -> dict[str, object]:
+    canonical_view = _canonical_explore_view(view_name)
+    tab_names = _EXPLORE_VIEW_TABS.get(canonical_view)
+    if tab_names is None:
+        raise ValueError(f"Unknown Explore view: {view_name}")
+
+    payload: dict[str, object] = {
+        "sql_backed": True,
+        "view": canonical_view,
+        "scoped": bool(session_id),
+        "session_id": session_id,
+    }
+    for tab_name in tab_names:
+        tab_payload = _sql_dashboard_tab_payload(db_path, tab_name, session_id=session_id)
+        content = {
+            key: value
+            for key, value in tab_payload.items()
+            if key not in {"sql_backed", "tab", "scoped", "session_id"}
+        }
+        if canonical_view in {"usage", "tools", "graph"}:
+            payload.update(content)
+        else:
+            payload[tab_name] = content
+    return payload
 
 
 def _sql_dashboard_payload(
@@ -3473,6 +3636,7 @@ def _sql_dashboard_payload(
         "comparison": comparison_payload,
         "agent_comparison": compat["agent_comparison"],
     }
+    _add_canonical_dashboard_tab_aliases(sqlite_payload["tabs"])
     payload = {
         "sql_backed": True,
         "sqlite": sqlite_payload,
@@ -4006,12 +4170,27 @@ def _build_dashboard_app(
         status = params.get("status") or "all"
         range_name = params.get("range") or "all"
         active_tab = (params.get("tab") or "sessions").strip().lower()
+        explore_view = _canonical_explore_view(params.get("view") or "usage")
+        legacy_explore_views = {
+            "overview": "usage",
+            "activity": "usage",
+            "tools": "tools",
+            "graphs": "graph",
+            "data": "context",
+            "context": "context",
+        }
+        if active_tab in legacy_explore_views:
+            explore_view = legacy_explore_views[active_tab]
+            active_tab = "explore"
+        elif active_tab == "observations":
+            active_tab = "inbox"
+        elif active_tab == "compare":
+            active_tab = "impact"
         filtered_base_tabs = {
-            "overview": {"activity", "models", "costs", "mcp"},
-            "tools": {"tools"},
-            "compare": {"agents"},
-            "observations": {"activity", "models", "costs", "tools", "mcp", "agents"},
-        }.get(active_tab, set())
+            ("explore", "usage"): {"activity", "models", "costs", "mcp", "agents"},
+            ("explore", "tools"): {"tools"},
+            ("inbox", "usage"): {"activity", "models", "costs", "tools", "mcp", "agents"},
+        }.get((active_tab, explore_view), set())
         if session_id:
             filtered_base_tabs = {"activity", "models", "costs", "tools", "mcp", "agents"}
         has_filter = any([q, session_id, agents, model != "all", status != "all", range_name != "all"])
@@ -4035,7 +4214,7 @@ def _build_dashboard_app(
                     status=status,
                     range_name=range_name,
                     lazy_heavy_tabs=True,
-                    include_comparison=active_tab == "compare",
+                    include_comparison=active_tab == "explore" and explore_view == "usage",
                     base_tab_names=filtered_base_tabs,
                 ))
             if not has_filter:
@@ -4117,6 +4296,26 @@ def _build_dashboard_app(
         finally:
             _perf_finish("api.tabs", perf_start, tab=tab_name, session=bool(session_id))
 
+    @app.get("/api/explore/{view_name}")
+    def api_explore(view_name: str, request: Request):
+        perf_start = _perf_start()
+        if db_path is None:
+            try:
+                return JSONResponse({"error": "SQLite report view is not configured"}, status_code=404)
+            finally:
+                _perf_finish("api.explore", perf_start, view=view_name, status=404)
+        session_id = (request.query_params.get("session") or "").strip()
+        try:
+            return JSONResponse(
+                _sql_dashboard_explore_payload(db_path, view_name, session_id=session_id)
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc), "view": view_name}, status_code=404)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc), "db_path": str(db_path)}, status_code=500)
+        finally:
+            _perf_finish("api.explore", perf_start, view=view_name, session=bool(session_id))
+
     @app.get("/api/session/{session_id:path}")
     def api_session(session_id: str):
         if db_path is not None:
@@ -4138,8 +4337,9 @@ def _build_dashboard_app(
         )
         return JSONResponse({"preparation": snapshot.as_dict()})
 
+    @app.get("/api/inbox")
     @app.get("/api/improvements")
-    def api_improvements(request: Request):
+    def api_inbox(request: Request):
         if db_path is None:
             return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
         from reflect.improvements.service import ImprovementService
@@ -4178,10 +4378,11 @@ def _build_dashboard_app(
                         "regressed",
                     )
                 )
+            collection_key = "findings" if request.url.path == "/api/inbox" else "observations"
             return JSONResponse(
                 {
                     "generated_at": summary.generated_at,
-                    "observations": [
+                    collection_key: [
                         item.model_dump(mode="json") for item in findings[:limit]
                     ],
                     "inbox_total_count": len(findings),
@@ -4222,8 +4423,9 @@ def _build_dashboard_app(
         finally:
             conn.close()
 
-    @app.get("/api/improvements/{observation_id}")
-    def api_improvement_detail(observation_id: str):
+    @app.get("/api/inbox/{finding_id}")
+    @app.get("/api/improvements/{finding_id}")
+    def api_inbox_detail(finding_id: str):
         if db_path is None:
             return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
         from reflect.improvements.service import ImprovementService
@@ -4231,9 +4433,9 @@ def _build_dashboard_app(
 
         conn = connect_sqlite(db_path)
         try:
-            observation = ImprovementService(conn).repository.get_observation(observation_id)
+            observation = ImprovementService(conn).repository.get_observation(finding_id)
             if observation is None:
-                return JSONResponse({"error": f"Observation {observation_id} not found"}, status_code=404)
+                return JSONResponse({"error": f"Finding {finding_id} not found"}, status_code=404)
             return JSONResponse(observation.model_dump(mode="json"))
         finally:
             conn.close()
@@ -4523,8 +4725,9 @@ def _build_dashboard_app(
         finally:
             conn.close()
 
+    @app.get("/api/impact")
     @app.get("/api/measurements")
-    def api_measurements():
+    def api_impact(request: Request):
         if db_path is None:
             return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
         from reflect.improvements.service import ImprovementService
@@ -4532,12 +4735,14 @@ def _build_dashboard_app(
 
         conn = connect_sqlite(db_path)
         try:
-            return JSONResponse({"measurements": ImprovementService(conn).measurements.list()})
+            collection_key = "impact_checks" if request.url.path == "/api/impact" else "measurements"
+            return JSONResponse({collection_key: ImprovementService(conn).measurements.list()})
         finally:
             conn.close()
 
-    @app.get("/api/measurements/{measurement_id}/sessions")
-    def api_measurement_sessions(measurement_id: str):
+    @app.get("/api/impact/{impact_id}/sessions")
+    @app.get("/api/measurements/{impact_id}/sessions")
+    def api_impact_sessions(impact_id: str):
         if db_path is None:
             return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
         from reflect.improvements.service import ImprovementService
@@ -4545,7 +4750,7 @@ def _build_dashboard_app(
 
         conn = connect_sqlite(db_path)
         try:
-            return JSONResponse(ImprovementService(conn).measurements.sessions(measurement_id))
+            return JSONResponse(ImprovementService(conn).measurements.sessions(impact_id))
         except KeyError as exc:
             return JSONResponse({"error": str(exc)}, status_code=404)
         finally:

@@ -25,6 +25,8 @@
 
 ### Changed
 
+- Aligned browser navigation, URL state, DOM identifiers, and frontend requests around the product-language Inbox, Impact, and Explore contracts; Explore now uses explicit Usage, Tools, Graph, and Context views, with legacy URLs and API routes retained only as compatibility aliases.
+- Moved direct session comparison into Sessions and generic cohort analysis into Explore → Usage so Impact is reserved for measured post-application outcomes.
 - Reframed Measurements as a plain-language Impact view that groups snapshots by applied workflow, shows evidence-collection progress before making claims, hides premature deltas and confidence, retains history under disclosure, and links each result to stored or explicitly reconstructed comparison-session cohorts.
 - Redesigned observation-evidence and workflow-review dialogs around compact decision briefs, professional section hierarchy, human-readable session rows, bounded evidence disclosure, and anchored review actions.
 - Restructured the browser report around Inbox, Sessions, Workflows, Skills, Measurements, and Explore while preserving the existing usage, cost, comparison, tools, graph, context, memory, privacy, export, and achievement widgets.
@@ -46,6 +48,10 @@
 
 ### Fixed
 
+- Migrated Codex native telemetry setup to the current `exporter` and `trace_exporter` schema while preserving user-owned OTel settings, and made doctor report prompt-content capture truthfully.
+- Prevented setup tests and stale daemons from sharing the local OTLP ports, added gateway ownership metadata, startup readiness checks, and sandbox-safe PID probing, and surfaced unmanaged listeners with their actual trace destination.
+- Kept lazy Graph loading responsive on large stores by deriving its tool and MCP summaries from bounded aggregate queries instead of rescanning skill, command, duration, and file telemetry that the graph does not render.
+- Reduced filtered Explore → Usage cohort analysis to the bounded tool, shell, MCP, subagent, and agent aggregates it renders instead of rebuilding every dashboard tab for both cohorts.
 - Populated prompt summaries for every session-sidebar navigation card and stopped token-bearing LLM generations from appearing as synthetic metadata-only user prompts in Conversation.
 - Prevented session-filtered dashboards from remaining on the loading screen by keeping improvement GET endpoints read-only and bounding non-critical improvement-data startup requests.
 - Displayed telemetry-observed skill-use sessions in Skills review, separately from the source sessions that produced generated skills.

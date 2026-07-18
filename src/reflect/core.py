@@ -2974,15 +2974,22 @@ def _run_doctor() -> None:
     summary.add_row("detected agents", f"[bold]{len(detected_agents)}[/] / {len(agents)}")
     summary.add_row("local spans", f"[bold]{span_files}[/] file(s)")
     summary.add_row("local sessions", f"[bold]{session_files}[/] file(s)")
-    from reflect.gateway import _is_running as _gw_running
+    from reflect.gateway import daemon_status as _gateway_status
     try:
-        gw_pid = _gw_running()
-    except PermissionError:
-        gw_pid = None
-    summary.add_row(
-        "otlp gateway",
-        _status_markup(gw_pid is not None, present=f"running (PID {gw_pid})", missing="stopped"),
-    )
+        gateway_health = _gateway_status()
+    except (OSError, PermissionError, ValueError):
+        gateway_health = {"running": False, "conflict": False}
+    if gateway_health.get("running"):
+        gateway_summary = f"[green]running (PID {gateway_health['pid']})[/]"
+    elif gateway_health.get("conflict"):
+        destination = gateway_health.get("listener_traces_path") or "unknown destination"
+        gateway_summary = (
+            f"[yellow]unmanaged listener (PID {gateway_health.get('listener_pid') or '?'})[/] "
+            f"[dim]→ {destination}[/]"
+        )
+    else:
+        gateway_summary = "[red]stopped[/]"
+    summary.add_row("otlp gateway", gateway_summary)
     try:
         report_server = _report_server_daemon(
             db_path=REFLECT_HOME / "state" / "reflect.db"
@@ -3428,6 +3435,11 @@ def gateway_status() -> None:
     status = daemon_status()
     if status["running"]:
         console.print(f"[green]running[/] (PID {status['pid']})")
+    elif status.get("conflict"):
+        console.print(
+            f"[yellow]unmanaged listener[/] (PID {status.get('listener_pid') or '?'})"
+            f" routes traces to {status.get('listener_traces_path') or 'an unknown destination'}"
+        )
     else:
         console.print("[red]stopped[/]")
     console.print(f"  traces: {status['traces_path']} ({_summarize_file(Path(status['traces_path']))})")

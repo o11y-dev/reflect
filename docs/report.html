@@ -2817,18 +2817,18 @@ body.rail-overlay-open{overflow:hidden}
   outline:2px solid rgba(255,177,86,.9);
   outline-offset:2px;
 }
-#tab-compare .panel{
+#tab-impact .panel{
   border-color:rgba(242,138,26,.24);
   box-shadow:0 24px 70px rgba(0,0,0,.34), 0 0 0 1px rgba(242,138,26,.06);
 }
-#tab-compare .panel-title::before{
+#tab-impact .panel-title::before{
   content:'';
   width:8px;
   height:8px;
   background:var(--signal);
   box-shadow:0 0 18px rgba(242,138,26,.65);
 }
-#compare-panel-main{
+#cohort-comparison-panel{
   background:
     linear-gradient(180deg,rgba(242,138,26,.11),rgba(242,138,26,.025)),
     linear-gradient(180deg,rgba(24,24,22,.95),rgba(12,12,11,.92));
@@ -3007,12 +3007,12 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 <!-- ── Nav tabs ── -->
 <nav id="tabs" role="tablist" aria-label="Dashboard sections">
-  <button class="tab active" id="tab-button-observations" type="button" role="tab" aria-selected="true" aria-controls="tab-observations" tabindex="0" data-tab="observations">Inbox</button>
+  <button class="tab active" id="tab-button-inbox" type="button" role="tab" aria-selected="true" aria-controls="tab-inbox" tabindex="0" data-tab="inbox">Inbox</button>
   <button class="tab" id="tab-button-sessions" type="button" role="tab" aria-selected="false" aria-controls="tab-sessions" tabindex="-1" data-tab="sessions">Sessions</button>
   <button class="tab" id="tab-button-workflows" type="button" role="tab" aria-selected="false" aria-controls="tab-workflows" tabindex="-1" data-tab="workflows">Workflows</button>
   <button class="tab" id="tab-button-skills" type="button" role="tab" aria-selected="false" aria-controls="tab-skills" tabindex="-1" data-tab="skills">Skills</button>
-  <button class="tab" id="tab-button-compare" type="button" role="tab" aria-selected="false" aria-controls="tab-compare" tabindex="-1" data-tab="compare">Impact</button>
-  <button class="tab" id="tab-button-overview" type="button" role="tab" aria-selected="false" aria-controls="tab-overview" tabindex="-1" data-tab="overview">Explore</button>
+  <button class="tab" id="tab-button-impact" type="button" role="tab" aria-selected="false" aria-controls="tab-impact" tabindex="-1" data-tab="impact">Impact</button>
+  <button class="tab" id="tab-button-explore" type="button" role="tab" aria-selected="false" aria-controls="tab-explore-usage" tabindex="-1" data-tab="explore">Explore</button>
 </nav>
 
 <main id="main-content">
@@ -3053,15 +3053,49 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
       </div>
     </div>
   </div>
+  <div class="panel panel-no-hover">
+    <div class="panel-title">Compare Sessions <span style="color:var(--text-3);font-weight:400;font-size:11px">— select A then B</span></div>
+      <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:flex-end">
+        <div style="flex:1;min-width:200px">
+        <label for="cmp-a" style="display:block;font-size:12px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Session A</label>
+        <select id="cmp-a" class="compare-select" name="compare-session-a" autocomplete="off">
+          <option value="">— select —</option>
+        </select>
+      </div>
+      <div style="flex:1;min-width:200px">
+        <label for="cmp-b" style="display:block;font-size:12px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Session B</label>
+        <select id="cmp-b" class="compare-select" name="compare-session-b" autocomplete="off">
+          <option value="">— select —</option>
+        </select>
+      </div>
+      <button id="cmp-clear" class="compare-clear" type="button" title="Clear selection">Clear</button>
+    </div>
+    <div id="cmp-result"></div>
+  </div>
 </div>
 
-<!-- ════════════════════ OVERVIEW ════════════════════ -->
-<div class="tab-panel" id="tab-overview" role="tabpanel" aria-labelledby="tab-button-overview" hidden>
+<!-- ════════════════════ EXPLORE: USAGE ════════════════════ -->
+<div class="tab-panel" id="tab-explore-usage" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
   <div class="explore-subnav" aria-label="Explore telemetry views">
-    <button class="explore-link active" type="button" data-explore-tab="overview">Usage</button>
-    <button class="explore-link" type="button" data-explore-tab="tools">Tools</button>
-    <button class="explore-link" type="button" data-explore-tab="graphs">Graph</button>
-    <button class="explore-link" type="button" data-explore-tab="data">Context &amp; system</button>
+    <button class="explore-link active" type="button" data-explore-view="usage">Usage</button>
+    <button class="explore-link" type="button" data-explore-view="tools">Tools</button>
+    <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
+    <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
+  </div>
+  <div class="panel" id="cohort-comparison-panel">
+    <div class="panel-title">Comparable cohorts</div>
+    <div id="cohort-comparison-summary"></div>
+  </div>
+
+  <div class="cols-2">
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Cohort Details</div>
+      <div id="cohort-comparison-details"></div>
+    </div>
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Baseline Agent Mix</div>
+      <div id="cohort-baseline-agents"></div>
+    </div>
   </div>
   <!-- Row 1: 4 headline stats -->
   <div class="stat-row" id="stat-row"></div>
@@ -3175,7 +3209,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 </div>
 
 <!-- ════════════════════ IMPACT ════════════════════ -->
-<div class="tab-panel" id="tab-compare" role="tabpanel" aria-labelledby="tab-button-compare" hidden>
+<div class="tab-panel" id="tab-impact" role="tabpanel" aria-labelledby="tab-button-impact" hidden>
   <div class="product-hero">
     <div><h2>Impact</h2><p>See whether applied workflows improve later, comparable sessions. Reflect waits for enough evidence before making a claim.</p></div>
     <div class="product-count" id="measurement-count">0<small>impact checks</small></div>
@@ -3186,46 +3220,10 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
     <div class="impact-step"><strong>3. Compare</strong><span>Review improvement, regression, or no clear change.</span></div>
   </div>
   <div class="measurement-list" id="measurement-ledger"></div>
-
-  <div class="panel" id="compare-panel-main">
-    <div class="panel-title">Explore comparable cohorts</div>
-    <div id="compare-summary"></div>
-  </div>
-
-  <div class="cols-2">
-    <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Comparison Details</div>
-      <div id="compare-details"></div>
-    </div>
-    <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Baseline Agent Mix</div>
-      <div id="compare-baseline-agents"></div>
-    </div>
-  </div>
-
-  <div class="panel panel-no-hover">
-    <div class="panel-title">Compare Sessions <span style="color:var(--text-3);font-weight:400;font-size:11px">— select A then B</span></div>
-      <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:flex-end">
-        <div style="flex:1;min-width:200px">
-        <label for="cmp-a" style="display:block;font-size:12px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Session A</label>
-        <select id="cmp-a" class="compare-select" name="compare-session-a" autocomplete="off">
-          <option value="">— select —</option>
-        </select>
-      </div>
-      <div style="flex:1;min-width:200px">
-        <label for="cmp-b" style="display:block;font-size:12px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Session B</label>
-        <select id="cmp-b" class="compare-select" name="compare-session-b" autocomplete="off">
-          <option value="">— select —</option>
-        </select>
-      </div>
-      <button id="cmp-clear" class="compare-clear" type="button" title="Clear selection">Clear</button>
-    </div>
-    <div id="cmp-result"></div>
-  </div>
 </div>
 
 <!-- ════════════════════ IMPROVEMENT INBOX ════════════════════ -->
-<div class="tab-panel active" id="tab-observations" role="tabpanel" aria-labelledby="tab-button-observations">
+<div class="tab-panel active" id="tab-inbox" role="tabpanel" aria-labelledby="tab-button-inbox">
   <div class="product-hero">
     <div><h2>Improvement Inbox</h2><p>Start with evidence: recurring failures, verification gaps, and repeated behavior that may deserve a better procedure.</p></div>
     <div class="product-count" id="inbox-count">0<small>needs attention</small></div>
@@ -3270,12 +3268,12 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 </div>
 
 <!-- ════════════════════ TOOLS (merged with Latency) ════════════════════ -->
-<div class="tab-panel" id="tab-tools" role="tabpanel" aria-labelledby="tab-button-overview" hidden>
+<div class="tab-panel" id="tab-explore-tools" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
   <div class="explore-subnav" aria-label="Explore telemetry views">
-    <button class="explore-link" type="button" data-explore-tab="overview">Usage</button>
-    <button class="explore-link active" type="button" data-explore-tab="tools">Tools</button>
-    <button class="explore-link" type="button" data-explore-tab="graphs">Graph</button>
-    <button class="explore-link" type="button" data-explore-tab="data">Context &amp; system</button>
+    <button class="explore-link" type="button" data-explore-view="usage">Usage</button>
+    <button class="explore-link active" type="button" data-explore-view="tools">Tools</button>
+    <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
+    <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
   </div>
 
   <div class="tools-summary-grid">
@@ -3330,12 +3328,12 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 </div>
 
 <!-- ════════════════════ GRAPHS ════════════════════ -->
-<div class="tab-panel" id="tab-graphs" role="tabpanel" aria-labelledby="tab-button-overview" hidden>
+<div class="tab-panel" id="tab-explore-graph" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
   <div class="explore-subnav" aria-label="Explore telemetry views">
-    <button class="explore-link" type="button" data-explore-tab="overview">Usage</button>
-    <button class="explore-link" type="button" data-explore-tab="tools">Tools</button>
-    <button class="explore-link active" type="button" data-explore-tab="graphs">Graph</button>
-    <button class="explore-link" type="button" data-explore-tab="data">Context &amp; system</button>
+    <button class="explore-link" type="button" data-explore-view="usage">Usage</button>
+    <button class="explore-link" type="button" data-explore-view="tools">Tools</button>
+    <button class="explore-link active" type="button" data-explore-view="graph">Graph</button>
+    <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
   </div>
 
   <!-- 1. Behavioral Memory Graph -->
@@ -3399,12 +3397,12 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 </div>
 
 <!-- ════════════════════ CONTEXT ════════════════════ -->
-<div class="tab-panel" id="tab-data" role="tabpanel" aria-labelledby="tab-button-overview" hidden>
+<div class="tab-panel" id="tab-explore-context" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
   <div class="explore-subnav" aria-label="Explore telemetry views">
-    <button class="explore-link" type="button" data-explore-tab="overview">Usage</button>
-    <button class="explore-link" type="button" data-explore-tab="tools">Tools</button>
-    <button class="explore-link" type="button" data-explore-tab="graphs">Graph</button>
-    <button class="explore-link active" type="button" data-explore-tab="data">Context &amp; system</button>
+    <button class="explore-link" type="button" data-explore-view="usage">Usage</button>
+    <button class="explore-link" type="button" data-explore-view="tools">Tools</button>
+    <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
+    <button class="explore-link active" type="button" data-explore-view="context">Context &amp; system</button>
   </div>
   <div class="stat-row" id="data-stat-row"></div>
 
@@ -3613,9 +3611,9 @@ async function loadImprovementData(){
   const requestOptions = {headers: {Accept: 'application/json'}, signal: controller.signal};
   try {
     const [inboxResponse, workflowResponse, measurementResponse, ruleResponse] = await Promise.all([
-      fetch('/api/improvements', requestOptions),
+      fetch('/api/inbox', requestOptions),
       fetch('/api/workflows', requestOptions),
-      fetch('/api/measurements', requestOptions),
+      fetch('/api/impact', requestOptions),
       fetch('/api/rules', requestOptions),
     ]);
     if (!inboxResponse.ok || !workflowResponse.ok || !measurementResponse.ok || !ruleResponse.ok) return IMPROVEMENT_DATA;
@@ -3631,13 +3629,14 @@ async function loadImprovementData(){
     const skills = skillResponse.ok ? await skillResponse.json() : {skills:[]};
     return {
       ...inbox,
+      observations: inbox.findings || [],
       loops: loops.loops || [],
       skills: skills.skills || [],
       skill_total_count: Number(skills.total_count ?? (skills.skills || []).length),
       skill_archived_count: Number(skills.archived_count || 0),
       skill_counts_by_lifecycle: skills.counts_by_lifecycle || {},
       workflows: workflows.workflows || [],
-      measurements: measurements.measurements || [],
+      measurements: measurements.impact_checks || [],
       rules: rules.rules || [],
       rule_extension: rules.extension || {},
     };
@@ -3669,7 +3668,7 @@ function reportUrlWithCurrentFilters(){
   const params = new URLSearchParams(window.location.search);
   const report = params.get('report') || '/api/data';
   const url = new URL(report, window.location.href);
-  ['q','agents','agent','model','status','range','session','tab'].forEach(key => {
+  ['q','agents','agent','model','status','range','session','tab','view'].forEach(key => {
     const value = params.get(key);
     if (value) url.searchParams.set(key, value);
   });
@@ -3956,7 +3955,7 @@ function renderWorkflowSessionLedger(sessions, {empty, total, initial = 5} = {})
 async function showObservationEvidence(observationId){
   openLedgerDialog({title:'Loading evidence…'});
   try {
-    const item = await ledgerRequest(`/api/improvements/${encodeURIComponent(observationId)}`);
+    const item = await ledgerRequest(`/api/inbox/${encodeURIComponent(observationId)}`);
     const ledger = item.candidate_id
       ? await ledgerRequest(`/api/workflows/${encodeURIComponent(item.candidate_id)}/sessions`)
       : null;
@@ -4325,7 +4324,7 @@ async function submitSessionFeedback(sessionId, outcome, button){
 async function showImpactSessions(measurementId){
   openLedgerDialog({title:'Loading comparison sessions…'});
   try {
-    const ledger = await ledgerRequest(`/api/measurements/${encodeURIComponent(measurementId)}/sessions`);
+    const ledger = await ledgerRequest(`/api/impact/${encodeURIComponent(measurementId)}/sessions`);
     const metric = impactMetricPresentation(ledger.metric_name);
     const cohortCopy = ledger.snapshot_exact
       ? 'These are the stored session cohorts behind this impact snapshot.'
@@ -4426,27 +4425,33 @@ let dashboardFilterActive = false;
 let dashboardSelectedSessionId = currentParams().get('session') || '';
 const lazySqlTabRequests = new Map();
 
-function lazySqlTabUrl(tabName){
-  const url = new URL(`/api/tabs/${encodeURIComponent(tabName)}`, window.location.href);
+function exploreViewUrl(viewName){
+  const url = new URL(`/api/explore/${encodeURIComponent(viewName)}`, window.location.href);
   const sessionId = currentParams().get('session') || dashboardSelectedSessionId || '';
   if (sessionId) url.searchParams.set('session', sessionId);
   return {url, sessionId};
 }
 
-async function loadSqlTab(tabName){
+async function loadExploreView(viewName){
   if (!D.sql_backed || !reportSupportsServerFiltering()) return null;
   if (!D.sqlite) D.sqlite = {};
   if (!D.sqlite.tabs) D.sqlite.tabs = {};
-  const {url, sessionId} = lazySqlTabUrl(tabName);
-  const cacheKey = `${tabName}:${sessionId || 'all'}`;
+  const {url, sessionId} = exploreViewUrl(viewName);
+  const cacheKey = `${viewName}:${sessionId || 'all'}`;
   if (lazySqlTabRequests.has(cacheKey)) return lazySqlTabRequests.get(cacheKey);
   const request = fetch(url.toString(), {headers: {Accept: 'application/json'}})
     .then(response => {
-      if (!response.ok) throw new Error(`tab-fetch-failed:${tabName}`);
+      if (!response.ok) throw new Error(`explore-fetch-failed:${viewName}`);
       return response.json();
     })
     .then(payload => {
-      D.sqlite.tabs[tabName] = payload;
+      if (viewName === 'context') {
+        ['specs','memory','privacy','exports'].forEach(name => {
+          if (payload[name]) D.sqlite.tabs[name] = payload[name];
+        });
+      } else {
+        D.sqlite.tabs[viewName] = payload;
+      }
       return payload;
     })
     .finally(() => lazySqlTabRequests.delete(cacheKey));
@@ -4454,25 +4459,20 @@ async function loadSqlTab(tabName){
   return request;
 }
 
-async function hydrateSqlTabForActiveTab(tabName){
-  if (tabName === 'graphs') {
+async function hydrateExploreView(viewName){
+  if (viewName === 'graph') {
     showReportLoader(dashboardSelectedSessionId ? 'Loading session graphs...' : 'Loading graphs...');
     try {
-      await loadSqlTab('graphs');
+      await loadExploreView('graph');
     } finally {
       hideReportLoader();
     }
     return;
   }
-  if (tabName === 'data') {
+  if (viewName === 'context') {
     showReportLoader(dashboardSelectedSessionId ? 'Loading session data...' : 'Loading data...');
     try {
-      await Promise.all([
-        loadSqlTab('specs'),
-        loadSqlTab('memory'),
-        loadSqlTab('privacy'),
-        loadSqlTab('exports'),
-      ]);
+      await loadExploreView('context');
       renderSqlTabPayloads();
     } finally {
       hideReportLoader();
@@ -4484,6 +4484,29 @@ async function hydrateSqlTabForActiveTab(tabName){
 let _graphsInited = false;
 const tabButtons = Array.from(document.querySelectorAll('.tab'));
 const tabsEl = document.getElementById('tabs');
+const PRODUCT_TABS = new Set(['inbox','sessions','workflows','skills','impact','explore']);
+const EXPLORE_VIEWS = new Set(['usage','tools','graph','context']);
+const LEGACY_TAB_LOCATIONS = {
+  observations: {tab:'inbox'},
+  compare: {tab:'impact'},
+  overview: {tab:'explore', view:'usage'},
+  activity: {tab:'explore', view:'usage'},
+  tools: {tab:'explore', view:'tools'},
+  graphs: {tab:'explore', view:'graph'},
+  data: {tab:'explore', view:'context'},
+  context: {tab:'explore', view:'context'},
+};
+let activeExploreView = 'usage';
+
+function canonicalDashboardLocation(tabName, viewName = ''){
+  const requestedTab = String(tabName || '').trim().toLowerCase();
+  const legacy = LEGACY_TAB_LOCATIONS[requestedTab];
+  if (legacy) return legacy;
+  const tab = PRODUCT_TABS.has(requestedTab) ? requestedTab : 'inbox';
+  if (tab !== 'explore') return {tab};
+  const normalizedView = String(viewName || '').trim().toLowerCase();
+  return {tab, view: EXPLORE_VIEWS.has(normalizedView) ? normalizedView : 'usage'};
+}
 
 function updateTabIndicator(activeButton){
   if (!tabsEl || !activeButton) return;
@@ -4502,13 +4525,12 @@ function animateTabIndicator(){
   tabsEl.classList.add('tab-rail-animate');
 }
 
-function activateTab(tabName, {updateUrl = true, focusButton = false} = {}){
-  if (tabName === 'activity') tabName = 'overview';
-  if (tabName === 'context') tabName = 'data';
-  const requestedPanel = document.getElementById('tab-' + tabName) ? tabName : 'observations';
-  const topTab = ['tools','graphs','data'].includes(requestedPanel) ? 'overview' : requestedPanel;
-  const activeButton = document.querySelector(`.tab[data-tab="${topTab}"]`) || tabButtons[0];
-  const activeTab = requestedPanel;
+function activateTab(tabName, {view = '', updateUrl = true, focusButton = false} = {}){
+  const location = canonicalDashboardLocation(tabName, view || activeExploreView);
+  const activeTab = location.tab;
+  if (activeTab === 'explore') activeExploreView = location.view || 'usage';
+  const panelId = activeTab === 'explore' ? `tab-explore-${activeExploreView}` : `tab-${activeTab}`;
+  const activeButton = document.querySelector(`.tab[data-tab="${activeTab}"]`) || tabButtons[0];
   tabButtons.forEach(button => {
     const isActive = button === activeButton;
     button.classList.toggle('active', isActive);
@@ -4517,24 +4539,31 @@ function activateTab(tabName, {updateUrl = true, focusButton = false} = {}){
     if (focusButton && isActive) button.focus();
   });
   document.querySelectorAll('.tab-panel').forEach(panel => {
-    const isActive = panel.id === 'tab-' + activeTab;
+    const isActive = panel.id === panelId;
     panel.classList.toggle('active', isActive);
     panel.hidden = !isActive;
   });
   updateTabIndicator(activeButton);
   animateTabIndicator();
-  if (activeTab === 'graphs') {
-    hydrateSqlTabForActiveTab(activeTab)
+  document.querySelectorAll('[data-explore-view]').forEach(button => {
+    button.classList.toggle('active', button.dataset.exploreView === activeExploreView);
+  });
+  if (activeTab === 'explore' && activeExploreView === 'graph') {
+    hydrateExploreView(activeExploreView)
       .catch(() => {})
       .finally(() => {
         _graphsInited = true;
         requestAnimationFrame(initGraphs);
       });
   } else {
-    hydrateSqlTabForActiveTab(activeTab).catch(() => {});
+    if (activeTab === 'explore') hydrateExploreView(activeExploreView).catch(() => {});
   }
   if (updateUrl) {
-    updateUrlParams(params => params.set('tab', activeTab));
+    updateUrlParams(params => {
+      params.set('tab', activeTab);
+      if (activeTab === 'explore') params.set('view', activeExploreView);
+      else params.delete('view');
+    });
   }
 }
 
@@ -4553,14 +4582,18 @@ tabButtons.forEach((button, index) => {
     activateTab(nextButton.dataset.tab, {focusButton: true});
   });
 });
-document.querySelectorAll('[data-explore-tab]').forEach(button => {
-  button.addEventListener('click', () => activateTab(button.dataset.exploreTab || 'overview'));
+document.querySelectorAll('[data-explore-view]').forEach(button => {
+  button.addEventListener('click', () => activateTab('explore', {view: button.dataset.exploreView || 'usage'}));
 });
 window.addEventListener('resize', () => updateTabIndicator(document.querySelector('.tab.active')));
 
 const requestedInitialTab = currentParams().get('tab');
-const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length ? 'observations' : 'sessions';
-activateTab(requestedInitialTab || defaultProductTab, {updateUrl: false});
+const requestedInitialView = currentParams().get('view');
+const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length ? 'inbox' : 'sessions';
+activateTab(requestedInitialTab || defaultProductTab, {
+  view: requestedInitialView || '',
+  updateUrl: Boolean(requestedInitialTab || requestedInitialView),
+});
 
 /* ── Header ── */
 document.getElementById('hdr-range').textContent = D.first_event_ts + ' — ' + D.last_event_ts;
@@ -6561,18 +6594,18 @@ class SessionConversationPlayhead {
   }
 })();
 
-/* ════════════════════ OVERVIEW ════════════════════ */
+/* ════════════════════ EXPLORE: USAGE ════════════════════ */
 
 /* Stat row */
-const overviewTab = sqlTab('overview');
-const overviewModels = overviewTab.models_by_count || sqlTab('models').models_by_count || D.models_by_count || {};
-const overviewEvents = overviewTab.events_by_type || sqlTab('activity').events_by_type || D.events_by_type || {};
-const overviewModelCosts = overviewTab.model_costs || sqlTab('costs').model_costs || D.model_costs || {};
+const usageTab = sqlTab('usage');
+const usageModels = usageTab.models_by_count || sqlTab('models').models_by_count || D.models_by_count || {};
+const usageEvents = usageTab.events_by_type || sqlTab('activity').events_by_type || D.events_by_type || {};
+const usageModelCosts = usageTab.model_costs || sqlTab('costs').model_costs || D.model_costs || {};
 const statDefs = [
-  { label:'Avg Quality',   value:(overviewTab.avg_quality_score ?? D.avg_quality_score ?? 0).toFixed(1)+'%', sub:'across all sessions',           c:(overviewTab.avg_quality_score ?? D.avg_quality_score ?? 0) > 70 ? 'var(--green)' : 'var(--yellow)' },
-  { label:'Sessions',      value:fmt(overviewTab.unique_sessions ?? D.unique_sessions),  sub:String(overviewTab.first_event_ts || D.first_event_ts || '').slice(0,10)+' - now',   c:'var(--purple)' },
-  { label:'Prompts',       value:fmt(overviewTab.prompt_submits ?? D.prompt_submits),   sub:'user prompt submits',                   c:'var(--teal)' },
-  { label:'Tool Calls',    value:fmt(overviewTab.tool_calls ?? D.tool_calls),       sub:(overviewTab.tool_to_prompt_ratio ?? D.tool_to_prompt_ratio)+':1 per prompt',  c:'var(--blue)' },
+  { label:'Avg Quality',   value:(usageTab.avg_quality_score ?? D.avg_quality_score ?? 0).toFixed(1)+'%', sub:'across all sessions',           c:(usageTab.avg_quality_score ?? D.avg_quality_score ?? 0) > 70 ? 'var(--green)' : 'var(--yellow)' },
+  { label:'Sessions',      value:fmt(usageTab.unique_sessions ?? D.unique_sessions),  sub:String(usageTab.first_event_ts || D.first_event_ts || '').slice(0,10)+' - now',   c:'var(--purple)' },
+  { label:'Prompts',       value:fmt(usageTab.prompt_submits ?? D.prompt_submits),   sub:'user prompt submits',                   c:'var(--teal)' },
+  { label:'Tool Calls',    value:fmt(usageTab.tool_calls ?? D.tool_calls),       sub:(usageTab.tool_to_prompt_ratio ?? D.tool_to_prompt_ratio)+':1 per prompt',  c:'var(--blue)' },
 ];
 document.getElementById('stat-row').innerHTML = statDefs.map(s=>`
   <div class="stat" style="--c:${s.c}">
@@ -6663,14 +6696,14 @@ function formatSignedDelta(delta, suffix = ''){
   return `${sign}${value.toFixed(1)}${suffix}`;
 }
 
-function buildCompareTab(){
-  const summaryEl = document.getElementById('compare-summary');
-  const detailsEl = document.getElementById('compare-details');
-  const baselineEl = document.getElementById('compare-baseline-agents');
+function buildCohortComparison(){
+  const summaryEl = document.getElementById('cohort-comparison-summary');
+  const detailsEl = document.getElementById('cohort-comparison-details');
+  const baselineEl = document.getElementById('cohort-baseline-agents');
   if (!summaryEl || !detailsEl || !baselineEl) return;
 
-  const compareTab = sqlTab('compare');
-  const comparison = compareTab.comparison || D.comparison;
+  const cohortTab = sqlTab('cohort_comparison');
+  const comparison = cohortTab.comparison || D.comparison;
   if (comparison && comparison.primary && comparison.baseline) {
     const primary = comparison.primary;
     const baseline = comparison.baseline;
@@ -6731,7 +6764,7 @@ function buildCompareTab(){
     return;
   }
 
-  const ranking = (compareTab.agent_comparison || currentAgentComparison())
+  const ranking = (cohortTab.agent_comparison || currentAgentComparison())
     .slice()
     .sort((a, b) => Number(b.sessions || 0) - Number(a.sessions || 0));
   summaryEl.innerHTML = `
@@ -6760,26 +6793,26 @@ function buildCompareTab(){
     : `<div style="color:var(--text-3)">No comparison data available for the current report.</div>`;
   baselineEl.innerHTML = `<div style="color:var(--text-3)">Apply an agent filter to unlock primary-vs-baseline comparison and keep session A/B below for drill-down.</div>`;
 }
-buildCompareTab();
+buildCohortComparison();
 document.addEventListener('dashboard-filters-changed', event => {
   dashboardSelectedSessionId = event.detail?.selectedSessionId || dashboardSelectedSessionId || '';
   dashboardFilterActive = Boolean(event.detail?.hasFilters || dashboardSelectedSessionId);
-  buildCompareTab();
+  buildCohortComparison();
 });
 
 /* Metric tiles */
-const ph   = (overviewTab.peak_hour ?? D.peak_hour) >= 0 ? h12(overviewTab.peak_hour ?? D.peak_hour) : '--';
-const signatureCommand = overviewTab.signature_command || D.signature_command || '';
+const ph   = (usageTab.peak_hour ?? D.peak_hour) >= 0 ? h12(usageTab.peak_hour ?? D.peak_hour) : '--';
+const signatureCommand = usageTab.signature_command || D.signature_command || '';
 const sig  = signatureCommand ? signatureCommand.slice(0,28)+(signatureCommand.length>28?'…':'') : '—';
 const metricDefs = [
-  { label:'MCP Calls',          value:fmt(overviewTab.mcp_calls ?? D.mcp_calls),           sub:Object.keys(overviewTab.mcp_servers_by_count || D.mcp_servers_by_count || {}).length+' servers' },
-  { label:'Subagents Launched', value:fmt(overviewTab.subagent_launches ?? D.subagent_launches),   sub:Object.keys(overviewTab.subagent_types_by_count || D.subagent_types_by_count || {}).length+' agent types' },
-  { label:'File Edits',         value:fmt(overviewTab.file_edits ?? D.file_edits),          sub:'modified files' },
-  { label:'Shell Runs',         value:fmt(overviewTab.shell_executions ?? D.shell_executions),    sub:(overviewTab.unique_commands ?? D.unique_commands)+' unique patterns' },
-  { label:'Tool Failures',      value:fmt(overviewTab.tool_failures ?? D.tool_failures),       sub:(overviewTab.failure_rate_pct ?? D.failure_rate_pct)+'% failure rate' },
-  { label:'Peak Hour',          value:ph,                         sub:fmt(overviewTab.peak_hour_count ?? D.peak_hour_count)+' events at peak' },
-  { label:'AI Models',          value:fmt(overviewTab.unique_models ?? D.unique_models),       sub:'distinct models used' },
-  { label:'Signature Command',  value:sig,                        sub:(overviewTab.signature_command_count ?? D.signature_command_count)+'x run' },
+  { label:'MCP Calls',          value:fmt(usageTab.mcp_calls ?? D.mcp_calls),           sub:Object.keys(usageTab.mcp_servers_by_count || D.mcp_servers_by_count || {}).length+' servers' },
+  { label:'Subagents Launched', value:fmt(usageTab.subagent_launches ?? D.subagent_launches),   sub:Object.keys(usageTab.subagent_types_by_count || D.subagent_types_by_count || {}).length+' agent types' },
+  { label:'File Edits',         value:fmt(usageTab.file_edits ?? D.file_edits),          sub:'modified files' },
+  { label:'Shell Runs',         value:fmt(usageTab.shell_executions ?? D.shell_executions),    sub:(usageTab.unique_commands ?? D.unique_commands)+' unique patterns' },
+  { label:'Tool Failures',      value:fmt(usageTab.tool_failures ?? D.tool_failures),       sub:(usageTab.failure_rate_pct ?? D.failure_rate_pct)+'% failure rate' },
+  { label:'Peak Hour',          value:ph,                         sub:fmt(usageTab.peak_hour_count ?? D.peak_hour_count)+' events at peak' },
+  { label:'AI Models',          value:fmt(usageTab.unique_models ?? D.unique_models),       sub:'distinct models used' },
+  { label:'Signature Command',  value:sig,                        sub:(usageTab.signature_command_count ?? D.signature_command_count)+'x run' },
 ];
 document.getElementById('metric-row').innerHTML = metricDefs.map(m=>`
   <div class="metric">
@@ -6793,14 +6826,14 @@ Chart.defaults.color = 'rgba(255,255,255,.5)';
 Chart.defaults.borderColor = 'rgba(255,255,255,.06)';
 
 makeDoughnut('modelChart',
-  Object.keys(overviewModels).map(k=>k.replace('claude-4.6-','cl-').replace('claude-','cl-').replace('gpt-5.4-','gpt-')),
-  Object.values(overviewModels));
+  Object.keys(usageModels).map(k=>k.replace('claude-4.6-','cl-').replace('claude-','cl-').replace('gpt-5.4-','gpt-')),
+  Object.values(usageModels));
 
 makeHBar('eventChart',
-  Object.keys(overviewEvents).slice(0,8),
-  Object.values(overviewEvents).slice(0,8),
+  Object.keys(usageEvents).slice(0,8),
+  Object.values(usageEvents).slice(0,8),
   P.blue);
-const sourceProvenance = overviewTab.source_provenance || D.source_provenance || [];
+const sourceProvenance = usageTab.source_provenance || D.source_provenance || [];
 const sourceProvenanceEl = document.getElementById('source-provenance');
 if (sourceProvenanceEl) {
   sourceProvenanceEl.innerHTML = sourceProvenance.length
@@ -6849,16 +6882,16 @@ function deriveAgentCostRowsFromSessions(sessions){
   });
   return Array.from(rows.values()).sort((a, b) => String(a.day).localeCompare(String(b.day)) || Number(b.total_cost || 0) - Number(a.total_cost || 0) || String(a.agent).localeCompare(String(b.agent)));
 }
-const rawOverviewAgentCostRows = overviewTab.agent_cost_over_time || D.agent_cost_over_time || [];
-const normalizedOverviewAgentCostRows = normalizeAgentCostRows(rawOverviewAgentCostRows);
-const overviewAgentCostRows = normalizedOverviewAgentCostRows.length ? normalizedOverviewAgentCostRows : deriveAgentCostRowsFromSessions(D.sessions || []);
+const rawUsageAgentCostRows = usageTab.agent_cost_over_time || D.agent_cost_over_time || [];
+const normalizedUsageAgentCostRows = normalizeAgentCostRows(rawUsageAgentCostRows);
+const usageAgentCostRows = normalizedUsageAgentCostRows.length ? normalizedUsageAgentCostRows : deriveAgentCostRowsFromSessions(D.sessions || []);
 const agentCostChartEl = document.getElementById('agentCostChart');
 if (agentCostChartEl) {
-  if (overviewAgentCostRows.length) {
-    const dayLabels = Array.from(new Set(overviewAgentCostRows.map(row => String(row.day || '')))).filter(Boolean).sort();
+  if (usageAgentCostRows.length) {
+    const dayLabels = Array.from(new Set(usageAgentCostRows.map(row => String(row.day || '')))).filter(Boolean).sort();
     const totalsByAgent = new Map();
     const byAgentDay = new Map();
-    overviewAgentCostRows.forEach(row => {
+    usageAgentCostRows.forEach(row => {
       const agent = String(row.agent || 'unknown');
       const day = String(row.day || '');
       const totalCost = Number(row.total_cost || 0);
@@ -6883,26 +6916,26 @@ if (agentCostChartEl) {
     agentCostChartEl.parentElement.innerHTML = `<div style="font-size:12px;color:var(--text-3);padding:24px 0">${message}</div>`;
   }
 }
-const overviewInputTokens = overviewTab.total_input_tokens ?? D.total_input_tokens ?? 0;
-const overviewOutputTokens = overviewTab.total_output_tokens ?? D.total_output_tokens ?? 0;
-const overviewCacheCreationTokens = overviewTab.total_cache_creation_tokens ?? D.total_cache_creation_tokens ?? 0;
-const overviewCacheReadTokens = overviewTab.total_cache_read_tokens ?? D.total_cache_read_tokens ?? 0;
-if (overviewInputTokens > 0 || overviewOutputTokens > 0) {
+const usageInputTokens = usageTab.total_input_tokens ?? D.total_input_tokens ?? 0;
+const usageOutputTokens = usageTab.total_output_tokens ?? D.total_output_tokens ?? 0;
+const usageCacheCreationTokens = usageTab.total_cache_creation_tokens ?? D.total_cache_creation_tokens ?? 0;
+const usageCacheReadTokens = usageTab.total_cache_read_tokens ?? D.total_cache_read_tokens ?? 0;
+if (usageInputTokens > 0 || usageOutputTokens > 0) {
   makeDoughnut('tokenChart',
     ['Input','Output','Cache Creation','Cache Read'],
-    [overviewInputTokens, overviewOutputTokens, overviewCacheCreationTokens, overviewCacheReadTokens]);
+    [usageInputTokens, usageOutputTokens, usageCacheCreationTokens, usageCacheReadTokens]);
 }
-document.getElementById('stat-input-tok').textContent = fmt(overviewInputTokens);
-document.getElementById('stat-output-tok').textContent = fmt(overviewOutputTokens);
-document.getElementById('stat-cache-tok').textContent = fmt(overviewCacheReadTokens);
-document.getElementById('stat-tok-ratio').textContent = overviewInputTokens ? (overviewOutputTokens / overviewInputTokens).toFixed(2) : '--';
+document.getElementById('stat-input-tok').textContent = fmt(usageInputTokens);
+document.getElementById('stat-output-tok').textContent = fmt(usageOutputTokens);
+document.getElementById('stat-cache-tok').textContent = fmt(usageCacheReadTokens);
+document.getElementById('stat-tok-ratio').textContent = usageInputTokens ? (usageOutputTokens / usageInputTokens).toFixed(2) : '--';
 
 const costStats = [
-  ['Total Cost', fmtCost(overviewTab.total_cost_usd ?? D.total_cost_usd ?? D.total_cost ?? 0), costUnit],
-  ['Input Cost', fmtCost(overviewTab.input_cost_usd ?? D.input_cost_usd ?? D.input_cost ?? 0), costUnit],
-  ['Output Cost', fmtCost(overviewTab.output_cost_usd ?? D.output_cost_usd ?? D.output_cost ?? 0), costUnit],
-  ['Cache Cost', fmtCost((overviewTab.cache_creation_cost_usd ?? D.cache_creation_cost_usd ?? D.cache_creation_cost ?? 0) + (overviewTab.cache_read_cost_usd ?? D.cache_read_cost_usd ?? D.cache_read_cost ?? 0)), costUnit],
-  ['Cost Basis', escHtml(overviewTab.pricing_source || D.pricing_source || 'unknown'), `${Object.keys(overviewModelCosts).length} priced model(s)`],
+  ['Total Cost', fmtCost(usageTab.total_cost_usd ?? D.total_cost_usd ?? D.total_cost ?? 0), costUnit],
+  ['Input Cost', fmtCost(usageTab.input_cost_usd ?? D.input_cost_usd ?? D.input_cost ?? 0), costUnit],
+  ['Output Cost', fmtCost(usageTab.output_cost_usd ?? D.output_cost_usd ?? D.output_cost ?? 0), costUnit],
+  ['Cache Cost', fmtCost((usageTab.cache_creation_cost_usd ?? D.cache_creation_cost_usd ?? D.cache_creation_cost ?? 0) + (usageTab.cache_read_cost_usd ?? D.cache_read_cost_usd ?? D.cache_read_cost ?? 0)), costUnit],
+  ['Cost Basis', escHtml(usageTab.pricing_source || D.pricing_source || 'unknown'), `${Object.keys(usageModelCosts).length} priced model(s)`],
 ];
 const costStatsEl = document.getElementById('cost-stats');
 if (costStatsEl) {
@@ -6914,7 +6947,7 @@ if (costStatsEl) {
     </div>
   `).join('');
 }
-const modelCostRows = Object.entries(overviewModelCosts)
+const modelCostRows = Object.entries(usageModelCosts)
   .sort((a,b) => Number(b[1] || 0) - Number(a[1] || 0))
   .slice(0, 8);
 const modelCostEl = document.getElementById('model-cost-share');
@@ -7720,9 +7753,9 @@ document.getElementById('cmd-tbody').innerHTML=(sqlTab('tools').top_commands || 
 /* Tool color map */
 const TOOL_COLORS = {};
 (function assignToolColors(){
-  const graphsTab = sqlTab('graphs');
-  const co = graphsTab.graph_cooccurrence || D.graph_cooccurrence || {};
-  const dep = graphsTab.graph_dep || D.graph_dep || {};
+  const graphTab = sqlTab('graph');
+  const co = graphTab.graph_cooccurrence || D.graph_cooccurrence || {};
+  const dep = graphTab.graph_dep || D.graph_dep || {};
   const toolList = (co.tools || []).concat(
     (dep.nodes || []).map(n => n.id)
   );
@@ -7740,7 +7773,7 @@ function initGraphs() {
 /* ── 1. Tool Flow — manual arc diagram ── */
 (function buildSankey(){
   const el = document.getElementById('sankey-svg');
-  const trans = sqlTab('graphs').graph_tool_transitions || D.graph_tool_transitions || [];
+  const trans = sqlTab('graph').graph_tool_transitions || D.graph_tool_transitions || [];
   if (!el || !trans.length) {
     if (el) d3.select(el).selectAll('*').remove();
     return;
@@ -7830,7 +7863,7 @@ function initGraphs() {
 
 /* ── 2. Dependency Graph (force-directed) ── */
 (function buildDepGraph(){
-  const dep = sqlTab('graphs').graph_dep || D.graph_dep;
+  const dep = sqlTab('graph').graph_dep || D.graph_dep;
   const noteEl = document.getElementById('dep-note');
   if (!dep) return;
 
@@ -8011,7 +8044,7 @@ function initGraphs() {
 
 /* ── 3. Behavioral Memory Graph ── */
 (function buildSemanticGraph(){
-  const initialGraph = sqlTab('graphs').graph_semantic || D.graph_semantic || { nodes: [], edges: [], sessions: [], legend: [] };
+  const initialGraph = sqlTab('graph').graph_semantic || D.graph_semantic || { nodes: [], edges: [], sessions: [], legend: [] };
   const shell = document.getElementById('semantic-graph-shell');
   const svgEl = document.getElementById('semantic-graph-svg');
   const filter = document.getElementById('semantic-session-filter');
@@ -8329,7 +8362,7 @@ function initGraphs() {
     }
     context.textContent = 'Loading every session in this canonical workspace...';
     try {
-      const url = new URL('/api/tabs/graphs', window.location.href);
+      const url = new URL('/api/explore/graph', window.location.href);
       url.searchParams.set('session', selectedSession);
       const response = await fetch(url.toString(), {headers: {Accept: 'application/json'}});
       if (!response.ok) throw new Error('workspace-graph-fetch-failed');
@@ -8352,7 +8385,7 @@ function initGraphs() {
 })();
 /* ── 3. Session Timeline ── */
 (function buildTimeline(){
-  const sessions = sqlTab('graphs').graph_session_timeline || D.graph_session_timeline || [];
+  const sessions = sqlTab('graph').graph_session_timeline || D.graph_session_timeline || [];
   if (!sessions.length) {
     document.getElementById('timeline-wrap').innerHTML =
       '<p style="color:var(--text-3);font-size:13px">No timeline data</p>';
@@ -8409,7 +8442,7 @@ function initGraphs() {
 
 /* ── 4. Co-occurrence Matrix ── */
 (function buildMatrix(){
-  const co = sqlTab('graphs').graph_cooccurrence || D.graph_cooccurrence;
+  const co = sqlTab('graph').graph_cooccurrence || D.graph_cooccurrence;
   if (!co || !co.tools.length) return;
 
   const tools = co.tools;
@@ -8604,7 +8637,7 @@ function urlHasDashboardFilters(){
 }
 
 dashboardFilterActive = urlHasDashboardFilters();
-buildCompareTab();
+buildCohortComparison();
 
 hideReportLoader();
 

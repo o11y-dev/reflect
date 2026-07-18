@@ -1958,6 +1958,12 @@ class TestDoctor:
 
 
 class TestSetup:
+    @pytest.fixture(autouse=True)
+    def _do_not_start_real_gateway(self):
+        """Setup tests must never leave detached OTLP daemons behind."""
+        with patch("reflect.gateway._is_running", return_value=12345):
+            yield
+
     def test_setup_surfaces_detected_agent_guidance(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
         hook_home = tmp_path / ".otel-hook-home"
@@ -2499,10 +2505,7 @@ class TestNativeOtelConfig:
         parsed = tomllib.loads(config)
         assert "[otel]" in config
         assert parsed["otel"]["exporter"]["otlp-grpc"]["endpoint"] == "http://localhost:4317"
-        assert parsed["otel"]["traces_exporter"] == "otlp"
-        assert parsed["otel"]["traces_endpoint"] == "http://localhost:4317"
-        assert parsed["otel"]["logs_exporter"] == "otlp"
-        assert parsed["otel"]["logs_endpoint"] == "http://localhost:4317"
+        assert parsed["otel"]["trace_exporter"]["otlp-grpc"]["endpoint"] == "http://localhost:4317"
         assert parsed["otel"]["log_user_prompt"] is False
 
     def test_codex_native_otel_enables_prompt_logging_when_text_capture_is_enabled(self, tmp_path):
@@ -2523,19 +2526,15 @@ class TestNativeOtelConfig:
         config = (codex_dir / "config.toml").read_text()
         assert "[model]" in config  # existing section preserved
         assert "[otel]" in config
-        assert 'traces_exporter = "otlp"' in config
-        assert 'logs_exporter = "otlp"' in config
+        assert "trace_exporter = { otlp-grpc" in config
         assert "log_user_prompt = false" in config
 
     def test_codex_native_otel_already_configured(self, tmp_path):
         codex_dir = tmp_path / ".codex"
         codex_dir.mkdir()
         config_text = (
-            '[otel]\nexporter = {otlp-grpc = {endpoint = "http://localhost:4317"}}\n'
-            'traces_exporter = "otlp"\n'
-            'traces_endpoint = "http://localhost:4317"\n'
-            'logs_exporter = "otlp"\n'
-            'logs_endpoint = "http://localhost:4317"\n'
+            '[otel]\nexporter = { otlp-grpc = { endpoint = "http://localhost:4317" } }\n'
+            'trace_exporter = { otlp-grpc = { endpoint = "http://localhost:4317" } }\n'
             "log_user_prompt = false\n"
         )
         (codex_dir / "config.toml").write_text(config_text)
@@ -2558,8 +2557,9 @@ class TestNativeOtelConfig:
 
         parsed = tomllib.loads((codex_dir / "config.toml").read_text())
         assert parsed["model"]["name"] == "o3"
-        assert parsed["otel"]["logs_exporter"] == "otlp"
-        assert parsed["otel"]["logs_endpoint"] == "http://localhost:4317"
+        assert parsed["otel"]["exporter"]["otlp-grpc"]["endpoint"] == "http://localhost:4317"
+        assert parsed["otel"]["trace_exporter"]["otlp-grpc"]["endpoint"] == "http://localhost:4317"
+        assert "traces_exporter" not in parsed["otel"]
 
     def test_codex_native_otel_replaces_mid_file_section_without_clobbering_following_sections(self, tmp_path):
         codex_dir = tmp_path / ".codex"
@@ -2575,10 +2575,32 @@ class TestNativeOtelConfig:
 
         updated = (codex_dir / "config.toml").read_text()
         parsed = tomllib.loads(updated)
-        assert parsed["otel"]["traces_exporter"] == "otlp"
-        assert parsed["otel"]["logs_exporter"] == "otlp"
+        assert parsed["otel"]["trace_exporter"]["otlp-grpc"]["endpoint"] == "http://localhost:4317"
         assert parsed["projects"]["/tmp/demo"]["trust_level"] == "trusted"
         assert "\n\n[projects]\n" in updated
+
+    def test_codex_native_otel_migrates_legacy_keys_and_preserves_user_settings(self, tmp_path):
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "config.toml").write_text(
+            '[otel]\nexporter = {otlp-grpc = {endpoint = "http://localhost:4317"}}\n'
+            'traces_exporter = "otlp"\n'
+            'traces_endpoint = "http://localhost:4317"\n'
+            'logs_exporter = "otlp"\n'
+            'logs_endpoint = "http://localhost:4317"\n'
+            'log_user_prompt = false\n'
+            'environment = "local-dev"\n'
+            'metrics_exporter = "none"\n'
+        )
+
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
+
+        parsed = tomllib.loads((codex_dir / "config.toml").read_text())
+        assert parsed["otel"]["environment"] == "local-dev"
+        assert parsed["otel"]["metrics_exporter"] == "none"
+        assert parsed["otel"]["trace_exporter"]["otlp-grpc"]["endpoint"] == "http://localhost:4317"
+        assert not ({"traces_exporter", "traces_endpoint", "logs_exporter", "logs_endpoint"} & parsed["otel"].keys())
 
     def test_codex_native_otel_read_error(self, tmp_path):
         codex_dir = tmp_path / ".codex"
@@ -2616,6 +2638,16 @@ class TestNativeOtelConfig:
         codex = next(status for status in statuses if status["agent"] == "OpenAI Codex CLI")
         assert codex["status"] == "ready"
         assert "trace/log OTLP exporters" in codex["details"]
+        assert "raw user prompt export stays disabled" in codex["details"]
+
+    def test_native_otel_status_reports_enabled_codex_prompt_capture(self, tmp_path):
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            core._configure_codex_native_otel(self._console(), self.HOOK_CFG_CAPTURE_TEXT)
+            statuses = core._collect_native_otel_statuses(self.HOOK_CFG_CAPTURE_TEXT)
+
+        codex = next(status for status in statuses if status["agent"] == "OpenAI Codex CLI")
+        assert codex["status"] == "ready"
+        assert "raw user prompt export is enabled" in codex["details"]
 
     def test_native_otel_status_reports_unreadable_codex_config(self, tmp_path):
         codex_dir = tmp_path / ".codex"
