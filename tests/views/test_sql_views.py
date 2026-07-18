@@ -3,7 +3,7 @@ from __future__ import annotations
 from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite
 from reflect.views.overview import build_overview
-from reflect.views.report_tabs import _semantic_graph, build_report_tabs
+from reflect.views.report_tabs import _semantic_graph, build_report_tab, build_report_tabs
 from reflect.views.sessions import list_sessions
 
 
@@ -518,11 +518,16 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
 
         tabs = build_report_tabs(conn)
         scoped = build_report_tabs(conn, session_ids={"sess-2"})
+        usage_tools = build_report_tab(conn, "usage_tools", session_ids={"sess-2"})
 
         assert tabs.activity.events_by_type == {"llm_call": 2, "tool_call": 3}
         assert tabs.activity.activity_by_day == {"2026-05-01": 3, "2026-05-02": 5}
         assert tabs.models.models_by_count == {"claude-4.6-opus": 1, "gpt-5.4": 1}
         assert tabs.costs.model_costs["gpt-5.4"] == 0.75
+        assert tabs.costs.agent_cost_over_time == [
+            {"day": "2026-05-01", "agent": "claude", "total_cost": 0.5},
+            {"day": "2026-05-02", "agent": "codex", "total_cost": 0.75},
+        ]
         assert tabs.tools.tools_by_count == {"Edit": 2, "Read": 1}
         assert tabs.agents.agent_comparison[0]["name"] == "codex"
         assert tabs.graphs.graph_session_timeline
@@ -555,6 +560,13 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
             {"command": "rtk memory sync", "count": 2},
             {"command": "poetry run pytest", "count": 1},
         ]
+        assert scoped.costs.agent_cost_over_time == [
+            {"day": "2026-05-02", "agent": "codex", "total_cost": 0.75},
+        ]
+        assert usage_tools["shell_executions"] == 3
+        assert usage_tools["file_edits"] == 1
+        assert usage_tools["subagent_launches"] == 3
+        assert usage_tools["agent_comparison"][0]["name"] == "codex"
         assert "gen_ai.client.hook.PreToolUse" not in scoped.tools.tools_by_count
         assert all(
             item["command"] != "gen_ai.client.hook.PreToolUse"

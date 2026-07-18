@@ -122,6 +122,28 @@ def _sanitize_command_display(command: str, *, max_len: int | None = None) -> st
     if not isinstance(command, str):
         return ""
 
+    secret_name = r"[A-Z_][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE)[A-Z0-9_]*"
+
+    def _redact_assignment(match: re.Match[str]) -> str:
+        quote = match.group("quote") or ""
+        return f"{match.group('prefix')}{quote}[REDACTED]{quote}"
+
+    sanitized = re.sub(
+        rf"(?i)(?P<prefix>\b(?:export\s+)?{secret_name}\s*=\s*)(?P<quote>[\"']?)(?P<value>[^\s;&|\"']+)(?P=quote)",
+        _redact_assignment,
+        command,
+    )
+    sanitized = re.sub(
+        r"(?i)(?P<prefix>--(?:api[-_]?key|token|secret|password|passwd|credential|authorization)(?:=|\s+))(?P<quote>[\"']?)(?P<value>[^\s;&|\"']+)(?P=quote)",
+        _redact_assignment,
+        sanitized,
+    )
+    sanitized = re.sub(
+        r"(?i)(\bAuthorization\s*:\s*(?:Bearer|Basic)\s+)[^\s\"']+",
+        r"\1[REDACTED]",
+        sanitized,
+    )
+
     def _replace_quoted(match: re.Match[str]) -> str:
         quote = match.group("quote")
         token = match.group("token")
@@ -130,7 +152,7 @@ def _sanitize_command_display(command: str, *, max_len: int | None = None) -> st
     sanitized = re.sub(
         r'(?P<quote>["\'])(?P<token>(?:~|/)[^"\']+)(?P=quote)',
         _replace_quoted,
-        command,
+        sanitized,
     )
     sanitized = re.sub(
         r'(?P<token>(?:~|/)[^\s"\']+)',

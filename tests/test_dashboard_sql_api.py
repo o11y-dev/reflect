@@ -644,6 +644,7 @@ def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
     assert loops.json()["loops"] == []
     assert skills.status_code == 200
     assert skills.json()["skills"][0]["slug"] == "verify-before-done"
+    assert skills.json()["skills"][0]["installation_targets"] == []
     assert skills.json()["total_count"] == len(skills.json()["skills"])
     assert all(
         item["lifecycle_state"] != "stale"
@@ -866,6 +867,10 @@ def test_dashboard_filtered_bootstrap_skips_heavy_tabs(tmp_path, monkeypatch):
     assert response.json()["graph_tool_transitions"] == []
     assert response.json()["comparison"] is None
 
+    def reject_full_tools_tab(*_args, **_kwargs):
+        raise AssertionError("Usage bootstrap must not build full tool percentiles and inventories")
+
+    monkeypatch.setattr("reflect.views.report_tabs._build_tools", reject_full_tools_tab)
     calls.clear()
     usage = TestClient(app).get(
         "/api/data",
@@ -873,8 +878,21 @@ def test_dashboard_filtered_bootstrap_skips_heavy_tabs(tmp_path, monkeypatch):
     )
 
     assert usage.status_code == 200
-    assert calls[-1]["base_tab_names"] == {"activity", "models", "costs", "mcp", "agents"}
+    assert calls[-1]["base_tab_names"] == {
+        "activity", "models", "costs", "usage_tools", "mcp",
+    }
     assert calls[-1]["include_comparison"] is True
+    payload = usage.json()
+    assert payload["shell_executions"] == 1
+    assert payload["subagent_launches"] == 1
+    assert payload["subagent_types_by_count"] == {"research-helper": 1}
+    assert payload["source_provenance"]
+    assert payload["agent_cost_over_time"] == [
+        {"day": "2026-05-01", "agent": "codex", "total_cost": 0.42},
+    ]
+    assert len(payload["weekly_trends"]) == 1
+    assert payload["failure_rate_pct"] == 0
+    assert payload["sqlite"]["tabs"]["usage"]["shell_executions"] == 1
 
 
 def test_dashboard_session_filter_uses_focused_fast_path(tmp_path, monkeypatch):
@@ -968,6 +986,7 @@ def test_dashboard_explore_api_uses_product_view_names(tmp_path, monkeypatch):
 
     usage = client.get("/api/explore/usage?session=sess-sql")
     tools = client.get("/api/explore/tools?session=sess-sql")
+    legacy_usage_name = client.get("/api/explore/overview?session=sess-sql")
 
     def _reject_expensive_graph_dependency(*_args, **_kwargs):
         raise AssertionError("lazy graph loading must not scan skill and subagent telemetry")
@@ -978,7 +997,6 @@ def test_dashboard_explore_api_uses_product_view_names(tmp_path, monkeypatch):
     )
     graph = client.get("/api/explore/graph?session=sess-sql")
     context = client.get("/api/explore/context?session=sess-sql")
-    legacy_usage_name = client.get("/api/explore/overview?session=sess-sql")
     missing = client.get("/api/explore/not-a-view")
 
     assert usage.status_code == 200
@@ -986,6 +1004,10 @@ def test_dashboard_explore_api_uses_product_view_names(tmp_path, monkeypatch):
     assert usage.json()["scoped"] is True
     assert usage.json()["events_by_type"]["llm_call"] == 2
     assert usage.json()["events_by_type"]["tool_call"] == 1
+    assert usage.json()["shell_executions"] == 1
+    assert usage.json()["agent_cost_over_time"] == [
+        {"day": "2026-05-01", "agent": "codex", "total_cost": 0.42},
+    ]
     assert tools.json()["view"] == "tools"
     assert tools.json()["tools_by_count"] == {"exec_command": 1}
     assert graph.json()["view"] == "graph"
@@ -1291,6 +1313,34 @@ def test_dashboard_api_scopes_sql_tab_view_models(tmp_path):
     assert tabs["graphs"]["graph_tool_transitions"] == []
     assert tabs["tools"]["tools_by_count"] == {}
     assert tabs["mcp"]["mcp_servers_by_count"] == {}
+
+
+def test_dashboard_usage_empty_scope_keeps_widget_contracts_empty(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    response = TestClient(app).get(
+        "/api/data",
+        params={
+            "agents": "missing-agent",
+            "tab": "explore",
+            "view": "usage",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    usage = payload["sqlite"]["tabs"]["usage"]
+    assert payload["unique_sessions"] == 0
+    assert usage["unique_sessions"] == 0
+    assert usage["models_by_count"] == {}
+    assert usage["events_by_type"] == {}
+    assert usage["source_provenance"] == []
+    assert usage["agent_cost_over_time"] == []
+    assert usage["subagent_types_by_count"] == {}
+    assert payload["weekly_trends"] == []
+    assert payload["failure_rate_pct"] == 0
 
 
 def test_dashboard_sql_endpoints_are_disabled_without_db(tmp_path):

@@ -1,6 +1,8 @@
 # Reflect Spec. SQLite, Pydantic, Graph Tables, Textual, DB-backed Reporting
 
-Status: implementation brief for Codex
+> **Historical design document.** This brief records the SQLite migration direction, but its Textual-first UI and command examples are not the current product contract. Use the root `README.md`, `reflect --help`, and `docs/specs/reflect-actionable-improvement-plan.md` for current behavior.
+
+Status: archived implementation brief for Codex
 Target repo: `o11y-dev/reflect`
 
 ## 1. Executive decision

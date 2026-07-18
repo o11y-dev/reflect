@@ -215,6 +215,21 @@ class SkillRegistryService:
                     (now, row[0]),
                 )
                 missing += 1
+        self.conn.execute(
+            """
+            UPDATE skills
+            SET lifecycle_state = 'stale', updated_at = ?
+            WHERE origin = 'imported' AND lifecycle_state = 'active'
+              AND EXISTS (
+                SELECT 1 FROM skill_installations WHERE skill_id = skills.id
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM skill_installations
+                WHERE skill_id = skills.id AND status = 'active'
+              )
+            """,
+            (now,),
+        )
         return {"skills": skills, "installations": installations, "missing": missing}
 
     def sync_usage(self) -> int:
@@ -400,10 +415,25 @@ class SkillRegistryService:
             versions_by_skill.setdefault(str(skill_id), []).append(
                 (str(version_id), str(content_hash), str(workflow_json))
             )
+        installation_rows = self.conn.execute(
+            f"""
+            SELECT skill_id, target_kind
+            FROM skill_installations
+            WHERE status = 'active' AND skill_id IN ({placeholders})
+            ORDER BY skill_id, target_kind
+            """,
+            tuple(item.id for item in records),
+        ).fetchall()
+        targets_by_skill: dict[str, list[str]] = {}
+        for skill_id, target_kind in installation_rows:
+            targets_by_skill.setdefault(str(skill_id), []).append(str(target_kind))
         return [
-            self._with_semantic_version_summary(
-                item,
-                versions_by_skill.get(item.id, []),
+            self._with_installation_targets(
+                self._with_semantic_version_summary(
+                    item,
+                    versions_by_skill.get(item.id, []),
+                ),
+                targets_by_skill.get(item.id, []),
             )
             for item in records
         ]
@@ -493,6 +523,10 @@ class SkillRegistryService:
         skill = self._with_semantic_version_summary(
             skill,
             [(str(item[0]), str(item[4]), str(item[5])) for item in version_rows],
+        )
+        skill = self._with_installation_targets(
+            skill,
+            [str(item[3]) for item in installation_rows if str(item[7]) == "active"],
         )
         return SkillDetail(
             skill=skill,
@@ -988,6 +1022,15 @@ class SkillRegistryService:
                 "current_version": semantic_numbers.get(current_key) if current_key else None,
                 "version_count": total,
             }
+        )
+
+    @staticmethod
+    def _with_installation_targets(
+        skill: SkillRecord,
+        target_kinds: list[str],
+    ) -> SkillRecord:
+        return skill.model_copy(
+            update={"installation_targets": sorted(set(target_kinds))}
         )
 
     @classmethod

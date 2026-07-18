@@ -12,7 +12,7 @@
 - Added typed, rule-owned `WorkflowDefinition` proposals so custom and built-in rules explicitly opt into workflow creation while observation-only rules remain supported.
 - Added the SQLite-backed Improvement Ledger with versioned rules, durable observations, redacted evidence links, session outcomes, workflow candidates and versions, interventions, measurements, feedback, bounded nudges, and signed team-bundle imports.
 - Added all ten deterministic P0 detector families, including explicit correction and correct-no-change outcomes, enforced-boundary violations, successful recovery sequences, and repeated high-performing routines.
-- Added the simplified `reflect improve`, `reflect ask`, `reflect loops`, `reflect skills`, compatibility `reflect workflows`, and `reflect feedback` command contracts.
+- Added the simplified `reflect improve`, `reflect ask`, `reflect loops`, `reflect skills`, first-class `reflect workflows`, and `reflect feedback` command contracts.
 - Added Recovery, Verification, Exploration, and Proven Pattern workflow behavior types with CLI and browser filtering, while retaining Loop as compatibility metadata for imported historical candidates.
 - Added exact workflow diff previews, audited candidate editing and rejection, idempotent hash-guarded application, safe rollback under `.agents/skills/`, automatic conservative before/after measurements, and aggregate-only signed team bundles.
 - Added deterministic task archetypes, task-scoped measurement cohorts, workflow exposure/adherence states, and rendered-artifact integrity evaluations.
@@ -27,11 +27,15 @@
 
 ### Changed
 
+- Redesigned Workflows and Skills as responsive tile grids with clearer status, provenance, evidence, usage, installation, and impact hierarchy; workflow steps now render as numbered readable tiles in both cards and review dialogs.
+- Distinguished Codex-visible, workspace-scoped, other-agent, pending, telemetry-only, archived, and uninstalled skill records in the Skills registry and review dialog.
+- Marked imported skill identities stale when their final active filesystem installation disappears, while preserving their version and installation history and reactivating them if the package returns.
+- Removed the replaced conversation-card renderer, telemetry beat rail, stale chart helper, and their unused styles and event handlers from the browser asset.
 - Aligned browser navigation, URL state, DOM identifiers, and frontend requests around the product-language Inbox, Impact, and Explore contracts; Explore now uses explicit Usage, Tools, Graph, and Context views, with legacy URLs and API routes retained only as compatibility aliases.
 - Moved direct session comparison into Sessions and generic cohort analysis into Explore → Usage so Impact is reserved for measured post-application outcomes.
-- Reframed Measurements as a plain-language Impact view that groups snapshots by applied workflow, shows evidence-collection progress before making claims, hides premature deltas and confidence, retains history under disclosure, and links each result to stored or explicitly reconstructed comparison-session cohorts.
+- Reframed the Impact view to group measurement snapshots by applied workflow, show evidence-collection progress before making claims, hide premature deltas and confidence, retain history under disclosure, and link each result to stored or explicitly reconstructed comparison-session cohorts.
 - Redesigned observation-evidence and workflow-review dialogs around compact decision briefs, professional section hierarchy, human-readable session rows, bounded evidence disclosure, and anchored review actions.
-- Restructured the browser report around Inbox, Sessions, Workflows, Skills, Measurements, and Explore while preserving the existing usage, cost, comparison, tools, graph, context, memory, privacy, export, and achievement widgets.
+- Restructured the browser report around Inbox, Sessions, Workflows, Skills, Impact, and Explore while preserving the existing usage, cost, comparison, tools, graph, context, memory, privacy, export, and achievement widgets.
 - Moved observed loops into the evidence-first Inbox, gave Workflows an independent review and delivery surface, and limited Skills to durable package versions, installations, usage, provenance, and measurements.
 - Removed legacy telemetry summaries, prompt examples, and rule administration from Inbox; Improvement Rules now live under Explore → Context & system.
 - Restructured session detail into Summary, Conversation, Execution, Changes, and Evidence views.
@@ -50,6 +54,7 @@
 
 ### Fixed
 
+- Restored every Explore → Usage widget under agent, model, status, range, search, and session filters: bounded usage-specific aggregates now keep tool metrics, failure rates, source provenance, weekly activity, scoped cost trends, subagent completion, and explicit zero-data chart states on the same filtered session cohort; command summaries also redact credential-like values.
 - Preserved assistant response text from native Claude, Codex, Copilot, Cursor, and Gemini sessions, preferred those high-fidelity transcripts in SQL-backed session detail, and retained native source provenance when telemetry and local-session records merge.
 - Fixed Conversation preview expansion so it reveals the stored response or prompt body, persists across detail rerenders, and is not overridden after full session detail loads.
 - Migrated Codex native telemetry setup to the current `exporter` and `trace_exporter` schema while preserving user-owned OTel settings, and made doctor report prompt-content capture truthfully.

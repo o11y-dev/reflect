@@ -276,6 +276,7 @@ class SkillRecord(ReflectModel):
     version_count: int = Field(default=0, ge=0)
     evidence_count: int = Field(default=0, ge=0)
     installation_count: int = Field(default=0, ge=0)
+    installation_targets: list[str] = Field(default_factory=list)
     usage_count: int = Field(default=0, ge=0)
     measurement_count: int = Field(default=0, ge=0)
     first_seen_at: str

@@ -2238,12 +2238,23 @@ def _sql_dashboard_compat_payload(
                 else {"activity", "models", "costs", "tools", "mcp", "agents"}
             )
             for tab_name in selected_base_tabs:
-                tab_views[tab_name] = build_report_tab(
+                tab_payload = build_report_tab(
                     conn,
                     tab_name,
                     session_ids=selected_session_ids,
                 )
-            source_provenance = []
+                if tab_name == "usage_tools":
+                    tab_views["agents"] = {
+                        "agent_comparison": tab_payload.pop("agent_comparison"),
+                        "agents": tab_payload.pop("agents"),
+                    }
+                    tab_views["tools"].update(tab_payload)
+                else:
+                    tab_views[tab_name] = tab_payload
+            source_provenance = (
+                list_source_provenance(conn, session_ids=selected_session_ids)
+                if "activity" in selected_base_tabs else []
+            )
     finally:
         conn.close()
 
@@ -2271,6 +2282,7 @@ def _sql_dashboard_compat_payload(
         "cost_breakdown": costs_view["cost_breakdown"],
         "total_cache_creation_tokens": costs_view["total_cache_creation_tokens"],
         "total_cache_read_tokens": costs_view["total_cache_read_tokens"],
+        "agent_cost_over_time": costs_view["agent_cost_over_time"],
         "tools_by_count": tools_view["tools_by_count"],
         "tool_percentiles": tools_view["tool_percentiles"],
         "agent_comparison": agents_view["agent_comparison"],
@@ -2669,6 +2681,7 @@ def _empty_sql_lazy_tabs() -> dict[str, object]:
             "cache_read_cost_usd": 0.0,
             "pricing_source": "local",
             "model_costs": {},
+            "agent_cost_over_time": [],
         },
         "activity": {
             "events_by_type": {},
@@ -2690,6 +2703,7 @@ def _empty_sql_lazy_tabs() -> dict[str, object]:
             },
             "total_cache_creation_tokens": 0,
             "total_cache_read_tokens": 0,
+            "agent_cost_over_time": [],
         },
         "tools": {
             "tools_by_count": {},
@@ -2769,7 +2783,7 @@ def _add_canonical_dashboard_tab_aliases(tabs: dict[str, object]) -> dict[str, o
         "inbox": "observations",
     }
     for canonical, legacy in aliases.items():
-        if canonical not in tabs and legacy in tabs:
+        if legacy in tabs:
             tabs[canonical] = tabs[legacy]
     return tabs
 
@@ -2777,6 +2791,7 @@ def _add_canonical_dashboard_tab_aliases(tabs: dict[str, object]) -> dict[str, o
 def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
     from reflect.store.migrate import migrate
     from reflect.store.sqlite import connect_sqlite
+    from reflect.views.overview import list_source_provenance
     from reflect.views.report_tabs import _display_mcp_server_name, build_report_tab
     from reflect.views.sessions import list_sessions
 
@@ -2907,6 +2922,7 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
             tab_name: build_report_tab(conn, tab_name, session_ids={session_id})
             for tab_name in ("activity", "models", "costs", "tools", "mcp", "agents")
         }
+        source_provenance = list_source_provenance(conn, session_ids={session_id})
         navigation_page = list_sessions(conn, limit=100, offset=0).model_dump()
     finally:
         conn.close()
@@ -3130,8 +3146,14 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
     models_view = tabs["models"]
     costs_view = tabs["costs"]
     agents_view = tabs["agents"]
+    failure_rate_pct = round(
+        100 * scoped_overview["failure_count"] / scoped_overview["tool_call_count"],
+        1,
+    ) if scoped_overview["tool_call_count"] else 0.0
+    weekly_trends = _compute_weekly_trends(Counter(activity_view["activity_by_day"]))
     session_card["skills"] = tools_view["skills_by_count"]
     tabs["overview"].update({
+        "failure_rate_pct": failure_rate_pct,
         "mcp_calls": mcp_view["mcp_calls"],
         "mcp_servers_by_count": mcp_view["mcp_servers_by_count"],
         "subagent_launches": tools_view["subagent_launches"],
@@ -3146,6 +3168,7 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
         "unique_models": models_view["unique_models"],
         "models_by_count": models_view["models_by_count"],
         "events_by_type": activity_view["events_by_type"],
+        "source_provenance": source_provenance,
         "total_cache_creation_tokens": costs_view["total_cache_creation_tokens"],
         "total_cache_read_tokens": costs_view["total_cache_read_tokens"],
         "input_cost_usd": costs_view["cost_breakdown"]["input_cost_usd"],
@@ -3153,6 +3176,7 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
         "cache_creation_cost_usd": costs_view["cost_breakdown"]["cache_creation_cost_usd"],
         "cache_read_cost_usd": costs_view["cost_breakdown"]["cache_read_cost_usd"],
         "model_costs": costs_view["model_costs"],
+        "agent_cost_over_time": costs_view["agent_cost_over_time"],
     })
     insight_payload = _sql_insight_payload(scoped_overview, [session_card], {
         "total_cache_creation_tokens": int(session_row["cache_creation_tokens"] or 0),
@@ -3195,8 +3219,8 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
         "tool_calls": scoped_overview["tool_call_count"],
         "tool_to_prompt_ratio": tabs["overview"]["tool_to_prompt_ratio"],
         "events_by_type": activity_view["events_by_type"],
-        "source_provenance": [],
-        "failure_rate_pct": 0,
+        "source_provenance": source_provenance,
+        "failure_rate_pct": failure_rate_pct,
         "file_edits": tools_view["file_edits"],
         "file_reads": tools_view["file_reads"],
         "total_input_tokens": scoped_overview["input_tokens"],
@@ -3224,7 +3248,8 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
         "activity_by_hour": activity_view["activity_by_hour"],
         "peak_hour": activity_view["peak_hour"],
         "peak_hour_count": activity_view["peak_hour_count"],
-        "weekly_trends": [],
+        "weekly_trends": weekly_trends,
+        "agent_cost_over_time": costs_view["agent_cost_over_time"],
         "graph_tool_transitions": [],
         "graph_cooccurrence": {"tools": [], "matrix": []},
         "graph_latency_histograms": {},
@@ -3287,7 +3312,7 @@ def _sql_dashboard_tab_payload(
 
 
 _EXPLORE_VIEW_TABS: dict[str, tuple[str, ...]] = {
-    "usage": ("activity", "models", "costs", "mcp"),
+    "usage": ("activity", "models", "costs", "usage_tools", "mcp"),
     "tools": ("tools",),
     "graph": ("graphs",),
     "context": ("specs", "memory", "privacy", "exports"),
@@ -3523,6 +3548,11 @@ def _sql_dashboard_payload(
     scoped_overview["source_provenance"] = compat["source_provenance"]
     cost_breakdown = compat["cost_breakdown"]
     total_cost_usd = float(scoped_overview["estimated_cost_usd"] or cost_breakdown["total_cost_usd"] or 0)
+    failure_rate_pct = round(
+        100 * scoped_overview["failure_count"] / scoped_overview["tool_call_count"],
+        1,
+    ) if scoped_overview["tool_call_count"] else 0.0
+    weekly_trends = _compute_weekly_trends(Counter(compat["activity_by_day"]))
     sqlite_payload["tabs"] = {
         **dict(sqlite_payload.get("tabs") or {}),
         "overview": {
@@ -3538,7 +3568,7 @@ def _sql_dashboard_payload(
                 f"{scoped_overview['tool_call_count'] / prompt_count:.1f}"
                 if prompt_count else "0.0"
             ),
-            "failure_rate_pct": 0,
+            "failure_rate_pct": failure_rate_pct,
             "tool_failures": int(scoped_overview["failure_count"]),
             "mcp_calls": compat["mcp_calls"],
             "mcp_servers_by_count": compat["mcp_servers_by_count"],
@@ -3566,6 +3596,7 @@ def _sql_dashboard_payload(
             "cache_read_cost_usd": cost_breakdown["cache_read_cost_usd"],
             "pricing_source": "local",
             "model_costs": compat["model_costs"],
+            "agent_cost_over_time": compat["agent_cost_over_time"],
         },
         "activity": {
             "events_by_type": compat["events_by_type"],
@@ -3584,6 +3615,7 @@ def _sql_dashboard_payload(
             "cost_breakdown": compat["cost_breakdown"],
             "total_cache_creation_tokens": compat["total_cache_creation_tokens"],
             "total_cache_read_tokens": compat["total_cache_read_tokens"],
+            "agent_cost_over_time": compat["agent_cost_over_time"],
         },
         "tools": {
             "tools_by_count": compat["tools_by_count"],
@@ -3670,7 +3702,7 @@ def _sql_dashboard_payload(
         "tool_to_prompt_ratio": f"{scoped_overview['tool_call_count'] / prompt_count:.1f}" if prompt_count else "0.0",
         "events_by_type": compat["events_by_type"],
         "source_provenance": compat["source_provenance"],
-        "failure_rate_pct": 0,
+        "failure_rate_pct": failure_rate_pct,
         "file_edits": compat["file_edits"],
         "file_reads": compat["file_reads"],
         "total_input_tokens": scoped_overview["input_tokens"],
@@ -3703,7 +3735,8 @@ def _sql_dashboard_payload(
         "activity_by_hour": compat["activity_by_hour"],
         "peak_hour": compat["peak_hour"],
         "peak_hour_count": compat["peak_hour_count"],
-        "weekly_trends": [],
+        "weekly_trends": weekly_trends,
+        "agent_cost_over_time": compat["agent_cost_over_time"],
         "graph_tool_transitions": compat["graph_tool_transitions"],
         "graph_cooccurrence": compat["graph_cooccurrence"],
         "graph_latency_histograms": {},
@@ -4262,7 +4295,7 @@ def _build_dashboard_app(
         elif active_tab == "compare":
             active_tab = "impact"
         filtered_base_tabs = {
-            ("explore", "usage"): {"activity", "models", "costs", "mcp", "agents"},
+            ("explore", "usage"): {"activity", "models", "costs", "usage_tools", "mcp"},
             ("explore", "tools"): {"tools"},
             ("inbox", "usage"): {"activity", "models", "costs", "tools", "mcp", "agents"},
         }.get((active_tab, explore_view), set())

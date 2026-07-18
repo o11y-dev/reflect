@@ -42,18 +42,42 @@ def test_skill_registry_tracks_filesystem_versions_and_missing_installations(tmp
         assert skill.lifecycle_state == SkillLifecycleState.ACTIVE
         assert skill.version_count == 1
         assert skill.installation_count == 1
+        assert skill.installation_targets == ["repository"]
 
         _write_skill(root, body="1. Run the focused test.\n2. Record the result.")
         registry.refresh(scan_paths=[root])
         detail = registry.show(skill.id)
         assert [item.version for item in detail.versions] == [2, 1]
         assert detail.skill.current_version == 2
+        assert detail.skill.installation_targets == ["repository"]
 
         path.unlink()
         missing = registry.refresh(scan_paths=[root])
         detail = registry.show(skill.id)
         assert missing["missing_installations"] == 1
         assert detail.installations[0].status == "missing"
+        assert detail.skill.lifecycle_state == SkillLifecycleState.STALE
+
+        _write_skill(root)
+        registry.refresh(scan_paths=[root])
+        assert registry.show(skill.id).skill.lifecycle_state == SkillLifecycleState.ACTIVE
+    finally:
+        conn.close()
+
+
+def test_skill_registry_exposes_codex_installation_target(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    root = tmp_path / ".codex" / "skills"
+    _write_skill(root)
+    try:
+        registry = SkillRegistryService(conn)
+        registry.refresh(scan_paths=[root])
+
+        skill = registry.list()[0]
+        detail = registry.show(skill.id)
+
+        assert skill.installation_targets == ["codex"]
+        assert detail.skill.installation_targets == ["codex"]
     finally:
         conn.close()
 

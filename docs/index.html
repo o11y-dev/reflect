@@ -247,8 +247,8 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
       <h2 class="section-title">60-Second Local Path</h2>
       <p>
         Start with reflect. It wires supported agents, reads local telemetry, and opens the same browser dashboard used by this showcase.
-        Use <code>reflect</code> for the Behavioral Memory Graph, <code>reflect memory sync .</code> for local folder memories, and <code>reflect skills</code> to extract reusable skills from your session history.
-        Calculations are based on actual agent spans and dependency edges, so let your agent run for a bit to generate telemetry before opening the report or running skills extraction.
+        Use <code>reflect</code> for the Behavioral Memory Graph, <code>reflect memory sync .</code> for local folder memories, and <code>reflect skills</code> to inspect the durable skill registry. Run <code>reflect skills discover --week</code> when you intentionally want an agent to draft evidence-backed skills for review.
+        Calculations are based on actual agent spans and dependency edges, so let your agent run for a bit to generate telemetry before expecting useful discoveries or impact results.
       </p>
       <pre><code>pipx install o11y-reflect
 reflect setup
@@ -257,6 +257,7 @@ reflect memory sync .
 reflect memory list .
 reflect memory candidates .
 reflect skills
+reflect skills discover --week
 
 # no telemetry yet?
 reflect --demo</code></pre>

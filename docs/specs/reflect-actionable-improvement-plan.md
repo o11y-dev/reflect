@@ -348,7 +348,7 @@ Top questions:
 - Which proposed improvement is ready for review?
 - Which applied improvement worked or regressed?
 
-Tabs can include Inbox, Sessions, Workflows, Measurements, Memory, and System Health.
+Tabs can include Inbox, Sessions, Workflows, Skills, Impact, and Explore.
 
 ### 2. `reflect improve`
 
@@ -760,7 +760,7 @@ Sessions / Activity / Compare / Observations / Tools / Graphs / Context
 With a smaller product-oriented navigation:
 
 ```text
-Inbox / Sessions / Workflows / Skills / Measurements / Explore
+Inbox / Sessions / Workflows / Skills / Impact / Explore
 ```
 
 | Area | Purpose |
@@ -769,7 +769,7 @@ Inbox / Sessions / Workflows / Skills / Measurements / Explore
 | Sessions | Searchable session history and evidence drilldown |
 | Workflows | Reusable procedure proposals, exact review, delivery targets, activation state, and rollback |
 | Skills | Durable package identities, versions, installations, usage, provenance, and measurements |
-| Measurements | Before and after results for applied interventions |
+| Impact | Before and after results for applied interventions |
 | Explore | Cross-agent, model, tool, MCP, cost, activity, graph, and advanced comparison analysis |
 
 The default screen should be Inbox when an open observation or detected loop exists. When the inbox is empty, it should show recent sessions, recently measured improvements, and capture health rather than a blank state.
@@ -1076,7 +1076,7 @@ Cross-agent analysis remains important. Move the full surface to:
 Explore -> Agents
 ```
 
-Cross-agent widgets should also appear contextually in Inbox observations, session comparisons, workflow evidence, and Measurements.
+Cross-agent widgets should also appear contextually in Inbox observations, session comparisons, workflow evidence, and Impact.
 
 Global filters:
 

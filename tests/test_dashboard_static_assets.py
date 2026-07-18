@@ -313,7 +313,7 @@ def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(p
     assert "url.searchParams.set('tab', 'sessions')" in text
     assert "url.searchParams.set('session', session.session_id || '')" in text
     assert "supporting_observation_count" in text
-    assert "evidence patterns" in text
+    assert "Evidence Patterns" in text
     assert "inbox_total_count" in text
     assert "skill_total_count" in text
     assert "current skills" in text
@@ -407,6 +407,44 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_workflows_and_skills_use_responsive_tiles(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert 'class="workflow-list workflow-tile-grid" id="workflow-ledger"' in text
+    assert 'class="workflow-list skill-tile-grid" id="skill-registry"' in text
+    assert ".workflow-tile-grid{grid-template-columns:repeat(auto-fit" in text
+    assert ".skill-tile-grid{grid-template-columns:repeat(auto-fit" in text
+    assert "function renderWorkflowSteps(steps, {limit = 0, compact = false} = {})" in text
+    assert 'class="workflow-step-number" aria-hidden="true"' in text
+    assert "renderWorkflowSteps(content.steps)" in text
+    assert "renderWorkflowSteps(steps, {limit:4, compact:true})" in text
+    assert '<dl class="tile-metric-grid">' in text
+    assert 'class="skill-detail-grid"' in text
+    assert 'class="tile-card-title"' in text
+    assert "touch-action:manipulation" in text
+    assert "function skillAvailabilityPresentation(skill, installations = null)" in text
+    assert "Available in Codex" in text
+    assert "Available in workspace" in text
+    assert "Telemetry only" in text
+    assert "Available to other agents" in text
+    assert "Registry history and observed usage do not install a skill." in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_does_not_keep_replaced_conversation_or_telemetry_rails(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "function getEventBadge(" not in text
+    assert "function getEventBodyLabel(" not in text
+    assert "function buildTelemetryBeatRail(" not in text
+    assert "function buildSessionObservationMarkers(" not in text
+    assert "function replaceChart(" not in text
+    assert ".telemetry-beat-row{" not in text
+    assert ".telemetry-observation{" not in text
+    assert ".carousel-outer{" not in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_usage_separates_source_provenance_from_event_semantics(path: Path):
     text = path.read_text(encoding="utf-8")
 
@@ -423,6 +461,19 @@ def test_dashboard_usage_separates_source_provenance_from_event_semantics(path: 
     assert "Cost totals are available, but priced sessions do not have valid dates for a trend chart." in text
     assert "makeLine('agentCostChart'" in text
     assert "Transport/source provenance. The chart above stays semantic by event type." in text
+    assert "No model calls match the current selection." in text
+    assert "No events match the current selection." in text
+    assert "No token usage is available for the current selection." in text
+    assert "No hourly activity matches the current selection." in text
+    assert "At least one dated activity week is needed for a trend." in text
+    assert "function renderChartEmpty(id, message)" in text
+    assert "const usageModelSeries = usageModelEntries.slice(0, 8);" in text
+    assert "if (usageModelOther > 0) usageModelSeries.push(['Other models', usageModelOther]);" in text
+    assert "const types = allTypes.slice(0, 12);" in text
+    assert "Showing the 12 most-launched types" in text
+    assert "const wt = (D.weekly_trends || []).slice(-12);" in text
+    assert 'title="${escHtml(String(m.value))}"' in text
+    assert "params.delete('workflow_type');" in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
