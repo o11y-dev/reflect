@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added exact current-session, selected-session, and uncapped global usage reporting through `reflect usage`, with token, cost, model, tool, MCP, subagent, duration, and failure breakdowns plus a globally distributed `$reflect-usage` helper skill.
 - Added Click-native Bash, Zsh, and Fish autocomplete across the full command tree, including idempotent installation and privacy-safe local ID suggestions for observations, workflows, loops, sessions, skills, and memories.
 - Added an adapter-neutral conversation reader with readable and full-activity modes, in-session search and result navigation, synchronized timeline jumps, failure navigation, turn labels, and prompt/response copy actions.
 - Added a typed native-session conversation adapter registry for Claude, Codex, Copilot, Cursor, and Gemini, including common CLI-name aliases and a narrow extension contract for additional agent formats.
@@ -57,6 +58,7 @@
 
 ### Fixed
 
+- Updated Codex skill distribution to use the current user-wide and project-local `.agents/skills/` discovery roots, so the packaged `reflect-skills` helper appears in Codex's skill and slash-command lists after setup.
 - Kept workflow candidates addressable and grouped across paginated ledgers larger than 500 records instead of silently hiding later candidates and variants.
 - Refreshed impact snapshots when sessions or metric values change inside a full 50-session cohort, even when the before/after counts remain constant.
 - Merged native prompt and response content into telemetry-backed conversations without dropping MCP calls, tool status, duration, or other execution evidence.

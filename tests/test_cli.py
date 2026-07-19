@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import tomllib
@@ -73,6 +74,12 @@ class TestHelp:
         assert result.exit_code == 0
         assert "Usage" in result.output
 
+    def test_usage_help(self, runner):
+        result = runner.invoke(main, ["usage", "--help"])
+        assert result.exit_code == 0
+        assert "--refresh" in result.output
+        assert "--global" in result.output
+
     def test_db_doctor_help(self, runner):
         result = runner.invoke(main, ["db", "doctor", "--help"])
         assert result.exit_code == 0
@@ -97,6 +104,22 @@ class TestHelp:
         assert result.exit_code != 0
         assert "Pending migrations: 1, 2, 3, 4, 5, 6" in result.output
         assert "SQLite store health: needs attention" in result.output
+
+
+    def test_skill_drift_checks_all_packaged_reflect_helpers(self, tmp_path):
+        global_root = tmp_path / "skills"
+        global_root.mkdir()
+        source = core._bundled_reflect_skill_dir()
+        assert source is not None
+        shutil.copytree(source, global_root / "reflect")
+
+        issue = core._detect_skill_drift(
+            [{"name": "OpenAI Codex CLI", "detected": True, "global_path": str(global_root)}]
+        )
+
+        assert issue is not None
+        assert "OpenAI Codex CLI/reflect-skills" in issue["summary"]
+        assert "OpenAI Codex CLI/reflect-usage" in issue["summary"]
 
     def test_ingest_requires_one_source(self, runner, tmp_path):
         db_path = tmp_path / "reflect.db"
@@ -2158,6 +2181,7 @@ class TestSetup:
 
         assert (global_skill_dir / "reflect" / "SKILL.md").exists()
         assert (global_skill_dir / "reflect-skills" / "SKILL.md").exists()
+        assert (global_skill_dir / "reflect-usage" / "SKILL.md").exists()
         assert not (global_skill_dir / "reflect-loops").exists()
         assert not (global_skill_dir / "skills").exists()
         assert not (tmp_path / ".claude" / "skills" / "reflect" / "SKILL.md").exists()
@@ -2188,6 +2212,7 @@ class TestSetup:
 
         assert (shared_skill_dir / "reflect" / "SKILL.md").exists()
         assert (shared_skill_dir / "reflect-skills" / "SKILL.md").exists()
+        assert (shared_skill_dir / "reflect-usage" / "SKILL.md").exists()
         assert not (shared_skill_dir / "reflect-loops").exists()
         assert "already populated" in console.file.getvalue()
 
@@ -2212,21 +2237,23 @@ class TestSetup:
 
         assert (global_skill_dir / "reflect" / "SKILL.md").exists()
         assert (global_skill_dir / "reflect-skills" / "SKILL.md").exists()
+        assert (global_skill_dir / "reflect-usage" / "SKILL.md").exists()
         assert not (global_skill_dir / "reflect-loops").exists()
         assert (tmp_path / ".claude" / "skills" / "reflect" / "SKILL.md").exists()
         assert (tmp_path / ".claude" / "skills" / "reflect-skills" / "SKILL.md").exists()
+        assert (tmp_path / ".claude" / "skills" / "reflect-usage" / "SKILL.md").exists()
         assert not (tmp_path / ".claude" / "skills" / "skills").exists()
 
     def test_distribute_skills_writes_codex_global_path(self, tmp_path):
         from rich.console import Console
 
         console = Console(file=io.StringIO())
-        codex_skill_dir = tmp_path / ".codex" / "skills"
+        codex_skill_dir = tmp_path / ".agents" / "skills"
         agent = {
             "name": "OpenAI Codex CLI",
             "detected": True,
             "global_path": str(codex_skill_dir),
-            "local_skill_path": ".codex/skills/",
+            "local_skill_path": ".agents/skills/",
         }
 
         with patch("reflect.core._detect_agents", return_value=[agent]), \
@@ -2235,7 +2262,14 @@ class TestSetup:
 
         assert (codex_skill_dir / "reflect" / "SKILL.md").exists()
         assert (codex_skill_dir / "reflect-skills" / "SKILL.md").exists()
+        assert (codex_skill_dir / "reflect-usage" / "SKILL.md").exists()
         assert not (codex_skill_dir / "reflect-loops").exists()
+
+    def test_codex_uses_the_current_shared_agent_skill_roots(self):
+        codex = next(agent for agent in core._AGENT_SPECS if agent["name"] == "OpenAI Codex CLI")
+
+        assert codex["global_path"] == "~/.agents/skills/"
+        assert codex["local_skill_path"] == ".agents/skills/"
 
 
     def test_setup_seeds_config_from_example_on_fresh_install(self, runner, tmp_path):

@@ -48,6 +48,13 @@ reflect
 
 `reflect doctor` checks capture health. `reflect` ingests new local evidence, starts or reuses the background report server, opens `http://127.0.0.1:8765`, and returns your terminal.
 
+For a fast terminal usage snapshot without opening the browser:
+
+```bash
+reflect usage                 # current session usage
+reflect usage --global --week # exact local usage across the last 7 days
+```
+
 `reflect completion --install` detects Bash, Zsh, or Fish, writes [Click's generated completion script](https://click.palletsprojects.com/en/stable/shell-completion/), and activates it idempotently. Interactive `reflect setup` also installs completion automatically. Restart your shell once; command names, nested commands, flags, choices, paths, and local workflow, loop, skill, session, observation, and memory IDs will then complete with Tab. To inspect a script without changing shell files, run `reflect completion --shell zsh` (or `bash` / `fish`) without `--install`.
 
 No telemetry yet? Open the bundled cross-agent dataset immediately:
@@ -134,6 +141,10 @@ A loop can motivate a workflow, and a workflow can be packaged as a skill, but n
 
 ```bash
 reflect                        # open local browser report (default)
+reflect usage                  # show current-session tokens, cost, tools, models, and failures
+reflect usage --session SESSION_ID # inspect one selected session
+reflect usage --global --week  # aggregate every matching local session from the last 7 days
+reflect usage --refresh         # ingest local sources first when freshness matters
 reflect memory sync .          # sync local instruction memories for this folder
 reflect memory list .          # list memories for this folder
 reflect memory search "query" . # search local SQLite memory
@@ -552,7 +563,9 @@ flowchart LR
 
 ## Packaged Agent Skills
 
-`reflect setup` distributes the packaged `reflect` and `reflect-skills` helpers to the global skill roots of the detected agents you select, including Codex, Claude Code, Cursor, Copilot, Gemini, and compatible shared-agent roots. It also installs the OpenTelemetry skill when that package is available. Run `reflect doctor` to detect missing or stale copies and rerun setup to refresh them.
+`reflect setup` distributes the packaged `reflect`, `reflect-usage`, and `reflect-skills` helpers to the global skill roots of the detected agents you select, including Codex, Claude Code, Cursor, Copilot, Gemini, and compatible shared-agent roots. It also installs the OpenTelemetry skill when that package is available. Run `reflect doctor` to detect missing or stale copies and rerun setup to refresh them.
+
+In Codex, invoke `$reflect` for evidence-backed workflow guidance, `$reflect-usage` for current or aggregate usage statistics, and `$reflect-skills` for the durable skill registry. Codex discovers the user-wide copies from `~/.agents/skills/`; restart Codex if a newly installed skill does not appear. Other agents receive the same helpers in their native global skill roots and expose them through their own skill picker or invocation syntax.
 
 Project-local copies are opt-in through `reflect setup --local-agent <agent>`. These operator helpers are separate from the durable Skills v2 registry: generated or imported skills remain pending until you review and apply them explicitly.
 

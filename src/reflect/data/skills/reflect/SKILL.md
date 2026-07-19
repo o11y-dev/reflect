@@ -52,10 +52,12 @@ Always follow this order:
    - Never run `reflect skills apply` or `reflect workflows apply` without explicit operator approval.
 
 3. **Baseline from local telemetry**
+   - For current-session, selected-session, or global token/cost/tool/model statistics, use `$reflect-usage` and run `reflect usage --json` with the matching scope. Keep provider limit and billing reconciliation in this skill.
    - Prefer OTLP JSON traces such as `~/.reflect/state/otlp/otel-traces.json`.
    - Use the existing `reflect` CLI or `python3 src/reflect/core.py`.
     - Remember the current CLI behavior:
       - `reflect`: open the local browser report from the SQLite store
+      - `reflect usage --json`: inspect exact local usage for the current runtime session
       - `reflect memory sync .`: sync local folder instruction memories into SQLite
       - `reflect memory list .`: inspect local folder memories
       - `reflect memory providers`: report local SQLite plus optional LiteLLM, Memory Palace, Agent Memory, Mem0, Graphiti, and TencentDB-Agent-Memory adapters

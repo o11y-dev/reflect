@@ -18,6 +18,17 @@ REFLECT_SKILLS_MD = (
     / "reflect-skills"
     / "SKILL.md"
 )
+REFLECT_USAGE_MD = (
+    Path(__file__).parent.parent
+    / "src"
+    / "reflect"
+    / "data"
+    / "skills"
+    / "reflect-usage"
+    / "SKILL.md"
+)
+
+
 class TestSkillMd:
     def test_skill_md_exists(self):
         assert SKILL_MD.exists(), f"SKILL.md not found at {SKILL_MD}"
@@ -25,11 +36,16 @@ class TestSkillMd:
     def test_reflect_skills_helper_exists(self):
         assert REFLECT_SKILLS_MD.exists(), f"SKILL.md not found at {REFLECT_SKILLS_MD}"
 
+    def test_reflect_usage_helper_exists(self):
+        assert REFLECT_USAGE_MD.exists(), f"SKILL.md not found at {REFLECT_USAGE_MD}"
+
     def test_package_data_references_current_skill_paths(self):
         pyproject = Path(__file__).parent.parent / "pyproject.toml"
         content = pyproject.read_text(encoding="utf-8")
         assert "data/skills/reflect/SKILL.md" in content
         assert "data/skills/reflect-skills/SKILL.md" in content
+        assert "data/skills/reflect-usage/SKILL.md" in content
+        assert "data/skills/reflect-usage/agents/openai.yaml" in content
         assert "data/loop-skill-prompt.md" in content
         assert "data/nudges/contract.json" in content
         assert "data/skills/skills/SKILL.md" not in content
@@ -57,6 +73,13 @@ class TestSkillMd:
         assert "reflect skills show <skill-id>" in content
         assert "Do not run `reflect setup`" in content
         assert "Never run `reflect skills apply` or `reflect workflows apply`" in content
+
+    def test_reflect_usage_skill_uses_exact_cli_contract(self):
+        content = REFLECT_USAGE_MD.read_text(encoding="utf-8")
+        assert "reflect usage --json" in content
+        assert "reflect usage --global --week --json" in content
+        assert "complete matching SQLite cohort" in content
+        assert "Do not run `reflect setup`" in content
 
 
 class TestCliInvocable:

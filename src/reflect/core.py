@@ -292,9 +292,9 @@ _AGENT_SPECS = [
         "env": "CODEX_HOME",
         "default": lambda: Path.home() / ".codex",
         "path_kind": "home",
-        "local_skill_path": ".codex/skills/",
+        "local_skill_path": ".agents/skills/",
         "hook_agent": "codex",
-        "global_path": "~/.codex/skills/",
+        "global_path": "~/.agents/skills/",
         "recommendation": "Use native Codex OTel for interactive runs; reflect does not yet ship a native session adapter for Codex logs.",
     },
     {
@@ -694,12 +694,25 @@ def _bundled_reflect_skill_dir() -> Path | None:
 
 
 def _detect_skill_drift(agents: list[dict]) -> dict | None:
-    source_dir = _bundled_reflect_skill_dir()
-    if source_dir is None:
+    reflect_source = _bundled_reflect_skill_dir()
+    if reflect_source is None:
         return None
 
-    source_signature = _directory_signature(source_dir)
-    if not source_signature:
+    bundled_root = Path(__file__).parent / "data" / "skills"
+    source_dirs = {
+        "reflect": reflect_source,
+        **{
+            name: bundled_root / name
+            for name in ("reflect-skills", "reflect-usage")
+            if (bundled_root / name / "SKILL.md").exists()
+        },
+    }
+    source_signatures = {
+        name: signature
+        for name, source_dir in source_dirs.items()
+        if (signature := _directory_signature(source_dir))
+    }
+    if not source_signatures:
         return None
 
     drifted_targets: list[str] = []
@@ -707,12 +720,14 @@ def _detect_skill_drift(agents: list[dict]) -> dict | None:
     for agent in agents:
         if not agent.get("detected"):
             continue
-        global_skill = Path(agent["global_path"]).expanduser() / "reflect"
-        if not global_skill.exists():
-            missing_targets.append(agent["name"])
-            continue
-        if _directory_signature(global_skill) != source_signature:
-            drifted_targets.append(agent["name"])
+        global_root = Path(agent["global_path"]).expanduser()
+        for skill_name, source_signature in source_signatures.items():
+            global_skill = global_root / skill_name
+            target = f"{agent['name']}/{skill_name}"
+            if not global_skill.exists():
+                missing_targets.append(target)
+            elif _directory_signature(global_skill) != source_signature:
+                drifted_targets.append(target)
 
     if not drifted_targets and not missing_targets:
         return None
@@ -1040,6 +1055,218 @@ def _open_improvement_service(db_path: Path):
 
     conn = connect_sqlite(db_path)
     return conn, ImprovementService(conn)
+
+
+def _format_usage_duration(duration_ms: int) -> str:
+    total_seconds = max(duration_ms, 0) // 1000
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
+def _render_usage_report(console: Console, report) -> None:
+    totals = report.totals
+    if report.session is not None:
+        title = f"Usage · {report.session.agent} · {report.session.id}"
+        context = report.session.workspace or report.session.repository or report.session.title or "Local session"
+    else:
+        title = f"Global usage · {report.period}"
+        context = "All matching local sessions"
+
+    summary = Table.grid(expand=True, padding=(0, 2))
+    summary.add_column(style="bold")
+    summary.add_column(justify="right", style="orange3")
+    summary.add_column(style="bold")
+    summary.add_column(justify="right", style="orange3")
+    summary.add_row("Sessions", f"{totals.sessions:,}", "Prompts", f"{totals.prompts:,}")
+    summary.add_row("LLM calls", f"{totals.llm_calls:,}", "Tool calls", f"{totals.tool_calls:,}")
+    summary.add_row("MCP calls", f"{totals.mcp_calls:,}", "Subagents", f"{totals.subagent_launches:,}")
+    summary.add_row("Failures", f"{totals.failures:,}", "Recovered", f"{totals.recovered_failures:,}")
+    summary.add_row("Duration", _format_usage_duration(totals.duration_ms), "Estimated cost", f"${totals.estimated_cost_usd:,.2f}")
+    console.print(Panel(summary, title=title, subtitle=context, border_style="orange3"))
+
+    tokens = Table(title="Tokens", border_style="grey37")
+    tokens.add_column("Input", justify="right")
+    tokens.add_column("Output", justify="right")
+    tokens.add_column("Cache write", justify="right")
+    tokens.add_column("Cache read", justify="right")
+    tokens.add_column("Reasoning", justify="right")
+    tokens.add_row(
+        f"{totals.input_tokens:,}",
+        f"{totals.output_tokens:,}",
+        f"{totals.cache_creation_tokens:,}",
+        f"{totals.cache_read_tokens:,}",
+        f"{totals.reasoning_tokens:,}",
+    )
+    console.print(tokens)
+
+    for heading, entries in (("Models", report.models), ("Tools", report.tools), ("Agents", report.agents)):
+        if not entries:
+            continue
+        table = Table(title=heading, border_style="grey37")
+        table.add_column(heading[:-1])
+        table.add_column("Uses", justify="right")
+        if heading != "Tools":
+            table.add_column("Tokens", justify="right")
+            table.add_column("Cost", justify="right")
+        for entry in entries:
+            row = [entry.name, f"{entry.count:,}"]
+            if heading != "Tools":
+                row.extend(
+                    [
+                        f"{entry.input_tokens + entry.output_tokens:,}",
+                        f"${entry.estimated_cost_usd:,.2f}",
+                    ]
+                )
+            table.add_row(*row)
+        console.print(table)
+
+    for limitation in report.limitations:
+        console.print(f"[yellow]Note:[/yellow] {limitation}")
+
+
+def _prepare_usage_db(
+    db_path: Path,
+    *,
+    otlp_traces: Path | None,
+    include_native_sessions: bool,
+) -> None:
+    """Refresh usage facts without rebuilding graph or improvement state."""
+    from reflect.store.cursor_adapter import apply_cursor_transcript_usage_estimates
+    from reflect.store.ingest import (
+        ingest_native_session_file,
+        ingest_otlp_logs_file,
+        ingest_otlp_traces_file,
+    )
+    from reflect.store.migrate import migrate
+    from reflect.store.normalize import normalize_pending_raw_events
+    from reflect.store.rollups import rebuild_rollups, refresh_rollups
+    from reflect.store.sqlite import connect_sqlite
+    from reflect.store.workspaces import backfill_session_context
+
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        if otlp_traces is not None and otlp_traces.exists():
+            ingest_otlp_traces_file(conn, file_path=otlp_traces, skip_unchanged=True)
+            otlp_logs = _infer_otlp_logs_file(otlp_traces)
+            if otlp_logs is not None and otlp_logs.exists():
+                ingest_otlp_logs_file(conn, file_path=otlp_logs, skip_unchanged=True)
+
+        changed_session_ids: set[str] = set()
+        if conn.execute(
+            "SELECT 1 FROM raw_events WHERE normalized_status = 'pending' LIMIT 1"
+        ).fetchone():
+            normalize_pending_raw_events(conn, changed_session_ids=changed_session_ids)
+
+        cursor_native_files: list[Path] = []
+        if include_native_sessions:
+            for native_agent, session_file in _discover_rich_session_files():
+                result = ingest_native_session_file(
+                    conn,
+                    file_path=session_file,
+                    agent=native_agent,
+                    source_id=f"native_session:{native_agent}:{session_file}",
+                    skip_existing_sessions=True,
+                    skip_unchanged=True,
+                )
+                if native_agent == "cursor" and not result.get("unchanged"):
+                    cursor_native_files.append(session_file)
+            normalize_pending_raw_events(conn, changed_session_ids=changed_session_ids)
+        cursor_result = (
+            apply_cursor_transcript_usage_estimates(conn, cursor_native_files)
+            if cursor_native_files
+            else {"updated": 0}
+        )
+        context_result = backfill_session_context(
+            conn,
+            timestamp=datetime.now(UTC).isoformat(),
+            changed_session_ids=changed_session_ids,
+        )
+        session_count = int(conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0])
+        rollup_count = int(conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0])
+        if session_count != rollup_count or cursor_result.get("updated"):
+            _ensure_sql_costs(conn)
+            rebuild_rollups(conn)
+        elif changed_session_ids or context_result["sessions_updated"]:
+            _ensure_sql_costs(conn, session_ids=changed_session_ids)
+            refresh_rollups(conn, changed_session_ids)
+    finally:
+        conn.close()
+
+
+@main.command("usage")
+@click.option("--session", "session_id", shell_complete=complete_session_id, help="Inspect one session ID.")
+@click.option("--global", "global_scope", is_flag=True, help="Aggregate all matching local sessions.")
+@click.option("--agent", help="Limit global usage to one agent name or ID.")
+@click.option("--day", "period", flag_value="day", help="Use the last 24 hours.")
+@click.option("--week", "period", flag_value="week", default=True, help="Use the last 7 days (default).")
+@click.option("--month", "period", flag_value="month", help="Use the last 30 days.")
+@click.option("--all", "period", flag_value="all", help="Use all available data.")
+@click.option(
+    "--refresh",
+    is_flag=True,
+    help="Ingest local telemetry before reporting. Slower on large native session stores.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print the usage report as JSON.")
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+    help="SQLite telemetry store.",
+)
+def usage(
+    session_id: str | None,
+    global_scope: bool,
+    agent: str | None,
+    period: str,
+    refresh: bool,
+    as_json: bool,
+    db_path: Path,
+) -> None:
+    """Show exact local usage for the current session or a global period."""
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+    from reflect.usage import UsageService
+
+    if session_id and global_scope:
+        raise click.UsageError("--session and --global cannot be used together")
+    if agent and not global_scope:
+        raise click.UsageError("--agent is only valid with --global")
+
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        has_sessions = conn.execute("SELECT 1 FROM sessions LIMIT 1").fetchone() is not None
+    finally:
+        conn.close()
+    if refresh or not has_sessions:
+        _prepare_usage_db(
+            db_path,
+            otlp_traces=_default_otlp_traces(),
+            include_native_sessions=True,
+        )
+
+    conn = connect_sqlite(db_path)
+    try:
+        report = UsageService(conn).report(
+            session_id=session_id,
+            global_scope=global_scope,
+            period=period,
+            agent=agent,
+        )
+    except (LookupError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        conn.close()
+    if as_json:
+        _echo_json(report.model_dump(mode="json"))
+        return
+    _render_usage_report(Console(), report)
 
 
 @main.command("improve")
@@ -2758,7 +2985,7 @@ def _distribute_skills(
     selected_agent_names: set[str] | None = None,
     local_agent_names: set[str] | None = None,
 ) -> None:
-    """Distribute the reflect and opentelemetry skills to detected agents."""
+    """Distribute the Reflect helpers and OpenTelemetry skill to detected agents."""
     # Bundle reflect core skills for automatic setup distribution.
     bundled_skills_dir = Path(__file__).parent / "data" / "skills"
 
@@ -2771,6 +2998,10 @@ def _distribute_skills(
     reflect_skills_helper = bundled_skills_dir / "reflect-skills"
     if (reflect_skills_helper / "SKILL.md").exists():
         available_skills["reflect-skills"] = reflect_skills_helper
+
+    reflect_usage_helper = bundled_skills_dir / "reflect-usage"
+    if (reflect_usage_helper / "SKILL.md").exists():
+        available_skills["reflect-usage"] = reflect_usage_helper
 
     otel_skill = _fetch_opentelemetry_skill(console)
     if otel_skill:
