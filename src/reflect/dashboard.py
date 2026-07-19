@@ -2161,6 +2161,94 @@ def _iso_to_epoch_ns(value: object) -> int:
     return int(parsed.timestamp() * 1_000_000_000)
 
 
+def _conversation_event_time_ns(event: dict[str, object]) -> int:
+    return _iso_to_epoch_ns(event.get("timestamp") or event.get("ts"))
+
+
+def _conversation_events_match(
+    telemetry_event: dict[str, object],
+    native_event: dict[str, object],
+) -> bool:
+    event_type = str(telemetry_event.get("type") or "")
+    if event_type != str(native_event.get("type") or ""):
+        return False
+    telemetry_tool_id = str(telemetry_event.get("tool_use_id") or "")
+    native_tool_id = str(native_event.get("tool_use_id") or "")
+    if telemetry_tool_id and native_tool_id:
+        return telemetry_tool_id == native_tool_id
+    if event_type in {"tool_call", "tool_result"}:
+        telemetry_tool = str(telemetry_event.get("tool_name") or "").casefold()
+        native_tool = str(native_event.get("tool_name") or "").casefold()
+        if telemetry_tool and native_tool and telemetry_tool != native_tool:
+            return False
+    telemetry_text = str(
+        telemetry_event.get("content") or telemetry_event.get("preview") or ""
+    ).strip()
+    native_text = str(
+        native_event.get("content") or native_event.get("preview") or ""
+    ).strip()
+    if telemetry_text and native_text and telemetry_text == native_text:
+        return True
+    telemetry_time = _conversation_event_time_ns(telemetry_event)
+    native_time = _conversation_event_time_ns(native_event)
+    return bool(
+        telemetry_time
+        and native_time
+        and abs(telemetry_time - native_time) <= 120 * 1_000_000_000
+    )
+
+
+def _merge_native_conversation_events(
+    telemetry_events: list[dict[str, object]],
+    native_events: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Enrich telemetry chronology with native text without dropping execution evidence."""
+    merged = [dict(event) for event in telemetry_events]
+    claimed_telemetry_indexes: set[int] = set()
+    text_fields = (
+        "content",
+        "timestamp",
+        "tool_name",
+        "tool_use_id",
+        "model",
+        "server",
+        "subagent_type",
+    )
+    numeric_fields = ("input_tokens", "output_tokens", "cache_read_tokens", "duration_ms")
+
+    for native_event in native_events:
+        candidates = [
+            index
+            for index, telemetry_event in enumerate(merged)
+            if index not in claimed_telemetry_indexes
+            and _conversation_events_match(telemetry_event, native_event)
+        ]
+        if not candidates:
+            merged.append(dict(native_event))
+            continue
+        native_time = _conversation_event_time_ns(native_event)
+        match_index = min(
+            candidates,
+            key=lambda index: abs(_conversation_event_time_ns(merged[index]) - native_time),
+        )
+        claimed_telemetry_indexes.add(match_index)
+        enriched = dict(merged[match_index])
+        for field in text_fields:
+            value = native_event.get(field)
+            if value not in (None, ""):
+                enriched[field] = value
+        for field in numeric_fields:
+            value = native_event.get(field)
+            if isinstance(value, (int, float)) and value > 0:
+                enriched[field] = value
+        merged[match_index] = enriched
+
+    return sorted(
+        merged,
+        key=lambda event: _conversation_event_time_ns(event) or 2**63,
+    )
+
+
 def _sql_log_body_text(body: dict[str, object], attrs: dict[str, object], event_type: object) -> str:
     for key in ("message", "body", "text", "content", "error.message", "exception.message"):
         value = body.get(key)
@@ -3991,6 +4079,7 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
                     "type": "tool_call",
                     "ts": base_ts,
                     "tool_name": tool["tool_name"],
+                    "tool_use_id": tool_use_id,
                     "preview": tool["input_preview_redacted"] or _sql_attr_text(
                         attrs,
                         "gen_ai.client.tool.input",
@@ -4003,6 +4092,7 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
                     "type": "tool_result",
                     "ts": step["ended_at"] or base_ts,
                     "tool_name": tool["tool_name"],
+                    "tool_use_id": tool_use_id,
                     "success": tool["status"] != "error",
                     "duration_ms": tool["duration_ms"] or 0,
                     "preview": tool["output_preview_redacted"] or _sql_attr_text(
@@ -4108,7 +4198,7 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
                     event.get("type") == "response" and str(event.get("content") or "").strip()
                     for event in native_events
                 ):
-                    conversation = native_events
+                    conversation = _merge_native_conversation_events(conversation, native_events)
                     conversation_source = native_transcript.source
                     conversation_warnings.extend(native_transcript.warnings)
             except (OSError, ValueError, TypeError) as exc:

@@ -332,6 +332,55 @@ def test_refresh_backfills_behavior_metadata_on_legacy_non_pending_candidates(tm
         conn.close()
 
 
+def test_workflow_lookup_and_grouping_include_candidates_beyond_first_page(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        service.refresh()
+        target = service.workflows.list()[0]
+        target_content = {**target.content, "slug": "overflow-target"}
+        filler_content = {**target.content, "slug": "bulk-filler"}
+        conn.execute(
+            "UPDATE workflow_candidates SET content_json = ?, confidence = 0 WHERE id = ?",
+            (json.dumps(target_content, sort_keys=True), target.id),
+        )
+        conn.executemany(
+            """
+            INSERT INTO workflow_candidates(
+              id, observation_id, task_archetype_id, action_type, title, hypothesis,
+              scope, risk, content_json, support_count, confidence, target_metric,
+              target_value, measurement_window, status, checks_json, provenance_json,
+              created_at, updated_at
+            )
+            SELECT ?, observation_id, task_archetype_id, ?, title, hypothesis,
+                   scope, risk, ?, support_count, 1.0, target_metric,
+                   target_value, measurement_window, status, checks_json, provenance_json,
+                   created_at, updated_at
+            FROM workflow_candidates WHERE id = ?
+            """,
+            [
+                (
+                    f"bulk-candidate-{index:03d}",
+                    f"bulk-action-{index:03d}",
+                    json.dumps(filler_content, sort_keys=True),
+                    target.id,
+                )
+                for index in range(500)
+            ],
+        )
+        conn.commit()
+
+        assert target.id not in {
+            item.id for item in service.repository.list_candidates(limit=500)
+        }
+        assert service.repository.get_candidate(target.id).id == target.id
+        assert service.workflows.show(target.id).content["slug"] == "overflow-target"
+        assert "overflow-target" in {
+            item.content["slug"] for item in service.workflows.list()
+        }
+    finally:
+        conn.close()
+
+
 def test_refresh_resolves_a_finding_that_disappears(tmp_path):
     service, conn = _service(tmp_path)
     try:
@@ -856,6 +905,87 @@ def test_refresh_automatically_measures_new_comparable_sessions_once(tmp_path):
         assert service.skills.show(skill.id).measurements[0].verdict == "regressed"
         assert second["measurements_created"] == 0
         assert conn.execute("SELECT COUNT(*) FROM measurements").fetchone()[0] == count_after_first_refresh
+    finally:
+        conn.close()
+
+
+def test_measurement_refreshes_when_fixed_size_cohort_rotates(tmp_path):
+    service, conn = _service(tmp_path)
+    project_root = tmp_path / "project"
+    (project_root / ".git").mkdir(parents=True)
+
+    def add_session(session_id: str, started_at: str, *, failed: bool = False) -> None:
+        status = "failed" if failed else "ok"
+        conn.execute(
+            """
+            INSERT INTO sessions(
+              id, agent_id, repo_id, started_at, ended_at, status, failure_count,
+              created_at, updated_at
+            ) VALUES (?, 'agent-1', 'repo-1', ?, ?, 'completed', ?, ?, ?)
+            """,
+            (session_id, started_at, started_at, int(failed), NOW, NOW),
+        )
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status, raw_attrs_json,
+              created_at, updated_at
+            ) VALUES (?, ?, 1, 'tool_call', ?, ?, '{}', ?, ?)
+            """,
+            (f"step-{session_id}", session_id, started_at, status, NOW, NOW),
+        )
+        conn.execute(
+            """
+            INSERT INTO tool_calls(
+              id, step_id, session_id, tool_name, status, input_hash, error_type,
+              raw_attrs_json, created_at, updated_at
+            ) VALUES (?, ?, ?, 'exec', ?, ?, ?, '{}', ?, ?)
+            """,
+            (
+                f"tool-{session_id}",
+                f"step-{session_id}",
+                session_id,
+                status,
+                f"input-{session_id}",
+                "exit_nonzero" if failed else None,
+                NOW,
+                NOW,
+            ),
+        )
+
+    try:
+        service.refresh()
+        candidate = next(
+            item for item in service.workflows.list() if item.target_metric == "tool_failure_rate"
+        )
+        applied = service.workflows.apply(candidate.id, project_root=project_root)
+        conn.execute(
+            "UPDATE interventions SET exposure_started_at = '2026-07-10T00:00:00+00:00' WHERE id = ?",
+            (applied["intervention_id"],),
+        )
+        conn.execute(
+            "UPDATE workflow_candidates SET task_archetype_id = NULL WHERE id = ?",
+            (candidate.id,),
+        )
+        for index in range(3, 6):
+            add_session(f"before-{index}", f"2026-07-0{index}T10:00:00+00:00")
+        for index in range(50):
+            add_session(f"after-{index:02d}", f"2026-07-11T00:{index:02d}:00+00:00")
+        conn.commit()
+
+        first = service.measurements.measure(candidate.id)
+        add_session("after-newest", "2026-07-11T01:00:00+00:00", failed=True)
+        conn.commit()
+        second = service.measurements.measure(candidate.id, skip_unchanged=True)
+        second_sessions = service.measurements.sessions(second["id"])
+
+        assert first["after_count"] == second["after_count"] == 50
+        assert second["created"] is True
+        assert second["id"] != first["id"]
+        assert second["after_value"] > first["after_value"]
+        assert "after-newest" in {
+            item["session_id"] for item in second_sessions["after_sessions"]
+        }
     finally:
         conn.close()
 

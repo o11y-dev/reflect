@@ -1214,6 +1214,10 @@ def test_dashboard_sql_session_detail_prefers_native_assistant_responses(tmp_pat
     assistant = next(event for event in payload["conversation"] if event["type"] == "response")
     assert assistant["content"] == "The native response is visible."
     assert payload["conversation_source"] == "native"
+    assert any(event["type"] == "mcp_call" for event in payload["conversation"])
+    tool_result = next(event for event in payload["conversation"] if event["type"] == "tool_result")
+    assert tool_result["duration_ms"] == 500
+    assert tool_result["success"] is True
     assert payload["telemetry"]["summary"]["spans"] == 3
 
 

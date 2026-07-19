@@ -70,6 +70,28 @@ def test_setup_can_explicitly_install_shell_completion() -> None:
     assert "Shell autocomplete installed" in result.output
 
 
+def test_setup_warns_when_optional_shell_completion_cannot_be_written() -> None:
+    with (
+        patch.object(core, "_run_setup") as run_setup,
+        patch.object(core, "_detect_agents", return_value=[]),
+        patch.object(core.ShellCompletionManager, "detect_shell", return_value="zsh"),
+        patch.object(
+            core.ShellCompletionManager,
+            "install",
+            side_effect=PermissionError(".zshrc is read-only"),
+        ),
+    ):
+        result = CliRunner().invoke(
+            main,
+            ["setup", "--text-capture-mode", "metadata", "--shell-completion"],
+        )
+
+    assert result.exit_code == 0
+    run_setup.assert_called_once()
+    assert "Telemetry setup completed" in result.output
+    assert "shell autocomplete could not be installed" in result.output
+
+
 def test_click_completion_covers_root_and_nested_commands() -> None:
     runner = CliRunner()
     root = runner.invoke(

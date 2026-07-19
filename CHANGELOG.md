@@ -57,6 +57,10 @@
 
 ### Fixed
 
+- Kept workflow candidates addressable and grouped across paginated ledgers larger than 500 records instead of silently hiding later candidates and variants.
+- Refreshed impact snapshots when sessions or metric values change inside a full 50-session cohort, even when the before/after counts remain constant.
+- Merged native prompt and response content into telemetry-backed conversations without dropping MCP calls, tool status, duration, or other execution evidence.
+- Made optional shell-autocomplete installation during setup best-effort so shell configuration permission errors do not invalidate completed telemetry setup.
 - Restored every Explore → Usage widget under agent, model, status, range, search, and session filters: bounded usage-specific aggregates now keep tool metrics, failure rates, source provenance, weekly activity, scoped cost trends, subagent completion, and explicit zero-data chart states on the same filtered session cohort; command summaries also redact credential-like values.
 - Preserved assistant response text from native Claude, Codex, Copilot, Cursor, and Gemini sessions, preferred those high-fidelity transcripts in SQL-backed session detail, and retained native source provenance when telemetry and local-session records merge.
 - Fixed Conversation preview expansion so it reveals the stored response or prompt body, persists across detail rerenders, and is not overridden after full session detail loads.

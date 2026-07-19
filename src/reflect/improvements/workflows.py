@@ -37,7 +37,7 @@ class WorkflowService:
         behavior_types: set[str] | None = None,
         statuses: set[str] | None = None,
     ) -> list[WorkflowCandidateRecord]:
-        candidates = self.repository.list_candidates(limit=500)
+        candidates = list(self.repository.iter_candidates())
         if behavior_types:
             candidates = [
                 candidate
@@ -83,11 +83,7 @@ class WorkflowService:
         if candidate is None:
             raise KeyError(f"Workflow candidate not found: {candidate_id}")
         slug = str(candidate.content.get("slug") or candidate.id)
-        members = [
-            item
-            for item in self.repository.list_candidates(limit=500)
-            if str(item.content.get("slug") or item.id) == slug
-        ]
+        members = self.repository.list_candidates_by_slug(slug)
         ledger = self.repository.workflow_session_ledger(candidate.id, limit=1)
         ledger_observation_ids = set(ledger.observation_ids)
         evidence_members = [

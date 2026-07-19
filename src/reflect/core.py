@@ -3018,9 +3018,17 @@ def setup(
                 "Run `reflect completion --help` for supported shells.[/yellow]"
             )
         else:
-            result = manager.install(selected_shell)
-            state = "installed" if result.changed else "already current"
-            console.print(f"[green]✓[/] Shell autocomplete {state}: {result.script_path}")
+            try:
+                result = manager.install(selected_shell)
+            except OSError as exc:
+                console.print(
+                    "[yellow]Telemetry setup completed, but shell autocomplete could not be "
+                    f"installed: {exc}. Run `reflect completion --install` after fixing shell "
+                    "configuration permissions.[/yellow]"
+                )
+            else:
+                state = "installed" if result.changed else "already current"
+                console.print(f"[green]✓[/] Shell autocomplete {state}: {result.script_path}")
 
 
 @main.group("doctor", invoke_without_command=True)

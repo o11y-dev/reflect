@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import statistics
@@ -13,7 +14,24 @@ def _public_cohort(raw: str) -> dict[str, Any]:
     cohort = json.loads(raw)
     cohort.pop("before_session_ids", None)
     cohort.pop("after_session_ids", None)
+    cohort.pop("fingerprint", None)
     return cohort
+
+
+def _cohort_fingerprint(
+    cohort: dict[str, Any],
+    *,
+    before_values: list[float],
+    after_values: list[float],
+) -> str:
+    payload = {
+        "before_session_ids": cohort["before_session_ids"],
+        "after_session_ids": cohort["after_session_ids"],
+        "before_values": before_values,
+        "after_values": after_values,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 class MeasurementService:
@@ -95,16 +113,26 @@ class MeasurementService:
                 )
             ],
         }
+        cohort["fingerprint"] = _cohort_fingerprint(
+            cohort,
+            before_values=before,
+            after_values=after,
+        )
         latest = self.conn.execute(
             """
-            SELECT id, before_count, after_count, verdict, measured_at
+            SELECT id, before_count, after_count, verdict, measured_at, cohort_json
             FROM measurements
             WHERE intervention_id = ? AND metric_name = ?
             ORDER BY measured_at DESC LIMIT 1
             """,
             (intervention_id, metric_name),
         ).fetchone()
-        if skip_unchanged and latest and int(latest[1]) == len(before) and int(latest[2]) == len(after):
+        latest_cohort = json.loads(latest[5]) if latest else {}
+        if (
+            skip_unchanged
+            and latest
+            and latest_cohort.get("fingerprint") == cohort["fingerprint"]
+        ):
             return {
                 "id": latest[0],
                 "candidate_id": candidate_id,
@@ -173,7 +201,7 @@ class MeasurementService:
         }
 
     def measure_active(self) -> dict[str, int]:
-        """Measure active workflows once per distinct before/after cohort size."""
+        """Measure active workflows once per distinct bounded cohort snapshot."""
         candidate_ids = [
             str(row[0])
             for row in self.conn.execute(

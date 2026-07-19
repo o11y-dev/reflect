@@ -5,7 +5,7 @@ import json
 import sqlite3
 import uuid
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -32,6 +32,25 @@ _ACTIVE_OBSERVATION_STATUSES = {
     ObservationStatus.ACTIVE.value,
     ObservationStatus.REGRESSED.value,
 }
+
+_CANDIDATE_SELECT_SQL = """
+    SELECT wc.id, wc.observation_id, wc.action_type, wc.title, wc.hypothesis,
+           wc.scope, wc.risk, wc.content_json, wc.support_count, wc.confidence,
+           wc.target_metric, wc.target_value, wc.measurement_window, wc.status,
+           wc.checks_json, wc.provenance_json, wc.created_at, wc.updated_at,
+           wc.task_archetype_id,
+           (SELECT i.id FROM interventions i
+            JOIN workflow_versions wv ON wv.id = i.workflow_version_id
+            WHERE wv.candidate_id = wc.id AND i.status = 'active'
+            ORDER BY i.created_at DESC LIMIT 1)
+    FROM workflow_candidates wc
+"""
+
+_CANDIDATE_ORDER_SQL = """
+    ORDER BY CASE wc.status
+      WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 WHEN 'active' THEN 2 ELSE 3 END,
+      wc.confidence DESC, wc.updated_at DESC, wc.id ASC
+"""
 
 
 def utc_now() -> str:
@@ -501,30 +520,46 @@ class ImprovementRepository:
             ).fetchone()[0]
         )
 
-    def list_candidates(self, *, limit: int = 100) -> list[WorkflowCandidateRecord]:
+    def list_candidates(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[WorkflowCandidateRecord]:
         rows = self.conn.execute(
-            """
-            SELECT wc.id, wc.observation_id, wc.action_type, wc.title, wc.hypothesis,
-                   wc.scope, wc.risk, wc.content_json, wc.support_count, wc.confidence,
-                   wc.target_metric, wc.target_value, wc.measurement_window, wc.status,
-                   wc.checks_json, wc.provenance_json, wc.created_at, wc.updated_at,
-                   wc.task_archetype_id,
-                   (SELECT i.id FROM interventions i
-                    JOIN workflow_versions wv ON wv.id = i.workflow_version_id
-                    WHERE wv.candidate_id = wc.id AND i.status = 'active'
-                    ORDER BY i.created_at DESC LIMIT 1)
-            FROM workflow_candidates wc
-            ORDER BY CASE wc.status
-              WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 WHEN 'active' THEN 2 ELSE 3 END,
-              wc.confidence DESC, wc.updated_at DESC
-            LIMIT ?
+            f"{_CANDIDATE_SELECT_SQL} {_CANDIDATE_ORDER_SQL} LIMIT ? OFFSET ?",
+            (max(1, min(limit, 500)), max(0, offset)),
+        ).fetchall()
+        return [self._candidate_from_row(row) for row in rows]
+
+    def iter_candidates(self, *, page_size: int = 500) -> Iterator[WorkflowCandidateRecord]:
+        """Iterate through every candidate without an implicit ledger-size cutoff."""
+        bounded_page_size = max(1, min(page_size, 500))
+        offset = 0
+        while True:
+            page = self.list_candidates(limit=bounded_page_size, offset=offset)
+            yield from page
+            if len(page) < bounded_page_size:
+                return
+            offset += len(page)
+
+    def list_candidates_by_slug(self, slug: str) -> list[WorkflowCandidateRecord]:
+        rows = self.conn.execute(
+            f"""
+            {_CANDIDATE_SELECT_SQL}
+            WHERE COALESCE(json_extract(wc.content_json, '$.slug'), wc.id) = ?
+            {_CANDIDATE_ORDER_SQL}
             """,
-            (max(1, min(limit, 500)),),
+            (slug,),
         ).fetchall()
         return [self._candidate_from_row(row) for row in rows]
 
     def get_candidate(self, candidate_id: str) -> WorkflowCandidateRecord | None:
-        return next((candidate for candidate in self.list_candidates(limit=500) if candidate.id == candidate_id), None)
+        row = self.conn.execute(
+            f"{_CANDIDATE_SELECT_SQL} WHERE wc.id = ?",
+            (candidate_id,),
+        ).fetchone()
+        return self._candidate_from_row(row) if row else None
 
     def workflow_session_ledger(
         self,
