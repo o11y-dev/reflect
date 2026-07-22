@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">reflect — See How Agents Work. Improve What Happens Next.</title>
+  <desc id="desc">Social card for reflect, local-first observability for AI coding agents.</desc>
+  <defs>
+    <radialGradient id="signal-glow" cx="78%" cy="8%" r="72%">
+      <stop offset="0" stop-color="#F28A1A" stop-opacity=".20"/>
+      <stop offset=".48" stop-color="#F28A1A" stop-opacity=".05"/>
+      <stop offset="1" stop-color="#050505" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#171411"/>
+      <stop offset="1" stop-color="#0C0B0A"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="#050505"/>
+  <rect width="1200" height="630" fill="url(#signal-glow)"/>
+  <path d="M0 0h1200" stroke="#F28A1A" stroke-width="5"/>
+
+  <!-- Product mark and wordmark. -->
+  <g transform="translate(64 54)">
+    <rect width="58" height="58" rx="8" fill="#0B0A09" stroke="#2B2722"/>
+    <path d="M29 7 52 48H6Z" fill="#F5F2EA"/>
+    <circle cx="29" cy="34" r="13" fill="#F28A1A"/>
+    <circle cx="29" cy="34" r="7" fill="#050505"/>
+    <text x="76" y="31" fill="#F5F2EA" font-family="Arial, Helvetica, sans-serif" font-size="31" font-weight="800" letter-spacing="-.8">reflect</text>
+    <text x="77" y="52" fill="#BEB8AD" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="700" letter-spacing="1.8">EVIDENCE, NOT VIBES.</text>
+  </g>
+
+  <g font-family="Arial, Helvetica, sans-serif">
+    <text x="64" y="208" fill="#D7D1C6" font-size="23" font-weight="800" letter-spacing="3.2">EVIDENCE, NOT VIBES.</text>
+    <text x="64" y="272" fill="#F5F2EA" font-size="50" font-weight="800" letter-spacing="-2.2">See How Agents Work.</text>
+    <text x="64" y="334" fill="#F28A1A" font-size="50" font-weight="800" letter-spacing="-2.2">Improve What</text>
+    <text x="64" y="394" fill="#F28A1A" font-size="50" font-weight="800" letter-spacing="-2.2">Happens Next.</text>
+    <text x="64" y="438" fill="#BEB8AD" font-size="20">Find failures, loops, cost burn, and repeatable patterns</text>
+    <text x="64" y="467" fill="#BEB8AD" font-size="20">across every agent — from local telemetry.</text>
+  </g>
+
+  <!-- Evidence panel echoes the current dashboard language. -->
+  <g transform="translate(816 151)">
+    <rect width="318" height="308" rx="8" fill="url(#panel)" stroke="#39322A"/>
+    <text x="24" y="38" fill="#BEB8AD" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="700" letter-spacing="1.6">OBSERVED EVIDENCE</text>
+    <circle cx="282" cy="32" r="5" fill="#F28A1A"/>
+    <path d="M24 60h270" stroke="#302A24"/>
+
+    <g font-family="Arial, Helvetica, sans-serif">
+      <text x="24" y="97" fill="#F5F2EA" font-size="17" font-weight="700">Failures</text>
+      <text x="254" y="97" fill="#F28A1A" font-size="17" font-weight="800">691</text>
+      <rect x="24" y="111" width="270" height="5" rx="2.5" fill="#24201C"/>
+      <rect x="24" y="111" width="194" height="5" rx="2.5" fill="#F28A1A"/>
+
+      <text x="24" y="153" fill="#F5F2EA" font-size="17" font-weight="700">Tool calls</text>
+      <text x="236" y="153" fill="#D7D1C6" font-size="17" font-weight="800">16,009</text>
+      <rect x="24" y="167" width="270" height="5" rx="2.5" fill="#24201C"/>
+      <rect x="24" y="167" width="242" height="5" rx="2.5" fill="#D7D1C6"/>
+
+      <text x="24" y="209" fill="#F5F2EA" font-size="17" font-weight="700">Sessions</text>
+      <text x="256" y="209" fill="#D7D1C6" font-size="17" font-weight="800">184</text>
+      <rect x="24" y="223" width="270" height="5" rx="2.5" fill="#24201C"/>
+      <rect x="24" y="223" width="156" height="5" rx="2.5" fill="#D7D1C6"/>
+
+      <rect x="24" y="254" width="270" height="34" rx="6" fill="#1C1712" stroke="#4A3420"/>
+      <circle cx="43" cy="271" r="5" fill="#F28A1A"/>
+      <text x="58" y="277" fill="#D7D1C6" font-size="13" font-weight="700">Patterns you can act on</text>
+    </g>
+  </g>
+
+  <g transform="translate(64 526)" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="700" letter-spacing="1.2">
+    <g><rect width="118" height="34" rx="6" fill="#12110F" stroke="#332C25"/><text x="16" y="22" fill="#D7D1C6">LOCAL FIRST</text></g>
+    <g transform="translate(130)"><rect width="126" height="34" rx="6" fill="#12110F" stroke="#332C25"/><text x="16" y="22" fill="#D7D1C6">OPEN SOURCE</text></g>
+    <g transform="translate(268)"><rect width="146" height="34" rx="6" fill="#12110F" stroke="#332C25"/><text x="16" y="22" fill="#D7D1C6">VENDOR NEUTRAL</text></g>
+    <g transform="translate(426)"><rect width="158" height="34" rx="6" fill="#12110F" stroke="#332C25"/><text x="16" y="22" fill="#D7D1C6">OTEL NATIVE</text></g>
+  </g>
+  <text x="1136" y="552" text-anchor="end" fill="#F5F2EA" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">reflect.o11y.dev</text>
+</svg>

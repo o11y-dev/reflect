@@ -83,6 +83,7 @@ reflect = [
     "data/demo-traces.json",
     "data/otel-logs.json",
     "data/index.html",
+    "data/og-image-v2.png",
     "data/skills-extraction-prompt.md",
     "data/loop-skill-prompt.md",
     "data/skills/reflect/SKILL.md",

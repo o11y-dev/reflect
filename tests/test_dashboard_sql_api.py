@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from collections import Counter
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -1434,3 +1435,15 @@ def test_dashboard_sql_endpoints_are_disabled_without_db(tmp_path):
     assert filtered.status_code == 409
     assert filtered.json()["sql_backed"] is False
     assert "SQLite report store" in filtered.json()["error"]
+
+
+def test_packaged_dashboard_serves_social_image():
+    data_dir = Path(__file__).resolve().parents[1] / "src" / "reflect" / "data"
+    expected = (data_dir / "og-image-v2.png").read_bytes()
+    app = _build_dashboard_app(_stats(), docs_dir=data_dir)
+
+    response = TestClient(app).get("/og-image-v2.png")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content == expected
