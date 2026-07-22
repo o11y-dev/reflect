@@ -47,6 +47,24 @@ def test_landing_page_has_clear_product_and_conversion_path():
     assert "codex mcp add reflect -- reflect-mcp" in text
     assert "optional memory providers such as OMEGA" in text
     assert "Bring Your Memory Provider." in text
+    assert "Use Reflect When the Work Needs an Answer." in text
+
+
+def test_landing_page_has_task_oriented_scenario_tiles():
+    text = _landing_text()
+
+    assert text.count('class="scenario-card"') == 7
+    for command in (
+        "reflect usage --global --week",
+        "reflect --week",
+        "reflect improve",
+        "reflect loops build LOOP_ID --agent codex",
+        'reflect ask "How should I debug CI here?"',
+        'reflect memory search "release gate" .',
+        "reflect doctor",
+    ):
+        assert command in text
+    assert 'href="#scenarios"' in text
 
 
 def test_landing_page_lists_every_memory_provider_with_honest_support_levels():

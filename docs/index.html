@@ -194,6 +194,17 @@
     .evidence-stack{display:grid;gap:8px;margin-top:28px}
     .evidence-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 12px;border:1px solid var(--line);border-radius:5px;background:#0b0b0a;color:var(--muted-strong);font-size:12px}
     .evidence-row strong{color:var(--ink);font-variant-numeric:tabular-nums}
+    .scenario-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px}
+    .scenario-card{position:relative;display:flex;min-width:0;min-height:230px;grid-column:span 4;flex-direction:column;padding:24px;border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(145deg,rgba(21,20,18,.94),rgba(10,10,9,.98));overflow:hidden;transition:transform .16s ease,border-color .16s ease,background-color .16s ease}
+    .scenario-card:nth-child(1),.scenario-card:nth-child(2),.scenario-card:nth-child(6),.scenario-card:nth-child(7){grid-column:span 6}
+    .scenario-card:hover{transform:translateY(-2px);border-color:rgba(242,138,26,.38);background:linear-gradient(145deg,rgba(28,25,20,.96),rgba(11,11,9,.99))}
+    .scenario-top{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:32px}
+    .scenario-icon{display:grid;place-items:center;width:36px;height:36px;border:1px solid rgba(242,138,26,.34);border-radius:6px;background:var(--signal-soft);color:var(--signal-bright);font-size:15px;font-weight:900}
+    .scenario-label{color:var(--muted);font-size:10px;font-weight:850;letter-spacing:.12em;text-transform:uppercase}
+    .scenario-card h3{margin:0;font-size:clamp(1.2rem,2vw,1.55rem);line-height:1.12;letter-spacing:-.025em}
+    .scenario-card p{margin:10px 0 22px;color:var(--muted-strong);font-size:13px;line-height:1.62;text-wrap:pretty}
+    .scenario-command{display:block;width:100%;margin-top:auto;padding:10px 11px;border:1px solid var(--line);border-radius:5px;background:#070706;color:#f7dfbf;font:500 11px/1.45 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;overflow-wrap:anywhere}
+    .scenario-command::before{content:"$ ";color:var(--signal-bright);font-weight:850}
     .graph-mini{position:absolute;right:-18px;bottom:-28px;width:230px;height:170px;opacity:.68}
     .graph-node{position:absolute;width:13px;height:13px;border:2px solid var(--signal);border-radius:50%;background:#0b0b0a;box-shadow:0 0 18px rgba(242,138,26,.34)}
     .graph-node::after{content:"";position:absolute;left:11px;top:4px;width:74px;height:1px;background:rgba(245,242,234,.28);transform-origin:left center}
@@ -267,6 +278,7 @@
       .section-intro{grid-template-columns:1fr;gap:16px}
       .feature-card-large,.feature-card-side{grid-column:span 12}
       .feature-card-third{grid-column:span 6}
+      .scenario-card,.scenario-card:nth-child(n){grid-column:span 6}
       .process{grid-template-columns:1fr}
       .process-step{border-right:0;border-bottom:1px solid var(--line)}
       .process-step:last-child{border-bottom:0}
@@ -293,6 +305,7 @@
       .agent-list{justify-content:flex-start}
       .content-section{padding-top:78px}
       .feature-card-third{grid-column:span 12}
+      .scenario-card,.scenario-card:nth-child(n){grid-column:span 12;min-height:0}
       .feature-card{min-height:0;padding:22px}
       .feature-index{margin-bottom:30px}
       .graph-mini{opacity:.42}
@@ -364,6 +377,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         </a>
         <div class="nav-links">
           <a href="#product">Product</a>
+          <a href="#scenarios">Use Cases</a>
           <a href="#how-it-works">How It Works</a>
           <a href="#install">Install</a>
           <a class="nav-cta" href="./report.html?report=reports/showcase.json">Open Live Demo</a>
@@ -488,6 +502,67 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
             <span class="feature-index">05</span>
             <h3>Measure Whether Improvement Is Real.</h3>
             <p>Compare later sessions against the original cohort before claiming that a workflow, skill, or rule improved the outcome.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="content-section" id="scenarios" aria-labelledby="scenarios-title">
+        <div class="section-intro">
+          <div>
+            <p class="kicker">Start With a Question</p>
+            <h2 id="scenarios-title">Use Reflect When the Work Needs an Answer.</h2>
+          </div>
+          <p>Go from a concrete engineering question to the smallest useful command. Every result stays grounded in local sessions, telemetry, and reviewed evidence.</p>
+        </div>
+
+        <div class="scenario-grid">
+          <article class="scenario-card">
+            <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">$</span><span class="scenario-label">Usage &amp; Cost</span></div>
+            <h3>What did our agents use this week?</h3>
+            <p>Break down exact local tokens, cache use, models, tools, failures, duration, and recognized model cost across agents.</p>
+            <code class="scenario-command" translate="no">reflect usage --global --week</code>
+          </article>
+
+          <article class="scenario-card">
+            <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">↳</span><span class="scenario-label">Session Diagnosis</span></div>
+            <h3>Why did this session stall or fail?</h3>
+            <p>Open the synchronized conversation, timeline, tool activity, subagents, workspace context, failures, and cost evidence.</p>
+            <code class="scenario-command" translate="no">reflect --week</code>
+          </article>
+
+          <article class="scenario-card">
+            <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">!</span><span class="scenario-label">Recurring Friction</span></div>
+            <h3>What should we improve first?</h3>
+            <p>Rank repeated problems by impact, then inspect the exact observations and source sessions behind each recommendation.</p>
+            <code class="scenario-command" translate="no">reflect improve</code>
+          </article>
+
+          <article class="scenario-card">
+            <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">∞</span><span class="scenario-label">Loops to Skills</span></div>
+            <h3>Can this repeated behavior become reusable?</h3>
+            <p>Review bounded loop evidence and let an agent author one pending workflow packaged as a skill for deliberate approval.</p>
+            <code class="scenario-command" translate="no">reflect loops build LOOP_ID --agent codex</code>
+          </article>
+
+          <article class="scenario-card">
+            <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">?</span><span class="scenario-label">Repository Guidance</span></div>
+            <h3>How should an agent work in this repository?</h3>
+            <p>Retrieve reviewed workflows, linked evidence, and folder-scoped memory instead of relying on generic advice.</p>
+            <code class="scenario-command" translate="no">reflect ask "How should I debug CI here?"</code>
+          </article>
+
+          <article class="scenario-card">
+            <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">◇</span><span class="scenario-label">Memory Recall</span></div>
+            <h3>What have we already learned here?</h3>
+            <p>Search local, provenance-aware memory for a repository decision, release practice, debugging path, or prior constraint.</p>
+            <code class="scenario-command" translate="no">reflect memory search "release gate" .</code>
+          </article>
+
+          <article class="scenario-card">
+            <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">✓</span><span class="scenario-label">Instrumentation Health</span></div>
+            <h3>Are the agents actually observable?</h3>
+            <p>Check hook installation, native telemetry, local files, gateway state, detected agents, pricing, and integration support.</p>
+            <code class="scenario-command" translate="no">reflect doctor</code>
           </article>
         </div>
       </section>

@@ -34,6 +34,7 @@
 
 ### Changed
 
+- Added a responsive, task-oriented landing-page scenario grid for usage and cost, session diagnosis, recurring friction, loop-to-skill authoring, repository guidance, memory recall, and instrumentation health.
 - Updated the public landing page and README to explain agent-neutral hook/native correlation, the searchable Skills registry, Reflect's read-only MCP, and every supported memory provider with accurate connected-versus-discovery-only capability labels.
 - Promoted explicit hook workspace, repository owner/name, branch, and credential-free remote hashes into canonical workspace and repository identity, including upgrades of existing stored steps.
 - Rebuilt the README around the "Evidence, Not Vibes." product promise, a short verified setup-to-dashboard quick start, the current evidence-to-improvement product model, local privacy defaults, and accurate cross-agent skill distribution guidance.
