@@ -42,6 +42,32 @@ def test_landing_page_has_clear_product_and_conversion_path():
     assert "From Install to Evidence in 60 Seconds." in text
     assert "Explore the Live Dashboard" in text
     assert "reflect skills discover --week" in text
+    assert "Search the durable registry" in text
+    assert "four read-only Reflect MCP tools" in text
+    assert "codex mcp add reflect -- reflect-mcp" in text
+    assert "optional memory providers such as OMEGA" in text
+    assert "Bring Your Memory Provider." in text
+
+
+def test_landing_page_lists_every_memory_provider_with_honest_support_levels():
+    text = _landing_text()
+
+    assert text.count('class="provider-card"') == 8
+    assert text.count('class="provider-icon') == 8
+    for provider_name in (
+        "Local SQLite",
+        "OMEGA",
+        "Agent Memory",
+        "LiteLLM",
+        "Memory Palace",
+        "Mem0",
+        "Graphiti",
+        "TencentDB Agent Memory",
+    ):
+        assert f"<strong>{provider_name}</strong>" in text
+    assert "Connected Providers" in text
+    assert "Discovery Adapters" in text
+    assert text.count("Discovery only") == 3
 
 
 def test_landing_page_keeps_showcase_metrics_current():

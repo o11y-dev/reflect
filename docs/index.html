@@ -216,6 +216,26 @@
     .trust-list li{display:grid;grid-template-columns:30px minmax(0,1fr);gap:12px;align-items:start;padding:13px;border:1px solid var(--line);border-radius:6px;background:rgba(5,5,5,.44);color:var(--muted-strong);font-size:13px}
     .check{display:grid;place-items:center;width:30px;height:30px;border-radius:4px;background:var(--signal-soft);color:var(--signal-bright);font-weight:900}
     .trust-list strong{display:block;margin-bottom:2px;color:var(--ink);font-size:14px}
+    .memory-panel{padding:34px;border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(145deg,rgba(20,19,17,.96),rgba(8,8,7,.98));box-shadow:var(--shadow)}
+    .memory-head{display:grid;grid-template-columns:minmax(0,.82fr) minmax(320px,.55fr);gap:36px;align-items:end;margin-bottom:28px}
+    .memory-head h2{margin:0;font-size:clamp(2.1rem,3.7vw,3.7rem);line-height:1;letter-spacing:-.04em}
+    .memory-head > p{margin:0;color:var(--muted-strong);font-size:15px;line-height:1.7;text-wrap:pretty}
+    .provider-group + .provider-group{margin-top:24px;padding-top:24px;border-top:1px solid var(--line)}
+    .provider-group-head{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:12px}
+    .provider-group-head h3{margin:0;font-size:13px;letter-spacing:.1em;text-transform:uppercase}
+    .provider-group-head span{color:var(--muted);font-size:12px}
+    .provider-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+    .provider-grid-discovery{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .provider-card{display:grid;grid-template-columns:42px minmax(0,1fr);gap:12px;align-items:center;min-width:0;padding:14px;border:1px solid var(--line);border-radius:7px;background:rgba(5,5,5,.58)}
+    .provider-card:hover{border-color:rgba(242,138,26,.35);background:rgba(242,138,26,.045)}
+    .provider-icon{display:grid;place-items:center;width:42px;height:42px;border:1px solid rgba(242,138,26,.3);border-radius:7px;background:var(--signal-soft);color:var(--signal-bright)}
+    .provider-icon svg{width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+    .provider-icon-text{font-size:17px;font-weight:900;letter-spacing:-.05em}
+    .provider-copy{min-width:0}
+    .provider-copy strong{display:block;overflow:hidden;color:var(--ink);font-size:13px;line-height:1.25;text-overflow:ellipsis;white-space:nowrap}
+    .provider-copy small{display:block;margin-top:4px;color:var(--muted);font-size:11px;line-height:1.35}
+    .provider-status{display:inline-flex;margin-top:7px;padding:3px 6px;border:1px solid rgba(242,138,26,.25);border-radius:999px;color:var(--signal-bright);font-size:9px;font-weight:850;letter-spacing:.09em;text-transform:uppercase}
+    .provider-status-discovery{border-color:var(--line-strong);color:var(--muted-strong)}
     .install-panel{display:grid;grid-template-columns:minmax(0,.72fr) minmax(420px,.8fr);gap:42px;align-items:center;padding:42px;border:1px solid var(--line-strong);border-radius:var(--radius);background:linear-gradient(155deg,rgba(26,25,22,.96),rgba(10,10,9,.98));box-shadow:var(--shadow)}
     .install-panel h2{margin:0;font-size:clamp(2.25rem,4.4vw,4.2rem);line-height:.98;letter-spacing:-.045em}
     .install-panel p{margin:18px 0 0;color:var(--muted-strong);line-height:1.7}
@@ -252,6 +272,8 @@
       .process-step:last-child{border-bottom:0}
       .step-number{margin-bottom:24px}
       .trust-panel,.install-panel{grid-template-columns:1fr}
+      .memory-head{grid-template-columns:1fr;gap:16px}
+      .provider-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
       .terminal{max-width:760px}
     }
     @media (max-width:720px){
@@ -275,6 +297,8 @@
       .feature-index{margin-bottom:30px}
       .graph-mini{opacity:.42}
       .trust-panel,.install-panel{padding:26px 22px;gap:30px}
+      .memory-panel{padding:26px 22px}
+      .provider-grid,.provider-grid-discovery{grid-template-columns:repeat(2,minmax(0,1fr))}
       .footer{align-items:flex-start;flex-direction:column}
       .footer-links{justify-content:flex-start}
     }
@@ -295,6 +319,9 @@
       .board-section{padding:18px}
       .agent-row{grid-template-columns:58px minmax(0,1fr) 46px}
       .install-panel{padding-inline:18px}
+      .memory-panel{padding-inline:18px}
+      .provider-grid,.provider-grid-discovery{grid-template-columns:1fr}
+      .provider-group-head{align-items:flex-start;flex-direction:column;gap:4px}
       pre{padding:16px;font-size:12px}
     }
     @media (prefers-reduced-motion:reduce){
@@ -430,7 +457,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
           <article class="feature-card feature-card-large">
             <span class="feature-index">01</span>
             <h3>Diagnose Sessions Without Reconstructing Them by Hand.</h3>
-            <p>Follow prompts, responses, tool calls, failures, retries, subagents, token use, cost, and outcomes on one synchronized timeline.</p>
+            <p>Follow prompts, responses, tool and MCP calls, failures, retries, subagents, token use, cost, and outcomes on one synchronized timeline—even when evidence arrives through native sessions and hooks.</p>
             <div class="evidence-stack" aria-label="Example session evidence">
               <div class="evidence-row"><span>Repeated tool failure</span><strong>3 retries</strong></div>
               <div class="evidence-row"><span>Context handoff gap</span><strong>2 sessions</strong></div>
@@ -441,7 +468,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
           <article class="feature-card feature-card-side">
             <span class="feature-index">02</span>
             <h3>See the Evidence Behind the Work.</h3>
-            <p>Move beyond isolated transcripts. Explore how sessions relate through repositories, workspaces, folders, tools, skills, memories, and outcomes.</p>
+            <p>Move beyond isolated transcripts. Stable hook, native-trace, workspace, repository, MCP, and delegation identities connect sessions to the work they actually performed.</p>
             <div class="graph-mini" aria-hidden="true">
               <span class="graph-node"></span><span class="graph-node"></span><span class="graph-node"></span><span class="graph-node"></span><span class="graph-node"></span>
             </div>
@@ -455,7 +482,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
           <article class="feature-card feature-card-third">
             <span class="feature-index">04</span>
             <h3>Turn Proven Patterns into Reusable Skills.</h3>
-            <p>Review evidence-backed proposals, install them into the right repository or agent, and retain version and usage history.</p>
+            <p>Search the durable registry, review evidence-backed proposals, install them into the right repository or agent, and retain version and usage history.</p>
           </article>
           <article class="feature-card feature-card-third">
             <span class="feature-index">05</span>
@@ -500,13 +527,76 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
           <div>
             <p class="kicker">Local-First Architecture</p>
             <h2 id="trust-title">Your Engineering Telemetry Stays Yours.</h2>
-            <p>Reflect continuously builds a living operational graph of your engineering system. It connects code, telemetry, incidents, deployments, ownership, and architecture into one explainable intelligence layer—without requiring a hosted control plane.</p>
+            <p>Reflect keeps its evidence graph and workflow ledger in local SQLite. Its read-only MCP gives agents scoped context with provenance, while optional memory providers such as OMEGA remain independently installed and clearly separated from Reflect-verified evidence.</p>
           </div>
           <ul class="trust-list">
             <li><span class="check" aria-hidden="true">✓</span><span><strong>Local by default</strong>Traces, session stores, the SQLite ledger, and dashboard data remain on your machine.</span></li>
             <li><span class="check" aria-hidden="true">✓</span><span><strong>Text capture is optional</strong>Use metadata-only telemetry or opt into prompt and response capture deliberately.</span></li>
             <li><span class="check" aria-hidden="true">✓</span><span><strong>OpenTelemetry native</strong>Keep your own collector, backend, retention, and governance model.</span></li>
+            <li><span class="check" aria-hidden="true">✓</span><span><strong>Agent-ready context</strong>Expose workflows, usage, explanations, and scoped memory through four read-only Reflect MCP tools.</span></li>
           </ul>
+        </div>
+      </section>
+
+      <section class="content-section" aria-labelledby="memory-title">
+        <div class="memory-panel">
+          <div class="memory-head">
+            <div>
+              <p class="kicker">Memory, With Boundaries</p>
+              <h2 id="memory-title">Bring Your Memory Provider.</h2>
+            </div>
+            <p>Reflect keeps evidence and provenance in its own local ledger, then connects to optional memory systems without confusing external recall with verified session facts.</p>
+          </div>
+
+          <div class="provider-group">
+            <div class="provider-group-head">
+              <h3>Connected Providers</h3>
+              <span>Available for configured memory operations</span>
+            </div>
+            <div class="provider-grid">
+              <article class="provider-card">
+                <span class="provider-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="7" ry="3"></ellipse><path d="M5 5v7c0 1.7 3.1 3 7 3s7-1.3 7-3V5"></path><path d="M5 12v7c0 1.7 3.1 3 7 3s7-1.3 7-3v-7"></path></svg></span>
+                <span class="provider-copy"><strong>Local SQLite</strong><small>Default source of truth</small><span class="provider-status">Built in</span></span>
+              </article>
+              <article class="provider-card">
+                <span class="provider-icon provider-icon-text" aria-hidden="true">Ω</span>
+                <span class="provider-copy"><strong>OMEGA</strong><small>Local semantic memory</small><span class="provider-status">Integrated</span></span>
+              </article>
+              <article class="provider-card">
+                <span class="provider-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="7" cy="7" r="2.5"></circle><circle cx="17" cy="7" r="2.5"></circle><circle cx="12" cy="17" r="2.5"></circle><path d="m9 8.5 2 6M15 8.5l-2 6M9.5 7h5"></path></svg></span>
+                <span class="provider-copy"><strong>Agent Memory</strong><small>Generic HTTP memory</small><span class="provider-status">Connected</span></span>
+              </article>
+              <article class="provider-card">
+                <span class="provider-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m13 2-8 12h7l-1 8 8-12h-7z"></path></svg></span>
+                <span class="provider-copy"><strong>LiteLLM</strong><small>Proxy memory endpoint</small><span class="provider-status">Connected</span></span>
+              </article>
+              <article class="provider-card">
+                <span class="provider-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 9h18M5 9V6l7-4 7 4v3M6 9v9M10 9v9M14 9v9M18 9v9M3 18h18M2 22h20"></path></svg></span>
+                <span class="provider-copy"><strong>Memory Palace</strong><small>Compatible HTTP memory</small><span class="provider-status">Connected</span></span>
+              </article>
+            </div>
+          </div>
+
+          <div class="provider-group">
+            <div class="provider-group-head">
+              <h3>Discovery Adapters</h3>
+              <span>Installation and health visibility in this release</span>
+            </div>
+            <div class="provider-grid provider-grid-discovery">
+              <article class="provider-card">
+                <span class="provider-icon provider-icon-text" aria-hidden="true">m0</span>
+                <span class="provider-copy"><strong>Mem0</strong><small>Health and discovery</small><span class="provider-status provider-status-discovery">Discovery only</span></span>
+              </article>
+              <article class="provider-card">
+                <span class="provider-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"></circle><circle cx="12" cy="5" r="2"></circle><circle cx="19" cy="9" r="2"></circle><circle cx="15" cy="19" r="2"></circle><path d="m6.5 10.5 4-4M14 5.8l3.2 2M18 11l-2 6M13.2 17.5 6.8 13"></path></svg></span>
+                <span class="provider-copy"><strong>Graphiti</strong><small>Health and discovery</small><span class="provider-status provider-status-discovery">Discovery only</span></span>
+              </article>
+              <article class="provider-card">
+                <span class="provider-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 18H5a4 4 0 0 1-.5-8A7.5 7.5 0 0 1 19 8a5 5 0 0 1 0 10h-2"></path><ellipse cx="12" cy="14" rx="4" ry="2"></ellipse><path d="M8 14v5c0 1.1 1.8 2 4 2s4-.9 4-2v-5"></path></svg></span>
+                <span class="provider-copy"><strong>TencentDB Agent Memory</strong><small>Health and discovery</small><span class="provider-status provider-status-discovery">Discovery only</span></span>
+              </article>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -531,7 +621,10 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 <span class="prompt">$</span> reflect skills
 
 <span class="comment"># Draft evidence-backed skills for review</span>
-<span class="prompt">$</span> reflect skills discover --week</code></pre>
+<span class="prompt">$</span> reflect skills discover --week
+
+<span class="comment"># Optional: give Codex read-only Reflect context</span>
+<span class="prompt">$</span> codex mcp add reflect -- reflect-mcp</code></pre>
           </div>
         </div>
       </section>

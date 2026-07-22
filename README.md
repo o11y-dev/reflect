@@ -90,7 +90,7 @@ The browser is organized around one evidence-to-value path:
 | **Inbox** | What recurring problems or loops need attention? |
 | **Sessions** | What happened in one run, and how does it compare with another? |
 | **Workflows** | Which reusable procedure is proposed, what evidence supports it, and what exact file will change? |
-| **Skills** | Which durable skill versions exist, where are they installed, and when were they used? |
+| **Skills** | Which searchable durable skill versions exist, where are they installed, and when were they used? |
 | **Impact** | Did sessions improve after a workflow or skill was applied? |
 | **Explore** | How do usage, tools, cost, context, and graph relationships change across filters? |
 
@@ -180,7 +180,7 @@ reflect feedback SESSION_ID --outcome corrected --reason "why"
 reflect --demo                 # instant demo with Claude/Codex/Copilot/Cursor/Gemini data
 ```
 
-The browser uses the same SQLite ledger as the CLI and follows one evidence-to-value path. **Inbox** contains only findings and observed loops. **Sessions** contains session inspection and direct A/B comparison. **Workflows** contains reusable procedures with source evidence, exact review, delivery target, and rollback. **Skills** contains only durable packages, versions, installations, observed usage, and measurements. **Impact** is reserved for measured outcomes after a workflow is applied. **Explore** contains Usage, Tools, Graph, and Context views; generic cohort analysis lives under Explore → Usage, while Improvement Rule definitions and extension guidance live under Explore → Context, away from daily triage. A selected loop remains evidence until `reflect loops build LOOP_ID` asks an agent to author one pending workflow packaged as a skill; no loop is installed or converted automatically.
+The browser uses the same SQLite ledger as the CLI and follows one evidence-to-value path. **Inbox** contains only findings and observed loops. **Sessions** contains session inspection and direct A/B comparison. **Workflows** contains reusable procedures with source evidence, exact review, delivery target, and rollback. **Skills** contains only durable packages, versions, installations, observed usage, and measurements, with instant multi-word search across identity, purpose, lifecycle, provenance, source agent, availability, and installation target. **Impact** is reserved for measured outcomes after a workflow is applied. **Explore** contains Usage, Tools, Graph, and Context views; generic cohort analysis lives under Explore → Usage, while Improvement Rule definitions and extension guidance live under Explore → Context, away from daily triage. A selected loop remains evidence until `reflect loops build LOOP_ID` asks an agent to author one pending workflow packaged as a skill; no loop is installed or converted automatically.
 
 Browser links use the same product names: `tab=inbox|sessions|workflows|skills|impact|explore`, with `view=usage|tools|graph|context` when Explore is active. The matching read APIs are `/api/inbox`, `/api/impact`, and `/api/explore/{view}`; older tab names and endpoints remain read-only compatibility aliases for existing bookmarks and integrations.
 
@@ -323,12 +323,16 @@ reflect memory search "release gate" . --provider omega
 
 Configured providers:
 
-- `local_sqlite` — default local memory store under `~/.reflect/state/reflect.db`
-- `omega` — local [OMEGA Memory](https://github.com/omega-memory/omega-memory) semantic store through its public Python API
-- `litellm` — LiteLLM Proxy `/v1/memory` key/value memory endpoint
-- `memorypalace` — Memory Palace-compatible HTTP memory endpoint
-- `agentmemory` — generic Agent Memory HTTP endpoint via `AGENTMEMORY_URL`
-- `mem0`, `graphiti`, `tencentdb_agent_memory` — discovery-only adapters in this release
+| Provider | Reflect support | Role |
+|---|---|---|
+| `local_sqlite` | Built in | Default local source of truth under `~/.reflect/state/reflect.db` |
+| `omega` | Integrated | Local [OMEGA Memory](https://github.com/omega-memory/omega-memory) semantic store through its public Python API |
+| `agentmemory` | Connected | Generic Agent Memory HTTP endpoint via `AGENTMEMORY_URL` |
+| `litellm` | Connected | LiteLLM Proxy `/v1/memory` key/value memory endpoint |
+| `memorypalace` | Connected | Memory Palace-compatible HTTP memory endpoint |
+| `mem0` | Discovery only | Installation and health visibility |
+| `graphiti` | Discovery only | Installation and health visibility |
+| `tencentdb_agent_memory` | Discovery only | Installation and health visibility |
 
 OMEGA remains independently installed and configured; Reflect does not run `omega setup`, install its hooks, or read its private SQLite schema. Install the optional integration, initialize OMEGA deliberately, then inspect provider health:
 
@@ -535,7 +539,7 @@ Commands:
 
 ## Skills
 
-`reflect skills` is the Skills v2 registry. It reconciles staged candidates, known skill directories, and telemetry-observed skill usage into stable skill identities. Each skill keeps immutable content versions plus source-agent, source-loop, source-session, installation-path, usage, and measurement links. If a tracked file disappears, its installation is marked missing rather than deleting its history.
+`reflect skills` is the Skills v2 registry. It reconciles staged candidates, known skill directories, and telemetry-observed skill usage into stable skill identities. Each skill keeps immutable content versions plus source-agent, source-loop, source-session, installation-path, usage, and measurement links. The browser Skills tab loads the bounded registry and provides URL-persisted free-text search over names, descriptions, lifecycle, provenance, source agents, availability, and installation targets. If a tracked file disappears, its installation is marked missing rather than deleting its history.
 
 The registry is intentionally broader than the skills available to the current agent. A Codex-visible skill must have an active package under a Codex or shared repository skill root; pending drafts, other-agent installations, and telemetry-only historical names remain reviewable registry records but are not presented as installed. The browser labels these states explicitly as **Available in Codex**, **Available in workspace**, **Pending review**, **Available to other agents**, **Telemetry only**, or **Not installed**.
 

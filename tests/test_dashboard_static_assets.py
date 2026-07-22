@@ -366,7 +366,7 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "fetch('/api/inbox'" in text
     assert "fetch('/api/workflows'" in text
     assert "fetch('/api/loops'" in text
-    assert "fetch('/api/skills'" in text
+    assert "fetch('/api/skills?limit=500'" in text
     assert "fetch('/api/impact'" in text
     assert "new URL(`/api/explore/${encodeURIComponent(viewName)}`" in text
     assert "/api/improvements" not in text
@@ -412,6 +412,11 @@ def test_dashboard_workflows_and_skills_use_responsive_tiles(path: Path):
 
     assert 'class="workflow-list workflow-tile-grid" id="workflow-ledger"' in text
     assert 'class="workflow-list skill-tile-grid" id="skill-registry"' in text
+    assert 'id="skill-search" type="search"' in text
+    assert 'id="skill-filter-summary" aria-live="polite"' in text
+    assert "function skillMatchesSearch(skill, query)" in text
+    assert "params.set('skill_q', query.trim())" in text
+    assert "fetch('/api/skills?limit=500'" in text
     assert ".workflow-tile-grid{grid-template-columns:repeat(auto-fit" in text
     assert ".skill-tile-grid{grid-template-columns:repeat(auto-fit" in text
     assert "function renderWorkflowSteps(steps, {limit = 0, compact = false} = {})" in text

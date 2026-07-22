@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added instant multi-word free-text search to the Skills registry across names, descriptions, lifecycle, provenance, source agents, availability, and installation targets, with URL-persisted filtering and visible result counts.
 - Added first-class ingestion for `opentelemetry-hooks` fact contract v1, including privacy-safe conversation facts, stable hook event identity, provider/schema provenance, native trace links, and subagent parent relationships.
 - Added queryable `conversation_facts` and `agent_events` ledgers plus session telemetry contract summaries and agent-ID-aware delegation graph edges.
 - Replaced the private `reflect-mcp` JSON-lines dispatcher with a standards-compliant FastMCP stdio server exposing read-only context, improvement, provenance, and exact-usage tools; `reflect ask` now uses the same context service and returns scoped memory with explicit provenance.
@@ -33,6 +34,7 @@
 
 ### Changed
 
+- Updated the public landing page and README to explain agent-neutral hook/native correlation, the searchable Skills registry, Reflect's read-only MCP, and every supported memory provider with accurate connected-versus-discovery-only capability labels.
 - Promoted explicit hook workspace, repository owner/name, branch, and credential-free remote hashes into canonical workspace and repository identity, including upgrades of existing stored steps.
 - Rebuilt the README around the "Evidence, Not Vibes." product promise, a short verified setup-to-dashboard quick start, the current evidence-to-improvement product model, local privacy defaults, and accurate cross-agent skill distribution guidance.
 - Redesigned the public landing page around a clear capture, understand, and improve journey with current showcase evidence and priced-cost coverage, a branded agent rail, a progressively enhanced GitHub release/star/fork proof strip, a product capability grid, local-first trust details, a focused install path, stronger responsive behavior, and accessible navigation and motion states.
