@@ -299,12 +299,14 @@ _AGENT_SPECS = [
     },
     {
         "name": "Windsurf",
+        "setup_aliases": ["windsurf"],
         "env": "WINDSURF_HOME",
         "default": lambda: Path.home() / ".codeium" / "windsurf",
         "path_kind": "home",
         "local_skill_path": ".windsurf/skills/",
+        "hook_agent": "windsurf",
         "global_path": "~/.codeium/windsurf/skills/",
-        "recommendation": "Native OTel and hooks still need verification for Windsurf.",
+        "recommendation": "Use opentelemetry-hooks for Windsurf telemetry; native OTel is not available.",
     },
     {
         "name": "Trae",
@@ -450,6 +452,7 @@ _IMPLEMENTED_AGENT_SUPPORT: dict[str, tuple[str, str]] = {
     "Gemini CLI": ("Native OTel + session adapters", "High"),
     "GitHub Copilot": ("Native OTel + VS Code env", "High"),
     "OpenAI Codex CLI": ("Native OTel config", "Medium"),
+    "Windsurf": ("Hook telemetry + config snapshots", "Medium"),
     "OpenCode": ("opencode run + export", "Medium"),
 }
 _DOCTOR_MATRIX_PLANNED = {"Antigravity", "OpenClaw"}

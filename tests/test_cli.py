@@ -1851,7 +1851,7 @@ class TestDoctor:
         assert "Gemini CLI" in result.output
         assert "Use native telemetry first" in result.output
 
-    def test_doctor_support_matrix_marks_planned_agents(self, runner, tmp_path):
+    def test_doctor_support_matrix_marks_windsurf_implemented_and_other_agents_planned(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
         hook_home = tmp_path / ".otel-hook-home"
         (reflect_home / "state").mkdir(parents=True)
@@ -1876,7 +1876,12 @@ class TestDoctor:
         assert result.exit_code == 0
         assert "Antigravity" in result.output
         assert "OpenClaw" in result.output
-        assert "Windsurf" not in result.output
+        assert "Windsurf" in result.output
+        assert core._agent_support_summary("Windsurf") == {
+            "support_status": "Implemented",
+            "telemetry_path": "Hook telemetry + config snapshots",
+            "confidence": "Medium",
+        }
         assert "Planned" in result.output
 
     def test_doctor_otlp_logs_waiting_when_otel_hook_installed(self, runner, tmp_path):
@@ -2050,6 +2055,29 @@ class TestSetup:
 
         assert result.exit_code == 0
         assert distribute_skills.call_args.kwargs["selected_agent_names"] == {"openai-codex-cli"}
+
+    def test_setup_wires_detected_windsurf_with_supported_hook_agent(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        windsurf_home = tmp_path / ".codeium" / "windsurf"
+        windsurf_home.mkdir(parents=True)
+
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call") as check_call, \
+             patch("reflect.core._distribute_skills"), \
+             patch.dict(os.environ, {"WINDSURF_HOME": str(windsurf_home)}, clear=False):
+            result = runner.invoke(main, ["setup", "--agent", "windsurf"])
+
+        assert result.exit_code == 0
+        check_call.assert_any_call(
+            ["/usr/bin/otel-hook", "setup", "--global", "--agent", "windsurf"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        assert "Windsurf global hook setup complete" in result.output
+        assert "Windsurf: Not implemented" not in result.output
 
     def test_setup_local_agent_is_explicit_opt_in(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"

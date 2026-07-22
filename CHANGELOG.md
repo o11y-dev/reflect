@@ -69,6 +69,8 @@
 
 ### Fixed
 
+- Marked Windsurf hook telemetry as implemented in setup and doctor, wired `reflect setup --agent windsurf` through `otel-hook setup --global --agent windsurf`, and aligned the support matrix documentation.
+
 - Added an agent-neutral, strategy-based MCP classifier that normalizes standard attributes, encoded tool names, and payload-based calls from all supported agents into the canonical MCP ledger; refresh now repairs existing sessions while preferring native spans over duplicate hook or transcript evidence.
 - Declared the `src/reflect` package explicitly for Poetry so the documented source-development install completes instead of stopping after dependency installation.
 - Updated Codex skill distribution to use the current user-wide and project-local `.agents/skills/` discovery roots, so the packaged `reflect-skills` helper appears in Codex's skill and slash-command lists after setup.
