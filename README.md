@@ -115,6 +115,16 @@ Reflect combines the strongest verified local signal available for each agent:
 
 Each source is normalized into one cross-agent model and stored in local SQLite. The browser, CLI, session rules, improvement rules, graph, workflows, and Skills v2 registry all derive from that shared evidence rather than independent summaries.
 
+Reflect understands the `opentelemetry-hooks` hook fact contract v1. Prompt, response,
+stop-message, error, and delegation facts remain useful when content capture is disabled:
+Reflect stores their length and SHA-256 evidence separately from any optional redacted
+preview. Stable hook event IDs, provider adapters, schema versions, native trace links,
+subagent and parent-agent IDs, and explicit workspace/repository identity are promoted into
+queryable SQLite fields instead of requiring raw-JSON scans. The Session telemetry cockpit
+shows the observed hook contract and native-link count, while Conversation and the graph use
+the normalized message and delegation relationships. Legacy hook and native telemetry remain
+supported through the existing fallback attributes.
+
 ```mermaid
 flowchart LR
     A[Agent sessions] --> D[Normalize]
@@ -152,7 +162,7 @@ reflect memory candidates .    # derive evidence-backed memory candidates from t
 reflect memory providers       # inspect configured memory providers
 reflect improve                # show highest-impact recurring problems and proposals
 reflect improve OBSERVATION_ID # inspect one finding and its exact evidence
-reflect ask "How should I debug CI here?" # retrieve bounded local guidance
+reflect ask "How should I debug CI here?" # retrieve workflows, evidence, and scoped memory
 reflect loops                  # list stalled and productive repeated behavior
 reflect loops show LOOP_ID     # inspect bounded source-session evidence
 reflect loops build LOOP_ID --agent codex # author one pending workflow packaged as a skill
@@ -303,20 +313,33 @@ The Conversation view defaults to a readable turn-focused transcript, keeps tool
 
 ## Memory providers
 
-Reflect keeps local SQLite as the source of truth and can mirror writes into optional memory backends. Remote provider failures do not block the local memory row; the local record is marked with provider status so you can inspect what was mirrored versus stored locally only. Reflect operational memories stay local by default; generic agent-session memory routes to `agentmemory`, `litellm`, or `memorypalace` when the matching provider is configured.
+Reflect keeps local SQLite as the source of truth and can mirror writes into optional memory backends. Provider failures do not block the local memory row; the local record is marked with provider status so you can inspect what was mirrored versus stored locally only. Reflect operational memories stay local by default; generic agent-session memory can route to `omega`, `agentmemory`, `litellm`, or `memorypalace` when explicitly configured.
 
 ```bash
 reflect memory providers
 reflect memory search "release gate" . --provider litellm
+reflect memory search "release gate" . --provider omega
 ```
 
 Configured providers:
 
 - `local_sqlite` — default local memory store under `~/.reflect/state/reflect.db`
+- `omega` — local [OMEGA Memory](https://github.com/omega-memory/omega-memory) semantic store through its public Python API
 - `litellm` — LiteLLM Proxy `/v1/memory` key/value memory endpoint
 - `memorypalace` — Memory Palace-compatible HTTP memory endpoint
 - `agentmemory` — generic Agent Memory HTTP endpoint via `AGENTMEMORY_URL`
 - `mem0`, `graphiti`, `tencentdb_agent_memory` — discovery-only adapters in this release
+
+OMEGA remains independently installed and configured; Reflect does not run `omega setup`, install its hooks, or read its private SQLite schema. Install the optional integration, initialize OMEGA deliberately, then inspect provider health:
+
+```bash
+pipx inject o11y-reflect "omega-memory>=1.5,<2"
+omega setup
+reflect memory providers
+reflect memory search "release gate" . --provider omega
+```
+
+CLI searches with `--provider omega` and MCP `reflect_context` calls with `memory_provider="omega"` use OMEGA when its package and `~/.omega/omega.db` are available. Reflect does not expose generic memory CRUD through its MCP; use OMEGA's own MCP for that. Internal generic agent-session writes can mirror into OMEGA when `REFLECT_OMEGA_MEMORY_ENABLED=true`. Use `REFLECT_OMEGA_MEMORY_HOME` (or OMEGA's own `OMEGA_HOME`) when its store is not under `~/.omega/`.
 
 LiteLLM memory is separate from LiteLLM pricing. To enable it, run a LiteLLM Proxy with a connected database and set:
 
@@ -568,6 +591,34 @@ flowchart LR
 In Codex, invoke `$reflect` for evidence-backed workflow guidance, `$reflect-usage` for current or aggregate usage statistics, and `$reflect-skills` for the durable skill registry. Codex discovers the user-wide copies from `~/.agents/skills/`; restart Codex if a newly installed skill does not appear. Other agents receive the same helpers in their native global skill roots and expose them through their own skill picker or invocation syntax.
 
 Project-local copies are opt-in through `reflect setup --local-agent <agent>`. These operator helpers are separate from the durable Skills v2 registry: generated or imported skills remain pending until you review and apply them explicitly.
+
+## Reflect MCP
+
+`reflect-mcp` is a standards-compliant local stdio server built with the stable official MCP Python SDK. It intentionally complements memory-provider MCPs instead of proxying them: OMEGA, Mem0, and similar products continue to own generic memory creation and recall, while Reflect exposes evidence-backed task context and provenance from its local telemetry ledger.
+
+The server exposes four read-only tools:
+
+- `reflect_context` — approved workflow guidance, observations, and path-scoped local or provider memory
+- `reflect_improvements` — current evidence-backed findings without running detectors or applying changes
+- `reflect_explain` — provenance for one observation, workflow, or local memory
+- `reflect_usage` — exact local session or aggregate usage
+
+Register the installed stdio command with the agents you use:
+
+```bash
+codex mcp add reflect -- reflect-mcp
+claude mcp add --scope user reflect -- reflect-mcp
+```
+
+The `$reflect` skill prefers `reflect_context` when the MCP is available and falls back to `reflect ask`, which uses the same context service. Neither path applies workflows, installs skills, mutates agent configuration, or treats provider memory as verified Reflect evidence.
+
+Reflect classifies MCP activity through one agent-neutral strategy registry rather than provider-specific branches. Standard OpenTelemetry MCP attributes, `mcp__server__tool` names, and payload-based calls are normalized for Codex, Claude Code, Cursor, Copilot, and Gemini; overlapping native, hook, and transcript records are reduced to the strongest available evidence. To smoke-test an installation, give an agent a read-only mission that invokes `reflect_context` once, retain the returned session ID, and verify it with:
+
+```bash
+reflect usage --session <session-id> --refresh --json
+```
+
+The result should report `mcp_calls: 1` and list the session as successful. The same call is visible in the session Conversation and MCP views in `reflect report`.
 
 ## Development
 

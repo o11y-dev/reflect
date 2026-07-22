@@ -30,6 +30,7 @@ from reflect.insights.renderers import insights_to_example_tuples, insights_to_s
 from reflect.models import AgentStats, TelemetryStats
 from reflect.preparation import BackgroundPreparationWorker, PreparationSnapshot, PreparationState
 from reflect.session_rules import DEFAULT_SESSION_RULE_SCORER, context_from_summary
+from reflect.store.hook_facts import HookFactRepository
 from reflect.utils import (
     _json_dumps,
     _safe_ratio,
@@ -2681,12 +2682,14 @@ def _sql_cohort_compat_payload(
         subagent_launches = conn.execute(
             f"""
             SELECT COUNT(*)
-            FROM steps
-            WHERE session_id IN ({placeholders})
+            FROM steps st
+            LEFT JOIN agent_events ae ON ae.step_id = st.id
+            WHERE st.session_id IN ({placeholders})
               AND (
-                type = 'subagent_start'
-                OR summary = 'SubagentStart'
-                OR summary LIKE '%.SubagentStart'
+                ae.event_name = 'SubagentStart'
+                OR st.type = 'subagent_start'
+                OR st.summary = 'SubagentStart'
+                OR st.summary LIKE '%.SubagentStart'
               )
             """,
             ordered_ids,
@@ -3902,6 +3905,7 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
             row["step_id"]: row
             for row in _dict_rows(conn.execute("SELECT * FROM llm_calls WHERE session_id = ?", (session_id,)))
         }
+        hook_facts = HookFactRepository(conn).load_session(session_id)
         tool_rows = _dict_rows(conn.execute("SELECT * FROM tool_calls WHERE session_id = ?", (session_id,)))
         tools_by_step = {row["step_id"]: row for row in tool_rows}
         mcp_rows = _dict_rows(conn.execute("SELECT * FROM mcp_calls WHERE session_id = ?", (session_id,)))
@@ -4020,7 +4024,7 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
         if span_id:
             step_id_by_span_id[span_id] = step["id"]
     seen_prompts: set[tuple[str, str]] = set()
-    seen_responses: set[tuple[str, str, int, int]] = set()
+    seen_responses: set[tuple[object, ...]] = set()
     seen_tools: set[tuple[str, str, str]] = set()
     for step in steps:
         attrs = _load_json_dict(step["raw_attrs_json"])
@@ -4038,16 +4042,42 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
             "input",
             limit=5000,
         )
+        prompt_fact = hook_facts.prompt_for_step(step["id"])
+        if prompt_fact:
+            prompt = str(prompt_fact.get("content_preview_redacted") or prompt)
         if is_prompt_event:
-            prompt_key = (generation_id or str(_sql_attr(attrs, "gen_ai.client.prompt.sha256") or ""), prompt)
+            prompt_hash = str(
+                (prompt_fact or {}).get("content_hash")
+                or _sql_attr(attrs, "gen_ai.client.prompt.sha256")
+                or ""
+            )
+            prompt_key = (generation_id or prompt_hash, prompt)
             if prompt_key not in seen_prompts:
                 seen_prompts.add(prompt_key)
                 conversation.append({
                     "type": "prompt",
                     "ts": base_ts,
                     "preview": prompt or "Prompt text was not captured for this turn; metadata is available.",
+                    "content_hash": prompt_hash,
+                    "content_length": int((prompt_fact or {}).get("content_length") or 0),
                 })
-        if step["id"] in llm_by_step:
+        response_facts = hook_facts.responses_for_step(step["id"])
+        for response_fact in response_facts:
+            response_hash = str(response_fact.get("content_hash") or "")
+            response_identity = response_hash or str(response_fact.get("id") or step["id"])
+            response_key = (response_identity, "hook", 0, 0)
+            if response_key in seen_responses:
+                continue
+            seen_responses.add(response_key)
+            conversation.append({
+                "type": "response",
+                "ts": base_ts,
+                "preview": response_fact.get("content_preview_redacted")
+                or "Assistant turn completed, but response text was not captured.",
+                "content_hash": response_hash,
+                "content_length": int(response_fact.get("content_length") or 0),
+            })
+        if step["id"] in llm_by_step and not response_facts:
             call = llm_by_step[step["id"]]
             if is_response_event or call["output_tokens"]:
                 model = call["response_model"] or call["request_model"] or ""
@@ -4113,6 +4143,20 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
                 "server": mcp["server_name"] or "",
                 "success": mcp["status"] != "error",
             })
+        if agent_event := hook_facts.agent_event_for_step(step["id"]):
+            conversation.append({
+                "type": "subagent_stop"
+                if str(agent_event.get("event_name") or "").lower().endswith("stop")
+                else "subagent_start",
+                "ts": base_ts,
+                "subagent_type": agent_event.get("agent_type") or "unknown",
+                "agent_id": agent_event.get("agent_id") or "",
+                "parent_agent_id": agent_event.get("parent_agent_id") or "",
+                "status": agent_event.get("status") or "",
+                "preview": agent_event.get("task_preview_redacted") or "",
+                "content_hash": agent_event.get("task_hash") or "",
+                "content_length": int(agent_event.get("task_length") or 0),
+            })
         raw_span = raw_by_step_id.get(step["id"]) or raw_by_time_event.get((str(step["started_at"] or ""), event_type)) or {}
         trace_id = str(raw_span.get("trace_id") or "")
         span_id = str(raw_span.get("span_id") or "")
@@ -4133,6 +4177,14 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
             "mcp_tool": (mcp_by_step.get(step["id"]) or {}).get("tool_name", ""),
             "mcp_server": (mcp_by_step.get(step["id"]) or {}).get("server_name", ""),
             "phase": step["type"],
+            "hook_event_id": step.get("hook_event_id") or "",
+            "telemetry_source": step.get("telemetry_source") or "",
+            "hook_schema_version": step.get("hook_schema_version"),
+            "provider_adapter": step.get("hook_provider_adapter") or "",
+            "native_trace_id": step.get("native_trace_id") or "",
+            "native_span_id": step.get("native_span_id") or "",
+            "agent_id": step.get("agent_invocation_id") or "",
+            "parent_agent_id": step.get("parent_agent_id") or "",
             "rel_ms": 0,
             "duration_ms": step["duration_ms"] or 0,
             "attrs": attrs,
@@ -4183,6 +4235,7 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
     errors = sum(1 for step in steps if step["status"] == "error") + sum(
         1 for log in telemetry_logs if log.get("severity") in {"ERROR", "FATAL"}
     )
+    hook_summary = hook_facts.summary(steps)
     conversation_source = "telemetry"
     conversation_warnings: list[str] = []
     native_path = _native_session_path(session_row)
@@ -4249,6 +4302,7 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
                 "duration_ms": 0,
                 "truncated_spans": 0,
                 "truncated_logs": max(0, int(raw_log_count or 0) - len(telemetry_logs)),
+                **hook_summary,
             },
             "spans": telemetry_spans,
             "logs": telemetry_logs,

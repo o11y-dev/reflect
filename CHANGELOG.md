@@ -4,6 +4,10 @@
 
 ### Added
 
+- Added first-class ingestion for `opentelemetry-hooks` fact contract v1, including privacy-safe conversation facts, stable hook event identity, provider/schema provenance, native trace links, and subagent parent relationships.
+- Added queryable `conversation_facts` and `agent_events` ledgers plus session telemetry contract summaries and agent-ID-aware delegation graph edges.
+- Replaced the private `reflect-mcp` JSON-lines dispatcher with a standards-compliant FastMCP stdio server exposing read-only context, improvement, provenance, and exact-usage tools; `reflect ask` now uses the same context service and returns scoped memory with explicit provenance.
+- Added an optional OMEGA Memory provider using OMEGA's public local `SQLiteStore` API for health, semantic search, mirrored writes, inspection, deletion, and validation, with explicit generic-session routing and local SQLite fallback.
 - Added exact current-session, selected-session, and uncapped global usage reporting through `reflect usage`, with token, cost, model, tool, MCP, subagent, duration, and failure breakdowns plus a globally distributed `$reflect-usage` helper skill.
 - Added Click-native Bash, Zsh, and Fish autocomplete across the full command tree, including idempotent installation and privacy-safe local ID suggestions for observations, workflows, loops, sessions, skills, and memories.
 - Added an adapter-neutral conversation reader with readable and full-activity modes, in-session search and result navigation, synchronized timeline jumps, failure navigation, turn labels, and prompt/response copy actions.
@@ -29,6 +33,7 @@
 
 ### Changed
 
+- Promoted explicit hook workspace, repository owner/name, branch, and credential-free remote hashes into canonical workspace and repository identity, including upgrades of existing stored steps.
 - Rebuilt the README around the "Evidence, Not Vibes." product promise, a short verified setup-to-dashboard quick start, the current evidence-to-improvement product model, local privacy defaults, and accurate cross-agent skill distribution guidance.
 - Redesigned the public landing page around a clear capture, understand, and improve journey with current showcase evidence and priced-cost coverage, a branded agent rail, a progressively enhanced GitHub release/star/fork proof strip, a product capability grid, local-first trust details, a focused install path, stronger responsive behavior, and accessible navigation and motion states.
 - Redesigned Workflows and Skills as responsive tile grids with clearer status, provenance, evidence, usage, installation, and impact hierarchy; workflow steps now render as numbered readable tiles in both cards and review dialogs.
@@ -56,8 +61,14 @@
 - Labeled workflow suggestions as Rule blueprint, Agent-authored draft, or Imported skill in the CLI and browser, and recorded the selected extraction agent on new agent-authored drafts.
 - Extended `reflect workflows add` with optional source-agent and source-workflow provenance so agent-authored loop skills retain their author and bounded source sessions without adding another top-level command.
 
+### Dependencies
+
+- Added the stable official MCP Python SDK (`mcp>=1.28,<2`) for protocol lifecycle, schemas, stdio transport, and MCP client compatibility while avoiding the v2 prerelease line.
+
 ### Fixed
 
+- Added an agent-neutral, strategy-based MCP classifier that normalizes standard attributes, encoded tool names, and payload-based calls from all supported agents into the canonical MCP ledger; refresh now repairs existing sessions while preferring native spans over duplicate hook or transcript evidence.
+- Declared the `src/reflect` package explicitly for Poetry so the documented source-development install completes instead of stopping after dependency installation.
 - Updated Codex skill distribution to use the current user-wide and project-local `.agents/skills/` discovery roots, so the packaged `reflect-skills` helper appears in Codex's skill and slash-command lists after setup.
 - Kept workflow candidates addressable and grouped across paginated ledgers larger than 500 records instead of silently hiding later candidates and variants.
 - Refreshed impact snapshots when sessions or metric values change inside a full 50-session cohort, even when the before/after counts remain constant.

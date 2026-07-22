@@ -15,9 +15,11 @@ from click.testing import CliRunner
 import reflect.core as core
 from reflect.core import main
 from reflect.shell_completion import (
+    MEMORY_PROVIDER_NAMES,
     SUPPORTED_SHELLS,
     ShellCompletionManager,
     SqliteCompletionCatalog,
+    complete_memory_provider,
 )
 
 
@@ -165,6 +167,18 @@ def test_sqlite_catalog_does_not_create_a_missing_database(tmp_path: Path) -> No
 
     assert items == []
     assert not db_path.exists()
+
+
+def test_memory_provider_completion_includes_omega_without_local_rows(tmp_path: Path) -> None:
+    command = click.Command("search", params=[click.Option(["--db-path"], default=tmp_path / "missing.db")])
+    context = click.Context(command)
+    context.params["db_path"] = tmp_path / "missing.db"
+
+    items = complete_memory_provider(context, command.params[0], "om")
+
+    assert "omega" in MEMORY_PROVIDER_NAMES
+    assert [item.value for item in items] == ["omega"]
+    assert not (tmp_path / "missing.db").exists()
 
 
 @click.command()

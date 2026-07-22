@@ -1,145 +1,111 @@
 from __future__ import annotations
 
-import json
-import sys
+import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
-from reflect.core import REFLECT_HOME
-from reflect.memory import MemoryItem, MemoryService, MemorySourceMetadata
+from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+
+from reflect.context import ReflectContextService
 from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite
 
+SERVER_INSTRUCTIONS = """
+Reflect provides local telemetry evidence, reviewed workflows, scoped context, and exact usage.
+Use reflect_context before recurring repository work. Treat provider memory as context rather than
+Reflect-verified evidence, and never apply pending workflows without explicit operator approval.
+""".strip()
 
-def _service(db_path: str | None = None) -> tuple[Any, MemoryService]:
-    conn = connect_sqlite(Path(db_path) if db_path else REFLECT_HOME / "state" / "reflect.db")
-    migrate(conn)
-    return conn, MemoryService(conn)
+mcp = FastMCP("Reflect", instructions=SERVER_INSTRUCTIONS)
+ResultT = TypeVar("ResultT")
+READ_ONLY_TOOL = ToolAnnotations(
+    readOnlyHint=True,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+)
 
 
-def memory_search(arguments: dict[str, Any]) -> dict[str, Any]:
-    conn, service = _service(arguments.get("db_path"))
+def _db_path() -> Path:
+    explicit = os.environ.get("REFLECT_DB_PATH", "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
+    home = Path(os.environ.get("REFLECT_HOME", Path.home() / ".reflect")).expanduser()
+    return home / "state" / "reflect.db"
+
+
+def _with_service(operation: Callable[[ReflectContextService], ResultT]) -> ResultT:
+    conn = connect_sqlite(_db_path())
     try:
-        results = service.search(
-            str(arguments.get("query") or ""),
-            path=Path(arguments["path"]) if arguments.get("path") else None,
-            provider=str(arguments.get("provider") or "local_sqlite"),
-            limit=int(arguments.get("limit") or 20),
-        )
+        migrate(conn)
+        return operation(ReflectContextService(conn))
     finally:
         conn.close()
-    return {"results": results}
 
 
-def memory_remember(arguments: dict[str, Any]) -> dict[str, Any]:
-    source = _source_from_arguments(arguments)
-    item = MemoryItem(
-        content=str(arguments.get("content") or ""),
-        type=str(arguments.get("type") or "note"),
-        scope=str(arguments.get("scope") or "project"),
-        source_metadata=source,
-        confidence=float(arguments.get("confidence") or 0.5),
-        sensitivity=str(arguments.get("sensitivity") or "unknown"),
+@mcp.tool(annotations=READ_ONLY_TOOL)
+def reflect_context(
+    question: str,
+    path: str = "",
+    task_file: str = "",
+    memory_provider: str = "local_sqlite",
+    memory_limit: int = 5,
+) -> dict[str, Any]:
+    """Get task guidance from approved workflows, local evidence, and scoped memory."""
+
+    resolved_path = Path(path).expanduser().resolve() if path else Path.cwd()
+    resolved_task = Path(task_file).expanduser().resolve() if task_file else None
+    return _with_service(
+        lambda service: service.ask(
+            question,
+            task_file=resolved_task,
+            path=resolved_path,
+            memory_provider=memory_provider,
+            memory_limit=memory_limit,
+        ).model_dump(mode="json")
     )
-    conn, service = _service(arguments.get("db_path"))
-    try:
-        remembered = service.remember(
-            item,
-            semantic_domain=str(arguments.get("semantic_domain") or "reflect_operational"),
-            provider=arguments.get("provider"),
+
+
+@mcp.tool(annotations=READ_ONLY_TOOL)
+def reflect_improvements(limit: int = 20) -> dict[str, Any]:
+    """List current evidence-backed findings without running detectors or applying changes."""
+
+    return _with_service(lambda service: service.improvements_summary(limit=limit))
+
+
+@mcp.tool(annotations=READ_ONLY_TOOL)
+def reflect_explain(entity_id: str) -> dict[str, Any]:
+    """Explain one Reflect observation, workflow, or local memory with provenance."""
+
+    return _with_service(lambda service: service.explain(entity_id))
+
+
+@mcp.tool(annotations=READ_ONLY_TOOL)
+def reflect_usage(
+    session_id: str = "",
+    global_scope: bool = False,
+    period: str = "week",
+    agent: str = "",
+) -> dict[str, Any]:
+    """Return exact local usage for one session or a global day, week, month, or all-time scope."""
+
+    return _with_service(
+        lambda service: service.usage_report(
+            session_id=session_id or None,
+            global_scope=global_scope,
+            period=period,
+            agent=agent or None,
         )
-    finally:
-        conn.close()
-    return {"memory": remembered}
-
-
-def memory_validate(arguments: dict[str, Any]) -> dict[str, Any]:
-    conn, service = _service(arguments.get("db_path"))
-    try:
-        if arguments.get("candidate_id"):
-            remembered = service.promote_candidate(str(arguments["candidate_id"]))
-            result = service.validate(str(remembered["id"]))
-        else:
-            result = service.validate(str(arguments.get("memory_id") or ""))
-    finally:
-        conn.close()
-    return {"validation": result}
-
-
-def service_context(arguments: dict[str, Any]) -> dict[str, Any]:
-    conn, service = _service(arguments.get("db_path"))
-    try:
-        providers = service.provider_health()
-        memories = service.list_memories(
-            path=Path(arguments["path"]) if arguments.get("path") else Path.cwd(),
-            all_memories=bool(arguments.get("all")),
-            limit=int(arguments.get("limit") or 20),
-        )
-    finally:
-        conn.close()
-    return {"providers": providers, "memories": memories}
-
-
-def explain(arguments: dict[str, Any]) -> dict[str, Any]:
-    conn, service = _service(arguments.get("db_path"))
-    try:
-        memory = service.inspect(str(arguments.get("memory_id") or ""))
-    finally:
-        conn.close()
-    if memory is None:
-        return {"found": False, "reason": "memory_not_found"}
-    return {
-        "found": True,
-        "memory_id": memory["id"],
-        "provider": memory.get("provider"),
-        "source_metadata": memory.get("source_metadata"),
-        "raw_attrs": memory.get("raw_attrs"),
-        "confidence": memory.get("confidence"),
-        "validation_status": memory.get("validation_status"),
-        "stale_reason": memory.get("stale_reason") or "",
-    }
-
-
-TOOLS = {
-    "memory_search": memory_search,
-    "memory_remember": memory_remember,
-    "memory_validate": memory_validate,
-    "service_context": service_context,
-    "explain": explain,
-}
+    )
 
 
 def main() -> None:
-    """Minimal JSON-lines stdio tool loop for local MCP-style clients."""
-    for line in sys.stdin:
-        if not line.strip():
-            continue
-        try:
-            request = json.loads(line)
-            name = str(request.get("tool") or request.get("name") or "")
-            arguments = request.get("arguments") if isinstance(request.get("arguments"), dict) else {}
-            if name not in TOOLS:
-                raise KeyError(f"Unknown tool: {name}")
-            payload = {"ok": True, "result": TOOLS[name](arguments)}
-        except Exception as exc:  # noqa: BLE001 - stdio server returns structured errors
-            payload = {"ok": False, "error": str(exc)}
-        sys.stdout.write(json.dumps(payload, sort_keys=True) + "\n")
-        sys.stdout.flush()
+    """Run Reflect's standards-compliant local MCP server over stdio."""
+
+    mcp.run(transport="stdio")
 
 
-def _source_from_arguments(arguments: dict[str, Any]) -> MemorySourceMetadata:
-    if arguments.get("manual_note"):
-        return MemorySourceMetadata.manual()
-    return MemorySourceMetadata(
-        source_kind=str(arguments.get("source_kind") or ""),
-        source_ref=str(arguments.get("source_ref") or ""),
-        path=str(arguments.get("path") or ""),
-        workspace_root=str(arguments.get("workspace_root") or ""),
-        session_id=str(arguments.get("session_id") or ""),
-        step_id=str(arguments.get("step_id") or ""),
-        repo_id=str(arguments.get("repo_id") or ""),
-        file_id=str(arguments.get("file_id") or ""),
-        spec_id=str(arguments.get("spec_id") or ""),
-        content_hash=str(arguments.get("content_hash") or ""),
-        attrs=arguments.get("attrs") if isinstance(arguments.get("attrs"), dict) else {},
-    )
+if __name__ == "__main__":
+    main()

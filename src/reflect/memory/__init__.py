@@ -7,11 +7,13 @@ from reflect.memory.models import (
     MemoryValidationError,
     MemoryValidationResult,
 )
+from reflect.memory.omega_provider import OmegaMemoryProvider
 from reflect.memory.service import MemoryService
 
 __all__ = [
     "MemoryCandidate",
     "MemoryItem",
+    "OmegaMemoryProvider",
     "MemoryProviderHealth",
     "MemorySearchResult",
     "MemoryService",

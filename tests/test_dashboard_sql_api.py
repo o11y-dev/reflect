@@ -1168,6 +1168,81 @@ def test_dashboard_session_detail_shows_tokenless_stop_response_turns(tmp_path):
     assert responses[1]["output_tokens"] == 0
 
 
+def test_dashboard_session_detail_reads_hook_fact_contract(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    now = "2026-05-01T10:02:45+00:00"
+    conn = connect_sqlite(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status, summary,
+              telemetry_source, hook_schema_version, agent_invocation_id,
+              parent_agent_id, raw_attrs_json, created_at, updated_at
+            ) VALUES (
+              'hook-agent-step', 'sess-sql', 5, 'agent_call', ?, 'ok',
+              'gen_ai.client.hook.SubagentStart', 'hook', 1, 'child-1', 'root-1',
+              '{}', ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO agent_events(
+              id, step_id, session_id, event_name, event_id, agent_id,
+              parent_agent_id, agent_type, status, task_hash, task_length,
+              created_at, updated_at
+            ) VALUES (
+              'agent-event', 'hook-agent-step', 'sess-sql', 'SubagentStart',
+              'provider-agent-event', 'child-1', 'root-1', 'reviewer', 'ok',
+              'task-hash', 42, ?, ?
+            )
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO conversation_facts(
+              id, step_id, session_id, kind, role, content_hash, content_length,
+              created_at, updated_at
+            ) VALUES (
+              'response-fact', 'hook-agent-step', 'sess-sql', 'response',
+              'assistant', 'response-hash', 99, ?, ?
+            )
+            """,
+            (now, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    detail = TestClient(app).get("/api/session/sess-sql")
+
+    assert detail.status_code == 200
+    response = next(
+        event
+        for event in detail.json()["conversation"]
+        if event.get("content_hash") == "response-hash"
+    )
+    assert response["content_length"] == 99
+    assert "not captured" in response["preview"]
+    subagent = next(
+        event
+        for event in detail.json()["conversation"]
+        if event.get("type") == "subagent_start" and event.get("agent_id") == "child-1"
+    )
+    assert subagent["parent_agent_id"] == "root-1"
+    assert subagent["subagent_type"] == "reviewer"
+    summary = detail.json()["telemetry"]["summary"]
+    assert summary["hook_schema_versions"] == [1]
+    assert summary["telemetry_sources"] == ["hook"]
+    assert summary["conversation_facts"] == 1
+    assert summary["agent_relationships"] == 1
+
+
 def test_dashboard_sql_sessions_endpoint_filters_from_sql(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)

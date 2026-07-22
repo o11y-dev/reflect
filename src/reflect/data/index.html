@@ -2032,7 +2032,7 @@ body.rail-overlay-open{overflow:hidden}
 .telemetry-shell{display:flex;flex-direction:column;gap:8px}
 .telemetry-summary{
   display:grid;
-  grid-template-columns:repeat(4,minmax(0,1fr));
+  grid-template-columns:repeat(auto-fit,minmax(132px,1fr));
   gap:6px;
 }
 .telemetry-stat{
@@ -6210,6 +6210,15 @@ class SessionConversationPlayhead {
       { kicker: 'Errors', value: fmt(summary.errors || 0), sub: `${fmt(summary.warnings || 0)} warnings in trace` },
       { kicker: 'Trace window', value: fmtDur(traceWindowMs), sub: `${fmt(summary.services || 0)} services correlated` },
     ];
+    if ((summary.hook_schema_versions || []).length || (summary.telemetry_sources || []).length) {
+      const schemas = (summary.hook_schema_versions || []).map(version => `v${version}`).join(', ');
+      const adapters = (summary.provider_adapters || []).join(', ');
+      summaryCards.push({
+        kicker: 'Hook contract',
+        value: schemas || 'legacy',
+        sub: `${adapters || (summary.telemetry_sources || []).join(', ') || 'unknown'} · ${fmt(summary.native_linked_spans || 0)} native links`,
+      });
+    }
 
     return `
       <div class="telemetry-shell">

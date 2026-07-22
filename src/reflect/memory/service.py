@@ -231,6 +231,10 @@ class MemoryService:
         return remembered
 
     def _route_provider(self, semantic_domain: str, item: MemoryItem) -> str:
+        if semantic_domain == "generic_agent_session" and _env_enabled(
+            "REFLECT_OMEGA_MEMORY_ENABLED"
+        ):
+            return "omega"
         if semantic_domain == "generic_agent_session" and os.environ.get("AGENTMEMORY_URL"):
             return "agentmemory"
         if semantic_domain == "generic_agent_session" and (
@@ -326,6 +330,10 @@ def _redacted_preview(path: Path, text: str, *, max_chars: int = 360) -> str:
     except ValueError:
         cleaned = " ".join(line.strip() for line in text.splitlines() if line.strip())
         return cleaned[:max_chars]
+
+
+def _env_enabled(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _loads(value: object) -> dict[str, Any]:

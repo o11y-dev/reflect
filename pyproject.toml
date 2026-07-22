@@ -29,6 +29,7 @@ dependencies = [
     "grpcio>=1.60",
     "opentelemetry-proto>=1.20",
     "pydantic>=2.0",
+    "mcp>=1.28,<2",
 ]
 
 [project.urls]
@@ -38,6 +39,9 @@ Documentation = "https://github.com/o11y-dev/reflect#readme"
 Issues = "https://github.com/o11y-dev/reflect/issues"
 Changelog = "https://github.com/o11y-dev/reflect/blob/main/CHANGELOG.md"
 
+[tool.poetry]
+packages = [{ include = "reflect", from = "src" }]
+
 [project.scripts]
 reflect = "reflect.core:main"
 reflect-mcp = "reflect.mcp:main"
@@ -45,6 +49,7 @@ reflect-mcp = "reflect.mcp:main"
 [project.optional-dependencies]
 test = ["pytest>=7.0", "pytest-cov>=4.0", "httpx>=0.24"]
 e2e = ["playwright>=1.40"]
+omega = ["omega-memory>=1.5,<2"]
 
 [tool.pytest.ini_options]
 addopts = "--cov=reflect --cov-report=term-missing --cov-fail-under=65"

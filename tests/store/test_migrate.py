@@ -9,7 +9,7 @@ def test_migrate_applies_initial_schema(tmp_path):
     conn = connect_sqlite(db_path)
     try:
         applied = migrate(conn)
-        assert applied == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+        assert applied == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "raw_events" in tables
         assert "schema_migrations" in tables
@@ -22,6 +22,8 @@ def test_migrate_applies_initial_schema(tmp_path):
         assert "llm_calls" in tables
         assert "tool_calls" in tables
         assert "mcp_calls" in tables
+        assert "conversation_facts" in tables
+        assert "agent_events" in tables
         assert "specs" in tables
         assert "requirements" in tables
         assert "evidence" in tables
@@ -60,7 +62,7 @@ def test_migrate_applies_initial_schema(tmp_path):
 def test_migrate_is_idempotent(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
-        assert migrate(conn) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+        assert migrate(conn) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
         assert migrate(conn) == []
     finally:
         conn.close()
@@ -79,8 +81,8 @@ def test_migrate_serializes_concurrent_background_requests(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: run_migration(), range(2)))
 
-    assert sorted(len(result) for result in results) == [0, 13]
-    assert sorted(version for result in results for version in result) == list(range(1, 14))
+    assert sorted(len(result) for result in results) == [0, 15]
+    assert sorted(version for result in results for version in result) == list(range(1, 16))
 
 
 def test_migrate_uses_read_only_fast_path_when_schema_is_current(tmp_path):
@@ -138,6 +140,9 @@ def test_migrate_creates_canonical_indexes(tmp_path):
         step_indexes = {row[1] for row in conn.execute("PRAGMA index_list('steps')")}
         assert "idx_steps_session_seq" in step_indexes
         assert "idx_steps_session_type" in step_indexes
+        assert "idx_steps_hook_event_id" in step_indexes
+        assert "idx_steps_hook_contract" in step_indexes
+        assert "idx_steps_native_context" in step_indexes
         assert "idx_steps_origin_kind" in step_indexes
 
         raw_indexes = {row[1] for row in conn.execute("PRAGMA index_list('raw_events')")}
@@ -154,6 +159,7 @@ def test_migrate_creates_canonical_indexes(tmp_path):
 
         mcp_indexes = {row[1] for row in conn.execute("PRAGMA index_list('mcp_calls')")}
         assert "idx_mcp_calls_session_status" in mcp_indexes
+        assert "idx_mcp_calls_session_tool_call" in mcp_indexes
 
         graph_indexes = {row[1] for row in conn.execute("PRAGMA index_list('graph_nodes')")}
         assert "idx_graph_nodes_session_kind" in graph_indexes
@@ -222,4 +228,6 @@ def test_database_doctor_reports_pending_migrations(tmp_path):
 
     assert status["ok"] is False
     assert status["applied_migrations"] == []
-    assert status["pending_migrations"] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+    assert status["pending_migrations"] == [
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+    ]

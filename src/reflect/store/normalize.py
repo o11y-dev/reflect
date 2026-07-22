@@ -6,6 +6,8 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
+from reflect.store.hook_facts import backfill_hook_facts
+from reflect.store.mcp import DEFAULT_MCP_CLASSIFIER, MCPCallBackfill
 from reflect.store.provenance import apply_origin_kind, classify_origin_kind
 from reflect.store.workspaces import backfill_session_context
 
@@ -109,43 +111,16 @@ def backfill_tool_call_hashes(conn: sqlite3.Connection) -> dict[str, int]:
     return {"updated": updated}
 
 
-def _extract_mcp_server_and_tool(attrs: dict[str, Any]) -> tuple[str | None, str | None]:
-    server = _first_text(
-        attrs,
-        "gen_ai.client.mcp_server",
-        "mcp.server",
-        "gen_ai.client.tool.input.server",
-        "tool.input.server",
+def backfill_mcp_calls(
+    conn: sqlite3.Connection,
+    *,
+    session_ids: set[str] | None = None,
+    changed_session_ids: set[str] | None = None,
+) -> dict[str, int]:
+    return MCPCallBackfill(conn).run(
+        session_ids=session_ids,
+        changed_session_ids=changed_session_ids,
     )
-    tool = _first_text(
-        attrs,
-        "gen_ai.client.mcp_tool",
-        "mcp.tool",
-        "gen_ai.client.tool.input.toolName",
-        "gen_ai.client.tool.input.tool",
-        "tool.input.toolName",
-        "tool.input.tool",
-    )
-    payload = _load_json(
-        str(
-            attrs.get("gen_ai.client.tool.input")
-            or attrs.get("tool.input")
-            or ""
-        )
-    )
-    if server is None:
-        for key in ("server", "serverName", "mcpServer"):
-            value = payload.get(key)
-            if isinstance(value, str) and value:
-                server = value
-                break
-    if tool is None:
-        for key in ("toolName", "tool", "mcpTool"):
-            value = payload.get(key)
-            if isinstance(value, str) and value:
-                tool = value
-                break
-    return server, tool
 
 
 def _agent_name(attrs: dict[str, Any]) -> str:
@@ -162,8 +137,10 @@ def _step_type(event_type: str, attrs: dict[str, Any]) -> str:
     event = _event_name(event_type, attrs).lower()
     if attrs.get("gen_ai.memory.id"):
         return "memory_event"
-    if "mcp" in event or attrs.get("gen_ai.client.mcp_server") or attrs.get("gen_ai.client.mcp_tool"):
+    if DEFAULT_MCP_CLASSIFIER.is_explicit_event(event_type, attrs):
         return "mcp_call"
+    if "subagent" in event or attrs.get("gen_ai.client.agent_id"):
+        return "agent_call"
     if attrs.get("gen_ai.client.command"):
         return "shell_command"
     if attrs.get("gen_ai.client.tool_name") or attrs.get("ide.tool_name") or "tool" in event:
@@ -173,8 +150,12 @@ def _step_type(event_type: str, attrs: dict[str, Any]) -> str:
         or attrs.get("gen_ai.response.model")
         or attrs.get("gen_ai.usage.input_tokens")
         or attrs.get("gen_ai.usage.output_tokens")
+        or attrs.get("gen_ai.client.prompt.sha256")
+        or attrs.get("gen_ai.client.response.sha256")
+        or attrs.get("gen_ai.client.stop_message.sha256")
         or "prompt" in event
         or "llm" in event
+        or event == "stop"
     ):
         return "llm_call"
     if "error" in event or "fail" in event:
@@ -395,6 +376,8 @@ def _insert_call_record(
         )
         response_preview = _first_text(
             attrs,
+            "gen_ai.client.response.text",
+            "gen_ai.client.stop_message.text",
             "gen_ai.client.output",
             "gen_ai.response.text",
             "gen_ai.response.content",
@@ -418,15 +401,26 @@ def _insert_call_record(
                 attrs.get("gen_ai.system"),
                 attrs.get("gen_ai.request.model"),
                 attrs.get("gen_ai.response.model") or attrs.get("gen_ai.request.model"),
-                raw_event["event_type"],
+                _event_name(raw_event["event_type"], attrs),
                 _to_int(attrs.get("gen_ai.usage.input_tokens")),
                 _to_int(attrs.get("gen_ai.usage.output_tokens")),
                 _to_int(attrs.get("gen_ai.usage.cache_creation.input_tokens")),
                 _to_int(attrs.get("gen_ai.usage.cache_read.input_tokens")),
                 _to_int(attrs.get("gen_ai.usage.reasoning_output_tokens")),
                 duration,
-                _first_hash(attrs, prompt_preview, "gen_ai.client.prompt.sha256", "gen_ai.prompt.sha256"),
-                _first_hash(attrs, response_preview, "gen_ai.response.sha256"),
+                _first_hash(
+                    attrs,
+                    prompt_preview,
+                    "gen_ai.client.prompt.sha256",
+                    "gen_ai.prompt.sha256",
+                ),
+                _first_hash(
+                    attrs,
+                    response_preview,
+                    "gen_ai.client.response.sha256",
+                    "gen_ai.client.stop_message.sha256",
+                    "gen_ai.response.sha256",
+                ),
                 prompt_preview,
                 response_preview,
                 raw_event["attrs_json"],
@@ -471,31 +465,32 @@ def _insert_call_record(
                 input_preview,
                 output_preview,
                 attrs.get("error.type"),
-                attrs.get("error.message"),
+                _first_text(attrs, "gen_ai.client.error.text", "error.message"),
                 raw_event["attrs_json"],
                 timestamp,
                 timestamp,
             ),
         )
     elif step_type == "mcp_call":
-        mcp_server, mcp_tool = _extract_mcp_server_and_tool(attrs)
+        identity = DEFAULT_MCP_CLASSIFIER.identify(attrs)
         conn.execute(
             """
             INSERT OR IGNORE INTO mcp_calls(
-              id, step_id, session_id, mcp_session_id, mcp_protocol_version,
+              id, step_id, session_id, tool_call_id, mcp_session_id, mcp_protocol_version,
               transport, server_name, tool_name, status, duration_ms,
               raw_attrs_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 _stable_id("mcp", raw_event["id"]),
                 step_id,
                 session_id,
-                attrs.get("gen_ai.client.mcp_session_id"),
-                attrs.get("gen_ai.client.mcp_protocol_version"),
-                attrs.get("gen_ai.client.mcp_transport"),
-                mcp_server,
-                mcp_tool or attrs.get("gen_ai.client.tool_name"),
+                DEFAULT_MCP_CLASSIFIER.call_id(attrs),
+                DEFAULT_MCP_CLASSIFIER.session_id(attrs),
+                DEFAULT_MCP_CLASSIFIER.protocol_version(attrs),
+                DEFAULT_MCP_CLASSIFIER.transport(attrs),
+                identity.server_name,
+                identity.tool_name or attrs.get("gen_ai.client.tool_name"),
                 status,
                 duration,
                 raw_event["attrs_json"],
@@ -787,6 +782,11 @@ def normalize_pending_raw_events(
             timestamp=timestamp,
             changed_session_ids=processed_session_ids,
             session_ids=processed_session_ids,
+        )
+        backfill_hook_facts(
+            conn,
+            session_ids=processed_session_ids,
+            timestamp=timestamp,
         )
         backfill_tool_call_hashes(conn)
         _refresh_session_statuses(conn, processed_session_ids, timestamp)

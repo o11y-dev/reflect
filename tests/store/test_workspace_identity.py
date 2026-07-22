@@ -73,6 +73,62 @@ def test_workspace_resolver_rejects_root_and_home_context():
     assert resolver.resolve({"code.workspace.root": str(Path.home())}) is None
 
 
+def test_workspace_resolver_trusts_explicit_hook_repository_identity(tmp_path):
+    repo = tmp_path / "checkout-without-local-git-metadata"
+    repo.mkdir()
+
+    identity = WorkspaceResolver().resolve({
+        "gen_ai.client.repository_root": str(repo),
+        "vcs.repository.owner": "o11y-dev",
+        "vcs.repository.name": "reflect",
+        "vcs.ref.head.name": "agent/hook-facts",
+        "gen_ai.client.repository.remote.sha256": "a" * 64,
+    })
+
+    assert identity is not None
+    assert identity.root_path == str(repo)
+    assert identity.repo_root == str(repo)
+    assert identity.repo_owner == "o11y-dev"
+    assert identity.repo_name == "reflect"
+    assert identity.branch == "agent/hook-facts"
+    assert identity.remote_hash == "a" * 64
+
+
+def test_backfill_persists_hook_repository_metadata(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    repo = tmp_path / "reflect"
+    repo.mkdir()
+    now = "2026-07-22T10:00:00+00:00"
+    try:
+        migrate(conn)
+        _insert_session(conn, "session-hook-repo", now)
+        _insert_step(
+            conn,
+            "session-hook-repo",
+            "step-hook-repo",
+            0,
+            now,
+            {
+                "gen_ai.client.repository_root": str(repo),
+                "vcs.repository.owner": "o11y-dev",
+                "vcs.repository.name": "reflect",
+                "vcs.ref.head.name": "main",
+                "gen_ai.client.repository.remote.sha256": "b" * 64,
+            },
+        )
+
+        result = backfill_session_context(conn, timestamp=now)
+
+        assert result["sessions_updated"] == 1
+        stored = conn.execute(
+            "SELECT owner, name, branch, raw_json FROM repos"
+        ).fetchone()
+        assert tuple(stored[:3]) == ("o11y-dev", "reflect", "main")
+        assert json.loads(stored[3])["remote_sha256"] == "b" * 64
+    finally:
+        conn.close()
+
+
 def test_backfill_and_graph_share_workspace_paths_and_parent_lineage(tmp_path):
     db = tmp_path / "reflect.db"
     repo = tmp_path / "reflect"

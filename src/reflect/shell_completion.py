@@ -19,6 +19,16 @@ if TYPE_CHECKING:
 
 
 SUPPORTED_SHELLS = ("bash", "zsh", "fish")
+MEMORY_PROVIDER_NAMES = (
+    "local_sqlite",
+    "omega",
+    "agentmemory",
+    "litellm",
+    "memorypalace",
+    "mem0",
+    "graphiti",
+    "tencentdb_agent_memory",
+)
 _COMPLETE_VAR = "_REFLECT_COMPLETE"
 _MANAGED_START = "# >>> reflect shell completion >>>"
 _MANAGED_END = "# <<< reflect shell completion <<<"
@@ -228,4 +238,21 @@ complete_memory_candidate_id = sqlite_completer("memory_candidate")
 complete_memory_type = sqlite_completer("memory_type")
 complete_memory_scope = sqlite_completer("memory_scope")
 complete_memory_source = sqlite_completer("memory_source")
-complete_memory_provider = sqlite_completer("memory_provider")
+
+
+def complete_memory_provider(
+    ctx: click.Context,
+    _param: click.Parameter,
+    incomplete: str,
+) -> list[CompletionItem]:
+    """Complete built-in provider names plus providers observed in local memory rows."""
+    observed = _SQLITE_COMPLETIONS.complete(
+        "memory_provider",
+        incomplete,
+        _db_path_from_context(ctx),
+    )
+    items = {item.value: item for item in observed}
+    for name in MEMORY_PROVIDER_NAMES:
+        if name.startswith(incomplete):
+            items.setdefault(name, CompletionItem(name, help="memory provider"))
+    return [items[name] for name in sorted(items)]

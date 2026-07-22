@@ -37,9 +37,11 @@ Always follow this order:
    - Only run setup after the operator explicitly authorizes it. Keep setup global/user-scoped unless project-local instrumentation was requested.
 
 1. **Retrieve task guidance before recurring work**
-   - For a concrete repository task, run `reflect ask "<task question>" --json` before acting.
+   - For a concrete repository task, use the MCP `reflect_context` tool when it is available; otherwise run `reflect ask "<task question>" --json` before acting. Both use the same context service.
    - Pass `--task-file <path>` when the task is written down and `--path <path>` when a specific artifact is in scope.
    - Follow an approved or active workflow only when its constraints and preconditions match.
+   - Treat returned local or provider memory as supporting context, not approved guidance. Reflect evidence, provider memory, and inference must remain visibly distinct.
+   - Use a configured memory provider's own MCP for generic remember/search/delete operations; Reflect's MCP is for telemetry evidence, workflows, explanations, and usage.
    - Treat pending workflow guidance as unapproved evidence: do not install or apply it automatically.
    - Stop and ask the operator when the answer's fallback applies.
 
@@ -60,7 +62,7 @@ Always follow this order:
       - `reflect usage --json`: inspect exact local usage for the current runtime session
       - `reflect memory sync .`: sync local folder instruction memories into SQLite
       - `reflect memory list .`: inspect local folder memories
-      - `reflect memory providers`: report local SQLite plus optional LiteLLM, Memory Palace, Agent Memory, Mem0, Graphiti, and TencentDB-Agent-Memory adapters
+      - `reflect memory providers`: report local SQLite plus optional OMEGA, LiteLLM, Memory Palace, Agent Memory, Mem0, Graphiti, and TencentDB-Agent-Memory adapters
    - If local traces are unavailable, fall back to legacy local state such as Cursor hook directories when present.
 
 4. **Explain what local telemetry can prove**

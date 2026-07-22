@@ -120,6 +120,7 @@ def test_provider_discovery_reports_external_stubs(tmp_path):
     assert health["agentmemory"]["available"] is False
     assert health["litellm"]["status"] == "not_configured"
     assert health["memorypalace"]["status"] == "not_configured"
+    assert health["omega"]["status"] in {"not_configured", "not_installed"}
     assert health["mem0"]["status"] == "not_configured"
     assert health["graphiti"]["status"] == "not_configured"
     assert health["tencentdb_agent_memory"]["status"] == "not_configured"

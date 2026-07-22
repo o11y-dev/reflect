@@ -7,6 +7,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
+from reflect.store.hook_facts import HookFactRepository
 from reflect.views.report_tabs import (
     _attr,
     _extract_skill_name_from_path,
@@ -542,7 +543,12 @@ def rebuild_graph(conn: sqlite3.Connection, *, reset: bool = True) -> dict[str, 
                     )
                     edges += int(inserted)
 
-            for step in conn.execute("SELECT * FROM steps WHERE session_id = ? ORDER BY seq", (session["id"],)):
+            hook_facts = HookFactRepository(conn).load_session(str(session["id"]))
+            agent_types_by_id = hook_facts.agent_types_by_id()
+            for step in conn.execute(
+                "SELECT * FROM steps WHERE session_id = ? ORDER BY seq",
+                (session["id"],),
+            ):
                 step_attrs = _load_json_dict(step["raw_attrs_json"])
                 step_node, inserted = _insert_node(
                     conn,
@@ -607,18 +613,51 @@ def rebuild_graph(conn: sqlite3.Connection, *, reset: bool = True) -> dict[str, 
                     )
                     edges += int(inserted)
 
-                event = str(_attr(step_attrs, "gen_ai.client.hook.event", "ide.hook.event") or step["summary"] or "")
+                agent_event = hook_facts.agent_event_for_step(step["id"]) or {}
+                event = str(
+                    agent_event.get("event_name")
+                    or _attr(step_attrs, "gen_ai.client.hook.event", "ide.hook.event")
+                    or step["summary"]
+                    or ""
+                )
                 event_lc = event.lower()
-                subagent_type = str(_attr(step_attrs, "gen_ai.client.subagent_type", "ide.subagent_type", "subagent.type") or "")
+                subagent_type = str(
+                    agent_event.get("agent_type")
+                    or _attr(
+                        step_attrs,
+                        "gen_ai.client.subagent_type",
+                        "ide.subagent_type",
+                        "subagent.type",
+                    )
+                    or ""
+                )
                 is_subagent_event = subagent_type or "subagent" in event_lc
                 if is_subagent_event:
                     subagent_name = subagent_type or "unknown"
+                    agent_id = str(
+                        agent_event.get("agent_id")
+                        or _attr(step_attrs, "gen_ai.client.agent_id", "gen_ai.agent.id")
+                        or ""
+                    )
+                    parent_agent_id = str(
+                        agent_event.get("parent_agent_id")
+                        or _attr(step_attrs, "gen_ai.client.parent_agent_id")
+                        or ""
+                    )
                     subagent_node, inserted = _insert_node(
                         conn,
                         kind="Subagent",
                         label=subagent_name,
                         session_id=session["id"],
-                        attrs={"source": "lifecycle", "event": event},
+                        identity_key=(
+                            f"{session['id']}:{agent_id}" if agent_id else ""
+                        ),
+                        attrs={
+                            "source": "lifecycle",
+                            "event": event,
+                            "agent_id": agent_id,
+                            "parent_agent_id": parent_agent_id,
+                        },
                         timestamp=timestamp,
                     )
                     nodes += int(inserted)
@@ -628,12 +667,43 @@ def rebuild_graph(conn: sqlite3.Connection, *, reset: bool = True) -> dict[str, 
                         target_node_id=subagent_node,
                         kind="spawned_subagent" if "stop" not in event_lc else "stopped_subagent",
                         session_id=session["id"],
-                        attrs={"source": "step", "step_id": step["id"]},
+                        attrs={
+                            "source": "step",
+                            "step_id": step["id"],
+                            "agent_id": agent_id,
+                            "parent_agent_id": parent_agent_id,
+                        },
                         first_seen_at=step["started_at"],
                         last_seen_at=step["ended_at"],
                         timestamp=timestamp,
                     )
                     edges += int(inserted)
+                    if parent_agent_id and parent_agent_id in agent_types_by_id:
+                        parent_node, inserted = _insert_node(
+                            conn,
+                            kind="Subagent",
+                            label=agent_types_by_id[parent_agent_id],
+                            session_id=session["id"],
+                            identity_key=f"{session['id']}:{parent_agent_id}",
+                            attrs={
+                                "source": "lifecycle",
+                                "agent_id": parent_agent_id,
+                            },
+                            timestamp=timestamp,
+                        )
+                        nodes += int(inserted)
+                        _, inserted = _insert_edge(
+                            conn,
+                            source_node_id=parent_node,
+                            target_node_id=subagent_node,
+                            kind="delegated_to",
+                            session_id=session["id"],
+                            attrs={"source": "hook_fact", "step_id": step["id"]},
+                            first_seen_at=step["started_at"],
+                            last_seen_at=step["ended_at"],
+                            timestamp=timestamp,
+                        )
+                        edges += int(inserted)
 
                 for subagent_name in sorted(_extract_subagent_names_from_text(prompt_text)):
                     subagent_node, inserted = _insert_node(

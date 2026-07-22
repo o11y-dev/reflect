@@ -1143,14 +1143,14 @@ def _prepare_usage_db(
         ingest_otlp_traces_file,
     )
     from reflect.store.migrate import migrate
-    from reflect.store.normalize import normalize_pending_raw_events
+    from reflect.store.normalize import backfill_mcp_calls, normalize_pending_raw_events
     from reflect.store.rollups import rebuild_rollups, refresh_rollups
     from reflect.store.sqlite import connect_sqlite
     from reflect.store.workspaces import backfill_session_context
 
     conn = connect_sqlite(db_path)
     try:
-        migrate(conn)
+        applied = migrate(conn)
         if otlp_traces is not None and otlp_traces.exists():
             ingest_otlp_traces_file(conn, file_path=otlp_traces, skip_unchanged=True)
             otlp_logs = _infer_otlp_logs_file(otlp_traces)
@@ -1177,6 +1177,11 @@ def _prepare_usage_db(
                 if native_agent == "cursor" and not result.get("unchanged"):
                     cursor_native_files.append(session_file)
             normalize_pending_raw_events(conn, changed_session_ids=changed_session_ids)
+        backfill_mcp_calls(
+            conn,
+            session_ids=None if 14 in applied else changed_session_ids,
+            changed_session_ids=changed_session_ids,
+        )
         cursor_result = (
             apply_cursor_transcript_usage_estimates(conn, cursor_native_files)
             if cursor_native_files
@@ -1371,14 +1376,18 @@ def _render_improvement_detail(console: Console, observation) -> None:
     help="SQLite improvement ledger.",
 )
 def ask(question: str, as_json: bool, task_file: Path | None, context_path: Path | None, db_path: Path) -> None:
-    """Answer QUESTION from reviewed local workflows and linked evidence."""
+    """Answer QUESTION from reviewed workflows, linked evidence, and scoped memory."""
     _prepare_sql_report_db(
         db_path,
         otlp_traces=_default_otlp_traces(),
         include_native_sessions=True,
     )
-    conn, service = _open_improvement_service(db_path)
+    from reflect.context import ReflectContextService
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
     try:
+        service = ReflectContextService(conn)
         answer = service.ask(question, task_file=task_file, path=context_path)
     finally:
         conn.close()
@@ -1394,6 +1403,11 @@ def ask(question: str, as_json: bool, task_file: Path | None, context_path: Path
         click.echo("\nEvidence")
         for item in answer.evidence:
             click.echo(f"  {item.kind}:{item.id} — {item.summary}")
+    if answer.memories:
+        click.echo("\nMemory Context")
+        for item in answer.memories:
+            status = item.validation_status or item.provenance
+            click.echo(f"  {item.provider}:{item.id} [{status}] — {item.content}")
     if answer.constraints:
         click.echo("\nConstraints")
         for item in answer.constraints:
@@ -4107,7 +4121,7 @@ def _ingest_into_db(
 ) -> dict[str, int]:
     from reflect.store.ingest import ingest_local_spans_file, ingest_otlp_traces_file
     from reflect.store.migrate import migrate
-    from reflect.store.normalize import normalize_pending_raw_events
+    from reflect.store.normalize import backfill_mcp_calls, normalize_pending_raw_events
     from reflect.store.rollups import rebuild_rollups
     from reflect.store.sqlite import connect_sqlite
 
@@ -4116,12 +4130,17 @@ def _ingest_into_db(
 
     conn = connect_sqlite(db_path)
     try:
-        migrate(conn)
+        applied = migrate(conn)
         if otlp_traces is not None:
             result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
         else:
             result = ingest_local_spans_file(conn, file_path=spans_file)
-        normalize_pending_raw_events(conn)
+        changed_session_ids: set[str] = set()
+        normalize_pending_raw_events(conn, changed_session_ids=changed_session_ids)
+        backfill_mcp_calls(
+            conn,
+            session_ids=None if 14 in applied else changed_session_ids,
+        )
         _ensure_sql_costs(conn)
         rebuild_rollups(conn)
     finally:
@@ -4169,7 +4188,11 @@ def _prepare_sql_report_db(
         ingest_otlp_traces_file,
     )
     from reflect.store.migrate import migrate
-    from reflect.store.normalize import backfill_tool_call_hashes, normalize_pending_raw_events
+    from reflect.store.normalize import (
+        backfill_mcp_calls,
+        backfill_tool_call_hashes,
+        normalize_pending_raw_events,
+    )
     from reflect.store.rollups import rebuild_rollups, refresh_rollups
     from reflect.store.sqlite import connect_sqlite
     from reflect.store.workspaces import backfill_session_context
@@ -4252,6 +4275,11 @@ def _prepare_sql_report_db(
             else {"processed": 0, "failed": 0, "skipped": 0}
         )
         fingerprint_result = backfill_tool_call_hashes(conn)
+        mcp_backfill_result = backfill_mcp_calls(
+            conn,
+            session_ids=None if 14 in applied else changed_session_ids,
+            changed_session_ids=changed_session_ids,
+        )
         context_result = backfill_session_context(
             conn,
             timestamp=datetime.now(UTC).isoformat(),
@@ -4275,6 +4303,8 @@ def _prepare_sql_report_db(
         graph_count = int(conn.execute("SELECT COUNT(*) FROM graph_nodes").fetchone()[0])
         canonical_changed = bool(
             normalize_result["processed"]
+            or mcp_backfill_result["inserted"]
+            or mcp_backfill_result["updated_status"]
             or cursor_adapter_result["updated"]
             or context_result["sessions_updated"]
         )
@@ -4313,6 +4343,7 @@ def _prepare_sql_report_db(
         "ingest": ingest_result,
         "ingest_sources": ingest_sources,
         "normalize": normalize_result,
+        "mcp_calls": mcp_backfill_result,
         "tool_call_fingerprints": fingerprint_result,
         "session_context": context_result,
         "cursor_adapter": cursor_adapter_result,
@@ -4640,13 +4671,22 @@ def db_ingest_spans(db_path: Path, spans_file: Path) -> None:
 def db_normalize(db_path: Path, limit: int | None) -> None:
     """Normalize pending raw_events into canonical SQLite tables."""
     from reflect.store.migrate import migrate
-    from reflect.store.normalize import normalize_pending_raw_events
+    from reflect.store.normalize import backfill_mcp_calls, normalize_pending_raw_events
     from reflect.store.sqlite import connect_sqlite
 
     conn = connect_sqlite(db_path)
     try:
-        migrate(conn)
-        result = normalize_pending_raw_events(conn, limit=limit)
+        applied = migrate(conn)
+        changed_session_ids: set[str] = set()
+        result = normalize_pending_raw_events(
+            conn,
+            limit=limit,
+            changed_session_ids=changed_session_ids,
+        )
+        backfill_mcp_calls(
+            conn,
+            session_ids=None if 14 in applied else changed_session_ids,
+        )
     finally:
         conn.close()
     click.echo(

@@ -14,6 +14,7 @@ from reflect.memory.models import (
     MemorySearchResult,
     MemoryValidationResult,
 )
+from reflect.memory.omega_provider import OmegaMemoryProvider
 from reflect.memory.sqlite_provider import LocalSQLiteMemoryProvider
 
 
@@ -329,6 +330,7 @@ class MemoryProviderRegistry:
                 os.environ.get("MEMORYPALACE_URL", ""),
                 os.environ.get("MEMORYPALACE_API_KEY", ""),
             ),
+            "omega": OmegaMemoryProvider(),
             "mem0": StubMemoryProvider("mem0", "Mem0 adapter is discovery/health-only in this release"),
             "graphiti": StubMemoryProvider("graphiti", "Graphiti adapter is discovery/health-only in this release"),
             "tencentdb_agent_memory": StubMemoryProvider(

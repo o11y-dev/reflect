@@ -7,7 +7,7 @@ import re
 import sqlite3
 from collections import Counter, defaultdict
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,7 @@ WORKSPACE_ATTRIBUTE_KEYS = (
     "gen_ai.client.cwd",
     "gen_ai.client.workspace_path",
     "gen_ai.client.workspace",
+    "gen_ai.client.repository_root",
     "workspace_path",
     "workspace",
     "cwd",
@@ -33,6 +34,7 @@ _SOURCE_SCORES = {
     "gen_ai.client.workspace_path": 300,
     "workspace_path": 280,
     "gen_ai.client.workspace": 240,
+    "gen_ai.client.repository_root": 350,
     "workspace": 220,
 }
 _AGENT_STATE_DIRS = {
@@ -89,6 +91,10 @@ class WorkspaceIdentity:
     source_key: str
     confidence: float
     repo_root: str = ""
+    repo_owner: str = ""
+    repo_name: str = ""
+    branch: str = ""
+    remote_hash: str = ""
 
     @property
     def workspace_id(self) -> str:
@@ -106,8 +112,24 @@ class WorkspaceResolver:
         self._repo_cache: dict[str, str] = {}
 
     def resolve(self, attrs: dict[str, Any]) -> WorkspaceIdentity | None:
-        return self.resolve_candidates(
+        identity = self.resolve_candidates(
             (key, attrs.get(key)) for key in WORKSPACE_ATTRIBUTE_KEYS if attrs.get(key)
+        )
+        return self.enrich(identity, attrs)
+
+    @staticmethod
+    def enrich(
+        identity: WorkspaceIdentity | None,
+        attrs: dict[str, Any],
+    ) -> WorkspaceIdentity | None:
+        if identity is None:
+            return None
+        return replace(
+            identity,
+            repo_owner=str(attrs.get("vcs.repository.owner") or ""),
+            repo_name=str(attrs.get("vcs.repository.name") or ""),
+            branch=str(attrs.get("vcs.ref.head.name") or ""),
+            remote_hash=str(attrs.get("gen_ai.client.repository.remote.sha256") or ""),
         )
 
     def resolve_candidates(
@@ -125,6 +147,8 @@ class WorkspaceResolver:
         resolved: list[tuple[int, str, str, int, str]] = []
         for path, source_counts in counts.items():
             repo_root = self._discover_repo_root(path)
+            if "gen_ai.client.repository_root" in source_counts:
+                repo_root = path
             if (_is_agent_state_path(path) or _is_generic_workspace_root(path)) and not repo_root:
                 continue
             source_key, occurrences = max(
@@ -232,20 +256,31 @@ class WorkspaceStore:
         self.conn.execute(
             """
             INSERT INTO repos(
-              id, provider, name, full_name, path_hash, raw_json, created_at, updated_at
-            ) VALUES (?, 'local', ?, ?, ?, ?, ?, ?)
+              id, provider, owner, name, full_name, branch, path_hash,
+              raw_json, created_at, updated_at
+            ) VALUES (?, 'local', NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
-              name = excluded.name,
+              owner = COALESCE(excluded.owner, repos.owner),
+              name = COALESCE(NULLIF(excluded.name, ''), repos.name),
+              branch = COALESCE(excluded.branch, repos.branch),
               path_hash = excluded.path_hash,
               raw_json = excluded.raw_json,
               updated_at = excluded.updated_at
             """,
             (
                 repo_id,
-                Path(identity.repo_root).name or identity.repo_root,
+                identity.repo_owner,
+                identity.repo_name or Path(identity.repo_root).name or identity.repo_root,
                 identity.repo_root,
+                identity.branch,
                 _path_hash(identity.repo_root),
-                json.dumps({"root_path": identity.repo_root}, sort_keys=True),
+                json.dumps(
+                    {
+                        "root_path": identity.repo_root,
+                        "remote_sha256": identity.remote_hash,
+                    },
+                    sort_keys=True,
+                ),
                 timestamp,
                 timestamp,
             ),
@@ -330,6 +365,7 @@ def backfill_session_context(
         session_id = str(session[0])
         candidates: list[tuple[str, object]] = []
         parent_candidates: list[dict[str, Any]] = []
+        repository_attrs: dict[str, Any] = {}
         for step in conn.execute(
             "SELECT raw_attrs_json FROM steps WHERE session_id = ? ORDER BY seq",
             (session_id,),
@@ -345,8 +381,17 @@ def backfill_session_context(
                     candidates.append((key, attrs[key]))
             if any(attrs.get(key) for key in PARENT_SESSION_ATTRIBUTE_KEYS):
                 parent_candidates.append(attrs)
+            for key in (
+                "vcs.repository.owner",
+                "vcs.repository.name",
+                "vcs.ref.head.name",
+                "gen_ai.client.repository.remote.sha256",
+            ):
+                if attrs.get(key) and not repository_attrs.get(key):
+                    repository_attrs[key] = attrs[key]
 
         identity = resolver.resolve_candidates(candidates)
+        identity = resolver.enrich(identity, repository_attrs)
         workspace_id = str(session[2] or "")
         repo_id = str(session[3] or "")
         if identity is not None:
