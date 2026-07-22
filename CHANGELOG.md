@@ -1,5 +1,111 @@
 # Changelog
 
+## 0.8.8 (unreleased)
+
+### Added
+
+- Added instant multi-word free-text search to the Skills registry across names, descriptions, lifecycle, provenance, source agents, availability, and installation targets, with URL-persisted filtering and visible result counts.
+- Added first-class ingestion for `opentelemetry-hooks` fact contract v1, including privacy-safe conversation facts, stable hook event identity, provider/schema provenance, native trace links, and subagent parent relationships.
+- Added queryable `conversation_facts` and `agent_events` ledgers plus session telemetry contract summaries and agent-ID-aware delegation graph edges.
+- Replaced the private `reflect-mcp` JSON-lines dispatcher with a standards-compliant FastMCP stdio server exposing read-only context, improvement, provenance, and exact-usage tools; `reflect ask` now uses the same context service and returns scoped memory with explicit provenance.
+- Added an optional OMEGA Memory provider using OMEGA's public local `SQLiteStore` API for health, semantic search, mirrored writes, inspection, deletion, and validation, with explicit generic-session routing and local SQLite fallback.
+- Added exact current-session, selected-session, and uncapped global usage reporting through `reflect usage`, with token, cost, model, tool, MCP, subagent, duration, and failure breakdowns plus a globally distributed `$reflect-usage` helper skill.
+- Added Click-native Bash, Zsh, and Fish autocomplete across the full command tree, including idempotent installation and privacy-safe local ID suggestions for observations, workflows, loops, sessions, skills, and memories.
+- Added an adapter-neutral conversation reader with readable and full-activity modes, in-session search and result navigation, synchronized timeline jumps, failure navigation, turn labels, and prompt/response copy actions.
+- Added a typed native-session conversation adapter registry for Claude, Codex, Copilot, Cursor, and Gemini, including common CLI-name aliases and a narrow extension contract for additional agent formats.
+- Added an accessible bidirectional session conversation playhead with draggable event snapping, keyboard navigation, compact event context, focused conversation highlighting, and timeline updates while manually scrolling the thread.
+- Added object-oriented Session Rules with typed definitions, normalized telemetry and summary contexts, a validated registry, a shared scorer, and a documented extension path for per-session quality dimensions.
+- Added a public object-oriented `BaseImprovementRule`, typed observation builder, validated `RuleRegistry`, and documented custom-rule extension path.
+- Added typed, rule-owned `WorkflowDefinition` proposals so custom and built-in rules explicitly opt into workflow creation while observation-only rules remain supported.
+- Added the SQLite-backed Improvement Ledger with versioned rules, durable observations, redacted evidence links, session outcomes, workflow candidates and versions, interventions, measurements, feedback, bounded nudges, and signed team-bundle imports.
+- Added all ten deterministic P0 detector families, including explicit correction and correct-no-change outcomes, enforced-boundary violations, successful recovery sequences, and repeated high-performing routines.
+- Added the simplified `reflect improve`, `reflect ask`, `reflect loops`, `reflect skills`, first-class `reflect workflows`, and `reflect feedback` command contracts.
+- Added Recovery, Verification, Exploration, and Proven Pattern workflow behavior types with CLI and browser filtering, while retaining Loop as compatibility metadata for imported historical candidates.
+- Added exact workflow diff previews, audited candidate editing and rejection, idempotent hash-guarded application, safe rollback under `.agents/skills/`, automatic conservative before/after measurements, and aggregate-only signed team bundles.
+- Added deterministic task archetypes, task-scoped measurement cohorts, workflow exposure/adherence states, and rendered-artifact integrity evaluations.
+- Added browser APIs and controls for evidence drill-down, workflow review/edit/apply/reject/rollback, session outcome feedback, and regression review.
+- Added a browser-visible detector registry plus source-session and post-activation workflow session ledgers.
+- Added a disabled, metadata-only nudge filesystem contract with private permissions, hashed session routing, and atomic JSON writes for a future `opentelemetry-hooks` reader; current setup does not configure or poll it.
+- Added canonical workspace identity, optional local Git repository resolution, historical session-context backfill, and parent/child session lineage for the Behavioral Memory Graph.
+- Added a first-class `reflect loops [show|build]` behavior ledger for stalled retries and productive repeated routines, with bounded source-session evidence and deliberate promotion into one pending workflow packaged as a skill.
+- Added the Skills v2 SQLite registry with stable skill identities, immutable content versions, evidence provenance, installation reconciliation, telemetry-observed usage, measurement storage, and `reflect skills [discover|show|apply|rollback]` commands.
+- Added browser APIs and dedicated product surfaces for observed loops, reusable workflows, and the durable skill registry.
+- Added typed workflow source and suggested-artifact contracts so deterministic rule blueprints, coding-agent drafts, and imported skills retain distinct provenance.
+
+### Changed
+
+- Added a responsive, task-oriented landing-page scenario grid for usage and cost, session diagnosis, recurring friction, loop-to-skill authoring, repository guidance, memory recall, and instrumentation health.
+- Updated the public landing page and README to explain agent-neutral hook/native correlation, the searchable Skills registry, Reflect's read-only MCP, and every supported memory provider with accurate connected-versus-discovery-only capability labels.
+- Promoted explicit hook workspace, repository owner/name, branch, and credential-free remote hashes into canonical workspace and repository identity, including upgrades of existing stored steps.
+- Rebuilt the README around the "Evidence, Not Vibes." product promise, a short verified setup-to-dashboard quick start, the current evidence-to-improvement product model, local privacy defaults, and accurate cross-agent skill distribution guidance.
+- Redesigned the public landing page around a clear capture, understand, and improve journey with current showcase evidence and priced-cost coverage, a branded agent rail, a progressively enhanced GitHub release/star/fork proof strip, a product capability grid, local-first trust details, a focused install path, stronger responsive behavior, and accessible navigation and motion states.
+- Redesigned Workflows and Skills as responsive tile grids with clearer status, provenance, evidence, usage, installation, and impact hierarchy; workflow steps now render as numbered readable tiles in both cards and review dialogs.
+- Distinguished Codex-visible, workspace-scoped, other-agent, pending, telemetry-only, archived, and uninstalled skill records in the Skills registry and review dialog.
+- Marked imported skill identities stale when their final active filesystem installation disappears, while preserving their version and installation history and reactivating them if the package returns.
+- Removed the replaced conversation-card renderer, telemetry beat rail, stale chart helper, and their unused styles and event handlers from the browser asset.
+- Aligned browser navigation, URL state, DOM identifiers, and frontend requests around the product-language Inbox, Impact, and Explore contracts; Explore now uses explicit Usage, Tools, Graph, and Context views, with legacy URLs and API routes retained only as compatibility aliases.
+- Moved direct session comparison into Sessions and generic cohort analysis into Explore → Usage so Impact is reserved for measured post-application outcomes.
+- Reframed the Impact view to group measurement snapshots by applied workflow, show evidence-collection progress before making claims, hide premature deltas and confidence, retain history under disclosure, and link each result to stored or explicitly reconstructed comparison-session cohorts.
+- Redesigned observation-evidence and workflow-review dialogs around compact decision briefs, professional section hierarchy, human-readable session rows, bounded evidence disclosure, and anchored review actions.
+- Restructured the browser report around Inbox, Sessions, Workflows, Skills, Impact, and Explore while preserving the existing usage, cost, comparison, tools, graph, context, memory, privacy, export, and achievement widgets.
+- Moved observed loops into the evidence-first Inbox, gave Workflows an independent review and delivery surface, and limited Skills to durable package versions, installations, usage, provenance, and measurements.
+- Removed legacy telemetry summaries, prompt examples, and rule administration from Inbox; Improvement Rules now live under Explore → Context & system.
+- Restructured session detail into Summary, Conversation, Execution, Changes, and Evidence views.
+- Changed `reflect skills` to reconcile and list the durable registry by default; agent-assisted extraction is explicit under `reflect skills discover`, and generated skills remain pending until operator approval.
+- Made deterministic, versioned SQLite rules the durable observation source while retaining the existing telemetry insight analysis as supporting context.
+- Changed the packaged Reflect skill to query approved `reflect ask` guidance before recurring work and to keep setup/configuration mutation explicitly operator-authorized.
+- Changed workflow review to lead with a readable change summary, repository target, proposed steps, abstention criteria, verification, and session provenance while keeping raw file diff and JSON editing under advanced disclosure.
+- Clarified workflow repository selection as the repo-local skill application destination and replaced ambiguous lock language with explicit active-target ownership and rollback semantics.
+- Tightened deterministic workflow discovery by requiring repeated failures across multiple sessions, using non-saturating failure impact scoring, and rejecting repeated single-tool sequences as reusable workflows.
+- Changed graph Folder and Path identity to workspace-relative shared nodes, kept activity on session-scoped weighted edges, and added Same workspace versus Selected session browser views with on-demand complete workspace expansion and cross-agent session labels.
+- Grouped evidence-specific workflow rows into one versioned reusable skill per slug, with unique supporting sessions, evidence-pattern counts, and scopes retained behind the skill.
+- Separated loops, workflows, and skills: loops represent observed repeated behavior, workflows represent reusable reviewable procedures, and skills represent durable installable packages produced by the current workflow renderer.
+- Removed the bundled `reflect-loops` helper skill because the real `reflect loops` command now owns detection, evidence review, and selected-loop skill generation.
+- Labeled workflow suggestions as Rule blueprint, Agent-authored draft, or Imported skill in the CLI and browser, and recorded the selected extraction agent on new agent-authored drafts.
+- Extended `reflect workflows add` with optional source-agent and source-workflow provenance so agent-authored loop skills retain their author and bounded source sessions without adding another top-level command.
+
+### Dependencies
+
+- Added the stable official MCP Python SDK (`mcp>=1.28,<2`) for protocol lifecycle, schemas, stdio transport, and MCP client compatibility while avoiding the v2 prerelease line.
+
+### Fixed
+
+- Marked Windsurf hook telemetry as implemented in setup and doctor, wired `reflect setup --agent windsurf` through `otel-hook setup --global --agent windsurf`, and aligned the support matrix documentation.
+
+- Added an agent-neutral, strategy-based MCP classifier that normalizes standard attributes, encoded tool names, and payload-based calls from all supported agents into the canonical MCP ledger; refresh now repairs existing sessions while preferring native spans over duplicate hook or transcript evidence.
+- Declared the `src/reflect` package explicitly for Poetry so the documented source-development install completes instead of stopping after dependency installation.
+- Updated Codex skill distribution to use the current user-wide and project-local `.agents/skills/` discovery roots, so the packaged `reflect-skills` helper appears in Codex's skill and slash-command lists after setup.
+- Kept workflow candidates addressable and grouped across paginated ledgers larger than 500 records instead of silently hiding later candidates and variants.
+- Refreshed impact snapshots when sessions or metric values change inside a full 50-session cohort, even when the before/after counts remain constant.
+- Merged native prompt and response content into telemetry-backed conversations without dropping MCP calls, tool status, duration, or other execution evidence.
+- Made optional shell-autocomplete installation during setup best-effort so shell configuration permission errors do not invalidate completed telemetry setup.
+- Restored every Explore → Usage widget under agent, model, status, range, search, and session filters: bounded usage-specific aggregates now keep tool metrics, failure rates, source provenance, weekly activity, scoped cost trends, subagent completion, and explicit zero-data chart states on the same filtered session cohort; command summaries also redact credential-like values.
+- Preserved assistant response text from native Claude, Codex, Copilot, Cursor, and Gemini sessions, preferred those high-fidelity transcripts in SQL-backed session detail, and retained native source provenance when telemetry and local-session records merge.
+- Fixed Conversation preview expansion so it reveals the stored response or prompt body, persists across detail rerenders, and is not overridden after full session detail loads.
+- Migrated Codex native telemetry setup to the current `exporter` and `trace_exporter` schema while preserving user-owned OTel settings, and made doctor report prompt-content capture truthfully.
+- Prevented setup tests and stale daemons from sharing the local OTLP ports, added gateway ownership metadata, startup readiness checks, and sandbox-safe PID probing, and surfaced unmanaged listeners with their actual trace destination.
+- Kept lazy Graph loading responsive on large stores by deriving its tool and MCP summaries from bounded aggregate queries instead of rescanning skill, command, duration, and file telemetry that the graph does not render.
+- Reduced filtered Explore → Usage cohort analysis to the bounded tool, shell, MCP, subagent, and agent aggregates it renders instead of rebuilding every dashboard tab for both cohorts.
+- Populated prompt summaries for every session-sidebar navigation card and stopped token-bearing LLM generations from appearing as synthetic metadata-only user prompts in Conversation.
+- Prevented session-filtered dashboards from remaining on the loading screen by keeping improvement GET endpoints read-only and bounding non-critical improvement-data startup requests.
+- Displayed telemetry-observed skill-use sessions in Skills review, separately from the source sessions that produced generated skills.
+- Grouped scope- and tool-specific observation rows into durable Inbox findings, excluded archived telemetry-only skill identities from the default Skills surface, and replaced page-length badge counts with explicit API totals.
+- Reduced loop false positives by requiring consecutive same-input runs, excluding approval and wait/poll transport events, requiring cross-session recurrence for failure-free patterns, hiding resolved loops by default, and replacing expensive windowed detection with a bounded streaming pass.
+- Prevented evidence-specific workflow rows, tool-specific trigger descriptions, and volatile observation IDs from appearing as duplicate skill versions; Skills v2 now reports semantic workflow versions with distinct evidence while retaining the full provenance ledger.
+- Kept intrinsic-width dashboard tables and heatmaps inside the report content grid so Subagent Effectiveness no longer overflows beneath the session filter rail.
+- Removed the duplicate SQLite dashboard quality rubric and scoring formulas so telemetry and summary-backed session detail use the same registered Session Rules implementation.
+- Marked pending workflow candidates stale when their source observation resolves, and reopened them if the same evidence-backed finding returns.
+- Preserved observation identity and review state across refreshes, resolved vanished findings instead of deleting them, and kept generated evidence redacted and traceable to canonical entities.
+- Prevented workflow rollback from overwriting operator edits made after Reflect applied a generated skill.
+- Prevented repeated workflow application from creating duplicate active interventions, detected missing or modified applied artifacts as stale, and avoided duplicate measurements when cohort sizes have not changed.
+- Prevented browser workflow application outside a selected Git repository and blocked different active candidates from writing the same workflow target.
+- Populated privacy-safe tool input/output hashes during normalization and backfilled hashes from existing redacted previews so identical-input retry loops produce observations and workflow candidates.
+- Bounded retry-loop detection to one grouped canonical query and added a partial tool-input fingerprint index so large local stores refresh without one full scan per detected tool.
+- Fixed disconnected same-folder sessions, discarded repeated-edge strength, stale derived graph state, missing Cursor child-session links, and preview parsing that produced folder noise such as glob or prose fragments.
+- Serialized first-time SQLite WAL initialization and pending migrations across concurrent dashboard requests so background preparation and session-detail reads cannot race on database setup, while fully migrated requests use a read-only fast path that does not contend with graph rebuilds.
+- Made workflow source-session navigation use direct session links that clear conflicting workflow and filter state while preserving the focused evidence ID.
+- Kept grouped workflow evidence-pattern counts aligned with the same current, non-rejected evidence set used by the source-session ledger.
+
 ## 0.8.7 (2026-07-13)
 
 ### Added

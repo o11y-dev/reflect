@@ -1,9 +1,12 @@
+import hashlib
 import json
 
 from reflect.store import normalize as normalize_mod
 from reflect.store.ingest import ingest_local_spans_file
 from reflect.store.migrate import migrate
 from reflect.store.normalize import (
+    backfill_mcp_calls,
+    backfill_tool_call_hashes,
     normalize_pending_raw_events,
     refresh_all_session_statuses,
     repair_telemetry_provenance,
@@ -27,7 +30,7 @@ def _write_spans(path):
                 "gen_ai.usage.input_tokens": 100,
                 "gen_ai.usage.output_tokens": 50,
                 "gen_ai.client.prompt.text": "Review the graph normalization",
-                "gen_ai.response.text": "I will inspect the graph normalizer.",
+                "gen_ai.client.output": "I will inspect the graph normalizer.",
             },
         },
         {
@@ -41,6 +44,8 @@ def _write_spans(path):
                 "gen_ai.client.name": "claude",
                 "gen_ai.client.session_id": "sess-1",
                 "gen_ai.client.tool_name": "Read",
+                "gen_ai.client.tool.input": '{"path":"src/reflect/core.py"}',
+                "gen_ai.client.tool.output": "[redacted file preview]",
             },
         },
         {
@@ -110,8 +115,56 @@ def test_normalize_pending_raw_events_populates_canonical_tables(tmp_path):
         assert llm_call[1]
         assert llm_call[2] == "Review the graph normalization"
         assert llm_call[3] == "I will inspect the graph normalizer."
-        assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 1
+        tool_call = conn.execute(
+            "SELECT input_hash, output_hash, input_preview_redacted, output_preview_redacted FROM tool_calls"
+        ).fetchone()
+        assert tuple(tool_call) == (
+            hashlib.sha256(b'{"path":"src/reflect/core.py"}').hexdigest(),
+            hashlib.sha256(b"[redacted file preview]").hexdigest(),
+            '{"path":"src/reflect/core.py"}',
+            "[redacted file preview]",
+        )
         assert conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_backfill_tool_call_hashes_repairs_existing_rows_idempotently(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        conn.execute(
+            """
+            INSERT INTO agents(id, name, created_at, updated_at)
+            VALUES ('agent-1', 'codex', '2026-07-01', '2026-07-01')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO sessions(id, agent_id, started_at, status, created_at, updated_at)
+            VALUES ('session-1', 'agent-1', '2026-07-01', 'completed', '2026-07-01', '2026-07-01')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO steps(id, session_id, seq, type, started_at, status, raw_attrs_json, created_at, updated_at)
+            VALUES ('step-1', 'session-1', 1, 'tool_call', '2026-07-01', 'ok', '{}', '2026-07-01', '2026-07-01')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO tool_calls(
+              id, step_id, session_id, tool_name, status,
+              input_preview_redacted, output_preview_redacted, raw_attrs_json, created_at, updated_at
+            ) VALUES ('tool-1', 'step-1', 'session-1', 'Read', 'ok', 'same input', 'safe output', '{}', '2026-07-01', '2026-07-01')
+            """
+        )
+
+        assert backfill_tool_call_hashes(conn) == {"updated": 1}
+        assert backfill_tool_call_hashes(conn) == {"updated": 0}
+        assert conn.execute("SELECT input_hash FROM tool_calls").fetchone()[0] == hashlib.sha256(
+            b"same input"
+        ).hexdigest()
     finally:
         conn.close()
 
@@ -211,6 +264,148 @@ def test_normalize_mcp_call_falls_back_to_tool_input_payload(tmp_path):
             "SELECT server_name, tool_name FROM mcp_calls WHERE session_id = 'sess-mcp-fallback'"
         ).fetchone()
         assert tuple(mcp_row) == ("mcp-github", "search_code")
+    finally:
+        conn.close()
+
+
+def test_normalize_native_codex_mcp_span_attributes(tmp_path):
+    db = tmp_path / "reflect.db"
+    spans = tmp_path / "spans.jsonl"
+    spans.write_text(
+        json.dumps(
+            {
+                "name": "mcp.tools.call",
+                "traceId": "trace-native-mcp",
+                "spanId": "span-native-mcp",
+                "start_time_ns": 100,
+                "end_time_ns": 200,
+                "attributes": {
+                    "gen_ai.client.name": "codex",
+                    "gen_ai.client.session_id": "sess-native-mcp",
+                    "mcp.server.name": "reflect",
+                    "mcp.transport": "stdio",
+                    "tool.name": "reflect_context",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        ingest_local_spans_file(conn, file_path=spans)
+        normalize_pending_raw_events(conn)
+        row = conn.execute(
+            "SELECT server_name, tool_name, transport FROM mcp_calls"
+        ).fetchone()
+        assert tuple(row) == ("reflect", "reflect_context", "stdio")
+    finally:
+        conn.close()
+
+
+def test_backfill_mcp_calls_prefers_hook_over_native_transcript(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        conn.execute(
+            """
+            INSERT INTO agents(id, name, created_at, updated_at)
+            VALUES ('agent-claude', 'claude', '2026-07-19', '2026-07-19')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO sessions(id, agent_id, started_at, status, created_at, updated_at)
+            VALUES ('sess-encoded-mcp', 'agent-claude', '2026-07-19T15:01:41+00:00',
+                    'ok', '2026-07-19', '2026-07-19')
+            """
+        )
+        fixtures = [
+            (
+                "step-native",
+                0,
+                "2026-07-19T15:01:41.917000+00:00",
+                "native_session",
+                {"gen_ai.client.hook.event": "PreToolUse"},
+            ),
+            (
+                "step-hook-pre",
+                1,
+                "2026-07-19T15:01:42.051817+00:00",
+                "hook_otlp_trace",
+                {
+                    "gen_ai.client.hook.event": "PreToolUse",
+                    "gen_ai.client.tool_use_id": "tool-call-1",
+                },
+            ),
+            (
+                "step-hook-post",
+                2,
+                "2026-07-19T15:01:42.211941+00:00",
+                "hook_otlp_trace",
+                {
+                    "gen_ai.client.hook.event": "PostToolUse",
+                    "gen_ai.client.tool_use_id": "tool-call-1",
+                },
+            ),
+        ]
+        for step_id, seq, started_at, origin_kind, attrs in fixtures:
+            attrs["gen_ai.client.tool_name"] = "mcp__reflect__reflect_context"
+            attrs_json = json.dumps(attrs, sort_keys=True)
+            status = "ok" if attrs["gen_ai.client.hook.event"] == "PostToolUse" else "unknown"
+            conn.execute(
+                """
+                INSERT INTO steps(
+                  id, session_id, seq, type, started_at, status, summary,
+                  origin_kind, raw_attrs_json, created_at, updated_at
+                ) VALUES (?, 'sess-encoded-mcp', ?, 'tool_call', ?, ?,
+                          ?, ?, ?, '2026-07-19', '2026-07-19')
+                """,
+                (
+                    step_id,
+                    seq,
+                    started_at,
+                    status,
+                    attrs["gen_ai.client.hook.event"],
+                    origin_kind,
+                    attrs_json,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO tool_calls(
+                  id, step_id, session_id, tool_name, status, raw_attrs_json,
+                  created_at, updated_at
+                ) VALUES (?, ?, 'sess-encoded-mcp', 'mcp__reflect__reflect_context',
+                          ?, ?, '2026-07-19', '2026-07-19')
+                """,
+                (f"tool-{step_id}", step_id, status, attrs_json),
+            )
+
+        changed: set[str] = set()
+        assert backfill_mcp_calls(conn, session_ids=set()) == {
+            "inserted": 0,
+            "skipped_duplicates": 0,
+            "updated_status": 0,
+        }
+        assert conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0] == 0
+        assert backfill_mcp_calls(conn, changed_session_ids=changed) == {
+            "inserted": 1,
+            "skipped_duplicates": 1,
+            "updated_status": 1,
+        }
+        row = conn.execute(
+            "SELECT step_id, server_name, tool_name, status FROM mcp_calls"
+        ).fetchone()
+        assert tuple(row) == ("step-hook-pre", "reflect", "reflect_context", "ok")
+        assert changed == {"sess-encoded-mcp"}
+        assert backfill_mcp_calls(conn) == {
+            "inserted": 0,
+            "skipped_duplicates": 1,
+            "updated_status": 0,
+        }
     finally:
         conn.close()
 

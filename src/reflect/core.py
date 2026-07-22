@@ -161,6 +161,21 @@ from reflect.parsing import (  # noqa: F401
 )
 from reflect.processing import _process_span, analyze_telemetry  # noqa: F401
 from reflect.report import render_report  # noqa: F401
+from reflect.shell_completion import (
+    SUPPORTED_SHELLS,
+    ShellCompletionManager,
+    complete_loop_id,
+    complete_memory_candidate_id,
+    complete_memory_id,
+    complete_memory_provider,
+    complete_memory_scope,
+    complete_memory_source,
+    complete_memory_type,
+    complete_observation_id,
+    complete_session_id,
+    complete_skill_id,
+    complete_workflow_id,
+)
 from reflect.skill_extraction import (  # noqa: F401
     _build_graph_evidence,
     _build_skill_evidence_bundle,
@@ -277,19 +292,21 @@ _AGENT_SPECS = [
         "env": "CODEX_HOME",
         "default": lambda: Path.home() / ".codex",
         "path_kind": "home",
-        "local_skill_path": ".codex/skills/",
+        "local_skill_path": ".agents/skills/",
         "hook_agent": "codex",
-        "global_path": "~/.codex/skills/",
+        "global_path": "~/.agents/skills/",
         "recommendation": "Use native Codex OTel for interactive runs; reflect does not yet ship a native session adapter for Codex logs.",
     },
     {
         "name": "Windsurf",
+        "setup_aliases": ["windsurf"],
         "env": "WINDSURF_HOME",
         "default": lambda: Path.home() / ".codeium" / "windsurf",
         "path_kind": "home",
         "local_skill_path": ".windsurf/skills/",
+        "hook_agent": "windsurf",
         "global_path": "~/.codeium/windsurf/skills/",
-        "recommendation": "Native OTel and hooks still need verification for Windsurf.",
+        "recommendation": "Use opentelemetry-hooks for Windsurf telemetry; native OTel is not available.",
     },
     {
         "name": "Trae",
@@ -402,12 +419,40 @@ _AGENT_SPECS = [
     },
 ]
 
+_SKILL_AGENT_CLI_NAMES = ("claude", "codex", "copilot", "cursor-agent", "gemini", "opencode")
+
+
+def _complete_setup_agent(
+    _ctx: click.Context,
+    _param: click.Parameter,
+    incomplete: str,
+) -> list[str]:
+    """Complete supported setup display names and stable aliases."""
+    candidates = {
+        value
+        for spec in _AGENT_SPECS
+        for value in (str(spec["name"]), *map(str, spec.get("setup_aliases", [])))
+    }
+    lowered = incomplete.lower()
+    return sorted(value for value in candidates if value.lower().startswith(lowered))
+
+
+def _complete_skill_agent_cli(
+    _ctx: click.Context,
+    _param: click.Parameter,
+    incomplete: str,
+) -> list[str]:
+    """Complete supported coding-agent executables used for skill authoring."""
+    lowered = incomplete.lower()
+    return [name for name in _SKILL_AGENT_CLI_NAMES if name.startswith(lowered)]
+
 _IMPLEMENTED_AGENT_SUPPORT: dict[str, tuple[str, str]] = {
     "Claude Code": ("Native OTel + hooks", "High"),
     "Cursor": ("Session/log adapters", "Medium"),
     "Gemini CLI": ("Native OTel + session adapters", "High"),
     "GitHub Copilot": ("Native OTel + VS Code env", "High"),
     "OpenAI Codex CLI": ("Native OTel config", "Medium"),
+    "Windsurf": ("Hook telemetry + config snapshots", "Medium"),
     "OpenCode": ("opencode run + export", "Medium"),
 }
 _DOCTOR_MATRIX_PLANNED = {"Antigravity", "OpenClaw"}
@@ -652,12 +697,25 @@ def _bundled_reflect_skill_dir() -> Path | None:
 
 
 def _detect_skill_drift(agents: list[dict]) -> dict | None:
-    source_dir = _bundled_reflect_skill_dir()
-    if source_dir is None:
+    reflect_source = _bundled_reflect_skill_dir()
+    if reflect_source is None:
         return None
 
-    source_signature = _directory_signature(source_dir)
-    if not source_signature:
+    bundled_root = Path(__file__).parent / "data" / "skills"
+    source_dirs = {
+        "reflect": reflect_source,
+        **{
+            name: bundled_root / name
+            for name in ("reflect-skills", "reflect-usage")
+            if (bundled_root / name / "SKILL.md").exists()
+        },
+    }
+    source_signatures = {
+        name: signature
+        for name, source_dir in source_dirs.items()
+        if (signature := _directory_signature(source_dir))
+    }
+    if not source_signatures:
         return None
 
     drifted_targets: list[str] = []
@@ -665,12 +723,14 @@ def _detect_skill_drift(agents: list[dict]) -> dict | None:
     for agent in agents:
         if not agent.get("detected"):
             continue
-        global_skill = Path(agent["global_path"]).expanduser() / "reflect"
-        if not global_skill.exists():
-            missing_targets.append(agent["name"])
-            continue
-        if _directory_signature(global_skill) != source_signature:
-            drifted_targets.append(agent["name"])
+        global_root = Path(agent["global_path"]).expanduser()
+        for skill_name, source_signature in source_signatures.items():
+            global_skill = global_root / skill_name
+            target = f"{agent['name']}/{skill_name}"
+            if not global_skill.exists():
+                missing_targets.append(target)
+            elif _directory_signature(global_skill) != source_signature:
+                drifted_targets.append(target)
 
     if not drifted_targets and not missing_targets:
         return None
@@ -949,6 +1009,905 @@ def main(
         output=output,
         db_path=db_path,
     )
+
+
+@main.command("completion")
+@click.option(
+    "--shell",
+    type=click.Choice(SUPPORTED_SHELLS, case_sensitive=False),
+    default=None,
+    help="Shell to target. Defaults to the current $SHELL.",
+)
+@click.option(
+    "--install",
+    is_flag=True,
+    help="Install and activate completion for the selected shell.",
+)
+def completion(shell: str | None, install: bool) -> None:
+    """Generate or install autocomplete for every Reflect command."""
+    manager = ShellCompletionManager(main)
+    selected_shell = shell.lower() if shell else manager.detect_shell()
+    if selected_shell is None:
+        supported = ", ".join(SUPPORTED_SHELLS)
+        raise click.ClickException(
+            f"Could not detect a supported shell from $SHELL; pass --shell ({supported})."
+        )
+    if not install:
+        click.echo(manager.source(selected_shell), nl=False)
+        return
+    result = manager.install(selected_shell)
+    state = "Installed" if result.changed else "Already current"
+    click.echo(f"{state}: {result.script_path}")
+    if result.config_path is not None:
+        click.echo(f"Activated from: {result.config_path}")
+    click.echo("Restart the shell or source its configuration to enable autocomplete.")
+
+
+def _demo_otlp_traces() -> Path:
+    bundled = Path(__file__).parent / "data" / "demo-traces.json"
+    if not bundled.exists():
+        bundled = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
+    if not bundled.exists():
+        raise click.ClickException("Demo data was not found; reinstall Reflect or run from the repository root")
+    return bundled
+
+
+def _open_improvement_service(db_path: Path):
+    from reflect.improvements.service import ImprovementService
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    return conn, ImprovementService(conn)
+
+
+def _format_usage_duration(duration_ms: int) -> str:
+    total_seconds = max(duration_ms, 0) // 1000
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
+def _render_usage_report(console: Console, report) -> None:
+    totals = report.totals
+    if report.session is not None:
+        title = f"Usage · {report.session.agent} · {report.session.id}"
+        context = report.session.workspace or report.session.repository or report.session.title or "Local session"
+    else:
+        title = f"Global usage · {report.period}"
+        context = "All matching local sessions"
+
+    summary = Table.grid(expand=True, padding=(0, 2))
+    summary.add_column(style="bold")
+    summary.add_column(justify="right", style="orange3")
+    summary.add_column(style="bold")
+    summary.add_column(justify="right", style="orange3")
+    summary.add_row("Sessions", f"{totals.sessions:,}", "Prompts", f"{totals.prompts:,}")
+    summary.add_row("LLM calls", f"{totals.llm_calls:,}", "Tool calls", f"{totals.tool_calls:,}")
+    summary.add_row("MCP calls", f"{totals.mcp_calls:,}", "Subagents", f"{totals.subagent_launches:,}")
+    summary.add_row("Failures", f"{totals.failures:,}", "Recovered", f"{totals.recovered_failures:,}")
+    summary.add_row("Duration", _format_usage_duration(totals.duration_ms), "Estimated cost", f"${totals.estimated_cost_usd:,.2f}")
+    console.print(Panel(summary, title=title, subtitle=context, border_style="orange3"))
+
+    tokens = Table(title="Tokens", border_style="grey37")
+    tokens.add_column("Input", justify="right")
+    tokens.add_column("Output", justify="right")
+    tokens.add_column("Cache write", justify="right")
+    tokens.add_column("Cache read", justify="right")
+    tokens.add_column("Reasoning", justify="right")
+    tokens.add_row(
+        f"{totals.input_tokens:,}",
+        f"{totals.output_tokens:,}",
+        f"{totals.cache_creation_tokens:,}",
+        f"{totals.cache_read_tokens:,}",
+        f"{totals.reasoning_tokens:,}",
+    )
+    console.print(tokens)
+
+    for heading, entries in (("Models", report.models), ("Tools", report.tools), ("Agents", report.agents)):
+        if not entries:
+            continue
+        table = Table(title=heading, border_style="grey37")
+        table.add_column(heading[:-1])
+        table.add_column("Uses", justify="right")
+        if heading != "Tools":
+            table.add_column("Tokens", justify="right")
+            table.add_column("Cost", justify="right")
+        for entry in entries:
+            row = [entry.name, f"{entry.count:,}"]
+            if heading != "Tools":
+                row.extend(
+                    [
+                        f"{entry.input_tokens + entry.output_tokens:,}",
+                        f"${entry.estimated_cost_usd:,.2f}",
+                    ]
+                )
+            table.add_row(*row)
+        console.print(table)
+
+    for limitation in report.limitations:
+        console.print(f"[yellow]Note:[/yellow] {limitation}")
+
+
+def _prepare_usage_db(
+    db_path: Path,
+    *,
+    otlp_traces: Path | None,
+    include_native_sessions: bool,
+) -> None:
+    """Refresh usage facts without rebuilding graph or improvement state."""
+    from reflect.store.cursor_adapter import apply_cursor_transcript_usage_estimates
+    from reflect.store.ingest import (
+        ingest_native_session_file,
+        ingest_otlp_logs_file,
+        ingest_otlp_traces_file,
+    )
+    from reflect.store.migrate import migrate
+    from reflect.store.normalize import backfill_mcp_calls, normalize_pending_raw_events
+    from reflect.store.rollups import rebuild_rollups, refresh_rollups
+    from reflect.store.sqlite import connect_sqlite
+    from reflect.store.workspaces import backfill_session_context
+
+    conn = connect_sqlite(db_path)
+    try:
+        applied = migrate(conn)
+        if otlp_traces is not None and otlp_traces.exists():
+            ingest_otlp_traces_file(conn, file_path=otlp_traces, skip_unchanged=True)
+            otlp_logs = _infer_otlp_logs_file(otlp_traces)
+            if otlp_logs is not None and otlp_logs.exists():
+                ingest_otlp_logs_file(conn, file_path=otlp_logs, skip_unchanged=True)
+
+        changed_session_ids: set[str] = set()
+        if conn.execute(
+            "SELECT 1 FROM raw_events WHERE normalized_status = 'pending' LIMIT 1"
+        ).fetchone():
+            normalize_pending_raw_events(conn, changed_session_ids=changed_session_ids)
+
+        cursor_native_files: list[Path] = []
+        if include_native_sessions:
+            for native_agent, session_file in _discover_rich_session_files():
+                result = ingest_native_session_file(
+                    conn,
+                    file_path=session_file,
+                    agent=native_agent,
+                    source_id=f"native_session:{native_agent}:{session_file}",
+                    skip_existing_sessions=True,
+                    skip_unchanged=True,
+                )
+                if native_agent == "cursor" and not result.get("unchanged"):
+                    cursor_native_files.append(session_file)
+            normalize_pending_raw_events(conn, changed_session_ids=changed_session_ids)
+        backfill_mcp_calls(
+            conn,
+            session_ids=None if 14 in applied else changed_session_ids,
+            changed_session_ids=changed_session_ids,
+        )
+        cursor_result = (
+            apply_cursor_transcript_usage_estimates(conn, cursor_native_files)
+            if cursor_native_files
+            else {"updated": 0}
+        )
+        context_result = backfill_session_context(
+            conn,
+            timestamp=datetime.now(UTC).isoformat(),
+            changed_session_ids=changed_session_ids,
+        )
+        session_count = int(conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0])
+        rollup_count = int(conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0])
+        if session_count != rollup_count or cursor_result.get("updated"):
+            _ensure_sql_costs(conn)
+            rebuild_rollups(conn)
+        elif changed_session_ids or context_result["sessions_updated"]:
+            _ensure_sql_costs(conn, session_ids=changed_session_ids)
+            refresh_rollups(conn, changed_session_ids)
+    finally:
+        conn.close()
+
+
+@main.command("usage")
+@click.option("--session", "session_id", shell_complete=complete_session_id, help="Inspect one session ID.")
+@click.option("--global", "global_scope", is_flag=True, help="Aggregate all matching local sessions.")
+@click.option("--agent", help="Limit global usage to one agent name or ID.")
+@click.option("--day", "period", flag_value="day", help="Use the last 24 hours.")
+@click.option("--week", "period", flag_value="week", default=True, help="Use the last 7 days (default).")
+@click.option("--month", "period", flag_value="month", help="Use the last 30 days.")
+@click.option("--all", "period", flag_value="all", help="Use all available data.")
+@click.option(
+    "--refresh",
+    is_flag=True,
+    help="Ingest local telemetry before reporting. Slower on large native session stores.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print the usage report as JSON.")
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+    help="SQLite telemetry store.",
+)
+def usage(
+    session_id: str | None,
+    global_scope: bool,
+    agent: str | None,
+    period: str,
+    refresh: bool,
+    as_json: bool,
+    db_path: Path,
+) -> None:
+    """Show exact local usage for the current session or a global period."""
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+    from reflect.usage import UsageService
+
+    if session_id and global_scope:
+        raise click.UsageError("--session and --global cannot be used together")
+    if agent and not global_scope:
+        raise click.UsageError("--agent is only valid with --global")
+
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        has_sessions = conn.execute("SELECT 1 FROM sessions LIMIT 1").fetchone() is not None
+    finally:
+        conn.close()
+    if refresh or not has_sessions:
+        _prepare_usage_db(
+            db_path,
+            otlp_traces=_default_otlp_traces(),
+            include_native_sessions=True,
+        )
+
+    conn = connect_sqlite(db_path)
+    try:
+        report = UsageService(conn).report(
+            session_id=session_id,
+            global_scope=global_scope,
+            period=period,
+            agent=agent,
+        )
+    except (LookupError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        conn.close()
+    if as_json:
+        _echo_json(report.model_dump(mode="json"))
+        return
+    _render_usage_report(Console(), report)
+
+
+@main.command("improve")
+@click.argument("observation_id", required=False, shell_complete=complete_observation_id)
+@click.option("--demo", is_flag=True, help="Use bundled sample telemetry in an isolated database.")
+@click.option("--json", "as_json", is_flag=True, help="Print the result as JSON.")
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+    help="SQLite improvement ledger.",
+)
+def improve(observation_id: str | None, demo: bool, as_json: bool, db_path: Path) -> None:
+    """Show the highest-impact local improvement or inspect OBSERVATION_ID."""
+    import tempfile
+
+    temporary: tempfile.TemporaryDirectory[str] | None = None
+    if demo:
+        temporary = tempfile.TemporaryDirectory(prefix="reflect-improve-demo-")
+        db_path = Path(temporary.name) / "reflect.db"
+    try:
+        _prepare_sql_report_db(
+            db_path,
+            otlp_traces=_demo_otlp_traces() if demo else _default_otlp_traces(),
+            include_native_sessions=not demo,
+        )
+        conn, service = _open_improvement_service(db_path)
+        try:
+            result = service.improve(observation_id, refresh=False)
+            if as_json:
+                _echo_json(result.model_dump(mode="json"))
+                return
+            console = Console(force_terminal=True)
+            if observation_id:
+                _render_improvement_detail(console, result)
+                return
+            if not result.observations:
+                console.print("[green]No actionable recurring observations found.[/green]")
+                return
+            table = Table(title="Improvement Inbox", border_style="orange3")
+            table.add_column("ID", style="cyan", no_wrap=True)
+            table.add_column("Finding")
+            table.add_column("Impact", justify="right")
+            table.add_column("Sessions", justify="right")
+            table.add_column("State")
+            for observation in result.observations[:10]:
+                table.add_row(
+                    observation.id,
+                    observation.title,
+                    f"{observation.impact_score:.0f}",
+                    str(observation.affected_session_count),
+                    observation.status.value.replace("_", " "),
+                )
+            console.print(table)
+            console.print(
+                f"[dim]{result.pending_workflows} pending workflow(s). "
+                "Inspect one with: reflect improve <ID>[/dim]"
+            )
+        finally:
+            conn.close()
+    finally:
+        if temporary is not None:
+            temporary.cleanup()
+
+
+def _render_improvement_detail(console: Console, observation) -> None:
+    body = [
+        f"[bold]{observation.title}[/bold]",
+        observation.summary,
+        "",
+        f"Impact: {observation.impact_score:.0f}/100  •  Severity: {observation.severity.value}",
+        f"Confidence: {observation.confidence:.0%}  •  Sessions: {observation.affected_session_count}",
+        f"Rule: {observation.rule_id} v{observation.rule_version}",
+    ]
+    if observation.candidate_id:
+        body.extend(
+            [
+                "",
+                f"Proposed workflow: {observation.candidate_id} ({observation.candidate_status.value})",
+                f"Review: reflect workflows show {observation.candidate_id}",
+            ]
+        )
+    console.print(Panel("\n".join(body), title=observation.id, border_style="orange3"))
+    if observation.evidence:
+        evidence = Table(title="Evidence", border_style="dim")
+        evidence.add_column("Entity")
+        evidence.add_column("Summary")
+        for item in observation.evidence[:20]:
+            evidence.add_row(f"{item.entity_type}:{item.entity_id}", item.summary_redacted)
+        console.print(evidence)
+
+
+@main.command("ask")
+@click.argument("question")
+@click.option("--json", "as_json", is_flag=True, help="Print the answer packet as JSON.")
+@click.option("--task-file", type=click.Path(path_type=Path, exists=True, dir_okay=False))
+@click.option("--path", "context_path", type=click.Path(path_type=Path, exists=True))
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+    help="SQLite improvement ledger.",
+)
+def ask(question: str, as_json: bool, task_file: Path | None, context_path: Path | None, db_path: Path) -> None:
+    """Answer QUESTION from reviewed workflows, linked evidence, and scoped memory."""
+    _prepare_sql_report_db(
+        db_path,
+        otlp_traces=_default_otlp_traces(),
+        include_native_sessions=True,
+    )
+    from reflect.context import ReflectContextService
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    try:
+        service = ReflectContextService(conn)
+        answer = service.ask(question, task_file=task_file, path=context_path)
+    finally:
+        conn.close()
+    if as_json:
+        _echo_json(answer.model_dump(mode="json"))
+        return
+    click.echo(answer.answer)
+    if answer.guidance:
+        click.echo("\nGuidance")
+        for index, step in enumerate(answer.guidance, start=1):
+            click.echo(f"  {index}. {step}")
+    if answer.evidence:
+        click.echo("\nEvidence")
+        for item in answer.evidence:
+            click.echo(f"  {item.kind}:{item.id} — {item.summary}")
+    if answer.memories:
+        click.echo("\nMemory Context")
+        for item in answer.memories:
+            status = item.validation_status or item.provenance
+            click.echo(f"  {item.provider}:{item.id} [{status}] — {item.content}")
+    if answer.constraints:
+        click.echo("\nConstraints")
+        for item in answer.constraints:
+            click.echo(f"  - {item}")
+    if answer.verification:
+        click.echo("\nVerification")
+        for item in answer.verification:
+            click.echo(f"  - {item}")
+    if answer.fallback:
+        click.echo(f"\nFallback: {answer.fallback}")
+    for limitation in answer.limitations:
+        click.echo(f"\nNote: {limitation}")
+
+
+@main.group("workflows")
+def workflows() -> None:
+    """Review and manage durable workflow proposals."""
+
+
+_WORKFLOW_BEHAVIOR_TYPES = ("loop", "recovery", "verification", "exploration", "proven_pattern")
+_WORKFLOW_STATUSES = ("pending", "approved", "active", "stale", "rejected", "rolled_back")
+
+
+def _print_workflow_table(candidates, *, title: str = "Workflows") -> None:
+    table = Table(title=title, border_style="orange3")
+    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("Behavior")
+    table.add_column("Workflow")
+    table.add_column("Origin")
+    table.add_column("Support", justify="right")
+    table.add_column("Confidence", justify="right")
+    table.add_column("State")
+    for candidate in candidates:
+        content = candidate.content or {}
+        source = content.get("source") or {}
+        source_kind = str(source.get("kind") or candidate.provenance.get("source") or "")
+        if source_kind in {"agent_authored", "skill_extraction"}:
+            origin = f"agent draft ({source.get('agent')})" if source.get("agent") else "agent draft"
+        elif source_kind == "manual_skill_file":
+            origin = "imported skill"
+        else:
+            origin = "rule blueprint"
+        table.add_row(
+            candidate.id,
+            str(content.get("behavior_type") or "proven_pattern").replace("_", " "),
+            str(content.get("slug") or candidate.title),
+            origin,
+            str(candidate.support_count),
+            f"{candidate.confidence:.0%}",
+            candidate.status.value,
+        )
+    Console(force_terminal=True).print(table)
+
+
+@workflows.command("list")
+@click.option("--json", "as_json", is_flag=True)
+@click.option("--type", "behavior_type", type=click.Choice(_WORKFLOW_BEHAVIOR_TYPES))
+@click.option("--status", type=click.Choice(_WORKFLOW_STATUSES))
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+def workflows_list(as_json: bool, behavior_type: str | None, status: str | None, db_path: Path) -> None:
+    """List pending, active, and rolled-back workflows."""
+    _prepare_sql_report_db(db_path, otlp_traces=_default_otlp_traces(), include_native_sessions=True)
+    conn, service = _open_improvement_service(db_path)
+    try:
+        candidates = service.workflows.list(
+            behavior_types={behavior_type} if behavior_type else None,
+            statuses={status} if status else None,
+        )
+    finally:
+        conn.close()
+    if as_json:
+        _echo_json([candidate.model_dump(mode="json") for candidate in candidates])
+        return
+    _print_workflow_table(candidates)
+
+
+def _read_workflow_skill(path: Path, behavior_type: str) -> dict[str, str]:
+    text = path.read_text(encoding="utf-8")
+    if not text.startswith("---\n"):
+        raise click.ClickException("SKILL.md must start with YAML frontmatter")
+    end = text.find("\n---\n", 4)
+    if end < 0:
+        raise click.ClickException("SKILL.md frontmatter is missing its closing --- line")
+    metadata: dict[str, str] = {}
+    for line in text[4:end].splitlines():
+        key, separator, value = line.partition(":")
+        if separator and key.strip() in {"name", "description"}:
+            metadata[key.strip()] = value.strip().strip("'\"")
+    try:
+        name = _validate_skill_name(metadata.get("name"))
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    description = metadata.get("description", "").strip()
+    if not description:
+        raise click.ClickException("SKILL.md frontmatter requires a description")
+    source_markdown = text[end + 5:].strip()
+    if not source_markdown:
+        raise click.ClickException("SKILL.md requires workflow instructions after frontmatter")
+    return {
+        "name": name,
+        "description": description,
+        "content": source_markdown,
+        "behavior_type": behavior_type,
+        "source_kind": "manual_skill_file",
+    }
+
+
+@workflows.command("add")
+@click.argument("skill_file", type=click.Path(path_type=Path, exists=True, dir_okay=False))
+@click.option("--type", "behavior_type", type=click.Choice(_WORKFLOW_BEHAVIOR_TYPES), default="proven_pattern", show_default=True)
+@click.option(
+    "--source-agent",
+    metavar="NAME",
+    help="Record NAME as the coding agent that authored this draft.",
+    shell_complete=_complete_skill_agent_cli,
+)
+@click.option(
+    "--from-workflow",
+    "source_workflow_id",
+    metavar="ID",
+    help="Link the draft to an existing workflow's bounded source-session evidence.",
+    shell_complete=complete_workflow_id,
+)
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+def workflows_add(
+    skill_file: Path,
+    behavior_type: str,
+    source_agent: str | None,
+    source_workflow_id: str | None,
+    db_path: Path,
+) -> None:
+    """Stage an existing SKILL.md as a pending workflow; do not install it."""
+    skill = _read_workflow_skill(skill_file, behavior_type)
+    normalized_agent = " ".join((source_agent or "").split())[:80]
+    if normalized_agent:
+        skill["source_kind"] = "agent_authored"
+    if source_workflow_id:
+        skill["source_workflow_id"] = source_workflow_id
+    conn, service = _open_improvement_service(db_path)
+    try:
+        source_session_ids: list[str] = []
+        if source_workflow_id:
+            try:
+                source_ledger = service.repository.workflow_session_ledger(
+                    source_workflow_id,
+                    limit=200,
+                )
+            except KeyError as exc:
+                raise click.ClickException(str(exc)) from exc
+            source_session_ids = [item.session_id for item in source_ledger.source_sessions]
+        candidate_id = service.stage_extracted_skills(
+            [skill],
+            session_ids=source_session_ids,
+            source_agent=normalized_agent or None,
+        )[0]
+    finally:
+        conn.close()
+    click.echo(f"Staged {candidate_id} from {skill_file}")
+    if normalized_agent:
+        click.echo(f"Authorship: agent draft ({normalized_agent})")
+    if source_workflow_id:
+        click.echo(
+            f"Evidence: {len(source_session_ids)} source session(s) from {source_workflow_id}"
+        )
+    click.echo(f"Review: reflect workflows show {candidate_id}")
+    click.echo("Nothing was installed. Apply it from the target Git repository after review.")
+
+
+@workflows.command("show")
+@click.argument("candidate_id", shell_complete=complete_workflow_id)
+@click.option("--json", "as_json", is_flag=True)
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+def workflows_show(candidate_id: str, as_json: bool, db_path: Path) -> None:
+    """Show a workflow proposal and its review state."""
+    conn, service = _open_improvement_service(db_path)
+    try:
+        candidate = service.workflows.show(candidate_id)
+        preview = service.workflows.preview(candidate_id, project_root=Path.cwd())
+    except KeyError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        conn.close()
+    if as_json:
+        payload = candidate.model_dump(mode="json")
+        payload["preview"] = preview
+        _echo_json(payload)
+        return
+    console = Console(force_terminal=True)
+    steps = "\n".join(
+        f"{index}. {step}" for index, step in enumerate(candidate.content.get("steps", []), start=1)
+    )
+    console.print(
+        Panel(
+            f"[bold]{candidate.title}[/bold]\n{candidate.hypothesis}\n\n"
+            f"State: {candidate.status.value}  •  Risk: {candidate.risk}  •  "
+            f"Support: {candidate.support_count}\n\n{steps}\n\n"
+            f"Target: {candidate.target_metric} over {candidate.measurement_window} comparable sessions",
+            title=candidate.id,
+            border_style="orange3",
+        )
+    )
+    console.print(
+        Panel(
+            preview["diff"] or "No filesystem change: the rendered workflow already matches.",
+            title=f"Exact diff · {preview['target_path']}",
+            border_style="dim",
+        )
+    )
+
+
+@workflows.command("apply")
+@click.argument("candidate_id", shell_complete=complete_workflow_id)
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+def workflows_apply(candidate_id: str, db_path: Path) -> None:
+    """Approve and apply CANDIDATE_ID as a repo-local skill."""
+    conn, service = _open_improvement_service(db_path)
+    try:
+        result = service.workflows.apply(candidate_id, project_root=Path.cwd())
+    except (KeyError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        conn.close()
+    action = "Already active" if result.get("idempotent") else "Applied"
+    click.echo(f"{action} {candidate_id} at {result['target_path']}")
+    click.echo(f"Rollback: reflect workflows rollback {candidate_id}")
+
+
+@workflows.command("rollback")
+@click.argument("candidate_id", shell_complete=complete_workflow_id)
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+def workflows_rollback(candidate_id: str, db_path: Path) -> None:
+    """Roll back the active application of CANDIDATE_ID."""
+    conn, service = _open_improvement_service(db_path)
+    try:
+        result = service.workflows.rollback(candidate_id)
+    except (KeyError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        conn.close()
+    click.echo(f"Rolled back {candidate_id} at {result['target_path']}")
+
+
+@main.group("loops", invoke_without_command=True)
+@click.option("--json", "as_json", is_flag=True)
+@click.option("--kind", type=click.Choice(["stalled", "productive"]))
+@click.option(
+    "--status",
+    type=click.Choice(["detected", "acknowledged", "promoted", "dismissed", "resolved"]),
+)
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+)
+@click.pass_context
+def loops(
+    ctx: click.Context,
+    as_json: bool,
+    kind: str | None,
+    status: str | None,
+    db_path: Path,
+) -> None:
+    """Inspect observed stalled retries and productive repeated routines."""
+    if ctx.invoked_subcommand:
+        return
+    from reflect.improvements.models import LoopKind, LoopStatus
+
+    _prepare_improvement_store_if_empty(db_path)
+    conn, improvement_service = _open_improvement_service(db_path)
+    try:
+        refresh = improvement_service.loops.refresh()
+        records = improvement_service.loops.list(
+            kind=LoopKind(kind) if kind else None,
+            status=LoopStatus(status) if status else None,
+            limit=500,
+        )
+    finally:
+        conn.close()
+    if as_json:
+        _echo_json(
+            {
+                "refresh": refresh,
+                "loops": [item.model_dump(mode="json") for item in records],
+            }
+        )
+        return
+    _print_loops(records, refresh=refresh)
+
+
+def _print_loops(records, *, refresh: dict[str, int] | None = None) -> None:
+    table = Table(title="Observed Loops", border_style="orange3")
+    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("Kind")
+    table.add_column("Loop")
+    table.add_column("Sessions", justify="right")
+    table.add_column("Occurrences", justify="right")
+    table.add_column("Confidence", justify="right")
+    table.add_column("State")
+    for item in records:
+        table.add_row(
+            item.id,
+            item.kind.value,
+            item.title,
+            str(item.affected_session_count),
+            str(item.occurrence_count),
+            f"{item.confidence:.0%}",
+            item.status.value,
+        )
+    Console(force_terminal=True).print(table)
+    if refresh:
+        click.echo(
+            f"Detected {refresh.get('stalled', 0)} stalled and "
+            f"{refresh.get('productive', 0)} productive loop pattern(s)."
+        )
+
+
+def _prepare_improvement_store_if_empty(db_path: Path) -> None:
+    """Populate canonical session data only when the local ledger is empty."""
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite
+
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        has_sessions = bool(conn.execute("SELECT 1 FROM sessions LIMIT 1").fetchone())
+    finally:
+        conn.close()
+    if has_sessions:
+        return
+    _prepare_sql_report_db(
+        db_path,
+        otlp_traces=_default_otlp_traces(),
+        include_native_sessions=True,
+    )
+
+
+@loops.command("show")
+@click.argument("loop_id", shell_complete=complete_loop_id)
+@click.option("--json", "as_json", is_flag=True)
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+)
+def loops_show(loop_id: str, as_json: bool, db_path: Path) -> None:
+    """Show one loop's classification and bounded source-session evidence."""
+    _prepare_improvement_store_if_empty(db_path)
+    conn, improvement_service = _open_improvement_service(db_path)
+    try:
+        improvement_service.loops.refresh()
+        detail = improvement_service.loops.show(loop_id)
+    except KeyError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        conn.close()
+    if as_json:
+        _echo_json(detail.model_dump(mode="json"))
+        return
+    loop = detail.loop
+    click.echo(f"{loop.title} ({loop.id})")
+    click.echo(
+        f"Kind: {loop.kind.value} · State: {loop.status.value} · "
+        f"Confidence: {loop.confidence:.0%}"
+    )
+    click.echo(loop.summary)
+    click.echo(
+        f"{loop.affected_session_count} session(s) · "
+        f"{loop.occurrence_count} repeated action(s) · "
+        f"{loop.state_change_count} observed state change(s)"
+    )
+    for occurrence in detail.occurrences[:20]:
+        outcome = f" · {occurrence.outcome}" if occurrence.outcome else ""
+        click.echo(
+            f"  {occurrence.session_id} · {occurrence.repeat_count} repeats · "
+            f"{occurrence.error_count} errors{outcome}"
+        )
+
+
+@loops.command("build")
+@click.argument("loop_id", shell_complete=complete_loop_id)
+@click.option(
+    "--agent",
+    default=None,
+    help="Coding-agent CLI used to author the skill draft.",
+    shell_complete=_complete_skill_agent_cli,
+)
+@click.option("--json", "as_json", is_flag=True)
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+)
+def loops_build(loop_id: str, agent: str | None, as_json: bool, db_path: Path) -> None:
+    """Ask an agent to draft one pending skill from a selected loop."""
+    import json as _json
+    import subprocess
+
+    _prepare_improvement_store_if_empty(db_path)
+    conn, improvement_service = _open_improvement_service(db_path)
+    try:
+        improvement_service.loops.refresh()
+        detail = improvement_service.loops.show(loop_id, limit=50)
+        evidence_bundle = improvement_service.loops.evidence_bundle(loop_id)
+    except KeyError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        conn.close()
+    agent_bin, agent_flags = _resolve_skills_agent(agent)
+    try:
+        prompt_template = (
+            importlib_resources.files("reflect") / "data" / "loop-skill-prompt.md"
+        ).read_text(encoding="utf-8")
+    except (FileNotFoundError, TypeError) as exc:
+        raise click.ClickException(f"Could not load loop skill prompt: {exc}") from exc
+    prompt = prompt_template.replace(
+        "{{EVIDENCE_JSON}}",
+        _json.dumps(evidence_bundle, sort_keys=True, indent=2),
+    )
+    result = subprocess.run(
+        [agent_bin, *agent_flags, prompt],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise click.ClickException(
+            f"Agent exited with code {result.returncode}: "
+            f"{_format_agent_failure(result.stderr, result.stdout)}"
+        )
+    try:
+        extracted = _load_extracted_skills(result.stdout)
+    except _json.JSONDecodeError as exc:
+        raise click.ClickException(f"Could not parse agent output as JSON: {exc}") from exc
+    if len(extracted) != 1:
+        raise click.ClickException("Loop build must return exactly one skill draft")
+    skill = extracted[0]
+    try:
+        skill_name = _validate_skill_name(skill.get("name"))
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    staged = {
+        **skill,
+        "name": skill_name,
+        "behavior_type": "loop",
+        "source_kind": "agent_authored",
+        "source_loop_id": loop_id,
+    }
+    session_ids = sorted({item.session_id for item in detail.occurrences})
+    conn, improvement_service = _open_improvement_service(db_path)
+    try:
+        candidate_id = improvement_service.stage_extracted_skills(
+            [staged],
+            session_ids=session_ids,
+            source_agent=agent_bin,
+        )[0]
+        registered = improvement_service.skills.skill_for_candidate(candidate_id)
+        improvement_service.loops.mark_promoted(loop_id, registered.id)
+    finally:
+        conn.close()
+    payload = {
+        "loop_id": loop_id,
+        "skill_id": registered.id,
+        "skill_slug": registered.slug,
+        "source_agent": agent_bin,
+        "status": "pending",
+    }
+    if as_json:
+        _echo_json(payload)
+        return
+    click.echo(f"Staged {registered.slug} ({registered.id}) from {loop_id}")
+    click.echo(f"Review: reflect skills show {registered.id}")
+    click.echo("Nothing was installed. Apply only after review with reflect skills apply <ID>.")
+
+
+@main.command("feedback")
+@click.argument("session_id", shell_complete=complete_session_id)
+@click.option(
+    "--outcome",
+    type=click.Choice(["good", "bad", "no-change-correct", "corrected"], case_sensitive=False),
+    required=True,
+)
+@click.option("--reason", default=None, help="Optional concise reason; stored only in the local database.")
+@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
+def feedback(session_id: str, outcome: str, reason: str | None, db_path: Path) -> None:
+    """Record an explicit outcome for SESSION_ID."""
+    _prepare_sql_report_db(db_path, otlp_traces=_default_otlp_traces(), include_native_sessions=True)
+    conn, service = _open_improvement_service(db_path)
+    try:
+        feedback_id = service.repository.record_feedback(
+            session_id,
+            outcome.lower(),
+            reason_redacted=reason,
+        )
+    except KeyError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        conn.close()
+    click.echo(f"Recorded {outcome.lower()} feedback for {session_id} ({feedback_id})")
 
 
 def _report_server_daemon(*, db_path: Path, otlp_traces: Path | None = None):
@@ -1376,7 +2335,7 @@ def _select_skills(
     *,
     yes: bool,
 ) -> list[dict]:
-    """Let the user pick which extracted skills to install.
+    """Let the user pick which extracted skills to stage for review.
 
     In an interactive terminal: renders a space-to-toggle checkbox list
     (↑↓ navigate, Space toggle, a=all, n=none, Enter confirm).
@@ -1399,7 +2358,7 @@ def _select_skills(
             console.print(f"  [bold]{i}.[/bold] [cyan]{s['name']:<22}[/cyan] {s['description']}")
         console.print()
         raw = click.prompt(
-            "Select skills to install (e.g. 1,3) or press Enter for all",
+            "Select skills to stage (e.g. 1,3) or press Enter for all",
             default="all",
             show_default=True,
         ).strip()
@@ -1476,7 +2435,7 @@ def _validate_skill_name(name: object) -> str:
     return name
 
 
-@main.command()
+@main.group(invoke_without_command=True)
 @click.option(
     "--otlp-traces",
     type=click.Path(path_type=Path),
@@ -1511,12 +2470,13 @@ def _validate_skill_name(name: object) -> str:
         "Agent CLI binary to use for skill extraction "
         "(e.g. claude, gemini, codex). Auto-detected if not set."
     ),
+    shell_complete=_complete_skill_agent_cli,
 )
 @click.option(
     "--yes",
     "-y",
     is_flag=True,
-    help="Install all extracted skills without prompting for selection.",
+    help="Stage all extracted skills without prompting for selection.",
 )
 @click.option(
     "--db-path",
@@ -1524,7 +2484,88 @@ def _validate_skill_name(name: object) -> str:
     default=REFLECT_HOME / "state" / "reflect.db",
     help="SQLite store used to derive SQL graph evidence for skill extraction.",
 )
+@click.option("--json", "as_json", is_flag=True, help="Return the Skills v2 registry as JSON.")
+@click.option(
+    "--path",
+    "scan_paths",
+    type=click.Path(path_type=Path),
+    multiple=True,
+    help="Additional skill root or SKILL.md to reconcile into the registry.",
+)
+@click.option(
+    "--status",
+    "lifecycle",
+    type=click.Choice(["pending", "active", "stale", "retired", "rejected"]),
+    help="Filter the registry by lifecycle state.",
+)
+@click.pass_context
 def skills(
+    ctx: click.Context,
+    otlp_traces: Path | None,
+    sessions_dir: Path | None,
+    spans_dir: Path | None,
+    time_range: str,
+    demo: bool,
+    agent: str | None,
+    yes: bool,
+    db_path: Path,
+    as_json: bool,
+    scan_paths: tuple[Path, ...],
+    lifecycle: str | None,
+) -> None:
+    """Sync and inspect the durable Skills v2 registry."""
+    if ctx.invoked_subcommand:
+        return
+    legacy_discovery = bool(
+        otlp_traces
+        or sessions_dir
+        or spans_dir
+        or demo
+        or agent
+        or yes
+        or time_range != "week"
+    )
+    if legacy_discovery:
+        click.echo(
+            "Compatibility mode: use `reflect skills discover` for agent-assisted extraction.",
+            err=True,
+        )
+        _discover_skills(
+            otlp_traces=otlp_traces,
+            sessions_dir=sessions_dir,
+            spans_dir=spans_dir,
+            time_range=time_range,
+            demo=demo,
+            agent=agent,
+            yes=yes,
+            db_path=db_path,
+        )
+        return
+    from reflect.improvements.models import SkillLifecycleState
+
+    conn, improvement_service = _open_improvement_service(db_path)
+    try:
+        roots = list(scan_paths) or _default_skill_scan_paths()
+        refresh = improvement_service.skills.refresh(scan_paths=roots)
+        records = improvement_service.skills.list(
+            lifecycle=SkillLifecycleState(lifecycle) if lifecycle else None,
+            limit=500,
+        )
+    finally:
+        conn.close()
+    if as_json:
+        _echo_json(
+            {
+                "refresh": refresh,
+                "skills": [item.model_dump(mode="json") for item in records],
+            }
+        )
+        return
+    _print_skill_registry(records, refresh=refresh)
+
+
+def _discover_skills(
+    *,
     otlp_traces: Path | None,
     sessions_dir: Path | None,
     spans_dir: Path | None,
@@ -1534,10 +2575,9 @@ def skills(
     yes: bool,
     db_path: Path,
 ) -> None:
-    """Extract reusable skills from your AI sessions using an agent."""
+    """Run bounded agent-assisted discovery and stage versioned skill drafts."""
     import json as _json
     import subprocess
-    import tempfile
 
     from rich.console import Console
     console = Console(force_terminal=True)
@@ -1635,66 +2675,221 @@ def skills(
         raise SystemExit(1) from exc
 
     selected = _select_skills(skill_defs, console, yes=yes)
+    valid_selected: list[dict] = []
+    for skill in selected:
+        try:
+            safe_name = _validate_skill_name(skill.get("name"))
+        except ValueError as exc:
+            click.echo(f"Skipping invalid skill name: {exc}", err=True)
+            continue
+        valid_selected.append({**skill, "name": safe_name})
+    if not valid_selected:
+        raise click.ClickException("No valid workflow candidates were extracted")
 
-    detected = [a for a in _detect_agents() if a["detected"]]
-    install_agents = _select_skill_install_agents(detected, console, yes=yes)
-    if not yes:
-        console.print()
-        confirmed = click.confirm(
-            f"Write {len(selected)} skill(s) to {len(install_agents)} selected agent(s)?",
-            default=True,
+    conn, improvement_service = _open_improvement_service(db_path)
+    try:
+        candidate_ids = improvement_service.stage_extracted_skills(
+            valid_selected,
+            session_ids=sorted(stats.sessions_seen),
+            source_agent=agent_bin,
         )
-        if not confirmed:
-            console.print("Aborted.")
-            return
+        registered_skills = [
+            improvement_service.skills.skill_for_candidate(candidate_id)
+            for candidate_id in candidate_ids
+        ]
+    finally:
+        conn.close()
 
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        for s in selected:
-            try:
-                safe_name = _validate_skill_name(s.get("name"))
-            except ValueError as exc:
-                click.echo(f"Skipping invalid skill name: {exc}", err=True)
-                continue
-            skill_dir = tmp_path / safe_name
-            skill_dir.mkdir()
-            skill_md = (
-                f"---\nname: {safe_name}\ndescription: {s['description']}\n---\n\n{s['content']}"
-            )
-            (skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
-
-        console.print()
-        for agent_spec in install_agents:
-            global_path = Path(agent_spec["global_path"]).expanduser()
-            global_path.mkdir(parents=True, exist_ok=True)
-            for s in selected:
-                try:
-                    safe_name = _validate_skill_name(s.get("name"))
-                except ValueError:
-                    continue  # already warned above
-                src = tmp_path / safe_name
-                if not src.exists():
-                    continue
-                dest = global_path / safe_name
-                # Ensure dest stays within the intended skills directory (must be a subdirectory)
-                resolved_dest = dest.resolve()
-                resolved_base = global_path.resolve()
-                if not str(resolved_dest).startswith(str(resolved_base) + os.sep):
-                    click.echo(f"Skipping skill {safe_name!r}: resolved path escapes skills dir", err=True)
-                    continue
-                if dest.exists():
-                    shutil.rmtree(dest)
-                shutil.copytree(src, dest)
-            console.print(f"  [green]✓[/green] {agent_spec['name']}: {global_path}")
-
-    names = ", ".join(f"/{s['name']}" for s in selected)
     if sql_bundle_used:
         console.print("[dim]Included SQL stats + Behavioral Memory Graph evidence in extraction prompt.[/dim]")
     elif graph_evidence_attached:
         console.print("[dim]Included SQL Behavioral Memory Graph evidence in extraction prompt.[/dim]")
-    console.print(
-        f"\n[bold green]{len(selected)} skill(s) ready.[/bold green] Use {names} in Claude Code."
+    console.print(f"\n[bold green]{len(registered_skills)} skill draft(s) staged in Skills v2.[/bold green]")
+    for skill in registered_skills:
+        console.print(f"  [cyan]{skill.id}[/cyan]  {skill.slug}  reflect skills show {skill.id}")
+    console.print("[dim]Nothing was installed. Apply a reviewed draft with reflect skills apply <ID>.[/dim]")
+
+
+def _default_skill_scan_paths() -> list[Path]:
+    roots = [
+        Path.cwd() / ".agents" / "skills",
+        Path.home() / ".agents" / "skills",
+        Path.home() / ".codex" / "skills",
+        Path.home() / ".claude" / "skills",
+        Path.home() / ".cursor" / "skills",
+    ]
+    for agent_info in _detect_agents():
+        global_path = agent_info.get("global_path")
+        if global_path:
+            roots.append(Path(str(global_path)))
+    unique: dict[str, Path] = {}
+    for root in roots:
+        resolved = root.expanduser().resolve()
+        if resolved.exists():
+            unique[str(resolved)] = resolved
+    return list(unique.values())
+
+
+def _print_skill_registry(records, *, refresh: dict[str, int] | None = None) -> None:
+    table = Table(title="Skills v2", border_style="orange3")
+    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("Skill")
+    table.add_column("Origin")
+    table.add_column("Version", justify="right")
+    table.add_column("Evidence", justify="right")
+    table.add_column("Installs", justify="right")
+    table.add_column("Uses", justify="right")
+    table.add_column("Measures", justify="right")
+    table.add_column("State")
+    for item in records:
+        origin = item.origin.value.replace("_", " ")
+        if item.source_agent:
+            origin = f"{origin} ({item.source_agent})"
+        table.add_row(
+            item.id,
+            item.slug,
+            origin,
+            str(item.current_version or "—"),
+            str(item.evidence_count),
+            str(item.installation_count),
+            str(item.usage_count),
+            str(item.measurement_count),
+            item.lifecycle_state.value,
+        )
+    Console(force_terminal=True).print(table)
+    if refresh:
+        click.echo(
+            "Synced "
+            f"{refresh.get('filesystem_skills', 0)} filesystem skill(s), "
+            f"{refresh.get('workflow_skills', 0)} internal workflow implementation(s), and "
+            f"{refresh.get('usage', 0)} observed usage link(s)."
+        )
+
+
+@skills.command("discover")
+@click.option("--otlp-traces", type=click.Path(path_type=Path), default=None)
+@click.option("--sessions-dir", type=click.Path(path_type=Path), default=None)
+@click.option("--spans-dir", type=click.Path(path_type=Path), default=None)
+@click.option("--day", "time_range", flag_value="day")
+@click.option("--week", "time_range", flag_value="week", default=True)
+@click.option("--month", "time_range", flag_value="month")
+@click.option("--all", "time_range", flag_value="all")
+@click.option("--demo", is_flag=True)
+@click.option("--agent", default=None, shell_complete=_complete_skill_agent_cli)
+@click.option("--yes", "yes", is_flag=True)
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+)
+def skills_discover(
+    otlp_traces: Path | None,
+    sessions_dir: Path | None,
+    spans_dir: Path | None,
+    time_range: str,
+    demo: bool,
+    agent: str | None,
+    yes: bool,
+    db_path: Path,
+) -> None:
+    """Use a coding agent to discover evidence-backed pending skill drafts."""
+    _discover_skills(
+        otlp_traces=otlp_traces,
+        sessions_dir=sessions_dir,
+        spans_dir=spans_dir,
+        time_range=time_range,
+        demo=demo,
+        agent=agent,
+        yes=yes,
+        db_path=db_path,
     )
+
+
+@skills.command("show")
+@click.argument("skill_id", shell_complete=complete_skill_id)
+@click.option("--json", "as_json", is_flag=True)
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+)
+def skills_show(skill_id: str, as_json: bool, db_path: Path) -> None:
+    """Show a skill's versions, evidence, installations, and usage summary."""
+    conn, improvement_service = _open_improvement_service(db_path)
+    try:
+        improvement_service.skills.refresh()
+        detail = improvement_service.skills.show(skill_id)
+    except KeyError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        conn.close()
+    if as_json:
+        _echo_json(detail.model_dump(mode="json"))
+        return
+    skill = detail.skill
+    click.echo(f"{skill.slug} ({skill.id})")
+    click.echo(f"State: {skill.lifecycle_state.value} · Origin: {skill.origin.value}")
+    click.echo(
+        f"Versions: {skill.version_count} · Evidence: {skill.evidence_count} · "
+        f"Installs: {skill.installation_count} · Uses: {skill.usage_count} · "
+        f"Measurements: {skill.measurement_count}"
+    )
+    click.echo(skill.description)
+    for version in detail.versions:
+        source = version.source_kind
+        if version.source_agent:
+            source = f"{source} ({version.source_agent})"
+        click.echo(f"  v{version.version} {version.status.value} · {source} · {version.content_hash[:12]}")
+    for installation in detail.installations:
+        click.echo(f"  {installation.status} · {installation.target_kind} · {installation.path}")
+
+
+@skills.command("apply")
+@click.argument("skill_id", shell_complete=complete_skill_id)
+@click.option("--project-root", type=click.Path(path_type=Path), default=Path.cwd)
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+)
+def skills_apply(skill_id: str, project_root: Path, db_path: Path) -> None:
+    """Apply a reviewed pending skill version to a Git repository."""
+    conn, improvement_service = _open_improvement_service(db_path)
+    try:
+        improvement_service.skills.refresh()
+        candidate_id = improvement_service.skills.workflow_candidate_for(skill_id)
+        result = improvement_service.workflows.apply(candidate_id, project_root=project_root)
+        improvement_service.skills.sync_workflow_candidates([candidate_id])
+        conn.commit()
+        skill = improvement_service.skills.skill_for_candidate(candidate_id)
+    except (KeyError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        conn.close()
+    click.echo(f"Applied {skill.slug} to {result['target_path']}")
+
+
+@skills.command("rollback")
+@click.argument("skill_id", shell_complete=complete_skill_id)
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+)
+def skills_rollback(skill_id: str, db_path: Path) -> None:
+    """Roll back the active installation owned by a Reflect skill version."""
+    conn, improvement_service = _open_improvement_service(db_path)
+    try:
+        improvement_service.skills.refresh()
+        candidate_id = improvement_service.skills.workflow_candidate_for(skill_id)
+        result = improvement_service.workflows.rollback(candidate_id)
+        improvement_service.skills.sync_workflow_candidates([candidate_id])
+        conn.commit()
+    except (KeyError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        conn.close()
+    click.echo(f"Rolled back {skill_id}; restored {result['target_path']}")
 
 
 # ---------------------------------------------------------------------------
@@ -1807,7 +3002,7 @@ def _distribute_skills(
     selected_agent_names: set[str] | None = None,
     local_agent_names: set[str] | None = None,
 ) -> None:
-    """Distribute the reflect and opentelemetry skills to detected agents."""
+    """Distribute the Reflect helpers and OpenTelemetry skill to detected agents."""
     # Bundle reflect core skills for automatic setup distribution.
     bundled_skills_dir = Path(__file__).parent / "data" / "skills"
 
@@ -1820,6 +3015,10 @@ def _distribute_skills(
     reflect_skills_helper = bundled_skills_dir / "reflect-skills"
     if (reflect_skills_helper / "SKILL.md").exists():
         available_skills["reflect-skills"] = reflect_skills_helper
+
+    reflect_usage_helper = bundled_skills_dir / "reflect-usage"
+    if (reflect_usage_helper / "SKILL.md").exists():
+        available_skills["reflect-usage"] = reflect_usage_helper
 
     otel_skill = _fetch_opentelemetry_skill(console)
     if otel_skill:
@@ -1979,6 +3178,7 @@ def _resolve_setup_agent_selection(
     "agent_names",
     multiple=True,
     help="Agent to instrument by name/key. Repeat to select multiple. Defaults to an interactive choice in a TTY, otherwise all detected agents.",
+    shell_complete=_complete_setup_agent,
 )
 @click.option(
     "--all-agents",
@@ -1990,6 +3190,12 @@ def _resolve_setup_agent_selection(
     "local_agent_names",
     multiple=True,
     help="Also install project-scoped hooks and skills for this selected agent. Repeat to select multiple.",
+    shell_complete=_complete_setup_agent,
+)
+@click.option(
+    "--shell-completion/--no-shell-completion",
+    default=None,
+    help="Install autocomplete during interactive setup; automation defaults to no shell changes.",
 )
 def setup(
     capture_text: bool | None,
@@ -1999,6 +3205,7 @@ def setup(
     agent_names: tuple[str, ...],
     all_agents: bool,
     local_agent_names: tuple[str, ...],
+    shell_completion: bool | None,
 ) -> None:
     """Install opentelemetry-hooks, configure local data export, and suggest agent enablement."""
     from rich.console import Console
@@ -2047,6 +3254,29 @@ def setup(
         selected_agent_names=selected_agent_keys,
         local_agent_names=local_agent_keys,
     )
+    install_completion = shell_completion is True or (
+        shell_completion is None and sys.stdin.isatty()
+    )
+    if install_completion:
+        manager = ShellCompletionManager(main)
+        selected_shell = manager.detect_shell()
+        if selected_shell is None:
+            console.print(
+                "[yellow]Shell autocomplete was not installed because $SHELL is unsupported. "
+                "Run `reflect completion --help` for supported shells.[/yellow]"
+            )
+        else:
+            try:
+                result = manager.install(selected_shell)
+            except OSError as exc:
+                console.print(
+                    "[yellow]Telemetry setup completed, but shell autocomplete could not be "
+                    f"installed: {exc}. Run `reflect completion --install` after fixing shell "
+                    "configuration permissions.[/yellow]"
+                )
+            else:
+                state = "installed" if result.changed else "already current"
+                console.print(f"[green]✓[/] Shell autocomplete {state}: {result.script_path}")
 
 
 @main.group("doctor", invoke_without_command=True)
@@ -2105,15 +3335,22 @@ def _run_doctor() -> None:
     summary.add_row("detected agents", f"[bold]{len(detected_agents)}[/] / {len(agents)}")
     summary.add_row("local spans", f"[bold]{span_files}[/] file(s)")
     summary.add_row("local sessions", f"[bold]{session_files}[/] file(s)")
-    from reflect.gateway import _is_running as _gw_running
+    from reflect.gateway import daemon_status as _gateway_status
     try:
-        gw_pid = _gw_running()
-    except PermissionError:
-        gw_pid = None
-    summary.add_row(
-        "otlp gateway",
-        _status_markup(gw_pid is not None, present=f"running (PID {gw_pid})", missing="stopped"),
-    )
+        gateway_health = _gateway_status()
+    except (OSError, PermissionError, ValueError):
+        gateway_health = {"running": False, "conflict": False}
+    if gateway_health.get("running"):
+        gateway_summary = f"[green]running (PID {gateway_health['pid']})[/]"
+    elif gateway_health.get("conflict"):
+        destination = gateway_health.get("listener_traces_path") or "unknown destination"
+        gateway_summary = (
+            f"[yellow]unmanaged listener (PID {gateway_health.get('listener_pid') or '?'})[/] "
+            f"[dim]→ {destination}[/]"
+        )
+    else:
+        gateway_summary = "[red]stopped[/]"
+    summary.add_row("otlp gateway", gateway_summary)
     try:
         report_server = _report_server_daemon(
             db_path=REFLECT_HOME / "state" / "reflect.db"
@@ -2559,6 +3796,11 @@ def gateway_status() -> None:
     status = daemon_status()
     if status["running"]:
         console.print(f"[green]running[/] (PID {status['pid']})")
+    elif status.get("conflict"):
+        console.print(
+            f"[yellow]unmanaged listener[/] (PID {status.get('listener_pid') or '?'})"
+            f" routes traces to {status.get('listener_traces_path') or 'an unknown destination'}"
+        )
     else:
         console.print("[red]stopped[/]")
     console.print(f"  traces: {status['traces_path']} ({_summarize_file(Path(status['traces_path']))})")
@@ -2663,10 +3905,10 @@ def memory_sync(path: Path | None, db_path: Path, as_json: bool) -> None:
 @click.argument("path", type=click.Path(path_type=Path), required=False)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 @click.option("--all", "all_memories", is_flag=True, help="List all memories instead of scoping to PATH.")
-@click.option("--type", "memory_type", default=None, help="Filter by memory type.")
-@click.option("--scope", default=None, help="Filter by memory scope.")
-@click.option("--source", default=None, help="Filter by memory source.")
-@click.option("--provider", default=None, help="Filter by provider.")
+@click.option("--type", "memory_type", default=None, help="Filter by memory type.", shell_complete=complete_memory_type)
+@click.option("--scope", default=None, help="Filter by memory scope.", shell_complete=complete_memory_scope)
+@click.option("--source", default=None, help="Filter by memory source.", shell_complete=complete_memory_source)
+@click.option("--provider", default=None, help="Filter by provider.", shell_complete=complete_memory_provider)
 @click.option("--stale", is_flag=True, help="Only show stale memories.")
 @click.option("--validated", is_flag=True, help="Only show validated memories.")
 @click.option("--unvalidated", is_flag=True, help="Only show unvalidated memories.")
@@ -2729,9 +3971,9 @@ def memory_list(
 @click.argument("query")
 @click.argument("path", type=click.Path(path_type=Path), required=False)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
-@click.option("--type", "memory_type", default=None, help="Filter by memory type.")
-@click.option("--scope", default=None, help="Filter by memory scope.")
-@click.option("--provider", default="local_sqlite", show_default=True, help="Provider to search.")
+@click.option("--type", "memory_type", default=None, help="Filter by memory type.", shell_complete=complete_memory_type)
+@click.option("--scope", default=None, help="Filter by memory scope.", shell_complete=complete_memory_scope)
+@click.option("--provider", default="local_sqlite", show_default=True, help="Provider to search.", shell_complete=complete_memory_provider)
 @click.option("--limit", type=int, default=20, show_default=True)
 @click.option("--json", "as_json", is_flag=True, help="Print search results as JSON.")
 def memory_search(
@@ -2774,7 +4016,7 @@ def memory_search(
 
 
 @memory.command("inspect")
-@click.argument("memory_id")
+@click.argument("memory_id", shell_complete=complete_memory_id)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 @click.option("--json", "as_json", is_flag=True, help="Print memory as JSON.")
 def memory_inspect(memory_id: str, db_path: Path, as_json: bool) -> None:
@@ -2793,7 +4035,7 @@ def memory_inspect(memory_id: str, db_path: Path, as_json: bool) -> None:
 
 
 @memory.command("forget")
-@click.argument("memory_id")
+@click.argument("memory_id", shell_complete=complete_memory_id)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def memory_forget(memory_id: str, db_path: Path) -> None:
     """Delete one local memory by ID."""
@@ -2808,8 +4050,8 @@ def memory_forget(memory_id: str, db_path: Path) -> None:
 
 
 @memory.command("validate")
-@click.argument("memory_id", required=False)
-@click.option("--candidate", "candidate_id", default=None, help="Promote and validate a graph-derived candidate.")
+@click.argument("memory_id", required=False, shell_complete=complete_memory_id)
+@click.option("--candidate", "candidate_id", default=None, help="Promote and validate a graph-derived candidate.", shell_complete=complete_memory_candidate_id)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 @click.option("--json", "as_json", is_flag=True, help="Print validation result as JSON.")
 def memory_validate(memory_id: str | None, candidate_id: str | None, db_path: Path, as_json: bool) -> None:
@@ -2836,7 +4078,7 @@ def memory_validate(memory_id: str | None, candidate_id: str | None, db_path: Pa
 
 @memory.command("candidates")
 @click.argument("path", type=click.Path(path_type=Path), required=False)
-@click.option("--session", "session_id", default="", help="Limit candidates to one session ID.")
+@click.option("--session", "session_id", default="", help="Limit candidates to one session ID.", shell_complete=complete_session_id)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 @click.option("--limit", type=int, default=50, show_default=True)
 @click.option("--json", "as_json", is_flag=True, help="Print candidates as JSON.")
@@ -2882,7 +4124,7 @@ def _ingest_into_db(
 ) -> dict[str, int]:
     from reflect.store.ingest import ingest_local_spans_file, ingest_otlp_traces_file
     from reflect.store.migrate import migrate
-    from reflect.store.normalize import normalize_pending_raw_events
+    from reflect.store.normalize import backfill_mcp_calls, normalize_pending_raw_events
     from reflect.store.rollups import rebuild_rollups
     from reflect.store.sqlite import connect_sqlite
 
@@ -2891,12 +4133,17 @@ def _ingest_into_db(
 
     conn = connect_sqlite(db_path)
     try:
-        migrate(conn)
+        applied = migrate(conn)
         if otlp_traces is not None:
             result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
         else:
             result = ingest_local_spans_file(conn, file_path=spans_file)
-        normalize_pending_raw_events(conn)
+        changed_session_ids: set[str] = set()
+        normalize_pending_raw_events(conn, changed_session_ids=changed_session_ids)
+        backfill_mcp_calls(
+            conn,
+            session_ids=None if 14 in applied else changed_session_ids,
+        )
         _ensure_sql_costs(conn)
         rebuild_rollups(conn)
     finally:
@@ -2944,9 +4191,14 @@ def _prepare_sql_report_db(
         ingest_otlp_traces_file,
     )
     from reflect.store.migrate import migrate
-    from reflect.store.normalize import normalize_pending_raw_events
+    from reflect.store.normalize import (
+        backfill_mcp_calls,
+        backfill_tool_call_hashes,
+        normalize_pending_raw_events,
+    )
     from reflect.store.rollups import rebuild_rollups, refresh_rollups
     from reflect.store.sqlite import connect_sqlite
+    from reflect.store.workspaces import backfill_session_context
 
     conn = connect_sqlite(db_path)
     try:
@@ -3025,6 +4277,17 @@ def _prepare_sql_report_db(
             if needs_normalize
             else {"processed": 0, "failed": 0, "skipped": 0}
         )
+        fingerprint_result = backfill_tool_call_hashes(conn)
+        mcp_backfill_result = backfill_mcp_calls(
+            conn,
+            session_ids=None if 14 in applied else changed_session_ids,
+            changed_session_ids=changed_session_ids,
+        )
+        context_result = backfill_session_context(
+            conn,
+            timestamp=datetime.now(UTC).isoformat(),
+            changed_session_ids=changed_session_ids,
+        )
         for name, refs in source_refs.items():
             if name in ingest_sources:
                 if ingest_sources[name].get("unchanged"):
@@ -3043,7 +4306,10 @@ def _prepare_sql_report_db(
         graph_count = int(conn.execute("SELECT COUNT(*) FROM graph_nodes").fetchone()[0])
         canonical_changed = bool(
             normalize_result["processed"]
+            or mcp_backfill_result["inserted"]
+            or mcp_backfill_result["updated_status"]
             or cursor_adapter_result["updated"]
+            or context_result["sessions_updated"]
         )
         derived_state_missing = bool(
             session_count != rollup_count
@@ -3070,6 +4336,9 @@ def _prepare_sql_report_db(
                 "tool_rollups": int(conn.execute("SELECT COUNT(*) FROM tool_rollups").fetchone()[0]),
                 "skipped": 1,
             }
+        from reflect.improvements.service import ImprovementService
+
+        improvement_result = ImprovementService(conn).refresh()
     finally:
         conn.close()
     return {
@@ -3077,9 +4346,13 @@ def _prepare_sql_report_db(
         "ingest": ingest_result,
         "ingest_sources": ingest_sources,
         "normalize": normalize_result,
+        "mcp_calls": mcp_backfill_result,
+        "tool_call_fingerprints": fingerprint_result,
+        "session_context": context_result,
         "cursor_adapter": cursor_adapter_result,
         "graph": graph_result,
         "rollups": rollup_result,
+        "improvements": improvement_result,
     }
 
 
@@ -3401,13 +4674,22 @@ def db_ingest_spans(db_path: Path, spans_file: Path) -> None:
 def db_normalize(db_path: Path, limit: int | None) -> None:
     """Normalize pending raw_events into canonical SQLite tables."""
     from reflect.store.migrate import migrate
-    from reflect.store.normalize import normalize_pending_raw_events
+    from reflect.store.normalize import backfill_mcp_calls, normalize_pending_raw_events
     from reflect.store.sqlite import connect_sqlite
 
     conn = connect_sqlite(db_path)
     try:
-        migrate(conn)
-        result = normalize_pending_raw_events(conn, limit=limit)
+        applied = migrate(conn)
+        changed_session_ids: set[str] = set()
+        result = normalize_pending_raw_events(
+            conn,
+            limit=limit,
+            changed_session_ids=changed_session_ids,
+        )
+        backfill_mcp_calls(
+            conn,
+            session_ids=None if 14 in applied else changed_session_ids,
+        )
     finally:
         conn.close()
     click.echo(

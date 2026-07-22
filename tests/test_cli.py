@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import tomllib
@@ -73,6 +74,12 @@ class TestHelp:
         assert result.exit_code == 0
         assert "Usage" in result.output
 
+    def test_usage_help(self, runner):
+        result = runner.invoke(main, ["usage", "--help"])
+        assert result.exit_code == 0
+        assert "--refresh" in result.output
+        assert "--global" in result.output
+
     def test_db_doctor_help(self, runner):
         result = runner.invoke(main, ["db", "doctor", "--help"])
         assert result.exit_code == 0
@@ -97,6 +104,22 @@ class TestHelp:
         assert result.exit_code != 0
         assert "Pending migrations: 1, 2, 3, 4, 5, 6" in result.output
         assert "SQLite store health: needs attention" in result.output
+
+
+    def test_skill_drift_checks_all_packaged_reflect_helpers(self, tmp_path):
+        global_root = tmp_path / "skills"
+        global_root.mkdir()
+        source = core._bundled_reflect_skill_dir()
+        assert source is not None
+        shutil.copytree(source, global_root / "reflect")
+
+        issue = core._detect_skill_drift(
+            [{"name": "OpenAI Codex CLI", "detected": True, "global_path": str(global_root)}]
+        )
+
+        assert issue is not None
+        assert "OpenAI Codex CLI/reflect-skills" in issue["summary"]
+        assert "OpenAI Codex CLI/reflect-usage" in issue["summary"]
 
     def test_ingest_requires_one_source(self, runner, tmp_path):
         db_path = tmp_path / "reflect.db"
@@ -764,6 +787,18 @@ _R = lambda code, out, err="": type("R", (), {"returncode": code, "stdout": out,
 
 
 class TestSkillsSubcommand:
+    @pytest.fixture(autouse=True)
+    def _isolated_skills_db(self, tmp_path):
+        parameter = next(
+            item for item in main.commands["skills"].params if item.name == "db_path"
+        )
+        original = parameter.default
+        parameter.default = tmp_path / "skills-reflect.db"
+        try:
+            yield
+        finally:
+            parameter.default = original
+
     def _agent_fixture(self, skill_dest, fake_skills=None):
         return [{
             "name": "Claude Code",
@@ -771,8 +806,9 @@ class TestSkillsSubcommand:
             "global_path": str(skill_dest),
         }]
 
-    def test_skills_writes_all_with_yes(self, runner, otlp_file, tmp_path):
+    def test_skills_stages_all_with_yes_without_installing(self, runner, otlp_file, tmp_path):
         skill_dest = tmp_path / "skills"
+        db_path = tmp_path / "reflect.db"
         fake_output = json.dumps([_FAKE_SKILLS[0]])
         with patch("subprocess.run", return_value=_R(0, fake_output)), \
              patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
@@ -781,10 +817,26 @@ class TestSkillsSubcommand:
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
+                "--db-path", str(db_path),
             ])
         assert result.exit_code == 0
-        assert (skill_dest / "debug-loop" / "SKILL.md").exists()
-        assert "name: debug-loop" in (skill_dest / "debug-loop" / "SKILL.md").read_text()
+        assert not skill_dest.exists()
+        conn = sqlite3.connect(db_path)
+        try:
+            row = conn.execute(
+                """
+                SELECT status,
+                       json_extract(content_json, '$.slug'),
+                       json_extract(content_json, '$.source.kind'),
+                       json_extract(content_json, '$.source.agent'),
+                       json_extract(content_json, '$.suggested_artifact')
+                FROM workflow_candidates
+                """
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row == ("pending", "debug-loop", "agent_authored", "claude", "skill")
+        assert "Nothing was installed" in result.output
 
     def test_skills_passes_evidence_bundle_to_agent(self, runner, otlp_file, tmp_path):
         fake_output = json.dumps([_FAKE_SKILLS[0]])
@@ -862,10 +914,7 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]), \
              patch("reflect.core._prepare_sql_report_db"), \
-             patch("reflect.store.sqlite.connect_sqlite") as mock_connect, \
              patch("reflect.core._build_skill_evidence_bundle_from_sql", return_value=sql_bundle):
-            mock_conn = sqlite3.connect(":memory:")
-            mock_connect.return_value = mock_conn
             result = runner.invoke(main, [
                 "skills", "--yes", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
@@ -879,9 +928,10 @@ class TestSkillsSubcommand:
         assert '"graph_evidence"' in prompt
         assert '"source": "sql-graph"' in prompt
 
-    def test_skills_partial_selection(self, runner, otlp_file, tmp_path):
+    def test_skills_partial_selection_stages_only_selected(self, runner, otlp_file, tmp_path):
         """User selects only skill #1 from a list of 3."""
         skill_dest = tmp_path / "skills"
+        db_path = tmp_path / "reflect.db"
         fake_output = json.dumps(_FAKE_SKILLS)
         with patch("subprocess.run", return_value=_R(0, fake_output)), \
              patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
@@ -891,13 +941,21 @@ class TestSkillsSubcommand:
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
-            ], input="1\ny\n")
+                "--db-path", str(db_path),
+            ], input="1\n")
         assert result.exit_code == 0
-        assert (skill_dest / "debug-loop" / "SKILL.md").exists()
-        assert not (skill_dest / "context-reset").exists()
-        assert not (skill_dest / "test-first").exists()
+        assert not skill_dest.exists()
+        conn = sqlite3.connect(db_path)
+        try:
+            slugs = {
+                row[0]
+                for row in conn.execute("SELECT json_extract(content_json, '$.slug') FROM workflow_candidates")
+            }
+        finally:
+            conn.close()
+        assert slugs == {"debug-loop"}
 
-    def test_skills_interactive_agent_selection_limits_install_targets(self, runner, otlp_file, tmp_path):
+    def test_skills_does_not_select_or_write_agent_install_targets(self, runner, otlp_file, tmp_path):
         skill_output = json.dumps([_FAKE_SKILLS[0]])
         first_dest = tmp_path / "agent-one"
         second_dest = tmp_path / "agent-two"
@@ -908,19 +966,19 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", return_value=_R(0, skill_output)), \
              patch("reflect.core._detect_agents", return_value=agents), \
              patch("reflect.core._select_skills", return_value=[_FAKE_SKILLS[0]]), \
-             patch("reflect.core._select_skill_install_agents", return_value=[agents[1]]) as selector, \
-             patch("reflect.core.click.confirm", return_value=True):
+             patch("reflect.core._select_skill_install_agents") as selector:
             result = runner.invoke(main, [
                 "skills", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
+                "--db-path", str(tmp_path / "reflect.db"),
             ])
 
         assert result.exit_code == 0
-        assert selector.called
+        assert not selector.called
         assert not (first_dest / "debug-loop" / "SKILL.md").exists()
-        assert (second_dest / "debug-loop" / "SKILL.md").exists()
+        assert not (second_dest / "debug-loop" / "SKILL.md").exists()
 
     def test_skills_gemini_uses_p_flag(self, runner, otlp_file, tmp_path):
         """gemini agent uses -p flag, not --print."""
@@ -1104,7 +1162,7 @@ class TestSkillsSubcommand:
                 "--spans-dir", str(tmp_path / "sp"),
             ])
         assert result.exit_code == 0
-        assert (skill_dest / "debug-loop" / "SKILL.md").exists()
+        assert not skill_dest.exists()
 
     def test_skills_strips_plain_fences(self, runner, otlp_file, tmp_path):
         """Agent output wrapped in ``` fences (no language tag) is parsed correctly."""
@@ -1119,7 +1177,7 @@ class TestSkillsSubcommand:
                 "--spans-dir", str(tmp_path / "sp"),
             ])
         assert result.exit_code == 0
-        assert (skill_dest / "debug-loop" / "SKILL.md").exists()
+        assert not skill_dest.exists()
 
     def test_skills_accepts_trailing_text_after_json(self, runner, otlp_file, tmp_path):
         """Valid JSON followed by trailing prose should still parse."""
@@ -1134,7 +1192,7 @@ class TestSkillsSubcommand:
                 "--spans-dir", str(tmp_path / "sp"),
             ])
         assert result.exit_code == 0
-        assert (skill_dest / "debug-loop" / "SKILL.md").exists()
+        assert not skill_dest.exists()
 
 
 def test_strip_json_fences_variants():
@@ -1169,7 +1227,9 @@ def test_strip_json_fences_variants():
 
 class TestNoDataNoCrash:
     def test_empty_dirs_no_crash(self, runner, tmp_path):
-        with patch("reflect.core._start_publish_server"):
+        with patch("reflect.core._start_publish_server"), \
+             patch("reflect.core._default_otlp_traces", return_value=None), \
+             patch("reflect.core._discover_rich_session_files", return_value=[]):
             result = runner.invoke(main, [
                 "--foreground",
                 "--sessions-dir", str(tmp_path / "s"),
@@ -1791,7 +1851,7 @@ class TestDoctor:
         assert "Gemini CLI" in result.output
         assert "Use native telemetry first" in result.output
 
-    def test_doctor_support_matrix_marks_planned_agents(self, runner, tmp_path):
+    def test_doctor_support_matrix_marks_windsurf_implemented_and_other_agents_planned(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
         hook_home = tmp_path / ".otel-hook-home"
         (reflect_home / "state").mkdir(parents=True)
@@ -1816,7 +1876,12 @@ class TestDoctor:
         assert result.exit_code == 0
         assert "Antigravity" in result.output
         assert "OpenClaw" in result.output
-        assert "Windsurf" not in result.output
+        assert "Windsurf" in result.output
+        assert core._agent_support_summary("Windsurf") == {
+            "support_status": "Implemented",
+            "telemetry_path": "Hook telemetry + config snapshots",
+            "confidence": "Medium",
+        }
         assert "Planned" in result.output
 
     def test_doctor_otlp_logs_waiting_when_otel_hook_installed(self, runner, tmp_path):
@@ -1921,6 +1986,12 @@ class TestDoctor:
 
 
 class TestSetup:
+    @pytest.fixture(autouse=True)
+    def _do_not_start_real_gateway(self):
+        """Setup tests must never leave detached OTLP daemons behind."""
+        with patch("reflect.gateway._is_running", return_value=12345):
+            yield
+
     def test_setup_surfaces_detected_agent_guidance(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
         hook_home = tmp_path / ".otel-hook-home"
@@ -1984,6 +2055,29 @@ class TestSetup:
 
         assert result.exit_code == 0
         assert distribute_skills.call_args.kwargs["selected_agent_names"] == {"openai-codex-cli"}
+
+    def test_setup_wires_detected_windsurf_with_supported_hook_agent(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        windsurf_home = tmp_path / ".codeium" / "windsurf"
+        windsurf_home.mkdir(parents=True)
+
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch("reflect.core.subprocess.check_call") as check_call, \
+             patch("reflect.core._distribute_skills"), \
+             patch.dict(os.environ, {"WINDSURF_HOME": str(windsurf_home)}, clear=False):
+            result = runner.invoke(main, ["setup", "--agent", "windsurf"])
+
+        assert result.exit_code == 0
+        check_call.assert_any_call(
+            ["/usr/bin/otel-hook", "setup", "--global", "--agent", "windsurf"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        assert "Windsurf global hook setup complete" in result.output
+        assert "Windsurf: Not implemented" not in result.output
 
     def test_setup_local_agent_is_explicit_opt_in(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
@@ -2115,6 +2209,8 @@ class TestSetup:
 
         assert (global_skill_dir / "reflect" / "SKILL.md").exists()
         assert (global_skill_dir / "reflect-skills" / "SKILL.md").exists()
+        assert (global_skill_dir / "reflect-usage" / "SKILL.md").exists()
+        assert not (global_skill_dir / "reflect-loops").exists()
         assert not (global_skill_dir / "skills").exists()
         assert not (tmp_path / ".claude" / "skills" / "reflect" / "SKILL.md").exists()
 
@@ -2144,6 +2240,8 @@ class TestSetup:
 
         assert (shared_skill_dir / "reflect" / "SKILL.md").exists()
         assert (shared_skill_dir / "reflect-skills" / "SKILL.md").exists()
+        assert (shared_skill_dir / "reflect-usage" / "SKILL.md").exists()
+        assert not (shared_skill_dir / "reflect-loops").exists()
         assert "already populated" in console.file.getvalue()
 
     def test_distribute_skills_can_opt_into_local_project_path(self, tmp_path):
@@ -2167,20 +2265,23 @@ class TestSetup:
 
         assert (global_skill_dir / "reflect" / "SKILL.md").exists()
         assert (global_skill_dir / "reflect-skills" / "SKILL.md").exists()
+        assert (global_skill_dir / "reflect-usage" / "SKILL.md").exists()
+        assert not (global_skill_dir / "reflect-loops").exists()
         assert (tmp_path / ".claude" / "skills" / "reflect" / "SKILL.md").exists()
         assert (tmp_path / ".claude" / "skills" / "reflect-skills" / "SKILL.md").exists()
+        assert (tmp_path / ".claude" / "skills" / "reflect-usage" / "SKILL.md").exists()
         assert not (tmp_path / ".claude" / "skills" / "skills").exists()
 
     def test_distribute_skills_writes_codex_global_path(self, tmp_path):
         from rich.console import Console
 
         console = Console(file=io.StringIO())
-        codex_skill_dir = tmp_path / ".codex" / "skills"
+        codex_skill_dir = tmp_path / ".agents" / "skills"
         agent = {
             "name": "OpenAI Codex CLI",
             "detected": True,
             "global_path": str(codex_skill_dir),
-            "local_skill_path": ".codex/skills/",
+            "local_skill_path": ".agents/skills/",
         }
 
         with patch("reflect.core._detect_agents", return_value=[agent]), \
@@ -2189,6 +2290,14 @@ class TestSetup:
 
         assert (codex_skill_dir / "reflect" / "SKILL.md").exists()
         assert (codex_skill_dir / "reflect-skills" / "SKILL.md").exists()
+        assert (codex_skill_dir / "reflect-usage" / "SKILL.md").exists()
+        assert not (codex_skill_dir / "reflect-loops").exists()
+
+    def test_codex_uses_the_current_shared_agent_skill_roots(self):
+        codex = next(agent for agent in core._AGENT_SPECS if agent["name"] == "OpenAI Codex CLI")
+
+        assert codex["global_path"] == "~/.agents/skills/"
+        assert codex["local_skill_path"] == ".agents/skills/"
 
 
     def test_setup_seeds_config_from_example_on_fresh_install(self, runner, tmp_path):
@@ -2458,10 +2567,7 @@ class TestNativeOtelConfig:
         parsed = tomllib.loads(config)
         assert "[otel]" in config
         assert parsed["otel"]["exporter"]["otlp-grpc"]["endpoint"] == "http://localhost:4317"
-        assert parsed["otel"]["traces_exporter"] == "otlp"
-        assert parsed["otel"]["traces_endpoint"] == "http://localhost:4317"
-        assert parsed["otel"]["logs_exporter"] == "otlp"
-        assert parsed["otel"]["logs_endpoint"] == "http://localhost:4317"
+        assert parsed["otel"]["trace_exporter"]["otlp-grpc"]["endpoint"] == "http://localhost:4317"
         assert parsed["otel"]["log_user_prompt"] is False
 
     def test_codex_native_otel_enables_prompt_logging_when_text_capture_is_enabled(self, tmp_path):
@@ -2482,19 +2588,15 @@ class TestNativeOtelConfig:
         config = (codex_dir / "config.toml").read_text()
         assert "[model]" in config  # existing section preserved
         assert "[otel]" in config
-        assert 'traces_exporter = "otlp"' in config
-        assert 'logs_exporter = "otlp"' in config
+        assert "trace_exporter = { otlp-grpc" in config
         assert "log_user_prompt = false" in config
 
     def test_codex_native_otel_already_configured(self, tmp_path):
         codex_dir = tmp_path / ".codex"
         codex_dir.mkdir()
         config_text = (
-            '[otel]\nexporter = {otlp-grpc = {endpoint = "http://localhost:4317"}}\n'
-            'traces_exporter = "otlp"\n'
-            'traces_endpoint = "http://localhost:4317"\n'
-            'logs_exporter = "otlp"\n'
-            'logs_endpoint = "http://localhost:4317"\n'
+            '[otel]\nexporter = { otlp-grpc = { endpoint = "http://localhost:4317" } }\n'
+            'trace_exporter = { otlp-grpc = { endpoint = "http://localhost:4317" } }\n'
             "log_user_prompt = false\n"
         )
         (codex_dir / "config.toml").write_text(config_text)
@@ -2517,8 +2619,9 @@ class TestNativeOtelConfig:
 
         parsed = tomllib.loads((codex_dir / "config.toml").read_text())
         assert parsed["model"]["name"] == "o3"
-        assert parsed["otel"]["logs_exporter"] == "otlp"
-        assert parsed["otel"]["logs_endpoint"] == "http://localhost:4317"
+        assert parsed["otel"]["exporter"]["otlp-grpc"]["endpoint"] == "http://localhost:4317"
+        assert parsed["otel"]["trace_exporter"]["otlp-grpc"]["endpoint"] == "http://localhost:4317"
+        assert "traces_exporter" not in parsed["otel"]
 
     def test_codex_native_otel_replaces_mid_file_section_without_clobbering_following_sections(self, tmp_path):
         codex_dir = tmp_path / ".codex"
@@ -2534,10 +2637,32 @@ class TestNativeOtelConfig:
 
         updated = (codex_dir / "config.toml").read_text()
         parsed = tomllib.loads(updated)
-        assert parsed["otel"]["traces_exporter"] == "otlp"
-        assert parsed["otel"]["logs_exporter"] == "otlp"
+        assert parsed["otel"]["trace_exporter"]["otlp-grpc"]["endpoint"] == "http://localhost:4317"
         assert parsed["projects"]["/tmp/demo"]["trust_level"] == "trusted"
         assert "\n\n[projects]\n" in updated
+
+    def test_codex_native_otel_migrates_legacy_keys_and_preserves_user_settings(self, tmp_path):
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "config.toml").write_text(
+            '[otel]\nexporter = {otlp-grpc = {endpoint = "http://localhost:4317"}}\n'
+            'traces_exporter = "otlp"\n'
+            'traces_endpoint = "http://localhost:4317"\n'
+            'logs_exporter = "otlp"\n'
+            'logs_endpoint = "http://localhost:4317"\n'
+            'log_user_prompt = false\n'
+            'environment = "local-dev"\n'
+            'metrics_exporter = "none"\n'
+        )
+
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
+
+        parsed = tomllib.loads((codex_dir / "config.toml").read_text())
+        assert parsed["otel"]["environment"] == "local-dev"
+        assert parsed["otel"]["metrics_exporter"] == "none"
+        assert parsed["otel"]["trace_exporter"]["otlp-grpc"]["endpoint"] == "http://localhost:4317"
+        assert not ({"traces_exporter", "traces_endpoint", "logs_exporter", "logs_endpoint"} & parsed["otel"].keys())
 
     def test_codex_native_otel_read_error(self, tmp_path):
         codex_dir = tmp_path / ".codex"
@@ -2575,6 +2700,16 @@ class TestNativeOtelConfig:
         codex = next(status for status in statuses if status["agent"] == "OpenAI Codex CLI")
         assert codex["status"] == "ready"
         assert "trace/log OTLP exporters" in codex["details"]
+        assert "raw user prompt export stays disabled" in codex["details"]
+
+    def test_native_otel_status_reports_enabled_codex_prompt_capture(self, tmp_path):
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            core._configure_codex_native_otel(self._console(), self.HOOK_CFG_CAPTURE_TEXT)
+            statuses = core._collect_native_otel_statuses(self.HOOK_CFG_CAPTURE_TEXT)
+
+        codex = next(status for status in statuses if status["agent"] == "OpenAI Codex CLI")
+        assert codex["status"] == "ready"
+        assert "raw user prompt export is enabled" in codex["details"]
 
     def test_native_otel_status_reports_unreadable_codex_config(self, tmp_path):
         codex_dir = tmp_path / ".codex"

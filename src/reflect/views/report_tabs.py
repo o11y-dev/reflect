@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from reflect.schema.base import ReflectModel
+from reflect.utils import _sanitize_command_display
 
 
 class ActivityViewModel(ReflectModel):
@@ -31,6 +32,7 @@ class CostsViewModel(ReflectModel):
     cost_breakdown: dict[str, float]
     total_cache_creation_tokens: int
     total_cache_read_tokens: int
+    agent_cost_over_time: list[dict[str, Any]]
 
 
 class ToolsViewModel(ReflectModel):
@@ -59,6 +61,23 @@ class McpViewModel(ReflectModel):
 
 
 class AgentsViewModel(ReflectModel):
+    agent_comparison: list[dict[str, Any]]
+    agents: dict[str, dict[str, Any]]
+
+
+class UsageToolSummaryViewModel(ReflectModel):
+    subagent_types_by_count: dict[str, int]
+    subagent_stops_by_type: dict[str, int]
+    subagent_launches: int
+    subagent_total_starts: int
+    subagent_total_stops: int
+    top_commands: list[dict[str, Any]]
+    unique_commands: int
+    signature_command: str
+    signature_command_count: int
+    shell_executions: int
+    file_edits: int
+    file_reads: int
     agent_comparison: list[dict[str, Any]]
     agents: dict[str, dict[str, Any]]
 
@@ -170,11 +189,15 @@ def build_report_tab(
     if normalized == "agents":
         skill_subagent = _skill_subagent_counts(conn, scoped)
         return _build_agents(conn, scoped, skill_subagent).model_dump()
+    if normalized == "usage_tools":
+        return _build_usage_tool_summary(conn, scoped).model_dump()
     if normalized == "graphs":
-        skill_subagent = _skill_subagent_counts(conn, scoped)
-        tools = _build_tools(conn, scoped, skill_subagent)
-        mcp = _build_mcp(conn, scoped)
-        return _build_graphs(conn, scoped, tools.tools_by_count, mcp.mcp_servers_by_count).model_dump()
+        return _build_graphs(
+            conn,
+            scoped,
+            _top_tool_counts(conn, scoped),
+            _graph_mcp_server_counts(conn, scoped),
+        ).model_dump()
     if normalized == "specs":
         return _build_specs(conn, scoped).model_dump()
     if normalized == "memory":
@@ -307,6 +330,35 @@ def _build_models_and_costs(
         """,
         rollup_params,
     ).fetchone()
+    cost_scope, cost_params = _scope_clause("sr.session_id", scoped_ids, prefix="AND")
+    agent_cost_rows = _dict_rows(conn.execute(
+        f"""
+        WITH scoped_costs AS (
+          SELECT
+            substr(sr.started_at, 1, 10) AS day,
+            COALESCE(NULLIF(sr.agent, ''), 'unknown') AS agent,
+            COALESCE(SUM(sr.total_cost), 0) AS total_cost
+          FROM session_rollups sr
+          WHERE sr.total_cost > 0
+            AND sr.started_at IS NOT NULL
+            AND sr.started_at <> ''
+            AND substr(sr.started_at, 1, 4) >= '2000'
+          {cost_scope}
+          GROUP BY substr(sr.started_at, 1, 10), COALESCE(NULLIF(sr.agent, ''), 'unknown')
+        ), recent_days AS (
+          SELECT day
+          FROM scoped_costs
+          GROUP BY day
+          ORDER BY day DESC
+          LIMIT 180
+        )
+        SELECT scoped_costs.day, scoped_costs.agent, scoped_costs.total_cost
+        FROM scoped_costs
+        JOIN recent_days USING(day)
+        ORDER BY scoped_costs.day ASC, scoped_costs.total_cost DESC, scoped_costs.agent ASC
+        """,
+        cost_params,
+    ))
     model_counts = _counter(model_rows, "model", "call_count")
     model_costs = {str(row["model"]): float(row["total_cost"] or 0) for row in model_rows}
     cost_breakdown = _token_weighted_cost_breakdown(model_rows)
@@ -318,6 +370,7 @@ def _build_models_and_costs(
             cost_breakdown=cost_breakdown,
             total_cache_creation_tokens=int(cache_totals[0] or 0),
             total_cache_read_tokens=int(cache_totals[1] or 0),
+            agent_cost_over_time=agent_cost_rows,
         ),
     )
 
@@ -350,29 +403,7 @@ def _build_tools(
     scoped_ids: list[str] | None,
     skill_subagent: dict[str, Any],
 ) -> ToolsViewModel:
-    if scoped_ids is None:
-        tool_rows = _dict_rows(conn.execute(
-            """
-            SELECT tool_name, COALESCE(SUM(call_count), 0) AS call_count
-            FROM tool_rollups
-            GROUP BY tool_name
-            ORDER BY call_count DESC, tool_name ASC
-            LIMIT 25
-            """
-        ))
-    else:
-        tool_scope, tool_params = _scope_clause("tc.session_id", scoped_ids)
-        tool_rows = _dict_rows(conn.execute(
-            f"""
-            SELECT tc.tool_name, COUNT(*) AS call_count
-            FROM tool_calls tc
-            {tool_scope}
-            GROUP BY tool_name
-            ORDER BY call_count DESC, tool_name ASC
-            LIMIT 25
-            """,
-            tool_params,
-        ))
+    tools_by_count = _top_tool_counts(conn, scoped_ids)
     duration_rows = _dict_rows(conn.execute(
         f"""
         SELECT tool_name, duration_ms
@@ -401,7 +432,7 @@ def _build_tools(
     signature = top_commands[0] if top_commands else {"command": "", "count": 0}
     file_counts = _file_counts(conn, scoped_ids)
     return ToolsViewModel(
-        tools_by_count=_counter(tool_rows, "tool_name", "call_count"),
+        tools_by_count=tools_by_count,
         tool_percentiles=percentiles,
         skills_by_count=dict(skill_subagent["skills"].most_common()),
         subagent_types_by_count=dict(skill_subagent["subagent_starts"].most_common()),
@@ -413,10 +444,95 @@ def _build_tools(
         unique_commands=len(commands),
         signature_command=str(signature["command"]),
         signature_command_count=int(signature["count"]),
-        shell_executions=sum(commands.values()),
+        shell_executions=_shell_execution_count(conn, scoped_ids),
         file_edits=file_counts["edits"],
         file_reads=file_counts["reads"],
     )
+
+
+def _build_usage_tool_summary(
+    conn: sqlite3.Connection,
+    scoped_ids: list[str] | None,
+) -> UsageToolSummaryViewModel:
+    skill_subagent = _usage_subagent_counts(conn, scoped_ids)
+    commands = _grouped_tool_command_patterns(conn, scoped_ids)
+    top_commands = [{"command": command, "count": count} for command, count in commands.most_common(25)]
+    signature = top_commands[0] if top_commands else {"command": "", "count": 0}
+    file_counts = _usage_file_counts(conn, scoped_ids)
+    agents = _build_agents(conn, scoped_ids, skill_subagent)
+    starts = skill_subagent["subagent_starts"]
+    stops = skill_subagent["subagent_stops"]
+    return UsageToolSummaryViewModel(
+        subagent_types_by_count=dict(starts.most_common()),
+        subagent_stops_by_type=dict(stops.most_common()),
+        subagent_launches=sum(starts.values()),
+        subagent_total_starts=sum(starts.values()),
+        subagent_total_stops=sum(stops.values()),
+        top_commands=top_commands,
+        unique_commands=len(commands),
+        signature_command=str(signature["command"]),
+        signature_command_count=int(signature["count"]),
+        shell_executions=sum(commands.values()),
+        file_edits=file_counts["edits"],
+        file_reads=file_counts["reads"],
+        agent_comparison=agents.agent_comparison,
+        agents=agents.agents,
+    )
+
+
+def _top_tool_counts(
+    conn: sqlite3.Connection,
+    scoped_ids: list[str] | None,
+) -> dict[str, int]:
+    if scoped_ids is None:
+        rows = _dict_rows(conn.execute(
+            """
+            SELECT tool_name, COALESCE(SUM(call_count), 0) AS call_count
+            FROM tool_rollups
+            GROUP BY tool_name
+            ORDER BY call_count DESC, tool_name ASC
+            LIMIT 25
+            """
+        ))
+    else:
+        scope, params = _scope_clause("tc.session_id", scoped_ids)
+        rows = _dict_rows(conn.execute(
+            f"""
+            SELECT tc.tool_name, COUNT(*) AS call_count
+            FROM tool_calls tc
+            {scope}
+            GROUP BY tool_name
+            ORDER BY call_count DESC, tool_name ASC
+            LIMIT 25
+            """,
+            params,
+        ))
+    return _counter(rows, "tool_name", "call_count")
+
+
+def _graph_mcp_server_counts(
+    conn: sqlite3.Connection,
+    scoped_ids: list[str] | None,
+) -> dict[str, int]:
+    scope, params = _scope_clause("session_id", scoped_ids, prefix="AND")
+    rows = _dict_rows(conn.execute(
+        f"""
+        SELECT server_name, COUNT(*) AS call_count
+        FROM mcp_calls
+        WHERE server_name IS NOT NULL AND server_name <> ''
+        {scope}
+        GROUP BY server_name
+        ORDER BY call_count DESC, server_name ASC
+        LIMIT 25
+        """,
+        params,
+    ))
+    counts: Counter[str] = Counter()
+    for row in rows:
+        server = _display_mcp_server_name(row["server_name"])
+        if server:
+            counts[server] += int(row["call_count"] or 0)
+    return dict(counts)
 
 
 def _skill_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> dict[str, Any]:
@@ -504,6 +620,72 @@ def _skill_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | Non
         "subagent_starts": subagent_starts,
         "subagent_stops": subagent_stops,
         "subagents_by_agent": subagents_by_agent,
+    }
+
+
+def _usage_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> dict[str, Any]:
+    scope, params = _scope_clause("st.session_id", scoped_ids, prefix="AND")
+    rows = _dict_rows(conn.execute(
+        f"""
+        SELECT
+          COALESCE(NULLIF(sr.agent, ''), 'unknown') AS agent,
+          st.summary,
+          st.raw_attrs_json
+        FROM steps st
+        LEFT JOIN session_rollups sr ON sr.session_id = st.session_id
+        WHERE (
+          LOWER(COALESCE(st.summary, '')) LIKE '%subagent%'
+          OR LOWER(COALESCE(st.raw_attrs_json, '')) LIKE '%subagent%'
+          OR LOWER(COALESCE(st.raw_attrs_json, '')) LIKE '%agent_type%'
+          OR LOWER(COALESCE(st.raw_attrs_json, '')) LIKE '%agent_id%'
+          OR (
+            json_valid(st.raw_attrs_json)
+            AND LOWER(COALESCE(json_extract(st.raw_attrs_json, '$."gen_ai.client.tool_name"'), ''))
+              IN ('agent', 'read_agent', 'subagent', 'task')
+          )
+        )
+        {scope}
+        """,
+        params,
+    ))
+    starts: Counter[str] = Counter()
+    stops: Counter[str] = Counter()
+    by_agent: dict[str, Counter[str]] = {}
+    for row in rows:
+        attrs = _load_json_dict(str(row["raw_attrs_json"] or "{}"))
+        agent = str(
+            _attr(attrs, "gen_ai.client.name", "ide.name", "agent.name")
+            or row["agent"]
+            or "unknown"
+        )
+        event = str(_attr(attrs, "gen_ai.client.hook.event", "ide.hook.event") or row["summary"] or "")
+        event_lc = event.lower()
+        subagent_type = str(_attr(attrs, "gen_ai.client.subagent_type", "ide.subagent_type", "subagent.type") or "")
+        is_start = event == "SubagentStart" or event.endswith(".SubagentStart")
+        is_stop = event == "SubagentStop" or event.endswith(".SubagentStop")
+        if subagent_type or is_start or is_stop:
+            subagent_type = subagent_type or "unknown"
+            if is_stop or ("subagent" in event_lc and "stop" in event_lc):
+                stops[subagent_type] += 1
+            else:
+                starts[subagent_type] += 1
+                by_agent.setdefault(agent, Counter())[subagent_type] += 1
+        tool_name = str(_attr(attrs, "gen_ai.client.tool_name") or "")
+        preview = str(_attr(attrs, "gen_ai.client.tool.input", "tool.input") or "")
+        tool_subagent = _extract_subagent_name_from_tool(tool_name, attrs, preview)
+        if tool_subagent and (event == "PreToolUse" or event.endswith(".PreToolUse")):
+            starts[tool_subagent] += 1
+            by_agent.setdefault(agent, Counter())[tool_subagent] += 1
+        prompt_text = str(_attr(attrs, "gen_ai.client.prompt", "gen_ai.client.prompt.text", "prompt") or "")
+        for subagent_name in sorted(_extract_subagent_names_from_text(prompt_text)):
+            starts[subagent_name] += 1
+            by_agent.setdefault(agent, Counter())[subagent_name] += 1
+    return {
+        "skills": Counter(),
+        "skills_by_agent": {},
+        "subagent_starts": starts,
+        "subagent_stops": stops,
+        "subagents_by_agent": by_agent,
     }
 
 
@@ -652,6 +834,57 @@ def _command_patterns(conn: sqlite3.Connection, scoped_ids: list[str] | None) ->
     return Counter({command: count for command, count in commands.items() if command})
 
 
+def _grouped_tool_command_patterns(
+    conn: sqlite3.Connection,
+    scoped_ids: list[str] | None,
+) -> Counter[str]:
+    rows = _dict_rows(conn.execute(
+        f"""
+        WITH command_calls AS (
+          SELECT input_hash, input_preview_redacted, raw_attrs_json
+          FROM tool_calls tc
+          WHERE (LOWER(tool_name) IN ('shell', 'bash', 'exec_command')
+             OR raw_attrs_json LIKE '%command%'
+             OR input_preview_redacted LIKE '%"cmd"%')
+          {_and_scope('tc.session_id', scoped_ids)}
+        )
+        SELECT
+          MIN(input_preview_redacted) AS input_preview_redacted,
+          MIN(raw_attrs_json) AS raw_attrs_json,
+          COUNT(*) AS occurrence_count
+        FROM command_calls
+        WHERE input_hash IS NOT NULL AND input_hash <> ''
+        GROUP BY input_hash
+        UNION ALL
+        SELECT input_preview_redacted, raw_attrs_json, COUNT(*) AS occurrence_count
+        FROM command_calls
+        WHERE input_hash IS NULL OR input_hash = ''
+        GROUP BY input_preview_redacted, raw_attrs_json
+        """,
+        scoped_ids or [],
+    ))
+    commands: Counter[str] = Counter()
+    for row in rows:
+        command = _extract_command(row["raw_attrs_json"], row["input_preview_redacted"])
+        if command:
+            commands[_sanitize_command(command)] += int(row["occurrence_count"] or 0)
+    return Counter({command: count for command, count in commands.items() if command})
+
+
+def _shell_execution_count(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> int:
+    scope, params = _scope_clause("session_id", scoped_ids, prefix="AND")
+    row = conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM tool_calls
+        WHERE LOWER(tool_name) IN ('shell', 'bash', 'exec_command')
+        {scope}
+        """,
+        params,
+    ).fetchone()
+    return int(row[0] or 0)
+
+
 def _extract_command(
     attrs_json: object,
     preview: object = "",
@@ -686,7 +919,7 @@ def _extract_command(
 
 
 def _sanitize_command(value: str) -> str:
-    text = " ".join(value.strip().split())
+    text = " ".join(_sanitize_command_display(value).strip().split())
     if not text:
         return ""
     cli_pattern = _cli_command_pattern(text)
@@ -783,6 +1016,28 @@ def _file_counts(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> dict
             reads += 1
         if "afterfileedit" in text or '"edit"' in text or '"write"' in text or "apply_patch" in text:
             edits += 1
+    return {"reads": reads, "edits": edits}
+
+
+def _usage_file_counts(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> dict[str, int]:
+    scope, params = _scope_clause("session_id", scoped_ids, prefix="AND")
+    rows = conn.execute(
+        f"""
+        SELECT LOWER(COALESCE(tool_name, '')) AS tool_name, COUNT(*) AS call_count
+        FROM tool_calls
+        WHERE 1 = 1
+        {scope}
+        GROUP BY LOWER(COALESCE(tool_name, ''))
+        """,
+        params,
+    ).fetchall()
+    read_tools = {"read", "read_file", "readfile", "view", "view_file"}
+    edit_tools = {
+        "apply_patch", "edit", "edit_file", "editfile", "multi_edit", "patch",
+        "replace", "write", "write_file", "writefile",
+    }
+    reads = sum(int(count or 0) for tool_name, count in rows if str(tool_name) in read_tools)
+    edits = sum(int(count or 0) for tool_name, count in rows if str(tool_name) in edit_tools)
     return {"reads": reads, "edits": edits}
 
 
@@ -1066,14 +1321,15 @@ def _build_graphs(
 
 
 def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> dict[str, Any]:
+    graph_scoped_ids = _workspace_peer_session_ids(conn, scoped_ids)
     node_filters: list[str] = []
     node_params: list[str] = []
-    if scoped_ids is not None:
-        if not scoped_ids:
+    if graph_scoped_ids is not None:
+        if not graph_scoped_ids:
             return {"nodes": [], "edges": [], "sessions": [], "legend": []}
-        placeholders = ", ".join("?" for _ in scoped_ids)
+        placeholders = ", ".join("?" for _ in graph_scoped_ids)
         node_filters.append(f"(session_id IS NULL OR session_id IN ({placeholders}))")
-        node_params.extend(scoped_ids)
+        node_params.extend(graph_scoped_ids)
     where = f"WHERE {' AND '.join(node_filters)}" if node_filters else ""
     node_rows = _dict_rows(conn.execute(
         f"""
@@ -1096,6 +1352,7 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
         WHERE kind_rank <= CASE kind
           WHEN 'Agent' THEN 10
           WHEN 'Session' THEN 40
+          WHEN 'Workspace' THEN 30
           WHEN 'Repo' THEN 20
           WHEN 'Spec' THEN 35
           WHEN 'Folder' THEN 75
@@ -1114,17 +1371,18 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
           CASE kind
             WHEN 'Agent' THEN 0
             WHEN 'Session' THEN 1
-            WHEN 'Skill' THEN 2
-            WHEN 'Subagent' THEN 3
-            WHEN 'Outcome' THEN 4
-            WHEN 'Repo' THEN 5
-            WHEN 'Spec' THEN 6
-            WHEN 'Folder' THEN 7
-            WHEN 'Tool' THEN 8
-            WHEN 'MCPServer' THEN 9
-            WHEN 'Path' THEN 10
-            WHEN 'ToolCall' THEN 11
-            WHEN 'Memory' THEN 12
+            WHEN 'Workspace' THEN 2
+            WHEN 'Skill' THEN 3
+            WHEN 'Subagent' THEN 4
+            WHEN 'Outcome' THEN 5
+            WHEN 'Repo' THEN 6
+            WHEN 'Spec' THEN 7
+            WHEN 'Folder' THEN 8
+            WHEN 'Tool' THEN 9
+            WHEN 'MCPServer' THEN 10
+            WHEN 'Path' THEN 11
+            WHEN 'ToolCall' THEN 12
+            WHEN 'Memory' THEN 13
             ELSE 99
           END,
           COALESCE(last_seen_at, first_seen_at, '') DESC,
@@ -1142,10 +1400,10 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
         f"target_node_id IN ({', '.join('?' for _ in selected_ids)})",
     ]
     edge_params = [*selected_ids, *selected_ids]
-    if scoped_ids is not None:
-        placeholders = ", ".join("?" for _ in scoped_ids)
+    if graph_scoped_ids is not None:
+        placeholders = ", ".join("?" for _ in graph_scoped_ids)
         edge_filters.append(f"(session_id IS NULL OR session_id IN ({placeholders}))")
-        edge_params.extend(scoped_ids)
+        edge_params.extend(graph_scoped_ids)
     edge_rows = _dict_rows(conn.execute(
         f"""
         SELECT source_node_id, target_node_id, kind, session_id, weight, attrs_json, first_seen_at, last_seen_at
@@ -1156,6 +1414,117 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
         """,
         edge_params,
     ))
+    if graph_scoped_ids is not None:
+        scope_placeholders = ", ".join("?" for _ in graph_scoped_ids)
+        scoped_context_rows = _dict_rows(conn.execute(
+            f"""
+            SELECT source_node_id, target_node_id, kind, session_id, weight,
+                   attrs_json, first_seen_at, last_seen_at
+            FROM graph_edges
+            WHERE session_id IN ({scope_placeholders})
+              AND kind IN (
+                'ran_in_workspace', 'ran_session', 'spawned_session',
+                'worked_in_repo'
+              )
+            ORDER BY
+              CASE kind
+                WHEN 'ran_in_workspace' THEN 0
+                WHEN 'ran_session' THEN 1
+                WHEN 'spawned_session' THEN 2
+                ELSE 3
+              END,
+              COALESCE(last_seen_at, first_seen_at, '') DESC
+            """,
+            graph_scoped_ids,
+        ))
+        scoped_bridge_rows = _dict_rows(conn.execute(
+            f"""
+            SELECT source_node_id, target_node_id, kind, session_id, weight,
+                   attrs_json, first_seen_at, last_seen_at
+            FROM graph_edges
+            WHERE session_id IN ({scope_placeholders})
+              AND kind IN (
+                'touched_folder', 'touched_path', 'used_skill',
+                'achieved_outcome', 'recorded_memory'
+              )
+            ORDER BY
+              CASE kind
+                WHEN 'touched_folder' THEN 0
+                ELSE 1
+              END,
+              weight DESC,
+              COALESCE(last_seen_at, first_seen_at, '') DESC
+            LIMIT 600
+            """,
+            graph_scoped_ids,
+        ))
+        scoped_bridge_rows = [*scoped_context_rows, *scoped_bridge_rows]
+        if scoped_bridge_rows:
+            bridge_node_ids = {
+                str(node_id)
+                for row in scoped_bridge_rows
+                for node_id in (row["source_node_id"], row["target_node_id"])
+            }
+            missing_ids = [node_id for node_id in bridge_node_ids if node_id not in selected]
+            if missing_ids:
+                placeholders = ", ".join("?" for _ in missing_ids)
+                node_rows.extend(
+                    _dict_rows(conn.execute(
+                        f"""
+                        SELECT id, kind, label, session_id, attrs_json, first_seen_at, last_seen_at
+                        FROM graph_nodes
+                        WHERE id IN ({placeholders})
+                        """,
+                        missing_ids,
+                    ))
+                )
+                selected_ids.extend(missing_ids)
+                selected.update(missing_ids)
+            edge_rows.extend(scoped_bridge_rows)
+    session_node_ids = [
+        str(row["id"])
+        for row in node_rows
+        if str(row.get("kind") or "") == "Session"
+    ]
+    if session_node_ids:
+        session_placeholders = ", ".join("?" for _ in session_node_ids)
+        lineage_rows = _dict_rows(conn.execute(
+            f"""
+            SELECT source_node_id, target_node_id, kind, session_id, weight,
+                   attrs_json, first_seen_at, last_seen_at
+            FROM graph_edges
+            WHERE kind = 'spawned_session'
+              AND (
+                source_node_id IN ({session_placeholders})
+                OR target_node_id IN ({session_placeholders})
+              )
+            ORDER BY COALESCE(last_seen_at, first_seen_at, '') DESC
+            LIMIT 120
+            """,
+            [*session_node_ids, *session_node_ids],
+        ))
+        if lineage_rows:
+            lineage_node_ids = {
+                str(node_id)
+                for row in lineage_rows
+                for node_id in (row["source_node_id"], row["target_node_id"])
+            }
+            missing_ids = [node_id for node_id in lineage_node_ids if node_id not in selected]
+            if missing_ids:
+                placeholders = ", ".join("?" for _ in missing_ids)
+                node_rows.extend(
+                    _dict_rows(conn.execute(
+                        f"""
+                        SELECT id, kind, label, session_id, attrs_json, first_seen_at, last_seen_at
+                        FROM graph_nodes
+                        WHERE id IN ({placeholders})
+                        """,
+                        missing_ids,
+                    ))
+                )
+                selected_ids.extend(missing_ids)
+                selected.update(missing_ids)
+            edge_rows.extend(lineage_rows)
     if scoped_ids is None:
         bridge_ids = [
             str(row["id"])
@@ -1215,7 +1584,7 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
         context_ids = [
             str(row["id"])
             for row in node_rows
-            if str(row.get("kind") or "") in {"Memory", "Spec", "Repo"}
+            if str(row.get("kind") or "") in {"Memory", "Spec", "Repo", "Workspace"}
         ]
         if context_ids:
             context_placeholders = ", ".join("?" for _ in context_ids)
@@ -1225,7 +1594,10 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
                 FROM graph_edges ge
                 JOIN graph_nodes gs ON gs.id = ge.source_node_id
                 JOIN graph_nodes gt ON gt.id = ge.target_node_id
-                WHERE ge.kind IN ('recorded_memory', 'planned_spec', 'addressed_spec', 'worked_in_repo')
+                WHERE ge.kind IN (
+                  'recorded_memory', 'planned_spec', 'addressed_spec',
+                  'worked_in_repo', 'ran_in_workspace'
+                )
                   AND (
                     (ge.source_node_id IN ({context_placeholders}) AND gt.kind = 'Session')
                     OR (ge.target_node_id IN ({context_placeholders}) AND gs.kind = 'Session')
@@ -1270,9 +1642,23 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
                         deduped[key] = row
                 edge_rows = list(deduped.values())
 
+    deduped_edges: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for row in edge_rows:
+        key = (
+            str(row["source_node_id"]),
+            str(row["target_node_id"]),
+            str(row["kind"]),
+            str(row.get("session_id") or ""),
+        )
+        existing = deduped_edges.get(key)
+        if existing is None or float(row.get("weight") or 0) > float(existing.get("weight") or 0):
+            deduped_edges[key] = row
+    edge_rows = list(deduped_edges.values())
+
     colors = {
         "Agent": "#ffb156",
         "Session": "#f5f2ea",
+        "Workspace": "#f28a1a",
         "Step": "#8f887d",
         "Tool": "#48d597",
         "ToolCall": "#2fa66f",
@@ -1301,11 +1687,12 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
             row for row in edge_rows
             if str(row["source_node_id"]) in connected_ids and str(row["target_node_id"]) in connected_ids
         ]
-    if scoped_ids is not None:
+    if graph_scoped_ids is not None:
         session_roots = {
             str(row["id"])
             for row in node_rows
-            if str(row["kind"] or "") == "Session" and str(row["session_id"] or "") in set(scoped_ids)
+            if str(row["kind"] or "") == "Session"
+            and str(row["session_id"] or "") in set(graph_scoped_ids)
         }
         adjacency: dict[str, set[str]] = {}
         for row in edge_rows:
@@ -1362,6 +1749,29 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
         "sessions": sorted({str(node["session_id"]) for node in nodes if node["session_id"]}),
         "legend": [{"kind": kind, "color": colors.get(kind, "#d7d1c6")} for kind in sorted(kinds)],
     }
+
+
+def _workspace_peer_session_ids(
+    conn: sqlite3.Connection,
+    scoped_ids: list[str] | None,
+) -> list[str] | None:
+    """Expand a semantic-graph session scope to every canonical workspace peer."""
+    if scoped_ids is None or not scoped_ids:
+        return scoped_ids
+    placeholders = ", ".join("?" for _ in scoped_ids)
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT peer.id
+        FROM sessions selected
+        JOIN sessions peer
+          ON peer.workspace_id = selected.workspace_id
+        WHERE selected.id IN ({placeholders})
+          AND COALESCE(selected.workspace_id, '') <> ''
+        ORDER BY peer.id
+        """,
+        scoped_ids,
+    )
+    return sorted({*scoped_ids, *(str(row[0]) for row in rows)})
 
 
 def _cooccurrence_matrix(conn: sqlite3.Connection, scoped_ids: list[str] | None, co_tools: list[str]) -> list[list[int]]:

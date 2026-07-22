@@ -205,7 +205,12 @@ def _build_http_app(
 
     @app.get("/health")
     async def health() -> dict:
-        return {"status": "ok"}
+        return {
+            "status": "ok",
+            "pid": os.getpid(),
+            "traces_path": str(traces_path or _DEFAULT_TRACES_PATH),
+            "logs_path": str(logs_path or _DEFAULT_LOGS_PATH),
+        }
 
     return app
 
@@ -228,14 +233,20 @@ def start_gateway(
     lp.parent.mkdir(parents=True, exist_ok=True)
 
     # gRPC server
-    grpc_server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    grpc_server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=4),
+        options=(("grpc.so_reuseport", 0),),
+    )
     trace_service_pb2_grpc.add_TraceServiceServicer_to_server(
         TraceServiceServicer(tp), grpc_server,
     )
     logs_service_pb2_grpc.add_LogsServiceServicer_to_server(
         LogsServiceServicer(lp), grpc_server,
     )
-    grpc_server.add_insecure_port(f"127.0.0.1:{grpc_port}")
+    bound_port = grpc_server.add_insecure_port(f"127.0.0.1:{grpc_port}")
+    if bound_port == 0:
+        grpc_server.stop(grace=0)
+        raise RuntimeError(f"gRPC port {grpc_port} is already in use")
     grpc_server.start()
     logger.info("gRPC listening on 127.0.0.1:%d", grpc_port)
 
@@ -290,10 +301,28 @@ def _is_running() -> int | None:
         return None
     try:
         os.kill(pid, 0)
+    except PermissionError:
+        # Sandboxed callers may not be allowed to signal an otherwise healthy
+        # user process. Preserve the PID file and let the health probe report
+        # endpoint ownership instead of treating permission denial as death.
+        return pid
     except OSError:
         _PID_FILE.unlink(missing_ok=True)
         return None
     return pid
+
+
+def _probe_gateway(http_port: int = 4318, *, timeout: float = 0.25) -> dict | None:
+    """Return health metadata for a Reflect gateway listening on ``http_port``."""
+    from urllib.error import HTTPError, URLError
+    from urllib.request import urlopen
+
+    try:
+        with urlopen(f"http://127.0.0.1:{http_port}/health", timeout=timeout) as response:
+            payload = orjson.loads(response.read())
+    except (HTTPError, URLError, TimeoutError, OSError, orjson.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) and payload.get("status") == "ok" else None
 
 
 def daemon_start(grpc_port: int = 4317, http_port: int = 4318) -> int:
@@ -303,6 +332,14 @@ def daemon_start(grpc_port: int = 4317, http_port: int = 4318) -> int:
     existing = _is_running()
     if existing:
         raise RuntimeError(f"Gateway already running (PID {existing})")
+    listener = _probe_gateway(http_port)
+    if listener:
+        listener_pid = listener.get("pid")
+        destination = listener.get("traces_path") or "an unknown trace store"
+        owner = f"PID {listener_pid}" if listener_pid else "an unmanaged process"
+        raise RuntimeError(
+            f"OTLP gateway port is already owned by {owner}; traces route to {destination}"
+        )
 
     _PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(_LOG_FILE, "a") as log_fd:
@@ -317,7 +354,28 @@ def daemon_start(grpc_port: int = 4317, http_port: int = 4318) -> int:
             start_new_session=True,
         )
     _PID_FILE.write_text(str(proc.pid))
-    return proc.pid
+
+    import time
+
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            _PID_FILE.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"Gateway failed to start; inspect {_LOG_FILE} for the bind error"
+            )
+        health = _probe_gateway(http_port)
+        if health and health.get("pid") == proc.pid:
+            return proc.pid
+        time.sleep(0.05)
+
+    proc.terminate()
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    _PID_FILE.unlink(missing_ok=True)
+    raise RuntimeError(f"Gateway did not become healthy; inspect {_LOG_FILE}")
 
 
 def daemon_stop() -> bool:
@@ -343,11 +401,20 @@ def daemon_stop() -> bool:
 def daemon_status() -> dict:
     """Return gateway status dict."""
     pid = _is_running()
+    health = _probe_gateway()
+    listener_pid = health.get("pid") if health else None
+    managed_listener = bool(pid and (listener_pid is None or listener_pid == pid))
+    conflict = bool(health and not managed_listener)
     traces_path = _DEFAULT_TRACES_PATH
     logs_path = _DEFAULT_LOGS_PATH
     return {
-        "running": pid is not None,
+        "running": pid is not None and not conflict,
         "pid": pid,
+        "listener": health is not None,
+        "listener_pid": listener_pid,
+        "conflict": conflict,
+        "listener_traces_path": health.get("traces_path") if health else None,
+        "listener_logs_path": health.get("logs_path") if health else None,
         "traces_path": str(traces_path),
         "logs_path": str(logs_path),
         "traces_size": traces_path.stat().st_size if traces_path.exists() else 0,

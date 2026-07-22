@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -193,7 +193,11 @@ class TestHttpEndpoints:
         client = TestClient(app)
         resp = client.get("/health")
         assert resp.status_code == 200
-        assert resp.json() == {"status": "ok"}
+        payload = resp.json()
+        assert payload["status"] == "ok"
+        assert payload["pid"] > 0
+        assert payload["traces_path"].endswith("otel-traces.json")
+        assert payload["logs_path"].endswith("otel-logs.json")
 
     def test_post_traces(self, traces_path):
         from fastapi.testclient import TestClient
@@ -292,17 +296,88 @@ class TestDaemonHelpers:
             assert _is_running() is None
             assert not pid_file.exists()  # cleaned up
 
+    def test_is_running_preserves_pid_when_sandbox_denies_signal_probe(self, tmp_path):
+        pid_file = tmp_path / "gateway.pid"
+        pid_file.write_text("4321")
+        with (
+            patch("reflect.gateway._PID_FILE", pid_file),
+            patch("reflect.gateway.os.kill", side_effect=PermissionError),
+        ):
+            from reflect.gateway import _is_running
+
+            assert _is_running() == 4321
+            assert pid_file.exists()
+
     def test_daemon_status_when_stopped(self, tmp_path):
         with (
             patch("reflect.gateway._PID_FILE", tmp_path / "gateway.pid"),
             patch("reflect.gateway._DEFAULT_TRACES_PATH", tmp_path / "traces.json"),
             patch("reflect.gateway._DEFAULT_LOGS_PATH", tmp_path / "logs.json"),
             patch("reflect.gateway._LOG_FILE", tmp_path / "gateway.log"),
+            patch("reflect.gateway._probe_gateway", return_value=None),
         ):
             from reflect.gateway import daemon_status
             status = daemon_status()
             assert status["running"] is False
             assert status["pid"] is None
+
+    def test_daemon_status_reports_unmanaged_listener(self, tmp_path):
+        health = {
+            "status": "ok",
+            "pid": 777,
+            "traces_path": "/tmp/pytest/otel-traces.json",
+            "logs_path": "/tmp/pytest/otel-logs.json",
+        }
+        with (
+            patch("reflect.gateway._PID_FILE", tmp_path / "gateway.pid"),
+            patch("reflect.gateway._DEFAULT_TRACES_PATH", tmp_path / "traces.json"),
+            patch("reflect.gateway._DEFAULT_LOGS_PATH", tmp_path / "logs.json"),
+            patch("reflect.gateway._LOG_FILE", tmp_path / "gateway.log"),
+            patch("reflect.gateway._probe_gateway", return_value=health),
+        ):
+            from reflect.gateway import daemon_status
+
+            status = daemon_status()
+
+        assert status["running"] is False
+        assert status["conflict"] is True
+        assert status["listener_pid"] == 777
+        assert status["listener_traces_path"] == "/tmp/pytest/otel-traces.json"
+
+    def test_daemon_start_refuses_unmanaged_listener(self, tmp_path):
+        health = {
+            "status": "ok",
+            "pid": 777,
+            "traces_path": "/tmp/pytest/otel-traces.json",
+        }
+        with (
+            patch("reflect.gateway._PID_FILE", tmp_path / "gateway.pid"),
+            patch("reflect.gateway._is_running", return_value=None),
+            patch("reflect.gateway._probe_gateway", return_value=health),
+        ):
+            from reflect.gateway import daemon_start
+
+            with pytest.raises(RuntimeError, match="already owned by PID 777"):
+                daemon_start()
+
+    def test_gateway_disables_grpc_port_reuse_and_fails_on_bind_conflict(self, tmp_path):
+        fake_server = MagicMock()
+        fake_server.add_insecure_port.return_value = 0
+        with (
+            patch("reflect.gateway.grpc.server", return_value=fake_server) as server_factory,
+            patch("reflect.gateway.trace_service_pb2_grpc.add_TraceServiceServicer_to_server"),
+            patch("reflect.gateway.logs_service_pb2_grpc.add_LogsServiceServicer_to_server"),
+        ):
+            from reflect.gateway import start_gateway
+
+            with pytest.raises(RuntimeError, match="gRPC port 4317 is already in use"):
+                start_gateway(
+                    traces_path=tmp_path / "traces.json",
+                    logs_path=tmp_path / "logs.json",
+                )
+
+        assert server_factory.call_args.kwargs["options"] == (("grpc.so_reuseport", 0),)
+        fake_server.stop.assert_called_once_with(grace=0)
 
 
 # ---------------------------------------------------------------------------

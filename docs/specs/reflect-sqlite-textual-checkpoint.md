@@ -1,5 +1,7 @@
 # Reflect SQLite/Textual Spec — Execution Checkpoint (2026-05-01)
 
+> **Historical checkpoint.** This snapshot is retained as migration history and is not a current backlog or command reference. Use the root `README.md`, `CHANGELOG.md`, and the actionable-improvement plan for the shipped product model.
+
 This checkpoint tracks implementation status for `docs/specs/reflect-sqlite-textual-spec.md`.
 
 ## Current status summary

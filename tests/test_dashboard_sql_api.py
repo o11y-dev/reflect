@@ -6,6 +6,15 @@ from collections import Counter
 from fastapi.testclient import TestClient
 
 from reflect.dashboard import _build_dashboard_app
+from reflect.improvements.models import (
+    EvidenceRef,
+    ObservationDraft,
+    RuleDefinition,
+    Severity,
+    WorkflowProposal,
+)
+from reflect.improvements.repository import ImprovementRepository
+from reflect.improvements.skills import SkillRegistryService
 from reflect.models import TelemetryStats
 from reflect.preparation import BackgroundPreparationWorker
 from reflect.store.migrate import migrate
@@ -287,6 +296,73 @@ def _seed_sql_report_db(db_path):
         conn.close()
 
 
+def _seed_improvement_ledger(db_path):
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        repository = ImprovementRepository(conn)
+        rule = RuleDefinition(
+            id="test_rule",
+            version=1,
+            category="verification",
+            title="Test rule",
+            description="Deterministic test rule",
+        )
+        repository.sync_rule_definitions((rule,), now="2026-05-01T11:00:00+00:00")
+        observation_id = repository.upsert_observation(
+            ObservationDraft(
+                rule_id=rule.id,
+                rule_version=rule.version,
+                scope_type="user",
+                scope_id="local",
+                fingerprint="test-fingerprint",
+                category=rule.category,
+                title="Verification is missing",
+                summary="One test session changed code without verification.",
+                metric_name="unverified_change_sessions",
+                metric_value=1,
+                metric_unit="sessions",
+                metric_direction="lower_is_better",
+                impact_score=60,
+                severity=Severity.MEDIUM,
+                confidence=0.8,
+                evidence=[
+                    EvidenceRef(
+                        entity_type="session",
+                        entity_id="sess-sql",
+                        session_id="sess-sql",
+                        summary_redacted="Test session evidence",
+                    )
+                ],
+            ),
+            now="2026-05-01T11:00:00+00:00",
+        )
+        repository.ensure_candidate(
+            observation_id,
+            proposal=WorkflowProposal(
+                title="Workflow: Verification is missing",
+                hypothesis="A reviewed verification workflow will reduce missing verification.",
+                risk="low",
+                content={
+                    "schema_version": 1,
+                    "slug": "verify-before-done",
+                    "behavior_type": "verification",
+                    "description": "Verify changes before completion.",
+                    "steps": ["Run the focused test."],
+                    "source": {"rule_id": rule.id},
+                },
+                target_metric="unverified_change_sessions",
+                target_value=0.7,
+            ),
+            now="2026-05-01T11:00:00+00:00",
+        )
+        SkillRegistryService(conn).sync_workflow_candidates()
+        conn.commit()
+        return observation_id
+    finally:
+        conn.close()
+
+
 def _add_sql_baseline_session(db_path):
     now = "2026-05-01T12:00:00+00:00"
     conn = connect_sqlite(db_path)
@@ -522,6 +598,175 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path, monkeypatch):
     assert tool_inventory["mcp_tools"][0]["name"].endswith("/jira_search")
 
 
+def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    observation_id = _seed_improvement_ledger(db_path)
+    project_root = tmp_path / "project"
+    (project_root / ".git").mkdir(parents=True)
+    app = _build_dashboard_app(
+        _stats(),
+        docs_dir=tmp_path,
+        db_path=db_path,
+        project_root=project_root,
+    )
+    client = TestClient(app)
+
+    inbox = client.get("/api/inbox")
+    detail = client.get(f"/api/inbox/{observation_id}")
+    legacy_inbox = client.get("/api/improvements")
+    legacy_detail = client.get(f"/api/improvements/{observation_id}")
+    workflows = client.get("/api/workflows")
+    verification_workflows = client.get("/api/workflows?type=verification&status=pending")
+    loop_workflows = client.get("/api/workflows?type=loop")
+    loops = client.get("/api/loops")
+    skills = client.get("/api/skills")
+    measurements = client.get("/api/impact")
+    missing_measurement_sessions = client.get("/api/impact/missing/sessions")
+    legacy_measurements = client.get("/api/measurements")
+    rules = client.get("/api/rules")
+
+    assert inbox.status_code == 200
+    assert inbox.json()["findings"][0]["id"] == observation_id
+    assert inbox.json()["inbox_total_count"] == 1
+    assert inbox.json()["raw_observation_count"] == 1
+    assert detail.status_code == 200
+    assert detail.json()["evidence"][0]["session_id"] == "sess-sql"
+    assert legacy_inbox.json()["observations"][0]["id"] == observation_id
+    assert legacy_detail.json() == detail.json()
+    assert workflows.status_code == 200
+    assert workflows.json()["workflows"][0]["status"] == "pending"
+    assert workflows.json()["workflows"][0]["skill_id"].startswith("skill_")
+    assert verification_workflows.status_code == 200
+    assert verification_workflows.json()["workflows"][0]["content"]["behavior_type"] == "verification"
+    assert loop_workflows.json() == {"workflows": []}
+    assert loops.status_code == 200
+    assert loops.json()["loops"] == []
+    assert skills.status_code == 200
+    assert skills.json()["skills"][0]["slug"] == "verify-before-done"
+    assert skills.json()["skills"][0]["installation_targets"] == []
+    assert skills.json()["total_count"] == len(skills.json()["skills"])
+    assert all(
+        item["lifecycle_state"] != "stale"
+        for item in skills.json()["skills"]
+    )
+    assert "archived_count" in skills.json()
+    assert "counts_by_lifecycle" in skills.json()
+    skill_id = skills.json()["skills"][0]["id"]
+    skill_detail = client.get(f"/api/skills/{skill_id}")
+    assert skill_detail.status_code == 200
+    assert skill_detail.json()["versions"][0]["status"] == "pending"
+    assert skill_detail.json()["usage_sessions"] == []
+    assert measurements.status_code == 200
+    assert measurements.json() == {"impact_checks": []}
+    assert legacy_measurements.json() == {"measurements": []}
+    assert missing_measurement_sessions.status_code == 404
+    assert "Measurement not found" in missing_measurement_sessions.json()["error"]
+    assert rules.status_code == 200
+    assert rules.json()["rules"][0]["id"] == "test_rule"
+    assert rules.json()["rules"][0]["open_observation_count"] == 1
+    assert rules.json()["extension"]["kind"] == "code_backed"
+    assert rules.json()["extension"]["base_class"] == "BaseImprovementRule"
+    assert rules.json()["extension"]["registry"] == "DEFAULT_RULE_REGISTRY"
+
+    workflow = workflows.json()["workflows"][0]
+    candidate_id = workflow["id"]
+    preview = client.get(f"/api/workflows/{candidate_id}/preview")
+    sessions = client.get(f"/api/workflows/{candidate_id}/sessions")
+    assert preview.status_code == 200
+    assert preview.json()["would_change"] is True
+    assert preview.json()["diff"].startswith("--- ")
+    assert preview.json()["change_kind"] == "create"
+    assert preview.json()["checks"]["apply_allowed"] is True
+    assert preview.json()["application_repository"] == str(project_root)
+    assert preview.json()["target_relative_path"] == ".agents/skills/verify-before-done/SKILL.md"
+    assert sessions.status_code == 200
+    assert sessions.json()["source_session_count"] == 1
+    assert sessions.json()["source_sessions"][0]["session_id"] == "sess-sql"
+
+    unsafe_root = tmp_path / "not-a-repository"
+    unsafe_root.mkdir()
+    unsafe_preview = client.get(
+        f"/api/workflows/{candidate_id}/preview",
+        params={"project_root": str(unsafe_root)},
+    )
+    unsafe_apply = client.post(
+        f"/api/workflows/{candidate_id}/apply",
+        json={"project_root": str(unsafe_root)},
+    )
+    assert unsafe_preview.status_code == 200
+    assert unsafe_preview.json()["checks"]["apply_allowed"] is False
+    assert unsafe_apply.status_code == 409
+    assert "containing .git" in unsafe_apply.json()["error"]
+
+    edited_content = {
+        **workflow["content"],
+        "steps": ["Inspect exact evidence.", "Run focused verification."],
+    }
+    edited = client.put(
+        f"/api/workflows/{candidate_id}",
+        json={"content": edited_content},
+    )
+    assert edited.status_code == 200
+    assert edited.json()["content"]["steps"] == edited_content["steps"]
+
+    applied = client.post(f"/api/workflows/{candidate_id}/apply")
+    applied_again = client.post(f"/api/workflows/{candidate_id}/apply")
+    assert applied.status_code == 200
+    assert applied.json()["idempotent"] is False
+    assert applied_again.json()["idempotent"] is True
+    assert applied_again.json()["intervention_id"] == applied.json()["intervention_id"]
+
+    feedback = client.post(
+        "/api/feedback/sess-sql",
+        json={"outcome": "corrected", "reason": "Missed the requested verification"},
+    )
+    invalid_feedback = client.post(
+        "/api/feedback/sess-sql",
+        json={"outcome": "invented"},
+    )
+    assert feedback.status_code == 201
+    assert feedback.json()["outcome"] == "corrected"
+    assert invalid_feedback.status_code == 422
+
+    rolled_back = client.post(f"/api/workflows/{candidate_id}/rollback")
+    rejected = client.post(
+        f"/api/workflows/{candidate_id}/reject",
+        json={"reason": "Not appropriate for this repository"},
+    )
+    assert rolled_back.status_code == 200
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "rejected"
+
+
+def test_dashboard_improvement_get_endpoints_are_read_only(tmp_path, monkeypatch):
+    from reflect.improvements.loops import LoopService
+
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    _seed_improvement_ledger(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    def reject_refresh(*_args, **_kwargs):
+        raise AssertionError("dashboard GET endpoint attempted a registry refresh")
+
+    monkeypatch.setattr(SkillRegistryService, "refresh", reject_refresh)
+    monkeypatch.setattr(SkillRegistryService, "sync_workflow_candidates", reject_refresh)
+    monkeypatch.setattr(LoopService, "refresh", reject_refresh)
+
+    client = TestClient(app)
+    workflows = client.get("/api/workflows")
+    loops = client.get("/api/loops")
+    skills = client.get("/api/skills")
+    skill_id = skills.json()["skills"][0]["id"]
+    skill_detail = client.get(f"/api/skills/{skill_id}")
+
+    assert workflows.status_code == 200
+    assert loops.status_code == 200
+    assert skills.status_code == 200
+    assert skill_detail.status_code == 200
+
+
 def test_dashboard_api_reports_background_preparation_status(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
@@ -622,14 +867,32 @@ def test_dashboard_filtered_bootstrap_skips_heavy_tabs(tmp_path, monkeypatch):
     assert response.json()["graph_tool_transitions"] == []
     assert response.json()["comparison"] is None
 
+    def reject_full_tools_tab(*_args, **_kwargs):
+        raise AssertionError("Usage bootstrap must not build full tool percentiles and inventories")
+
+    monkeypatch.setattr("reflect.views.report_tabs._build_tools", reject_full_tools_tab)
     calls.clear()
-    overview = TestClient(app).get(
+    usage = TestClient(app).get(
         "/api/data",
-        params={"agents": "codex", "tab": "overview"},
+        params={"agents": "codex", "tab": "explore", "view": "usage"},
     )
 
-    assert overview.status_code == 200
-    assert calls[-1]["base_tab_names"] == {"activity", "models", "costs", "mcp"}
+    assert usage.status_code == 200
+    assert calls[-1]["base_tab_names"] == {
+        "activity", "models", "costs", "usage_tools", "mcp",
+    }
+    assert calls[-1]["include_comparison"] is True
+    payload = usage.json()
+    assert payload["shell_executions"] == 1
+    assert payload["subagent_launches"] == 1
+    assert payload["subagent_types_by_count"] == {"research-helper": 1}
+    assert payload["source_provenance"]
+    assert payload["agent_cost_over_time"] == [
+        {"day": "2026-05-01", "agent": "codex", "total_cost": 0.42},
+    ]
+    assert len(payload["weekly_trends"]) == 1
+    assert payload["failure_rate_pct"] == 0
+    assert payload["sqlite"]["tabs"]["usage"]["shell_executions"] == 1
 
 
 def test_dashboard_session_filter_uses_focused_fast_path(tmp_path, monkeypatch):
@@ -715,7 +978,48 @@ def test_dashboard_lazy_tab_endpoint_rejects_unknown_tab(tmp_path):
     assert "Unknown report tab" in response.json()["error"]
 
 
-def test_dashboard_session_detail_shows_metadata_only_llm_prompt_turns(tmp_path):
+def test_dashboard_explore_api_uses_product_view_names(tmp_path, monkeypatch):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+    client = TestClient(app)
+
+    usage = client.get("/api/explore/usage?session=sess-sql")
+    tools = client.get("/api/explore/tools?session=sess-sql")
+    legacy_usage_name = client.get("/api/explore/overview?session=sess-sql")
+
+    def _reject_expensive_graph_dependency(*_args, **_kwargs):
+        raise AssertionError("lazy graph loading must not scan skill and subagent telemetry")
+
+    monkeypatch.setattr(
+        "reflect.views.report_tabs._skill_subagent_counts",
+        _reject_expensive_graph_dependency,
+    )
+    graph = client.get("/api/explore/graph?session=sess-sql")
+    context = client.get("/api/explore/context?session=sess-sql")
+    missing = client.get("/api/explore/not-a-view")
+
+    assert usage.status_code == 200
+    assert usage.json()["view"] == "usage"
+    assert usage.json()["scoped"] is True
+    assert usage.json()["events_by_type"]["llm_call"] == 2
+    assert usage.json()["events_by_type"]["tool_call"] == 1
+    assert usage.json()["shell_executions"] == 1
+    assert usage.json()["agent_cost_over_time"] == [
+        {"day": "2026-05-01", "agent": "codex", "total_cost": 0.42},
+    ]
+    assert tools.json()["view"] == "tools"
+    assert tools.json()["tools_by_count"] == {"exec_command": 1}
+    assert graph.json()["view"] == "graph"
+    assert "graph_semantic" in graph.json()
+    assert context.json()["view"] == "context"
+    assert {"specs", "memory", "privacy", "exports"} <= set(context.json())
+    assert legacy_usage_name.json()["view"] == "usage"
+    assert missing.status_code == 404
+    assert "Unknown Explore view" in missing.json()["error"]
+
+
+def test_dashboard_session_detail_keeps_llm_input_tokens_on_response_turns(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
     now = "2026-05-01T10:01:30+00:00"
@@ -758,10 +1062,62 @@ def test_dashboard_session_detail_shows_metadata_only_llm_prompt_turns(tmp_path)
 
     assert detail.status_code == 200
     prompts = [event for event in detail.json()["conversation"] if event["type"] == "prompt"]
-    assert len(prompts) == 2
+    responses = [event for event in detail.json()["conversation"] if event["type"] == "response"]
+    assert len(prompts) == 1
     assert prompts[0]["preview"].startswith("Fix the failing SQL dashboard tests")
-    assert prompts[1]["preview"] == "Prompt text was not captured for this turn; token metadata is available."
-    assert prompts[1]["input_tokens"] == 44
+    metadata_response = next(event for event in responses if event["input_tokens"] == 44)
+    assert metadata_response["output_tokens"] == 11
+
+
+def test_dashboard_session_detail_keeps_one_placeholder_for_explicit_prompt_event(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    now = "2026-05-01T10:01:30+00:00"
+    conn = connect_sqlite(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status, summary,
+              raw_attrs_json, created_at, updated_at
+            )
+            VALUES (
+              'metadata-only-prompt-step', 'sess-sql', 4, 'conversation',
+              ?, 'completed', 'gen_ai.client.hook.UserPromptSubmit',
+              '{"gen_ai.client.generation_id":"gen-prompt-metadata"}',
+              ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    detail = TestClient(app).get("/api/session/sess-sql")
+
+    assert detail.status_code == 200
+    prompts = [event for event in detail.json()["conversation"] if event["type"] == "prompt"]
+    assert len(prompts) == 2
+    assert prompts[1]["preview"] == (
+        "Prompt text was not captured for this turn; metadata is available."
+    )
+
+
+def test_dashboard_session_filter_navigation_cards_include_first_prompts(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    _add_sql_codex_sibling_session(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    response = TestClient(app).get("/api/data", params={"session": "sess-codex-2"})
+
+    assert response.status_code == 200
+    sessions = {session["id"]: session for session in response.json()["sessions"]}
+    assert sessions["sess-sql"]["first_prompt"].startswith(
+        "Fix the failing SQL dashboard tests"
+    )
 
 
 def test_dashboard_session_detail_shows_tokenless_stop_response_turns(tmp_path):
@@ -812,6 +1168,81 @@ def test_dashboard_session_detail_shows_tokenless_stop_response_turns(tmp_path):
     assert responses[1]["output_tokens"] == 0
 
 
+def test_dashboard_session_detail_reads_hook_fact_contract(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    now = "2026-05-01T10:02:45+00:00"
+    conn = connect_sqlite(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status, summary,
+              telemetry_source, hook_schema_version, agent_invocation_id,
+              parent_agent_id, raw_attrs_json, created_at, updated_at
+            ) VALUES (
+              'hook-agent-step', 'sess-sql', 5, 'agent_call', ?, 'ok',
+              'gen_ai.client.hook.SubagentStart', 'hook', 1, 'child-1', 'root-1',
+              '{}', ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO agent_events(
+              id, step_id, session_id, event_name, event_id, agent_id,
+              parent_agent_id, agent_type, status, task_hash, task_length,
+              created_at, updated_at
+            ) VALUES (
+              'agent-event', 'hook-agent-step', 'sess-sql', 'SubagentStart',
+              'provider-agent-event', 'child-1', 'root-1', 'reviewer', 'ok',
+              'task-hash', 42, ?, ?
+            )
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO conversation_facts(
+              id, step_id, session_id, kind, role, content_hash, content_length,
+              created_at, updated_at
+            ) VALUES (
+              'response-fact', 'hook-agent-step', 'sess-sql', 'response',
+              'assistant', 'response-hash', 99, ?, ?
+            )
+            """,
+            (now, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    detail = TestClient(app).get("/api/session/sess-sql")
+
+    assert detail.status_code == 200
+    response = next(
+        event
+        for event in detail.json()["conversation"]
+        if event.get("content_hash") == "response-hash"
+    )
+    assert response["content_length"] == 99
+    assert "not captured" in response["preview"]
+    subagent = next(
+        event
+        for event in detail.json()["conversation"]
+        if event.get("type") == "subagent_start" and event.get("agent_id") == "child-1"
+    )
+    assert subagent["parent_agent_id"] == "root-1"
+    assert subagent["subagent_type"] == "reviewer"
+    summary = detail.json()["telemetry"]["summary"]
+    assert summary["hook_schema_versions"] == [1]
+    assert summary["telemetry_sources"] == ["hook"]
+    assert summary["conversation_facts"] == 1
+    assert summary["agent_relationships"] == 1
+
+
 def test_dashboard_sql_sessions_endpoint_filters_from_sql(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
@@ -828,6 +1259,43 @@ def test_dashboard_sql_sessions_endpoint_filters_from_sql(tmp_path):
     assert sessions.json()["rows"][0]["duration_ms"] == 120000
 
 
+def test_dashboard_sql_session_detail_prefers_native_assistant_responses(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    native_session = tmp_path / "codex-session.jsonl"
+    native_session.write_text(
+        "\n".join([
+            '{"type":"session_meta","payload":{"id":"sess-sql","model":"gpt-5.4"}}',
+            '{"type":"response_item","timestamp":"2026-05-01T10:00:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Fix it"}]}}',
+            '{"type":"response_item","timestamp":"2026-05-01T10:00:30Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The native response is visible."}]}}',
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    conn = connect_sqlite(db_path)
+    try:
+        conn.execute(
+            "UPDATE sessions SET source_kind = 'native_session', source_ref = ? WHERE id = 'sess-sql'",
+            (f"native_session:codex:{native_session}",),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    response = TestClient(app).get("/api/session/sess-sql")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assistant = next(event for event in payload["conversation"] if event["type"] == "response")
+    assert assistant["content"] == "The native response is visible."
+    assert payload["conversation_source"] == "native"
+    assert any(event["type"] == "mcp_call" for event in payload["conversation"])
+    tool_result = next(event for event in payload["conversation"] if event["type"] == "tool_result")
+    assert tool_result["duration_ms"] == 500
+    assert tool_result["success"] is True
+    assert payload["telemetry"]["summary"]["spans"] == 3
+
+
 def test_dashboard_api_filters_by_session_param_from_sql(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
@@ -841,11 +1309,20 @@ def test_dashboard_api_filters_by_session_param_from_sql(tmp_path):
     assert [session["id"] for session in payload["sessions"]] == ["sess-sql"]
 
 
-def test_dashboard_api_applies_sql_filters_and_comparison(tmp_path):
+def test_dashboard_api_applies_sql_filters_and_comparison(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
     _add_sql_baseline_session(db_path)
     app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+    dashboard_module = __import__("reflect.dashboard", fromlist=["_sql_dashboard_compat_payload"])
+    original_compat = dashboard_module._sql_dashboard_compat_payload
+    compat_calls = []
+
+    def capture_compat(*args, **kwargs):
+        compat_calls.append(kwargs)
+        return original_compat(*args, **kwargs)
+
+    monkeypatch.setattr("reflect.dashboard._sql_dashboard_compat_payload", capture_compat)
 
     response = TestClient(app).get(
         "/api/data",
@@ -854,7 +1331,8 @@ def test_dashboard_api_applies_sql_filters_and_comparison(tmp_path):
             "status": "completed",
             "model": "gpt-5.4",
             "range": "7d",
-            "tab": "compare",
+            "tab": "explore",
+            "view": "usage",
         },
     )
 
@@ -865,10 +1343,11 @@ def test_dashboard_api_applies_sql_filters_and_comparison(tmp_path):
     assert payload["comparison"]["primary"]["avg_quality"] == 87
     assert payload["comparison"]["baseline"]["avg_quality"] == 65
     assert payload["comparison"]["baseline_agents"][0]["avg_quality"] == 65
-    assert payload["sqlite"]["tabs"]["compare"]["comparison"] == payload["comparison"]
-    assert payload["sqlite"]["tabs"]["compare"]["agent_comparison"] == payload["agent_comparison"]
+    assert payload["sqlite"]["tabs"]["cohort_comparison"]["comparison"] == payload["comparison"]
+    assert payload["sqlite"]["tabs"]["cohort_comparison"]["agent_comparison"] == payload["agent_comparison"]
     assert {item["name"] for item in payload["sessions"][0]["quality_breakdown"]} >= {"Completion", "Efficiency"}
     assert payload["sessions"][0]["quality_breakdown"][0]["inputs"]
+    assert len(compat_calls) == 1
 
     active = TestClient(app).get("/api/data", params={"agents": "codex", "status": "active"})
     assert active.status_code == 200
@@ -913,6 +1392,34 @@ def test_dashboard_api_scopes_sql_tab_view_models(tmp_path):
     assert tabs["graphs"]["graph_tool_transitions"] == []
     assert tabs["tools"]["tools_by_count"] == {}
     assert tabs["mcp"]["mcp_servers_by_count"] == {}
+
+
+def test_dashboard_usage_empty_scope_keeps_widget_contracts_empty(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    response = TestClient(app).get(
+        "/api/data",
+        params={
+            "agents": "missing-agent",
+            "tab": "explore",
+            "view": "usage",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    usage = payload["sqlite"]["tabs"]["usage"]
+    assert payload["unique_sessions"] == 0
+    assert usage["unique_sessions"] == 0
+    assert usage["models_by_count"] == {}
+    assert usage["events_by_type"] == {}
+    assert usage["source_provenance"] == []
+    assert usage["agent_cost_over_time"] == []
+    assert usage["subagent_types_by_count"] == {}
+    assert payload["weekly_trends"] == []
+    assert payload["failure_rate_pct"] == 0
 
 
 def test_dashboard_sql_endpoints_are_disabled_without_db(tmp_path):

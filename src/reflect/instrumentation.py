@@ -174,10 +174,7 @@ def _codex_native_otel_settings(hook_config: dict[str, str]) -> dict[str, object
     endpoint = target["endpoint"]
     return {
         "exporter": {"otlp-grpc": {"endpoint": endpoint}},
-        "traces_exporter": "otlp",
-        "traces_endpoint": endpoint,
-        "logs_exporter": "otlp",
-        "logs_endpoint": endpoint,
+        "trace_exporter": {"otlp-grpc": {"endpoint": endpoint}},
         "log_user_prompt": target["prompt_capture"],
     }
 
@@ -190,17 +187,57 @@ def _codex_native_otel_matches_desired(otel: object, desired: dict[str, object])
 
 def _render_codex_native_otel_block(hook_config: dict[str, str]) -> str:
     desired = _codex_native_otel_settings(hook_config)
-    endpoint = desired["traces_endpoint"]
+    endpoint = _native_otel_target(hook_config, "OpenAI Codex CLI")["endpoint"]
     log_user_prompt = "true" if desired["log_user_prompt"] else "false"
     return (
         "[otel]\n"
-        f'exporter = {{otlp-grpc = {{endpoint = "{endpoint}"}}}}\n'
-        'traces_exporter = "otlp"\n'
-        f'traces_endpoint = "{endpoint}"\n'
-        'logs_exporter = "otlp"\n'
-        f'logs_endpoint = "{endpoint}"\n'
+        f'exporter = {{ otlp-grpc = {{ endpoint = "{endpoint}" }} }}\n'
+        f'trace_exporter = {{ otlp-grpc = {{ endpoint = "{endpoint}" }} }}\n'
         f"log_user_prompt = {log_user_prompt}\n"
     )
+
+
+_CODEX_MANAGED_OTEL_KEYS = {
+    "exporter",
+    "trace_exporter",
+    "log_user_prompt",
+    # Removed Codex aliases written by Reflect <= 0.8.7.
+    "traces_exporter",
+    "traces_endpoint",
+    "logs_exporter",
+    "logs_endpoint",
+}
+
+
+def _upsert_codex_otel_section(original: str, hook_config: dict[str, str]) -> str:
+    """Update Reflect-managed Codex OTel keys without dropping user settings."""
+    desired_lines = _render_codex_native_otel_block(hook_config).strip().splitlines()
+    section_pattern = re.compile(r"^\[otel\]\n(.*?)(?=^\[|\Z)", re.MULTILINE | re.DOTALL)
+    match = section_pattern.search(original)
+    if match is None:
+        return _upsert_toml_section(original, "otel", "\n".join(desired_lines) + "\n")
+
+    preserved_lines: list[str] = []
+    for line in match.group(1).splitlines():
+        key_match = re.match(r"^\s*([A-Za-z0-9_-]+)\s*=", line)
+        if key_match and key_match.group(1) in _CODEX_MANAGED_OTEL_KEYS:
+            continue
+        preserved_lines.append(line)
+    while preserved_lines and not preserved_lines[0].strip():
+        preserved_lines.pop(0)
+    while preserved_lines and not preserved_lines[-1].strip():
+        preserved_lines.pop()
+
+    replacement_lines = desired_lines
+    if preserved_lines:
+        replacement_lines.extend(["", *preserved_lines])
+    replacement = "\n".join(replacement_lines).rstrip() + "\n\n"
+    updated = original[:match.start()] + replacement + original[match.end():]
+    return re.sub(r"\n{3,}", "\n\n", updated).rstrip() + "\n"
+
+
+def _capture_status(enabled: bool, *, subject: str) -> str:
+    return f"{subject} is enabled." if enabled else f"{subject} stays disabled."
 
 
 def _upsert_toml_section(original: str, section_name: str, block: str) -> str:
@@ -308,7 +345,11 @@ def _collect_native_otel_statuses(hook_config: dict[str, str]) -> list[dict[str,
                 "ready" if copilot_ready else "unreadable" if copilot_unreadable and not copilot_issues else "incomplete"
             ),
             "details": (
-                "Native OTLP HTTP export is configured and content capture stays disabled."
+                "Native OTLP HTTP export is configured and "
+                + _capture_status(
+                    bool(copilot_desired["github.copilot.chat.otel.captureContent"]),
+                    subject="content capture",
+                )
                 if copilot_ready
                 else "Failed to read settings: " + "; ".join(copilot_unreadable)
                 if copilot_unreadable and not copilot_issues
@@ -364,7 +405,8 @@ def _collect_native_otel_statuses(hook_config: dict[str, str]) -> list[dict[str,
                 "agent": "Gemini CLI",
                 "status": "ready" if not issues else "incomplete",
                 "details": (
-                    "Local collector mode is enabled and prompt logging stays disabled."
+                    "Local collector mode is enabled and "
+                    + _capture_status(bool(gemini_desired["logPrompts"]), subject="prompt logging")
                     if not issues
                     else "Missing or incorrect telemetry keys: " + ", ".join(issues)
                 ),
@@ -397,7 +439,11 @@ def _collect_native_otel_statuses(hook_config: dict[str, str]) -> list[dict[str,
                 "agent": "OpenAI Codex CLI",
                 "status": "ready" if not issues else "incomplete",
                 "details": (
-                    "Explicit trace/log OTLP exporters are configured and prompt logging stays disabled."
+                    "Explicit trace/log OTLP exporters are configured and "
+                    + _capture_status(
+                        bool(codex_desired["log_user_prompt"]),
+                        subject="raw user prompt export",
+                    )
                     if not issues
                     else "Missing or incorrect [otel] keys: " + ", ".join(issues)
                 ),
@@ -574,8 +620,7 @@ def _configure_codex_native_otel(console, hook_config: dict[str, str]) -> None:
         config_path.parent.mkdir(parents=True, exist_ok=True)
 
     original = config_path.read_text() if config_path.exists() else ""
-    otel_block = _render_codex_native_otel_block(hook_config)
-    updated = _upsert_toml_section(original, "otel", otel_block)
+    updated = _upsert_codex_otel_section(original, hook_config)
 
     config_path.write_text(updated)
     console.print(f"  [green]✓[/] Enabled native Codex OTel in {config_path}")

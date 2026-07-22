@@ -101,6 +101,22 @@ def test_dashboard_html_uses_persistent_session_and_filter_rails(path: Path):
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_semantic_graph_exposes_workspace_relationship_mode(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert 'id="semantic-graph-mode"' in text
+    assert '<option value="workspace">Same workspace</option>' in text
+    assert "function workspaceSessionIds(sessionId)" in text
+    assert "edge.kind !== 'ran_in_workspace'" in text
+    assert "function useGraphData(nextGraph, selectedSession = '')" in text
+    assert "url.searchParams.set('session', selectedSession)" in text
+    assert "Loading every session in this canonical workspace" in text
+    assert "edge.kind !== 'ran_session'" in text
+    assert "connected through the same canonical workspace" in text
+    assert "Workspace:.29" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_session_filters_reload_sql_reports(path: Path):
     text = path.read_text(encoding="utf-8")
     match = re.search(r"function scheduleDashboardReload\(\)\{\s*(.*?)\s*\}", text, re.S)
@@ -128,15 +144,15 @@ def test_dashboard_session_filters_use_server_scoped_sql_payloads(path: Path):
     assert "selectedSessionId: dashboardSelectedSessionId" in text
     assert "event.detail?.hasFilters || dashboardSelectedSessionId" in text
     assert "(params.get('session') || '').trim()" in text
-    assert "const compareTab = sqlTab('compare');" in text
-    assert "const comparison = compareTab.comparison || D.comparison;" in text
-    assert "compareTab.agent_comparison || currentAgentComparison()" in text
-    assert "const overviewTab = sqlTab('overview');" in text
-    assert "overviewTab.models_by_count || sqlTab('models').models_by_count || D.models_by_count || {}" in text
-    assert "overviewTab.events_by_type || sqlTab('activity').events_by_type || D.events_by_type || {}" in text
-    assert "overviewTab.total_input_tokens ?? D.total_input_tokens ?? 0" in text
-    assert "sqlTab('graphs').graph_tool_transitions || D.graph_tool_transitions || []" in text
-    assert "sqlTab('graphs').graph_dep || D.graph_dep" in text
+    assert "const cohortTab = sqlTab('cohort_comparison');" in text
+    assert "const comparison = cohortTab.comparison || D.comparison;" in text
+    assert "cohortTab.agent_comparison || currentAgentComparison()" in text
+    assert "const usageTab = sqlTab('usage');" in text
+    assert "usageTab.models_by_count || sqlTab('models').models_by_count || D.models_by_count || {}" in text
+    assert "usageTab.events_by_type || sqlTab('activity').events_by_type || D.events_by_type || {}" in text
+    assert "usageTab.total_input_tokens ?? D.total_input_tokens ?? 0" in text
+    assert "sqlTab('graph').graph_tool_transitions || D.graph_tool_transitions || []" in text
+    assert "sqlTab('graph').graph_dep || D.graph_dep" in text
     assert "Cost Basis" in text
     assert "Pricing Source" not in text
 
@@ -155,7 +171,7 @@ def test_dashboard_html_builds_agent_filters_from_data_without_allowlist(path: P
     assert "Object.keys(D.models_by_count || {})" in text
     assert "D.session_list_total || sessions.length || D.unique_sessions" in text
     assert "fetch(reportUrlWithCurrentFilters()" in text
-    assert "['q','agents','agent','model','status','range','session','tab']" in text
+    assert "['q','agents','agent','model','status','range','session','tab','view']" in text
     assert "scheduleDashboardReload();" in text
     assert "urlParams.delete('session');" in text
     assert "selectedIdx = filtered[0]._idx;" in text
@@ -178,6 +194,16 @@ def test_dashboard_tools_tab_spaces_event_distribution_from_top_widgets(path: Pa
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_grids_and_subagent_table_stay_inside_report_content(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert ".cols-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))" in text
+    assert re.search(r"\.panel\s*\{[^}]*min-width\s*:\s*0\s*;", text)
+    assert "#subagent-effectiveness{min-width:0;overflow-x:auto" in text
+    assert "#subagent-effectiveness .data-table{min-width:340px;table-layout:fixed}" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_agent_tool_network_supports_sql_graph_value_shapes(path: Path):
     text = path.read_text(encoding="utf-8")
 
@@ -187,11 +213,18 @@ def test_dashboard_agent_tool_network_supports_sql_graph_value_shapes(path: Path
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
-def test_dashboard_session_detail_has_quality_rules_tab(path: Path):
+def test_dashboard_session_detail_restructures_quality_and_telemetry_as_product_views(path: Path):
     text = path.read_text(encoding="utf-8")
 
-    assert 'data-tab="quality">Quality</button>' in text
+    assert 'data-tab="summary">Summary</button>' in text
+    assert 'data-tab="conversation">Conversation</button>' in text
+    assert 'data-tab="execution">Execution</button>' in text
+    assert 'data-tab="changes">Changes</button>' in text
+    assert 'data-tab="evidence">Evidence</button>' in text
+    assert 'data-tab="quality">Quality</button>' not in text
+    assert 'data-tab="telemetry">Telemetry</button>' not in text
     assert "function renderQualityPanel(session)" in text
+    assert "function renderSessionChangesPanel(session)" in text
     assert "D.quality_rules || []" in text
     assert "Score Breakdown" in text
     assert "quality_breakdown" in text
@@ -212,8 +245,8 @@ def test_dashboard_session_detail_has_quality_rules_tab(path: Path):
 def test_dashboard_html_wires_sql_data_tab_surfaces(path: Path):
     text = path.read_text(encoding="utf-8")
 
-    assert 'data-tab="data">Context</button>' in text
-    assert 'id="tab-data"' in text
+    assert 'data-explore-view="context">Context &amp; system</button>' in text
+    assert 'id="tab-explore-context"' in text
     assert 'id="sql-specs-panel"' in text
     assert 'id="sql-memory-panel"' in text
     assert 'id="sql-privacy-panel"' in text
@@ -224,8 +257,8 @@ def test_dashboard_html_wires_sql_data_tab_surfaces(path: Path):
     assert "tabs.memory" in text
     assert "tabs.privacy" in text
     assert "tabs.exports" in text
-    assert "const obsTab = sqlTab('observations');" in text
-    assert "obsTab.token_economy || D.token_economy || {}" in text
+    assert text.index('id="tab-explore-context"') < text.index('id="rule-registry"')
+    assert "Improvement Rules create durable findings" in text
     assert "SQLite Store" not in text
     assert "SQL Sessions" not in text
     assert "Top SQL" not in text
@@ -237,36 +270,215 @@ def test_dashboard_html_wires_sql_data_tab_surfaces(path: Path):
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
-def test_dashboard_activity_widgets_live_on_overview_tab(path: Path):
+def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(path: Path):
     text = path.read_text(encoding="utf-8")
 
-    assert 'data-tab="overview">Activity</button>' in text
+    assert 'id="rule-registry"' in text
+    assert "fetch('/api/rules'" in text
+    assert "BaseImprovementRule" in text
+    assert "RuleRegistry" in text
+    assert "DEFAULT_RULE_REGISTRY" in text
+    assert "Session Rules score one session" in text
+    assert "View Source Sessions" in text
+    assert "Source Evidence" in text
+    assert "Related Sessions" in text
+    assert "Observed Uses" in text
+    assert "After Activation" in text
+    assert "Review Agent Draft & Diff" in text
+    assert "Review Blueprint & Diff" in text
+    assert "Rule blueprint" in text
+    assert "Agent-authored draft" in text
+    assert "Imported skill" in text
+    assert "suggested_artifact" in text
+    assert "Exact File Diff" in text
+    assert "Edit Structured Workflow" in text
+    assert 'id="workflow-project-root"' in text
+    assert "Choose Git Repository" in text
+    assert "Check Repository" in text
+    assert 'id="workflow-type-filter"' in text
+    assert 'id="workflow-status-filter"' in text
+    assert "not a Git or filesystem lock" in text
+    assert "Package as Repo-local Skill" in text
+    assert "it does not change the source evidence" in text
+    assert "content.source?.rule_id" in text
+    assert "content.behavior_type" in text
+    assert "workflow_type" in text
+    assert 'class="review-kpi-strip"' in text
+    assert 'class="review-grid"' in text
+    assert 'class="ledger-action-spacer"' in text
+    assert "Show ${fmt(items.length - initial)} More Sessions" in text
+    assert "/sessions`" in text
+    assert "function sessionInspectionUrl(session)" in text
+    assert "data-related-session-link" in text
+    assert "url.searchParams.set('tab', 'sessions')" in text
+    assert "url.searchParams.set('session', session.session_id || '')" in text
+    assert "supporting_observation_count" in text
+    assert "Evidence Patterns" in text
+    assert "inbox_total_count" in text
+    assert "skill_total_count" in text
+    assert "current skills" in text
+    assert "linked session(s)" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_activity_widgets_live_on_explore_usage_view(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert 'data-tab="explore">Explore</button>' in text
+    assert 'data-explore-view="usage">Usage</button>' in text
     assert 'data-tab="activity"' not in text
     assert 'id="tab-activity"' not in text
     assert 'id="hm-grid"' in text
     assert 'id="hour-bars"' in text
     assert 'id="weekly-trends-table"' in text
-    assert "if (tabName === 'activity') tabName = 'overview';" in text
-    assert "if (tabName === 'context') tabName = 'data';" in text
+    assert "activity: {tab:'explore', view:'usage'}" in text
+    assert "context: {tab:'explore', view:'context'}" in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
-def test_dashboard_overview_separates_source_provenance_from_event_semantics(path: Path):
+def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert 'data-tab="inbox">Inbox</button>' in text
+    assert 'data-tab="sessions">Sessions</button>' in text
+    assert 'data-tab="workflows">Workflows</button>' in text
+    assert 'data-tab="skills">Skills</button>' in text
+    assert 'data-tab="impact">Impact</button>' in text
+    assert 'data-tab="explore">Explore</button>' in text
+    assert 'data-tab="observations"' not in text
+    assert 'data-tab="compare"' not in text
+    assert 'data-tab="overview"' not in text
+    assert 'id="tab-impact"' in text
+    assert 'id="tab-explore-usage"' in text
+    assert 'id="tab-explore-tools"' in text
+    assert 'id="tab-explore-graph"' in text
+    assert 'id="tab-explore-context"' in text
+    assert 'id="improvement-inbox"' in text
+    assert 'id="workflow-ledger"' in text
+    assert 'id="loop-ledger"' in text
+    assert 'id="skill-registry"' in text
+    assert 'id="tab-skills"' in text
+    assert 'id="measurement-ledger"' in text
+    assert "Supporting telemetry analysis" not in text
+    assert 'id="obs-hero-grid"' not in text
+    assert 'id="obs-signals"' not in text
+    assert 'id="obs-next-moves"' not in text
+    assert "fetch('/api/inbox'" in text
+    assert "fetch('/api/workflows'" in text
+    assert "fetch('/api/loops'" in text
+    assert "fetch('/api/skills?limit=500'" in text
+    assert "fetch('/api/impact'" in text
+    assert "new URL(`/api/explore/${encodeURIComponent(viewName)}`" in text
+    assert "/api/improvements" not in text
+    assert "/api/measurements" not in text
+    assert "/api/tabs/" not in text
+    assert "observations: {tab:'inbox'}" in text
+    assert "compare: {tab:'impact'}" in text
+    assert "overview: {tab:'explore', view:'usage'}" in text
+    assert "params.set('view', activeExploreView)" in text
+    assert "params.delete('view')" in text
+    assert "groupImpactMeasurements(measurements)" in text
+    assert 'data-ledger-action="review-impact-sessions"' in text
+    assert "View Compared Sessions" in text
+    assert "Post-application session collection progress" in text
+    assert 'id="ledger-dialog"' in text
+    assert 'data-ledger-action="evidence"' in text
+    assert 'data-ledger-action="review-loop"' in text
+    assert 'data-ledger-action="review-skill"' in text
+    assert 'data-ledger-action="review-workflow"' in text
+    assert "showLoopReview(trigger.dataset.loopId || '')" in text
+    assert "showSkillReview(trigger.dataset.skillId || '')" in text
+    assert "showWorkflowReview(candidateId)" in text
+    assert "submitSessionFeedback(sessionId, outcome, button)" in text
+    assert 'data-session-feedback="no-change-correct"' in text
+    assert "Approve this workflow and package it as a skill at" in text
+    assert "Exact File Diff" in text
+    assert "Review &amp; Roll Back" in text
+    assert "const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length ? 'inbox' : 'sessions';" in text
+
+    sessions_panel = text[text.index('id="tab-sessions"'):text.index('id="tab-explore-usage"')]
+    usage_panel = text[text.index('id="tab-explore-usage"'):text.index('id="tab-impact"')]
+    impact_panel = text[text.index('id="tab-impact"'):text.index('id="tab-inbox"')]
+    assert 'id="cmp-a"' in sessions_panel
+    assert 'id="cohort-comparison-panel"' in usage_panel
+    assert 'id="measurement-ledger"' in impact_panel
+    assert 'id="cmp-a"' not in impact_panel
+    assert 'id="cohort-comparison-panel"' not in impact_panel
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_workflows_and_skills_use_responsive_tiles(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert 'class="workflow-list workflow-tile-grid" id="workflow-ledger"' in text
+    assert 'class="workflow-list skill-tile-grid" id="skill-registry"' in text
+    assert 'id="skill-search" type="search"' in text
+    assert 'id="skill-filter-summary" aria-live="polite"' in text
+    assert "function skillMatchesSearch(skill, query)" in text
+    assert "params.set('skill_q', query.trim())" in text
+    assert "fetch('/api/skills?limit=500'" in text
+    assert ".workflow-tile-grid{grid-template-columns:repeat(auto-fit" in text
+    assert ".skill-tile-grid{grid-template-columns:repeat(auto-fit" in text
+    assert "function renderWorkflowSteps(steps, {limit = 0, compact = false} = {})" in text
+    assert 'class="workflow-step-number" aria-hidden="true"' in text
+    assert "renderWorkflowSteps(content.steps)" in text
+    assert "renderWorkflowSteps(steps, {limit:4, compact:true})" in text
+    assert '<dl class="tile-metric-grid">' in text
+    assert 'class="skill-detail-grid"' in text
+    assert 'class="tile-card-title"' in text
+    assert "touch-action:manipulation" in text
+    assert "function skillAvailabilityPresentation(skill, installations = null)" in text
+    assert "Available in Codex" in text
+    assert "Available in workspace" in text
+    assert "Telemetry only" in text
+    assert "Available to other agents" in text
+    assert "Registry history and observed usage do not install a skill." in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_does_not_keep_replaced_conversation_or_telemetry_rails(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "function getEventBadge(" not in text
+    assert "function getEventBodyLabel(" not in text
+    assert "function buildTelemetryBeatRail(" not in text
+    assert "function buildSessionObservationMarkers(" not in text
+    assert "function replaceChart(" not in text
+    assert ".telemetry-beat-row{" not in text
+    assert ".telemetry-observation{" not in text
+    assert ".carousel-outer{" not in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_usage_separates_source_provenance_from_event_semantics(path: Path):
     text = path.read_text(encoding="utf-8")
 
     assert 'id="source-provenance"' in text
     assert 'id="agentCostChart"' in text
-    assert "const sourceProvenance = overviewTab.source_provenance || D.source_provenance || [];" in text
+    assert "const sourceProvenance = usageTab.source_provenance || D.source_provenance || [];" in text
     assert "function validCostTrendDay(value)" in text
     assert "Number(day.slice(0, 4)) < 2000" in text
     assert "function normalizeAgentCostRows(rows)" in text
     assert "function deriveAgentCostRowsFromSessions(sessions)" in text
-    assert "const rawOverviewAgentCostRows = overviewTab.agent_cost_over_time || D.agent_cost_over_time || [];" in text
-    assert "const normalizedOverviewAgentCostRows = normalizeAgentCostRows(rawOverviewAgentCostRows);" in text
+    assert "const rawUsageAgentCostRows = usageTab.agent_cost_over_time || D.agent_cost_over_time || [];" in text
+    assert "const normalizedUsageAgentCostRows = normalizeAgentCostRows(rawUsageAgentCostRows);" in text
     assert "deriveAgentCostRowsFromSessions(D.sessions || [])" in text
     assert "Cost totals are available, but priced sessions do not have valid dates for a trend chart." in text
     assert "makeLine('agentCostChart'" in text
     assert "Transport/source provenance. The chart above stays semantic by event type." in text
+    assert "No model calls match the current selection." in text
+    assert "No events match the current selection." in text
+    assert "No token usage is available for the current selection." in text
+    assert "No hourly activity matches the current selection." in text
+    assert "At least one dated activity week is needed for a trend." in text
+    assert "function renderChartEmpty(id, message)" in text
+    assert "const usageModelSeries = usageModelEntries.slice(0, 8);" in text
+    assert "if (usageModelOther > 0) usageModelSeries.push(['Other models', usageModelOther]);" in text
+    assert "const types = allTypes.slice(0, 12);" in text
+    assert "Showing the 12 most-launched types" in text
+    assert "const wt = (D.weekly_trends || []).slice(-12);" in text
+    assert 'title="${escHtml(String(m.value))}"' in text
+    assert "params.delete('workflow_type');" in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
@@ -279,8 +491,8 @@ def test_dashboard_html_prefers_sql_tab_payloads_for_existing_tabs(path: Path):
     assert "sqlTab('activity').tool_percentiles" not in text
     assert "toolsTab.tools_by_count || D.tools_by_count || {}" in text
     assert "mcpTab.mcp_server_before || D.mcp_server_before || {}" in text
-    assert "sqlTab('graphs').graph_tool_transitions || D.graph_tool_transitions || []" in text
-    assert "sqlTab('graphs').graph_dep || D.graph_dep" in text
+    assert "sqlTab('graph').graph_tool_transitions || D.graph_tool_transitions || []" in text
+    assert "sqlTab('graph').graph_dep || D.graph_dep" in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
@@ -295,10 +507,10 @@ def test_dashboard_graph_tab_renders_semantic_force_graph(path: Path):
     assert "d3.forceManyBody" in text
     assert "d3.zoom" in text
     assert "d3.drag" in text
-    assert "visibleIdsForSession" in text
-    assert "const adjacency = new Map();" in text
+    assert "visibleIdsForSessions" in text
+    assert "let adjacency = new Map();" in text
     assert "while (frontier.length)" in text
-    assert "if (edge.session_id && edge.session_id !== sessionId) continue;" in text
+    assert "if (edge.session_id && !sessionIds.has(edge.session_id)) continue;" in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
@@ -338,6 +550,71 @@ def test_dashboard_session_detail_uses_shared_timeline_above_tabs(path: Path):
     assert "title=\"${safeTip}\"" not in text
     assert "Trace waterfall" in text
     assert "<span>Trace timeline</span>" not in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_session_timeline_controls_conversation_playhead(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "class SessionConversationPlayhead" in text
+    assert 'class="session-timeline-playhead" role="slider"' in text
+    assert 'aria-label="Conversation position"' in text
+    assert 'data-timeline-event-index="${ev._conversationIndex}"' in text
+    assert 'data-timeline-summary="${tooltipAttr(summary)}"' in text
+    assert 'data-conversation-event-index="${index}"' in text
+    assert 'data-conversation-event-index="${ev._conversationIndex}"' in text
+    assert "this.track.setPointerCapture?.(event.pointerId)" in text
+    assert "key === 'ArrowLeft' || key === 'ArrowUp'" in text
+    assert "key === 'ArrowRight' || key === 'ArrowDown'" in text
+    assert "this.syncFromConversation()" in text
+    assert "Drag to scan conversation" in text
+    assert ".chat-msg.is-playhead-active .chat-bubble{" in text
+    assert ".session-timeline-playhead:focus-visible{" in text
+    assert "this.reducedMotion" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_conversation_reader_supports_focus_search_and_actions(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "function conversationMatchIndexes(conversation, query)" in text
+    assert "function highlightConversationText(value, query)" in text
+    assert "function renderConversationReaderToolbar(session, conversation)" in text
+    assert 'data-conversation-mode="focused"' in text
+    assert 'data-conversation-mode="full"' in text
+    assert 'aria-label="Search this conversation"' in text
+    assert 'aria-keyshortcuts="Meta+f Control+f /"' in text
+    assert 'data-conversation-search-nav="previous"' in text
+    assert 'data-conversation-search-nav="next"' in text
+    assert "session._conversationMode === 'full' || Boolean" in text
+    assert "const lastResponseIndex = turn.events.findLastIndex" in text
+    assert 'data-conversation-failure' in text
+    assert 'data-copy-conversation="${index}"' in text
+    assert "selectConversationEvent(session, matches[session._conversationMatchCursor])" in text
+    assert "const findShortcut = (event.metaKey || event.ctrlKey)" in text
+    assert ".conversation-reader-toolbar{" in text
+    assert ".chat-msg.is-search-match .chat-bubble" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_conversation_preview_expands_real_content(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "session._expandedConversationEvents instanceof Set" in text
+    assert "const previewLimit = isExpanded ? 20000 : 280;" in text
+    assert "fullText.slice(0, expanded ? 20000 : 280)" in text
+    assert ".ev-preview.full-content.expanded{max-height:none}" in text
+    assert "hint.textContent = expanded ? 'Tap to collapse' : 'Tap to expand';" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_supplementary_data_cannot_block_initial_render(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "const controller = new AbortController();" in text
+    assert "window.setTimeout(() => controller.abort(), 3000)" in text
+    assert "signal: controller.signal" in text
+    assert "window.clearTimeout(timeout);" in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)

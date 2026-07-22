@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import threading
 import time
 from collections import Counter, defaultdict
@@ -28,6 +29,8 @@ from reflect.insights import (
 from reflect.insights.renderers import insights_to_example_tuples, insights_to_strings
 from reflect.models import AgentStats, TelemetryStats
 from reflect.preparation import BackgroundPreparationWorker, PreparationSnapshot, PreparationState
+from reflect.session_rules import DEFAULT_SESSION_RULE_SCORER, context_from_summary
+from reflect.store.hook_facts import HookFactRepository
 from reflect.utils import (
     _json_dumps,
     _safe_ratio,
@@ -130,215 +133,13 @@ def _cursor_estimate_note(has_full_transcript: bool = True) -> str:
 
 def _quality_rules_payload() -> list[dict[str, object]]:
     """Dashboard copy for the session quality scoring rubric."""
-    return [
-        {
-            "name": "Completion",
-            "points": 25,
-            "signals": ["Stop", "SessionEnd", "SubagentStop"],
-            "description": "Full credit when the session emits a normal completion event; partial credit for subagent-only completion.",
-        },
-        {
-            "name": "Efficiency",
-            "points": 20,
-            "signals": ["tokens per tool", "tool count", "session token volume"],
-            "description": "Penalizes high token-per-tool usage and unusually large tool counts, using local distribution thresholds when available.",
-        },
-        {
-            "name": "Tool reliability",
-            "points": 15,
-            "signals": ["PostToolUseFailure", "tool failure rate"],
-            "description": "Rewards clean tool execution and scales down as failed tool calls exceed the expected local failure rate.",
-        },
-        {
-            "name": "Loop detection",
-            "points": 10,
-            "signals": ["repeated consecutive tool calls"],
-            "description": "Penalizes repeated use of the same tool in adjacent steps, which usually indicates stalled exploration or retry loops.",
-        },
-        {
-            "name": "Duration health",
-            "points": 10,
-            "signals": ["session span timestamps"],
-            "description": "Gives partial credit when timing data is sparse, penalizes very short sessions and long outliers.",
-        },
-        {
-            "name": "Error recovery",
-            "points": 10,
-            "signals": ["failure followed by successful PostToolUse"],
-            "description": "Rewards sessions that recover after failed tool calls; sessions without failures receive baseline credit.",
-        },
-        {
-            "name": "Tool diversity",
-            "points": 5,
-            "signals": ["distinct tools"],
-            "description": "Rewards sessions that use a reasonable mix of tools instead of a single repeated action.",
-        },
-        {
-            "name": "Edit productivity",
-            "points": 5,
-            "signals": ["AfterFileEdit", "BeforeReadFile"],
-            "description": "Rewards sessions that convert exploration into edits, using the edit-to-read ratio when available.",
-        },
-    ]
-
-
-def _summary_breakdown_item(
-    name: str,
-    earned: float,
-    max_points: float,
-    summary: str,
-    metrics: dict[str, object],
-) -> dict[str, object]:
-    return {
-        "name": name,
-        "earned": round(max(0.0, min(max_points, earned)), 2),
-        "max": max_points,
-        "summary": summary,
-        "metrics": metrics,
-        "inputs": [
-            {"name": key.replace("_", " "), "value": value}
-            for key, value in metrics.items()
-        ],
-    }
+    return DEFAULT_SESSION_RULE_SCORER.rules_payload()
 
 
 def _sql_quality_breakdown(row: dict[str, object], recovered: int = 0) -> list[dict[str, object]]:
-    status = str(row.get("status") or "unknown")
-    failures = int(row.get("failure_count") or row.get("failures") or 0)
-    tool_uses = int(row.get("tool_call_count") or row.get("tool_calls") or 0)
-    duration_ms = int(row.get("duration_ms") or 0)
-    input_tokens = int(row.get("input_tokens") or 0)
-    output_tokens = int(row.get("output_tokens") or 0)
-    total_tokens = input_tokens + output_tokens
-    completed = status in {"ok", "completed", "success"}
-
-    efficiency = 20.0
-    if tool_uses > 0:
-        tokens_per_tool = total_tokens / tool_uses
-        if tokens_per_tool > 25_000:
-            efficiency -= 15.0
-            efficiency_summary = "Tokens per tool exceeded the severe threshold."
-        elif tokens_per_tool > 10_000:
-            efficiency -= 7.0
-            efficiency_summary = "Tokens per tool exceeded the mild threshold."
-        else:
-            efficiency_summary = "Tokens per tool stayed within the expected range."
-        if tool_uses > 30:
-            efficiency -= 5.0
-            efficiency_summary += " Tool count exceeded the cold-start threshold."
-    else:
-        tokens_per_tool = 0.0
-        efficiency_summary = "No tool calls were present; scoring used total token volume."
-        if total_tokens > 50_000:
-            efficiency -= 10.0
-            efficiency_summary = "No tool calls were present and total tokens exceeded 50k."
-        elif total_tokens > 20_000:
-            efficiency -= 5.0
-            efficiency_summary = "No tool calls were present and total tokens exceeded 20k."
-
-    if tool_uses > 0:
-        failure_rate = failures / tool_uses
-        if failure_rate > 0.15:
-            reliability = max(0.0, 15.0 - failure_rate * 100)
-            reliability_summary = "Failure rate exceeded the threshold."
-        elif failures == 0:
-            reliability = 15.0
-            reliability_summary = "No failed tool calls were observed."
-        else:
-            reliability = 15.0 * (1.0 - failure_rate / 0.15)
-            reliability_summary = "Failures were present but stayed under the threshold."
-    else:
-        failure_rate = 0.0
-        reliability = 15.0
-        reliability_summary = "No tool calls were present, so no tool failures were observed."
-
-    duration_score = 10.0
-    if duration_ms <= 0:
-        duration_score = 5.0
-        duration_summary = "Only partial timing data was available."
-    elif duration_ms < 30_000:
-        duration_score -= 3.0
-        duration_summary = "Session was very short, so duration health was reduced."
-    elif duration_ms > 1_800_000:
-        duration_score -= 5.0
-        duration_summary = "Session exceeded the 30 minute cold-start duration threshold."
-    else:
-        duration_summary = "Duration stayed within the expected range."
-
-    if failures == 0:
-        recovery = 7.0
-        recovery_summary = "No failures were observed, so recovery gets baseline credit."
-    elif recovered > 0:
-        recovery = 10.0 * min(1.0, recovered / failures)
-        recovery_summary = "Failures were followed by successful tool results."
-    else:
-        recovery = 0.0
-        recovery_summary = "Failures were observed without a matching successful recovery."
-
-    return [
-        _summary_breakdown_item(
-            "Completion",
-            25.0 if completed else 0.0,
-            25.0,
-            "Session status indicates completion." if completed else "Session status does not indicate completion.",
-            {"status": status, "completed": completed},
-        ),
-        _summary_breakdown_item(
-            "Efficiency",
-            efficiency,
-            20.0,
-            efficiency_summary,
-            {
-                "tool_uses": tool_uses,
-                "total_tokens": total_tokens,
-                "tokens_per_tool": round(tokens_per_tool, 2),
-                "mild_threshold": 10_000,
-                "severe_threshold": 25_000,
-            },
-        ),
-        _summary_breakdown_item(
-            "Tool reliability",
-            reliability,
-            15.0,
-            reliability_summary,
-            {"failures": failures, "tool_uses": tool_uses, "failure_rate": round(failure_rate, 4), "threshold": 0.15},
-        ),
-        _summary_breakdown_item(
-            "Loop detection",
-            10.0,
-            10.0,
-            "No repeated-tool loop signal was present in the session summary.",
-            {"tool_sequence_available": False},
-        ),
-        _summary_breakdown_item(
-            "Duration health",
-            duration_score,
-            10.0,
-            duration_summary,
-            {"duration_ms": duration_ms},
-        ),
-        _summary_breakdown_item(
-            "Error recovery",
-            recovery,
-            10.0,
-            recovery_summary,
-            {"failures": failures, "recovered": recovered},
-        ),
-        _summary_breakdown_item(
-            "Tool diversity",
-            0.0,
-            5.0,
-            "Distinct per-session tool count was not present in the session summary.",
-            {"distinct_tools_available": False},
-        ),
-        _summary_breakdown_item(
-            "Edit productivity",
-            0.0,
-            5.0,
-            "Read/edit productivity events were not present in the session summary.",
-            {"edit_events_available": False},
-        ),
-    ]
+    return DEFAULT_SESSION_RULE_SCORER.breakdown(
+        context_from_summary(row, recovered=recovered)
+    )
 
 
 def _extract_skill_name_from_preview(preview: str) -> str:
@@ -1826,6 +1627,19 @@ def _artifact_report_ref(path: Path) -> str | None:
 
 def _load_detail_from_native(session_id: str, agent: str, file_path: Path) -> dict:
     """Read a native session file and return full conversation events."""
+    from reflect.session_adapters import DEFAULT_SESSION_ADAPTERS
+
+    if DEFAULT_SESSION_ADAPTERS.supports(agent):
+        try:
+            return DEFAULT_SESSION_ADAPTERS.load(session_id, agent, file_path).as_dict()
+        except (OSError, ValueError, TypeError) as exc:
+            logger.warning(
+                "Conversation adapter %s failed for %s; using compatibility parser: %s",
+                agent,
+                file_path,
+                exc,
+            )
+
     import json as _json
     try:
         import orjson
@@ -2156,7 +1970,7 @@ def _sql_report_payload(
             "db_path": str(db_path),
             "overview": overview,
             "sessions": list_sessions(conn, limit=limit, offset=offset).model_dump(),
-            "tabs": (
+            "tabs": _add_canonical_dashboard_tab_aliases(
                 build_report_tabs(conn).model_dump()
                 if include_tabs
                 else _empty_sql_lazy_tabs()
@@ -2348,6 +2162,94 @@ def _iso_to_epoch_ns(value: object) -> int:
     return int(parsed.timestamp() * 1_000_000_000)
 
 
+def _conversation_event_time_ns(event: dict[str, object]) -> int:
+    return _iso_to_epoch_ns(event.get("timestamp") or event.get("ts"))
+
+
+def _conversation_events_match(
+    telemetry_event: dict[str, object],
+    native_event: dict[str, object],
+) -> bool:
+    event_type = str(telemetry_event.get("type") or "")
+    if event_type != str(native_event.get("type") or ""):
+        return False
+    telemetry_tool_id = str(telemetry_event.get("tool_use_id") or "")
+    native_tool_id = str(native_event.get("tool_use_id") or "")
+    if telemetry_tool_id and native_tool_id:
+        return telemetry_tool_id == native_tool_id
+    if event_type in {"tool_call", "tool_result"}:
+        telemetry_tool = str(telemetry_event.get("tool_name") or "").casefold()
+        native_tool = str(native_event.get("tool_name") or "").casefold()
+        if telemetry_tool and native_tool and telemetry_tool != native_tool:
+            return False
+    telemetry_text = str(
+        telemetry_event.get("content") or telemetry_event.get("preview") or ""
+    ).strip()
+    native_text = str(
+        native_event.get("content") or native_event.get("preview") or ""
+    ).strip()
+    if telemetry_text and native_text and telemetry_text == native_text:
+        return True
+    telemetry_time = _conversation_event_time_ns(telemetry_event)
+    native_time = _conversation_event_time_ns(native_event)
+    return bool(
+        telemetry_time
+        and native_time
+        and abs(telemetry_time - native_time) <= 120 * 1_000_000_000
+    )
+
+
+def _merge_native_conversation_events(
+    telemetry_events: list[dict[str, object]],
+    native_events: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Enrich telemetry chronology with native text without dropping execution evidence."""
+    merged = [dict(event) for event in telemetry_events]
+    claimed_telemetry_indexes: set[int] = set()
+    text_fields = (
+        "content",
+        "timestamp",
+        "tool_name",
+        "tool_use_id",
+        "model",
+        "server",
+        "subagent_type",
+    )
+    numeric_fields = ("input_tokens", "output_tokens", "cache_read_tokens", "duration_ms")
+
+    for native_event in native_events:
+        candidates = [
+            index
+            for index, telemetry_event in enumerate(merged)
+            if index not in claimed_telemetry_indexes
+            and _conversation_events_match(telemetry_event, native_event)
+        ]
+        if not candidates:
+            merged.append(dict(native_event))
+            continue
+        native_time = _conversation_event_time_ns(native_event)
+        match_index = min(
+            candidates,
+            key=lambda index: abs(_conversation_event_time_ns(merged[index]) - native_time),
+        )
+        claimed_telemetry_indexes.add(match_index)
+        enriched = dict(merged[match_index])
+        for field in text_fields:
+            value = native_event.get(field)
+            if value not in (None, ""):
+                enriched[field] = value
+        for field in numeric_fields:
+            value = native_event.get(field)
+            if isinstance(value, (int, float)) and value > 0:
+                enriched[field] = value
+        merged[match_index] = enriched
+
+    return sorted(
+        merged,
+        key=lambda event: _conversation_event_time_ns(event) or 2**63,
+    )
+
+
 def _sql_log_body_text(body: dict[str, object], attrs: dict[str, object], event_type: object) -> str:
     for key in ("message", "body", "text", "content", "error.message", "exception.message"):
         value = body.get(key)
@@ -2425,12 +2327,23 @@ def _sql_dashboard_compat_payload(
                 else {"activity", "models", "costs", "tools", "mcp", "agents"}
             )
             for tab_name in selected_base_tabs:
-                tab_views[tab_name] = build_report_tab(
+                tab_payload = build_report_tab(
                     conn,
                     tab_name,
                     session_ids=selected_session_ids,
                 )
-            source_provenance = []
+                if tab_name == "usage_tools":
+                    tab_views["agents"] = {
+                        "agent_comparison": tab_payload.pop("agent_comparison"),
+                        "agents": tab_payload.pop("agents"),
+                    }
+                    tab_views["tools"].update(tab_payload)
+                else:
+                    tab_views[tab_name] = tab_payload
+            source_provenance = (
+                list_source_provenance(conn, session_ids=selected_session_ids)
+                if "activity" in selected_base_tabs else []
+            )
     finally:
         conn.close()
 
@@ -2458,6 +2371,7 @@ def _sql_dashboard_compat_payload(
         "cost_breakdown": costs_view["cost_breakdown"],
         "total_cache_creation_tokens": costs_view["total_cache_creation_tokens"],
         "total_cache_read_tokens": costs_view["total_cache_read_tokens"],
+        "agent_cost_over_time": costs_view["agent_cost_over_time"],
         "tools_by_count": tools_view["tools_by_count"],
         "tool_percentiles": tools_view["tool_percentiles"],
         "agent_comparison": agents_view["agent_comparison"],
@@ -2679,8 +2593,8 @@ def _sql_comparison_payload(
         return None
     primary_ids = {str(session["id"]) for session in primary_sessions}
     baseline_ids = {str(session["id"]) for session in baseline_sessions}
-    primary_compat = _sql_dashboard_compat_payload(db_path, session_ids=primary_ids)
-    baseline_compat = _sql_dashboard_compat_payload(db_path, session_ids=baseline_ids)
+    primary_compat = _sql_cohort_compat_payload(db_path, primary_ids)
+    baseline_compat = _sql_cohort_compat_payload(db_path, baseline_ids)
     primary_summary = _sql_cohort_summary(
         primary_sessions,
         primary_compat,
@@ -2693,7 +2607,7 @@ def _sql_comparison_payload(
         label="All other agents in scope",
     )
     baseline_agents = sorted(
-        baseline_compat.get("agent_comparison") or [],
+        _cohort_agent_comparison(baseline_sessions),
         key=lambda item: (-int(item.get("sessions") or 0), str(item.get("name") or "")),
     )
     quality_by_agent: dict[str, list[float]] = {}
@@ -2720,6 +2634,105 @@ def _sql_comparison_payload(
             "subagent_launches": _comparison_delta(primary_summary["subagent_launches"], baseline_summary["subagent_launches"]),
         },
     }
+
+
+def _sql_cohort_compat_payload(
+    db_path: Path,
+    session_ids: set[str],
+) -> dict[str, object]:
+    """Load only the aggregates rendered by cohort comparison cards."""
+    from reflect.store.sqlite import connect_sqlite
+
+    if not session_ids:
+        return {
+            "tools_by_count": {},
+            "top_commands": [],
+            "shell_executions": 0,
+            "mcp_calls": 0,
+            "subagent_launches": 0,
+        }
+    ordered_ids = sorted(session_ids)
+    placeholders = ", ".join("?" for _ in ordered_ids)
+    conn = connect_sqlite(db_path)
+    try:
+        tool_rows = _dict_rows(conn.execute(
+            f"""
+            SELECT tool_name, COUNT(*) AS call_count
+            FROM tool_calls
+            WHERE session_id IN ({placeholders})
+            GROUP BY tool_name
+            ORDER BY call_count DESC, tool_name ASC
+            LIMIT 5
+            """,
+            ordered_ids,
+        ))
+        shell_runs = conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM tool_calls
+            WHERE session_id IN ({placeholders})
+              AND LOWER(tool_name) IN ('shell', 'bash', 'exec_command')
+            """,
+            ordered_ids,
+        ).fetchone()[0]
+        mcp_calls = conn.execute(
+            f"SELECT COUNT(*) FROM mcp_calls WHERE session_id IN ({placeholders})",
+            ordered_ids,
+        ).fetchone()[0]
+        subagent_launches = conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM steps st
+            LEFT JOIN agent_events ae ON ae.step_id = st.id
+            WHERE st.session_id IN ({placeholders})
+              AND (
+                ae.event_name = 'SubagentStart'
+                OR st.type = 'subagent_start'
+                OR st.summary = 'SubagentStart'
+                OR st.summary LIKE '%.SubagentStart'
+              )
+            """,
+            ordered_ids,
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    return {
+        "tools_by_count": {
+            str(row["tool_name"]): int(row["call_count"] or 0)
+            for row in tool_rows
+            if row.get("tool_name")
+        },
+        "top_commands": [],
+        "shell_executions": int(shell_runs or 0),
+        "mcp_calls": int(mcp_calls or 0),
+        "subagent_launches": int(subagent_launches or 0),
+    }
+
+
+def _cohort_agent_comparison(
+    sessions: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    grouped: dict[str, list[dict[str, object]]] = {}
+    for session in sessions:
+        grouped.setdefault(str(session.get("agent") or "unknown"), []).append(session)
+    rows = []
+    for name, agent_sessions in grouped.items():
+        quality = [float(item.get("quality_score") or 0) for item in agent_sessions]
+        rows.append({
+            "name": name,
+            "sessions": len(agent_sessions),
+            "prompts": sum(int(item.get("prompt_count") or 0) for item in agent_sessions),
+            "tools": sum(int(item.get("tool_calls") or 0) for item in agent_sessions),
+            "failures": sum(int(item.get("failure_count") or 0) for item in agent_sessions),
+            "tokens": sum(
+                int(item.get("input_tokens") or 0) + int(item.get("output_tokens") or 0)
+                for item in agent_sessions
+            ),
+            "total_cost": sum(float(item.get("total_cost_usd") or 0) for item in agent_sessions),
+            "total_cost_usd": sum(float(item.get("total_cost_usd") or 0) for item in agent_sessions),
+            "avg_quality": sum(quality) / len(quality) if quality else 0.0,
+        })
+    return rows
 
 
 def _empty_sql_lazy_tabs() -> dict[str, object]:
@@ -2759,6 +2772,7 @@ def _empty_sql_lazy_tabs() -> dict[str, object]:
             "cache_read_cost_usd": 0.0,
             "pricing_source": "local",
             "model_costs": {},
+            "agent_cost_over_time": [],
         },
         "activity": {
             "events_by_type": {},
@@ -2780,6 +2794,7 @@ def _empty_sql_lazy_tabs() -> dict[str, object]:
             },
             "total_cache_creation_tokens": 0,
             "total_cache_read_tokens": 0,
+            "agent_cost_over_time": [],
         },
         "tools": {
             "tools_by_count": {},
@@ -2850,9 +2865,24 @@ def _empty_sql_lazy_tabs() -> dict[str, object]:
     }
 
 
+def _add_canonical_dashboard_tab_aliases(tabs: dict[str, object]) -> dict[str, object]:
+    """Expose product-language keys while retaining legacy payload compatibility."""
+    aliases = {
+        "usage": "overview",
+        "graph": "graphs",
+        "cohort_comparison": "compare",
+        "inbox": "observations",
+    }
+    for canonical, legacy in aliases.items():
+        if legacy in tabs:
+            tabs[canonical] = tabs[legacy]
+    return tabs
+
+
 def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
     from reflect.store.migrate import migrate
     from reflect.store.sqlite import connect_sqlite
+    from reflect.views.overview import list_source_provenance
     from reflect.views.report_tabs import _display_mcp_server_name, build_report_tab
     from reflect.views.sessions import list_sessions
 
@@ -2983,9 +3013,15 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
             tab_name: build_report_tab(conn, tab_name, session_ids={session_id})
             for tab_name in ("activity", "models", "costs", "tools", "mcp", "agents")
         }
+        source_provenance = list_source_provenance(conn, session_ids={session_id})
         navigation_page = list_sessions(conn, limit=100, offset=0).model_dump()
     finally:
         conn.close()
+
+    navigation_first_prompts = _sql_session_first_prompts(
+        db_path,
+        {str(row["session_id"]) for row in navigation_page["rows"]},
+    )
 
     quality_breakdown = _sql_quality_breakdown(session_row)
     quality_score = sum(float(item["earned"]) for item in quality_breakdown)
@@ -3054,7 +3090,9 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
             "agent": navigation_row.get("agent") or "unknown",
             "status": navigation_row["status"],
             "title": navigation_row.get("title"),
-            "first_prompt": navigation_row.get("title") or "",
+            "first_prompt": navigation_first_prompts.get(navigation_id, "")
+            or navigation_row.get("title")
+            or "",
             "started_at": navigation_row["started_at"],
             "ended_at": navigation_row.get("ended_at"),
             "created_at": navigation_row["started_at"],
@@ -3199,8 +3237,14 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
     models_view = tabs["models"]
     costs_view = tabs["costs"]
     agents_view = tabs["agents"]
+    failure_rate_pct = round(
+        100 * scoped_overview["failure_count"] / scoped_overview["tool_call_count"],
+        1,
+    ) if scoped_overview["tool_call_count"] else 0.0
+    weekly_trends = _compute_weekly_trends(Counter(activity_view["activity_by_day"]))
     session_card["skills"] = tools_view["skills_by_count"]
     tabs["overview"].update({
+        "failure_rate_pct": failure_rate_pct,
         "mcp_calls": mcp_view["mcp_calls"],
         "mcp_servers_by_count": mcp_view["mcp_servers_by_count"],
         "subagent_launches": tools_view["subagent_launches"],
@@ -3215,6 +3259,7 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
         "unique_models": models_view["unique_models"],
         "models_by_count": models_view["models_by_count"],
         "events_by_type": activity_view["events_by_type"],
+        "source_provenance": source_provenance,
         "total_cache_creation_tokens": costs_view["total_cache_creation_tokens"],
         "total_cache_read_tokens": costs_view["total_cache_read_tokens"],
         "input_cost_usd": costs_view["cost_breakdown"]["input_cost_usd"],
@@ -3222,6 +3267,7 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
         "cache_creation_cost_usd": costs_view["cost_breakdown"]["cache_creation_cost_usd"],
         "cache_read_cost_usd": costs_view["cost_breakdown"]["cache_read_cost_usd"],
         "model_costs": costs_view["model_costs"],
+        "agent_cost_over_time": costs_view["agent_cost_over_time"],
     })
     insight_payload = _sql_insight_payload(scoped_overview, [session_card], {
         "total_cache_creation_tokens": int(session_row["cache_creation_tokens"] or 0),
@@ -3242,6 +3288,7 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
         "token_economy": insight_payload["token_economy"],
     }
     tabs["compare"] = {"comparison": None, "agent_comparison": [agent_payload]}
+    _add_canonical_dashboard_tab_aliases(tabs)
     return {
         "sql_backed": True,
         "sqlite": {
@@ -3263,8 +3310,8 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
         "tool_calls": scoped_overview["tool_call_count"],
         "tool_to_prompt_ratio": tabs["overview"]["tool_to_prompt_ratio"],
         "events_by_type": activity_view["events_by_type"],
-        "source_provenance": [],
-        "failure_rate_pct": 0,
+        "source_provenance": source_provenance,
+        "failure_rate_pct": failure_rate_pct,
         "file_edits": tools_view["file_edits"],
         "file_reads": tools_view["file_reads"],
         "total_input_tokens": scoped_overview["input_tokens"],
@@ -3292,7 +3339,8 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
         "activity_by_hour": activity_view["activity_by_hour"],
         "peak_hour": activity_view["peak_hour"],
         "peak_hour_count": activity_view["peak_hour_count"],
-        "weekly_trends": [],
+        "weekly_trends": weekly_trends,
+        "agent_cost_over_time": costs_view["agent_cost_over_time"],
         "graph_tool_transitions": [],
         "graph_cooccurrence": {"tools": [], "matrix": []},
         "graph_latency_histograms": {},
@@ -3352,6 +3400,57 @@ def _sql_dashboard_tab_payload(
         "session_id": session_id,
         **payload,
     }
+
+
+_EXPLORE_VIEW_TABS: dict[str, tuple[str, ...]] = {
+    "usage": ("activity", "models", "costs", "usage_tools", "mcp"),
+    "tools": ("tools",),
+    "graph": ("graphs",),
+    "context": ("specs", "memory", "privacy", "exports"),
+}
+
+_EXPLORE_VIEW_ALIASES = {
+    "overview": "usage",
+    "activity": "usage",
+    "graphs": "graph",
+    "data": "context",
+}
+
+
+def _canonical_explore_view(view_name: str) -> str:
+    normalized = view_name.strip().lower().replace("-", "_")
+    return _EXPLORE_VIEW_ALIASES.get(normalized, normalized)
+
+
+def _sql_dashboard_explore_payload(
+    db_path: Path,
+    view_name: str,
+    *,
+    session_id: str = "",
+) -> dict[str, object]:
+    canonical_view = _canonical_explore_view(view_name)
+    tab_names = _EXPLORE_VIEW_TABS.get(canonical_view)
+    if tab_names is None:
+        raise ValueError(f"Unknown Explore view: {view_name}")
+
+    payload: dict[str, object] = {
+        "sql_backed": True,
+        "view": canonical_view,
+        "scoped": bool(session_id),
+        "session_id": session_id,
+    }
+    for tab_name in tab_names:
+        tab_payload = _sql_dashboard_tab_payload(db_path, tab_name, session_id=session_id)
+        content = {
+            key: value
+            for key, value in tab_payload.items()
+            if key not in {"sql_backed", "tab", "scoped", "session_id"}
+        }
+        if canonical_view in {"usage", "tools", "graph"}:
+            payload.update(content)
+        else:
+            payload[tab_name] = content
+    return payload
 
 
 def _sql_dashboard_payload(
@@ -3540,6 +3639,11 @@ def _sql_dashboard_payload(
     scoped_overview["source_provenance"] = compat["source_provenance"]
     cost_breakdown = compat["cost_breakdown"]
     total_cost_usd = float(scoped_overview["estimated_cost_usd"] or cost_breakdown["total_cost_usd"] or 0)
+    failure_rate_pct = round(
+        100 * scoped_overview["failure_count"] / scoped_overview["tool_call_count"],
+        1,
+    ) if scoped_overview["tool_call_count"] else 0.0
+    weekly_trends = _compute_weekly_trends(Counter(compat["activity_by_day"]))
     sqlite_payload["tabs"] = {
         **dict(sqlite_payload.get("tabs") or {}),
         "overview": {
@@ -3555,7 +3659,7 @@ def _sql_dashboard_payload(
                 f"{scoped_overview['tool_call_count'] / prompt_count:.1f}"
                 if prompt_count else "0.0"
             ),
-            "failure_rate_pct": 0,
+            "failure_rate_pct": failure_rate_pct,
             "tool_failures": int(scoped_overview["failure_count"]),
             "mcp_calls": compat["mcp_calls"],
             "mcp_servers_by_count": compat["mcp_servers_by_count"],
@@ -3583,6 +3687,7 @@ def _sql_dashboard_payload(
             "cache_read_cost_usd": cost_breakdown["cache_read_cost_usd"],
             "pricing_source": "local",
             "model_costs": compat["model_costs"],
+            "agent_cost_over_time": compat["agent_cost_over_time"],
         },
         "activity": {
             "events_by_type": compat["events_by_type"],
@@ -3601,6 +3706,7 @@ def _sql_dashboard_payload(
             "cost_breakdown": compat["cost_breakdown"],
             "total_cache_creation_tokens": compat["total_cache_creation_tokens"],
             "total_cache_read_tokens": compat["total_cache_read_tokens"],
+            "agent_cost_over_time": compat["agent_cost_over_time"],
         },
         "tools": {
             "tools_by_count": compat["tools_by_count"],
@@ -3666,6 +3772,7 @@ def _sql_dashboard_payload(
         "comparison": comparison_payload,
         "agent_comparison": compat["agent_comparison"],
     }
+    _add_canonical_dashboard_tab_aliases(sqlite_payload["tabs"])
     payload = {
         "sql_backed": True,
         "sqlite": sqlite_payload,
@@ -3686,7 +3793,7 @@ def _sql_dashboard_payload(
         "tool_to_prompt_ratio": f"{scoped_overview['tool_call_count'] / prompt_count:.1f}" if prompt_count else "0.0",
         "events_by_type": compat["events_by_type"],
         "source_provenance": compat["source_provenance"],
-        "failure_rate_pct": 0,
+        "failure_rate_pct": failure_rate_pct,
         "file_edits": compat["file_edits"],
         "file_reads": compat["file_reads"],
         "total_input_tokens": scoped_overview["input_tokens"],
@@ -3719,7 +3826,8 @@ def _sql_dashboard_payload(
         "activity_by_hour": compat["activity_by_hour"],
         "peak_hour": compat["peak_hour"],
         "peak_hour_count": compat["peak_hour_count"],
-        "weekly_trends": [],
+        "weekly_trends": weekly_trends,
+        "agent_cost_over_time": compat["agent_cost_over_time"],
         "graph_tool_transitions": compat["graph_tool_transitions"],
         "graph_cooccurrence": compat["graph_cooccurrence"],
         "graph_latency_histograms": {},
@@ -3797,6 +3905,7 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
             row["step_id"]: row
             for row in _dict_rows(conn.execute("SELECT * FROM llm_calls WHERE session_id = ?", (session_id,)))
         }
+        hook_facts = HookFactRepository(conn).load_session(session_id)
         tool_rows = _dict_rows(conn.execute("SELECT * FROM tool_calls WHERE session_id = ?", (session_id,)))
         tools_by_step = {row["step_id"]: row for row in tool_rows}
         mcp_rows = _dict_rows(conn.execute("SELECT * FROM mcp_calls WHERE session_id = ?", (session_id,)))
@@ -3833,6 +3942,19 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
             """,
             (session_id,),
         ).fetchone()[0]
+        native_source = conn.execute(
+            """
+            SELECT source_id
+            FROM raw_events
+            WHERE session_id = ? AND source_type = 'native_session'
+            ORDER BY observed_at DESC
+            LIMIT 1
+            """,
+            (session_id,),
+        ).fetchone()
+        if native_source and native_source[0]:
+            session_row["source_kind"] = "native_session"
+            session_row["source_ref"] = native_source[0]
         tool_inventory = _build_tool_inventory(
             [
                 {
@@ -3902,8 +4024,7 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
         if span_id:
             step_id_by_span_id[span_id] = step["id"]
     seen_prompts: set[tuple[str, str]] = set()
-    seen_prompt_generations: set[str] = set()
-    seen_responses: set[tuple[str, str, int, int]] = set()
+    seen_responses: set[tuple[object, ...]] = set()
     seen_tools: set[tuple[str, str, str]] = set()
     for step in steps:
         attrs = _load_json_dict(step["raw_attrs_json"])
@@ -3921,31 +4042,43 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
             "input",
             limit=5000,
         )
-        prompt_added = False
+        prompt_fact = hook_facts.prompt_for_step(step["id"])
+        if prompt_fact:
+            prompt = str(prompt_fact.get("content_preview_redacted") or prompt)
         if is_prompt_event:
-            prompt_key = (generation_id or str(_sql_attr(attrs, "gen_ai.client.prompt.sha256") or ""), prompt)
+            prompt_hash = str(
+                (prompt_fact or {}).get("content_hash")
+                or _sql_attr(attrs, "gen_ai.client.prompt.sha256")
+                or ""
+            )
+            prompt_key = (generation_id or prompt_hash, prompt)
             if prompt_key not in seen_prompts:
                 seen_prompts.add(prompt_key)
-                if generation_id:
-                    seen_prompt_generations.add(generation_id)
                 conversation.append({
                     "type": "prompt",
                     "ts": base_ts,
                     "preview": prompt or "Prompt text was not captured for this turn; metadata is available.",
+                    "content_hash": prompt_hash,
+                    "content_length": int((prompt_fact or {}).get("content_length") or 0),
                 })
-                prompt_added = True
-        if step["id"] in llm_by_step:
+        response_facts = hook_facts.responses_for_step(step["id"])
+        for response_fact in response_facts:
+            response_hash = str(response_fact.get("content_hash") or "")
+            response_identity = response_hash or str(response_fact.get("id") or step["id"])
+            response_key = (response_identity, "hook", 0, 0)
+            if response_key in seen_responses:
+                continue
+            seen_responses.add(response_key)
+            conversation.append({
+                "type": "response",
+                "ts": base_ts,
+                "preview": response_fact.get("content_preview_redacted")
+                or "Assistant turn completed, but response text was not captured.",
+                "content_hash": response_hash,
+                "content_length": int(response_fact.get("content_length") or 0),
+            })
+        if step["id"] in llm_by_step and not response_facts:
             call = llm_by_step[step["id"]]
-            has_prompt_for_call = prompt_added or (bool(generation_id) and generation_id in seen_prompt_generations)
-            if call["input_tokens"] and not has_prompt_for_call:
-                if generation_id:
-                    seen_prompt_generations.add(generation_id)
-                conversation.append({
-                    "type": "prompt",
-                    "ts": base_ts,
-                    "input_tokens": call["input_tokens"],
-                    "preview": "Prompt text was not captured for this turn; token metadata is available.",
-                })
             if is_response_event or call["output_tokens"]:
                 model = call["response_model"] or call["request_model"] or ""
                 response_key = (
@@ -3976,6 +4109,7 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
                     "type": "tool_call",
                     "ts": base_ts,
                     "tool_name": tool["tool_name"],
+                    "tool_use_id": tool_use_id,
                     "preview": tool["input_preview_redacted"] or _sql_attr_text(
                         attrs,
                         "gen_ai.client.tool.input",
@@ -3988,6 +4122,7 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
                     "type": "tool_result",
                     "ts": step["ended_at"] or base_ts,
                     "tool_name": tool["tool_name"],
+                    "tool_use_id": tool_use_id,
                     "success": tool["status"] != "error",
                     "duration_ms": tool["duration_ms"] or 0,
                     "preview": tool["output_preview_redacted"] or _sql_attr_text(
@@ -4007,6 +4142,20 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
                 "tool_name": mcp["tool_name"] or "",
                 "server": mcp["server_name"] or "",
                 "success": mcp["status"] != "error",
+            })
+        if agent_event := hook_facts.agent_event_for_step(step["id"]):
+            conversation.append({
+                "type": "subagent_stop"
+                if str(agent_event.get("event_name") or "").lower().endswith("stop")
+                else "subagent_start",
+                "ts": base_ts,
+                "subagent_type": agent_event.get("agent_type") or "unknown",
+                "agent_id": agent_event.get("agent_id") or "",
+                "parent_agent_id": agent_event.get("parent_agent_id") or "",
+                "status": agent_event.get("status") or "",
+                "preview": agent_event.get("task_preview_redacted") or "",
+                "content_hash": agent_event.get("task_hash") or "",
+                "content_length": int(agent_event.get("task_length") or 0),
             })
         raw_span = raw_by_step_id.get(step["id"]) or raw_by_time_event.get((str(step["started_at"] or ""), event_type)) or {}
         trace_id = str(raw_span.get("trace_id") or "")
@@ -4028,6 +4177,14 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
             "mcp_tool": (mcp_by_step.get(step["id"]) or {}).get("tool_name", ""),
             "mcp_server": (mcp_by_step.get(step["id"]) or {}).get("server_name", ""),
             "phase": step["type"],
+            "hook_event_id": step.get("hook_event_id") or "",
+            "telemetry_source": step.get("telemetry_source") or "",
+            "hook_schema_version": step.get("hook_schema_version"),
+            "provider_adapter": step.get("hook_provider_adapter") or "",
+            "native_trace_id": step.get("native_trace_id") or "",
+            "native_span_id": step.get("native_span_id") or "",
+            "agent_id": step.get("agent_invocation_id") or "",
+            "parent_agent_id": step.get("parent_agent_id") or "",
             "rel_ms": 0,
             "duration_ms": step["duration_ms"] or 0,
             "attrs": attrs,
@@ -4078,13 +4235,45 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
     errors = sum(1 for step in steps if step["status"] == "error") + sum(
         1 for log in telemetry_logs if log.get("severity") in {"ERROR", "FATAL"}
     )
+    hook_summary = hook_facts.summary(steps)
+    conversation_source = "telemetry"
+    conversation_warnings: list[str] = []
+    native_path = _native_session_path(session_row)
+    if native_path is not None:
+        from reflect.session_adapters import DEFAULT_SESSION_ADAPTERS
+
+        agent = str(session_row.get("agent") or "")
+        if DEFAULT_SESSION_ADAPTERS.supports(agent):
+            try:
+                native_transcript = DEFAULT_SESSION_ADAPTERS.load(session_id, agent, native_path)
+                native_events = [event.as_dict() for event in native_transcript.events]
+                if any(
+                    event.get("type") == "response" and str(event.get("content") or "").strip()
+                    for event in native_events
+                ):
+                    conversation = _merge_native_conversation_events(conversation, native_events)
+                    conversation_source = native_transcript.source
+                    conversation_warnings.extend(native_transcript.warnings)
+            except (OSError, ValueError, TypeError) as exc:
+                logger.warning(
+                    "Native conversation adapter failed for session %s (%s): %s",
+                    session_id,
+                    agent,
+                    exc,
+                )
+                conversation_warnings.append(
+                    "The local native transcript could not be loaded; showing telemetry-derived events."
+                )
+
     tool_inventory = _add_skill_hints_to_inventory(
         tool_inventory,
         {
             skill_name
             for event in conversation
             if event.get("type") in {"prompt", "response"}
-            for skill_name in _extract_skill_names_from_text(str(event.get("preview") or ""))
+            for skill_name in _extract_skill_names_from_text(
+                str(event.get("preview") or event.get("content") or "")
+            )
         },
     )
     tool_inventory = _add_subagent_hints_to_inventory(
@@ -4093,12 +4282,15 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
             subagent_name
             for event in conversation
             if event.get("type") in {"prompt", "response"}
-            for subagent_name in _extract_subagent_names_from_text(str(event.get("preview") or ""))
+            for subagent_name in _extract_subagent_names_from_text(
+                str(event.get("preview") or event.get("content") or "")
+            )
         },
     )
     return {
         "session_id": session_id,
         "conversation": conversation,
+        "conversation_source": conversation_source,
         "tool_inventory": tool_inventory,
         "telemetry": {
             "summary": {
@@ -4110,13 +4302,29 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
                 "duration_ms": 0,
                 "truncated_spans": 0,
                 "truncated_logs": max(0, int(raw_log_count or 0) - len(telemetry_logs)),
+                **hook_summary,
             },
             "spans": telemetry_spans,
             "logs": telemetry_logs,
             "warnings": [],
         },
-        "warnings": [],
+        "warnings": conversation_warnings,
     }
+
+
+def _native_session_path(session_row: dict[str, object]) -> Path | None:
+    """Resolve a local native transcript path from canonical session provenance."""
+    if str(session_row.get("source_kind") or "") != "native_session":
+        return None
+    source_ref = str(session_row.get("source_ref") or "")
+    prefix, separator, remainder = source_ref.partition(":")
+    if prefix != "native_session" or not separator:
+        return None
+    _agent, separator, path_text = remainder.partition(":")
+    if not separator or not path_text:
+        return None
+    path = Path(path_text).expanduser()
+    return path if path.is_file() else None
 
 
 def _start_publish_server(
@@ -4150,6 +4358,7 @@ def _build_dashboard_app(
     db_path: Path | None = None,
     sql_only: bool = False,
     preparation_worker: BackgroundPreparationWorker | None = None,
+    project_root: Path | None = None,
 ):
     from fastapi import FastAPI, Request
     from fastapi.responses import FileResponse, JSONResponse
@@ -4158,6 +4367,12 @@ def _build_dashboard_app(
     globals()["Request"] = Request
 
     app = FastAPI(title="reflect dashboard", docs_url=None, redoc_url=None)
+    workflow_project_root = (project_root or Path.cwd()).expanduser().resolve()
+
+    def resolve_workflow_project_root(value: object = None) -> Path:
+        requested = str(value or "").strip()
+        return Path(requested).expanduser().resolve() if requested else workflow_project_root
+
     if db_path is not None:
         if preparation_worker is not None:
             dashboard_cache = DashboardDataCache(
@@ -4207,12 +4422,27 @@ def _build_dashboard_app(
         status = params.get("status") or "all"
         range_name = params.get("range") or "all"
         active_tab = (params.get("tab") or "sessions").strip().lower()
+        explore_view = _canonical_explore_view(params.get("view") or "usage")
+        legacy_explore_views = {
+            "overview": "usage",
+            "activity": "usage",
+            "tools": "tools",
+            "graphs": "graph",
+            "data": "context",
+            "context": "context",
+        }
+        if active_tab in legacy_explore_views:
+            explore_view = legacy_explore_views[active_tab]
+            active_tab = "explore"
+        elif active_tab == "observations":
+            active_tab = "inbox"
+        elif active_tab == "compare":
+            active_tab = "impact"
         filtered_base_tabs = {
-            "overview": {"activity", "models", "costs", "mcp"},
-            "tools": {"tools"},
-            "compare": {"agents"},
-            "observations": {"activity", "models", "costs", "tools", "mcp", "agents"},
-        }.get(active_tab, set())
+            ("explore", "usage"): {"activity", "models", "costs", "usage_tools", "mcp"},
+            ("explore", "tools"): {"tools"},
+            ("inbox", "usage"): {"activity", "models", "costs", "tools", "mcp", "agents"},
+        }.get((active_tab, explore_view), set())
         if session_id:
             filtered_base_tabs = {"activity", "models", "costs", "tools", "mcp", "agents"}
         has_filter = any([q, session_id, agents, model != "all", status != "all", range_name != "all"])
@@ -4236,7 +4466,7 @@ def _build_dashboard_app(
                     status=status,
                     range_name=range_name,
                     lazy_heavy_tabs=True,
-                    include_comparison=active_tab == "compare",
+                    include_comparison=active_tab == "explore" and explore_view == "usage",
                     base_tab_names=filtered_base_tabs,
                 ))
             if not has_filter:
@@ -4318,6 +4548,26 @@ def _build_dashboard_app(
         finally:
             _perf_finish("api.tabs", perf_start, tab=tab_name, session=bool(session_id))
 
+    @app.get("/api/explore/{view_name}")
+    def api_explore(view_name: str, request: Request):
+        perf_start = _perf_start()
+        if db_path is None:
+            try:
+                return JSONResponse({"error": "SQLite report view is not configured"}, status_code=404)
+            finally:
+                _perf_finish("api.explore", perf_start, view=view_name, status=404)
+        session_id = (request.query_params.get("session") or "").strip()
+        try:
+            return JSONResponse(
+                _sql_dashboard_explore_payload(db_path, view_name, session_id=session_id)
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc), "view": view_name}, status_code=404)
+        except Exception as exc:
+            return JSONResponse({"error": str(exc), "db_path": str(db_path)}, status_code=500)
+        finally:
+            _perf_finish("api.explore", perf_start, view=view_name, session=bool(session_id))
+
     @app.get("/api/session/{session_id:path}")
     def api_session(session_id: str):
         if db_path is not None:
@@ -4338,6 +4588,425 @@ def _build_dashboard_app(
             else PreparationSnapshot(state=PreparationState.IDLE, generation=0)
         )
         return JSONResponse({"preparation": snapshot.as_dict()})
+
+    @app.get("/api/inbox")
+    @app.get("/api/improvements")
+    def api_inbox(request: Request):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        params = request.query_params
+        conn = connect_sqlite(db_path)
+        try:
+            service = ImprovementService(conn)
+            status = (params.get("status") or "").strip() or None
+            include_resolved = (params.get("include_resolved") or "").lower() in {
+                "1",
+                "true",
+                "yes",
+            }
+            limit = min(500, max(1, int(params.get("limit") or 100)))
+            findings = service.list_inbox_findings(
+                limit=500,
+                status=status,
+                include_resolved=include_resolved,
+            )
+            summary = service.repository.summary(limit=0)
+            if status:
+                raw_observation_count = summary.counts_by_status.get(status, 0)
+            elif include_resolved:
+                raw_observation_count = sum(summary.counts_by_status.values())
+            else:
+                raw_observation_count = sum(
+                    summary.counts_by_status.get(item, 0)
+                    for item in (
+                        "new",
+                        "acknowledged",
+                        "proposal_ready",
+                        "approved",
+                        "active",
+                        "regressed",
+                    )
+                )
+            collection_key = "findings" if request.url.path == "/api/inbox" else "observations"
+            return JSONResponse(
+                {
+                    "generated_at": summary.generated_at,
+                    collection_key: [
+                        item.model_dump(mode="json") for item in findings[:limit]
+                    ],
+                    "inbox_total_count": len(findings),
+                    "raw_observation_count": raw_observation_count,
+                    "counts_by_status": summary.counts_by_status,
+                    "pending_workflows": summary.pending_workflows,
+                    "active_interventions": summary.active_interventions,
+                    "verified_improvement_rate": summary.verified_improvement_rate,
+                }
+            )
+        except (ValueError, sqlite3.Error) as exc:
+            return JSONResponse({"error": str(exc), "db_path": str(db_path)}, status_code=500)
+        finally:
+            conn.close()
+
+    @app.get("/api/rules")
+    def api_improvement_rules():
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            rules = ImprovementService(conn).repository.list_rule_summaries()
+            return JSONResponse(
+                {
+                    "rules": [rule.model_dump(mode="json") for rule in rules],
+                    "extension": {
+                        "kind": "code_backed",
+                        "module": "reflect.improvements",
+                        "base_class": "BaseImprovementRule",
+                        "registry": "DEFAULT_RULE_REGISTRY",
+                        "registration": "RuleRegistry.register",
+                    },
+                }
+            )
+        finally:
+            conn.close()
+
+    @app.get("/api/inbox/{finding_id}")
+    @app.get("/api/improvements/{finding_id}")
+    def api_inbox_detail(finding_id: str):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            observation = ImprovementService(conn).repository.get_observation(finding_id)
+            if observation is None:
+                return JSONResponse({"error": f"Finding {finding_id} not found"}, status_code=404)
+            return JSONResponse(observation.model_dump(mode="json"))
+        finally:
+            conn.close()
+
+    @app.get("/api/workflows")
+    def api_workflows(request: Request):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            behavior_type = request.query_params.get("type")
+            status = request.query_params.get("status")
+            service = ImprovementService(conn)
+            candidates = service.workflows.list(
+                behavior_types={behavior_type} if behavior_type else None,
+                statuses={status} if status else None,
+            )
+            serialized = []
+            for candidate in candidates:
+                item = candidate.model_dump(mode="json")
+                try:
+                    item["skill_id"] = service.skills.skill_for_candidate(candidate.id).id
+                except KeyError:
+                    item["skill_id"] = None
+                serialized.append(item)
+            return JSONResponse(
+                {"workflows": serialized}
+            )
+        finally:
+            conn.close()
+
+    @app.get("/api/loops")
+    def api_loops(request: Request):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.models import LoopKind, LoopStatus
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            service = ImprovementService(conn)
+            kind = request.query_params.get("kind")
+            status = request.query_params.get("status")
+            records = service.loops.list(
+                kind=LoopKind(kind) if kind else None,
+                status=LoopStatus(status) if status else None,
+                limit=min(500, max(1, int(request.query_params.get("limit") or 100))),
+            )
+            return JSONResponse(
+                {
+                    "loops": [record.model_dump(mode="json") for record in records],
+                }
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
+        finally:
+            conn.close()
+
+    @app.get("/api/loops/{loop_id}")
+    def api_loop_detail(loop_id: str):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            service = ImprovementService(conn)
+            return JSONResponse(service.loops.show(loop_id).model_dump(mode="json"))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        finally:
+            conn.close()
+
+    @app.get("/api/skills")
+    def api_skills(request: Request):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.models import SkillLifecycleState
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            service = ImprovementService(conn)
+            status = request.query_params.get("status")
+            include_stale = (
+                request.query_params.get("include_stale") or ""
+            ).lower() in {"1", "true", "yes"}
+            lifecycle = SkillLifecycleState(status) if status else None
+            counts_by_lifecycle = service.skills.counts_by_lifecycle()
+            records = service.skills.list(
+                lifecycle=lifecycle,
+                include_stale=include_stale,
+                limit=min(500, max(1, int(request.query_params.get("limit") or 100))),
+            )
+            if lifecycle:
+                total_count = counts_by_lifecycle.get(lifecycle.value, 0)
+            elif include_stale:
+                total_count = sum(counts_by_lifecycle.values())
+            else:
+                total_count = sum(
+                    counts_by_lifecycle.get(item.value, 0)
+                    for item in (SkillLifecycleState.ACTIVE, SkillLifecycleState.PENDING)
+                )
+            return JSONResponse(
+                {
+                    "skills": [record.model_dump(mode="json") for record in records],
+                    "total_count": total_count,
+                    "archived_count": counts_by_lifecycle.get(SkillLifecycleState.STALE.value, 0),
+                    "counts_by_lifecycle": counts_by_lifecycle,
+                }
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
+        finally:
+            conn.close()
+
+    @app.get("/api/skills/{skill_id}")
+    def api_skill_detail(skill_id: str):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            service = ImprovementService(conn)
+            return JSONResponse(service.skills.show(skill_id).model_dump(mode="json"))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        finally:
+            conn.close()
+
+    @app.get("/api/workflows/{candidate_id}/sessions")
+    def api_workflow_sessions(candidate_id: str, request: Request):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            ledger = ImprovementService(conn).repository.workflow_session_ledger(
+                candidate_id,
+                limit=min(200, max(1, int(request.query_params.get("limit") or 50))),
+            )
+            return JSONResponse(ledger.model_dump(mode="json"))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        finally:
+            conn.close()
+
+    @app.get("/api/workflows/{candidate_id}/preview")
+    def api_workflow_preview(candidate_id: str, request: Request):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            return JSONResponse(
+                ImprovementService(conn).workflows.preview(
+                    candidate_id,
+                    project_root=resolve_workflow_project_root(
+                        request.query_params.get("project_root")
+                    ),
+                )
+            )
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except (RuntimeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        finally:
+            conn.close()
+
+    @app.put("/api/workflows/{candidate_id}")
+    def api_workflow_edit(candidate_id: str, body: dict):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        content = body.get("content")
+        if not isinstance(content, dict):
+            return JSONResponse({"error": "A structured workflow content object is required"}, status_code=422)
+        conn = connect_sqlite(db_path)
+        try:
+            candidate = ImprovementService(conn).workflows.edit(candidate_id, content=content)
+            return JSONResponse(candidate.model_dump(mode="json"))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except (RuntimeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        finally:
+            conn.close()
+
+    @app.post("/api/workflows/{candidate_id}/apply")
+    def api_workflow_apply(candidate_id: str, body: dict | None = None):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            return JSONResponse(
+                ImprovementService(conn).workflows.apply(
+                    candidate_id,
+                    project_root=resolve_workflow_project_root((body or {}).get("project_root")),
+                )
+            )
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except (RuntimeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        finally:
+            conn.close()
+
+    @app.post("/api/workflows/{candidate_id}/rollback")
+    def api_workflow_rollback(candidate_id: str):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            return JSONResponse(ImprovementService(conn).workflows.rollback(candidate_id))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except (RuntimeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        finally:
+            conn.close()
+
+    @app.post("/api/workflows/{candidate_id}/reject")
+    def api_workflow_reject(candidate_id: str, body: dict | None = None):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            candidate = ImprovementService(conn).workflows.reject(
+                candidate_id,
+                reason=str((body or {}).get("reason") or "operator_rejected")[:200],
+            )
+            return JSONResponse(candidate.model_dump(mode="json"))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except (RuntimeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        finally:
+            conn.close()
+
+    @app.post("/api/feedback/{session_id:path}")
+    def api_session_feedback(session_id: str, body: dict):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        outcome = str(body.get("outcome") or "")
+        reason = body.get("reason")
+        conn = connect_sqlite(db_path)
+        try:
+            feedback_id = ImprovementService(conn).repository.record_feedback(
+                session_id,
+                outcome,
+                reason_redacted=str(reason) if reason is not None else None,
+            )
+            return JSONResponse(
+                {"id": feedback_id, "session_id": session_id, "outcome": outcome},
+                status_code=201,
+            )
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
+        finally:
+            conn.close()
+
+    @app.get("/api/impact")
+    @app.get("/api/measurements")
+    def api_impact(request: Request):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            collection_key = "impact_checks" if request.url.path == "/api/impact" else "measurements"
+            return JSONResponse({collection_key: ImprovementService(conn).measurements.list()})
+        finally:
+            conn.close()
+
+    @app.get("/api/impact/{impact_id}/sessions")
+    @app.get("/api/measurements/{impact_id}/sessions")
+    def api_impact_sessions(impact_id: str):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            return JSONResponse(ImprovementService(conn).measurements.sessions(impact_id))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        finally:
+            conn.close()
 
     @app.get("/")
     def index():
