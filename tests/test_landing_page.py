@@ -2,6 +2,7 @@
 
 import json
 import re
+import tomllib
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -175,8 +176,28 @@ def test_landing_page_has_complete_social_and_structured_metadata():
     text = _landing_text()
 
     assert "Local-First Observability for AI Coding Agents" in text
+    assert '<meta property="og:image" content="https://reflect.o11y.dev/og-image-v2.png">' in text
+    assert '<meta property="og:image:type" content="image/png">' in text
     assert '<meta property="og:image:width" content="1200">' in text
     assert '<meta property="og:image:height" content="630">' in text
+    assert '<meta property="og:image:alt"' in text
     assert '<meta name="twitter:card" content="summary_large_image">' in text
+    assert '<meta name="twitter:image:alt"' in text
     assert '"@type": "SoftwareApplication"' in text
     assert '"license": "https://www.apache.org/licenses/LICENSE-2.0"' in text
+
+
+def test_landing_page_social_image_is_shipped_at_declared_dimensions():
+    public_image = REPO_ROOT / "docs" / "og-image-v2.png"
+    packaged_image = REPO_ROOT / "src" / "reflect" / "data" / "og-image-v2.png"
+
+    public_bytes = public_image.read_bytes()
+    assert public_bytes == packaged_image.read_bytes()
+    assert public_bytes[:8] == b"\x89PNG\r\n\x1a\n"
+    assert int.from_bytes(public_bytes[16:20], "big") == 1200
+    assert int.from_bytes(public_bytes[20:24], "big") == 630
+
+    package_data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))[
+        "tool"
+    ]["setuptools"]["package-data"]["reflect"]
+    assert "data/og-image-v2.png" in package_data

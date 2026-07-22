@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.1 (unreleased)
+
+### Fixed
+
+- Replaced the outdated social preview artwork with the current reflect visual identity and ensured the Open Graph image ships with the packaged dashboard.
+- Updated the public landing-page release fallback to the current package version.
+- Added safe canvas padding to the shared logo mark so README and favicon renderers do not crop its edges.
+
+### Changed
+
+- Removed archived implementation-plan and migration-spec snapshots from the public documentation tree.
+
 ## 0.9.0 (2026-07-22)
 
 ### Added
