@@ -505,6 +505,7 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .product-hero h2{margin:0 0 7px;font-size:25px;letter-spacing:-.03em}.product-hero p{margin:0;color:var(--text-2);max-width:720px;line-height:1.55}
 .product-count{font-size:34px;font-weight:800;color:var(--blue);white-space:nowrap}.product-count small{display:block;font-size:10px;color:var(--text-3);letter-spacing:.1em;text-transform:uppercase;text-align:right}
 .product-section{margin-top:18px}.product-section.panel{padding:18px}.product-section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:14px}.product-section-title{margin:0 0 4px;color:var(--text);font-size:16px;font-weight:800}.product-section-copy{margin:0;max-width:760px;color:var(--text-3);font-size:12px;line-height:1.55}.product-section-count{flex:0 0 auto;color:var(--blue);font-size:22px;font-weight:800}.product-section-count small{display:block;color:var(--text-3);font-size:9px;font-weight:700;letter-spacing:.09em;text-align:right;text-transform:uppercase}
+.inbox-view-switch{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:-6px 0 18px}.inbox-view-button{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"label count" "detail count";gap:3px 14px;align-items:center;min-height:72px;padding:13px 15px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);text-align:left;cursor:pointer;transition:border-color .18s ease,background .18s ease,transform .18s ease}.inbox-view-button:hover{border-color:rgba(242,138,26,.45);transform:translateY(-1px)}.inbox-view-button.active{border-color:rgba(242,138,26,.72);background:linear-gradient(135deg,rgba(242,138,26,.14),rgba(18,17,15,.9));box-shadow:inset 3px 0 0 var(--blue)}.inbox-view-button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}.inbox-view-label{grid-area:label;font-size:14px;font-weight:800}.inbox-view-detail{grid-area:detail;color:var(--text-3);font-size:11px}.inbox-view-count{grid-area:count;color:var(--text);font-size:25px;font-weight:850}.inbox-view-button.loops .inbox-view-count{color:var(--blue)}.inbox-view-panel[hidden]{display:none}
 .inbox-list,.workflow-list,.measurement-list{display:grid;gap:12px}
 .inbox-card,.workflow-card,.measurement-card{content-visibility:auto;contain-intrinsic-size:auto 180px;border:1px solid var(--border);border-radius:8px;background:var(--surface);padding:17px;box-shadow:0 12px 28px rgba(0,0,0,.18)}
 .inbox-card-head,.workflow-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:8px}
@@ -537,7 +538,7 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .review-lead{position:relative;margin:0 0 18px;padding:17px 18px 17px 20px;border:1px solid var(--border);border-radius:8px;background:linear-gradient(135deg,rgba(242,138,26,.09),rgba(255,255,255,.018) 48%,rgba(255,255,255,.008))}.review-lead::before{content:"";position:absolute;inset:14px auto 14px 0;width:2px;border-radius:2px;background:var(--blue)}.review-eyebrow{margin-bottom:7px;color:var(--blue);font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.review-lead p{max-width:760px;margin:0;color:var(--text-2);font-size:14px;line-height:1.58;text-wrap:pretty}.review-kpi-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:18px;border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.015);overflow:hidden}.review-kpi{min-width:0;padding:13px 15px}.review-kpi+.review-kpi{border-left:1px solid var(--border)}.review-kpi-label{color:var(--text-3);font-size:9px;font-weight:750;letter-spacing:.09em;text-transform:uppercase}.review-kpi-value{margin-top:5px;color:var(--text);font-size:14px;font-weight:760;line-height:1.35;overflow-wrap:anywhere}.review-kpi-value.signal{color:var(--blue)}.review-grid{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(280px,.8fr);gap:14px;align-items:start}.review-stack{display:grid;gap:14px;min-width:0}.review-panel{min-width:0;padding:16px;border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.018)}.review-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.review-panel-title{margin:0;color:var(--text);font-size:13px;font-weight:800;letter-spacing:.01em}.review-panel-copy{margin:-4px 0 12px;color:var(--text-3);font-size:11px;line-height:1.5}.review-facts{display:grid;gap:0;margin:0}.review-fact{display:grid;grid-template-columns:95px minmax(0,1fr);gap:12px;padding:9px 0;border-top:1px solid var(--border)}.review-fact:first-child{padding-top:0;border-top:0}.review-fact:last-child{padding-bottom:0}.review-fact dt{color:var(--text-3);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}.review-fact dd{min-width:0;margin:0;color:var(--text-2);font-size:12px;line-height:1.45;overflow-wrap:anywhere}.review-section{margin:0}.review-section h3{margin:0 0 11px;font-size:13px}.workflow-readable{margin:0;padding-left:21px;color:var(--text-2);font-size:12px;line-height:1.58}.workflow-readable li::marker{color:var(--blue);font-weight:800}.workflow-readable li+li{margin-top:7px}.workflow-support-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.workflow-target{display:grid;gap:8px;margin:0}.workflow-target label{font-size:11px;font-weight:750;color:var(--text)}.workflow-target-row{display:flex;gap:8px;align-items:center}.workflow-target-input{min-width:0;flex:1;border:1px solid var(--border2);border-radius:6px;background:#070604;color:var(--text);padding:10px 11px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace}.workflow-target-input:focus-visible{outline:2px solid var(--blue);outline-offset:2px}.workflow-target-file{min-width:0;padding:9px 11px;border:1px solid var(--border);border-radius:6px;background:#090806;color:var(--text-3);font:10px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.review-check{display:flex;align-items:flex-start;gap:8px;margin-top:9px;padding:9px 11px;border:1px solid rgba(50,215,75,.22);border-radius:6px;background:rgba(50,215,75,.055);color:var(--green);font-size:11px;line-height:1.45}.review-check::before{content:"✓";font-weight:900}.review-check.blocked{border-color:rgba(255,69,58,.28);background:rgba(255,69,58,.055);color:#ff8b84}.review-check.blocked::before{content:"!"}.review-warning{margin-top:9px;padding:9px 11px;border:1px solid rgba(242,138,26,.24);border-radius:6px;background:rgba(242,138,26,.055);color:#e6b46e;font-size:11px;line-height:1.45}.advanced-review{margin:0;border:1px solid var(--border);border-radius:7px;background:rgba(0,0,0,.12);overflow:hidden}.advanced-review+.advanced-review{margin-top:8px}.advanced-review>summary{padding:11px 12px;cursor:pointer;color:var(--text-2);font-size:11px;font-weight:750;list-style-position:inside}.advanced-review[open]>summary{border-bottom:1px solid var(--border);color:var(--text)}.advanced-review>.ledger-diff,.advanced-review>.ledger-editor,.advanced-review>.evidence-list,.advanced-review>label{margin:12px}.advanced-review>label{display:block;color:var(--text-3);font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase}.advanced-review>.ledger-editor{width:calc(100% - 24px)}.session-ledger{display:grid;gap:7px}.session-ledger-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;content-visibility:auto;contain-intrinsic-size:84px;padding:11px 12px;border:1px solid var(--border);border-radius:7px;background:rgba(255,255,255,.018)}.session-ledger-item:hover{border-color:rgba(242,138,26,.28);background:rgba(242,138,26,.025)}.session-ledger-main{min-width:0}.session-ledger-head{display:flex;align-items:center;gap:8px;min-width:0}.session-ledger-title{min-width:0;color:var(--text);font-size:12px;font-weight:760;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.session-ledger-id{margin-top:4px;color:#77736b;font:9px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.session-ledger-meta{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px;color:var(--text-3);font-size:10px}.session-ledger-summary{margin-top:7px;color:var(--text-3);font-size:11px;line-height:1.45;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.session-ledger-side{display:grid;justify-items:end;gap:7px}.session-ledger-side .ledger-button{padding:6px 9px;font-size:10px}.session-more{margin-top:8px}.session-more>summary{cursor:pointer;color:var(--blue);font-size:11px;font-weight:700}.session-more[open]>summary{margin-bottom:8px}.session-ledger-empty{padding:12px;border:1px dashed var(--border);border-radius:7px;color:var(--text-3);font-size:11px;line-height:1.5}.ledger-status{min-height:16px;color:var(--text-3);font-size:10px;line-height:1.45}.ledger-status code{overflow-wrap:anywhere}.review-panel .ledger-status{margin-top:8px}
 .review-lead .review-panel-copy{margin:8px 0 0;color:var(--text-3);font-size:11px}.workflow-approval-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:10px;border:1px solid var(--border);border-radius:8px;background:rgba(255,255,255,.015);overflow:hidden}.workflow-approval-item{min-width:0;padding:14px 15px}.workflow-approval-item+.workflow-approval-item{border-left:1px solid var(--border)}.workflow-approval-label{color:var(--text-3);font-size:9px;font-weight:780;letter-spacing:.09em;text-transform:uppercase}.workflow-approval-value{margin-top:6px;color:var(--text);font-size:14px;font-weight:780;line-height:1.35;overflow-wrap:anywhere}.workflow-approval-value.signal{color:var(--blue)}.workflow-approval-copy{margin-top:5px;color:var(--text-3);font-size:10px;line-height:1.45;overflow-wrap:anywhere}.workflow-scope-note{display:flex;gap:9px;align-items:flex-start;margin:0 0 18px;padding:10px 12px;border:1px solid var(--border);border-radius:7px;background:rgba(255,255,255,.018);color:var(--text-2);font-size:11px;line-height:1.45}.workflow-scope-note::before{content:"•";color:var(--text-3);font-weight:900}.workflow-scope-note strong{color:var(--text)}.workflow-scope-note.related{border-color:rgba(50,215,75,.22);background:rgba(50,215,75,.045)}.workflow-scope-note.related::before{content:"✓";color:var(--green)}.workflow-scope-note.unrelated{border-color:rgba(242,138,26,.28);background:rgba(242,138,26,.055)}.workflow-scope-note.unrelated::before{content:"!";color:var(--blue)}
 @media(max-width:860px){.review-grid{grid-template-columns:1fr}.review-kpi-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.review-kpi:nth-child(3){border-left:0;border-top:1px solid var(--border)}.review-kpi:nth-child(4){border-top:1px solid var(--border)}.workflow-approval-summary{grid-template-columns:1fr}.workflow-approval-item+.workflow-approval-item{border-top:1px solid var(--border);border-left:0}.ledger-dialog{width:calc(100vw - 24px);max-height:calc(100vh - 24px)}.workflow-support-grid{grid-template-columns:1fr}}
-@media(max-width:600px){.product-hero,.product-section-head{align-items:flex-start;flex-direction:column}.product-count,.product-section-count{align-self:flex-start}.product-count small,.product-section-count small{text-align:left}.rule-grid{grid-template-columns:1fr}.ledger-dialog{width:calc(100vw - 12px);max-height:calc(100vh - 12px);border-radius:8px}.ledger-dialog-head{padding:19px 17px 16px}.ledger-dialog-body{padding:17px}.ledger-dialog-actions{padding-inline:17px;overflow-x:auto}.ledger-dialog-title{font-size:18px}.workflow-target-row{align-items:stretch;flex-direction:column}.workflow-toolbar{align-items:stretch}.workflow-filter-field{min-width:100%}.workflow-filter-summary{margin-left:0;padding:0}.ledger-action-spacer{display:none}.session-ledger-item{grid-template-columns:1fr}.session-ledger-side{display:flex;align-items:center;justify-content:space-between}.review-fact{grid-template-columns:82px minmax(0,1fr)}.impact-head{align-items:flex-start;flex-direction:column;gap:10px}.impact-status-stack{align-items:flex-start}.impact-comparison{grid-template-columns:1fr}.impact-arrow{transform:rotate(90deg)}.impact-explainer{grid-template-columns:1fr}}
+@media(max-width:600px){.product-hero,.product-section-head{align-items:flex-start;flex-direction:column}.product-count,.product-section-count{align-self:flex-start}.product-count small,.product-section-count small{text-align:left}.inbox-view-switch{grid-template-columns:1fr}.rule-grid{grid-template-columns:1fr}.ledger-dialog{width:calc(100vw - 12px);max-height:calc(100vh - 12px);border-radius:8px}.ledger-dialog-head{padding:19px 17px 16px}.ledger-dialog-body{padding:17px}.ledger-dialog-actions{padding-inline:17px;overflow-x:auto}.ledger-dialog-title{font-size:18px}.workflow-target-row{align-items:stretch;flex-direction:column}.workflow-toolbar{align-items:stretch}.workflow-filter-field{min-width:100%}.workflow-filter-summary{margin-left:0;padding:0}.ledger-action-spacer{display:none}.session-ledger-item{grid-template-columns:1fr}.session-ledger-side{display:flex;align-items:center;justify-content:space-between}.review-fact{grid-template-columns:82px minmax(0,1fr)}.impact-head{align-items:flex-start;flex-direction:column;gap:10px}.impact-status-stack{align-items:flex-start}.impact-comparison{grid-template-columns:1fr}.impact-arrow{transform:rotate(90deg)}.impact-explainer{grid-template-columns:1fr}}
 @media(max-width:600px){.tile-card-footer{grid-template-columns:1fr}.tile-card-footer .ledger-button{width:100%}.workflow-tile .tile-metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.workflow-tile .tile-metric:last-child{grid-column:1/-1}.tile-card-main{padding:16px 15px 13px}}
 .explore-subnav{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 18px;padding:6px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}
 .explore-link{appearance:none;border:0;border-radius:6px;background:transparent;color:var(--text-2);padding:8px 12px;font:600 12px inherit;cursor:pointer}.explore-link:hover,.explore-link.active{background:rgba(242,138,26,.12);color:var(--blue)}
@@ -2037,7 +2038,7 @@ body.rail-overlay-open{overflow:hidden}
 .telemetry-shell{display:flex;flex-direction:column;gap:8px}
 .telemetry-summary{
   display:grid;
-  grid-template-columns:repeat(4,minmax(0,1fr));
+  grid-template-columns:repeat(auto-fit,minmax(132px,1fr));
   gap:6px;
 }
 .telemetry-stat{
@@ -3013,11 +3014,22 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
     <div><h2>Improvement Inbox</h2><p>Start with evidence: recurring failures, verification gaps, and repeated behavior that may deserve a better procedure.</p></div>
     <div class="product-count" id="inbox-count">0<small>needs attention</small></div>
   </div>
-  <div class="inbox-list" id="improvement-inbox"></div>
+  <div class="inbox-view-switch" role="tablist" aria-label="Improvement Inbox views">
+    <button class="inbox-view-button active" id="inbox-view-findings" type="button" role="tab" aria-selected="true" aria-controls="inbox-findings-panel" data-inbox-view="findings"><span class="inbox-view-label">Findings</span><span class="inbox-view-detail">Failures, gaps, and corrections</span><strong class="inbox-view-count" id="inbox-findings-count">0</strong></button>
+    <button class="inbox-view-button loops" id="inbox-view-loops" type="button" role="tab" aria-selected="false" aria-controls="inbox-loops-panel" data-inbox-view="loops"><span class="inbox-view-label">Loops</span><span class="inbox-view-detail" id="inbox-loops-detail">Goals, schedules, and repeated behavior</span><strong class="inbox-view-count" id="inbox-loops-count">0</strong></button>
+  </div>
 
-  <section class="panel product-section" aria-labelledby="observed-loops-title">
+  <section class="panel product-section inbox-view-panel" id="inbox-findings-panel" role="tabpanel" aria-labelledby="inbox-view-findings" style="margin-top:0">
     <div class="product-section-head">
-      <div><h3 class="product-section-title" id="observed-loops-title">Observed Loops</h3><p class="product-section-copy">Repeated action cycles found in source sessions. Inspect the evidence first; build only a loop that would benefit from an agentic workflow.</p></div>
+      <div><h3 class="product-section-title">Findings</h3><p class="product-section-copy">Evidence-backed problems and opportunities detected by Reflect rules.</p></div>
+      <div class="product-section-count" id="finding-count">0<small>open findings</small></div>
+    </div>
+    <div class="inbox-list" id="improvement-inbox"></div>
+  </section>
+
+  <section class="panel product-section inbox-view-panel" id="inbox-loops-panel" role="tabpanel" aria-labelledby="inbox-view-loops" hidden>
+    <div class="product-section-head">
+      <div><h3 class="product-section-title" id="observed-loops-title">Observed Loops</h3><p class="product-section-copy">Agent-native goals and schedules plus repeated behavior found in source sessions. New actionable loops appear first; review one to turn it into a monitored workflow.</p></div>
       <div class="product-section-count" id="loop-count">0<small>detected loops</small></div>
     </div>
     <div class="workflow-list" id="loop-ledger" aria-live="polite"></div>
@@ -3652,6 +3664,18 @@ function humanizeLedgerText(value){
   return String(value || '').replace(/\b[a-z0-9]+(?:_[a-z0-9]+)+\b/gi, token => token.replaceAll('_',' '));
 }
 
+function sortObservedLoops(items){
+  const statusRank = {detected:0, acknowledged:1, promoted:2, dismissed:3, resolved:4};
+  const kindRank = {agent_native:0, stalled:1, productive:2};
+  return [...items].sort((left, right) => {
+    const statusDelta = (statusRank[left.status] ?? 9) - (statusRank[right.status] ?? 9);
+    if (statusDelta) return statusDelta;
+    const kindDelta = (kindRank[left.kind] ?? 9) - (kindRank[right.kind] ?? 9);
+    if (kindDelta) return kindDelta;
+    return String(right.last_seen_at || right.updated_at || '').localeCompare(String(left.last_seen_at || left.updated_at || ''));
+  });
+}
+
 function skillTargetLabel(targetKind){
   const labels = {
     codex:'Codex',
@@ -3867,6 +3891,7 @@ async function showLoopReview(loopId){
     const detail = await ledgerRequest(`/api/loops/${encodeURIComponent(loopId)}`);
     const loop = detail.loop || {};
     const occurrences = detail.occurrences || [];
+    const nativeLoop = loop.kind === 'agent_native';
     updateUrlParams(params => {
       params.delete('workflow');
       params.delete('workflow_root');
@@ -3875,11 +3900,13 @@ async function showLoopReview(loopId){
     });
     const sourceSessions = renderWorkflowSessionLedger(occurrences.map(item => ({
       session_id:item.session_id,
-      title:`${humanizeLedgerLabel(item.tool_name || loop.tool_name || 'Tool')} · ${fmt(Number(item.repeat_count || 0))} repeats`,
-      status:item.outcome || (item.state_changed ? 'state changed' : 'no state change'),
+      title:`${humanizeLedgerLabel(item.tool_name || loop.tool_name || 'Tool')} · ${fmt(Number(item.repeat_count || 0))} ${nativeLoop ? 'signals' : 'repeats'}`,
+      status:item.outcome || (nativeLoop ? 'native continuation observed' : (item.state_changed ? 'state changed' : 'no state change')),
       evidence_count:Number(item.repeat_count || 0),
       evidence_summaries:[
-        `${fmt(Number(item.error_count || 0))} errors · ${item.state_changed ? 'relevant state changed' : 'no relevant state change'}${item.evidence?.retry_run_count ? ` · ${fmt(Number(item.evidence.retry_run_count))} retry runs` : ''}`,
+        nativeLoop
+          ? `${humanizeLedgerLabel(item.evidence?.signal || 'agent native command')} · ${humanizeLedgerLabel(item.evidence?.command_family || 'continuation')}`
+          : `${fmt(Number(item.error_count || 0))} errors · ${item.state_changed ? 'relevant state changed' : 'no relevant state change'}${item.evidence?.retry_run_count ? ` · ${fmt(Number(item.evidence.retry_run_count))} retry runs` : ''}`,
       ],
     })), {
       empty:'No source sessions are linked to this loop.',
@@ -3899,8 +3926,8 @@ async function showLoopReview(loopId){
         </div>
         <div class="review-kpi-strip">
           <div class="review-kpi"><div class="review-kpi-label">Source Sessions</div><div class="review-kpi-value signal">${fmt(Number(loop.affected_session_count || 0))}</div></div>
-          <div class="review-kpi"><div class="review-kpi-label">Repeated Actions</div><div class="review-kpi-value">${fmt(Number(loop.occurrence_count || 0))}</div></div>
-          <div class="review-kpi"><div class="review-kpi-label">State Changes</div><div class="review-kpi-value">${fmt(Number(loop.state_change_count || 0))}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">${nativeLoop ? 'Native Signals' : 'Repeated Actions'}</div><div class="review-kpi-value">${fmt(Number(loop.occurrence_count || 0))}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">${nativeLoop ? 'Command' : 'State Changes'}</div><div class="review-kpi-value">${nativeLoop ? escHtml(loop.tool_name || 'Native') : fmt(Number(loop.state_change_count || 0))}</div></div>
           <div class="review-kpi"><div class="review-kpi-label">Confidence</div><div class="review-kpi-value">${Math.round(Number(loop.confidence || 0) * 100)}%</div></div>
         </div>
         <div class="review-grid">
@@ -3920,12 +3947,13 @@ async function showLoopReview(loopId){
             </section>
             <section class="review-panel">
               <div class="review-panel-head"><h3 class="review-panel-title">Next Step</h3></div>
-              <p class="review-panel-copy">A loop is evidence, not yet a workflow or skill. If it is worth standardizing, ask an authoring agent to create one bounded pending skill for review.</p>
+              <p class="review-panel-copy">A loop is evidence, not yet a workflow. Build stages one bounded workflow for review. After you apply that workflow, Reflect monitors comparable future sessions in Impact.</p>
               <div class="ledger-command">reflect loops build ${escHtml(loopId)} --agent codex</div>
+              <div class="ledger-command">reflect workflows apply WORKFLOW_ID</div>
             </section>
           </aside>
         </div>`,
-      actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div>${canBuild ? `<span class="ledger-status">Build from the CLI after reviewing the source sessions.</span>` : ''}`,
+      actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div>${canBuild ? `<span class="ledger-status">Next: build a workflow, review it, then apply it to start monitoring.</span>` : ''}`,
     });
   } catch (error) {
     openLedgerDialog({title:'Loop evidence unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`});
@@ -6272,6 +6300,15 @@ class SessionConversationPlayhead {
       { kicker: 'Errors', value: fmt(summary.errors || 0), sub: `${fmt(summary.warnings || 0)} warnings in trace` },
       { kicker: 'Trace window', value: fmtDur(traceWindowMs), sub: `${fmt(summary.services || 0)} services correlated` },
     ];
+    if ((summary.hook_schema_versions || []).length || (summary.telemetry_sources || []).length) {
+      const schemas = (summary.hook_schema_versions || []).map(version => `v${version}`).join(', ');
+      const adapters = (summary.provider_adapters || []).join(', ');
+      summaryCards.push({
+        kicker: 'Hook contract',
+        value: schemas || 'legacy',
+        sub: `${adapters || (summary.telemetry_sources || []).join(', ') || 'unknown'} · ${fmt(summary.native_linked_spans || 0)} native links`,
+      });
+    }
 
     return `
       <div class="telemetry-shell">
@@ -6941,7 +6978,7 @@ function impactScope(item){
 /* Product operating surfaces */
 function buildImprovementSurfaces(){
   const observations = IMPROVEMENT_DATA.observations || [];
-  const loops = IMPROVEMENT_DATA.loops || [];
+  const loops = sortObservedLoops(IMPROVEMENT_DATA.loops || []);
   const skills = IMPROVEMENT_DATA.skills || [];
   const workflows = IMPROVEMENT_DATA.workflows || [];
   const measurements = IMPROVEMENT_DATA.measurements || [];
@@ -6953,12 +6990,57 @@ function buildImprovementSurfaces(){
   const skillCount = document.getElementById('skill-count');
   const measurementCount = document.getElementById('measurement-count');
   const findingTotal = Number(IMPROVEMENT_DATA.inbox_total_count ?? observations.length);
+  const actionableLoopCount = loops.filter(item => item.status === 'detected' || item.status === 'acknowledged').length;
   const skillTotal = Number(IMPROVEMENT_DATA.skill_total_count ?? skills.length);
-  if (inboxCount) inboxCount.firstChild.textContent = String(findingTotal + loops.length);
+  if (inboxCount) inboxCount.firstChild.textContent = String(findingTotal + actionableLoopCount);
+  const findingCount = document.getElementById('finding-count');
+  const inboxFindingsCount = document.getElementById('inbox-findings-count');
+  const inboxLoopsCount = document.getElementById('inbox-loops-count');
+  const inboxLoopsDetail = document.getElementById('inbox-loops-detail');
+  if (findingCount) findingCount.firstChild.textContent = String(findingTotal);
+  if (inboxFindingsCount) inboxFindingsCount.textContent = String(findingTotal);
+  if (inboxLoopsCount) inboxLoopsCount.textContent = String(loops.length);
+  if (inboxLoopsDetail && actionableLoopCount) inboxLoopsDetail.textContent = `${fmt(actionableLoopCount)} ready to review and build`;
   if (loopCount) loopCount.firstChild.textContent = String(loops.length);
   if (workflowCount) workflowCount.firstChild.textContent = String(workflows.length);
   if (skillCount) skillCount.firstChild.textContent = String(skillTotal);
   if (measurementCount) measurementCount.firstChild.textContent = String(measurementGroups.length);
+
+  const inboxViewButtons = [...document.querySelectorAll('[data-inbox-view]')];
+  const inboxViewPanels = {
+    findings:document.getElementById('inbox-findings-panel'),
+    loops:document.getElementById('inbox-loops-panel'),
+  };
+  const setInboxView = (requestedView, {persist=true}={}) => {
+    const view = requestedView === 'loops' ? 'loops' : 'findings';
+    inboxViewButtons.forEach(button => {
+      const active = button.dataset.inboxView === view;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', String(active));
+      button.tabIndex = active ? 0 : -1;
+    });
+    Object.entries(inboxViewPanels).forEach(([name,panel]) => {
+      if (panel) panel.hidden = name !== view;
+    });
+    if (persist) updateUrlParams(params => {
+      view === 'findings' ? params.delete('inbox_view') : params.set('inbox_view', view);
+    });
+  };
+  inboxViewButtons.forEach(button => {
+    button.onclick = () => setInboxView(button.dataset.inboxView);
+    button.onkeydown = event => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      event.preventDefault();
+      const nextView = button.dataset.inboxView === 'findings' ? 'loops' : 'findings';
+      setInboxView(nextView);
+      inboxViewButtons.find(item => item.dataset.inboxView === nextView)?.focus();
+    };
+  });
+  const requestedInboxView = currentParams().get('inbox_view');
+  const initialInboxView = requestedInboxView === 'loops' || currentParams().get('loop')
+    ? 'loops'
+    : (findingTotal === 0 && loops.length ? 'loops' : 'findings');
+  setInboxView(initialInboxView, {persist:false});
 
   const ruleCount = document.getElementById('rule-count');
   const ruleGrid = document.getElementById('rule-grid');
@@ -7004,10 +7086,10 @@ function buildImprovementSurfaces(){
   if (loopLedger) {
     loopLedger.innerHTML = loops.length ? loops.map(item => `<article class="workflow-card">
       <div class="workflow-card-head"><div><div class="workflow-title">${escHtml(String(item.title || 'Observed loop'))}</div><div class="workflow-copy">${escHtml(String(item.summary || ''))}</div></div><span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(item.kind || 'stalled'))}</span></div>
-      <div class="ledger-meta"><span class="ledger-pill">${fmt(Number(item.affected_session_count || 0))} sessions</span><span class="ledger-pill">${fmt(Number(item.occurrence_count || 0))} occurrences</span><span class="ledger-pill">${fmt(Number(item.state_change_count || 0))} state changes</span><span class="ledger-pill">${Math.round(Number(item.confidence || 0)*100)}% confidence</span><span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.status || 'detected'))}</span></div>
+      <div class="ledger-meta">${item.status === 'detected' ? '<span class="ledger-pill signal">Ready to review</span>' : ''}<span class="ledger-pill">${fmt(Number(item.affected_session_count || 0))} sessions</span><span class="ledger-pill">${fmt(Number(item.occurrence_count || 0))} occurrences</span>${item.kind === 'agent_native' ? `<span class="ledger-pill">${escHtml(item.tool_name || 'native command')}</span>` : `<span class="ledger-pill">${fmt(Number(item.state_change_count || 0))} state changes</span>`}<span class="ledger-pill">${Math.round(Number(item.confidence || 0)*100)}% confidence</span><span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.status || 'detected'))}</span></div>
       <div class="ledger-command">reflect loops show ${escHtml(String(item.id))}</div>
-      <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-loop" data-loop-id="${escHtml(String(item.id))}">Review Loop Evidence</button></div>
-    </article>`).join('') : `<div class="session-ledger-empty">No repeated loop behavior is currently detected. Run <code>reflect loops</code> after more sessions are captured.</div>`;
+      <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-loop" data-loop-id="${escHtml(String(item.id))}">${item.status === 'detected' ? 'Review & Build Instructions' : 'Review Loop Evidence'}</button></div>
+    </article>`).join('') : `<div class="session-ledger-empty">No agent-native or behavioral loop is currently detected. Run <code>reflect loops</code> after more sessions are captured.</div>`;
   }
 
   const skillRegistry = document.getElementById('skill-registry');

@@ -4,6 +4,7 @@ The loop is observed behavior, not automatically a workflow. Decide whether the 
 
 - For a stalled loop, design a state-changing recovery routine. Never copy the failed repetition as guidance.
 - For a productive loop, preserve the verified routine with explicit preconditions and bounded iteration.
+- For an agent-native loop or goal, preserve the objective and documented trigger while adding a bounded cadence or checkpoint, progress evidence, a verifiable stop condition, and an operator handoff. Do not reproduce wake sentinels as user instructions.
 - Include trigger, required inputs, loop state, one iteration, exit/escalation, verification, and output.
 - Do not invent repository commands or evidence that are not present.
 - Do not approve, install, or claim the skill improved outcomes.

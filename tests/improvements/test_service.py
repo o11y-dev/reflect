@@ -299,6 +299,37 @@ def test_loop_detection_ignores_poll_transport_and_approval_metadata(tmp_path):
         conn.close()
 
 
+def test_agent_native_loop_is_detected_once_and_sorted_before_promoted_history(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        conn.execute("UPDATE agents SET name = 'Cursor' WHERE id = 'agent-1'")
+        conn.execute(
+            """
+            UPDATE tool_calls
+            SET input_preview_redacted = '{"cmd":"echo AGENT_LOOP_WAKE_mrchase"}',
+                input_hash = 'cursor-loop-wake'
+            WHERE id = 'tool-1'
+            """
+        )
+        conn.commit()
+
+        refresh = service.loops.refresh()
+        records = service.loops.list()
+        native = next(item for item in records if item.kind.value == "agent_native")
+        stalled = next(item for item in records if item.kind.value == "stalled")
+        service.loops.mark_promoted(stalled.id, "skill-existing")
+        ordered = service.loops.list()
+
+        assert refresh["agent_native"] == 1
+        assert native.evidence["command"] == "/loop"
+        assert native.evidence["objective_label"] == "mrchase"
+        assert service.loops.show(native.id).occurrences[0].session_id == "session-1"
+        assert ordered[0].id == native.id
+        assert ordered[-1].status.value == "promoted"
+    finally:
+        conn.close()
+
+
 def test_refresh_backfills_behavior_metadata_on_legacy_non_pending_candidates(tmp_path):
     service, conn = _service(tmp_path)
     try:

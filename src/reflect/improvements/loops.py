@@ -13,6 +13,10 @@ from reflect.improvements.models import (
     LoopRecord,
     LoopStatus,
 )
+from reflect.improvements.recurring_commands import (
+    RecurringCommandMatch,
+    RecurringCommandRegistry,
+)
 from reflect.improvements.repository import utc_now
 from reflect.store.migrate import migrate
 
@@ -38,14 +42,21 @@ def _fingerprint(*parts: object) -> str:
 class LoopService:
     """Detect and retain repeated workflow cycles independently of skill proposals."""
 
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        recurring_commands: RecurringCommandRegistry | None = None,
+    ):
         self.conn = conn
+        self.recurring_commands = recurring_commands or RecurringCommandRegistry()
         migrate(conn)
 
     def refresh(self, *, commit: bool = True) -> dict[str, int]:
-        """Refresh stalled retries and confirmed productive routines from canonical evidence."""
+        """Refresh behavioral and agent-native loops from canonical evidence."""
         now = utc_now()
         seen: set[str] = set()
+        agent_native = self._refresh_agent_native(now=now, seen=seen)
         stalled = self._refresh_stalled(now=now, seen=seen)
         productive = self._refresh_productive(now=now, seen=seen)
         if seen:
@@ -67,11 +78,115 @@ class LoopService:
         if commit:
             self.conn.commit()
         return {
-            "detected": stalled + productive,
+            "detected": agent_native + stalled + productive,
+            "agent_native": agent_native,
             "stalled": stalled,
             "productive": productive,
             "resolved": int(resolved or 0),
         }
+
+    def _refresh_agent_native(self, *, now: str, seen: set[str]) -> int:
+        rows = self.conn.execute(
+            """
+            SELECT s.repo_id, s.id, COALESCE(a.name, 'unknown'), 'session_title',
+                   NULL, NULL, s.title
+            FROM sessions s
+            LEFT JOIN agents a ON a.id = s.agent_id
+            WHERE trim(COALESCE(s.title, '')) LIKE '/%'
+            UNION ALL
+            SELECT s.repo_id, tc.session_id, COALESCE(a.name, 'unknown'), 'tool_call',
+                   tc.tool_name, tc.input_hash, tc.input_preview_redacted
+            FROM tool_calls tc
+            JOIN sessions s ON s.id = tc.session_id
+            LEFT JOIN agents a ON a.id = s.agent_id
+            WHERE lower(tc.tool_name) LIKE '%goal%'
+               OR lower(tc.tool_name) LIKE '%cron%'
+               OR lower(COALESCE(tc.input_preview_redacted, '')) LIKE '%agent_loop_%'
+               OR trim(COALESCE(tc.input_preview_redacted, '')) LIKE '/%'
+               OR lower(COALESCE(tc.input_preview_redacted, '')) LIKE '%"/loop%'
+               OR lower(COALESCE(tc.input_preview_redacted, '')) LIKE '%"/goal%'
+               OR lower(COALESCE(tc.input_preview_redacted, '')) LIKE '%"/every%'
+               OR lower(COALESCE(tc.input_preview_redacted, '')) LIKE '%"/schedule%'
+            """
+        ).fetchall()
+        grouped: dict[
+            tuple[str | None, str, str, str],
+            list[tuple[sqlite3.Row | tuple, RecurringCommandMatch]],
+        ] = defaultdict(list)
+        for row in rows:
+            match = self.recurring_commands.classify(
+                agent_name=str(row[2]),
+                tool_name=row[4],
+                preview=row[6],
+            )
+            if match is None:
+                continue
+            key = (row[0], match.agent_family, match.family, match.identity)
+            grouped[key].append((row, match))
+
+        for (repo_id, agent, family, identity), matches in grouped.items():
+            exemplar = matches[0][1]
+            fingerprint = _fingerprint("agent_native", repo_id or "local", agent, family, identity)
+            loop_id = f"loop_{fingerprint}"
+            seen.add(loop_id)
+            session_ids = {str(row[1]) for row, _match in matches}
+            occurrence_count = len(matches)
+            command = exemplar.command
+            kind_label = "goal" if family == "goal" else "recurring command"
+            self._upsert_pattern(
+                loop_id=loop_id,
+                fingerprint=fingerprint,
+                kind=LoopKind.AGENT_NATIVE,
+                title=f"{agent.title()} {kind_label}: {exemplar.label}",
+                summary=(
+                    f"Reflect observed {occurrence_count} strong {agent} {command} signal(s) "
+                    f"across {len(session_ids)} session(s). This is an agent-native continuation "
+                    "loop, separate from behavioral tool-sequence loops."
+                ),
+                scope_type="repository" if repo_id else "user",
+                scope_id=str(repo_id or "local"),
+                repo_id=repo_id,
+                tool_name=command,
+                occurrence_count=occurrence_count,
+                affected_session_count=len(session_ids),
+                state_change_count=0,
+                confidence=max(match.confidence for _row, match in matches),
+                evidence={
+                    "agent": agent,
+                    "command": command,
+                    "command_family": family,
+                    "classification": "agent_native_recurring_command",
+                    "objective_label": exemplar.label,
+                    "signals": sorted({match.signal for _row, match in matches}),
+                },
+                now=now,
+            )
+            self.conn.execute("DELETE FROM loop_occurrences WHERE loop_id = ?", (loop_id,))
+            per_session: dict[str, list[tuple[sqlite3.Row | tuple, RecurringCommandMatch]]] = defaultdict(list)
+            for row, match in matches:
+                per_session[str(row[1])].append((row, match))
+            for session_id, session_matches in list(per_session.items())[:200]:
+                row, match = session_matches[0]
+                self._insert_occurrence(
+                    loop_id=loop_id,
+                    session_id=session_id,
+                    tool_name=match.command,
+                    input_hash=str(row[5]) if row[5] else _fingerprint(match.identity),
+                    repeat_count=len(session_matches),
+                    error_count=0,
+                    state_changed=False,
+                    outcome=self._session_outcome(session_id),
+                    evidence={
+                        "agent": match.agent_family,
+                        "command": match.command,
+                        "command_family": match.family,
+                        "objective_label": match.label,
+                        "signal": match.signal,
+                        "source": str(row[3]),
+                    },
+                    now=now,
+                )
+        return len(grouped)
 
     def _refresh_stalled(self, *, now: str, seen: set[str]) -> int:
         cursor = self.conn.execute(
@@ -397,8 +512,14 @@ class LoopService:
                    first_seen_at, last_seen_at, updated_at
             FROM loop_patterns
             {where}
-            ORDER BY CASE status WHEN 'detected' THEN 0 WHEN 'promoted' THEN 1 ELSE 2 END,
-                     confidence DESC, affected_session_count DESC, updated_at DESC
+            ORDER BY CASE status
+                       WHEN 'detected' THEN 0
+                       WHEN 'acknowledged' THEN 1
+                       WHEN 'promoted' THEN 2
+                       ELSE 3
+                     END,
+                     CASE kind WHEN 'agent_native' THEN 0 WHEN 'stalled' THEN 1 ELSE 2 END,
+                     last_seen_at DESC, confidence DESC, affected_session_count DESC
             LIMIT ?
             """,
             (*params, max(1, min(limit, 500))),

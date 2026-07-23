@@ -371,6 +371,14 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "fetch('/api/inbox'" in text
     assert "fetch('/api/workflows'" in text
     assert "fetch('/api/loops'" in text
+    assert "function sortObservedLoops(items)" in text
+    assert "const kindRank = {agent_native:0, stalled:1, productive:2}" in text
+    assert 'data-inbox-view="findings"' in text
+    assert 'data-inbox-view="loops"' in text
+    assert "ready to review and build" in text
+    assert "params.set('inbox_view', view)" in text
+    assert "Review & Build Instructions" in text
+    assert "Reflect monitors comparable future sessions in Impact" in text
     assert "fetch('/api/skills?limit=500'" in text
     assert "fetch('/api/impact'" in text
     assert "new URL(`/api/explore/${encodeURIComponent(viewName)}`" in text

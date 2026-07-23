@@ -1655,7 +1655,7 @@ def workflows_rollback(candidate_id: str, db_path: Path) -> None:
 
 @main.group("loops", invoke_without_command=True)
 @click.option("--json", "as_json", is_flag=True)
-@click.option("--kind", type=click.Choice(["stalled", "productive"]))
+@click.option("--kind", type=click.Choice(["agent_native", "stalled", "productive"]))
 @click.option(
     "--status",
     type=click.Choice(["detected", "acknowledged", "promoted", "dismissed", "resolved"]),
@@ -1673,7 +1673,7 @@ def loops(
     status: str | None,
     db_path: Path,
 ) -> None:
-    """Inspect observed stalled retries and productive repeated routines."""
+    """Inspect agent-native continuations and observed behavioral loops."""
     if ctx.invoked_subcommand:
         return
     from reflect.improvements.models import LoopKind, LoopStatus
@@ -1722,7 +1722,8 @@ def _print_loops(records, *, refresh: dict[str, int] | None = None) -> None:
     Console(force_terminal=True).print(table)
     if refresh:
         click.echo(
-            f"Detected {refresh.get('stalled', 0)} stalled and "
+            f"Detected {refresh.get('agent_native', 0)} agent-native, "
+            f"{refresh.get('stalled', 0)} stalled, and "
             f"{refresh.get('productive', 0)} productive loop pattern(s)."
         )
 
@@ -1776,11 +1777,17 @@ def loops_show(loop_id: str, as_json: bool, db_path: Path) -> None:
         f"Confidence: {loop.confidence:.0%}"
     )
     click.echo(loop.summary)
-    click.echo(
-        f"{loop.affected_session_count} session(s) · "
-        f"{loop.occurrence_count} repeated action(s) · "
-        f"{loop.state_change_count} observed state change(s)"
-    )
+    if loop.kind.value == "agent_native":
+        click.echo(
+            f"{loop.affected_session_count} session(s) · "
+            f"{loop.occurrence_count} native continuation signal(s)"
+        )
+    else:
+        click.echo(
+            f"{loop.affected_session_count} session(s) · "
+            f"{loop.occurrence_count} repeated action(s) · "
+            f"{loop.state_change_count} observed state change(s)"
+        )
     for occurrence in detail.occurrences[:20]:
         outcome = f" · {occurrence.outcome}" if occurrence.outcome else ""
         click.echo(
@@ -3194,8 +3201,9 @@ def _resolve_setup_agent_selection(
 )
 @click.option(
     "--shell-completion/--no-shell-completion",
-    default=None,
-    help="Install autocomplete during interactive setup; automation defaults to no shell changes.",
+    default=True,
+    show_default=True,
+    help="Install autocomplete during setup; use --no-shell-completion to opt out.",
 )
 def setup(
     capture_text: bool | None,
@@ -3254,10 +3262,7 @@ def setup(
         selected_agent_names=selected_agent_keys,
         local_agent_names=local_agent_keys,
     )
-    install_completion = shell_completion is True or (
-        shell_completion is None and sys.stdin.isatty()
-    )
-    if install_completion:
+    if shell_completion is not False:
         manager = ShellCompletionManager(main)
         selected_shell = manager.detect_shell()
         if selected_shell is None:
