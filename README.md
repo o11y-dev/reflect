@@ -36,7 +36,6 @@ Requires Python 3.11+ and [pipx](https://pipx.pypa.io/stable/installation/).
 ```bash
 pipx install o11y-reflect
 reflect setup
-reflect completion --install
 ```
 
 `reflect setup` detects supported agents, asks which ones to connect, starts the local OTLP gateway, configures verified telemetry paths, and installs Reflect's agent skills. Use your coding agents normally for a few sessions, then open the local report:
@@ -55,7 +54,7 @@ reflect usage                 # current session usage
 reflect usage --global --week # exact local usage across the last 7 days
 ```
 
-`reflect completion --install` detects Bash, Zsh, or Fish, writes [Click's generated completion script](https://click.palletsprojects.com/en/stable/shell-completion/), and activates it idempotently. Interactive `reflect setup` also installs completion automatically. Restart your shell once; command names, nested commands, flags, choices, paths, and local workflow, loop, skill, session, observation, and memory IDs will then complete with Tab. To inspect a script without changing shell files, run `reflect completion --shell zsh` (or `bash` / `fish`) without `--install`.
+`reflect setup` detects Bash, Zsh, or Fish and installs [Click's generated completion script](https://click.palletsprojects.com/en/stable/shell-completion/) idempotently by default. Use `--no-shell-completion` to opt out, or `reflect completion --install` to install it separately. Restart your shell once; command names, nested commands, flags, choices, paths, and local workflow, loop, skill, session, observation, and memory IDs will then complete with Tab. To inspect a script without changing shell files, run `reflect completion --shell zsh` (or `bash` / `fish`) without `--install`.
 
 No telemetry yet? Open the bundled cross-agent dataset immediately:
 
@@ -530,7 +529,7 @@ Commands:
   update   Check release drift and optional package upgrade
   improve  Calculate or inspect durable, evidence-backed observations
   ask      Retrieve approved local guidance and linked evidence
-  loops    Inspect stalled retries and productive repeated routines
+  loops    Inspect agent-native continuations and observed behavioral loops
   workflows Review, package, apply, and roll back reusable workflows
   feedback Record a cheap session outcome label
   memory   Sync, search, validate, and route evidence-backed memories
@@ -546,7 +545,7 @@ The registry is intentionally broader than the skills available to the current a
 
 Discovery is now explicit: `reflect skills discover` feeds the selected coding agent a deterministic evidence bundle built from session scores, recurring tool flows, shell commands, recovery chains, graph relationships, and bounded context from high-signal sessions. Valid output is stored as a pending skill version with its authoring agent and evidence. Older invocations such as `reflect skills --agent codex --week` still run in compatibility mode, but new scripts should use the `discover` subcommand.
 
-`reflect loops` is independent from workflow and skill discovery. It records stalled loops from consecutive same-input runs with no intervening state change, excluding approval metadata and wait/poll transport events; single-session patterns require recorded failure evidence, while failure-free patterns must recur across sessions. Productive loops require repeated routines with positive outcome evidence. `reflect loops build LOOP_ID` passes only the selected loop's bounded evidence to an agent and requires exactly one pending workflow packaged as a skill, with explicit state, iteration, exit, recovery, verification, and handoff contracts. The workflow and skill version remain linked to the loop and are never applied automatically.
+`reflect loops` is independent from workflow and skill discovery. It combines behavioral evidence with strong agent-native continuation signals: Cursor `/loop` wake sentinels; Claude `/loop`, `/goal`, recurring `CronCreate`, and recurring `/schedule`; Copilot `/every` and its `/loop` alias; and Codex `/goal`. Gemini, Windsurf, and OpenCode reusable commands remain ordinary manual workflows unless telemetry shows repeated behavior. Reflect also records stalled loops from consecutive same-input runs with no intervening state change and productive routines with positive outcome evidence. Newly detected agent-native and stalled loops are listed before acknowledged or promoted history. `reflect loops build LOOP_ID` passes only the selected loop's bounded evidence to an agent and requires exactly one pending workflow packaged as a skill, with explicit state, iteration, exit, recovery, verification, and handoff contracts. The workflow and skill version remain linked to the loop and are never applied automatically.
 
 Nothing is installed until an operator runs `reflect skills apply SKILL_ID` or `reflect workflows apply WORKFLOW_ID` from a Git repository, or approves the same target in the local browser. `reflect workflows show WORKFLOW_ID` reviews the procedure and exact delivery diff; `reflect skills show SKILL_ID` reviews the durable package history. `reflect workflows add path/to/SKILL.md` imports an existing skill file as a reviewable workflow. The current workflow renderer packages approved workflows under `.agents/skills/`; future renderers may target guidance, checklists, evaluations, or opt-in nudges without redefining the workflow itself.
 

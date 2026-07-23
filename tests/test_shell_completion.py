@@ -72,6 +72,35 @@ def test_setup_can_explicitly_install_shell_completion() -> None:
     assert "Shell autocomplete installed" in result.output
 
 
+def test_setup_installs_shell_completion_by_default_for_automation() -> None:
+    install_result = SimpleNamespace(changed=True, script_path=Path("/tmp/reflect.zsh"))
+    with (
+        patch.object(core, "_run_setup"),
+        patch.object(core, "_detect_agents", return_value=[]),
+        patch.object(core.ShellCompletionManager, "detect_shell", return_value="zsh"),
+        patch.object(core.ShellCompletionManager, "install", return_value=install_result) as install,
+    ):
+        result = CliRunner().invoke(main, ["setup", "--text-capture-mode", "metadata"])
+
+    assert result.exit_code == 0
+    install.assert_called_once_with("zsh")
+
+
+def test_setup_no_shell_completion_is_an_explicit_opt_out() -> None:
+    with (
+        patch.object(core, "_run_setup"),
+        patch.object(core, "_detect_agents", return_value=[]),
+        patch.object(core.ShellCompletionManager, "install") as install,
+    ):
+        result = CliRunner().invoke(
+            main,
+            ["setup", "--text-capture-mode", "metadata", "--no-shell-completion"],
+        )
+
+    assert result.exit_code == 0
+    install.assert_not_called()
+
+
 def test_setup_warns_when_optional_shell_completion_cannot_be_written() -> None:
     with (
         patch.object(core, "_run_setup") as run_setup,

@@ -121,7 +121,7 @@ class WorkflowService:
         candidate = self.show(candidate_id)
         content = self._render_skill(candidate)
         root, target = self._target_for(candidate, project_root)
-        previous_content = target.read_text(encoding="utf-8") if target.exists() else ""
+        previous_content = target.read_text(encoding="utf-8") if target.is_file() else ""
         diff = "".join(
             difflib.unified_diff(
                 previous_content.splitlines(keepends=True),
@@ -134,44 +134,60 @@ class WorkflowService:
         workspace_counts = Counter(
             item.workspace for item in ledger.source_sessions if item.workspace
         )
+        suggested_root_counts: Counter[tuple[str, bool]] = Counter()
+        for workspace, count in workspace_counts.items():
+            suggested_root, is_repository = self._normalize_project_root(Path(workspace))
+            suggested_root_counts[(str(suggested_root), is_repository)] += count
         suggested_roots = [
             {
-                "path": workspace,
+                "path": path,
                 "source_sessions": count,
-                "is_repository": (Path(workspace) / ".git").exists(),
+                "is_repository": is_repository,
+                "is_directory": Path(path).is_dir(),
             }
-            for workspace, count in workspace_counts.most_common()
+            for (path, is_repository), count in suggested_root_counts.most_common()
         ]
-        evidence_repository_paths = {
+        evidence_project_paths = {
             str(Path(item["path"]).expanduser().resolve())
             for item in suggested_roots
-            if item["is_repository"]
+            if item["is_directory"]
         }
         checks = self._target_checks(candidate, root=root, target=target)
         evidence_scope_match = (
-            str(root) in evidence_repository_paths if evidence_repository_paths else None
+            str(root) in evidence_project_paths if evidence_project_paths else None
         )
         checks["evidence_scope_match"] = evidence_scope_match
         checks["advisories"] = []
         if evidence_scope_match is False:
             checks["advisories"].append(
-                "This application repository differs from the repositories visible in the source evidence."
+                "This application folder differs from the project folders visible in the source evidence."
             )
         return {
             "candidate_id": candidate_id,
             "project_root": str(root),
+            "application_root": str(root),
             "application_repository": str(root),
+            "is_git_repository": checks["repository_root"],
             "target_path": str(target),
             "target_relative_path": str(target.relative_to(root)),
-            "change_kind": "no_change" if previous_content == content else "update" if target.exists() else "create",
-            "previous_hash": _content_hash(previous_content) if target.exists() else None,
+            "change_kind": (
+                "blocked"
+                if target.exists() and not target.is_file()
+                else "no_change"
+                if target.is_file() and previous_content == content
+                else "update"
+                if target.is_file()
+                else "create"
+            ),
+            "previous_hash": _content_hash(previous_content) if target.is_file() else None,
             "proposed_hash": _content_hash(content),
             "would_change": previous_content != content,
             "diff": diff,
             "content": content,
             "checks": checks,
             "suggested_project_roots": suggested_roots,
-            "evidence_repository_paths": sorted(evidence_repository_paths),
+            "evidence_project_paths": sorted(evidence_project_paths),
+            "evidence_repository_paths": sorted(evidence_project_paths),
             "source_session_count": ledger.source_session_count,
             "exposure_session_count": ledger.exposure_session_count,
         }
@@ -522,7 +538,7 @@ class WorkflowService:
         project_root: Path,
     ) -> tuple[Path, Path]:
         cls._validate_content(candidate.content)
-        root = project_root.expanduser().resolve()
+        root, _ = cls._normalize_project_root(project_root)
         slug = str(candidate.content.get("slug") or "")
         skills_root = (root / ".agents" / "skills").resolve()
         target = skills_root / slug / "SKILL.md"
@@ -535,6 +551,17 @@ class WorkflowService:
             raise ValueError("Refusing to apply a workflow through a symlink")
         return root, target
 
+    @staticmethod
+    def _normalize_project_root(project_root: Path) -> tuple[Path, bool]:
+        """Resolve nested Git paths to their repository root and preserve ordinary folders."""
+        root = project_root.expanduser().resolve()
+        if not root.is_dir():
+            return root, False
+        for candidate in (root, *root.parents):
+            if (candidate / ".git").exists():
+                return candidate, True
+        return root, False
+
     def _target_checks(
         self,
         candidate: WorkflowCandidateRecord,
@@ -542,7 +569,29 @@ class WorkflowService:
         root: Path,
         target: Path,
     ) -> dict[str, Any]:
-        repository_root = root.is_dir() and (root / ".git").exists()
+        project_directory = root.is_dir()
+        repository_root = project_directory and (root / ".git").exists()
+        unsafe_project_root = root in {Path(root.anchor), Path.home().expanduser().resolve()}
+        invalid_parent = next(
+            (
+                parent
+                for parent in target.parents
+                if (parent == root or parent.is_relative_to(root))
+                and parent.exists()
+                and not parent.is_dir()
+            ),
+            None,
+        )
+        target_supported = not target.exists() or target.is_file()
+        write_probe = target.parent
+        while not write_probe.exists() and write_probe != root.parent:
+            write_probe = write_probe.parent
+        writable = (
+            project_directory
+            and invalid_parent is None
+            and write_probe.is_dir()
+            and os.access(write_probe, os.W_OK)
+        )
         active_owners = [
             {"candidate_id": str(row[0]), "title": str(row[1])}
             for row in self.conn.execute(
@@ -575,20 +624,35 @@ class WorkflowService:
         ]
         issues: list[str] = []
         if not root.exists():
-            issues.append(f"Target repository does not exist: {root}")
+            issues.append(f"Target project folder does not exist: {root}")
         elif not root.is_dir():
-            issues.append(f"Target repository is not a directory: {root}")
-        elif not repository_root:
-            issues.append(f"Choose a repository root containing .git before applying: {root}")
+            issues.append(f"Target project path is not a directory: {root}")
+        elif unsafe_project_root:
+            issues.append(f"Choose a project folder instead of a home or filesystem root: {root}")
+        elif invalid_parent is not None:
+            issues.append(f"Target path component is not a directory: {invalid_parent}")
+        elif not target_supported:
+            issues.append(f"Workflow target is not a file: {target}")
+        elif not writable:
+            issues.append(f"Target project folder is not writable: {root}")
         if active_conflicts:
             issues.append(
                 f"Another active workflow already owns {target}: {active_conflicts[0]['title']}"
             )
         return {
             "schema_valid": True,
+            "project_directory": project_directory,
             "repository_root": repository_root,
+            "writable": writable,
             "target_available": not active_conflicts,
-            "apply_allowed": repository_root and not active_conflicts,
+            "apply_allowed": (
+                project_directory
+                and not unsafe_project_root
+                and invalid_parent is None
+                and target_supported
+                and writable
+                and not active_conflicts
+            ),
             "issues": issues,
             "target_owner": active_owners[0] if active_owners else None,
             "active_conflicts": active_conflicts,

@@ -1988,8 +1988,12 @@ class TestDoctor:
 class TestSetup:
     @pytest.fixture(autouse=True)
     def _do_not_start_real_gateway(self):
-        """Setup tests must never leave detached OTLP daemons behind."""
-        with patch("reflect.gateway._is_running", return_value=12345):
+        """Setup tests must never mutate live gateway or shell state."""
+        with (
+            patch("reflect.gateway._is_running", return_value=12345),
+            patch.object(core.ShellCompletionManager, "detect_shell", return_value="zsh"),
+            patch.object(core.ShellCompletionManager, "install"),
+        ):
             yield
 
     def test_setup_surfaces_detected_agent_guidance(self, runner, tmp_path):

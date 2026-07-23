@@ -680,25 +680,47 @@ def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
     assert preview.json()["change_kind"] == "create"
     assert preview.json()["checks"]["apply_allowed"] is True
     assert preview.json()["application_repository"] == str(project_root)
+    assert preview.json()["application_root"] == str(project_root)
+    assert preview.json()["is_git_repository"] is True
     assert preview.json()["target_relative_path"] == ".agents/skills/verify-before-done/SKILL.md"
     assert sessions.status_code == 200
     assert sessions.json()["source_session_count"] == 1
     assert sessions.json()["source_sessions"][0]["session_id"] == "sess-sql"
 
-    unsafe_root = tmp_path / "not-a-repository"
-    unsafe_root.mkdir()
-    unsafe_preview = client.get(
+    nested_root = project_root / "packages" / "app"
+    nested_root.mkdir(parents=True)
+    nested_preview = client.get(
         f"/api/workflows/{candidate_id}/preview",
-        params={"project_root": str(unsafe_root)},
+        params={"project_root": str(nested_root)},
     )
-    unsafe_apply = client.post(
+    assert nested_preview.status_code == 200
+    assert nested_preview.json()["project_root"] == str(project_root)
+    assert nested_preview.json()["checks"]["apply_allowed"] is True
+
+    plain_root = tmp_path / "plain-project"
+    plain_root.mkdir()
+    plain_preview = client.get(
+        f"/api/workflows/{candidate_id}/preview",
+        params={"project_root": str(plain_root)},
+    )
+    assert plain_preview.status_code == 200
+    assert plain_preview.json()["project_root"] == str(plain_root)
+    assert plain_preview.json()["is_git_repository"] is False
+    assert plain_preview.json()["checks"]["apply_allowed"] is True
+
+    missing_root = tmp_path / "missing-project"
+    missing_preview = client.get(
+        f"/api/workflows/{candidate_id}/preview",
+        params={"project_root": str(missing_root)},
+    )
+    missing_apply = client.post(
         f"/api/workflows/{candidate_id}/apply",
-        json={"project_root": str(unsafe_root)},
+        json={"project_root": str(missing_root)},
     )
-    assert unsafe_preview.status_code == 200
-    assert unsafe_preview.json()["checks"]["apply_allowed"] is False
-    assert unsafe_apply.status_code == 409
-    assert "containing .git" in unsafe_apply.json()["error"]
+    assert missing_preview.status_code == 200
+    assert missing_preview.json()["checks"]["apply_allowed"] is False
+    assert missing_apply.status_code == 409
+    assert "does not exist" in missing_apply.json()["error"]
 
     edited_content = {
         **workflow["content"],

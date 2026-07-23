@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Classified documented agent-native continuation signals from Cursor, Claude, Copilot, and Codex as buildable observed loops, prioritized newly actionable loops above acknowledged and promoted history, and added count-bearing Findings and Loops Inbox views with a clear evidence-to-workflow path.
+- Made `reflect setup` install shell autocomplete by default in both interactive and automated runs, with an explicit `--no-shell-completion` opt-out and non-fatal unsupported-shell or permission handling.
+- Distinguished an Impact card's result against its pre-activation baseline from its direction since the previous check, so improving-but-not-yet-recovered workflows show progress without implying success or an immediate rollback.
+- Made workflow application accept existing writable non-Git project folders while rejecting home and filesystem roots, normalize nested Git paths to their repository root, replace the ambiguous Create badge and browser-native confirmation with a clear in-dialog action, surface target or API failures inline, and clarify the selected project, source-evidence relationship, file change, and single-project scope before approval.
 - Replaced the outdated social preview artwork with the current reflect visual identity and ensured the Open Graph image ships with the packaged dashboard.
 - Updated the public landing-page release fallback to the current package version.
 - Added safe canvas padding to the shared logo mark so README and favicon renderers do not crop its edges.

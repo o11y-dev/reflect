@@ -299,6 +299,37 @@ def test_loop_detection_ignores_poll_transport_and_approval_metadata(tmp_path):
         conn.close()
 
 
+def test_agent_native_loop_is_detected_once_and_sorted_before_promoted_history(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        conn.execute("UPDATE agents SET name = 'Cursor' WHERE id = 'agent-1'")
+        conn.execute(
+            """
+            UPDATE tool_calls
+            SET input_preview_redacted = '{"cmd":"echo AGENT_LOOP_WAKE_mrchase"}',
+                input_hash = 'cursor-loop-wake'
+            WHERE id = 'tool-1'
+            """
+        )
+        conn.commit()
+
+        refresh = service.loops.refresh()
+        records = service.loops.list()
+        native = next(item for item in records if item.kind.value == "agent_native")
+        stalled = next(item for item in records if item.kind.value == "stalled")
+        service.loops.mark_promoted(stalled.id, "skill-existing")
+        ordered = service.loops.list()
+
+        assert refresh["agent_native"] == 1
+        assert native.evidence["command"] == "/loop"
+        assert native.evidence["objective_label"] == "mrchase"
+        assert service.loops.show(native.id).occurrences[0].session_id == "session-1"
+        assert ordered[0].id == native.id
+        assert ordered[-1].status.value == "promoted"
+    finally:
+        conn.close()
+
+
 def test_refresh_backfills_behavior_metadata_on_legacy_non_pending_candidates(tmp_path):
     service, conn = _service(tmp_path)
     try:
@@ -567,6 +598,91 @@ def test_workflow_preview_is_exact_and_repeat_apply_is_idempotent(tmp_path):
             "SELECT COUNT(*) FROM interventions WHERE status = 'active'"
         ).fetchone()[0] == 1
         assert service.workflows.preview(candidate.id, project_root=project_root)["would_change"] is False
+    finally:
+        conn.close()
+
+
+def test_workflow_targets_accept_non_git_folders_and_normalize_nested_git_paths(tmp_path):
+    service, conn = _service(tmp_path)
+    git_root = tmp_path / "git-project"
+    nested_git_folder = git_root / "packages" / "app"
+    (git_root / ".git").mkdir(parents=True)
+    nested_git_folder.mkdir(parents=True)
+    plain_project = tmp_path / "plain-project"
+    plain_project.mkdir()
+    try:
+        service.refresh()
+        candidate = service.workflows.list()[0]
+
+        nested_preview = service.workflows.preview(
+            candidate.id,
+            project_root=nested_git_folder,
+        )
+        assert nested_preview["project_root"] == str(git_root)
+        assert nested_preview["is_git_repository"] is True
+        assert nested_preview["checks"]["apply_allowed"] is True
+
+        plain_preview = service.workflows.preview(candidate.id, project_root=plain_project)
+        assert plain_preview["project_root"] == str(plain_project)
+        assert plain_preview["application_root"] == str(plain_project)
+        assert plain_preview["is_git_repository"] is False
+        assert plain_preview["checks"]["project_directory"] is True
+        assert plain_preview["checks"]["writable"] is True
+        assert plain_preview["checks"]["apply_allowed"] is True
+
+        applied = service.workflows.apply(candidate.id, project_root=plain_project)
+        assert Path(applied["target_path"]).is_file()
+        assert Path(applied["target_path"]).is_relative_to(plain_project)
+    finally:
+        conn.close()
+
+
+def test_workflow_target_checks_reject_missing_folders_and_path_collisions(tmp_path):
+    service, conn = _service(tmp_path)
+    missing_project = tmp_path / "missing-project"
+    blocked_project = tmp_path / "blocked-project"
+    blocked_project.mkdir()
+    (blocked_project / ".agents").write_text("not a directory", encoding="utf-8")
+    try:
+        service.refresh()
+        candidate = service.workflows.list()[0]
+
+        missing_preview = service.workflows.preview(
+            candidate.id,
+            project_root=missing_project,
+        )
+        assert missing_preview["checks"]["apply_allowed"] is False
+        assert "does not exist" in missing_preview["checks"]["issues"][0]
+
+        blocked_preview = service.workflows.preview(
+            candidate.id,
+            project_root=blocked_project,
+        )
+        assert blocked_preview["checks"]["apply_allowed"] is False
+        assert "not a directory" in blocked_preview["checks"]["issues"][0]
+    finally:
+        conn.close()
+
+
+def test_workflow_target_checks_reject_broad_filesystem_roots(tmp_path, monkeypatch):
+    service, conn = _service(tmp_path)
+    fake_home = tmp_path / "operator-home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+    try:
+        service.refresh()
+        candidate = service.workflows.list()[0]
+
+        home_preview = service.workflows.preview(candidate.id, project_root=fake_home)
+        assert home_preview["checks"]["apply_allowed"] is False
+        assert "home or filesystem root" in home_preview["checks"]["issues"][0]
+
+        filesystem_preview = service.workflows.preview(
+            candidate.id,
+            project_root=Path(Path.cwd().anchor),
+        )
+        assert filesystem_preview["checks"]["apply_allowed"] is False
+        assert "home or filesystem root" in filesystem_preview["checks"]["issues"][0]
     finally:
         conn.close()
 

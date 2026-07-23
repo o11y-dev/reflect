@@ -293,13 +293,18 @@ def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(p
     assert "Exact File Diff" in text
     assert "Edit Structured Workflow" in text
     assert 'id="workflow-project-root"' in text
-    assert "Choose Git Repository" in text
-    assert "Check Repository" in text
+    assert "Choose a Project Folder" in text
+    assert "Selected Project Folder" in text
+    assert "Verify Folder" in text
     assert 'id="workflow-type-filter"' in text
     assert 'id="workflow-status-filter"' in text
     assert "not a Git or filesystem lock" in text
-    assert "Package as Repo-local Skill" in text
-    assert "it does not change the source evidence" in text
+    assert "Why Reflect Suggested This" in text
+    assert 'aria-label="Workflow approval summary"' in text
+    assert "Apply to One Project" in text
+    assert "Linked to source evidence" in text
+    assert "Different from source evidence" in text
+    assert "Only the selected project will be changed" in text
     assert "content.source?.rule_id" in text
     assert "content.behavior_type" in text
     assert "workflow_type" in text
@@ -366,6 +371,14 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "fetch('/api/inbox'" in text
     assert "fetch('/api/workflows'" in text
     assert "fetch('/api/loops'" in text
+    assert "function sortObservedLoops(items)" in text
+    assert "const kindRank = {agent_native:0, stalled:1, productive:2}" in text
+    assert 'data-inbox-view="findings"' in text
+    assert 'data-inbox-view="loops"' in text
+    assert "ready to review and build" in text
+    assert "params.set('inbox_view', view)" in text
+    assert "Review & Build Instructions" in text
+    assert "Reflect monitors comparable future sessions in Impact" in text
     assert "fetch('/api/skills?limit=500'" in text
     assert "fetch('/api/impact'" in text
     assert "new URL(`/api/explore/${encodeURIComponent(viewName)}`" in text
@@ -381,6 +394,14 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert 'data-ledger-action="review-impact-sessions"' in text
     assert "View Compared Sessions" in text
     assert "Post-application session collection progress" in text
+    assert "function impactTrendPresentation(item, previous, metric)" in text
+    assert "metric?.direction || 'lower_is_better'" in text
+    assert "direction:'higher_is_better'" in text
+    assert "Needs Attention vs Baseline" in text
+    assert "Improving${amount} since last check" in text
+    assert "moving in the right direction, but not enough yet" in text
+    assert "regressedButImproving ? 'Review Progress'" in text
+    assert 'data-trend="${escHtml(trend?.kind || \'unknown\')}"' in text
     assert 'id="ledger-dialog"' in text
     assert 'data-ledger-action="evidence"' in text
     assert 'data-ledger-action="review-loop"' in text
@@ -391,7 +412,9 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "showWorkflowReview(candidateId)" in text
     assert "submitSessionFeedback(sessionId, outcome, button)" in text
     assert 'data-session-feedback="no-change-correct"' in text
-    assert "Approve this workflow and package it as a skill at" in text
+    assert "trigger.textContent = 'Applying…'" in text
+    assert "trigger.textContent = 'Approve & Apply to This Project'" in text
+    assert "create:'New file'" in text
     assert "Exact File Diff" in text
     assert "Review &amp; Roll Back" in text
     assert "const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length ? 'inbox' : 'sessions';" in text

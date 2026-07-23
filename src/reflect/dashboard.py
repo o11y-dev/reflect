@@ -4864,7 +4864,7 @@ def _build_dashboard_app(
             )
         except KeyError as exc:
             return JSONResponse({"error": str(exc)}, status_code=404)
-        except (RuntimeError, ValueError) as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=409)
         finally:
             conn.close()
@@ -4907,7 +4907,7 @@ def _build_dashboard_app(
             )
         except KeyError as exc:
             return JSONResponse({"error": str(exc)}, status_code=404)
-        except (RuntimeError, ValueError) as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=409)
         finally:
             conn.close()

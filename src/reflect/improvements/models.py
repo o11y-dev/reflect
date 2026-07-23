@@ -77,6 +77,7 @@ class SkillVersionStatus(StrEnum):
 
 
 class LoopKind(StrEnum):
+    AGENT_NATIVE = "agent_native"
     STALLED = "stalled"
     PRODUCTIVE = "productive"
 
