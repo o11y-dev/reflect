@@ -20,8 +20,8 @@ MCP must not become a second workflow renderer. `WorkflowDefinition` remains the
 ## Agent lifecycle
 
 1. After identifying a non-trivial repository task and its path, the agent calls `reflect_context`.
-2. Reflect returns approved guidance, selected skill versions, constraints, verification, and a `task_run_id`.
-3. The agent follows the selected skill when its preconditions match.
+2. Reflect returns approved guidance, selected skill versions, one explicit execution state, constraints, verification, and a `task_run_id`.
+3. The agent follows a complete selected skill when `execution_state` is `follow_allowed` and its preconditions match. If the state is `retrieve_full_instructions`, it retrieves the complete version first.
 4. After validation, the agent calls `reflect_complete` with the task outcome.
 5. Reflect links the task run to the runtime session when ingestion is available and records selected-skill usage.
 6. Existing detectors and measurements use the completed session evidence to identify improvements.
@@ -37,6 +37,8 @@ Implemented by the initial MCP-first change:
 - operational MCP server instructions with explicit call timing
 - task-scoped `reflect_context` runs with privacy-safe question hashes
 - selected Skills v2 metadata and bounded skill instructions
+- explicit execution state separated from registry and installation lifecycle
+- signaled instruction truncation with exact full-version retrieval through `reflect_explain`
 - `reflect_complete` outcomes and verification results
 - late-ingestion-safe runtime session identity
 - selected-skill outcome linkage when the session already exists

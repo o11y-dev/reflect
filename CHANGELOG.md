@@ -10,6 +10,7 @@
 ### Changed
 
 - Replaced vague MCP timing guidance with explicit task-start, material-scope-change, and post-validation completion rules so agents can use Reflect without requiring users to operate the CLI.
+- Preserved multi-environment session resolution, added typed MCP task contracts, and made selected-skill execution, installation approval, and truncated-instruction retrieval explicit for agents.
 
 ## 0.9.1 (2026-07-23)
 

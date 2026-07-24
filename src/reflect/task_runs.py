@@ -4,11 +4,42 @@ import hashlib
 import json
 import sqlite3
 import uuid
+from enum import StrEnum
 from pathlib import Path
-from typing import Any
 
 from reflect.improvements.repository import utc_now
+from reflect.schema.base import ReflectModel
 from reflect.usage import UsageService
+
+
+class MCPTaskOutcome(StrEnum):
+    """Agent-reported completion state for one Reflect task run."""
+
+    SUCCESS = "success"
+    PARTIAL = "partial"
+    FAILURE = "failure"
+    ABANDONED = "abandoned"
+
+
+class MCPSelectedSkillRef(ReflectModel):
+    """Stable skill identity captured when guidance starts."""
+
+    skill_id: str
+    version_id: str
+    slug: str
+
+
+class MCPTaskRunResult(ReflectModel):
+    """Typed completion result returned to agent-facing orchestration."""
+
+    task_run_id: str
+    status: str
+    outcome: MCPTaskOutcome | None = None
+    verification_passed: bool | None = None
+    completed_at: str | None = None
+    runtime_session_id: str | None = None
+    linked_to_session: bool
+    idempotent: bool
 
 
 class MCPTaskRunService:
@@ -30,9 +61,9 @@ class MCPTaskRunService:
         workspace_path: Path,
         task_file_path: Path | None,
         workflow_id: str | None,
-        selected_skills: list[dict[str, str]],
+        selected_skills: list[MCPSelectedSkillRef],
     ) -> str:
-        runtime_session_id, runtime_agent, _source = self.usage.runtime_session_hint()
+        session_hint = self.usage.runtime_session_hint()
         task_run_id = f"mcp_task_{uuid.uuid4().hex}"
         now = utc_now()
         self.conn.execute(
@@ -45,13 +76,16 @@ class MCPTaskRunService:
             """,
             (
                 task_run_id,
-                runtime_session_id,
-                runtime_agent,
+                session_hint.session_id if session_hint else None,
+                session_hint.agent if session_hint else None,
                 str(workspace_path),
                 str(task_file_path) if task_file_path else None,
                 hashlib.sha256(question.encode("utf-8")).hexdigest(),
                 workflow_id,
-                json.dumps(selected_skills, sort_keys=True),
+                json.dumps(
+                    [skill.model_dump(mode="json") for skill in selected_skills],
+                    sort_keys=True,
+                ),
                 now,
                 now,
                 now,
@@ -64,13 +98,14 @@ class MCPTaskRunService:
         self,
         task_run_id: str,
         *,
-        outcome: str,
+        outcome: MCPTaskOutcome | str,
         verification_passed: bool | None = None,
         summary_redacted: str = "",
-    ) -> dict[str, Any]:
-        allowed_outcomes = {"success", "partial", "failure", "abandoned"}
-        if outcome not in allowed_outcomes:
-            raise ValueError(f"Unsupported task outcome: {outcome}")
+    ) -> MCPTaskRunResult:
+        try:
+            normalized_outcome = MCPTaskOutcome(outcome)
+        except ValueError as exc:
+            raise ValueError(f"Unsupported task outcome: {outcome}") from exc
         summary = summary_redacted.strip()[:1000]
         row = self.conn.execute(
             """
@@ -85,7 +120,7 @@ class MCPTaskRunService:
         existing_verification = None if row[4] is None else bool(row[4])
         if str(row[2]) == "completed":
             if (
-                str(row[3]) == outcome
+                str(row[3]) == normalized_outcome.value
                 and existing_verification == verification_passed
                 and str(row[5] or "") == summary
             ):
@@ -103,7 +138,7 @@ class MCPTaskRunService:
             WHERE id = ?
             """,
             (
-                outcome,
+                normalized_outcome.value,
                 None if verification_passed is None else int(verification_passed),
                 summary or None,
                 now,
@@ -120,18 +155,22 @@ class MCPTaskRunService:
             ).fetchone()
         )
         if linked_to_session:
+            selected_skills = [
+                MCPSelectedSkillRef.model_validate(item)
+                for item in json.loads(str(row[1] or "[]"))
+            ]
             self._record_session_outcome(
                 task_run_id,
                 runtime_session_id,
-                outcome=outcome,
+                outcome=normalized_outcome,
                 verification_passed=verification_passed,
                 has_summary=bool(summary),
                 now=now,
             )
             self._record_skill_outcomes(
                 runtime_session_id,
-                json.loads(str(row[1] or "[]")),
-                outcome=outcome,
+                selected_skills,
+                outcome=normalized_outcome,
                 verification_passed=verification_passed,
                 now=now,
             )
@@ -147,7 +186,7 @@ class MCPTaskRunService:
         task_run_id: str,
         session_id: str,
         *,
-        outcome: str,
+        outcome: MCPTaskOutcome,
         verification_passed: bool | None,
         has_summary: bool,
         now: str,
@@ -172,7 +211,7 @@ class MCPTaskRunService:
             (
                 f"outcome_{hashlib.sha256((task_run_id + ':agent').encode()).hexdigest()[:24]}",
                 session_id,
-                outcome,
+                outcome.value,
                 0.9 if verification_passed is not None else 0.7,
                 json.dumps(verification, sort_keys=True),
                 now,
@@ -183,15 +222,15 @@ class MCPTaskRunService:
     def _record_skill_outcomes(
         self,
         session_id: str,
-        selected_skills: list[dict[str, Any]],
+        selected_skills: list[MCPSelectedSkillRef],
         *,
-        outcome: str,
+        outcome: MCPTaskOutcome,
         verification_passed: bool | None,
         now: str,
     ) -> None:
         for skill in selected_skills:
-            skill_id = str(skill.get("skill_id") or "")
-            version_id = str(skill.get("version_id") or "") or None
+            skill_id = skill.skill_id
+            version_id = skill.version_id or None
             if not skill_id:
                 continue
             usage_id = f"skill_usage_{hashlib.sha256(f'{skill_id}:{session_id}'.encode()).hexdigest()[:24]}"
@@ -215,7 +254,7 @@ class MCPTaskRunService:
                     skill_id,
                     version_id,
                     session_id,
-                    outcome,
+                    outcome.value,
                     0.9 if verification_passed is not None else 0.7,
                     json.dumps(
                         {
@@ -236,7 +275,7 @@ class MCPTaskRunService:
         *,
         idempotent: bool,
         linked_to_session: bool | None = None,
-    ) -> dict[str, Any]:
+    ) -> MCPTaskRunResult:
         row = self.conn.execute(
             """
             SELECT runtime_session_id, status, outcome, verification_passed,
@@ -256,13 +295,13 @@ class MCPTaskRunService:
                     (session_id,),
                 ).fetchone()
             )
-        return {
-            "task_run_id": task_run_id,
-            "status": str(row[1]),
-            "outcome": row[2],
-            "verification_passed": None if row[3] is None else bool(row[3]),
-            "completed_at": row[4],
-            "runtime_session_id": session_id or None,
-            "linked_to_session": linked_to_session,
-            "idempotent": idempotent,
-        }
+        return MCPTaskRunResult(
+            task_run_id=task_run_id,
+            status=str(row[1]),
+            outcome=MCPTaskOutcome(str(row[2])) if row[2] is not None else None,
+            verification_passed=None if row[3] is None else bool(row[3]),
+            completed_at=row[4],
+            runtime_session_id=session_id or None,
+            linked_to_session=linked_to_session,
+            idempotent=idempotent,
+        )

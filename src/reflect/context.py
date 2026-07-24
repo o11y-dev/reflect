@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,12 @@ from reflect.improvements.models import AskAnswer
 from reflect.improvements.service import ImprovementService
 from reflect.memory import MemoryService
 from reflect.schema.base import ReflectModel
-from reflect.task_runs import MCPTaskRunService
+from reflect.task_runs import (
+    MCPSelectedSkillRef,
+    MCPTaskOutcome,
+    MCPTaskRunResult,
+    MCPTaskRunService,
+)
 from reflect.usage import UsageService
 
 
@@ -32,6 +38,28 @@ class ContextMemory(ReflectModel):
     workspace_root: str = ""
 
 
+class ContextNextAction(ReflectModel):
+    """A bounded follow-up call an agent can make."""
+
+    tool: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    when: str
+
+
+class SkillExecutionState(StrEnum):
+    """Machine-readable decision for handling selected skill instructions."""
+
+    FOLLOW_ALLOWED = "follow_allowed"
+    RETRIEVE_FULL_INSTRUCTIONS = "retrieve_full_instructions"
+
+
+class SkillInstallationState(StrEnum):
+    """Whether Reflect has an active installation for the selected skill."""
+
+    INSTALLED = "installed"
+    NOT_INSTALLED = "not_installed"
+
+
 class ContextSkill(ReflectModel):
     """A versioned skill selected for the current task."""
 
@@ -41,17 +69,16 @@ class ContextSkill(ReflectModel):
     name: str
     description: str
     workflow_status: str
-    lifecycle_state: str
+    registry_lifecycle_state: str
+    execution_state: SkillExecutionState
+    execution_reason: str
     installation_targets: list[str] = Field(default_factory=list)
+    installation_state: SkillInstallationState
+    installation_requires_operator_approval: bool
+    content_hash: str
     instructions: str
-
-
-class ContextNextAction(ReflectModel):
-    """The bounded follow-up call an agent should make after using guidance."""
-
-    tool: str
-    arguments: dict[str, Any] = Field(default_factory=dict)
-    when: str
+    instructions_truncated: bool = False
+    full_instructions_action: ContextNextAction | None = None
 
 
 class ReflectContextAnswer(AskAnswer):
@@ -61,6 +88,12 @@ class ReflectContextAnswer(AskAnswer):
     task_run_id: str | None = None
     selected_skills: list[ContextSkill] = Field(default_factory=list)
     next_action: ContextNextAction | None = None
+
+
+class TaskCompletionAnswer(MCPTaskRunResult):
+    """Task completion result with a bounded optional improvement follow-up."""
+
+    next_action: ContextNextAction
 
 
 class ReflectContextService:
@@ -153,11 +186,11 @@ class ReflectContextService:
         )
         selected_skills = self._selected_skills(answer.workflow_id)
         skill_refs = [
-            {
-                "skill_id": skill.skill_id,
-                "version_id": skill.version_id,
-                "slug": skill.slug,
-            }
+            MCPSelectedSkillRef(
+                skill_id=skill.skill_id,
+                version_id=skill.version_id,
+                slug=skill.slug,
+            )
             for skill in selected_skills
         ]
         task_run_id = self.task_runs.start(
@@ -183,10 +216,10 @@ class ReflectContextService:
         self,
         task_run_id: str,
         *,
-        outcome: str,
+        outcome: MCPTaskOutcome | str,
         verification_passed: bool | None = None,
         summary_redacted: str = "",
-    ) -> dict[str, Any]:
+    ) -> TaskCompletionAnswer:
         """Record the agent-reported outcome for one MCP guidance run."""
 
         result = self.task_runs.complete(
@@ -195,14 +228,16 @@ class ReflectContextService:
             verification_passed=verification_passed,
             summary_redacted=summary_redacted,
         )
-        result["next_action"] = {
-            "tool": "reflect_improvements",
-            "when": (
-                "When the task exposed a repeated success, failure, recovery pattern, "
-                "or workflow gap."
+        return TaskCompletionAnswer(
+            **result.model_dump(mode="python"),
+            next_action=ContextNextAction(
+                tool="reflect_improvements",
+                when=(
+                    "When the task exposed a repeated success, failure, recovery pattern, "
+                    "or workflow gap."
+                ),
             ),
-        }
-        return result
+        )
 
     def improvements_summary(self, *, limit: int = 20) -> dict[str, Any]:
         findings = self.improvements.list_inbox_findings(limit=max(1, min(limit, 100)))
@@ -229,6 +264,9 @@ class ReflectContextService:
                 "provenance": "reflect_workflow_ledger",
                 "entity": workflow.model_dump(mode="json"),
             }
+        skill = self._skill_explanation(entity_id)
+        if skill is not None:
+            return skill
         memory = self.memory.inspect(entity_id)
         if memory is not None:
             source = memory.get("source_metadata") or {}
@@ -271,7 +309,7 @@ class ReflectContextService:
         if not workflow_id:
             return []
         workflow = self.improvements.repository.get_candidate(workflow_id)
-        if workflow is None:
+        if workflow is None or workflow.status.value not in {"approved", "active"}:
             return []
         self.improvements.skills.sync_workflow_candidates([workflow_id])
         try:
@@ -289,6 +327,19 @@ class ReflectContextService:
         )
         if current is None:
             return []
+        instructions_limit = 20_000
+        instructions_truncated = len(current.content_markdown) > instructions_limit
+        execution_state = (
+            SkillExecutionState.RETRIEVE_FULL_INSTRUCTIONS
+            if instructions_truncated
+            else SkillExecutionState.FOLLOW_ALLOWED
+        )
+        execution_reason = (
+            "Retrieve the complete versioned instructions before following this skill."
+            if instructions_truncated
+            else "The linked workflow is approved or active and its inline instructions are complete."
+        )
+        installation_targets = detail.skill.installation_targets
         return [
             ContextSkill(
                 skill_id=detail.skill.id,
@@ -297,11 +348,63 @@ class ReflectContextService:
                 name=detail.skill.name,
                 description=detail.skill.description,
                 workflow_status=workflow.status.value,
-                lifecycle_state=detail.skill.lifecycle_state.value,
-                installation_targets=detail.skill.installation_targets,
-                instructions=current.content_markdown[:20_000],
+                registry_lifecycle_state=detail.skill.lifecycle_state.value,
+                execution_state=execution_state,
+                execution_reason=execution_reason,
+                installation_targets=installation_targets,
+                installation_state=(
+                    SkillInstallationState.INSTALLED
+                    if installation_targets
+                    else SkillInstallationState.NOT_INSTALLED
+                ),
+                installation_requires_operator_approval=True,
+                content_hash=current.content_hash,
+                instructions=current.content_markdown[:instructions_limit],
+                instructions_truncated=instructions_truncated,
+                full_instructions_action=(
+                    ContextNextAction(
+                        tool="reflect_explain",
+                        arguments={"entity_id": current.id},
+                        when="Before following this skill because its inline instructions are truncated.",
+                    )
+                    if instructions_truncated
+                    else None
+                ),
             )
         ]
+
+    def _skill_explanation(self, entity_id: str) -> dict[str, Any] | None:
+        version_row = self.conn.execute(
+            "SELECT skill_id FROM skill_versions WHERE id = ?",
+            (entity_id,),
+        ).fetchone()
+        try:
+            detail = self.improvements.skills.show(
+                str(version_row[0]) if version_row is not None else entity_id
+            )
+        except KeyError:
+            return None
+        version = next(
+            (
+                item
+                for item in detail.versions
+                if item.id
+                == (entity_id if version_row is not None else detail.skill.current_version_id)
+            ),
+            detail.versions[0] if detail.versions else None,
+        )
+        if version is None:
+            return None
+        return {
+            "found": True,
+            "kind": "skill_version" if version_row is not None else "skill",
+            "provenance": "reflect_skill_registry",
+            "entity": {
+                "skill": detail.skill.model_dump(mode="json"),
+                "version": version.model_dump(mode="json"),
+                "instructions_truncated": False,
+            },
+        }
 
     @staticmethod
     def _context_memory(row: dict[str, Any], requested_provider: str) -> ContextMemory:

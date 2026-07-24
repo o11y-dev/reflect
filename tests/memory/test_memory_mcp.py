@@ -84,10 +84,10 @@ def test_context_service_records_and_completes_an_agent_task(tmp_path):
             summary_redacted="Focused tests passed.",
         )
 
-        assert completed["status"] == "completed"
-        assert completed["verification_passed"] is True
-        assert completed["idempotent"] is False
-        assert repeated["idempotent"] is True
+        assert completed.status == "completed"
+        assert completed.verification_passed is True
+        assert completed.idempotent is False
+        assert repeated.idempotent is True
         with pytest.raises(RuntimeError, match="already completed"):
             service.complete_task(answer.task_run_id, outcome="failure")
     finally:
@@ -147,14 +147,18 @@ def test_context_service_returns_and_measures_the_selected_versioned_skill(
         selected = answer.selected_skills[0]
         assert selected.slug == "safe-release"
         assert selected.workflow_status == "active"
-        assert selected.lifecycle_state == "active"
+        assert selected.registry_lifecycle_state == "active"
+        assert selected.execution_state == "follow_allowed"
+        assert selected.instructions_truncated is False
+        assert selected.installation_state == "installed"
+        assert selected.installation_requires_operator_approval is True
         assert "Run the focused release validation" in selected.instructions
         completed = context.complete_task(
             answer.task_run_id,
             outcome="success",
             verification_passed=True,
         )
-        assert completed["linked_to_session"] is True
+        assert completed.linked_to_session is True
         assert tuple(
             conn.execute(
                 "SELECT state, outcome FROM skill_usage WHERE skill_id = ?",
@@ -167,6 +171,92 @@ def test_context_service_returns_and_measures_the_selected_versioned_skill(
             WHERE session_id = 'session-1' AND source = 'agent_completion'
             """
         ).fetchone()[0] == "success"
+    finally:
+        conn.close()
+
+
+def test_context_service_makes_approved_pending_skill_execution_unambiguous(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        service = ImprovementService(conn)
+        candidate_id = service.stage_extracted_skills(
+            [
+                {
+                    "name": "safe-release",
+                    "description": "Publish a release with a focused validation gate.",
+                    "content": "# Safe release\n\n1. Run the focused release validation.",
+                    "behavior_type": "verification",
+                }
+            ],
+            session_ids=[],
+            source_agent="codex",
+        )[0]
+        conn.execute(
+            "UPDATE workflow_candidates SET status = 'approved' WHERE id = ?",
+            (candidate_id,),
+        )
+        conn.commit()
+
+        answer = ReflectContextService(conn).begin_task(
+            "Publish the safe release with validation",
+            path=tmp_path,
+        )
+
+        selected = answer.selected_skills[0]
+        assert selected.workflow_status == "approved"
+        assert selected.registry_lifecycle_state == "pending"
+        assert selected.execution_state == "follow_allowed"
+        assert selected.installation_state == "not_installed"
+        assert selected.installation_requires_operator_approval is True
+    finally:
+        conn.close()
+
+
+def test_context_service_requires_full_skill_retrieval_when_inline_content_is_truncated(
+    tmp_path,
+):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        service = ImprovementService(conn)
+        final_instruction = "FINAL VERIFICATION MARKER"
+        candidate_id = service.stage_extracted_skills(
+            [
+                {
+                    "name": "large-release",
+                    "description": "Publish a large release with complete validation.",
+                    "content": f"# Large release\n\n{'x' * 21_000}\n\n{final_instruction}",
+                    "behavior_type": "verification",
+                }
+            ],
+            session_ids=[],
+            source_agent="codex",
+        )[0]
+        conn.execute(
+            "UPDATE workflow_candidates SET status = 'approved' WHERE id = ?",
+            (candidate_id,),
+        )
+        conn.commit()
+
+        context = ReflectContextService(conn)
+        answer = context.begin_task(
+            "Publish the large release with validation",
+            path=tmp_path,
+        )
+
+        selected = answer.selected_skills[0]
+        assert selected.execution_state == "retrieve_full_instructions"
+        assert selected.instructions_truncated is True
+        assert final_instruction not in selected.instructions
+        assert selected.full_instructions_action is not None
+        assert selected.full_instructions_action.tool == "reflect_explain"
+        assert selected.full_instructions_action.arguments == {
+            "entity_id": selected.version_id
+        }
+
+        explanation = context.explain(selected.version_id)
+        assert explanation["kind"] == "skill_version"
+        assert final_instruction in explanation["entity"]["version"]["content_markdown"]
+        assert explanation["entity"]["instructions_truncated"] is False
     finally:
         conn.close()
 
@@ -208,6 +298,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
 
     assert initialized.serverInfo.name == "Reflect"
     assert "At the start of every non-trivial repository task" in initialized.instructions
+    assert "execution_state is follow_allowed" in initialized.instructions
     assert "call reflect_complete exactly once" in initialized.instructions
     assert names == {
         "reflect_complete",

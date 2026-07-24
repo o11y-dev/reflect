@@ -39,7 +39,9 @@ Always follow this order:
 1. **Start non-trivial repository work with Reflect**
    - After identifying the task and repository path, call the MCP `reflect_context` tool exactly once before implementation or file changes.
    - Pass a concrete task question, set `path` to the repository root or relevant target, and set `task_file` when a written task or specification exists.
-   - Preserve the returned `task_run_id`. Follow a selected approved or active skill only when its constraints and preconditions match.
+   - Preserve the returned `task_run_id`. Follow a selected skill only when `execution_state` is `follow_allowed` and its constraints and preconditions match.
+   - If `execution_state` is `retrieve_full_instructions`, call the supplied `full_instructions_action` before following the skill. Do not treat truncated inline instructions as complete.
+   - Treat `registry_lifecycle_state` and installation fields as descriptive state, not execution permission. Installing or applying a skill still requires explicit operator approval.
    - Call `reflect_context` again only when the goal, repository, or subsystem changes materially. Skip it for trivial factual lookups and tasks that do not involve a repository.
    - When MCP is unavailable, run `reflect ask "<task question>" --json` before acting. This uses the same context service but does not create a completable task run.
    - Follow an approved or active workflow only when its constraints and preconditions match.
