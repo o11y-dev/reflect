@@ -9,7 +9,7 @@ def test_migrate_applies_initial_schema(tmp_path):
     conn = connect_sqlite(db_path)
     try:
         applied = migrate(conn)
-        assert applied == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        assert applied == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "raw_events" in tables
         assert "schema_migrations" in tables
@@ -55,6 +55,7 @@ def test_migrate_applies_initial_schema(tmp_path):
         assert "skill_installations" in tables
         assert "skill_usage" in tables
         assert "skill_measurements" in tables
+        assert "mcp_task_runs" in tables
     finally:
         conn.close()
 
@@ -62,7 +63,7 @@ def test_migrate_applies_initial_schema(tmp_path):
 def test_migrate_is_idempotent(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
-        assert migrate(conn) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        assert migrate(conn) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
         assert migrate(conn) == []
     finally:
         conn.close()
@@ -81,8 +82,8 @@ def test_migrate_serializes_concurrent_background_requests(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: run_migration(), range(2)))
 
-    assert sorted(len(result) for result in results) == [0, 15]
-    assert sorted(version for result in results for version in result) == list(range(1, 16))
+    assert sorted(len(result) for result in results) == [0, 16]
+    assert sorted(version for result in results for version in result) == list(range(1, 17))
 
 
 def test_migrate_uses_read_only_fast_path_when_schema_is_current(tmp_path):
@@ -229,5 +230,5 @@ def test_database_doctor_reports_pending_migrations(tmp_path):
     assert status["ok"] is False
     assert status["applied_migrations"] == []
     assert status["pending_migrations"] == [
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
     ]

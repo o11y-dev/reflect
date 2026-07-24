@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.2 (unreleased)
+
+### Added
+
+- Added an MCP-first agent task lifecycle: `reflect_context` now records a privacy-safe guidance run, returns selected versioned skills and an explicit completion callback, while `reflect_complete` records validation and task outcomes for later evidence-backed measurement.
+- Added a phased MCP agent-workflow plan covering agent-native inspection, conversational review and application, guidance coverage, and bounded self-improvement.
+
+### Changed
+
+- Replaced vague MCP timing guidance with explicit task-start, material-scope-change, and post-validation completion rules so agents can use Reflect without requiring users to operate the CLI.
+
 ## 0.9.1 (2026-07-23)
 
 ### Fixed

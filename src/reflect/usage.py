@@ -135,14 +135,9 @@ class UsageService:
                 return explicit_session_id, "explicit_session", None
             raise LookupError(f"Session not found: {explicit_session_id}")
 
-        agent_hint: str | None = None
-        for env_key, candidate_agent in self._SESSION_ENV_KEYS:
-            runtime_id = str(self.environ.get(env_key, "")).strip()
-            if not runtime_id:
-                continue
-            agent_hint = candidate_agent or agent_hint
-            if self._session_exists(runtime_id):
-                return runtime_id, f"environment:{env_key}", None
+        runtime_id, agent_hint, env_key = self.runtime_session_hint()
+        if runtime_id and self._session_exists(runtime_id):
+            return runtime_id, f"environment:{env_key}", None
 
         workspace_match = self._latest_workspace_session(agent_hint)
         if workspace_match:
@@ -160,6 +155,15 @@ class UsageService:
                 "The active runtime session was not present in the local store; showing the newest matching local session.",
             )
         raise LookupError("No local sessions found. Run `reflect setup` and capture a session first.")
+
+    def runtime_session_hint(self) -> tuple[str | None, str | None, str | None]:
+        """Return the agent runtime identity without requiring ingestion to have completed."""
+
+        for env_key, candidate_agent in self._SESSION_ENV_KEYS:
+            runtime_id = str(self.environ.get(env_key, "")).strip()
+            if runtime_id:
+                return runtime_id, candidate_agent, env_key
+        return None, None, None
 
     def _session_exists(self, session_id: str) -> bool:
         return self.conn.execute("SELECT 1 FROM sessions WHERE id = ?", (session_id,)).fetchone() is not None

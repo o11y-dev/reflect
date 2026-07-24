@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -14,7 +14,12 @@ from reflect.store.sqlite import connect_sqlite
 
 SERVER_INSTRUCTIONS = """
 Reflect provides local telemetry evidence, reviewed workflows, scoped context, and exact usage.
-Use reflect_context before recurring repository work. Treat provider memory as context rather than
+At the start of every non-trivial repository task, call reflect_context once after identifying the
+task and repository path, and before implementation or file changes. Follow a selected approved or
+active skill only when its preconditions match. Call reflect_context again only when the goal,
+repository, or subsystem changes materially. After validation, call reflect_complete exactly once
+with the returned task_run_id before the final response. Skip this flow for trivial factual lookups
+and tasks that do not involve a repository. Treat provider memory as context rather than
 Reflect-verified evidence, and never apply pending workflows without explicit operator approval.
 """.strip()
 
@@ -22,6 +27,18 @@ mcp = FastMCP("Reflect", instructions=SERVER_INSTRUCTIONS)
 ResultT = TypeVar("ResultT")
 READ_ONLY_TOOL = ToolAnnotations(
     readOnlyHint=True,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+)
+TASK_START_TOOL = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=False,
+    openWorldHint=False,
+)
+TASK_COMPLETE_TOOL = ToolAnnotations(
+    readOnlyHint=False,
     destructiveHint=False,
     idempotentHint=True,
     openWorldHint=False,
@@ -45,7 +62,7 @@ def _with_service(operation: Callable[[ReflectContextService], ResultT]) -> Resu
         conn.close()
 
 
-@mcp.tool(annotations=READ_ONLY_TOOL)
+@mcp.tool(annotations=TASK_START_TOOL)
 def reflect_context(
     question: str,
     path: str = "",
@@ -53,18 +70,37 @@ def reflect_context(
     memory_provider: str = "local_sqlite",
     memory_limit: int = 5,
 ) -> dict[str, Any]:
-    """Get task guidance from approved workflows, local evidence, and scoped memory."""
+    """Call once at task start before implementation to get guidance and selected skills."""
 
     resolved_path = Path(path).expanduser().resolve() if path else Path.cwd()
     resolved_task = Path(task_file).expanduser().resolve() if task_file else None
     return _with_service(
-        lambda service: service.ask(
+        lambda service: service.begin_task(
             question,
             task_file=resolved_task,
             path=resolved_path,
             memory_provider=memory_provider,
             memory_limit=memory_limit,
         ).model_dump(mode="json")
+    )
+
+
+@mcp.tool(annotations=TASK_COMPLETE_TOOL)
+def reflect_complete(
+    task_run_id: str,
+    outcome: Literal["success", "partial", "failure", "abandoned"],
+    verification_passed: bool | None = None,
+    summary: str = "",
+) -> dict[str, Any]:
+    """Call once after validation to record the task outcome and close the Reflect guidance run."""
+
+    return _with_service(
+        lambda service: service.complete_task(
+            task_run_id,
+            outcome=outcome,
+            verification_passed=verification_passed,
+            summary_redacted=summary,
+        )
     )
 
 

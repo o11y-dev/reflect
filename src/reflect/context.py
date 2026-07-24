@@ -10,6 +10,7 @@ from reflect.improvements.models import AskAnswer
 from reflect.improvements.service import ImprovementService
 from reflect.memory import MemoryService
 from reflect.schema.base import ReflectModel
+from reflect.task_runs import MCPTaskRunService
 from reflect.usage import UsageService
 
 
@@ -31,10 +32,35 @@ class ContextMemory(ReflectModel):
     workspace_root: str = ""
 
 
+class ContextSkill(ReflectModel):
+    """A versioned skill selected for the current task."""
+
+    skill_id: str
+    version_id: str
+    slug: str
+    name: str
+    description: str
+    workflow_status: str
+    lifecycle_state: str
+    installation_targets: list[str] = Field(default_factory=list)
+    instructions: str
+
+
+class ContextNextAction(ReflectModel):
+    """The bounded follow-up call an agent should make after using guidance."""
+
+    tool: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    when: str
+
+
 class ReflectContextAnswer(AskAnswer):
     """Task guidance enriched with scoped memory, without conflating provenance."""
 
     memories: list[ContextMemory] = Field(default_factory=list)
+    task_run_id: str | None = None
+    selected_skills: list[ContextSkill] = Field(default_factory=list)
+    next_action: ContextNextAction | None = None
 
 
 class ReflectContextService:
@@ -45,6 +71,7 @@ class ReflectContextService:
         self.improvements = ImprovementService(conn)
         self.memory = MemoryService(conn)
         self.usage = UsageService(conn)
+        self.task_runs = MCPTaskRunService(conn, usage=self.usage)
 
     def ask(
         self,
@@ -103,6 +130,79 @@ class ReflectContextService:
             limitations=list(dict.fromkeys(limitations)),
             memories=memories,
         )
+
+    def begin_task(
+        self,
+        question: str,
+        *,
+        task_file: Path | None = None,
+        path: Path | None = None,
+        memory_provider: str = "local_sqlite",
+        memory_limit: int = 5,
+    ) -> ReflectContextAnswer:
+        """Return task guidance and record a privacy-safe MCP guidance run."""
+
+        resolved_path = (path or Path.cwd()).expanduser().resolve()
+        resolved_task = task_file.expanduser().resolve() if task_file else None
+        answer = self.ask(
+            question,
+            task_file=resolved_task,
+            path=resolved_path,
+            memory_provider=memory_provider,
+            memory_limit=memory_limit,
+        )
+        selected_skills = self._selected_skills(answer.workflow_id)
+        skill_refs = [
+            {
+                "skill_id": skill.skill_id,
+                "version_id": skill.version_id,
+                "slug": skill.slug,
+            }
+            for skill in selected_skills
+        ]
+        task_run_id = self.task_runs.start(
+            question=question,
+            workspace_path=resolved_path,
+            task_file_path=resolved_task,
+            workflow_id=answer.workflow_id,
+            selected_skills=skill_refs,
+        )
+        return answer.model_copy(
+            update={
+                "task_run_id": task_run_id,
+                "selected_skills": selected_skills,
+                "next_action": ContextNextAction(
+                    tool="reflect_complete",
+                    arguments={"task_run_id": task_run_id},
+                    when="After completing task validation and before the final response.",
+                ),
+            }
+        )
+
+    def complete_task(
+        self,
+        task_run_id: str,
+        *,
+        outcome: str,
+        verification_passed: bool | None = None,
+        summary_redacted: str = "",
+    ) -> dict[str, Any]:
+        """Record the agent-reported outcome for one MCP guidance run."""
+
+        result = self.task_runs.complete(
+            task_run_id,
+            outcome=outcome,
+            verification_passed=verification_passed,
+            summary_redacted=summary_redacted,
+        )
+        result["next_action"] = {
+            "tool": "reflect_improvements",
+            "when": (
+                "When the task exposed a repeated success, failure, recovery pattern, "
+                "or workflow gap."
+            ),
+        }
+        return result
 
     def improvements_summary(self, *, limit: int = 20) -> dict[str, Any]:
         findings = self.improvements.list_inbox_findings(limit=max(1, min(limit, 100)))
@@ -166,6 +266,42 @@ class ReflectContextService:
             period=period,
             agent=agent,
         ).model_dump(mode="json")
+
+    def _selected_skills(self, workflow_id: str | None) -> list[ContextSkill]:
+        if not workflow_id:
+            return []
+        workflow = self.improvements.repository.get_candidate(workflow_id)
+        if workflow is None:
+            return []
+        self.improvements.skills.sync_workflow_candidates([workflow_id])
+        try:
+            skill = self.improvements.skills.skill_for_candidate(workflow_id)
+            detail = self.improvements.skills.show(skill.id)
+        except (KeyError, RuntimeError):
+            return []
+        current = next(
+            (
+                version
+                for version in detail.versions
+                if version.id == detail.skill.current_version_id
+            ),
+            detail.versions[0] if detail.versions else None,
+        )
+        if current is None:
+            return []
+        return [
+            ContextSkill(
+                skill_id=detail.skill.id,
+                version_id=current.id,
+                slug=detail.skill.slug,
+                name=detail.skill.name,
+                description=detail.skill.description,
+                workflow_status=workflow.status.value,
+                lifecycle_state=detail.skill.lifecycle_state.value,
+                installation_targets=detail.skill.installation_targets,
+                instructions=current.content_markdown[:20_000],
+            )
+        ]
 
     @staticmethod
     def _context_memory(row: dict[str, Any], requested_provider: str) -> ContextMemory:
