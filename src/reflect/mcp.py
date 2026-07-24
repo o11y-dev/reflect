@@ -9,6 +9,13 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
 from reflect.context import ReflectContextService
+from reflect.improvements.models import (
+    LoopKind,
+    LoopStatus,
+    SkillLifecycleState,
+    WorkflowStatus,
+)
+from reflect.inspection import PatternType, SkillAvailability
 from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite
 from reflect.task_runs import MCPTaskOutcome
@@ -25,6 +32,7 @@ After validation, call reflect_complete exactly once with the returned task_run_
 Do this before the final response. Skip this flow for trivial factual lookups
 and tasks that do not involve a repository. Treat provider memory as context rather than
 Reflect-verified evidence, and never install or apply workflows without explicit operator approval.
+Use the read-only inspection tools when you need registry, pattern, provenance, or task-link status.
 """.strip()
 
 mcp = FastMCP("Reflect", instructions=SERVER_INSTRUCTIONS)
@@ -116,8 +124,63 @@ def reflect_improvements(limit: int = 20) -> dict[str, Any]:
 
 
 @mcp.tool(annotations=READ_ONLY_TOOL)
+def reflect_skills(
+    query: str = "",
+    lifecycle: SkillLifecycleState | None = None,
+    availability: SkillAvailability = SkillAvailability.ANY,
+    source_agent: str = "",
+    minimum_evidence: int = 0,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """List or search indexed skills by lifecycle, installation, source agent, and evidence."""
+
+    return _with_service(
+        lambda service: service.skills_search(
+            query=query,
+            lifecycle=lifecycle,
+            availability=availability,
+            source_agent=source_agent or None,
+            minimum_evidence=minimum_evidence,
+            limit=limit,
+        ).model_dump(mode="json")
+    )
+
+
+@mcp.tool(annotations=READ_ONLY_TOOL)
+def reflect_patterns(
+    pattern_type: PatternType = PatternType.ALL,
+    query: str = "",
+    workflow_status: WorkflowStatus | None = None,
+    loop_kind: LoopKind | None = None,
+    loop_status: LoopStatus | None = None,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Inspect existing workflow candidates and loops without running detectors."""
+
+    return _with_service(
+        lambda service: service.patterns(
+            pattern_type=pattern_type,
+            query=query,
+            workflow_status=workflow_status,
+            loop_kind=loop_kind,
+            loop_status=loop_status,
+            limit=limit,
+        ).model_dump(mode="json")
+    )
+
+
+@mcp.tool(annotations=READ_ONLY_TOOL)
+def reflect_task_status(task_run_id: str) -> dict[str, Any]:
+    """Inspect task completion and late-ingestion linkage without changing either."""
+
+    return _with_service(
+        lambda service: service.task_status(task_run_id).model_dump(mode="json")
+    )
+
+
+@mcp.tool(annotations=READ_ONLY_TOOL)
 def reflect_explain(entity_id: str) -> dict[str, Any]:
-    """Explain one observation, workflow, skill version, or local memory with provenance."""
+    """Explain an observation, workflow, loop, skill, task run, or memory with provenance."""
 
     return _with_service(lambda service: service.explain(entity_id))
 

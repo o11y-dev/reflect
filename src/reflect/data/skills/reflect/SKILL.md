@@ -55,12 +55,14 @@ Always follow this order:
    - Report `success`, `partial`, `failure`, or `abandoned`, whether verification passed when known, and a short redacted summary.
    - If the task exposed a repeated success, failure, recovery pattern, or workflow gap, follow the returned `reflect_improvements` next action and explain any relevant finding to the operator. Do not apply it automatically.
 
-3. **Find actionable improvements after work**
-   - Run `reflect improve` to inspect the highest-impact durable observations.
-   - Use `reflect improve <observation-id>` for bounded problem evidence.
-   - Run `reflect loops` to inspect repeated stalled or productive behavior; use `reflect loops build <loop-id>` only when the operator wants one selected loop turned into a pending workflow packaged as a skill.
-   - Run `reflect skills` to inspect the durable skill registry and `reflect skills show <skill-id>` for versions, evidence, installations, and observed usage.
-   - Use `reflect workflows list|show` to inspect reusable procedures and `reflect workflows add <SKILL.md>` to import an existing procedure; importing does not install the skill package.
+3. **Inspect evidence and improvements without requiring the user to run CLI commands**
+   - Prefer `reflect_improvements` for the highest-impact durable observations.
+   - Use `reflect_skills` to search the durable registry by lifecycle, installation availability, source agent, or evidence count.
+   - Use `reflect_patterns` to inspect existing stalled or productive loops and workflow candidates without running detectors.
+   - Use `reflect_explain` for bounded provenance on an observation, workflow, loop, skill version, task run, or local memory.
+   - Use `reflect_task_status` when task completion or late-ingestion linkage is unclear. Treat it as inspection only; ingestion performs reconciliation.
+   - When MCP is unavailable, use the equivalent `reflect improve`, `reflect loops`, `reflect skills`, and `reflect workflows list|show` CLI commands as an agent-operated fallback.
+   - Use `reflect loops build <loop-id>` or `reflect workflows add <SKILL.md>` only when the operator wants a selected source turned into a pending workflow. Neither operation installs the skill package.
    - Never run `reflect skills apply` or `reflect workflows apply` without explicit operator approval.
 
 4. **Baseline from local telemetry**

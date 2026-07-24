@@ -1,6 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 
-from reflect.store.migrate import migrate
+from reflect.store.migrate import load_migrations, migrate
 from reflect.store.sqlite import connect_sqlite
 
 
@@ -9,7 +9,7 @@ def test_migrate_applies_initial_schema(tmp_path):
     conn = connect_sqlite(db_path)
     try:
         applied = migrate(conn)
-        assert applied == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        assert applied == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "raw_events" in tables
         assert "schema_migrations" in tables
@@ -63,7 +63,7 @@ def test_migrate_applies_initial_schema(tmp_path):
 def test_migrate_is_idempotent(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
-        assert migrate(conn) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        assert migrate(conn) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
         assert migrate(conn) == []
     finally:
         conn.close()
@@ -82,8 +82,8 @@ def test_migrate_serializes_concurrent_background_requests(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: run_migration(), range(2)))
 
-    assert sorted(len(result) for result in results) == [0, 16]
-    assert sorted(version for result in results for version in result) == list(range(1, 17))
+    assert sorted(len(result) for result in results) == [0, 17]
+    assert sorted(version for result in results for version in result) == list(range(1, 18))
 
 
 def test_migrate_uses_read_only_fast_path_when_schema_is_current(tmp_path):
@@ -230,5 +230,45 @@ def test_database_doctor_reports_pending_migrations(tmp_path):
     assert status["ok"] is False
     assert status["applied_migrations"] == []
     assert status["pending_migrations"] == [
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17
     ]
+
+
+def test_migrate_adds_task_reconciliation_state_without_losing_phase_one_runs(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        for migration in load_migrations():
+            if migration.version > 16:
+                break
+            conn.executescript(migration.sql)
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO schema_migrations(version, name, applied_at)
+                VALUES (?, ?, '2026-07-24T00:00:00+00:00')
+                """,
+                (migration.version, migration.name),
+            )
+        conn.execute(
+            """
+            INSERT INTO mcp_task_runs(
+              id, workspace_path, question_hash, selected_skills_json,
+              status, started_at, created_at, updated_at
+            ) VALUES ('mcp_task_existing', '/workspace/repo', 'hash', '[]',
+                      'started', '2026-07-24T00:00:00+00:00',
+                      '2026-07-24T00:00:00+00:00', '2026-07-24T00:00:00+00:00')
+            """
+        )
+        conn.commit()
+
+        assert migrate(conn) == [17]
+        row = conn.execute(
+            """
+            SELECT id, session_linked_at, session_outcome_recorded,
+                   skill_usage_recorded_count
+            FROM mcp_task_runs
+            """
+        ).fetchone()
+
+        assert tuple(row) == ("mcp_task_existing", None, 0, 0)
+    finally:
+        conn.close()

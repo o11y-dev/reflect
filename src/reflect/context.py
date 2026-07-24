@@ -7,8 +7,21 @@ from typing import Any
 
 from pydantic import Field
 
-from reflect.improvements.models import AskAnswer
+from reflect.improvements.models import (
+    AskAnswer,
+    LoopKind,
+    LoopStatus,
+    SkillLifecycleState,
+    WorkflowStatus,
+)
 from reflect.improvements.service import ImprovementService
+from reflect.inspection import (
+    AgentInspectionService,
+    PatternInspectionAnswer,
+    PatternType,
+    SkillAvailability,
+    SkillInspectionAnswer,
+)
 from reflect.memory import MemoryService
 from reflect.schema.base import ReflectModel
 from reflect.task_runs import (
@@ -16,6 +29,7 @@ from reflect.task_runs import (
     MCPTaskOutcome,
     MCPTaskRunResult,
     MCPTaskRunService,
+    MCPTaskRunStatus,
 )
 from reflect.usage import UsageService
 
@@ -105,6 +119,12 @@ class ReflectContextService:
         self.memory = MemoryService(conn)
         self.usage = UsageService(conn)
         self.task_runs = MCPTaskRunService(conn, usage=self.usage)
+        self.agent_inspection = AgentInspectionService(
+            conn,
+            skills=self.improvements.skills,
+            workflows=self.improvements.workflows,
+            loops=self.improvements.loops,
+        )
 
     def ask(
         self,
@@ -247,6 +267,53 @@ class ReflectContextService:
             "provenance": "local_telemetry",
         }
 
+    def skills_search(
+        self,
+        *,
+        query: str = "",
+        lifecycle: SkillLifecycleState | None = None,
+        availability: SkillAvailability = SkillAvailability.ANY,
+        source_agent: str | None = None,
+        minimum_evidence: int = 0,
+        limit: int = 20,
+    ) -> SkillInspectionAnswer:
+        """Search the existing skill registry without refreshing it."""
+
+        return self.agent_inspection.search_skills(
+            query=query,
+            lifecycle=lifecycle,
+            availability=availability,
+            source_agent=source_agent,
+            minimum_evidence=minimum_evidence,
+            limit=limit,
+        )
+
+    def patterns(
+        self,
+        *,
+        pattern_type: PatternType = PatternType.ALL,
+        query: str = "",
+        workflow_status: WorkflowStatus | None = None,
+        loop_kind: LoopKind | None = None,
+        loop_status: LoopStatus | None = None,
+        limit: int = 20,
+    ) -> PatternInspectionAnswer:
+        """Inspect existing workflow candidates and loops without running detectors."""
+
+        return self.agent_inspection.inspect_patterns(
+            pattern_type=pattern_type,
+            query=query,
+            workflow_status=workflow_status,
+            loop_kind=loop_kind,
+            loop_status=loop_status,
+            limit=limit,
+        )
+
+    def task_status(self, task_run_id: str) -> MCPTaskRunStatus:
+        """Return a read-only task lifecycle snapshot."""
+
+        return self.task_runs.status(task_run_id)
+
     def explain(self, entity_id: str) -> dict[str, Any]:
         observation = self.improvements.repository.get_observation(entity_id)
         if observation is not None:
@@ -258,12 +325,41 @@ class ReflectContextService:
             }
         workflow = self.improvements.repository.get_candidate(entity_id)
         if workflow is not None:
+            entity = workflow.model_dump(mode="json")
+            entity["session_ledger"] = self.improvements.repository.workflow_session_ledger(
+                entity_id,
+                limit=50,
+            ).model_dump(mode="json")
             return {
                 "found": True,
                 "kind": "workflow",
                 "provenance": "reflect_workflow_ledger",
-                "entity": workflow.model_dump(mode="json"),
+                "entity": entity,
             }
+        if entity_id.startswith("loop_"):
+            try:
+                loop = self.improvements.loops.show(entity_id, limit=50)
+            except KeyError:
+                pass
+            else:
+                return {
+                    "found": True,
+                    "kind": "loop",
+                    "provenance": "reflect_loop_ledger",
+                    "entity": loop.model_dump(mode="json"),
+                }
+        if entity_id.startswith("mcp_task_"):
+            try:
+                task_run = self.task_runs.status(entity_id)
+            except KeyError:
+                pass
+            else:
+                return {
+                    "found": True,
+                    "kind": "task_run",
+                    "provenance": "reflect_mcp_task_ledger",
+                    "entity": task_run.model_dump(mode="json"),
+                }
         skill = self._skill_explanation(entity_id)
         if skill is not None:
             return skill
@@ -395,6 +491,17 @@ class ReflectContextService:
         )
         if version is None:
             return None
+        source_sessions = self.agent_inspection.skill_source_sessions(version.id)
+        usage_sessions = [
+            item
+            for item in detail.usage_sessions
+            if item.skill_version_id in {None, version.id}
+        ]
+        measurements = [
+            item
+            for item in detail.measurements
+            if item.skill_version_id in {None, version.id}
+        ]
         return {
             "found": True,
             "kind": "skill_version" if version_row is not None else "skill",
@@ -403,6 +510,16 @@ class ReflectContextService:
                 "skill": detail.skill.model_dump(mode="json"),
                 "version": version.model_dump(mode="json"),
                 "instructions_truncated": False,
+                "evidence": detail.evidence[:50],
+                "source_sessions": [
+                    item.model_dump(mode="json") for item in source_sessions
+                ],
+                "usage_sessions": [
+                    item.model_dump(mode="json") for item in usage_sessions[:50]
+                ],
+                "measurements": [
+                    item.model_dump(mode="json") for item in measurements[:50]
+                ],
             },
         }
 

@@ -600,12 +600,15 @@ Project-local copies are opt-in through `reflect setup --local-agent <agent>`. T
 
 `reflect-mcp` is a standards-compliant local stdio server built with the stable official MCP Python SDK. It intentionally complements memory-provider MCPs instead of proxying them: OMEGA, Mem0, and similar products continue to own generic memory creation and recall, while Reflect exposes evidence-backed task context and provenance from its local telemetry ledger.
 
-The server exposes a bounded agent task lifecycle plus three read-only inspection tools:
+The server exposes a bounded agent task lifecycle plus six read-only inspection tools:
 
 - `reflect_context` — start a non-destructive task guidance run with approved workflow guidance, selected versioned skills, observations, and path-scoped memory
 - `reflect_complete` — close that task run after validation and record the agent-reported outcome for later measurement
 - `reflect_improvements` — current evidence-backed findings without running detectors or applying changes
-- `reflect_explain` — provenance for one observation, workflow, or local memory
+- `reflect_skills` — bounded skill-registry search by lifecycle, installation availability, source agent, and evidence
+- `reflect_patterns` — existing workflow candidates and loops without running detectors
+- `reflect_task_status` — completion and telemetry-link status for one task run
+- `reflect_explain` — provenance for an observation, workflow, loop, skill version, task run, or local memory
 - `reflect_usage` — exact local session or aggregate usage
 
 Register the installed stdio command with the agents you use:
@@ -615,7 +618,7 @@ codex mcp add reflect -- reflect-mcp
 claude mcp add --scope user reflect -- reflect-mcp
 ```
 
-At the start of a non-trivial repository task, the `$reflect` skill calls `reflect_context` once after identifying the task and repository path and before implementation. The response includes a privacy-safe `task_run_id`, any selected skill version from an approved or active workflow, and an explicit `reflect_complete` follow-up. Selected skills expose one machine-readable `execution_state`: `follow_allowed` means the bounded instructions are complete, while `retrieve_full_instructions` requires the agent to call the supplied `reflect_explain` action before following the skill. Registry lifecycle and installation state remain separate, and installing or applying a skill still requires explicit operator approval. The agent calls `reflect_complete` after validation and before its final response. Neither tool applies workflows, installs skills, mutates agent configuration, or treats provider memory as verified Reflect evidence.
+At the start of a non-trivial repository task, the `$reflect` skill calls `reflect_context` once after identifying the task and repository path and before implementation. The response includes a privacy-safe `task_run_id`, any selected skill version from an approved or active workflow, and an explicit `reflect_complete` follow-up. Selected skills expose one machine-readable `execution_state`: `follow_allowed` means the bounded instructions are complete, while `retrieve_full_instructions` requires the agent to call the supplied `reflect_explain` action before following the skill. Registry lifecycle and installation state remain separate, and installing or applying a skill still requires explicit operator approval. The agent calls `reflect_complete` after validation and before its final response. If the runtime session has not been ingested yet, normalization later reconciles the completed task, session outcome, and selected-skill usage idempotently. `reflect_task_status` reports that linkage without mutating it. None of these tools applies workflows, installs skills, mutates agent configuration, or treats provider memory as verified Reflect evidence.
 
 When MCP is unavailable, `$reflect` falls back to `reflect ask`, which uses the same read-only context service but cannot record the task lifecycle. The CLI remains an operator and automation surface rather than a requirement for ordinary agent work. See [`docs/mcp-agent-workflow.md`](docs/mcp-agent-workflow.md) for the phased MCP-first plan.
 

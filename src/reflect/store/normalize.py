@@ -10,6 +10,7 @@ from reflect.store.hook_facts import backfill_hook_facts
 from reflect.store.mcp import DEFAULT_MCP_CLASSIFIER, MCPCallBackfill
 from reflect.store.provenance import apply_origin_kind, classify_origin_kind
 from reflect.store.workspaces import backfill_session_context
+from reflect.task_runs import TaskRunReconciler
 
 
 def _now() -> str:
@@ -790,6 +791,10 @@ def normalize_pending_raw_events(
         )
         backfill_tool_call_hashes(conn)
         _refresh_session_statuses(conn, processed_session_ids, timestamp)
+        TaskRunReconciler(conn).reconcile(
+            session_ids=processed_session_ids,
+            commit=False,
+        )
         if changed_session_ids is not None:
             changed_session_ids.update(processed_session_ids)
         conn.commit()

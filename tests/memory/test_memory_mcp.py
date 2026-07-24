@@ -153,6 +153,7 @@ def test_context_service_returns_and_measures_the_selected_versioned_skill(
         assert selected.installation_state == "installed"
         assert selected.installation_requires_operator_approval is True
         assert "Run the focused release validation" in selected.instructions
+        assert context.task_status(answer.task_run_id).link_state == "session_available"
         completed = context.complete_task(
             answer.task_run_id,
             outcome="success",
@@ -266,10 +267,23 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
     memory_id = _seed_memory(db_path, tmp_path)
 
     async def exercise_server():
+        runtime_keys = {
+            "REFLECT_SESSION_ID",
+            "CODEX_THREAD_ID",
+            "CLAUDE_SESSION_ID",
+            "CURSOR_SESSION_ID",
+            "GEMINI_SESSION_ID",
+            "COPILOT_SESSION_ID",
+            "OPENCODE_SESSION_ID",
+            "PI_SESSION_ID",
+        }
         params = StdioServerParameters(
             command=sys.executable,
             args=["-m", "reflect.mcp"],
-            env={**os.environ, "REFLECT_DB_PATH": str(db_path)},
+            env={
+                **{key: value for key, value in os.environ.items() if key not in runtime_keys},
+                "REFLECT_DB_PATH": str(db_path),
+            },
         )
         async with (
             stdio_client(params) as (read_stream, write_stream),
@@ -291,9 +305,20 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
                     "summary": "Validated the release gate.",
                 },
             )
-            return initialized, discovered, result, completed
+            task_status = await session.call_tool(
+                "reflect_task_status",
+                {"task_run_id": result.structuredContent["task_run_id"]},
+            )
+            skills = await session.call_tool("reflect_skills", {"query": "release"})
+            patterns = await session.call_tool(
+                "reflect_patterns",
+                {"pattern_type": "all", "query": "release"},
+            )
+            return initialized, discovered, result, completed, task_status, skills, patterns
 
-    initialized, discovered, result, completed = asyncio.run(exercise_server())
+    initialized, discovered, result, completed, task_status, skills, patterns = asyncio.run(
+        exercise_server()
+    )
     names = set(discovered)
 
     assert initialized.serverInfo.name == "Reflect"
@@ -305,6 +330,9 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
         "reflect_context",
         "reflect_explain",
         "reflect_improvements",
+        "reflect_patterns",
+        "reflect_skills",
+        "reflect_task_status",
         "reflect_usage",
     }
     assert not result.isError
@@ -314,6 +342,14 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
     assert result.structuredContent["next_action"]["tool"] == "reflect_complete"
     assert not completed.isError
     assert completed.structuredContent["status"] == "completed"
+    assert not task_status.isError
+    assert task_status.structuredContent["task_run_id"] == result.structuredContent["task_run_id"]
+    assert task_status.structuredContent["link_state"] == "no_runtime_session"
+    assert not skills.isError
+    assert skills.structuredContent["count"] == 0
+    assert not patterns.isError
+    assert patterns.structuredContent["workflow_count"] == 0
+    assert patterns.structuredContent["loop_count"] == 0
     assert not {"memory_search", "memory_remember", "memory_validate"} & names
     assert discovered["reflect_context"].annotations.readOnlyHint is False
     assert discovered["reflect_complete"].annotations.readOnlyHint is False

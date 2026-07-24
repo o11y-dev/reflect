@@ -46,13 +46,14 @@ Implemented by the initial MCP-first change:
 
 ### Phase 2. Agent-native inspection
 
-Expose typed read-only access without mirroring arbitrary CLI strings:
+Implemented on the same MCP-first change with typed read-only access rather than arbitrary CLI strings:
 
-- list and search skills by lifecycle, availability, and evidence
-- explain a skill version, its source sessions, and measurements
-- inspect loops and workflow candidates
-- extend `reflect_explain` to cover skill and task-run identifiers
-- reconcile task runs whose telemetry arrived after `reflect_complete`
+- `reflect_skills` lists and searches already-indexed skills by lifecycle, installation availability, source agent, and evidence count
+- `reflect_patterns` inspects existing loops and workflow candidates without running detectors
+- `reflect_task_status` distinguishes no runtime identity, pending ingestion, an available session, reconciliation-ready completion, and linked evidence
+- `reflect_explain` covers loops, skill versions with bounded source sessions and measurements, and task-run identifiers
+- `TaskRunReconciler` runs after session normalization and idempotently links task outcomes and selected-skill usage whose telemetry arrived after `reflect_complete`
+- additive reconciliation columns preserve task runs created by the Phase 1 schema
 
 ### Phase 3. Conversational review and application
 

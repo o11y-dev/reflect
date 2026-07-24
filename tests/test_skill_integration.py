@@ -69,8 +69,10 @@ class TestSkillMd:
     def test_skill_queries_approved_guidance_without_implicit_setup(self):
         content = SKILL_MD.read_text(encoding="utf-8")
         assert 'reflect ask "<task question>" --json' in content
+        assert "`reflect_skills`" in content
+        assert "`reflect_patterns`" in content
+        assert "`reflect_task_status`" in content
         assert "reflect loops build <loop-id>" in content
-        assert "reflect skills show <skill-id>" in content
         assert "Do not run `reflect setup`" in content
         assert "Never run `reflect skills apply` or `reflect workflows apply`" in content
 

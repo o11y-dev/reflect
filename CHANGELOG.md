@@ -6,11 +6,13 @@
 
 - Added an MCP-first agent task lifecycle: `reflect_context` now records a privacy-safe guidance run, returns selected versioned skills and an explicit completion callback, while `reflect_complete` records validation and task outcomes for later evidence-backed measurement.
 - Added a phased MCP agent-workflow plan covering agent-native inspection, conversational review and application, guidance coverage, and bounded self-improvement.
+- Added typed `reflect_skills`, `reflect_patterns`, and `reflect_task_status` inspection tools, plus loop and task-run provenance and bounded source-session and measurement evidence in `reflect_explain`.
 
 ### Changed
 
 - Replaced vague MCP timing guidance with explicit task-start, material-scope-change, and post-validation completion rules so agents can use Reflect without requiring users to operate the CLI.
 - Preserved multi-environment session resolution, added typed MCP task contracts, and made selected-skill execution, installation approval, and truncated-instruction retrieval explicit for agents.
+- Added atomic, idempotent post-normalization reconciliation so completed MCP task runs link to sessions, outcomes, and selected-skill usage when telemetry arrives late.
 
 ## 0.9.1 (2026-07-23)
 
