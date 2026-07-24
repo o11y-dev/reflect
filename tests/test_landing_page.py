@@ -44,7 +44,7 @@ def test_landing_page_has_clear_product_and_conversion_path():
     assert "Explore the Live Dashboard" in text
     assert "reflect skills discover --week" in text
     assert "Search the durable registry" in text
-    assert "four read-only Reflect MCP tools" in text
+    assert "six read-only Reflect MCP inspection tools" in text
     assert "codex mcp add reflect -- reflect-mcp" in text
     assert "optional memory providers such as OMEGA" in text
     assert "Bring Your Memory Provider." in text
