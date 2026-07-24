@@ -14,6 +14,10 @@
 - Preserved multi-environment session resolution, added typed MCP task contracts, and made selected-skill execution, installation approval, and truncated-instruction retrieval explicit for agents.
 - Added atomic, idempotent post-normalization reconciliation so completed MCP task runs link to sessions, outcomes, and selected-skill usage when telemetry arrives late.
 
+### Fixed
+
+- Updated the public landing-page release fallback to match the current package version.
+
 ## 0.9.1 (2026-07-23)
 
 ### Fixed
