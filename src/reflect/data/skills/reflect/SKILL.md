@@ -61,9 +61,14 @@ Always follow this order:
    - Use `reflect_patterns` to inspect existing stalled or productive loops and workflow candidates without running detectors.
    - Use `reflect_explain` for bounded provenance on an observation, workflow, loop, skill version, task run, or local memory.
    - Use `reflect_task_status` when task completion or late-ingestion linkage is unclear. Treat it as inspection only; ingestion performs reconciliation.
+   - When the user wants to approve, install, or roll back a workflow, call `reflect_review_change` first. Present its exact target, diff, evidence, risks, rollback plan, and expiration without displaying the approval token.
+   - Discuss the proposal naturally. If the user requests a revision, call `reflect_review_change` again with the complete revised structured content, present the replacement diff, and treat every earlier review as superseded.
+   - Call the returned `reflect_apply_change` next action only after the user explicitly approves that exact review in the current conversation. "Looks useful", "consider it", silence, and other ambiguous responses are not approval.
+   - Never reconstruct, edit, reuse, or ask the user to copy an approval token. A stale, expired, or superseded review requires a new `reflect_review_change` call.
+   - Treat approving, applying, and rolling back as separate reviewed actions. Upgrading an installed workflow requires an explicitly reviewed rollback followed by an explicitly reviewed application.
    - When MCP is unavailable, use the equivalent `reflect improve`, `reflect loops`, `reflect skills`, and `reflect workflows list|show` CLI commands as an agent-operated fallback.
    - Use `reflect loops build <loop-id>` or `reflect workflows add <SKILL.md>` only when the operator wants a selected source turned into a pending workflow. Neither operation installs the skill package.
-   - Never run `reflect skills apply` or `reflect workflows apply` without explicit operator approval.
+   - Run `reflect skills apply`, `reflect workflows apply`, or rollback CLI commands only as an agent-operated fallback after explicit operator approval.
 
 4. **Baseline from local telemetry**
    - For current-session, selected-session, or global token/cost/tool/model statistics, use `$reflect-usage` and run `reflect usage --json` with the matching scope. Keep provider limit and billing reconciliation in this skill.

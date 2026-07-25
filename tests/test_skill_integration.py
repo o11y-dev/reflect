@@ -72,9 +72,12 @@ class TestSkillMd:
         assert "`reflect_skills`" in content
         assert "`reflect_patterns`" in content
         assert "`reflect_task_status`" in content
+        assert "`reflect_review_change`" in content
+        assert "`reflect_apply_change`" in content
+        assert "ambiguous responses are not approval" in content
         assert "reflect loops build <loop-id>" in content
         assert "Do not run `reflect setup`" in content
-        assert "Never run `reflect skills apply` or `reflect workflows apply`" in content
+        assert "only as an agent-operated fallback after explicit operator approval" in content
 
     def test_reflect_usage_skill_uses_exact_cli_contract(self):
         content = REFLECT_USAGE_MD.read_text(encoding="utf-8")

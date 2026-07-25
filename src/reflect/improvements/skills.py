@@ -151,6 +151,19 @@ class SkillRegistryService:
                     status=str(install[2]),
                     now=str(install[4] or install[3]),
                 )
+            if lifecycle != SkillLifecycleState.ACTIVE:
+                self.conn.execute(
+                    """
+                    UPDATE skills
+                    SET lifecycle_state = ?, updated_at = ?
+                    WHERE id = ?
+                      AND NOT EXISTS (
+                        SELECT 1 FROM skill_installations
+                        WHERE skill_id = ? AND status = 'active'
+                      )
+                    """,
+                    (lifecycle.value, candidate.updated_at, skill_id, skill_id),
+                )
         return {"skills": tracked, "versions_created": versions}
 
     def sync_paths(self, paths: Iterable[Path]) -> dict[str, int]:

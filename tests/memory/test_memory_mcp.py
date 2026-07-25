@@ -265,6 +265,22 @@ def test_context_service_requires_full_skill_retrieval_when_inline_content_is_tr
 def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
     db_path = tmp_path / "reflect.db"
     memory_id = _seed_memory(db_path, tmp_path)
+    conn = connect_sqlite(db_path)
+    try:
+        candidate_id = ImprovementService(conn).stage_extracted_skills(
+            [
+                {
+                    "name": "safe-release",
+                    "description": "Publish with a focused release gate.",
+                    "content": "# Safe release\n\n1. Run the release gate.",
+                    "behavior_type": "verification",
+                }
+            ],
+            session_ids=[],
+            source_agent="codex",
+        )[0]
+    finally:
+        conn.close()
 
     async def exercise_server():
         runtime_keys = {
@@ -314,23 +330,57 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
                 "reflect_patterns",
                 {"pattern_type": "all", "query": "release"},
             )
-            return initialized, discovered, result, completed, task_status, skills, patterns
+            review = await session.call_tool(
+                "reflect_review_change",
+                {
+                    "action": "approve_workflow",
+                    "entity_id": candidate_id,
+                },
+            )
+            applied = await session.call_tool(
+                "reflect_apply_change",
+                {
+                    "approval_token": review.structuredContent["approval_token"],
+                },
+            )
+            return (
+                initialized,
+                discovered,
+                result,
+                completed,
+                task_status,
+                skills,
+                patterns,
+                review,
+                applied,
+            )
 
-    initialized, discovered, result, completed, task_status, skills, patterns = asyncio.run(
-        exercise_server()
-    )
+    (
+        initialized,
+        discovered,
+        result,
+        completed,
+        task_status,
+        skills,
+        patterns,
+        review,
+        applied,
+    ) = asyncio.run(exercise_server())
     names = set(discovered)
 
     assert initialized.serverInfo.name == "Reflect"
     assert "At the start of every non-trivial repository task" in initialized.instructions
     assert "execution_state is follow_allowed" in initialized.instructions
     assert "call reflect_complete exactly once" in initialized.instructions
+    assert "only after the user explicitly approves" in initialized.instructions
     assert names == {
+        "reflect_apply_change",
         "reflect_complete",
         "reflect_context",
         "reflect_explain",
         "reflect_improvements",
         "reflect_patterns",
+        "reflect_review_change",
         "reflect_skills",
         "reflect_task_status",
         "reflect_usage",
@@ -346,18 +396,36 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
     assert task_status.structuredContent["task_run_id"] == result.structuredContent["task_run_id"]
     assert task_status.structuredContent["link_state"] == "no_runtime_session"
     assert not skills.isError
-    assert skills.structuredContent["count"] == 0
+    assert skills.structuredContent["count"] == 1
     assert not patterns.isError
-    assert patterns.structuredContent["workflow_count"] == 0
+    assert patterns.structuredContent["workflow_count"] == 1
     assert patterns.structuredContent["loop_count"] == 0
+    assert not review.isError
+    assert review.structuredContent["candidate_id"] == candidate_id
+    assert review.structuredContent["state"] == "pending"
+    assert not applied.isError
+    assert applied.structuredContent["state"] == "applied"
     assert not {"memory_search", "memory_remember", "memory_validate"} & names
     assert discovered["reflect_context"].annotations.readOnlyHint is False
     assert discovered["reflect_complete"].annotations.readOnlyHint is False
+    assert discovered["reflect_review_change"].annotations.readOnlyHint is False
+    assert discovered["reflect_apply_change"].annotations.readOnlyHint is False
+    assert discovered["reflect_apply_change"].annotations.destructiveHint is True
     assert all(
         discovered[name].annotations and discovered[name].annotations.readOnlyHint
-        for name in names - {"reflect_context", "reflect_complete"}
+        for name in names
+        - {
+            "reflect_context",
+            "reflect_complete",
+            "reflect_review_change",
+            "reflect_apply_change",
+        }
     )
-    assert all(tool.annotations and not tool.annotations.destructiveHint for tool in discovered.values())
+    assert all(
+        tool.annotations and not tool.annotations.destructiveHint
+        for name, tool in discovered.items()
+        if name != "reflect_apply_change"
+    )
 
     conn = connect_sqlite(db_path)
     try:

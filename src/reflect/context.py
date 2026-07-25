@@ -7,6 +7,12 @@ from typing import Any
 
 from pydantic import Field
 
+from reflect.changes import (
+    ChangeAction,
+    ChangeApplyAnswer,
+    ChangeReviewAnswer,
+    ChangeReviewService,
+)
 from reflect.improvements.models import (
     AskAnswer,
     LoopKind,
@@ -124,6 +130,11 @@ class ReflectContextService:
             skills=self.improvements.skills,
             workflows=self.improvements.workflows,
             loops=self.improvements.loops,
+        )
+        self.change_reviews = ChangeReviewService(
+            conn,
+            skills=self.improvements.skills,
+            workflows=self.improvements.workflows,
         )
 
     def ask(
@@ -314,6 +325,30 @@ class ReflectContextService:
 
         return self.task_runs.status(task_run_id)
 
+    def review_change(
+        self,
+        *,
+        action: ChangeAction | str,
+        entity_id: str,
+        project_root: Path | None = None,
+        revised_content: dict[str, Any] | None = None,
+        expires_in_minutes: int = 30,
+    ) -> ChangeReviewAnswer:
+        """Prepare one exact workflow change for conversational approval."""
+
+        return self.change_reviews.review(
+            action=action,
+            entity_id=entity_id,
+            project_root=project_root,
+            revised_content=revised_content,
+            expires_in_minutes=expires_in_minutes,
+        )
+
+    def apply_change(self, approval_token: str) -> ChangeApplyAnswer:
+        """Apply one exact change after explicit conversational approval."""
+
+        return self.change_reviews.apply(approval_token)
+
     def explain(self, entity_id: str) -> dict[str, Any]:
         observation = self.improvements.repository.get_observation(entity_id)
         if observation is not None:
@@ -359,6 +394,15 @@ class ReflectContextService:
                     "kind": "task_run",
                     "provenance": "reflect_mcp_task_ledger",
                     "entity": task_run.model_dump(mode="json"),
+                }
+        if entity_id.startswith("change_review_"):
+            review = self.change_reviews.inspect(entity_id)
+            if review is not None:
+                return {
+                    "found": True,
+                    "kind": "change_review",
+                    "provenance": "reflect_change_review_ledger",
+                    "entity": review,
                 }
         skill = self._skill_explanation(entity_id)
         if skill is not None:

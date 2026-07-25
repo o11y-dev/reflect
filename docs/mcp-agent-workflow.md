@@ -25,8 +25,8 @@ MCP must not become a second workflow renderer. `WorkflowDefinition` remains the
 4. After validation, the agent calls `reflect_complete` with the task outcome.
 5. Reflect links the task run to the runtime session when ingestion is available and records selected-skill usage.
 6. Existing detectors and measurements use the completed session evidence to identify improvements.
-7. Future MCP review tools present an exact proposed change to the user.
-8. Only an explicitly approved, immutable change may be applied.
+7. MCP review tools present an exact proposed change to the user and allow conversational revision.
+8. Only an explicitly approved, immutable, unexpired change may be applied.
 
 ## Delivery plan
 
@@ -57,12 +57,18 @@ Implemented on the same MCP-first change with typed read-only access rather than
 
 ### Phase 3. Conversational review and application
 
-Add a two-step mutation contract:
+Implemented on the same MCP-first change by reusing the existing workflow and Skills v2 mutation paths:
 
-1. `reflect_review_change` returns the exact target, diff, evidence, risks, rollback plan, and an immutable approval token.
-2. After explicit user approval, `reflect_apply_change` accepts only that token.
+- `reflect_review_change` resolves workflow or skill identifiers through the existing registry and returns the exact target, diff, evidence, risks, rollback plan, and a short-lived random approval token
+- an optional structured revision is staged through `WorkflowService.edit`, then rendered and validated by the same exact preview path used by the CLI and browser
+- a newer review supersedes every earlier pending review for that workflow
+- tokens are stored only as hashes and bound to the candidate content, normalized project root, target path, previous hash, proposed hash, action, and active intervention where relevant
+- `reflect_apply_change` rejects invalid, expired, superseded, or stale reviews and delegates the mutation to the existing approve, apply, or rollback methods
+- application remains hash guarded and idempotent; rollback verifies both the applied artifact and any already-restored artifact before reporting success
+- every approved mutation resynchronizes the existing Skills v2 version and installation ledgers
+- `reflect_explain` exposes review state and provenance without exposing the approval token
 
-Pending proposals may be staged without changing agent configuration. Applying, replacing, or rolling back an installed skill always requires explicit operator approval. Do not expose a generic `reflect_cli(command)` escape hatch.
+The agent presents the exact review in the conversation and waits for explicit user approval. Ambiguous positive feedback is not approval. Approving, applying, and rolling back are separate reviewed actions. Replacing an installed workflow therefore requires an explicitly reviewed rollback followed by an explicitly reviewed application. No generic `reflect_cli(command)` escape hatch is exposed.
 
 ### Phase 4. Guidance reliability
 

@@ -8,6 +8,7 @@ from typing import Any, TypeVar
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+from reflect.changes import ChangeAction
 from reflect.context import ReflectContextService
 from reflect.improvements.models import (
     LoopKind,
@@ -33,6 +34,11 @@ Do this before the final response. Skip this flow for trivial factual lookups
 and tasks that do not involve a repository. Treat provider memory as context rather than
 Reflect-verified evidence, and never install or apply workflows without explicit operator approval.
 Use the read-only inspection tools when you need registry, pattern, provenance, or task-link status.
+For a requested workflow mutation, call reflect_review_change and present its exact target, diff,
+evidence, risks, and rollback plan. Do not expose or apply its approval token yet. If the user asks
+for a revision, prepare a new review and present the replacement diff. Call reflect_apply_change
+only after the user explicitly approves that exact review in the current conversation. Vague
+positive feedback is not approval. Never use these tools as a generic command execution path.
 """.strip()
 
 mcp = FastMCP("Reflect", instructions=SERVER_INSTRUCTIONS)
@@ -52,6 +58,18 @@ TASK_START_TOOL = ToolAnnotations(
 TASK_COMPLETE_TOOL = ToolAnnotations(
     readOnlyHint=False,
     destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+)
+CHANGE_REVIEW_TOOL = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=False,
+    openWorldHint=False,
+)
+CHANGE_APPLY_TOOL = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
     idempotentHint=True,
     openWorldHint=False,
 )
@@ -178,9 +196,40 @@ def reflect_task_status(task_run_id: str) -> dict[str, Any]:
     )
 
 
+@mcp.tool(annotations=CHANGE_REVIEW_TOOL)
+def reflect_review_change(
+    action: ChangeAction,
+    entity_id: str,
+    project_root: str = "",
+    revised_content: dict[str, Any] | None = None,
+    expires_in_minutes: int = 30,
+) -> dict[str, Any]:
+    """Prepare an exact workflow approval, application, or rollback for user review."""
+
+    resolved_root = Path(project_root).expanduser().resolve() if project_root else None
+    return _with_service(
+        lambda service: service.review_change(
+            action=action,
+            entity_id=entity_id,
+            project_root=resolved_root,
+            revised_content=revised_content,
+            expires_in_minutes=expires_in_minutes,
+        ).model_dump(mode="json")
+    )
+
+
+@mcp.tool(annotations=CHANGE_APPLY_TOOL)
+def reflect_apply_change(approval_token: str) -> dict[str, Any]:
+    """Apply only the exact reviewed change after explicit user approval."""
+
+    return _with_service(
+        lambda service: service.apply_change(approval_token).model_dump(mode="json")
+    )
+
+
 @mcp.tool(annotations=READ_ONLY_TOOL)
 def reflect_explain(entity_id: str) -> dict[str, Any]:
-    """Explain an observation, workflow, loop, skill, task run, or memory with provenance."""
+    """Explain evidence, workflows, skills, task runs, change reviews, or memory."""
 
     return _with_service(lambda service: service.explain(entity_id))
 
