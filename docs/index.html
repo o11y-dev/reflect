@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>reflect — Local-First Observability for AI Coding Agents</title>
-  <meta name="description" content="Reflect turns local AI coding-agent sessions and OpenTelemetry traces into evidence about failures, loops, cost, context, reusable skills, and measurable workflow improvements.">
+  <title>reflect — Improve and Scale AI Agent Work Across Teams</title>
+  <meta name="description" content="Turn AI coding sessions into shared evidence for better procedures, smarter capacity decisions, and reusable practices that scale across agents, repositories, and teams.">
   <link rel="canonical" href="https://reflect.o11y.dev/">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <meta name="color-scheme" content="dark">
@@ -12,8 +12,8 @@
 
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="reflect.o11y.dev">
-  <meta property="og:title" content="reflect — Local-First Observability for AI Coding Agents">
-  <meta property="og:description" content="Turn local agent sessions and OpenTelemetry traces into evidence you can use to improve every run.">
+  <meta property="og:title" content="reflect — Improve and Scale AI Agent Work Across Teams">
+  <meta property="og:description" content="Turn AI coding sessions into shared evidence for better procedures, smarter capacity decisions, and reusable practices across the organization.">
   <meta property="og:url" content="https://reflect.o11y.dev/">
   <meta property="og:image" content="https://reflect.o11y.dev/og-image-v2.png">
   <meta property="og:image:secure_url" content="https://reflect.o11y.dev/og-image-v2.png">
@@ -23,8 +23,8 @@
   <meta property="og:image:alt" content="reflect — See How Agents Work. Improve What Happens Next.">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="reflect — Local-First Observability for AI Coding Agents">
-  <meta name="twitter:description" content="Turn local agent sessions and OpenTelemetry traces into evidence you can use to improve every run.">
+  <meta name="twitter:title" content="reflect — Improve and Scale AI Agent Work Across Teams">
+  <meta name="twitter:description" content="Turn AI coding sessions into shared evidence for better procedures, smarter capacity decisions, and reusable practices across the organization.">
   <meta name="twitter:image" content="https://reflect.o11y.dev/og-image-v2.png">
   <meta name="twitter:image:alt" content="reflect — See How Agents Work. Improve What Happens Next.">
 
@@ -37,7 +37,7 @@
         "name": "reflect",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "macOS, Linux, Windows",
-        "description": "Local-first observability for AI coding agents. Reflect turns local session data and OpenTelemetry GenAI spans into evidence about failures, loops, cost, context, reusable skills, and measurable workflow improvements.",
+        "description": "Evidence-backed improvement for AI agent work. Reflect turns local sessions into better procedures, smarter capacity decisions, reusable practices, and measured improvements across teams.",
         "url": "https://reflect.o11y.dev/",
         "downloadUrl": "https://pypi.org/project/o11y-reflect/",
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
@@ -48,6 +48,59 @@
         "name": "o11y.dev",
         "url": "https://reflect.o11y.dev/",
         "sameAs": ["https://github.com/o11y-dev"]
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Why did my AI coding agent hit its token budget limit?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Reflect breaks down observed input, output, cache creation, and cache-read tokens by session and model, then connects that usage to tool and MCP calls, retries, context churn, continuations, and outcomes. When the evidence cannot prove an exact cause, Reflect keeps the attribution unknown instead of inventing one."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Why did this AI coding session fail?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Reflect puts prompts, responses, tool and MCP calls, errors, retries, subagents, files, verification, and outcomes on a synchronized local timeline so the first visible failure or recovery gap can be found."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How can I improve the way I work with AI agents?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Reflect finds recurring friction and successful routines in past sessions, then suggests bounded changes to context, prompts, tools, verification, workflows, or skills. The evidence remains available for review before any practice becomes reusable."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Where do tokens and cost go across AI agent work?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Reflect shows observed token usage, cache behavior, estimated cost, model mix, tool activity, failures, retries, context churn, and large-session concentration across one session or the full local history. Cost is shown only where model-pricing evidence is recognized."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How can proven AI practices scale across teams, repositories, and agents?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Reflect turns selected session evidence into reviewable, versioned workflows and skills. Proven practices can then move across agents, repositories, and teams, while later sessions measure whether they actually helped."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "What evidence supports increasing AI capacity and budget?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Reflect connects local usage and cost to delivered work, identifies avoidable waste, documents improvement commitments, and prepares an evidence-backed internal request for review."
+            }
+          }
+        ]
       }
     ]
   }
@@ -101,7 +154,6 @@
     .mark::after{content:"";position:absolute;left:50%;top:60%;transform:translate(-50%,-50%);width:12px;height:12px;border:4px solid var(--signal);border-radius:999px;background:var(--bg);z-index:1;box-shadow:0 0 20px rgba(242,138,26,.55)}
     .brand-copy{display:grid;line-height:1.12}
     .brand-name{font-size:15px;font-weight:850;letter-spacing:.01em}
-    .brand-note{color:var(--muted);font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
     .nav-links{display:flex;align-items:center;gap:4px;color:var(--muted-strong);font-size:13px;font-weight:700}
     .nav-links a{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:8px 11px;border:1px solid transparent;border-radius:6px;text-decoration:none;touch-action:manipulation;transition:color .16s ease,background-color .16s ease,border-color .16s ease,transform .16s ease}
     .nav-links a:hover{color:var(--ink);background:rgba(245,242,234,.06);border-color:var(--line)}
@@ -209,6 +261,45 @@
     .scenario-card p{margin:10px 0 22px;color:var(--muted-strong);font-size:13px;line-height:1.62;text-wrap:pretty}
     .scenario-command{display:block;width:100%;margin-top:auto;padding:10px 11px;border:1px solid var(--line);border-radius:5px;background:#070706;color:#f7dfbf;font:500 11px/1.45 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;overflow-wrap:anywhere}
     .scenario-command::before{content:"$ ";color:var(--signal-bright);font-weight:850}
+    .agent-window{overflow:hidden;border:1px solid var(--line-strong);border-radius:10px;background:#0a0a09;box-shadow:0 24px 80px rgba(0,0,0,.42)}
+    .agent-window-bar{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:13px 16px;border-bottom:1px solid var(--line);background:rgba(23,22,19,.94)}
+    .agent-window-identity{display:flex;align-items:center;gap:10px;min-width:0}
+    .agent-window-mark{display:grid;place-items:center;width:32px;height:32px;flex:0 0 auto;border:1px solid rgba(242,138,26,.4);border-radius:7px;background:var(--signal-soft);color:var(--signal-bright);font-size:13px;font-weight:950}
+    .agent-window-name{display:block;color:var(--ink);font-size:13px;font-weight:850;line-height:1.2}
+    .agent-window-status{display:flex;align-items:center;gap:6px;margin-top:3px;color:var(--muted);font-size:10px;line-height:1.2}
+    .agent-window-status::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--good);box-shadow:0 0 10px rgba(101,214,165,.46)}
+    .agent-window-slogan{color:var(--muted-strong);font-size:11px;font-weight:850;letter-spacing:.08em;text-transform:uppercase}
+    .agent-window-body{display:grid;grid-template-columns:minmax(280px,.64fr) minmax(0,1.36fr);min-height:520px}
+    .agent-prompt-library{min-width:0;padding:20px;border-right:1px solid var(--line);background:rgba(5,5,5,.5)}
+    .agent-prompt-group + .agent-prompt-group{margin-top:22px}
+    .agent-prompt-heading{margin:0 0 8px;color:var(--muted);font-size:9px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}
+    .agent-prompt-options{display:grid;gap:7px}
+    .agent-prompt-button{display:grid;width:100%;grid-template-columns:18px minmax(0,1fr);gap:9px;align-items:start;padding:10px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--muted-strong);font:inherit;text-align:left;cursor:pointer;transition:border-color .16s ease,background-color .16s ease,color .16s ease}
+    .agent-prompt-button:hover{border-color:var(--line);background:rgba(245,242,234,.035);color:var(--ink)}
+    .agent-prompt-button.is-active{border-color:rgba(242,138,26,.32);background:var(--signal-soft);color:var(--ink)}
+    .agent-prompt-arrow{color:var(--signal-bright);font:850 12px/1.5 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+    .agent-prompt-copy{font-size:12px;line-height:1.48;text-wrap:pretty}
+    .agent-conversation{display:flex;min-width:0;flex-direction:column;padding:30px;background:radial-gradient(circle at 78% 4%,rgba(242,138,26,.07),transparent 31%),#0d0d0b}
+    .agent-thread{display:grid;flex:1;align-content:start;gap:18px}
+    .agent-message{min-width:0;max-width:90%;padding:15px 16px;border:1px solid var(--line);border-radius:8px}
+    .agent-message-user{justify-self:end;border-color:rgba(242,138,26,.28);background:rgba(242,138,26,.09)}
+    .agent-message-reflect{justify-self:start;background:rgba(20,19,17,.94)}
+    .agent-message-label{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:8px;color:var(--muted);font-size:9px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}
+    .agent-message-label strong{color:var(--signal-bright);font-size:10px}
+    .agent-evidence-label{display:inline-flex;align-items:center;gap:5px;color:var(--good);letter-spacing:.08em}
+    .agent-evidence-label::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor}
+    .agent-message p{margin:0;color:var(--muted-strong);font-size:14px;line-height:1.72;text-wrap:pretty}
+    .agent-message-user p{color:var(--ink);font-weight:650}
+    .agent-answer[hidden]{display:none}
+    .agent-answer-signals{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+    .agent-answer-signals span{display:inline-flex;padding:4px 7px;border:1px solid var(--line);border-radius:999px;background:#090908;color:var(--muted);font-size:9px;font-weight:800;letter-spacing:.05em}
+    .agent-composer{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;margin-top:26px;padding:12px 12px 12px 14px;border:1px solid var(--line-strong);border-radius:8px;background:#080807}
+    .agent-composer-prompt{color:var(--signal-bright);font:900 14px/1 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+    .agent-typed-question{min-height:20px;color:#f6ead8;font:500 12px/1.65 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;overflow-wrap:anywhere}
+    .agent-typed-question::after{content:"";display:inline-block;width:1px;height:13px;margin-left:3px;vertical-align:-2px;background:var(--signal-bright);animation:agent-caret 1s steps(1,end) infinite}
+    .agent-send{display:grid;place-items:center;width:31px;height:31px;border:1px solid rgba(242,138,26,.38);border-radius:6px;background:var(--signal);color:#160b02;font-size:15px;font-weight:950;cursor:pointer;transition:transform .16s ease,background-color .16s ease}
+    .agent-send:hover{transform:translateY(-1px);background:var(--signal-bright)}
+    @keyframes agent-caret{0%,48%{opacity:1}49%,100%{opacity:0}}
     .graph-mini{position:absolute;right:-18px;bottom:-28px;width:230px;height:170px;opacity:.68}
     .graph-node{position:absolute;width:13px;height:13px;border:2px solid var(--signal);border-radius:50%;background:#0b0b0a;box-shadow:0 0 18px rgba(242,138,26,.34)}
     .graph-node::after{content:"";position:absolute;left:11px;top:4px;width:74px;height:1px;background:rgba(245,242,234,.28);transform-origin:left center}
@@ -283,6 +374,9 @@
       .feature-card-large,.feature-card-side{grid-column:span 12}
       .feature-card-third{grid-column:span 6}
       .scenario-card,.scenario-card:nth-child(n){grid-column:span 6}
+      .agent-window-body{grid-template-columns:1fr;min-height:0}
+      .agent-prompt-library{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;border-right:0;border-bottom:1px solid var(--line)}
+      .agent-prompt-group + .agent-prompt-group{margin-top:0}
       .process{grid-template-columns:1fr}
       .process-step{border-right:0;border-bottom:1px solid var(--line)}
       .process-step:last-child{border-bottom:0}
@@ -296,7 +390,6 @@
       .site-shell{width:min(100% - 28px,var(--shell))}
       .site-header{padding-top:max(10px,env(safe-area-inset-top))}
       .nav{min-height:54px}
-      .brand-note{display:none}
       .nav-links{display:none}
       .nav-repo-proof{min-width:0;max-width:330px;margin-left:auto}
       main{padding-top:26px}
@@ -310,6 +403,12 @@
       .content-section{padding-top:78px}
       .feature-card-third{grid-column:span 12}
       .scenario-card,.scenario-card:nth-child(n){grid-column:span 12;min-height:0}
+      .agent-window-bar{align-items:flex-start}
+      .agent-window-slogan{display:none}
+      .agent-prompt-library{grid-template-columns:1fr;padding:16px}
+      .agent-prompt-group + .agent-prompt-group{margin-top:4px}
+      .agent-conversation{padding:20px}
+      .agent-message{max-width:100%}
       .feature-card{min-height:0;padding:22px}
       .feature-index{margin-bottom:30px}
       .graph-mini{opacity:.42}
@@ -361,7 +460,6 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
           <span class="mark" aria-hidden="true"></span>
           <span class="brand-copy">
             <span class="brand-name" translate="no">reflect</span>
-            <span class="brand-note">Evidence, Not Vibes.</span>
           </span>
         </a>
         <a class="repo-proof nav-repo-proof" href="https://github.com/o11y-dev/reflect" aria-label="View o11y-dev/reflect on GitHub">
@@ -382,6 +480,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         <div class="nav-links">
           <a href="#product">Product</a>
           <a href="#scenarios">Use Cases</a>
+          <a href="#questions">Questions</a>
           <a href="#how-it-works">How It Works</a>
           <a href="#install">Install</a>
           <a class="nav-cta" href="./report.html?report=reports/showcase.json">Open Live Demo</a>
@@ -396,7 +495,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         <div class="hero-copy">
           <h1 id="hero-title">See How Agents Work. <span class="signal">Improve What Happens Next.</span></h1>
           <p class="lede">
-            Reflect turns local AI coding sessions and OpenTelemetry traces into evidence you can act on—failures, loops, cost burn, context gaps, and repeatable patterns across every agent.
+            Reflect turns AI coding sessions into shared evidence for better procedures, smarter capacity decisions, and reusable practices that scale across agents, repositories, and teams.
           </p>
           <ul class="hero-proof" aria-label="Product principles">
             <li>Local first</li>
@@ -465,10 +564,10 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
       <section class="content-section" id="product" aria-labelledby="product-title">
         <div class="section-intro">
           <div>
-            <p class="kicker">From Telemetry to Better Work</p>
-            <h2 id="product-title">Understand the Run. Keep What Works.</h2>
+            <p class="kicker">From Agent Work to Measured Improvement</p>
+            <h2 id="product-title">Understand the Run. Decide What Improves.</h2>
           </div>
-          <p>Reflect connects sessions, workspaces, repositories, tools, skills, outcomes, and local memory so every recommendation stays traceable to real evidence.</p>
+          <p>Reflect connects sessions, workspaces, repositories, tools, skills, outcomes, and local memory so evidence can explain what happened, guide better procedures, and show what is ready to scale.</p>
         </div>
 
         <div class="bento">
@@ -494,13 +593,13 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 
           <article class="feature-card feature-card-third">
             <span class="feature-index">03</span>
-            <h3>Find Loops and Workflow Drag.</h3>
-            <p>Detect repeated inputs, failed recovery, broad exploration, late verification, and patterns that consume time without changing state.</p>
+            <h3>Find Loops That Create Rework.</h3>
+            <p>Detect repeated inputs, failed recovery, broad exploration, late verification, and patterns that consume time without changing state or improving the work.</p>
           </article>
           <article class="feature-card feature-card-third">
             <span class="feature-index">04</span>
-            <h3>Turn Proven Patterns into Reusable Skills.</h3>
-            <p>Search the durable registry, review evidence-backed proposals, install them into the right repository or agent, and retain version and usage history.</p>
+            <h3>Decide What Becomes Reusable.</h3>
+            <p>Review evidence-backed workflow and skill proposals, inspect the exact change, install approved versions into the right repository or agent, and retain their history.</p>
           </article>
           <article class="feature-card feature-card-third">
             <span class="feature-index">05</span>
@@ -513,18 +612,18 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
       <section class="content-section" id="scenarios" aria-labelledby="scenarios-title">
         <div class="section-intro">
           <div>
-            <p class="kicker">Start With a Question</p>
-            <h2 id="scenarios-title">Use Reflect When the Work Needs an Answer.</h2>
+            <p class="kicker">Ask Through Your Agent</p>
+            <h2 id="scenarios-title">Use Reflect Where You Already Work.</h2>
           </div>
-          <p>Go from a concrete engineering question to the smallest useful command. Every result stays grounded in local sessions, telemetry, and reviewed evidence.</p>
+          <p>Start with a normal engineering or business question. The agent uses Reflect's local evidence to explain the work, recommend follow-up actions, and prepare evidence for personal learning, team decisions, or internal requests.</p>
         </div>
 
         <div class="scenario-grid">
           <article class="scenario-card">
-            <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">$</span><span class="scenario-label">Usage &amp; Cost</span></div>
-            <h3>What did our agents use this week?</h3>
-            <p>Break down exact local tokens, cache use, models, tools, failures, duration, and recognized model cost across agents.</p>
-            <code class="scenario-command" translate="no">reflect usage --global --week</code>
+            <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">$</span><span class="scenario-label">Budget Evidence</span></div>
+            <h3>Why does our team need more AI budget?</h3>
+            <p>Let the agent connect exact usage to past work, separate productive growth from avoidable waste, recommend improvements, and prepare a reviewed internal request.</p>
+            <code class="scenario-command" translate="no">$reflect-usage Explain our budget need and what we should improve.</code>
           </article>
 
           <article class="scenario-card">
@@ -571,13 +670,125 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         </div>
       </section>
 
+      <section class="content-section" id="questions" aria-labelledby="questions-title">
+        <div class="section-intro">
+          <div>
+            <p class="kicker">Personal Insight to Organizational Learning</p>
+            <h2 id="questions-title">Reflect on One Session. Improve How AI Work Scales.</h2>
+          </div>
+          <p>Start with a personal question about one session, then follow the same local evidence into shared procedures, capacity decisions, and practices that scale across the organization.</p>
+        </div>
+
+        <div class="agent-window" data-agent-qa>
+          <div class="agent-window-bar">
+            <div class="agent-window-identity">
+              <span class="agent-window-mark" aria-hidden="true">R</span>
+              <span>
+                <strong class="agent-window-name">Reflect</strong>
+                <span class="agent-window-status">Local evidence connected</span>
+              </span>
+            </div>
+            <span class="agent-window-slogan">Evidence, Not Vibes.</span>
+          </div>
+
+          <div class="agent-window-body">
+            <div class="agent-prompt-library" aria-label="Try a Reflect question">
+              <div class="agent-prompt-group">
+                <p class="agent-prompt-heading">Personal reflection</p>
+                <div class="agent-prompt-options">
+                  <button class="agent-prompt-button is-active" type="button" data-question="Why did my AI coding agent hit its token budget limit?" data-answer-id="answer-token-budget" aria-controls="answer-token-budget" aria-pressed="true">
+                    <span class="agent-prompt-arrow" aria-hidden="true">›</span>
+                    <span class="agent-prompt-copy">Why did my AI coding agent hit its token budget limit?</span>
+                  </button>
+                  <button class="agent-prompt-button" type="button" data-question="Why did this AI coding session fail?" data-answer-id="answer-session-failure" aria-controls="answer-session-failure" aria-pressed="false">
+                    <span class="agent-prompt-arrow" aria-hidden="true">›</span>
+                    <span class="agent-prompt-copy">Why did this AI coding session fail?</span>
+                  </button>
+                  <button class="agent-prompt-button" type="button" data-question="How can I improve the way I work with AI agents?" data-answer-id="answer-personal-improvement" aria-controls="answer-personal-improvement" aria-pressed="false">
+                    <span class="agent-prompt-arrow" aria-hidden="true">›</span>
+                    <span class="agent-prompt-copy">How can I improve the way I work with AI agents?</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="agent-prompt-group">
+                <p class="agent-prompt-heading">Organizational reflection</p>
+                <div class="agent-prompt-options">
+                  <button class="agent-prompt-button" type="button" data-question="Where do tokens and cost go across AI agent work?" data-answer-id="answer-organization-cost" aria-controls="answer-organization-cost" aria-pressed="false">
+                    <span class="agent-prompt-arrow" aria-hidden="true">›</span>
+                    <span class="agent-prompt-copy">Where do tokens and cost go across AI agent work?</span>
+                  </button>
+                  <button class="agent-prompt-button" type="button" data-question="How can proven AI practices scale across teams, repositories, and agents?" data-answer-id="answer-organization-scale" aria-controls="answer-organization-scale" aria-pressed="false">
+                    <span class="agent-prompt-arrow" aria-hidden="true">›</span>
+                    <span class="agent-prompt-copy">How can proven AI practices scale across teams, repositories, and agents?</span>
+                  </button>
+                  <button class="agent-prompt-button" type="button" data-question="What evidence supports increasing AI capacity and budget?" data-answer-id="answer-organization-capacity" aria-controls="answer-organization-capacity" aria-pressed="false">
+                    <span class="agent-prompt-arrow" aria-hidden="true">›</span>
+                    <span class="agent-prompt-copy">What evidence supports increasing AI capacity and budget?</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="agent-conversation">
+              <div class="agent-thread" aria-live="polite" aria-atomic="true">
+                <div class="agent-message agent-message-user">
+                  <span class="agent-message-label">You</span>
+                  <p id="agent-active-question">Why did my AI coding agent hit its token budget limit?</p>
+                </div>
+
+                <div class="agent-message agent-message-reflect">
+                  <span class="agent-message-label"><strong>Reflect</strong><span class="agent-evidence-label">Local evidence</span></span>
+
+                  <article class="agent-answer" id="answer-token-budget">
+                    <p>Reflect breaks down observed input, output, cache creation, and cache-read tokens by session and model, then connects that usage to tool and MCP calls, retries, context churn, continuations, and outcomes. When the evidence cannot prove an exact cause, Reflect keeps the attribution unknown instead of inventing one.</p>
+                    <div class="agent-answer-signals" aria-label="Evidence used"><span>Token breakdown</span><span>Retries</span><span>Context</span></div>
+                  </article>
+
+                  <article class="agent-answer" id="answer-session-failure" hidden>
+                    <p>Reflect puts prompts, responses, tool and MCP calls, errors, retries, subagents, files, verification, and outcomes on a synchronized local timeline so the first visible failure or recovery gap can be found.</p>
+                    <div class="agent-answer-signals" aria-label="Evidence used"><span>Timeline</span><span>Errors</span><span>Verification</span></div>
+                  </article>
+
+                  <article class="agent-answer" id="answer-personal-improvement" hidden>
+                    <p>Reflect finds recurring friction and successful routines in past sessions, then suggests bounded changes to context, prompts, tools, verification, workflows, or skills. The evidence remains available for review before any practice becomes reusable.</p>
+                    <div class="agent-answer-signals" aria-label="Evidence used"><span>Patterns</span><span>Tools</span><span>Skills</span></div>
+                  </article>
+
+                  <article class="agent-answer" id="answer-organization-cost" hidden>
+                    <p>Reflect shows observed token usage, cache behavior, estimated cost, model mix, tool activity, failures, retries, context churn, and large-session concentration across one session or the full local history. Cost is shown only where model-pricing evidence is recognized.</p>
+                    <div class="agent-answer-signals" aria-label="Evidence used"><span>Usage</span><span>Cost</span><span>Waste</span></div>
+                  </article>
+
+                  <article class="agent-answer" id="answer-organization-scale" hidden>
+                    <p>Reflect turns selected session evidence into reviewable, versioned workflows and skills. Proven practices can then move across agents, repositories, and teams, while later sessions measure whether they actually helped.</p>
+                    <div class="agent-answer-signals" aria-label="Evidence used"><span>Workflows</span><span>Skills</span><span>Impact</span></div>
+                  </article>
+
+                  <article class="agent-answer" id="answer-organization-capacity" hidden>
+                    <p>Reflect connects local usage and cost to delivered work, identifies avoidable waste, documents improvement commitments, and prepares an evidence-backed internal request for review.</p>
+                    <div class="agent-answer-signals" aria-label="Evidence used"><span>Delivered work</span><span>Capacity</span><span>Budget</span></div>
+                  </article>
+                </div>
+              </div>
+
+              <div class="agent-composer" aria-label="Selected Reflect question">
+                <span class="agent-composer-prompt" aria-hidden="true">›</span>
+                <span class="agent-typed-question" id="agent-typed-question">Why did my AI coding agent hit its token budget limit?</span>
+                <button class="agent-send" type="button" aria-label="Ask selected question">↑</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="content-section" id="how-it-works" aria-labelledby="how-title">
         <div class="section-intro">
           <div>
             <p class="kicker">How It Works</p>
-            <h2 id="how-title">Private by Default. Useful by Design.</h2>
+            <h2 id="how-title">Private by Default. People Stay in Control.</h2>
           </div>
-          <p>Start locally, keep optional text capture under your control, and add richer workflows only when the evidence earns them.</p>
+          <p>Connect once, ask through your agent, and use the visual UI whenever you want the complete evidence and review path.</p>
         </div>
         <div class="process">
           <article class="process-step">
@@ -587,16 +798,16 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
             <code class="command" translate="no">reflect setup</code>
           </article>
           <article class="process-step">
-            <span class="step-number">02 / Connect</span>
-            <h3>Build the Evidence Graph.</h3>
-            <p>Canonical sessions connect prompts, tools, folders, repositories, skills, outcomes, cost, and behavior across agent and telemetry sources.</p>
-            <code class="command" translate="no">reflect</code>
+            <span class="step-number">02 / Ask</span>
+            <h3>Work Through Your Agent.</h3>
+            <p>Ask natural questions about usage, failures, repeated work, repository guidance, and improvement. Reflect gives the agent bounded, provenance-aware evidence.</p>
+            <code class="command" translate="no">Use Reflect to explain this work.</code>
           </article>
           <article class="process-step">
-            <span class="step-number">03 / Improve</span>
-            <h3>Review Before You Apply.</h3>
-            <p>Inspect observations, workflow proposals, and skills with their source sessions, exact changes, target repository, and later impact.</p>
-            <code class="command" translate="no">reflect skills discover --week</code>
+            <span class="step-number">03 / Review</span>
+            <h3>Explore the Evidence Visually.</h3>
+            <p>Open the UI to inspect sessions and costs, review exact workflow or skill changes, approve or reject them, and see their later impact.</p>
+            <code class="command" translate="no">reflect</code>
           </article>
         </div>
       </section>
@@ -683,8 +894,8 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         <div class="install-panel">
           <div>
             <p class="kicker">Start Locally</p>
-            <h2 id="install-title">From Install to Evidence in 60 Seconds.</h2>
-            <p>Install the CLI, connect supported local agents, and open the dashboard. Let a few sessions run before expecting meaningful workflow discoveries or impact measurements.</p>
+            <h2 id="install-title">From Install to Agent-Ready Evidence in 60 Seconds.</h2>
+            <p>Connect Reflect once, ask through your coding agent, and open the visual dashboard whenever you want the complete evidence and review path.</p>
             <div class="install-links">
               <a href="https://github.com/o11y-dev/reflect">Read the Documentation</a>
               <a href="https://pypi.org/project/o11y-reflect/">View on PyPI</a>
@@ -694,24 +905,20 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
             <div class="terminal-head"><span class="terminal-dot"></span><span class="terminal-dot"></span><span class="terminal-dot"></span><span>Quick Start</span></div>
             <pre tabindex="0"><code translate="no"><span class="prompt">$</span> pipx install o11y-reflect
 <span class="prompt">$</span> reflect setup
-<span class="prompt">$</span> reflect
 
-<span class="comment"># Inspect the durable skill registry</span>
-<span class="prompt">$</span> reflect skills
+<span class="comment"># Then ask in your coding agent</span>
+<span class="prompt">›</span> Use Reflect to explain why our team needs more AI budget.
 
-<span class="comment"># Draft evidence-backed skills for review</span>
-<span class="prompt">$</span> reflect skills discover --week
-
-<span class="comment"># Optional: give Codex read-only Reflect context</span>
-<span class="prompt">$</span> codex mcp add reflect -- reflect-mcp</code></pre>
+<span class="comment"># Open the visual overview</span>
+<span class="prompt">$</span> reflect</code></pre>
           </div>
         </div>
       </section>
 
       <section class="closing" aria-labelledby="closing-title">
-        <p class="kicker">Make the Next Run Better</p>
-        <h2 id="closing-title">Stop Guessing Where Agent Work Goes Wrong.</h2>
-        <p>Use local evidence to diagnose the session, preserve what worked, and improve the workflow your agents follow next.</p>
+        <p class="kicker">Ask. Review. Improve.</p>
+        <h2 id="closing-title">Ask Through Your Agent. See the Evidence in Reflect.</h2>
+        <p>Get the immediate explanation in the conversation, then use the visual UI to inspect the source evidence, control what becomes reusable, and measure what helped.</p>
         <div class="cta-row">
           <a class="button button-primary" href="./report.html?report=reports/showcase.json">Explore the Live Dashboard <span class="arrow" aria-hidden="true">→</span></a>
           <a class="button button-secondary" href="https://github.com/o11y-dev/reflect">View reflect on GitHub</a>
@@ -720,11 +927,69 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 
       <footer class="footer">
         <span class="footer-copy">Built on OpenTelemetry GenAI semantic conventions. Local first, vendor neutral, and open source under Apache 2.0.</span>
-        <span class="footer-links"><a href="./report.html?report=reports/showcase.json">Live Dashboard</a><a href="https://github.com/o11y-dev/reflect">GitHub</a><a href="https://pypi.org/project/o11y-reflect/">PyPI</a></span>
+        <span class="footer-links"><a href="#questions">Questions</a><a href="./report.html?report=reports/showcase.json">Live Dashboard</a><a href="https://github.com/o11y-dev/reflect">GitHub</a><a href="https://pypi.org/project/o11y-reflect/">PyPI</a></span>
       </footer>
     </div>
   </main>
   <script>
+    (() => {
+      const qa = document.querySelector('[data-agent-qa]');
+      if (!qa) return;
+
+      const promptButtons = Array.from(qa.querySelectorAll('[data-question]'));
+      const answers = Array.from(qa.querySelectorAll('.agent-answer'));
+      const activeQuestion = qa.querySelector('#agent-active-question');
+      const typedQuestion = qa.querySelector('#agent-typed-question');
+      const sendButton = qa.querySelector('.agent-send');
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      let selectedButton = promptButtons[0];
+      let typingTimer = null;
+
+      const reveal = (button) => {
+        const answerId = button.getAttribute('data-answer-id');
+        const question = button.getAttribute('data-question') || '';
+        activeQuestion.textContent = question;
+        answers.forEach((answer) => {
+          answer.hidden = answer.id !== answerId;
+        });
+      };
+
+      const ask = (button) => {
+        if (!button) return;
+        if (typingTimer) window.clearInterval(typingTimer);
+        selectedButton = button;
+        promptButtons.forEach((candidate) => {
+          const active = candidate === button;
+          candidate.classList.toggle('is-active', active);
+          candidate.setAttribute('aria-pressed', String(active));
+        });
+
+        const question = button.getAttribute('data-question') || '';
+        if (reduceMotion) {
+          typedQuestion.textContent = question;
+          reveal(button);
+          return;
+        }
+
+        typedQuestion.textContent = '';
+        let characterIndex = 0;
+        typingTimer = window.setInterval(() => {
+          characterIndex += 1;
+          typedQuestion.textContent = question.slice(0, characterIndex);
+          if (characterIndex >= question.length) {
+            window.clearInterval(typingTimer);
+            typingTimer = null;
+            reveal(button);
+          }
+        }, 12);
+      };
+
+      promptButtons.forEach((button) => {
+        button.addEventListener('click', () => ask(button));
+      });
+      sendButton.addEventListener('click', () => ask(selectedButton));
+    })();
+
     (() => {
       const stats = document.getElementById('repo-stats');
       const release = document.getElementById('repo-release');

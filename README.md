@@ -8,7 +8,7 @@
 
 <p align="center">
   <strong>Evidence, Not Vibes.</strong><br>
-  Local-first observability for failures, loops, context, cost, workflows, and skills across your AI coding-agent sessions.
+  Evidence-backed improvement for AI agent work across teams.
 </p>
 
 <p align="center">
@@ -25,7 +25,9 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-Reflect turns local AI coding-agent sessions and OpenTelemetry signals into evidence you can act on. It shows where agents fail, stall, repeat work, lose context, or burn budget; preserves successful procedures as reviewable workflows and skills; and measures whether later sessions improve.
+Reflect is the local-first improvement loop for AI coding agents and the work around them. It shows where agents fail, stall, repeat work, lose context, or burn budget; turns that evidence into better procedures, reviewable workflows, and reusable skills; and measures whether later sessions improve.
+
+Ask through your agent for immediate insight. Open the Reflect UI for the visual overview, source evidence, exact reviews, and measured impact. Each session can become evidence for a better procedure, a smarter capacity decision, or a reusable practice that scales across repositories, agents, and teams.
 
 No hosted backend. No Reflect account. Your telemetry and SQLite ledger stay on your machine.
 
@@ -38,14 +40,39 @@ pipx install o11y-reflect
 reflect setup
 ```
 
-`reflect setup` detects supported agents, asks which ones to connect, installs or upgrades `opentelemetry-hooks` through pipx, starts the local OTLP gateway, configures verified telemetry paths and the local `reflect-mcp` server, and installs Reflect's agent skills. Re-running setup refreshes the hook package and MCP registration before rewiring agents. Use your coding agents normally for a few sessions, then open the local report:
+`reflect setup` detects supported agents, asks which ones to connect, installs or upgrades `opentelemetry-hooks` through pipx, starts the local OTLP gateway, configures verified telemetry paths and the local `reflect-mcp` server, and installs Reflect's agent skills. Re-running setup refreshes the hook package and MCP registration before rewiring agents.
+
+### Ask through your agent
+
+After setup, use your coding agent normally and ask Reflect questions where you already work:
+
+```text
+Use Reflect to explain why this session was expensive and what should improve.
+
+Use Reflect to find recurring problems in our recent work.
+
+Use Reflect to prepare an internal AI budget increase request from our past work. Explain the value delivered, identify avoidable waste, and recommend improvements.
+
+Use Reflect to find a successful pattern that should become a reusable skill.
+```
+
+Reflect's agent skills and MCP give the agent bounded access to exact local usage, sessions, evidence, workflows, and approved skills. The agent can explain the evidence, recommend follow-up actions, and prepare a shareable internal request. You review the answer and decide what should affect later work.
+
+### Explore visually in the UI
+
+Open the local Reflect UI when you want the full picture:
 
 ```bash
-reflect doctor
 reflect
 ```
 
-`reflect doctor` checks capture health. `reflect` ingests new local evidence, starts or reuses the background report server, opens `http://127.0.0.1:8765`, and returns your terminal.
+`reflect` ingests new local evidence, starts or reuses the background report server, opens `http://127.0.0.1:8765`, and returns your terminal. Use the UI to explore sessions, conversations, tools, failures, cost, and context; review the evidence behind an agent's explanation; approve or reject proposed workflows and skills; and see whether an applied improvement helped later sessions.
+
+Use `reflect doctor` when you need to check capture, hook, gateway, agent-skill, or MCP health:
+
+```bash
+reflect doctor
+```
 
 For a fast terminal usage snapshot without opening the browser:
 
@@ -80,9 +107,13 @@ reflect setup --agent "Claude Code" --local-agent "Claude Code"
 
 Local traces, logs, session data, and the report database live under `~/.reflect/state/` and supported agent-owned local stores. Reflect does not send them to a hosted Reflect service.
 
-## From Sessions to Improvement
+## From Personal Reflection to Organizational Improvement
 
-The browser is organized around one evidence-to-value path:
+The loop begins with a question about real work and ends with a reviewed improvement:
+
+> Work goal → agent session → Reflect evidence → human review → approved workflow or skill → measured later sessions
+
+Ask through your agent for explanations, recommendations, and shareable summaries. Use the browser for the visual evidence and review path:
 
 | Surface | What it answers |
 |---|---|
