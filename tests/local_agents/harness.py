@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -21,6 +22,7 @@ EFFECTIVENESS_QUESTION = (
     "Resolve the capsule-violet routing incident with the approved verification protocol."
 )
 EFFECTIVENESS_EXPECTED_VALUES = ("quartz-17", "RFLX-VIOLET-7319", "amber-4")
+_EFFECTIVENESS_RESULT = re.compile(r"ROUTE=(\S+) VERIFY=(\S+) REJECT=(\S+)")
 
 
 @dataclass(frozen=True)
@@ -466,4 +468,14 @@ def effectiveness_guided_prompt(workspace: Path, completion_summary: str) -> str
 def score_effectiveness(final_message: str) -> int:
     """Score externally observable adherence to the hidden approved policy."""
 
-    return sum(value in final_message for value in EFFECTIVENESS_EXPECTED_VALUES)
+    match = _EFFECTIVENESS_RESULT.fullmatch(final_message.strip())
+    if match is None:
+        return 0
+    return sum(
+        actual == expected
+        for actual, expected in zip(
+            match.groups(),
+            EFFECTIVENESS_EXPECTED_VALUES,
+            strict=True,
+        )
+    )

@@ -149,6 +149,47 @@ def test_revised_conversational_review_supersedes_the_previous_token(tmp_path):
         conn.close()
 
 
+def test_failed_revised_review_preserves_approved_candidate(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    missing_project = tmp_path / "missing-project"
+    try:
+        improvements, candidate_id = _candidate(conn)
+        improvements.workflows.approve(candidate_id)
+        improvements.skills.sync_workflow_candidates([candidate_id])
+        conn.commit()
+        original = improvements.workflows.show(candidate_id)
+        original_skill = improvements.skills.show("safe-release")
+        changes = ChangeReviewService(
+            conn,
+            workflows=improvements.workflows,
+            skills=improvements.skills,
+            token_factory=_token_factory(),
+        )
+        revised_content = {
+            **original.content,
+            "source_markdown": "",
+            "steps": ["This revision must not survive a failed preview."],
+        }
+
+        with pytest.raises(RuntimeError, match="does not exist"):
+            changes.review(
+                action="apply_workflow",
+                entity_id=candidate_id,
+                project_root=missing_project,
+                revised_content=revised_content,
+            )
+
+        unchanged = improvements.workflows.show(candidate_id)
+        unchanged_skill = improvements.skills.show("safe-release")
+        assert unchanged.status == WorkflowStatus.APPROVED
+        assert unchanged.content == original.content
+        assert unchanged_skill.skill == original_skill.skill
+        assert unchanged_skill.versions == original_skill.versions
+        assert conn.execute("SELECT COUNT(*) FROM change_reviews").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
 def test_change_review_refuses_stale_target_and_preserves_external_content(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     project_root = tmp_path / "project"

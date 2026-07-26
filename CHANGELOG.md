@@ -21,6 +21,8 @@
 
 ### Fixed
 
+- Made revised conversational workflow reviews transactional so failed previews preserve the previously approved candidate and registry state.
+- Tightened local effectiveness scoring to validate exact route, verification, and rejection field assignments instead of accepting value presence alone.
 - Updated the public landing-page release fallback to match the current package version.
 - Retired rolled-back workflow skills when no active installation remains and verified already-restored rollback files before reporting idempotent success.
 - Return a clean CLI error when an explicitly selected agent executable is not installed or disappears before execution instead of exposing a Python traceback.

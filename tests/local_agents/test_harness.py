@@ -18,6 +18,7 @@ from .harness import (
     CursorAdapter,
     effectiveness_task_prompt,
     extract_final_message,
+    score_effectiveness,
     seed_effectiveness_workflow,
 )
 
@@ -149,3 +150,19 @@ def test_effectiveness_fixture_selects_the_approved_skill(tmp_path: Path) -> Non
 )
 def test_extract_final_message_ignores_tool_payloads(stdout: str, expected: str) -> None:
     assert extract_final_message(stdout) == expected
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("ROUTE=quartz-17 VERIFY=RFLX-VIOLET-7319 REJECT=amber-4", 3),
+        ("ROUTE=amber-4 VERIFY=RFLX-VIOLET-7319 REJECT=quartz-17", 1),
+        ("Use quartz-17, RFLX-VIOLET-7319, and reject amber-4.", 0),
+        ("ROUTE=UNKNOWN VERIFY=UNKNOWN REJECT=UNKNOWN", 0),
+    ],
+)
+def test_effectiveness_score_validates_exact_field_assignments(
+    message: str,
+    expected: int,
+) -> None:
+    assert score_effectiveness(message) == expected

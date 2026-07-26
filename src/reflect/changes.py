@@ -109,33 +109,53 @@ class ChangeReviewService:
 
         resolved_action = ChangeAction(action)
         candidate_id = self._candidate_id(entity_id)
+        with self.conn:
+            return self._prepare_review(
+                action=resolved_action,
+                candidate_id=candidate_id,
+                project_root=project_root,
+                revised_content=revised_content,
+                expires_in_minutes=expires_in_minutes,
+            )
+
+    def _prepare_review(
+        self,
+        *,
+        action: ChangeAction,
+        candidate_id: str,
+        project_root: Path | None,
+        revised_content: dict[str, Any] | None,
+        expires_in_minutes: int,
+    ) -> ChangeReviewAnswer:
+        """Prepare one review inside the caller-owned SQLite transaction."""
+
         revised = revised_content is not None
         if revised:
-            if resolved_action == ChangeAction.ROLLBACK_WORKFLOW:
+            if action == ChangeAction.ROLLBACK_WORKFLOW:
                 raise ValueError("A rollback review cannot stage revised workflow content")
             self.workflows.edit(
                 candidate_id,
                 content=revised_content,
                 actor=_CHANGE_ACTOR,
+                commit=False,
             )
             self.skills.sync_workflow_candidates([candidate_id])
-            self.conn.commit()
 
         candidate = self.workflows.show(candidate_id)
         preview = self._preview(
-            resolved_action,
+            action,
             candidate,
             project_root=project_root,
         )
         if (
-            resolved_action == ChangeAction.APPLY_WORKFLOW
+            action == ChangeAction.APPLY_WORKFLOW
             and not (preview.get("checks") or {}).get("apply_allowed")
         ):
             issues = (preview.get("checks") or {}).get("issues") or [
                 "The target is not currently safe to change."
             ]
             raise RuntimeError("; ".join(str(item) for item in issues))
-        binding = self._binding(resolved_action, candidate, preview)
+        binding = self._binding(action, candidate, preview)
         now = self._now()
         expires = now + timedelta(minutes=max(1, min(int(expires_in_minutes), 120)))
         token = f"reflect_approval_{self.token_factory()}"
@@ -144,7 +164,7 @@ class ChangeReviewService:
         skill_id, skill_slug, measurements = self._skill_context(candidate_id)
         evidence = self._evidence(candidate, measurements=measurements)
         risks = self._risks(candidate, preview)
-        rollback_plan = self._rollback_plan(resolved_action, candidate_id)
+        rollback_plan = self._rollback_plan(action, candidate_id)
         payload = {
             "candidate_content_hash": self._candidate_content_hash(candidate),
             "preview": preview,
@@ -174,7 +194,7 @@ class ChangeReviewService:
             """,
             (
                 review_id,
-                resolved_action.value,
+                action.value,
                 candidate_id,
                 preview.get("project_root"),
                 preview["target_path"],
@@ -194,17 +214,16 @@ class ChangeReviewService:
             event_type="prepared",
             actor=_CHANGE_ACTOR,
             details={
-                "action": resolved_action.value,
+                "action": action.value,
                 "candidate_id": candidate_id,
                 "binding_hash": binding,
                 "expires_at": expires.isoformat(),
             },
             now=now.isoformat(),
         )
-        self.conn.commit()
         return ChangeReviewAnswer(
             review_id=review_id,
-            action=resolved_action,
+            action=action,
             state=ChangeReviewState.PENDING,
             candidate_id=candidate_id,
             skill_id=skill_id,
@@ -516,7 +535,6 @@ class ChangeReviewService:
         candidate_id: str,
     ) -> tuple[str | None, str | None, list[dict[str, Any]]]:
         self.skills.sync_workflow_candidates([candidate_id])
-        self.conn.commit()
         try:
             skill = self.skills.skill_for_candidate(candidate_id)
             detail = self.skills.show(skill.id)

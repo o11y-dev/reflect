@@ -420,6 +420,7 @@ class WorkflowService:
         *,
         content: dict[str, Any],
         actor: str = "local_operator",
+        commit: bool = True,
     ) -> WorkflowCandidateRecord:
         """Replace a pending candidate's structured content and return it to review."""
         candidate = self.show(candidate_id)
@@ -453,7 +454,8 @@ class WorkflowService:
             details={"content_hash": _content_hash(json.dumps(normalized, sort_keys=True))},
             now=now,
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return self.show(candidate_id)
 
     def reject(
