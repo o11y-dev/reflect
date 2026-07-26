@@ -192,7 +192,66 @@ class WorkflowService:
             "exposure_session_count": ledger.exposure_session_count,
         }
 
-    def apply(self, candidate_id: str, *, project_root: Path) -> dict[str, Any]:
+    def approve(
+        self,
+        candidate_id: str,
+        *,
+        actor: str = "local_operator",
+    ) -> dict[str, Any]:
+        """Approve a reviewed workflow without installing its rendered artifact."""
+
+        candidate = self.show(candidate_id)
+        if candidate.status.value == "approved":
+            return {
+                "candidate_id": candidate_id,
+                "status": "approved",
+                "idempotent": True,
+            }
+        if candidate.status.value == "active":
+            return {
+                "candidate_id": candidate_id,
+                "status": "active",
+                "idempotent": True,
+            }
+        if candidate.status.value in {"stale", "rejected", "rolled_back"}:
+            raise RuntimeError(
+                f"Workflow {candidate_id} is {candidate.status.value}; review it before approving"
+            )
+        now = utc_now()
+        self.conn.execute(
+            """
+            UPDATE workflow_candidates
+            SET status = 'approved', reviewer = ?, reviewed_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (actor, now, now, candidate_id),
+        )
+        self.conn.execute(
+            "UPDATE observations SET status = 'approved', updated_at = ? WHERE id = ?",
+            (now, candidate.observation_id),
+        )
+        self.repository.record_event(
+            entity_type="workflow_candidate",
+            entity_id=candidate_id,
+            event_type="approved",
+            actor=actor,
+            details={"installation_changed": False},
+            now=now,
+        )
+        self.conn.commit()
+        return {
+            "candidate_id": candidate_id,
+            "status": "approved",
+            "idempotent": False,
+        }
+
+    def apply(
+        self,
+        candidate_id: str,
+        *,
+        project_root: Path,
+        actor: str = "local_operator",
+    ) -> dict[str, Any]:
         candidate = self.show(candidate_id)
         if candidate.status.value in {"stale", "rejected", "rolled_back"}:
             raise RuntimeError(f"Workflow {candidate_id} is {candidate.status.value}; review it before applying")
@@ -325,8 +384,8 @@ class WorkflowService:
                 ),
             )
             self.conn.execute(
-                "UPDATE workflow_candidates SET status = 'active', reviewer = 'local_operator', reviewed_at = ?, updated_at = ? WHERE id = ?",
-                (now, now, candidate_id),
+                "UPDATE workflow_candidates SET status = 'active', reviewer = ?, reviewed_at = ?, updated_at = ? WHERE id = ?",
+                (actor, now, now, candidate_id),
             )
             self.conn.execute(
                 "UPDATE observations SET status = 'active', updated_at = ? WHERE id = ?",
@@ -336,7 +395,7 @@ class WorkflowService:
                 entity_type="intervention",
                 entity_id=intervention_id,
                 event_type="applied",
-                actor="local_operator",
+                actor=actor,
                 details={"candidate_id": candidate_id, "target_path": str(target)},
                 now=now,
             )
@@ -355,7 +414,14 @@ class WorkflowService:
             "idempotent": False,
         }
 
-    def edit(self, candidate_id: str, *, content: dict[str, Any]) -> WorkflowCandidateRecord:
+    def edit(
+        self,
+        candidate_id: str,
+        *,
+        content: dict[str, Any],
+        actor: str = "local_operator",
+        commit: bool = True,
+    ) -> WorkflowCandidateRecord:
         """Replace a pending candidate's structured content and return it to review."""
         candidate = self.show(candidate_id)
         if candidate.status.value == "active":
@@ -384,14 +450,21 @@ class WorkflowService:
             entity_type="workflow_candidate",
             entity_id=candidate_id,
             event_type="edited_pending",
-            actor="local_operator",
+            actor=actor,
             details={"content_hash": _content_hash(json.dumps(normalized, sort_keys=True))},
             now=now,
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return self.show(candidate_id)
 
-    def reject(self, candidate_id: str, *, reason: str = "operator_rejected") -> WorkflowCandidateRecord:
+    def reject(
+        self,
+        candidate_id: str,
+        *,
+        reason: str = "operator_rejected",
+        actor: str = "local_operator",
+    ) -> WorkflowCandidateRecord:
         candidate = self.show(candidate_id)
         if candidate.status.value == "active":
             raise RuntimeError("Roll back an active workflow before rejecting it")
@@ -399,10 +472,10 @@ class WorkflowService:
         self.conn.execute(
             """
             UPDATE workflow_candidates
-            SET status = 'rejected', reviewer = 'local_operator', reviewed_at = ?, updated_at = ?
+            SET status = 'rejected', reviewer = ?, reviewed_at = ?, updated_at = ?
             WHERE id = ?
             """,
-            (now, now, candidate_id),
+            (actor, now, now, candidate_id),
         )
         self.conn.execute(
             "UPDATE observations SET status = 'rejected', updated_at = ? WHERE id = ?",
@@ -412,7 +485,7 @@ class WorkflowService:
             entity_type="workflow_candidate",
             entity_id=candidate_id,
             event_type="rejected",
-            actor="local_operator",
+            actor=actor,
             details={"reason": reason},
             now=now,
         )
@@ -442,31 +515,84 @@ class WorkflowService:
             self.conn.commit()
         return {"stale": stale, "checked": len(rows)}
 
-    def rollback(self, candidate_id: str, *, reason: str = "operator_requested") -> dict[str, Any]:
-        row = self.conn.execute(
-            """
-            SELECT i.id, i.target_path, i.previous_content, i.previous_hash, i.applied_hash,
-                   wc.observation_id
-            FROM interventions i
-            JOIN workflow_versions wv ON wv.id = i.workflow_version_id
-            JOIN workflow_candidates wc ON wc.id = wv.candidate_id
-            WHERE wc.id = ? AND i.status = 'active'
-            ORDER BY i.created_at DESC
-            LIMIT 1
-            """,
-            (candidate_id,),
-        ).fetchone()
-        if not row:
+    def preview_rollback(self, candidate_id: str) -> dict[str, Any]:
+        """Render the exact inverse of an active workflow without changing it."""
+
+        row = self.intervention_snapshot(candidate_id, statuses={"active"})
+        if row is None:
             raise KeyError(f"No active intervention found for workflow: {candidate_id}")
-        intervention_id, target_path, previous_content, previous_hash, applied_hash, observation_id = row
-        target = Path(target_path)
+        target = Path(row["target_path"])
         current_content = target.read_text(encoding="utf-8") if target.exists() else None
         current_hash = _content_hash(current_content) if current_content is not None else None
-        if current_hash != applied_hash:
+        if current_hash != row["applied_hash"]:
+            raise RuntimeError(
+                "The applied workflow file changed after Reflect wrote it; refusing to prepare a rollback"
+            )
+        previous_content = row["previous_content"] or ""
+        diff = "".join(
+            difflib.unified_diff(
+                (current_content or "").splitlines(keepends=True),
+                previous_content.splitlines(keepends=True),
+                fromfile=str(target),
+                tofile=str(target),
+            )
+        )
+        return {
+            "candidate_id": candidate_id,
+            "intervention_id": row["intervention_id"],
+            "target_path": str(target),
+            "change_kind": "restore" if row["previous_content"] is not None else "delete",
+            "previous_hash": row["applied_hash"],
+            "proposed_hash": row["previous_hash"],
+            "would_change": current_content != row["previous_content"],
+            "diff": diff,
+            "checks": {
+                "artifact_unchanged": True,
+                "rollback_allowed": True,
+                "issues": [],
+            },
+        }
+
+    def rollback(
+        self,
+        candidate_id: str,
+        *,
+        reason: str = "operator_requested",
+        actor: str = "local_operator",
+    ) -> dict[str, Any]:
+        row = self.intervention_snapshot(candidate_id, statuses={"active"})
+        if not row:
+            completed = self.intervention_snapshot(
+                candidate_id,
+                statuses={"rolled_back"},
+            )
+            if completed is None:
+                raise KeyError(f"No active intervention found for workflow: {candidate_id}")
+            target = Path(completed["target_path"])
+            current_content = target.read_text(encoding="utf-8") if target.exists() else None
+            current_hash = (
+                _content_hash(current_content) if current_content is not None else None
+            )
+            if current_hash != completed["previous_hash"]:
+                raise RuntimeError(
+                    "The restored workflow file changed after rollback; review it before continuing"
+                )
+            return {
+                "candidate_id": candidate_id,
+                "intervention_id": completed["intervention_id"],
+                "target_path": completed["target_path"],
+                "restored_hash": completed["previous_hash"],
+                "status": "rolled_back",
+                "idempotent": True,
+            }
+        target = Path(row["target_path"])
+        current_content = target.read_text(encoding="utf-8") if target.exists() else None
+        current_hash = _content_hash(current_content) if current_content is not None else None
+        if current_hash != row["applied_hash"]:
             raise RuntimeError(
                 "The applied workflow file changed after Reflect wrote it; refusing to overwrite those edits"
             )
-        self._restore_file(target, previous_content)
+        self._restore_file(target, row["previous_content"])
         now = utc_now()
         self.conn.execute(
             """
@@ -474,7 +600,7 @@ class WorkflowService:
             SET status = 'rolled_back', rolled_back_at = ?, rollback_reason = ?, updated_at = ?
             WHERE id = ?
             """,
-            (now, reason, now, intervention_id),
+            (now, reason, now, row["intervention_id"]),
         )
         self.conn.execute(
             "UPDATE workflow_candidates SET status = 'rolled_back', updated_at = ? WHERE id = ?",
@@ -482,23 +608,57 @@ class WorkflowService:
         )
         self.conn.execute(
             "UPDATE observations SET status = 'rolled_back', updated_at = ? WHERE id = ?",
-            (now, observation_id),
+            (now, row["observation_id"]),
         )
         self.repository.record_event(
             entity_type="intervention",
-            entity_id=str(intervention_id),
+            entity_id=row["intervention_id"],
             event_type="rolled_back",
-            actor="local_operator",
+            actor=actor,
             details={"candidate_id": candidate_id, "reason": reason},
             now=now,
         )
         self.conn.commit()
         return {
             "candidate_id": candidate_id,
-            "intervention_id": intervention_id,
+            "intervention_id": row["intervention_id"],
             "target_path": str(target),
-            "restored_hash": previous_hash,
+            "restored_hash": row["previous_hash"],
             "status": "rolled_back",
+            "idempotent": False,
+        }
+
+    def intervention_snapshot(
+        self,
+        candidate_id: str,
+        *,
+        statuses: set[str],
+    ) -> dict[str, Any] | None:
+        """Return the latest intervention state for exact-change orchestration."""
+
+        placeholders = ",".join("?" for _ in statuses)
+        row = self.conn.execute(
+            f"""
+            SELECT i.id, i.target_path, i.previous_content, i.previous_hash,
+                   i.applied_hash, wc.observation_id
+            FROM interventions i
+            JOIN workflow_versions wv ON wv.id = i.workflow_version_id
+            JOIN workflow_candidates wc ON wc.id = wv.candidate_id
+            WHERE wc.id = ? AND i.status IN ({placeholders})
+            ORDER BY i.created_at DESC
+            LIMIT 1
+            """,
+            (candidate_id, *sorted(statuses)),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "intervention_id": str(row[0]),
+            "target_path": str(row[1]),
+            "previous_content": row[2],
+            "previous_hash": row[3],
+            "applied_hash": str(row[4]),
+            "observation_id": str(row[5]),
         }
 
     @staticmethod

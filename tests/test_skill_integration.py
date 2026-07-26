@@ -27,6 +27,7 @@ REFLECT_USAGE_MD = (
     / "reflect-usage"
     / "SKILL.md"
 )
+REFLECT_USAGE_OPENAI_YAML = REFLECT_USAGE_MD.parent / "agents" / "openai.yaml"
 
 
 class TestSkillMd:
@@ -69,10 +70,15 @@ class TestSkillMd:
     def test_skill_queries_approved_guidance_without_implicit_setup(self):
         content = SKILL_MD.read_text(encoding="utf-8")
         assert 'reflect ask "<task question>" --json' in content
+        assert "`reflect_skills`" in content
+        assert "`reflect_patterns`" in content
+        assert "`reflect_task_status`" in content
+        assert "`reflect_review_change`" in content
+        assert "`reflect_apply_change`" in content
+        assert "ambiguous responses are not approval" in content
         assert "reflect loops build <loop-id>" in content
-        assert "reflect skills show <skill-id>" in content
         assert "Do not run `reflect setup`" in content
-        assert "Never run `reflect skills apply` or `reflect workflows apply`" in content
+        assert "only as an agent-operated fallback after explicit operator approval" in content
 
     def test_reflect_usage_skill_uses_exact_cli_contract(self):
         content = REFLECT_USAGE_MD.read_text(encoding="utf-8")
@@ -80,6 +86,18 @@ class TestSkillMd:
         assert "reflect usage --global --week --json" in content
         assert "complete matching SQLite cohort" in content
         assert "Do not run `reflect setup`" in content
+        assert '"where did my tokens go?"' in content
+        assert (
+            "Treat tool, MCP, and subagent counts as workflow context, not token attribution"
+            in content
+        )
+        assert "`productive`, `mixed`, `inefficient`, or `indeterminate`" in content
+        assert "Label behavioral explanations and value judgments `Inference`" in content
+
+    def test_reflect_usage_openai_metadata_explains_token_analysis(self):
+        content = REFLECT_USAGE_OPENAI_YAML.read_text(encoding="utf-8")
+        assert 'display_name: "Reflect Token Usage"' in content
+        assert "where this session’s tokens went" in content
 
 
 class TestCliInvocable:

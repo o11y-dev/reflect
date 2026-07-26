@@ -196,6 +196,27 @@ def test_current_session_usage_prefers_matching_workspace(tmp_path):
     assert resolved.session is not None and resolved.session.id == "session-current"
 
 
+def test_current_session_usage_checks_all_runtime_ids_before_falling_back(tmp_path):
+    conn = _open_db(tmp_path / "reflect.db")
+    try:
+        _seed_session(conn, "session-current")
+        _seed_session(conn, "session-newer", started_at=NOW + timedelta(hours=1))
+        report = UsageService(
+            conn,
+            environ={
+                "REFLECT_SESSION_ID": "not-flushed",
+                "CODEX_THREAD_ID": "session-current",
+            },
+            cwd=tmp_path / "outside",
+            now=NOW,
+        ).report()
+    finally:
+        conn.close()
+
+    assert report.resolution == "environment:CODEX_THREAD_ID"
+    assert report.session is not None and report.session.id == "session-current"
+
+
 def test_global_usage_is_not_limited_to_500_sessions(tmp_path):
     conn = _open_db(tmp_path / "reflect.db")
     started_at = NOW - timedelta(hours=1)

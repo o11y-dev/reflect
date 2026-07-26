@@ -1,4 +1,4 @@
 interface:
-  display_name: "Reflect Usage"
-  short_description: "Inspect current and aggregate agent usage"
-  default_prompt: "Use $reflect-usage to summarize this session’s tokens, cost, tools, models, and failures."
+  display_name: "Reflect Token Usage"
+  short_description: "Explain token spend and workflow efficiency"
+  default_prompt: "Use $reflect-usage to explain where this session’s tokens went, what drove the spend, and whether the usage looks productive or wasteful."

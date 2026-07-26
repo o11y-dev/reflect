@@ -59,6 +59,14 @@ class UsageReport(ReflectModel):
     limitations: list[str]
 
 
+class RuntimeSessionHint(ReflectModel):
+    """One runtime-provided session identity candidate."""
+
+    session_id: str
+    agent: str | None = None
+    environment_key: str
+
+
 class UsageService:
     """Query exact usage from Reflect's canonical SQLite store."""
 
@@ -136,13 +144,10 @@ class UsageService:
             raise LookupError(f"Session not found: {explicit_session_id}")
 
         agent_hint: str | None = None
-        for env_key, candidate_agent in self._SESSION_ENV_KEYS:
-            runtime_id = str(self.environ.get(env_key, "")).strip()
-            if not runtime_id:
-                continue
-            agent_hint = candidate_agent or agent_hint
-            if self._session_exists(runtime_id):
-                return runtime_id, f"environment:{env_key}", None
+        for hint in self.runtime_session_hints():
+            agent_hint = hint.agent or agent_hint
+            if self._session_exists(hint.session_id):
+                return hint.session_id, f"environment:{hint.environment_key}", None
 
         workspace_match = self._latest_workspace_session(agent_hint)
         if workspace_match:
@@ -160,6 +165,24 @@ class UsageService:
                 "The active runtime session was not present in the local store; showing the newest matching local session.",
             )
         raise LookupError("No local sessions found. Run `reflect setup` and capture a session first.")
+
+    def runtime_session_hints(self) -> list[RuntimeSessionHint]:
+        """Return runtime identities in precedence order, including unflushed sessions."""
+
+        return [
+            RuntimeSessionHint(
+                session_id=runtime_id,
+                agent=candidate_agent,
+                environment_key=env_key,
+            )
+            for env_key, candidate_agent in self._SESSION_ENV_KEYS
+            if (runtime_id := str(self.environ.get(env_key, "")).strip())
+        ]
+
+    def runtime_session_hint(self) -> RuntimeSessionHint | None:
+        """Return the agent runtime identity without requiring ingestion to have completed."""
+
+        return next(iter(self.runtime_session_hints()), None)
 
     def _session_exists(self, session_id: str) -> bool:
         return self.conn.execute("SELECT 1 FROM sessions WHERE id = ?", (session_id,)).fetchone() is not None

@@ -123,8 +123,8 @@ def test_loops_list_show_and_build_promote_selected_evidence_to_pending_skill(tm
         stderr="",
     )
     with patch("reflect.core._prepare_sql_report_db"), patch(
-        "subprocess.run", return_value=agent_result
-    ):
+        "reflect.core.shutil.which", return_value="/usr/bin/codex"
+    ), patch("subprocess.run", return_value=agent_result):
         built = runner.invoke(
             main,
             [

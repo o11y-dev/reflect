@@ -795,9 +795,55 @@ class TestSkillsSubcommand:
         original = parameter.default
         parameter.default = tmp_path / "skills-reflect.db"
         try:
-            yield
+            with patch(
+                "reflect.core.shutil.which",
+                side_effect=lambda binary: f"/usr/bin/{binary}",
+            ):
+                yield
         finally:
             parameter.default = original
+
+    def test_skills_missing_explicit_agent_is_a_clean_cli_error(self, runner, tmp_path):
+        with patch("reflect.core.shutil.which", return_value=None):
+            result = runner.invoke(
+                main,
+                [
+                    "skills",
+                    "--yes",
+                    "--agent",
+                    "not-installed-agent",
+                    "--demo",
+                    "--db-path",
+                    str(tmp_path / "reflect.db"),
+                ],
+            )
+
+        assert result.exit_code != 0
+        assert "Agent CLI 'not-installed-agent' was not found on PATH" in result.output
+        assert "Traceback" not in result.output
+
+    def test_skills_agent_disappearing_before_execution_is_a_clean_cli_error(
+        self,
+        runner,
+        tmp_path,
+    ):
+        with patch("subprocess.run", side_effect=FileNotFoundError("agent disappeared")):
+            result = runner.invoke(
+                main,
+                [
+                    "skills",
+                    "--yes",
+                    "--agent",
+                    "claude",
+                    "--demo",
+                    "--db-path",
+                    str(tmp_path / "reflect.db"),
+                ],
+            )
+
+        assert result.exit_code != 0
+        assert "Could not run agent CLI 'claude': agent disappeared" in result.output
+        assert "Traceback" not in result.output
 
     def _agent_fixture(self, skill_dest, fake_skills=None):
         return [{
