@@ -29,6 +29,7 @@
 - Expanded the packaged `reflect-usage` skill to explain where tokens went, distinguish measured attribution from workflow inference, and judge whether usage looks productive, mixed, inefficient, or indeterminate; renamed its Codex-facing label to Reflect Token Usage.
 
 ### Fixed
+
 - Made every `reflect setup` run install or upgrade the pipx-managed `opentelemetry-hooks` package before rewiring agents, and removed the stale `0.11.0` fresh-install pin.
 - Made `reflect setup` persist the local `reflect-mcp` server in each selected supported agent's user configuration, including Cursor's `.cursor/mcp.json`, while preserving existing servers.
 - Made revised conversational workflow reviews transactional so failed previews preserve the previously approved candidate and registry state.
