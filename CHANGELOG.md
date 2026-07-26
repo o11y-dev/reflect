@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.3 (unreleased)
+
+### Fixed
+
+- Recognized ChatGPT's `Codex Desktop` OTLP service, re-ingested native logs with real conversation IDs, and removed previously stored low-level runtime trace sessions.
+- Prevented local native transcripts from duplicating sessions already normalized from native OTLP telemetry.
+- Scoped session-level `reflect usage --refresh` native imports to the explicit or active runtime session instead of scanning unrelated session history.
+
 ## 0.9.2 (unreleased)
 
 ### Added
@@ -21,10 +29,6 @@
 - Expanded the packaged `reflect-usage` skill to explain where tokens went, distinguish measured attribution from workflow inference, and judge whether usage looks productive, mixed, inefficient, or indeterminate; renamed its Codex-facing label to Reflect Token Usage.
 
 ### Fixed
-
-- Recognized ChatGPT's `Codex Desktop` OTLP service, re-ingested native logs with real conversation IDs, and removed previously stored low-level runtime trace sessions.
-- Prevented local native transcripts from duplicating sessions already normalized from native OTLP telemetry.
-- Scoped session-level `reflect usage --refresh` native imports to the explicit or active runtime session instead of scanning unrelated session history.
 - Made every `reflect setup` run install or upgrade the pipx-managed `opentelemetry-hooks` package before rewiring agents, and removed the stale `0.11.0` fresh-install pin.
 - Made `reflect setup` persist the local `reflect-mcp` server in each selected supported agent's user configuration, including Cursor's `.cursor/mcp.json`, while preserving existing servers.
 - Made revised conversational workflow reviews transactional so failed previews preserve the previously approved candidate and registry state.
