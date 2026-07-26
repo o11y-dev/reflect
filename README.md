@@ -8,7 +8,7 @@
 
 <p align="center">
   <strong>Evidence, Not Vibes.</strong><br>
-  Developer-controlled improvement for AI coding agents, grounded in local evidence.
+  Evidence-backed improvement for AI agent work across teams.
 </p>
 
 <p align="center">
@@ -25,9 +25,9 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-Reflect is the local-first improvement loop for developers working with AI coding agents. It shows where agents fail, stall, repeat work, lose context, or burn budget; helps your agent explain that evidence in the conversation; preserves successful procedures as reviewable workflows and skills; and measures whether later sessions improve.
+Reflect is the local-first improvement loop for AI coding agents and the work around them. It shows where agents fail, stall, repeat work, lose context, or burn budget; turns that evidence into better procedures, reviewable workflows, and reusable skills; and measures whether later sessions improve.
 
-Ask through your agent for the immediate answer. Open the Reflect UI for the visual overview, source evidence, exact reviews, and measured impact. The developer decides what becomes reusable.
+Ask through your agent for immediate insight. Open the Reflect UI for the visual overview, source evidence, exact reviews, and measured impact. Each session can become evidence for a better procedure, a smarter capacity decision, or a reusable practice that scales across repositories, agents, and teams.
 
 No hosted backend. No Reflect account. Your telemetry and SQLite ledger stay on your machine.
 
@@ -107,11 +107,11 @@ reflect setup --agent "Claude Code" --local-agent "Claude Code"
 
 Local traces, logs, session data, and the report database live under `~/.reflect/state/` and supported agent-owned local stores. Reflect does not send them to a hosted Reflect service.
 
-## Developer-Controlled Improvement
+## From Personal Reflection to Organizational Improvement
 
-The everyday loop starts and ends with the developer:
+The loop begins with a question about real work and ends with a reviewed improvement:
 
-> Developer goal → agent work → Reflect evidence → developer review → approved workflow or skill → measured later sessions
+> Work goal → agent session → Reflect evidence → human review → approved workflow or skill → measured later sessions
 
 Ask through your agent for explanations, recommendations, and shareable summaries. Use the browser for the visual evidence and review path:
 
