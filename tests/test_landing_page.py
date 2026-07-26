@@ -56,16 +56,26 @@ def test_landing_page_has_task_oriented_scenario_tiles():
     text = _landing_text()
 
     assert text.count('class="scenario-card"') == 7
-    for command in (
-        "$reflect-usage Explain our budget need and what we should improve.",
-        "reflect --week",
-        "reflect improve",
-        "reflect loops build LOOP_ID --agent codex",
-        'reflect ask "How should I debug CI here?"',
-        'reflect memory search "release gate" .',
-        "reflect doctor",
+    assert text.count('class="scenario-prompt"') == 7
+    assert 'class="agent-syntax" data-agent-syntax' in text
+    assert 'data-agent-prefix="$" aria-pressed="true"' in text
+    assert 'data-agent-prefix="/" aria-pressed="false"' in text
+    assert "For other agents, choose Reflect from the skill picker." in text
+    assert text.count('data-reflect-skill="reflect"') == 5
+    assert text.count('data-reflect-skill="reflect-usage"') == 1
+    assert text.count('data-reflect-skill="reflect-skills"') == 1
+    for prompt in (
+        "Explain our AI budget need and what should improve.",
+        "Explain why this session stalled or failed.",
+        "Rank what we should improve first.",
+        "Find repeated behavior worth turning into a reusable skill.",
+        "Explain how an agent should work in this repository.",
+        "Find what we already learned about the release gate.",
+        "Check whether agent telemetry and integrations are healthy.",
     ):
-        assert command in text
+        assert prompt in text
+    assert "reflect --week" not in text
+    assert 'class="scenario-command"' not in text
     assert 'href="#scenarios"' in text
 
 
@@ -100,8 +110,12 @@ def test_landing_page_question_window_is_accessible_and_interactive():
     assert "Personal reflection" in text
     assert "Organizational reflection" in text
     assert text.count('aria-controls="answer-') == 6
-    assert text.count('aria-pressed="true"') == 1
-    assert text.count('aria-pressed="false"') == 5
+    prompt_states = re.findall(
+        r'<button class="agent-prompt-button[^"]*"[^>]*aria-pressed="(true|false)"',
+        text,
+    )
+    assert prompt_states.count("true") == 1
+    assert prompt_states.count("false") == 5
     assert 'aria-live="polite"' in text
     assert 'id="agent-active-question"' in text
     assert 'id="agent-typed-question"' in text
