@@ -8,14 +8,19 @@ from pathlib import Path
 import pytest
 
 from reflect.context import ReflectContextService
+from reflect.mcp_clients import local_mcp_agent_names
 from reflect.store.sqlite import connect_sqlite
 
 from .harness import (
+    AGENT_ADAPTERS,
     EFFECTIVENESS_QUESTION,
     AgentTestContext,
     ClaudeAdapter,
     CodexAdapter,
+    CopilotAdapter,
     CursorAdapter,
+    GeminiAdapter,
+    OpenCodeAdapter,
     effectiveness_task_prompt,
     extract_final_message,
     score_effectiveness,
@@ -98,6 +103,90 @@ def test_cursor_adapter_uses_temporary_workspace_config_and_ask_mode(
     assert not (baseline_workspace / ".cursor" / "mcp.json").exists()
 
 
+def test_gemini_adapter_uses_only_temporary_reflect_mcp(
+    context: AgentTestContext,
+) -> None:
+    command = GeminiAdapter().build(context)
+
+    assert "--allowed-mcp-server-names" in command.argv
+    assert "--skip-trust" in command.argv
+    config = json.loads(
+        (context.workspace / ".gemini" / "settings.json").read_text()
+    )
+    assert config["mcp"]["allowed"] == ["reflect"]
+    assert config["mcpServers"]["reflect"]["includeTools"] == [
+        "reflect_context",
+        "reflect_complete",
+    ]
+    assert config["mcpServers"]["reflect"]["env"]["REFLECT_DB_PATH"] == str(
+        context.db_path.resolve()
+    )
+
+    GeminiAdapter().build_baseline(context)
+    baseline = json.loads(
+        (context.workspace / ".gemini" / "settings.json").read_text()
+    )
+    assert baseline["mcp"]["allowed"] == ["reflect-disabled"]
+    assert "mcpServers" not in baseline
+
+
+def test_copilot_adapter_uses_session_scoped_mcp_and_final_text(
+    context: AgentTestContext,
+) -> None:
+    adapter = CopilotAdapter()
+    command = adapter.build(context)
+
+    assert "--disable-builtin-mcps" in command.argv
+    assert "--no-custom-instructions" in command.argv
+    assert "--additional-mcp-config" in command.argv
+    assert "--available-tools=reflect(reflect_context),reflect(reflect_complete)" in (
+        command.argv
+    )
+    config = json.loads((context.workspace / "copilot-mcp.json").read_text())
+    assert config["mcpServers"]["reflect"]["type"] == "local"
+    assert config["mcpServers"]["reflect"]["tools"] == [
+        "reflect_context",
+        "reflect_complete",
+    ]
+    assert config["mcpServers"]["reflect"]["env"]["REFLECT_DB_PATH"] == str(
+        context.db_path.resolve()
+    )
+    assert adapter.extract_final_message("  FINAL\n") == "FINAL"
+    baseline = adapter.build_baseline(context)
+    assert "--additional-mcp-config" not in baseline.argv
+    assert "--available-tools=reflect-disabled(noop)" in baseline.argv
+
+
+def test_opencode_adapter_disables_other_tools_and_uses_project_mcp(
+    context: AgentTestContext,
+) -> None:
+    adapter = OpenCodeAdapter()
+    command = adapter.build(context)
+
+    assert "--pure" in command.argv
+    assert "--dangerously-skip-permissions" in command.argv
+    config = json.loads((context.workspace / "opencode.json").read_text())
+    assert config["tools"] == {"*": False, "reflect_*": True}
+    assert config["permission"] == {"reflect_*": "allow"}
+    assert config["mcp"]["reflect"]["command"] == [
+        context.python_executable,
+        "-m",
+        "reflect.mcp",
+    ]
+    assert config["mcp"]["reflect"]["environment"]["REFLECT_DB_PATH"] == str(
+        context.db_path.resolve()
+    )
+
+    adapter.build_baseline(context)
+    baseline = json.loads((context.workspace / "opencode.json").read_text())
+    assert baseline["tools"] == {"*": False}
+    assert "mcp" not in baseline
+
+
+def test_local_adapter_inventory_matches_declared_headless_clients() -> None:
+    assert tuple(adapter.name for adapter in AGENT_ADAPTERS) == local_mcp_agent_names()
+
+
 def test_effectiveness_fixture_selects_the_approved_skill(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -119,6 +208,24 @@ def test_effectiveness_fixture_selects_the_approved_skill(tmp_path: Path) -> Non
     [
         (
             json.dumps({"type": "result", "result": "FINAL"}),
+            "FINAL",
+        ),
+        (
+            json.dumps({"response": "FINAL", "stats": {}}, indent=2),
+            "FINAL",
+        ),
+        (
+            "\n".join(
+                [
+                    json.dumps({"type": "step_start", "part": {"type": "step-start"}}),
+                    json.dumps(
+                        {
+                            "type": "text",
+                            "part": {"type": "text", "text": "FINAL"},
+                        }
+                    ),
+                ]
+            ),
             "FINAL",
         ),
         (

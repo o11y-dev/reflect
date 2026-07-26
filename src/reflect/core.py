@@ -140,6 +140,7 @@ from reflect.instrumentation import (
 from reflect.instrumentation import (
     _snapshot_detected_agent_configs as _instrumentation_snapshot_detected_agent_configs,
 )
+from reflect.mcp_clients import get_mcp_client_capability
 from reflect.models import AgentStats, TelemetryStats  # noqa: F401
 from reflect.parsing import (  # noqa: F401
     _canonical_otlp_traces_path,
@@ -464,9 +465,11 @@ def _agent_support_summary(name: str) -> dict[str, str]:
         ("Not implemented yet (setup only snapshots skills/config)", "Planned"),
     )
     status = "Implemented" if name in _IMPLEMENTED_AGENT_SUPPORT else "Planned"
+    mcp_client = get_mcp_client_capability(name)
     return {
         "support_status": status,
         "telemetry_path": telemetry_path,
+        "mcp_client": mcp_client.surface.value if mcp_client else "Not declared",
         "confidence": confidence,
     }
 
@@ -3529,6 +3532,21 @@ def _run_doctor() -> None:
             agent["confidence"],
         )
     console.print(Panel(integrations, title="Support matrix", border_style="green"))
+
+    mcp_clients = Table(box=box.SIMPLE, expand=True, show_header=True)
+    mcp_clients.add_column("Agent", style="bold cyan")
+    mcp_clients.add_column("Surface", no_wrap=True)
+    mcp_clients.add_column("Configuration")
+    for agent in matrix_agents:
+        capability = get_mcp_client_capability(agent["name"])
+        if capability is None:
+            continue
+        mcp_clients.add_row(
+            capability.agent_name,
+            capability.surface.value,
+            capability.config_surface,
+        )
+    console.print(Panel(mcp_clients, title="MCP client matrix", border_style="green"))
 
     action_line = "[bold]Next:[/] run [cyan]reflect setup[/] or enable native telemetry on a supported agent."
 

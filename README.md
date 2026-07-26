@@ -618,7 +618,27 @@ Register the installed stdio command with the agents you use:
 ```bash
 codex mcp add reflect -- reflect-mcp
 claude mcp add --scope user reflect -- reflect-mcp
+gemini mcp add --scope user reflect reflect-mcp
+copilot mcp add reflect -- reflect-mcp
 ```
+
+MCP client support is separate from telemetry ingestion support. Reflect declares
+the connection and local validation surface for every implemented agent:
+
+| Agent | Reflect MCP configuration | Local validation surface |
+|---|---|---|
+| Claude Code | `claude mcp` or `--mcp-config` | Headless CLI suite |
+| Cursor | `.cursor/mcp.json` | Headless CLI suite |
+| Gemini CLI | `.gemini/settings.json` | Headless CLI suite |
+| GitHub Copilot | `--additional-mcp-config` | Headless CLI suite |
+| OpenAI Codex CLI | `codex mcp` or inline config | Headless CLI suite |
+| OpenCode | `opencode.json` | Headless CLI suite |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | Editor configuration only |
+
+Windsurf can connect to the same stdio server through Cascade, but it is not
+included in the machine-only end-to-end suite because there is no supported
+headless Windsurf agent surface to exercise. Run `reflect doctor` to see the
+telemetry path and MCP client surface together.
 
 At the start of a non-trivial repository task, the `$reflect` skill calls `reflect_context` once after identifying the task and repository path and before implementation. The response includes a privacy-safe `task_run_id`, any selected skill version from an approved or active workflow, and an explicit `reflect_complete` follow-up. Selected skills expose one machine-readable `execution_state`: `follow_allowed` means the bounded instructions are complete, while `retrieve_full_instructions` requires the agent to call the supplied `reflect_explain` action before following the skill. Registry lifecycle and installation state remain separate. The agent calls `reflect_complete` after validation and before its final response. If the runtime session has not been ingested yet, normalization later reconciles the completed task, session outcome, and selected-skill usage idempotently. `reflect_task_status` reports that linkage without mutating it.
 

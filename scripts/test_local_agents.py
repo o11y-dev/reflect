@@ -9,7 +9,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-AGENTS = ("claude", "codex", "cursor")
+from reflect.mcp_clients import local_mcp_agent_names
+
+AGENTS = local_mcp_agent_names()
 SUITES = ("smoke", "effectiveness", "all")
 
 

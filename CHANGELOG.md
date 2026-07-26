@@ -8,7 +8,8 @@
 - Added a phased MCP agent-workflow plan covering agent-native inspection, conversational review and application, guidance coverage, and bounded self-improvement.
 - Added typed `reflect_skills`, `reflect_patterns`, and `reflect_task_status` inspection tools, plus loop and task-run provenance and bounded source-session and measurement evidence in `reflect_explain`.
 - Added approval-gated `reflect_review_change` and `reflect_apply_change` tools for interactive workflow approval, installation, revision, and rollback without requiring users to operate the CLI.
-- Added an opt-in, local-machine-only end-to-end suite that exercises the real Claude, Codex, and Cursor CLIs through the `reflect_context` and `reflect_complete` MCP lifecycle using isolated temporary state.
+- Added an explicit MCP client capability matrix for every implemented agent, with six headless CLI validation surfaces and an honest editor-config-only classification for Windsurf.
+- Expanded the opt-in, local-machine-only end-to-end suite to exercise the real Claude, Codex, Cursor, Gemini, GitHub Copilot, and OpenCode CLIs through the `reflect_context` and `reflect_complete` MCP lifecycle using isolated temporary state.
 - Added paired local effectiveness trials that compare baseline and Reflect-guided agents against an opaque policy task, scoring final-answer correctness and verifying selected-skill provenance instead of trusting self-reported success.
 
 ### Changed

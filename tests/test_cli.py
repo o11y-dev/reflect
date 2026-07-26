@@ -1923,9 +1923,12 @@ class TestDoctor:
         assert "Antigravity" in result.output
         assert "OpenClaw" in result.output
         assert "Windsurf" in result.output
+        assert "MCP client matrix" in result.output
+        assert "Editor config" in result.output
         assert core._agent_support_summary("Windsurf") == {
             "support_status": "Implemented",
             "telemetry_path": "Hook telemetry + config snapshots",
+            "mcp_client": "Editor config",
             "confidence": "Medium",
         }
         assert "Planned" in result.output
