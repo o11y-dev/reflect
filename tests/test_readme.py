@@ -21,7 +21,9 @@ def test_readme_has_current_quick_start_contract():
     assert "### Explore visually in the UI" in readme
     assert "Use Reflect to explain why this session was expensive" in readme
     assert "Use Reflect to prepare an internal AI budget increase request" in readme
-    assert "Developer-controlled improvement for AI coding agents" in readme
+    assert "Evidence-backed improvement for AI agent work across teams" in readme
+    assert "From Personal Reflection to Organizational Improvement" in readme
+    assert "human review" in readme
 
 
 def test_readme_explains_current_product_surfaces():
