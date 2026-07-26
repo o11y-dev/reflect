@@ -42,12 +42,13 @@ def test_landing_page_has_clear_product_and_conversion_path():
     assert "Private by Default. Developer-Controlled by Design." in text
     assert "From Install to Agent-Ready Evidence in 60 Seconds." in text
     assert "Explore the Live Dashboard" in text
-    assert "Ask through your agent, review the evidence in the UI" in text
+    assert "Ask through your agent, review the exact local evidence in Reflect" in text
     assert "Decide What Becomes Reusable." in text
     assert "six read-only MCP inspection tools, and approval-gated changes" in text
     assert "optional memory providers such as OMEGA" in text
     assert "Bring Your Memory Provider." in text
     assert "Use Reflect Where You Already Work." in text
+    assert "Why Did My AI Coding Agent Hit Its Token Limit or Fail?" in text
     assert "Ask Through Your Agent. See the Evidence in Reflect." in text
 
 
@@ -66,6 +67,25 @@ def test_landing_page_has_task_oriented_scenario_tiles():
     ):
         assert command in text
     assert 'href="#scenarios"' in text
+
+
+def test_landing_page_answers_developer_search_questions():
+    text = _landing_text()
+
+    assert text.count('class="question-card"') == 6
+    for question in (
+        "Why did my AI coding agent hit its token budget limit?",
+        "Why did this AI coding session fail?",
+        "Where did my Claude Code, Codex, Cursor, or Copilot tokens and cost go?",
+        "How can I reduce AI agent cost without reducing useful work?",
+        "How can I improve AI coding agent performance from past sessions?",
+        "How can I justify a larger AI coding budget?",
+    ):
+        assert f"<h3>{question}</h3>" in text
+    assert "When the evidence cannot prove an exact cause" in text
+    assert "Cost is shown only where model-pricing evidence is recognized." in text
+    assert '<meta name="keywords"' not in text
+    assert 'href="#questions"' in text
 
 
 def test_landing_page_lists_every_memory_provider_with_honest_support_levels():
@@ -175,7 +195,8 @@ def test_landing_page_meets_static_accessibility_contracts():
 def test_landing_page_has_complete_social_and_structured_metadata():
     text = _landing_text()
 
-    assert "Developer-Controlled Improvement for AI Coding Agents" in text
+    assert "AI Coding Agent Token Usage &amp; Failure Analysis" in text
+    assert "why an AI coding agent hit its token limit" in text
     assert '<meta property="og:image" content="https://reflect.o11y.dev/og-image-v2.png">' in text
     assert '<meta property="og:image:type" content="image/png">' in text
     assert '<meta property="og:image:width" content="1200">' in text
@@ -185,6 +206,23 @@ def test_landing_page_has_complete_social_and_structured_metadata():
     assert '<meta name="twitter:image:alt"' in text
     assert '"@type": "SoftwareApplication"' in text
     assert '"license": "https://www.apache.org/licenses/LICENSE-2.0"' in text
+
+    metadata_match = re.search(
+        r'<script type="application/ld\+json">\s*(.*?)\s*</script>',
+        text,
+        re.DOTALL,
+    )
+    assert metadata_match is not None
+    metadata = json.loads(metadata_match.group(1))
+    graph = metadata["@graph"]
+    faq = next(node for node in graph if node["@type"] == "FAQPage")
+    assert len(faq["mainEntity"]) == 6
+    assert all(
+        item["@type"] == "Question"
+        and item["acceptedAnswer"]["@type"] == "Answer"
+        and item["acceptedAnswer"]["text"] in text
+        for item in faq["mainEntity"]
+    )
 
 
 def test_landing_page_social_image_is_shipped_at_declared_dimensions():
