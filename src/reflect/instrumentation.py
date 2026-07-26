@@ -12,7 +12,7 @@ from pathlib import Path
 from reflect.parsing import _canonical_otlp_traces_path
 from reflect.utils import _json_loads
 
-_HOOK_PACKAGE_SPEC = "opentelemetry-hooks==0.11.0"
+_HOOK_PACKAGE_SPEC = "opentelemetry-hooks"
 _HOOK_CFG_ENDPOINT_KEY = "OTEL_EXPORTER_OTLP_ENDPOINT"
 _HOOK_CFG_ENDPOINT_DEFAULT = "http://localhost:4317"
 _HOOK_CFG_PROTOCOL_KEY = "OTEL_EXPORTER_OTLP_PROTOCOL"
@@ -770,23 +770,50 @@ def _run_setup(
         console.print("\n[bold]Step 2: Snapshot detected agent configs[/]")
         _snapshot_detected_agent_configs(console, detected_agents, reflect_home=reflect_home)
 
-    console.print("\n[bold]Step 3: Install or verify opentelemetry-hooks[/]")
+    console.print("\n[bold]Step 3: Install or upgrade opentelemetry-hooks[/]")
+    pipx = shutil.which("pipx")
     otel_hook = shutil.which("otel-hook")
-    if otel_hook:
-        console.print(f"  [green]✓[/] opentelemetry-hooks already installed ({otel_hook})")
-    else:
-        console.print("  [yellow]•[/] Installing opentelemetry-hooks via pipx...")
+    if pipx:
+        console.print("  [yellow]•[/] Installing or upgrading opentelemetry-hooks via pipx...")
         try:
             subprocess.check_call(
-                ["pipx", "install", _HOOK_PACKAGE_SPEC],
+                [pipx, "upgrade", "--install", _HOOK_PACKAGE_SPEC],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            otel_hook = shutil.which("otel-hook")
-            console.print(f"  [green]✓[/] Installed opentelemetry-hooks ({otel_hook})")
+            otel_hook = shutil.which("otel-hook") or otel_hook
+            if otel_hook:
+                console.print(f"  [green]✓[/] opentelemetry-hooks ready ({otel_hook})")
+            else:
+                console.print(
+                    "  [yellow]•[/] pipx completed, but otel-hook is not on PATH yet"
+                )
         except (subprocess.CalledProcessError, FileNotFoundError) as exc:
-            console.print(f"  [red]✗[/] Failed to install opentelemetry-hooks: {exc}")
-            console.print(f"    Install manually: [bold]pipx install {_HOOK_PACKAGE_SPEC}[/]")
+            if otel_hook:
+                console.print(
+                    "  [yellow]•[/] Could not upgrade opentelemetry-hooks; "
+                    f"continuing with the existing command ({otel_hook}): {exc}"
+                )
+            else:
+                console.print(f"  [red]✗[/] Failed to install opentelemetry-hooks: {exc}")
+                console.print(
+                    "    Install manually: "
+                    f"[bold]pipx upgrade --install {_HOOK_PACKAGE_SPEC}[/]"
+                )
+    elif otel_hook:
+        console.print(
+            "  [yellow]•[/] opentelemetry-hooks is installed, but pipx is unavailable; "
+            f"version was not checked ({otel_hook})"
+        )
+        console.print(
+            "    Upgrade manually when pipx is available: "
+            f"[bold]pipx upgrade --install {_HOOK_PACKAGE_SPEC}[/]"
+        )
+    else:
+        console.print("  [red]✗[/] pipx and otel-hook are not available")
+        console.print(
+            f"    Install manually: [bold]pipx upgrade --install {_HOOK_PACKAGE_SPEC}[/]"
+        )
 
     console.print("\n[bold]Step 4: Configure local telemetry export[/]")
     config_path = hook_home / "otel_config.json"
@@ -897,7 +924,9 @@ def _run_setup(
             console.print("  [yellow]•[/] No selected agents have hook setup support.")
     else:
         console.print("  [yellow]•[/] otel-hook not found; skipping hook-based agent wiring")
-        console.print(f"    Install first: [bold]pipx install {_HOOK_PACKAGE_SPEC}[/]")
+        console.print(
+            f"    Install first: [bold]pipx upgrade --install {_HOOK_PACKAGE_SPEC}[/]"
+        )
 
     console.print("\n[bold]Step 6: Enable native OTel (Claude Code, Copilot, Gemini, Codex)[/]")
     def selected(agent_name: str) -> bool:

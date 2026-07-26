@@ -38,7 +38,7 @@ pipx install o11y-reflect
 reflect setup
 ```
 
-`reflect setup` detects supported agents, asks which ones to connect, starts the local OTLP gateway, configures verified telemetry paths, and installs Reflect's agent skills. Use your coding agents normally for a few sessions, then open the local report:
+`reflect setup` detects supported agents, asks which ones to connect, installs or upgrades `opentelemetry-hooks` through pipx, starts the local OTLP gateway, configures verified telemetry paths, and installs Reflect's agent skills. Re-running setup refreshes the hook package before rewiring agents. Use your coding agents normally for a few sessions, then open the local report:
 
 ```bash
 reflect doctor

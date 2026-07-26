@@ -2062,6 +2062,50 @@ class TestSetup:
         assert "native OTel" in result.output
         assert "Gemini" in result.output
 
+    def test_setup_upgrades_or_installs_hooks_before_wiring(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        home_dir = tmp_path / "home"
+        claude_home = home_dir / ".claude"
+        claude_home.mkdir(parents=True)
+
+        def executable(name: str) -> str | None:
+            return {
+                "pipx": "/usr/local/bin/pipx",
+                "otel-hook": "/usr/local/bin/otel-hook",
+            }.get(name)
+
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", side_effect=executable), \
+             patch("reflect.core.subprocess.check_call") as check_call, \
+             patch("reflect.core._distribute_skills"), \
+             patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
+            result = runner.invoke(main, ["setup", "--agent", "Claude Code"])
+
+        assert result.exit_code == 0
+        upgrade_call = call(
+            [
+                "/usr/local/bin/pipx",
+                "upgrade",
+                "--install",
+                "opentelemetry-hooks",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        hook_setup_call = call(
+            ["/usr/local/bin/otel-hook", "setup", "--global", "--agent", "claude"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        assert upgrade_call in check_call.call_args_list
+        assert hook_setup_call in check_call.call_args_list
+        assert check_call.call_args_list.index(upgrade_call) < check_call.call_args_list.index(
+            hook_setup_call
+        )
+        assert "opentelemetry-hooks ready" in result.output
+
     def test_setup_can_select_single_agent_non_interactively(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
         hook_home = tmp_path / ".otel-hook-home"

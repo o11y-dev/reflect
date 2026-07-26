@@ -22,6 +22,7 @@
 
 ### Fixed
 
+- Made every `reflect setup` run install or upgrade the pipx-managed `opentelemetry-hooks` package before rewiring agents, and removed the stale `0.11.0` fresh-install pin.
 - Made revised conversational workflow reviews transactional so failed previews preserve the previously approved candidate and registry state.
 - Tightened local effectiveness scoring to validate exact route, verification, and rejection field assignments instead of accepting value presence alone.
 - Updated the public landing-page release fallback to match the current package version.
