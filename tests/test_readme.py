@@ -17,6 +17,11 @@ def test_readme_has_current_quick_start_contract():
     assert "reflect doctor" in readme
     assert "reflect\n```" in readme
     assert "reflect --demo" in readme
+    assert "### Ask through your agent" in readme
+    assert "### Explore visually in the UI" in readme
+    assert "Use Reflect to explain why this session was expensive" in readme
+    assert "Use Reflect to prepare an internal AI budget increase request" in readme
+    assert "Developer-controlled improvement for AI coding agents" in readme
 
 
 def test_readme_explains_current_product_surfaces():
