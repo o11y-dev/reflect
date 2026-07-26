@@ -8,7 +8,7 @@
 - Prevented local native transcripts from duplicating sessions already normalized from native OTLP telemetry.
 - Scoped session-level `reflect usage --refresh` native imports to the explicit or active runtime session instead of scanning unrelated session history.
 
-## 0.9.2 (unreleased)
+## 0.9.2 (2026-07-26)
 
 ### Added
 
