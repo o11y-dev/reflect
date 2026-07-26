@@ -159,6 +159,7 @@ from reflect.parsing import (  # noqa: F401
     _load_json_lines,
     _load_otlp_logs,
     _load_otlp_traces,
+    _native_session_path_matches_id,
 )
 from reflect.processing import _process_span, analyze_telemetry  # noqa: F401
 from reflect.report import render_report  # noqa: F401
@@ -1140,6 +1141,7 @@ def _prepare_usage_db(
     *,
     otlp_traces: Path | None,
     include_native_sessions: bool,
+    native_session_ids: tuple[str, ...] = (),
 ) -> None:
     """Refresh usage facts without rebuilding graph or improvement state."""
     from reflect.store.cursor_adapter import apply_cursor_transcript_usage_estimates
@@ -1150,7 +1152,7 @@ def _prepare_usage_db(
     )
     from reflect.store.migrate import migrate
     from reflect.store.normalize import backfill_mcp_calls, normalize_pending_raw_events
-    from reflect.store.rollups import rebuild_rollups, refresh_rollups
+    from reflect.store.rollups import rebuild_rollups, refresh_rollups, rollup_rebuild_pending
     from reflect.store.sqlite import connect_sqlite
     from reflect.store.workspaces import backfill_session_context
 
@@ -1172,6 +1174,11 @@ def _prepare_usage_db(
         cursor_native_files: list[Path] = []
         if include_native_sessions:
             for native_agent, session_file in _discover_rich_session_files():
+                if native_session_ids and not any(
+                    _native_session_path_matches_id(session_file, candidate)
+                    for candidate in native_session_ids
+                ):
+                    continue
                 result = ingest_native_session_file(
                     conn,
                     file_path=session_file,
@@ -1200,7 +1207,11 @@ def _prepare_usage_db(
         )
         session_count = int(conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0])
         rollup_count = int(conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0])
-        if session_count != rollup_count or cursor_result.get("updated"):
+        if (
+            rollup_rebuild_pending(conn)
+            or session_count != rollup_count
+            or cursor_result.get("updated")
+        ):
             _ensure_sql_costs(conn)
             rebuild_rollups(conn)
         elif changed_session_ids or context_result["sessions_updated"]:
@@ -1241,6 +1252,7 @@ def usage(
 ) -> None:
     """Show exact local usage for the current session or a global period."""
     from reflect.store.migrate import migrate
+    from reflect.store.rollups import rollup_rebuild_pending
     from reflect.store.sqlite import connect_sqlite
     from reflect.usage import UsageService
 
@@ -1253,13 +1265,21 @@ def usage(
     try:
         migrate(conn)
         has_sessions = conn.execute("SELECT 1 FROM sessions LIMIT 1").fetchone() is not None
+        runtime_hints = UsageService(conn).runtime_session_hints()
+        reconciled_legacy_data = rollup_rebuild_pending(conn)
     finally:
         conn.close()
-    if refresh or not has_sessions:
+    if refresh or not has_sessions or reconciled_legacy_data:
         _prepare_usage_db(
             db_path,
             otlp_traces=_default_otlp_traces(),
             include_native_sessions=True,
+            native_session_ids=(
+                ()
+                if global_scope
+                else (session_id,) if session_id
+                else tuple(hint.session_id for hint in runtime_hints)
+            ),
         )
 
     conn = connect_sqlite(db_path)
@@ -4234,7 +4254,7 @@ def _prepare_sql_report_db(
         backfill_tool_call_hashes,
         normalize_pending_raw_events,
     )
-    from reflect.store.rollups import rebuild_rollups, refresh_rollups
+    from reflect.store.rollups import rebuild_rollups, refresh_rollups, rollup_rebuild_pending
     from reflect.store.sqlite import connect_sqlite
     from reflect.store.workspaces import backfill_session_context
 
@@ -4342,6 +4362,7 @@ def _prepare_sql_report_db(
         session_count = int(conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0])
         rollup_count = int(conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0])
         graph_count = int(conn.execute("SELECT COUNT(*) FROM graph_nodes").fetchone()[0])
+        reconciled_legacy_data = rollup_rebuild_pending(conn)
         canonical_changed = bool(
             normalize_result["processed"]
             or mcp_backfill_result["inserted"]
@@ -4358,7 +4379,11 @@ def _prepare_sql_report_db(
             and 0 < len(changed_session_ids) <= 400
             and not cursor_adapter_result["updated"]
         )
-        if derived_state_missing or (canonical_changed and not incremental_refresh):
+        if (
+            reconciled_legacy_data
+            or derived_state_missing
+            or (canonical_changed and not incremental_refresh)
+        ):
             _ensure_sql_costs(conn)
             graph_result = rebuild_graph(conn)
             rollup_result = rebuild_rollups(conn)

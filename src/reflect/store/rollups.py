@@ -5,9 +5,26 @@ from datetime import UTC, datetime
 
 from reflect.store.normalize import refresh_all_session_statuses, refresh_session_statuses
 
+CODEX_DESKTOP_ROLLUP_REBUILD_TASK = "rebuild_rollups_after_codex_desktop_otel"
+
 
 def _now() -> str:
     return datetime.now(tz=UTC).isoformat()
+
+
+def rollup_rebuild_pending(conn: sqlite3.Connection) -> bool:
+    try:
+        return (
+            conn.execute(
+                "SELECT 1 FROM maintenance_tasks WHERE task = ?",
+                (CODEX_DESKTOP_ROLLUP_REBUILD_TASK,),
+            ).fetchone()
+            is not None
+        )
+    except sqlite3.OperationalError as exc:
+        if "no such table" not in str(exc).lower():
+            raise
+        return False
 
 
 def rebuild_rollups(conn: sqlite3.Connection) -> dict[str, int]:
@@ -143,6 +160,11 @@ def rebuild_rollups(conn: sqlite3.Connection) -> dict[str, int]:
         (timestamp,),
     )
 
+    if rollup_rebuild_pending(conn):
+        conn.execute(
+            "DELETE FROM maintenance_tasks WHERE task = ?",
+            (CODEX_DESKTOP_ROLLUP_REBUILD_TASK,),
+        )
     conn.commit()
     return {
         "session_rollups": conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0],

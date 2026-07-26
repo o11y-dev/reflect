@@ -3,7 +3,12 @@ import json
 from reflect.store.ingest import ingest_local_spans_file
 from reflect.store.migrate import migrate
 from reflect.store.normalize import normalize_pending_raw_events
-from reflect.store.rollups import rebuild_rollups, refresh_rollups
+from reflect.store.rollups import (
+    CODEX_DESKTOP_ROLLUP_REBUILD_TASK,
+    rebuild_rollups,
+    refresh_rollups,
+    rollup_rebuild_pending,
+)
 from reflect.store.sqlite import connect_sqlite
 
 
@@ -127,6 +132,27 @@ def test_rebuild_rollups_from_canonical_tables(tmp_path):
             "SELECT tool_name, call_count, success_count, error_count, total_duration_ms FROM tool_rollups"
         ).fetchone()
         assert tool == ("Read", 2, 1, 1, 300)
+    finally:
+        conn.close()
+
+
+def test_rebuild_rollups_clears_pending_maintenance_task(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO maintenance_tasks(task, requested_at)
+            VALUES (?, '2026-07-26T00:00:00+00:00')
+            """,
+            (CODEX_DESKTOP_ROLLUP_REBUILD_TASK,),
+        )
+
+        assert rollup_rebuild_pending(conn)
+
+        rebuild_rollups(conn)
+
+        assert not rollup_rebuild_pending(conn)
     finally:
         conn.close()
 

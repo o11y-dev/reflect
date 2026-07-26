@@ -6,11 +6,29 @@ from datetime import UTC, datetime, timedelta
 from click.testing import CliRunner
 
 from reflect.core import _prepare_usage_db, main
-from reflect.store.migrate import migrate
+from reflect.store.migrate import load_migrations, migrate
 from reflect.store.sqlite import connect_sqlite
 from reflect.usage import UsageService
 
 NOW = datetime(2026, 7, 19, 12, 0, tzinfo=UTC)
+
+
+def _write_codex_session(path, session_id: str, *, timestamp: str) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "timestamp": timestamp,
+                "type": "session_meta",
+                "payload": {
+                    "id": session_id,
+                    "cwd": str(path.parent),
+                    "model": "gpt-5.6-sol",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def _open_db(path):
@@ -337,6 +355,162 @@ def test_usage_refresh_skips_native_discovery_when_store_has_sessions(tmp_path, 
     )
 
     _prepare_usage_db(db_path, otlp_traces=None, include_native_sessions=False)
+
+
+def test_usage_refresh_ingests_only_the_runtime_native_session(tmp_path, monkeypatch):
+    db_path = tmp_path / "reflect.db"
+    old_session = tmp_path / "rollout-session-old.jsonl"
+    runtime_session = tmp_path / "rollout-session-runtime.jsonl"
+    prefix_collision = tmp_path / "rollout-session-runtime-extra.jsonl"
+    _write_codex_session(
+        old_session,
+        "session-old",
+        timestamp="2026-07-18T10:00:00Z",
+    )
+    _write_codex_session(
+        runtime_session,
+        "session-runtime",
+        timestamp="2026-07-19T10:00:00Z",
+    )
+    _write_codex_session(
+        prefix_collision,
+        "session-prefix-collision",
+        timestamp="2026-07-19T09:00:00Z",
+    )
+    monkeypatch.setattr(
+        "reflect.core._discover_rich_session_files",
+        lambda: [
+            ("codex", old_session),
+            ("codex", runtime_session),
+            ("codex", prefix_collision),
+        ],
+    )
+    monkeypatch.setattr("reflect.core._default_otlp_traces", lambda: None)
+    monkeypatch.setenv("REFLECT_SESSION_ID", "session-stale")
+    monkeypatch.setenv("CODEX_THREAD_ID", "session-runtime")
+
+    result = CliRunner().invoke(
+        main,
+        ["usage", "--refresh", "--json", "--db-path", str(db_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["session"]["id"] == "session-runtime"
+    conn = connect_sqlite(db_path)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 1
+        assert conn.execute("SELECT id FROM sessions").fetchone()[0] == "session-runtime"
+    finally:
+        conn.close()
+
+
+def test_usage_rebuilds_rollups_after_codex_desktop_migration(tmp_path, monkeypatch):
+    db_path = tmp_path / "reflect.db"
+    conn = connect_sqlite(db_path)
+    try:
+        for migration in load_migrations():
+            if migration.version > 18:
+                break
+            conn.executescript(migration.sql)
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO schema_migrations(version, name, applied_at)
+                VALUES (?, ?, '2026-07-26T00:00:00+00:00')
+                """,
+                (migration.version, migration.name),
+            )
+        conn.execute(
+            """
+            INSERT INTO agents(id, name, kind, raw_json, created_at, updated_at)
+            VALUES ('codex', 'codex', 'cli', '{}', ?, ?)
+            """,
+            (NOW.isoformat(), NOW.isoformat()),
+        )
+        _seed_session(conn, "session-current")
+        conn.execute(
+            """
+            INSERT INTO agents(id, name, kind, raw_json, created_at, updated_at)
+            VALUES ('codex-desktop', 'Codex Desktop', 'native', '{}', ?, ?)
+            """,
+            (NOW.isoformat(), NOW.isoformat()),
+        )
+        conn.execute(
+            """
+            INSERT INTO sessions(
+              id, agent_id, started_at, status, source_kind, source_ref,
+              created_at, updated_at
+            ) VALUES (
+              'session-noisy', 'codex-desktop', ?, 'ok', 'otlp_traces_json',
+              '/tmp/otel-traces.json', ?, ?
+            )
+            """,
+            (NOW.isoformat(), NOW.isoformat(), NOW.isoformat()),
+        )
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status, raw_attrs_json,
+              created_at, updated_at
+            ) VALUES (
+              'step-noisy', 'session-noisy', 1, 'FramedRead::poll_next', ?,
+              'ok', '{"service.name":"Codex Desktop","code.module.name":"h2::codec"}',
+              ?, ?
+            )
+            """,
+            (NOW.isoformat(), NOW.isoformat(), NOW.isoformat()),
+        )
+        conn.execute("DELETE FROM daily_rollups")
+        conn.execute("DELETE FROM tool_rollups")
+        conn.execute(
+            """
+            INSERT INTO daily_rollups(
+              day, agent, session_count, prompt_count, updated_at
+            ) VALUES ('2026-07-19', 'Codex Desktop', 1, 99, ?)
+            """,
+            (NOW.isoformat(),),
+        )
+        conn.execute(
+            """
+            INSERT INTO tool_rollups(
+              tool_name, agent, call_count, success_count, updated_at
+            ) VALUES ('stale_tool', 'Codex Desktop', 99, 99, ?)
+            """,
+            (NOW.isoformat(),),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    conn = connect_sqlite(db_path)
+    try:
+        assert migrate(conn) == [19]
+    finally:
+        conn.close()
+    monkeypatch.setattr("reflect.core._default_otlp_traces", lambda: None)
+    monkeypatch.setattr("reflect.core._discover_rich_session_files", lambda: [])
+
+    result = CliRunner().invoke(
+        main,
+        ["usage", "--session", "session-current", "--json", "--db-path", str(db_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    conn = connect_sqlite(db_path)
+    try:
+        assert conn.execute(
+            "SELECT agent FROM daily_rollups"
+        ).fetchone()[0] == "codex"
+        assert conn.execute(
+            "SELECT tool_name FROM tool_rollups"
+        ).fetchone()[0] == "exec_command"
+        assert conn.execute(
+            """
+            SELECT COUNT(*) FROM maintenance_tasks
+            WHERE task = 'rebuild_rollups_after_codex_desktop_otel'
+            """
+        ).fetchone()[0] == 0
+    finally:
+        conn.close()
 
 
 def test_usage_cli_rejects_conflicting_scopes():
