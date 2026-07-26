@@ -112,6 +112,11 @@ class AgentAdapter(ABC):
     def build_baseline(self, context: AgentTestContext) -> AgentCommand:
         """Return an equivalent invocation with no test-scoped Reflect MCP server."""
 
+    def extract_final_message(self, stdout: str) -> str:
+        """Extract the final answer from this client's structured output."""
+
+        return extract_final_message(stdout)
+
 
 class ClaudeAdapter(AgentAdapter):
     name = "claude"
@@ -292,10 +297,193 @@ class CursorAdapter(AgentAdapter):
         )
 
 
+class GeminiAdapter(AgentAdapter):
+    name = "gemini"
+    executable_name = "gemini"
+
+    @staticmethod
+    def _write_settings(context: AgentTestContext, *, with_reflect: bool) -> None:
+        config_dir = context.workspace / ".gemini"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        settings: dict[str, object] = {
+            "mcp": {"allowed": ["reflect"] if with_reflect else ["reflect-disabled"]},
+        }
+        if with_reflect:
+            settings["mcpServers"] = {
+                "reflect": {
+                    **context.stdio_server,
+                    "trust": True,
+                    "includeTools": ["reflect_context", "reflect_complete"],
+                }
+            }
+        (config_dir / "settings.json").write_text(
+            json.dumps(settings),
+            encoding="utf-8",
+        )
+
+    def build(self, context: AgentTestContext) -> AgentCommand:
+        self._write_settings(context, with_reflect=True)
+        return AgentCommand(
+            argv=(
+                context.executable,
+                "--prompt",
+                context.prompt,
+                "--output-format",
+                "json",
+                "--approval-mode",
+                "default",
+                "--skip-trust",
+                "--allowed-mcp-server-names",
+                "reflect",
+            ),
+            cwd=context.workspace,
+        )
+
+    def build_baseline(self, context: AgentTestContext) -> AgentCommand:
+        self._write_settings(context, with_reflect=False)
+        return AgentCommand(
+            argv=(
+                context.executable,
+                "--prompt",
+                context.prompt,
+                "--output-format",
+                "json",
+                "--approval-mode",
+                "default",
+                "--skip-trust",
+            ),
+            cwd=context.workspace,
+        )
+
+
+class CopilotAdapter(AgentAdapter):
+    name = "copilot"
+    executable_name = "copilot"
+
+    @staticmethod
+    def _base_argv(context: AgentTestContext) -> tuple[str, ...]:
+        return (
+            context.executable,
+            "--prompt",
+            context.prompt,
+            "--silent",
+            "--output-format",
+            "text",
+            "--stream",
+            "off",
+            "--effort",
+            "low",
+            "--disable-builtin-mcps",
+            "--no-custom-instructions",
+            "--no-ask-user",
+            "--no-remote",
+            "--no-remote-export",
+            "--allow-all-tools",
+            "-C",
+            str(context.workspace),
+        )
+
+    def build(self, context: AgentTestContext) -> AgentCommand:
+        config_path = context.workspace / "copilot-mcp.json"
+        server = {
+            "type": "local",
+            **context.stdio_server,
+            "tools": ["reflect_context", "reflect_complete"],
+        }
+        config_path.write_text(
+            json.dumps({"mcpServers": {"reflect": server}}),
+            encoding="utf-8",
+        )
+        return AgentCommand(
+            argv=(
+                *self._base_argv(context),
+                "--additional-mcp-config",
+                f"@{config_path}",
+                "--available-tools=reflect(reflect_context),reflect(reflect_complete)",
+            ),
+            cwd=context.workspace,
+        )
+
+    def build_baseline(self, context: AgentTestContext) -> AgentCommand:
+        return AgentCommand(
+            argv=(
+                *self._base_argv(context),
+                "--available-tools=reflect-disabled(noop)",
+            ),
+            cwd=context.workspace,
+        )
+
+    def extract_final_message(self, stdout: str) -> str:
+        """Copilot's silent text mode emits only the final agent response."""
+
+        return stdout.strip()
+
+
+class OpenCodeAdapter(AgentAdapter):
+    name = "opencode"
+    executable_name = "opencode"
+
+    @staticmethod
+    def _write_config(context: AgentTestContext, *, with_reflect: bool) -> None:
+        config: dict[str, object] = {
+            "$schema": "https://opencode.ai/config.json",
+            "tools": {
+                "*": False,
+                **({"reflect_*": True} if with_reflect else {}),
+            },
+        }
+        if with_reflect:
+            server = context.stdio_server
+            config["mcp"] = {
+                "reflect": {
+                    "type": "local",
+                    "command": [
+                        str(server["command"]),
+                        *[str(arg) for arg in server["args"]],
+                    ],
+                    "enabled": True,
+                    "environment": server["env"],
+                }
+            }
+            config["permission"] = {"reflect_*": "allow"}
+        (context.workspace / "opencode.json").write_text(
+            json.dumps(config),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _command(context: AgentTestContext) -> AgentCommand:
+        return AgentCommand(
+            argv=(
+                context.executable,
+                "run",
+                "--pure",
+                "--format",
+                "json",
+                "--dir",
+                str(context.workspace),
+                "--dangerously-skip-permissions",
+                context.prompt,
+            ),
+            cwd=context.workspace,
+        )
+
+    def build(self, context: AgentTestContext) -> AgentCommand:
+        self._write_config(context, with_reflect=True)
+        return self._command(context)
+
+    def build_baseline(self, context: AgentTestContext) -> AgentCommand:
+        self._write_config(context, with_reflect=False)
+        return self._command(context)
+
+
 AGENT_ADAPTERS: tuple[AgentAdapter, ...] = (
     ClaudeAdapter(),
-    CodexAdapter(),
     CursorAdapter(),
+    GeminiAdapter(),
+    CopilotAdapter(),
+    CodexAdapter(),
+    OpenCodeAdapter(),
 )
 
 
@@ -326,6 +514,12 @@ def extract_final_message(stdout: str) -> str:
     """Extract only the final assistant message from supported JSON output formats."""
 
     messages: list[str] = []
+    try:
+        document = json.loads(stdout)
+    except json.JSONDecodeError:
+        document = None
+    if isinstance(document, dict) and isinstance(document.get("response"), str):
+        messages.append(str(document["response"]))
     for line in stdout.splitlines():
         try:
             payload = json.loads(line)
@@ -348,6 +542,14 @@ def extract_final_message(stdout: str) -> str:
                 if isinstance(payload.get(key), str):
                     messages.append(str(payload[key]))
                     break
+        part = payload.get("part")
+        if (
+            payload.get("type") == "text"
+            and isinstance(part, dict)
+            and part.get("type") == "text"
+            and isinstance(part.get("text"), str)
+        ):
+            messages.append(str(part["text"]))
     return messages[-1].strip() if messages else ""
 
 

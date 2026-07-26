@@ -1,4 +1,4 @@
-"""Opt-in end-to-end tests using real Claude, Codex, and Cursor CLIs."""
+"""Opt-in end-to-end tests using real MCP-capable agent CLIs."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from .harness import (
     SUCCESS_MARKER,
     AgentAdapter,
     AgentTestContext,
-    extract_final_message,
     read_completed_task,
     run_agent,
 )
@@ -29,7 +28,10 @@ pytestmark = [
 
 
 def _selected_agents() -> set[str]:
-    raw = os.environ.get("REFLECT_LOCAL_AGENT_E2E_AGENTS", "claude,codex,cursor")
+    raw = os.environ.get(
+        "REFLECT_LOCAL_AGENT_E2E_AGENTS",
+        ",".join(adapter.name for adapter in AGENT_ADAPTERS),
+    )
     return {item.strip().lower() for item in raw.split(",") if item.strip()}
 
 
@@ -67,7 +69,7 @@ def test_real_agent_completes_reflect_mcp_lifecycle(
         pytest.fail(f"{adapter.name} timed out after {exc.timeout}s")
 
     assert result.returncode == 0, result.diagnostic()
-    assert extract_final_message(result.stdout) == SUCCESS_MARKER, result.diagnostic()
+    assert adapter.extract_final_message(result.stdout) == SUCCESS_MARKER, result.diagnostic()
 
     task = read_completed_task(db_path)
     assert task is not None, result.diagnostic()

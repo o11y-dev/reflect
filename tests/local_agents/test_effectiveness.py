@@ -15,7 +15,6 @@ from .harness import (
     AgentTestContext,
     effectiveness_guided_prompt,
     effectiveness_task_prompt,
-    extract_final_message,
     read_completed_task,
     read_task_selection,
     run_agent,
@@ -33,7 +32,10 @@ pytestmark = [
 
 
 def _selected_agents() -> set[str]:
-    raw = os.environ.get("REFLECT_LOCAL_AGENT_E2E_AGENTS", "claude,codex,cursor")
+    raw = os.environ.get(
+        "REFLECT_LOCAL_AGENT_E2E_AGENTS",
+        ",".join(adapter.name for adapter in AGENT_ADAPTERS),
+    )
     return {item.strip().lower() for item in raw.split(",") if item.strip()}
 
 
@@ -71,7 +73,7 @@ def test_reflect_guidance_improves_policy_adherence(
     except subprocess.TimeoutExpired as exc:
         pytest.fail(f"{adapter.name} baseline timed out after {exc.timeout}s")
     assert baseline.returncode == 0, baseline.diagnostic()
-    baseline_message = extract_final_message(baseline.stdout)
+    baseline_message = adapter.extract_final_message(baseline.stdout)
     baseline_score = score_effectiveness(baseline_message)
 
     guided_workspace = tmp_path / f"{adapter.name}-guided"
@@ -94,7 +96,7 @@ def test_reflect_guidance_improves_policy_adherence(
     except subprocess.TimeoutExpired as exc:
         pytest.fail(f"{adapter.name} guided run timed out after {exc.timeout}s")
     assert guided.returncode == 0, guided.diagnostic()
-    guided_message = extract_final_message(guided.stdout)
+    guided_message = adapter.extract_final_message(guided.stdout)
     guided_score = score_effectiveness(guided_message)
 
     task = read_completed_task(guided_db)
