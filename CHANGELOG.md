@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Repositioned the README and public landing page around evidence-backed AI improvement: ask through the coding agent for explanations and shareable internal requests, use the local UI for visual evidence and review, and measure whether approved workflows and skills improve later sessions. Added people-first search copy that balances personal reflection on token limits and failed sessions with organizational reflection on cost, reusable practices, capacity, and budget, presented through an accessible interactive agent window.
+- Repositioned the README and public landing page around evidence-backed AI improvement: ask through the coding agent for explanations and shareable internal requests, use the local UI for visual evidence and review, and measure whether approved workflows and skills improve later sessions. Added people-first search copy that balances personal reflection on token limits and failed sessions with organizational reflection on cost, reusable practices, capacity, and budget, presented through an accessible interactive agent window. Replaced CLI-like use-case labels with agent-native prompts and an invocation-style selector for Codex and slash-command agents.
 
 ## 0.9.2 (2026-07-26)
 
