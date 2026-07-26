@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Repositioned the README and public landing page around developer-controlled improvement: ask through the coding agent for evidence-backed explanations and shareable internal requests, use the local UI for the visual evidence and review path, and measure whether approved workflows and skills improve later sessions. Added people-first search copy for token-budget limits, failed sessions, cost attribution, agent performance, and budget justification.
+- Repositioned the README and public landing page around evidence-backed AI improvement: ask through the coding agent for explanations and shareable internal requests, use the local UI for visual evidence and review, and measure whether approved workflows and skills improve later sessions. Added people-first search copy that balances personal reflection on token limits and failed sessions with organizational reflection on cost, reusable practices, capacity, and budget.
 
 ## 0.9.2 (2026-07-26)
 
