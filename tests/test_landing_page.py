@@ -38,17 +38,17 @@ def test_landing_page_has_clear_product_and_conversion_path():
     assert text.count("Evidence, Not Vibes.") == 1
     assert "Behavioral Memory Graph" not in text
     assert 'class="eyebrow"' not in text
-    assert "From Telemetry to Better Work" in text
-    assert "Private by Default. Useful by Design." in text
-    assert "From Install to Evidence in 60 Seconds." in text
+    assert "From Agent Work to Measured Improvement" in text
+    assert "Private by Default. Developer-Controlled by Design." in text
+    assert "From Install to Agent-Ready Evidence in 60 Seconds." in text
     assert "Explore the Live Dashboard" in text
-    assert "reflect skills discover --week" in text
-    assert "Search the durable registry" in text
+    assert "Ask through your agent, review the evidence in the UI" in text
+    assert "Decide What Becomes Reusable." in text
     assert "six read-only MCP inspection tools, and approval-gated changes" in text
-    assert "codex mcp add reflect -- reflect-mcp" in text
     assert "optional memory providers such as OMEGA" in text
     assert "Bring Your Memory Provider." in text
-    assert "Use Reflect When the Work Needs an Answer." in text
+    assert "Use Reflect Where You Already Work." in text
+    assert "Ask Through Your Agent. See the Evidence in Reflect." in text
 
 
 def test_landing_page_has_task_oriented_scenario_tiles():
@@ -56,7 +56,7 @@ def test_landing_page_has_task_oriented_scenario_tiles():
 
     assert text.count('class="scenario-card"') == 7
     for command in (
-        "reflect usage --global --week",
+        "$reflect-usage Explain our budget need and what we should improve.",
         "reflect --week",
         "reflect improve",
         "reflect loops build LOOP_ID --agent codex",
@@ -175,7 +175,7 @@ def test_landing_page_meets_static_accessibility_contracts():
 def test_landing_page_has_complete_social_and_structured_metadata():
     text = _landing_text()
 
-    assert "Local-First Observability for AI Coding Agents" in text
+    assert "Developer-Controlled Improvement for AI Coding Agents" in text
     assert '<meta property="og:image" content="https://reflect.o11y.dev/og-image-v2.png">' in text
     assert '<meta property="og:image:type" content="image/png">' in text
     assert '<meta property="og:image:width" content="1200">' in text
