@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.3 (unreleased)
+
+### Changed
+
+- Repositioned the README and public landing page around developer-controlled improvement: ask through the coding agent for evidence-backed explanations and shareable internal requests, use the local UI for the visual evidence and review path, and measure whether approved workflows and skills improve later sessions.
+
 ## 0.9.2 (2026-07-26)
 
 ### Added
