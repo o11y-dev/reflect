@@ -9,6 +9,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
+from reflect.mcp_clients import configure_reflect_mcp, get_mcp_client_configurator
 from reflect.parsing import _canonical_otlp_traces_path
 from reflect.utils import _json_loads
 
@@ -456,7 +457,13 @@ def _collect_native_otel_statuses(hook_config: dict[str, str]) -> list[dict[str,
 def _snapshot_detected_agent_configs(console, agents: list[dict], *, reflect_home: Path) -> None:
     for agent in agents:
         snapshots = []
-        for source in _agent_config_candidates(agent):
+        sources = _agent_config_candidates(agent)
+        configurator = get_mcp_client_configurator(str(agent["name"]))
+        if configurator is not None:
+            mcp_path = configurator.config_path(Path(agent["path"]))
+            if mcp_path.exists() and mcp_path not in sources:
+                sources.append(mcp_path)
+        for source in sources:
             try:
                 snapshots.append(_copy_config_snapshot(reflect_home, agent["name"], source))
             except Exception as exc:
@@ -970,14 +977,41 @@ def _run_setup(
                 "reflect setup will not start collecting telemetry for this agent yet."
             )
 
-    console.print("\n[bold]Step 7: Distribute AI Agent Skills[/]")
+    console.print("\n[bold]Step 7: Configure Reflect MCP clients[/]")
+    reflect_mcp = shutil.which("reflect-mcp") or "reflect-mcp"
+    configured_clients = 0
+    for agent in detected_agents:
+        try:
+            result = configure_reflect_mcp(
+                str(agent["name"]),
+                Path(agent["path"]),
+                command=reflect_mcp,
+            )
+        except Exception as exc:
+            console.print(
+                f"  [red]✗[/] Failed to configure Reflect MCP for "
+                f"{agent['name']}: {exc}"
+            )
+            continue
+        if result is None:
+            continue
+        configured_clients += 1
+        state = "Configured" if result.changed else "Already configured"
+        console.print(
+            f"  [green]✓[/] {state} Reflect MCP for "
+            f"{agent['name']} ({result.path})"
+        )
+    if not configured_clients:
+        console.print("  [yellow]•[/] No selected agents expose a supported MCP config surface.")
+
+    console.print("\n[bold]Step 8: Distribute AI Agent Skills[/]")
     distribute_skills(
         console,
         selected_agent_names=selected_agent_names,
         local_agent_names=local_agent_names,
     )
 
-    console.print("\n[bold]Step 8: Next steps[/]")
+    console.print("\n[bold]Step 9: Next steps[/]")
     console.print(f"[bold green]Done![/] Data will be written to [bold]{reflect_home}/state/[/]")
     console.print("\nRun [bold]reflect doctor[/] to confirm capture health, then run [bold]reflect[/] to view your dashboard.")
     console.print()

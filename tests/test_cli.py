@@ -2106,6 +2106,41 @@ class TestSetup:
         )
         assert "opentelemetry-hooks ready" in result.output
 
+    def test_setup_persists_cursor_reflect_mcp_config(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        home_dir = tmp_path / "home"
+        cursor_home = home_dir / ".cursor"
+        cursor_home.mkdir(parents=True)
+        (cursor_home / "mcp.json").write_text(
+            '{"mcpServers":{"existing":{"command":"existing-mcp"}}}\n',
+            encoding="utf-8",
+        )
+
+        def executable(name: str) -> str | None:
+            return {
+                "pipx": "/usr/local/bin/pipx",
+                "otel-hook": "/usr/local/bin/otel-hook",
+                "reflect-mcp": "/usr/local/bin/reflect-mcp",
+            }.get(name)
+
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.shutil.which", side_effect=executable), \
+             patch("reflect.core.subprocess.check_call"), \
+             patch("reflect.core._distribute_skills"), \
+             patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
+            result = runner.invoke(main, ["setup", "--agent", "Cursor"])
+
+        assert result.exit_code == 0
+        config = json.loads((cursor_home / "mcp.json").read_text())
+        assert config["mcpServers"]["existing"] == {"command": "existing-mcp"}
+        assert config["mcpServers"]["reflect"] == {
+            "command": "/usr/local/bin/reflect-mcp",
+            "args": [],
+        }
+        assert "Configured Reflect MCP for Cursor" in result.output
+
     def test_setup_can_select_single_agent_non_interactively(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
         hook_home = tmp_path / ".otel-hook-home"

@@ -38,7 +38,7 @@ pipx install o11y-reflect
 reflect setup
 ```
 
-`reflect setup` detects supported agents, asks which ones to connect, installs or upgrades `opentelemetry-hooks` through pipx, starts the local OTLP gateway, configures verified telemetry paths, and installs Reflect's agent skills. Re-running setup refreshes the hook package before rewiring agents. Use your coding agents normally for a few sessions, then open the local report:
+`reflect setup` detects supported agents, asks which ones to connect, installs or upgrades `opentelemetry-hooks` through pipx, starts the local OTLP gateway, configures verified telemetry paths and the local `reflect-mcp` server, and installs Reflect's agent skills. Re-running setup refreshes the hook package and MCP registration before rewiring agents. Use your coding agents normally for a few sessions, then open the local report:
 
 ```bash
 reflect doctor
@@ -627,12 +627,12 @@ the connection and local validation surface for every implemented agent:
 
 | Agent | Reflect MCP configuration | Local validation surface |
 |---|---|---|
-| Claude Code | `claude mcp` or `--mcp-config` | Headless CLI suite |
-| Cursor | `.cursor/mcp.json` | Headless CLI suite |
-| Gemini CLI | `.gemini/settings.json` | Headless CLI suite |
-| GitHub Copilot | `--additional-mcp-config` | Headless CLI suite |
-| OpenAI Codex CLI | `codex mcp` or inline config | Headless CLI suite |
-| OpenCode | `opencode.json` | Headless CLI suite |
+| Claude Code | `~/.claude.json` | Headless CLI suite |
+| Cursor | `~/.cursor/mcp.json` | Headless CLI suite |
+| Gemini CLI | `~/.gemini/settings.json` | Headless CLI suite |
+| GitHub Copilot | `~/.copilot/mcp-config.json` | Headless CLI suite |
+| OpenAI Codex CLI | `~/.codex/config.toml` | Headless CLI suite |
+| OpenCode | `~/.config/opencode/opencode.json` | Headless CLI suite |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` | Editor configuration only |
 
 Windsurf can connect to the same stdio server through Cascade, but it is not
