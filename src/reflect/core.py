@@ -1836,11 +1836,14 @@ def loops_build(loop_id: str, agent: str | None, as_json: bool, db_path: Path) -
         "{{EVIDENCE_JSON}}",
         _json.dumps(evidence_bundle, sort_keys=True, indent=2),
     )
-    result = subprocess.run(
-        [agent_bin, *agent_flags, prompt],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            [agent_bin, *agent_flags, prompt],
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        raise click.ClickException(f"Could not run agent CLI '{agent_bin}': {exc}") from exc
     if result.returncode != 0:
         raise click.ClickException(
             f"Agent exited with code {result.returncode}: "
@@ -2302,10 +2305,15 @@ def _resolve_skills_agent(agent: str | None) -> tuple[str, list[str]]:
     prompted to pick one interactively (arrows + Enter).
     """
     if agent is not None:
+        if shutil.which(agent) is None:
+            supported = ", ".join(name for name, _flags in _SKILL_AGENT_SPECS)
+            raise click.ClickException(
+                f"Agent CLI '{agent}' was not found on PATH. "
+                f"Install it or choose an installed CLI. Supported names: {supported}."
+            )
         for name, flags in _SKILL_AGENT_SPECS:
             if name == agent:
                 return agent, flags
-        # Unknown agent — fall back to --print and hope for the best
         return agent, ["--print"]
 
     # Probe all supported CLIs
@@ -2316,12 +2324,10 @@ def _resolve_skills_agent(agent: str | None) -> tuple[str, list[str]]:
     ]
 
     if not available:
-        click.echo(
-            f"No supported agent CLI found (tried: {_SKILL_AGENT_NAMES}).\n"
-            "Install one or pass --agent <binary>.",
-            err=True,
+        raise click.ClickException(
+            f"No supported agent CLI found (tried: {_SKILL_AGENT_NAMES}). "
+            "Install one or pass --agent with an installed executable."
         )
-        raise SystemExit(1)
 
     if len(available) == 1:
         return available[0]
@@ -2663,7 +2669,16 @@ def _discover_skills(
         f"[bold]Extracting skills with {agent_bin}...[/bold]",
         spinner="dots",
     ):
-        result = subprocess.run([agent_bin, *agent_flags, prompt], capture_output=True, text=True)
+        try:
+            result = subprocess.run(
+                [agent_bin, *agent_flags, prompt],
+                capture_output=True,
+                text=True,
+            )
+        except OSError as exc:
+            raise click.ClickException(
+                f"Could not run agent CLI '{agent_bin}': {exc}"
+            ) from exc
     if result.returncode != 0:
         click.echo(
             f"Agent exited with code {result.returncode}:\n"

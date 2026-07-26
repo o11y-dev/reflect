@@ -27,6 +27,7 @@ REFLECT_USAGE_MD = (
     / "reflect-usage"
     / "SKILL.md"
 )
+REFLECT_USAGE_OPENAI_YAML = REFLECT_USAGE_MD.parent / "agents" / "openai.yaml"
 
 
 class TestSkillMd:
@@ -85,6 +86,18 @@ class TestSkillMd:
         assert "reflect usage --global --week --json" in content
         assert "complete matching SQLite cohort" in content
         assert "Do not run `reflect setup`" in content
+        assert '"where did my tokens go?"' in content
+        assert (
+            "Treat tool, MCP, and subagent counts as workflow context, not token attribution"
+            in content
+        )
+        assert "`productive`, `mixed`, `inefficient`, or `indeterminate`" in content
+        assert "Label behavioral explanations and value judgments `Inference`" in content
+
+    def test_reflect_usage_openai_metadata_explains_token_analysis(self):
+        content = REFLECT_USAGE_OPENAI_YAML.read_text(encoding="utf-8")
+        assert 'display_name: "Reflect Token Usage"' in content
+        assert "where this session’s tokens went" in content
 
 
 class TestCliInvocable:

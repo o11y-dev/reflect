@@ -15,11 +15,13 @@
 - Preserved multi-environment session resolution, added typed MCP task contracts, and made selected-skill execution, installation approval, and truncated-instruction retrieval explicit for agents.
 - Added atomic, idempotent post-normalization reconciliation so completed MCP task runs link to sessions, outcomes, and selected-skill usage when telemetry arrives late.
 - Reused the existing exact workflow preview, apply, rollback, and Skills v2 synchronization paths for conversational changes, with short-lived hashed tokens bound to the reviewed target and content.
+- Expanded the packaged `reflect-usage` skill to explain where tokens went, distinguish measured attribution from workflow inference, and judge whether usage looks productive, mixed, inefficient, or indeterminate; renamed its Codex-facing label to Reflect Token Usage.
 
 ### Fixed
 
 - Updated the public landing-page release fallback to match the current package version.
 - Retired rolled-back workflow skills when no active installation remains and verified already-restored rollback files before reporting idempotent success.
+- Return a clean CLI error when an explicitly selected agent executable is not installed or disappears before execution instead of exposing a Python traceback.
 
 ## 0.9.1 (2026-07-23)
 
