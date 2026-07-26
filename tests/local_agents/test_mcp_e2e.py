@@ -14,6 +14,7 @@ from .harness import (
     SUCCESS_MARKER,
     AgentAdapter,
     AgentTestContext,
+    extract_final_message,
     read_completed_task,
     run_agent,
 )
@@ -66,7 +67,7 @@ def test_real_agent_completes_reflect_mcp_lifecycle(
         pytest.fail(f"{adapter.name} timed out after {exc.timeout}s")
 
     assert result.returncode == 0, result.diagnostic()
-    assert SUCCESS_MARKER in result.stdout, result.diagnostic()
+    assert extract_final_message(result.stdout) == SUCCESS_MARKER, result.diagnostic()
 
     task = read_completed_task(db_path)
     assert task is not None, result.diagnostic()

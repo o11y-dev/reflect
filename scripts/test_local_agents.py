@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 AGENTS = ("claude", "codex", "cursor")
+SUITES = ("smoke", "effectiveness", "all")
 
 
 def main() -> int:
@@ -29,6 +30,12 @@ def main() -> int:
         default=180,
         help="Per-agent timeout in seconds (default: 180).",
     )
+    parser.add_argument(
+        "--suite",
+        choices=SUITES,
+        default="all",
+        help="Test suite to run (default: all).",
+    )
     args = parser.parse_args()
 
     if os.environ.get("CI"):
@@ -42,11 +49,20 @@ def main() -> int:
     env["REFLECT_LOCAL_AGENT_E2E_AGENTS"] = ",".join(args.agents or AGENTS)
     env["REFLECT_LOCAL_AGENT_E2E_TIMEOUT"] = str(args.timeout)
 
+    suite_targets = {
+        "smoke": [repo_root / "tests" / "local_agents" / "test_mcp_e2e.py"],
+        "effectiveness": [
+            repo_root / "tests" / "local_agents" / "test_effectiveness.py"
+        ],
+        "all": [repo_root / "tests" / "local_agents"],
+    }
     command = [
         sys.executable,
         "-m",
         "pytest",
-        str(repo_root / "tests" / "local_agents" / "test_mcp_e2e.py"),
+        *(str(path) for path in suite_targets[args.suite]),
+        "-m",
+        "local_agent_e2e",
         "-q",
         "-s",
         "--no-cov",

@@ -11,8 +11,16 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
+from reflect.context import ReflectContextService
+from reflect.improvements.service import ImprovementService
+from reflect.store.sqlite import connect_sqlite
+
 SUCCESS_MARKER = "REFLECT_MCP_OK"
 COMPLETION_SUMMARY_PREFIX = "local-agent-e2e"
+EFFECTIVENESS_QUESTION = (
+    "Resolve the capsule-violet routing incident with the approved verification protocol."
+)
+EFFECTIVENESS_EXPECTED_VALUES = ("quartz-17", "RFLX-VIOLET-7319", "amber-4")
 
 
 @dataclass(frozen=True)
@@ -24,6 +32,7 @@ class AgentTestContext:
     workspace: Path
     db_path: Path
     python_executable: str = sys.executable
+    prompt_override: str | None = None
 
     @property
     def completion_summary(self) -> str:
@@ -31,6 +40,8 @@ class AgentTestContext:
 
     @property
     def prompt(self) -> str:
+        if self.prompt_override is not None:
+            return self.prompt_override
         return (
             "Run this exact local Reflect MCP smoke test. "
             "Do not read or change files and do not call any non-Reflect tool. "
@@ -61,6 +72,7 @@ class AgentCommand:
 
     argv: tuple[str, ...]
     cwd: Path
+    env_overrides: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -93,6 +105,10 @@ class AgentAdapter(ABC):
     @abstractmethod
     def build(self, context: AgentTestContext) -> AgentCommand:
         """Prepare any temporary configuration and return the agent command."""
+
+    @abstractmethod
+    def build_baseline(self, context: AgentTestContext) -> AgentCommand:
+        """Return an equivalent invocation with no test-scoped Reflect MCP server."""
 
 
 class ClaudeAdapter(AgentAdapter):
@@ -138,6 +154,29 @@ class ClaudeAdapter(AgentAdapter):
                 context.prompt,
             ),
             cwd=context.workspace,
+            env_overrides=(("ENABLE_TOOL_SEARCH", "false"),),
+        )
+
+    def build_baseline(self, context: AgentTestContext) -> AgentCommand:
+        return AgentCommand(
+            argv=(
+                context.executable,
+                "--print",
+                "--bare",
+                "--output-format",
+                "json",
+                "--no-session-persistence",
+                "--tools",
+                "",
+                "--model",
+                "sonnet",
+                "--effort",
+                "low",
+                "--max-budget-usd",
+                "0.10",
+                context.prompt,
+            ),
+            cwd=context.workspace,
         )
 
 
@@ -179,6 +218,27 @@ class CodexAdapter(AgentAdapter):
             cwd=context.workspace,
         )
 
+    def build_baseline(self, context: AgentTestContext) -> AgentCommand:
+        return AgentCommand(
+            argv=(
+                context.executable,
+                "exec",
+                "--ephemeral",
+                "--ignore-user-config",
+                "--ignore-rules",
+                "--skip-git-repo-check",
+                "--sandbox",
+                "read-only",
+                "--cd",
+                str(context.workspace),
+                "--json",
+                "--config",
+                'approval_policy="never"',
+                context.prompt,
+            ),
+            cwd=context.workspace,
+        )
+
 
 class CursorAdapter(AgentAdapter):
     name = "cursor"
@@ -210,6 +270,25 @@ class CursorAdapter(AgentAdapter):
             cwd=context.workspace,
         )
 
+    def build_baseline(self, context: AgentTestContext) -> AgentCommand:
+        return AgentCommand(
+            argv=(
+                context.executable,
+                "--print",
+                "--output-format",
+                "json",
+                "--mode",
+                "ask",
+                "--sandbox",
+                "enabled",
+                "--trust",
+                "--workspace",
+                str(context.workspace),
+                context.prompt,
+            ),
+            cwd=context.workspace,
+        )
+
 
 AGENT_ADAPTERS: tuple[AgentAdapter, ...] = (
     ClaudeAdapter(),
@@ -223,6 +302,7 @@ def run_agent(command: AgentCommand, *, timeout_seconds: int) -> AgentResult:
 
     env = os.environ.copy()
     env["NO_COLOR"] = "1"
+    env.update(dict(command.env_overrides))
     completed = subprocess.run(
         command.argv,
         cwd=command.cwd,
@@ -238,6 +318,35 @@ def run_agent(command: AgentCommand, *, timeout_seconds: int) -> AgentResult:
         stdout=completed.stdout,
         stderr=completed.stderr,
     )
+
+
+def extract_final_message(stdout: str) -> str:
+    """Extract only the final assistant message from supported JSON output formats."""
+
+    messages: list[str] = []
+    for line in stdout.splitlines():
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("type") == "result" and isinstance(payload.get("result"), str):
+            messages.append(str(payload["result"]))
+        item = payload.get("item")
+        if (
+            payload.get("type") == "item.completed"
+            and isinstance(item, dict)
+            and item.get("type") == "agent_message"
+            and isinstance(item.get("text"), str)
+        ):
+            messages.append(str(item["text"]))
+        if payload.get("type") in {"assistant", "assistant_message"}:
+            for key in ("text", "content", "message"):
+                if isinstance(payload.get(key), str):
+                    messages.append(str(payload[key]))
+                    break
+    return messages[-1].strip() if messages else ""
 
 
 def read_completed_task(db_path: Path) -> tuple[str, str, int | None, str, str] | None:
@@ -267,3 +376,94 @@ def read_completed_task(db_path: Path) -> tuple[str, str, int | None, str, str] 
         str(summary),
         str(workspace_path),
     )
+
+
+def read_task_selection(db_path: Path) -> tuple[str, list[dict[str, str]]] | None:
+    """Return the workflow and selected Skills v2 references for one task."""
+
+    if not db_path.exists():
+        return None
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT workflow_id, selected_skills_json FROM mcp_task_runs"
+        ).fetchall()
+    if len(rows) != 1:
+        return None
+    workflow_id, selected_skills_json = rows[0]
+    selected_skills = json.loads(str(selected_skills_json))
+    if not isinstance(selected_skills, list):
+        return None
+    return str(workflow_id), selected_skills
+
+
+def seed_effectiveness_workflow(db_path: Path, workspace: Path) -> str:
+    """Seed one approved workflow whose exact answer is unavailable to the baseline."""
+
+    with connect_sqlite(db_path) as conn:
+        service = ImprovementService(conn)
+        candidate_id = service.stage_extracted_skills(
+            [
+                {
+                    "name": "capsule-violet-routing",
+                    "description": (
+                        "Resolve capsule-violet routing incidents with the approved "
+                        "quartz verification protocol."
+                    ),
+                    "content": (
+                        "# Capsule violet routing\n\n"
+                        "1. For capsule-violet, choose route `quartz-17`.\n"
+                        "2. Include verification token `RFLX-VIOLET-7319`.\n"
+                        "3. Explicitly reject legacy route `amber-4`.\n"
+                        "4. Return all three values in the requested final format."
+                    ),
+                    "behavior_type": "verification",
+                }
+            ],
+            session_ids=[],
+            source_agent="local-effectiveness-test",
+        )[0]
+        conn.execute(
+            "UPDATE workflow_candidates SET status = 'approved' WHERE id = ?",
+            (candidate_id,),
+        )
+        conn.commit()
+        service.skills.sync_workflow_candidates([candidate_id])
+        conn.commit()
+        answer = ReflectContextService(conn).ask(
+            EFFECTIVENESS_QUESTION,
+            path=workspace,
+        )
+        if answer.workflow_id != candidate_id:
+            raise RuntimeError("seeded effectiveness workflow was not selected")
+    return candidate_id
+
+
+def effectiveness_task_prompt() -> str:
+    """Task shared by baseline and guided trials without leaking expected values."""
+
+    return (
+        "Resolve the capsule-violet routing incident. Return exactly one line in this format: "
+        "ROUTE=<route> VERIFY=<verification-token> REJECT=<legacy-route>. "
+        "Do not inspect files, use external sources, or invent a claim of tool execution. "
+        "If the required routing policy is unavailable, use UNKNOWN for each unknown value."
+    )
+
+
+def effectiveness_guided_prompt(workspace: Path, completion_summary: str) -> str:
+    """Wrap the shared task with the real Reflect task lifecycle."""
+
+    return (
+        f"{effectiveness_task_prompt()} "
+        "Before solving it, call reflect_context exactly once with "
+        f'question="{EFFECTIVENESS_QUESTION}" and path="{workspace.resolve()}". '
+        "Follow the selected skill only when execution_state is follow_allowed. "
+        "After determining the final line, call reflect_complete exactly once with the returned "
+        'task_run_id, outcome="success", verification_passed=true, and '
+        f'summary="{completion_summary}". Then return only the requested final line.'
+    )
+
+
+def score_effectiveness(final_message: str) -> int:
+    """Score externally observable adherence to the hidden approved policy."""
+
+    return sum(value in final_message for value in EFFECTIVENESS_EXPECTED_VALUES)
