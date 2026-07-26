@@ -250,6 +250,14 @@
     .evidence-stack{display:grid;gap:8px;margin-top:28px}
     .evidence-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 12px;border:1px solid var(--line);border-radius:5px;background:#0b0b0a;color:var(--muted-strong);font-size:12px}
     .evidence-row strong{color:var(--ink);font-variant-numeric:tabular-nums}
+    .agent-syntax{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:-10px 0 22px;color:var(--muted);font-size:11px}
+    .agent-syntax-label{margin-right:2px;font-weight:850;letter-spacing:.1em;text-transform:uppercase}
+    .agent-syntax-options{display:flex;align-items:center;gap:6px}
+    .agent-syntax-button{display:flex;align-items:center;gap:7px;padding:6px 9px;border:1px solid var(--line);border-radius:5px;background:#0b0b0a;color:var(--muted-strong);font:inherit;cursor:pointer}
+    .agent-syntax-button code{color:inherit;font:750 11px/1 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+    .agent-syntax-button:hover{border-color:rgba(242,138,26,.32);color:var(--ink)}
+    .agent-syntax-button[aria-pressed="true"]{border-color:rgba(242,138,26,.45);background:var(--signal-soft);color:var(--signal-bright)}
+    .agent-syntax-note{margin-left:4px}
     .scenario-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px}
     .scenario-card{position:relative;display:flex;min-width:0;min-height:230px;grid-column:span 4;flex-direction:column;padding:24px;border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(145deg,rgba(21,20,18,.94),rgba(10,10,9,.98));overflow:hidden;transition:transform .16s ease,border-color .16s ease,background-color .16s ease}
     .scenario-card:nth-child(1),.scenario-card:nth-child(2),.scenario-card:nth-child(6),.scenario-card:nth-child(7){grid-column:span 6}
@@ -259,8 +267,9 @@
     .scenario-label{color:var(--muted);font-size:10px;font-weight:850;letter-spacing:.12em;text-transform:uppercase}
     .scenario-card h3{margin:0;font-size:clamp(1.2rem,2vw,1.55rem);line-height:1.12;letter-spacing:-.025em}
     .scenario-card p{margin:10px 0 22px;color:var(--muted-strong);font-size:13px;line-height:1.62;text-wrap:pretty}
-    .scenario-command{display:block;width:100%;margin-top:auto;padding:10px 11px;border:1px solid var(--line);border-radius:5px;background:#070706;color:#f7dfbf;font:500 11px/1.45 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;overflow-wrap:anywhere}
-    .scenario-command::before{content:"$ ";color:var(--signal-bright);font-weight:850}
+    .scenario-prompt{display:flex;width:100%;align-items:flex-start;gap:8px;margin-top:auto;padding:10px 11px;border:1px solid var(--line);border-radius:5px;background:#070706;color:#f7dfbf;font:500 11px/1.45 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;overflow-wrap:anywhere}
+    .scenario-invocation{flex:0 0 auto;color:var(--signal-bright);font-weight:850}
+    .scenario-prompt-copy{min-width:0}
     .agent-window{overflow:hidden;border:1px solid var(--line-strong);border-radius:10px;background:#0a0a09;box-shadow:0 24px 80px rgba(0,0,0,.42)}
     .agent-window-bar{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:13px 16px;border-bottom:1px solid var(--line);background:rgba(23,22,19,.94)}
     .agent-window-identity{display:flex;align-items:center;gap:10px;min-width:0}
@@ -618,54 +627,63 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
           <p>Start with a normal engineering or business question. The agent uses Reflect's local evidence to explain the work, recommend follow-up actions, and prepare evidence for personal learning, team decisions, or internal requests.</p>
         </div>
 
+        <div class="agent-syntax" data-agent-syntax>
+          <span class="agent-syntax-label">Agent syntax</span>
+          <span class="agent-syntax-options" role="group" aria-label="Choose an agent invocation style">
+            <button class="agent-syntax-button" type="button" data-agent-prefix="$" aria-pressed="true"><span>Codex</span><code>$reflect</code></button>
+            <button class="agent-syntax-button" type="button" data-agent-prefix="/" aria-pressed="false"><span>Slash</span><code>/reflect</code></button>
+          </span>
+          <span class="agent-syntax-note">For other agents, choose Reflect from the skill picker.</span>
+        </div>
+
         <div class="scenario-grid">
           <article class="scenario-card">
             <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">$</span><span class="scenario-label">Budget Evidence</span></div>
             <h3>Why does our team need more AI budget?</h3>
             <p>Let the agent connect exact usage to past work, separate productive growth from avoidable waste, recommend improvements, and prepare a reviewed internal request.</p>
-            <code class="scenario-command" translate="no">$reflect-usage Explain our budget need and what we should improve.</code>
+            <code class="scenario-prompt"><span class="scenario-invocation" data-reflect-skill="reflect-usage">$reflect-usage</span><span class="scenario-prompt-copy">Explain our AI budget need and what should improve.</span></code>
           </article>
 
           <article class="scenario-card">
             <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">↳</span><span class="scenario-label">Session Diagnosis</span></div>
             <h3>Why did this session stall or fail?</h3>
             <p>Open the synchronized conversation, timeline, tool activity, subagents, workspace context, failures, and cost evidence.</p>
-            <code class="scenario-command" translate="no">reflect --week</code>
+            <code class="scenario-prompt"><span class="scenario-invocation" data-reflect-skill="reflect">$reflect</span><span class="scenario-prompt-copy">Explain why this session stalled or failed.</span></code>
           </article>
 
           <article class="scenario-card">
             <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">!</span><span class="scenario-label">Recurring Friction</span></div>
             <h3>What should we improve first?</h3>
             <p>Rank repeated problems by impact, then inspect the exact observations and source sessions behind each recommendation.</p>
-            <code class="scenario-command" translate="no">reflect improve</code>
+            <code class="scenario-prompt"><span class="scenario-invocation" data-reflect-skill="reflect">$reflect</span><span class="scenario-prompt-copy">Rank what we should improve first.</span></code>
           </article>
 
           <article class="scenario-card">
             <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">∞</span><span class="scenario-label">Loops to Skills</span></div>
             <h3>Can this repeated behavior become reusable?</h3>
             <p>Review bounded loop evidence and let an agent author one pending workflow packaged as a skill for deliberate approval.</p>
-            <code class="scenario-command" translate="no">reflect loops build LOOP_ID --agent codex</code>
+            <code class="scenario-prompt"><span class="scenario-invocation" data-reflect-skill="reflect-skills">$reflect-skills</span><span class="scenario-prompt-copy">Find repeated behavior worth turning into a reusable skill.</span></code>
           </article>
 
           <article class="scenario-card">
             <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">?</span><span class="scenario-label">Repository Guidance</span></div>
             <h3>How should an agent work in this repository?</h3>
             <p>Retrieve reviewed workflows, linked evidence, and folder-scoped memory instead of relying on generic advice.</p>
-            <code class="scenario-command" translate="no">reflect ask "How should I debug CI here?"</code>
+            <code class="scenario-prompt"><span class="scenario-invocation" data-reflect-skill="reflect">$reflect</span><span class="scenario-prompt-copy">Explain how an agent should work in this repository.</span></code>
           </article>
 
           <article class="scenario-card">
             <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">◇</span><span class="scenario-label">Memory Recall</span></div>
             <h3>What have we already learned here?</h3>
             <p>Search local, provenance-aware memory for a repository decision, release practice, debugging path, or prior constraint.</p>
-            <code class="scenario-command" translate="no">reflect memory search "release gate" .</code>
+            <code class="scenario-prompt"><span class="scenario-invocation" data-reflect-skill="reflect">$reflect</span><span class="scenario-prompt-copy">Find what we already learned about the release gate.</span></code>
           </article>
 
           <article class="scenario-card">
             <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">✓</span><span class="scenario-label">Instrumentation Health</span></div>
             <h3>Are the agents actually observable?</h3>
             <p>Check hook installation, native telemetry, local files, gateway state, detected agents, pricing, and integration support.</p>
-            <code class="scenario-command" translate="no">reflect doctor</code>
+            <code class="scenario-prompt"><span class="scenario-invocation" data-reflect-skill="reflect">$reflect</span><span class="scenario-prompt-copy">Check whether agent telemetry and integrations are healthy.</span></code>
           </article>
         </div>
       </section>
@@ -933,6 +951,23 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
   </main>
   <script>
     (() => {
+      const syntaxSwitcher = document.querySelector('[data-agent-syntax]');
+      if (syntaxSwitcher) {
+        const syntaxButtons = Array.from(syntaxSwitcher.querySelectorAll('[data-agent-prefix]'));
+        const invocations = Array.from(document.querySelectorAll('[data-reflect-skill]'));
+        syntaxButtons.forEach((button) => {
+          button.addEventListener('click', () => {
+            const prefix = button.getAttribute('data-agent-prefix') || '';
+            syntaxButtons.forEach((candidate) => {
+              candidate.setAttribute('aria-pressed', String(candidate === button));
+            });
+            invocations.forEach((invocation) => {
+              invocation.textContent = `${prefix}${invocation.getAttribute('data-reflect-skill') || 'reflect'}`;
+            });
+          });
+        });
+      }
+
       const qa = document.querySelector('[data-agent-qa]');
       if (!qa) return;
 
