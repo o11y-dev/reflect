@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>reflect — Developer-Controlled Improvement for AI Coding Agents</title>
-  <meta name="description" content="Ask through your coding agent, explore the evidence in a local visual UI, and turn real sessions into reviewed workflows, reusable skills, and measured improvements.">
+  <title>reflect — AI Coding Agent Token Usage &amp; Failure Analysis</title>
+  <meta name="description" content="Understand why an AI coding agent hit its token limit, why a session failed, where tokens and cost went, and how to improve future Claude Code, Codex, Cursor, and Copilot work.">
   <link rel="canonical" href="https://reflect.o11y.dev/">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <meta name="color-scheme" content="dark">
@@ -12,8 +12,8 @@
 
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="reflect.o11y.dev">
-  <meta property="og:title" content="reflect — Developer-Controlled Improvement for AI Coding Agents">
-  <meta property="og:description" content="Ask through your agent. Explore the evidence visually. Stay in control of every improvement.">
+  <meta property="og:title" content="reflect — Understand AI Agent Token Usage and Session Failures">
+  <meta property="og:description" content="Ask why a coding agent hit its token budget, why the session failed, and what should improve. Reflect answers from local execution evidence.">
   <meta property="og:url" content="https://reflect.o11y.dev/">
   <meta property="og:image" content="https://reflect.o11y.dev/og-image-v2.png">
   <meta property="og:image:secure_url" content="https://reflect.o11y.dev/og-image-v2.png">
@@ -23,8 +23,8 @@
   <meta property="og:image:alt" content="reflect — See How Agents Work. Improve What Happens Next.">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="reflect — Developer-Controlled Improvement for AI Coding Agents">
-  <meta name="twitter:description" content="Ask through your agent. Explore the evidence visually. Stay in control of every improvement.">
+  <meta name="twitter:title" content="reflect — Understand AI Agent Token Usage and Session Failures">
+  <meta name="twitter:description" content="Ask why a coding agent hit its token budget, why the session failed, and what should improve. Reflect answers from local execution evidence.">
   <meta name="twitter:image" content="https://reflect.o11y.dev/og-image-v2.png">
   <meta name="twitter:image:alt" content="reflect — See How Agents Work. Improve What Happens Next.">
 
@@ -37,7 +37,7 @@
         "name": "reflect",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "macOS, Linux, Windows",
-        "description": "Developer-controlled improvement for AI coding agents. Reflect turns local sessions and OpenTelemetry GenAI spans into agent-ready evidence, reviewed workflows, reusable skills, and measured improvements.",
+        "description": "Local AI coding agent token usage and failure analysis. Reflect explains where tokens and cost went, why sessions failed, and what developers can improve from evidence.",
         "url": "https://reflect.o11y.dev/",
         "downloadUrl": "https://pypi.org/project/o11y-reflect/",
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
@@ -48,6 +48,59 @@
         "name": "o11y.dev",
         "url": "https://reflect.o11y.dev/",
         "sameAs": ["https://github.com/o11y-dev"]
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Why did my AI coding agent hit its token budget limit?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Reflect breaks down observed input, output, cache creation, and cache-read tokens by session and model, then connects that usage to tool and MCP calls, retries, context churn, continuations, and outcomes. When the evidence cannot prove an exact cause, Reflect keeps the attribution unknown instead of inventing one."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Why did this AI coding session fail?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Reflect puts prompts, responses, tool and MCP calls, errors, retries, subagents, files, verification, and outcomes on a synchronized local timeline so a developer can find the first visible failure or recovery gap."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Where did my Claude Code, Codex, Cursor, or Copilot tokens and cost go?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Reflect shows observed token usage, cache behavior, estimated cost, model mix, tool activity, failures, and large-session concentration across the current session, a selected session, or the full local history. Cost is shown only where model-pricing evidence is recognized."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How can I reduce AI agent cost without reducing useful work?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Reflect separates observed productive work from repeated failures, retries, context churn, large-session concentration, and missing verification. The agent can propose bounded improvements from that evidence, while the developer decides what to adopt."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How can I improve AI coding agent performance from past sessions?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Reflect finds recurring friction and successful routines in past sessions, turns selected evidence into reviewable workflow or skill proposals, and measures later sessions before claiming the change helped."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How can I justify a larger AI coding budget?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Ask your agent to use Reflect's local usage history to connect spend to delivered work, identify avoidable waste, document improvement commitments, and prepare an evidence-backed internal request for developer review."
+            }
+          }
+        ]
       }
     ]
   }
@@ -209,6 +262,11 @@
     .scenario-card p{margin:10px 0 22px;color:var(--muted-strong);font-size:13px;line-height:1.62;text-wrap:pretty}
     .scenario-command{display:block;width:100%;margin-top:auto;padding:10px 11px;border:1px solid var(--line);border-radius:5px;background:#070706;color:#f7dfbf;font:500 11px/1.45 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;overflow-wrap:anywhere}
     .scenario-command::before{content:"$ ";color:var(--signal-bright);font-weight:850}
+    .question-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+    .question-card{min-width:0;padding:26px;border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(145deg,rgba(21,20,18,.94),rgba(10,10,9,.98))}
+    .question-card:hover{border-color:rgba(242,138,26,.36);background:linear-gradient(145deg,rgba(28,25,20,.96),rgba(11,11,9,.99))}
+    .question-card h3{margin:0;font-size:clamp(1.2rem,2vw,1.55rem);line-height:1.18;letter-spacing:-.025em}
+    .question-card p{margin:12px 0 0;color:var(--muted-strong);font-size:14px;line-height:1.7;text-wrap:pretty}
     .graph-mini{position:absolute;right:-18px;bottom:-28px;width:230px;height:170px;opacity:.68}
     .graph-node{position:absolute;width:13px;height:13px;border:2px solid var(--signal);border-radius:50%;background:#0b0b0a;box-shadow:0 0 18px rgba(242,138,26,.34)}
     .graph-node::after{content:"";position:absolute;left:11px;top:4px;width:74px;height:1px;background:rgba(245,242,234,.28);transform-origin:left center}
@@ -310,6 +368,8 @@
       .content-section{padding-top:78px}
       .feature-card-third{grid-column:span 12}
       .scenario-card,.scenario-card:nth-child(n){grid-column:span 12;min-height:0}
+      .question-grid{grid-template-columns:1fr}
+      .question-card{padding:22px}
       .feature-card{min-height:0;padding:22px}
       .feature-index{margin-bottom:30px}
       .graph-mini{opacity:.42}
@@ -382,6 +442,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         <div class="nav-links">
           <a href="#product">Product</a>
           <a href="#scenarios">Use Cases</a>
+          <a href="#questions">Questions</a>
           <a href="#how-it-works">How It Works</a>
           <a href="#install">Install</a>
           <a class="nav-cta" href="./report.html?report=reports/showcase.json">Open Live Demo</a>
@@ -396,7 +457,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         <div class="hero-copy">
           <h1 id="hero-title">See How Agents Work. <span class="signal">Improve What Happens Next.</span></h1>
           <p class="lede">
-            Reflect helps developers turn local AI coding sessions and OpenTelemetry traces into evidence-backed workflows and skills. Ask through your agent, review the evidence in the UI, and measure whether later runs actually improve.
+            Understand why an AI coding agent hit its token budget, why a session failed, where the cost went, and what should improve. Ask through your agent, review the exact local evidence in Reflect, and turn approved lessons into measured workflows and skills.
           </p>
           <ul class="hero-proof" aria-label="Product principles">
             <li>Local first</li>
@@ -571,6 +632,48 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         </div>
       </section>
 
+      <section class="content-section" id="questions" aria-labelledby="questions-title">
+        <div class="section-intro">
+          <div>
+            <p class="kicker">AI Coding Agent Questions</p>
+            <h2 id="questions-title">Why Did My AI Coding Agent Hit Its Token Limit or Fail?</h2>
+          </div>
+          <p>Reflect answers from the local execution evidence your tools produced—not from a generic guess. When the trace cannot support an exact cause, the answer stays unknown.</p>
+        </div>
+
+        <div class="question-grid">
+          <article class="question-card">
+            <h3>Why did my AI coding agent hit its token budget limit?</h3>
+            <p>Reflect breaks down observed input, output, cache creation, and cache-read tokens by session and model, then connects that usage to tool and MCP calls, retries, context churn, continuations, and outcomes. When the evidence cannot prove an exact cause, Reflect keeps the attribution unknown instead of inventing one.</p>
+          </article>
+
+          <article class="question-card">
+            <h3>Why did this AI coding session fail?</h3>
+            <p>Reflect puts prompts, responses, tool and MCP calls, errors, retries, subagents, files, verification, and outcomes on a synchronized local timeline so a developer can find the first visible failure or recovery gap.</p>
+          </article>
+
+          <article class="question-card">
+            <h3>Where did my Claude Code, Codex, Cursor, or Copilot tokens and cost go?</h3>
+            <p>Reflect shows observed token usage, cache behavior, estimated cost, model mix, tool activity, failures, and large-session concentration across the current session, a selected session, or the full local history. Cost is shown only where model-pricing evidence is recognized.</p>
+          </article>
+
+          <article class="question-card">
+            <h3>How can I reduce AI agent cost without reducing useful work?</h3>
+            <p>Reflect separates observed productive work from repeated failures, retries, context churn, large-session concentration, and missing verification. The agent can propose bounded improvements from that evidence, while the developer decides what to adopt.</p>
+          </article>
+
+          <article class="question-card">
+            <h3>How can I improve AI coding agent performance from past sessions?</h3>
+            <p>Reflect finds recurring friction and successful routines in past sessions, turns selected evidence into reviewable workflow or skill proposals, and measures later sessions before claiming the change helped.</p>
+          </article>
+
+          <article class="question-card">
+            <h3>How can I justify a larger AI coding budget?</h3>
+            <p>Ask your agent to use Reflect's local usage history to connect spend to delivered work, identify avoidable waste, document improvement commitments, and prepare an evidence-backed internal request for developer review.</p>
+          </article>
+        </div>
+      </section>
+
       <section class="content-section" id="how-it-works" aria-labelledby="how-title">
         <div class="section-intro">
           <div>
@@ -716,7 +819,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 
       <footer class="footer">
         <span class="footer-copy">Built on OpenTelemetry GenAI semantic conventions. Local first, vendor neutral, and open source under Apache 2.0.</span>
-        <span class="footer-links"><a href="./report.html?report=reports/showcase.json">Live Dashboard</a><a href="https://github.com/o11y-dev/reflect">GitHub</a><a href="https://pypi.org/project/o11y-reflect/">PyPI</a></span>
+        <span class="footer-links"><a href="#questions">Questions</a><a href="./report.html?report=reports/showcase.json">Live Dashboard</a><a href="https://github.com/o11y-dev/reflect">GitHub</a><a href="https://pypi.org/project/o11y-reflect/">PyPI</a></span>
       </footer>
     </div>
   </main>
