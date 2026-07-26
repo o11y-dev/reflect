@@ -72,7 +72,9 @@ def test_landing_page_has_task_oriented_scenario_tiles():
 def test_landing_page_balances_personal_and_organizational_search_questions():
     text = _landing_text()
 
-    assert text.count('class="question-card"') == 6
+    assert 'class="agent-window" data-agent-qa' in text
+    assert text.count('class="agent-prompt-button') == 6
+    assert text.count('class="agent-answer"') == 6
     for question in (
         "Why did my AI coding agent hit its token budget limit?",
         "Why did this AI coding session fail?",
@@ -81,13 +83,33 @@ def test_landing_page_balances_personal_and_organizational_search_questions():
         "How can proven AI practices scale across teams, repositories, and agents?",
         "What evidence supports increasing AI capacity and budget?",
     ):
-        assert f"<h3>{question}</h3>" in text
+        assert f'data-question="{question}"' in text
     assert "When the evidence cannot prove an exact cause" in text
     assert "Cost is shown only where model-pricing evidence is recognized." in text
     assert "personal question about one session" in text
     assert "practices that scale across the organization" in text
     assert '<meta name="keywords"' not in text
     assert 'href="#questions"' in text
+
+
+def test_landing_page_question_window_is_accessible_and_interactive():
+    text = _landing_text()
+
+    assert "Evidence, Not Vibes." in text
+    assert "Local evidence connected" in text
+    assert "Personal reflection" in text
+    assert "Organizational reflection" in text
+    assert text.count('aria-controls="answer-') == 6
+    assert text.count('aria-pressed="true"') == 1
+    assert text.count('aria-pressed="false"') == 5
+    assert 'aria-live="polite"' in text
+    assert 'id="agent-active-question"' in text
+    assert 'id="agent-typed-question"' in text
+    assert 'aria-label="Ask selected question"' in text
+    assert "prefers-reduced-motion: reduce" in text
+    assert "window.setInterval" in text
+    assert "typedQuestion.textContent" in text
+    assert "answer.hidden = answer.id !== answerId" in text
 
 
 def test_landing_page_lists_every_memory_provider_with_honest_support_levels():
