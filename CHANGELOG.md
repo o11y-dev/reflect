@@ -11,6 +11,7 @@
 - Recognized ChatGPT's `Codex Desktop` OTLP service, re-ingested native logs with real conversation IDs, preserved low-level runtime traces as raw evidence, and excluded their synthetic sessions from analytics.
 - Prevented local native transcripts from duplicating sessions already normalized from native OTLP telemetry.
 - Scoped session-level `reflect usage --refresh` native imports to the explicit or active runtime session instead of scanning unrelated session history.
+- Made `reflect server --db-path ...` serve bounded SQLite snapshots without importing unrelated local history; background telemetry ingestion now requires explicit `--refresh`.
 
 ## 0.9.2 (2026-07-26)
 
