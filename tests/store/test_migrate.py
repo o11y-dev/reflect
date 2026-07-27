@@ -1,3 +1,4 @@
+import json
 from concurrent.futures import ThreadPoolExecutor
 
 from reflect.store.migrate import load_migrations, migrate
@@ -10,7 +11,7 @@ def test_migrate_applies_initial_schema(tmp_path):
     try:
         applied = migrate(conn)
         assert applied == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
         ]
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "raw_events" in tables
@@ -67,7 +68,7 @@ def test_migrate_is_idempotent(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
         assert migrate(conn) == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
         ]
         assert migrate(conn) == []
     finally:
@@ -87,8 +88,8 @@ def test_migrate_serializes_concurrent_background_requests(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: run_migration(), range(2)))
 
-    assert sorted(len(result) for result in results) == [0, 18]
-    assert sorted(version for result in results for version in result) == list(range(1, 19))
+    assert sorted(len(result) for result in results) == [0, 19]
+    assert sorted(version for result in results for version in result) == list(range(1, 20))
 
 
 def test_migrate_uses_read_only_fast_path_when_schema_is_current(tmp_path):
@@ -235,7 +236,7 @@ def test_database_doctor_reports_pending_migrations(tmp_path):
     assert status["ok"] is False
     assert status["applied_migrations"] == []
     assert status["pending_migrations"] == [
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
     ]
 
 
@@ -265,7 +266,7 @@ def test_migrate_adds_task_reconciliation_state_without_losing_phase_one_runs(tm
         )
         conn.commit()
 
-        assert migrate(conn) == [17, 18]
+        assert migrate(conn) == [17, 18, 19]
         row = conn.execute(
             """
             SELECT id, session_linked_at, session_outcome_recorded,
@@ -307,7 +308,7 @@ def test_migrate_adds_change_reviews_without_changing_phase_two_task_runs(tmp_pa
         )
         conn.commit()
 
-        assert migrate(conn) == [18]
+        assert migrate(conn) == [18, 19]
         assert tuple(
             conn.execute(
                 """
@@ -320,5 +321,140 @@ def test_migrate_adds_change_reviews_without_changing_phase_two_task_runs(tmp_pa
         assert conn.execute(
             "SELECT COUNT(*) FROM change_reviews"
         ).fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
+def test_migrate_reingests_codex_desktop_logs_and_removes_noisy_trace_session(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        for migration in load_migrations():
+            if migration.version > 18:
+                break
+            conn.executescript(migration.sql)
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO schema_migrations(version, name, applied_at)
+                VALUES (?, ?, '2026-07-26T00:00:00+00:00')
+                """,
+                (migration.version, migration.name),
+            )
+        now = "2026-07-26T00:00:00+00:00"
+        conn.execute(
+            """
+            INSERT INTO agents(id, name, kind, raw_json, created_at, updated_at)
+            VALUES ('codex-desktop', 'Codex Desktop', 'native', '{}', ?, ?)
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO sessions(
+              id, agent_id, started_at, status, source_kind, source_ref,
+              created_at, updated_at
+            ) VALUES (
+              'session-noisy', 'codex-desktop', ?, 'ok', 'otlp_traces_json',
+              '/tmp/otel-traces.json', ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status, raw_attrs_json,
+              created_at, updated_at
+            ) VALUES (
+              'step-noisy', 'session-noisy', 1, 'FramedRead::poll_next', ?,
+              'ok', '{"service.name":"Codex Desktop","code.module.name":"h2::codec"}',
+              ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO raw_events(
+              id, source_id, source_type, event_type, trace_id, span_id,
+              observed_at, received_at, attrs_json, body_json,
+              normalized_status, content_hash, created_at
+            ) VALUES (
+              'raw-noisy', '/tmp/otel-traces.json', 'otlp_traces_json',
+              'FramedRead::poll_next', 'trace', 'span', ?, ?,
+              '{"service.name":"Codex Desktop","code.module.name":"h2::codec"}',
+              '{}', 'ok', 'hash', ?
+            )
+            """,
+            (now, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO session_rollups(session_id, agent, started_at, updated_at)
+            VALUES ('session-noisy', 'Codex Desktop', ?, ?)
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO graph_nodes(
+              id, kind, label, session_id, attrs_json, created_at, updated_at
+            ) VALUES ('node-noisy', 'session', 'noisy', 'session-noisy', '{}', ?, ?)
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO daily_rollups(
+              day, agent, session_count, prompt_count, updated_at
+            ) VALUES ('2026-07-26', 'claude', 1, 1, ?)
+            """,
+            (now,),
+        )
+        conn.execute(
+            """
+            INSERT INTO tool_rollups(
+              tool_name, agent, call_count, success_count, updated_at
+            ) VALUES ('Read', 'claude', 1, 1, ?)
+            """,
+            (now,),
+        )
+        conn.executemany(
+            """
+            INSERT INTO source_ingestion_state(
+              source_id, source_type, size_bytes, modified_ns, updated_at
+            ) VALUES (?, ?, 100, 100, ?)
+            """,
+            [
+                ("/tmp/otel-traces.json", "otlp_traces_json", now),
+                ("/tmp/otel-logs.json", "otlp_logs_json", now),
+            ],
+        )
+        conn.commit()
+
+        assert migrate(conn) == [19]
+        assert conn.execute(
+            "SELECT COUNT(*) FROM source_ingestion_state"
+        ).fetchone()[0] == 0
+        raw = conn.execute(
+            "SELECT normalized_status, session_id, attrs_json FROM raw_events"
+        ).fetchone()
+        assert raw[:2] == ("ignored", None)
+        assert json.loads(raw[2])["reflect.telemetry.classification"] == "runtime_internal"
+        assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM steps").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM graph_nodes").fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT agent FROM daily_rollups"
+        ).fetchone()[0] == "claude"
+        assert conn.execute(
+            "SELECT agent FROM tool_rollups"
+        ).fetchone()[0] == "claude"
+        assert conn.execute(
+            """
+            SELECT COUNT(*) FROM maintenance_tasks
+            WHERE task = 'rebuild_rollups_after_codex_desktop_otel'
+            """
+        ).fetchone()[0] == 1
     finally:
         conn.close()

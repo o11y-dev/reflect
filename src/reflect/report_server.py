@@ -16,6 +16,7 @@ class ReportServerConfig:
     port: int
     db_path: Path
     otlp_traces: Path | None = None
+    refresh: bool = False
 
     @property
     def url(self) -> str:
@@ -30,6 +31,7 @@ class ReportServerStatus:
     url: str
     log_file: Path
     db_path: Path
+    refresh: bool
 
 
 class ReportServerDaemon:
@@ -62,6 +64,8 @@ class ReportServerDaemon:
         ]
         if self.config.otlp_traces is not None:
             command.extend(["--otlp-traces", str(self.config.otlp_traces)])
+        if self.config.refresh:
+            command.append("--refresh")
         with self._log_file.open("a", encoding="utf-8") as log_fd:
             process = subprocess.Popen(
                 command,
@@ -75,6 +79,7 @@ class ReportServerDaemon:
                 "port": self.config.port,
                 "db_path": str(self.config.db_path),
                 "otlp_traces": str(self.config.otlp_traces) if self.config.otlp_traces else None,
+                "refresh": self.config.refresh,
             }),
             encoding="utf-8",
         )
@@ -107,6 +112,7 @@ class ReportServerDaemon:
             url=config.url,
             log_file=self._log_file,
             db_path=config.db_path,
+            refresh=config.refresh,
         )
 
     def clear_pid(self, pid: int) -> None:
@@ -149,6 +155,7 @@ class ReportServerDaemon:
                 port=int(payload["port"]),
                 db_path=Path(payload["db_path"]),
                 otlp_traces=Path(otlp_traces) if otlp_traces else None,
+                refresh=bool(payload.get("refresh", False)),
             )
         except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
             return self.config
@@ -172,6 +179,7 @@ def _run_daemon(config: ReportServerConfig, daemon: ReportServerDaemon) -> None:
             dashboard_artifact=None,
             output=None,
             db_path=config.db_path,
+            refresh=config.refresh,
         )
     finally:
         daemon.clear_pid(os.getpid())
@@ -184,11 +192,13 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--db-path", type=Path, required=True)
     parser.add_argument("--otlp-traces", type=Path)
+    parser.add_argument("--refresh", action="store_true")
     args = parser.parse_args()
     config = ReportServerConfig(
         port=args.port,
         db_path=args.db_path,
         otlp_traces=args.otlp_traces,
+        refresh=args.refresh,
     )
     state_dir = Path(os.environ.get("REFLECT_HOME", Path.home() / ".reflect")) / "state"
     _run_daemon(config, ReportServerDaemon(config, state_dir=state_dir))

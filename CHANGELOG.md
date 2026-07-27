@@ -6,6 +6,13 @@
 
 - Repositioned the README and public landing page around evidence-backed AI improvement: ask through the coding agent for explanations and shareable internal requests, use the local UI for visual evidence and review, and measure whether approved workflows and skills improve later sessions. Added people-first search copy that balances personal reflection on token limits and failed sessions with organizational reflection on cost, reusable practices, capacity, and budget, presented through an accessible interactive agent window. Replaced CLI-like use-case labels with agent-native prompts and an invocation-style selector for Codex and slash-command agents.
 
+### Fixed
+
+- Recognized ChatGPT's `Codex Desktop` OTLP service, re-ingested native logs with real conversation IDs, preserved low-level runtime traces as raw evidence, and excluded their synthetic sessions from analytics.
+- Prevented local native transcripts from duplicating sessions already normalized from native OTLP telemetry.
+- Scoped session-level `reflect usage --refresh` native imports to the explicit or active runtime session instead of scanning unrelated session history.
+- Made `reflect server --db-path ...` serve bounded SQLite snapshots without importing unrelated local history; background telemetry ingestion now requires explicit `--refresh`.
+
 ## 0.9.2 (2026-07-26)
 
 ### Added

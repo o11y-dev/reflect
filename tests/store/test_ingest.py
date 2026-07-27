@@ -39,6 +39,39 @@ def _write_otlp_file(path):
     path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
 
+def _write_codex_trace_file(path, *, attributes):
+    payload = {
+        "resourceSpans": [
+            {
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "Codex Desktop"}}
+                    ]
+                },
+                "scopeSpans": [
+                    {
+                        "spans": [
+                            {
+                                "name": "FramedRead::poll_next",
+                                "traceId": "codex-trace",
+                                "spanId": "codex-span",
+                                "parentSpanId": "",
+                                "startTimeUnixNano": "100",
+                                "endTimeUnixNano": "200",
+                                "attributes": [
+                                    {"key": key, "value": {"stringValue": value}}
+                                    for key, value in attributes.items()
+                                ],
+                            }
+                        ]
+                    }
+                ],
+            }
+        ]
+    }
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
 def _write_spans_file(path):
     payload = {
         "name": "PreToolUse",
@@ -55,7 +88,7 @@ def _write_spans_file(path):
     path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
 
-def _write_codex_logs_file(path):
+def _write_codex_logs_file(path, *, session_id="codex-sess-1"):
     payload = {
         "resourceLogs": [
             {
@@ -70,7 +103,7 @@ def _write_codex_logs_file(path):
                                 "attributes": [
                                     {"key": "event.name", "value": {"stringValue": "codex.user_prompt"}},
                                     {"key": "event.timestamp", "value": {"stringValue": "2026-03-24T10:00:01Z"}},
-                                    {"key": "conversation.id", "value": {"stringValue": "codex-sess-1"}},
+                                    {"key": "conversation.id", "value": {"stringValue": session_id}},
                                     {"key": "model", "value": {"stringValue": "gpt-5.5"}},
                                     {"key": "prompt", "value": {"stringValue": "[REDACTED]"}},
                                 ],
@@ -267,6 +300,78 @@ def test_ingest_otlp_traces_dedupes(tmp_path):
         conn.close()
 
 
+def test_ingest_retains_codex_runtime_trace_without_creating_session(tmp_path):
+    db = tmp_path / "reflect.db"
+    otlp = tmp_path / "traces.json"
+    _write_codex_trace_file(otlp, attributes={"code.module.name": "h2::codec"})
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+
+        assert ingest_otlp_traces_file(conn, file_path=otlp) == {
+            "inserted": 1,
+            "skipped": 0,
+        }
+        assert normalize_pending_raw_events(conn) == {
+            "processed": 0,
+            "failed": 0,
+            "skipped": 0,
+        }
+
+        row = conn.execute(
+            """
+            SELECT normalized_status, session_id, attrs_json
+            FROM raw_events
+            """
+        ).fetchone()
+        attrs = json.loads(row[2])
+        assert row[:2] == ("ignored", None)
+        assert attrs["reflect.telemetry.classification"] == "runtime_internal"
+        assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM steps").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
+def test_ingest_links_semantic_codex_trace_by_conversation_id(tmp_path):
+    db = tmp_path / "reflect.db"
+    otlp = tmp_path / "traces.json"
+    _write_codex_trace_file(
+        otlp,
+        attributes={
+            "conversation.id": "codex-conversation",
+            "event.name": "codex.semantic_operation",
+        },
+    )
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+
+        assert ingest_otlp_traces_file(conn, file_path=otlp) == {
+            "inserted": 1,
+            "skipped": 0,
+        }
+        assert normalize_pending_raw_events(conn) == {
+            "processed": 1,
+            "failed": 0,
+            "skipped": 0,
+        }
+
+        raw = conn.execute(
+            "SELECT normalized_status, session_id, attrs_json FROM raw_events"
+        ).fetchone()
+        assert raw[:2] == ("ok", "codex-conversation")
+        assert "reflect.telemetry.classification" not in json.loads(raw[2])
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sessions WHERE id = 'codex-conversation'"
+        ).fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
 def test_ingest_otlp_logs_normalizes_codex_records(tmp_path):
     db = tmp_path / "reflect.db"
     logs = tmp_path / "otel-logs.json"
@@ -346,6 +451,133 @@ def test_ingest_native_codex_session_file(tmp_path):
         assert {attr["gen_ai.client.name"] for attr in attrs} == {"codex"}
         assert any(attr.get("gen_ai.client.tool_name") == "exec_command" for attr in attrs)
         assert any(attr.get("gen_ai.usage.input_tokens") == 750 for attr in attrs)
+    finally:
+        conn.close()
+
+
+def test_ingest_native_session_skips_session_already_created_from_otlp(tmp_path):
+    db = tmp_path / "reflect.db"
+    logs = tmp_path / "otel-logs.json"
+    session_file = tmp_path / "rollout-codex-native-sess-1.jsonl"
+    _write_codex_logs_file(logs, session_id="codex-native-sess-1")
+    _write_codex_session_file(session_file)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        assert ingest_otlp_logs_file(conn, file_path=logs) == {
+            "inserted": 1,
+            "skipped": 0,
+        }
+
+        result = ingest_native_session_file(
+            conn,
+            file_path=session_file,
+            agent="codex",
+            skip_existing_sessions=True,
+            skip_unchanged=True,
+        )
+
+        assert result == {"inserted": 0, "skipped": 0, "unchanged": 1}
+        assert conn.execute("SELECT COUNT(*) FROM raw_events").fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT COUNT(*) FROM raw_events WHERE source_type = 'native_session'"
+        ).fetchone()[0] == 0
+        assert normalize_pending_raw_events(conn) == {
+            "processed": 1,
+            "failed": 0,
+            "skipped": 0,
+        }
+    finally:
+        conn.close()
+
+
+def test_ingest_native_session_allows_updates_from_the_owning_file(tmp_path):
+    db = tmp_path / "reflect.db"
+    session_file = tmp_path / "rollout-codex-native-sess-1.jsonl"
+    _write_codex_session_file(session_file)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        assert ingest_native_session_file(
+            conn,
+            file_path=session_file,
+            agent="codex",
+            skip_existing_sessions=True,
+            skip_unchanged=True,
+        ) == {"inserted": 6, "skipped": 0, "unchanged": 0}
+        assert normalize_pending_raw_events(conn) == {
+            "processed": 6,
+            "failed": 0,
+            "skipped": 0,
+        }
+        with session_file.open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "timestamp": "2026-05-08T00:42:20.256Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "user",
+                            "content": [
+                                {"type": "input_text", "text": "inspect the appended update"}
+                            ],
+                        },
+                    }
+                )
+                + "\n"
+            )
+
+        result = ingest_native_session_file(
+            conn,
+            file_path=session_file,
+            agent="codex",
+            skip_existing_sessions=True,
+            skip_unchanged=True,
+        )
+
+        assert result == {"inserted": 2, "skipped": 5, "unchanged": 0}
+        assert conn.execute("SELECT COUNT(*) FROM raw_events").fetchone()[0] == 8
+        assert conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM raw_events
+            WHERE event_type = 'gen_ai.client.hook.UserPromptSubmit'
+            """
+        ).fetchone()[0] == 2
+    finally:
+        conn.close()
+
+
+def test_ingest_otlp_logs_skips_session_owned_by_native_file(tmp_path):
+    db = tmp_path / "reflect.db"
+    logs = tmp_path / "otel-logs.json"
+    session_file = tmp_path / "rollout-codex-native-sess-1.jsonl"
+    _write_codex_logs_file(logs, session_id="codex-native-sess-1")
+    _write_codex_session_file(session_file)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        assert ingest_native_session_file(
+            conn,
+            file_path=session_file,
+            agent="codex",
+        ) == {"inserted": 6, "skipped": 0}
+        assert normalize_pending_raw_events(conn) == {
+            "processed": 6,
+            "failed": 0,
+            "skipped": 0,
+        }
+
+        result = ingest_otlp_logs_file(conn, file_path=logs)
+
+        assert result == {"inserted": 0, "skipped": 1}
+        assert conn.execute(
+            "SELECT COUNT(*) FROM raw_events WHERE source_type = 'otlp_logs_json'"
+        ).fetchone()[0] == 0
     finally:
         conn.close()
 

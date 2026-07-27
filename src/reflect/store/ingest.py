@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from itertools import chain
 from pathlib import Path
 
 from reflect.parsing import (
@@ -103,6 +104,7 @@ def _session_id(attrs: dict) -> str | None:
         attrs.get("session.id")
         or attrs.get("gen_ai.session.id")
         or attrs.get("gen_ai.client.session_id")
+        or attrs.get("conversation.id")
         or attrs.get("session_id")
         or None
     )
@@ -119,6 +121,7 @@ def _insert_raw_span(
     attrs = span.get("attributes", {}) or {}
     origin_kind = classify_origin_kind(source_type, attrs)
     attrs = apply_origin_kind(attrs, origin_kind)
+    runtime_internal = attrs.get("reflect.telemetry.classification") == "runtime_internal"
     observed_at = _iso8601_from_ns(int(span.get("start_time_ns", 0) or 0))
     received_at = _iso8601_from_ns(int(span.get("end_time_ns", 0) or 0))
     content_hash = _event_hash({**span, "attributes": attrs})
@@ -140,13 +143,13 @@ def _insert_raw_span(
             span.get("traceId", ""),
             span.get("spanId", ""),
             span.get("parentSpanId", ""),
-            _session_id(attrs),
+            None if runtime_internal else _session_id(attrs),
             observed_at,
             received_at,
             origin_kind,
             json.dumps(attrs, sort_keys=True),
             json.dumps(span.get("body", {}) or {}, sort_keys=True),
-            "pending",
+            "ignored" if runtime_internal else "pending",
             None,
             content_hash,
             created_at,
@@ -155,17 +158,58 @@ def _insert_raw_span(
     return cursor.rowcount != 0
 
 
+def _session_owned_by_other_source(
+    db_conn: sqlite3.Connection,
+    *,
+    span: dict,
+    source: str,
+    source_type: str,
+) -> bool:
+    session_id = _session_id(span.get("attributes", {}) or {})
+    if not session_id:
+        return False
+    row = db_conn.execute(
+        "SELECT source_kind, source_ref FROM sessions WHERE id = ?",
+        (session_id,),
+    ).fetchone()
+    if row:
+        return (str(row[0] or ""), str(row[1] or "")) != (source_type, source)
+    raw_owner = db_conn.execute(
+        """
+        SELECT source_type, source_id
+        FROM raw_events
+        WHERE session_id = ?
+        ORDER BY created_at, id
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone()
+    return bool(
+        raw_owner
+        and (str(raw_owner[0] or ""), str(raw_owner[1] or "")) != (source_type, source)
+    )
+
+
 def _ingest_spans(
     db_conn,
     *,
     spans,
     source: str,
     source_type: str,
+    respect_session_ownership: bool = False,
 ) -> dict[str, int]:
     inserted = 0
     skipped = 0
     created_at = datetime.now(tz=UTC).isoformat()
     for span in spans:
+        if respect_session_ownership and _session_owned_by_other_source(
+            db_conn,
+            span=span,
+            source=source,
+            source_type=source_type,
+        ):
+            skipped += 1
+            continue
         if _insert_raw_span(
             db_conn,
             span=span,
@@ -189,16 +233,36 @@ def _ingest_file_spans(
     source_type: str,
     spans_factory: Callable[[], Iterable[dict]],
     skip_unchanged: bool,
+    skip_existing_session: bool = False,
+    respect_session_ownership: bool = False,
 ) -> dict[str, int]:
     fingerprint = SourceFingerprint.from_path(file_path)
     state = SourceIngestionState(db_conn)
     if skip_unchanged and state.matches(source, source_type, fingerprint):
         return {"inserted": 0, "skipped": 0, "unchanged": 1}
+    spans = iter(spans_factory())
+    if skip_existing_session:
+        first_span = next(spans, None)
+        if first_span is not None:
+            if _session_owned_by_other_source(
+                db_conn,
+                span=first_span,
+                source=source,
+                source_type=source_type,
+            ):
+                state.record(source, source_type, fingerprint)
+                db_conn.commit()
+                result = {"inserted": 0, "skipped": 0}
+                if skip_unchanged:
+                    result["unchanged"] = 1
+                return result
+            spans = chain((first_span,), spans)
     result = _ingest_spans(
         db_conn,
-        spans=spans_factory(),
+        spans=spans,
         source=source,
         source_type=source_type,
+        respect_session_ownership=respect_session_ownership,
     )
     state.record(source, source_type, fingerprint)
     db_conn.commit()
@@ -247,6 +311,7 @@ def ingest_otlp_logs_file(
         source_type="otlp_logs_json",
         spans_factory=spans,
         skip_unchanged=skip_unchanged,
+        respect_session_ownership=True,
     )
 
 
@@ -297,4 +362,5 @@ def ingest_native_session_file(
         source_type="native_session",
         spans_factory=lambda: spans,
         skip_unchanged=skip_unchanged,
+        skip_existing_session=skip_existing_sessions,
     )

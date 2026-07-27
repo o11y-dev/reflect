@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from reflect.store.mcp import DEFAULT_MCP_CLASSIFIER
+from reflect.store.provenance import is_codex_otel_service
 from reflect.utils import (
     _flatten_text_content,
     _json_dumps,
@@ -88,22 +89,24 @@ def _load_otlp_traces(file_path: Path, since_ns: int = 0) -> Iterable[dict]:
                                 **_flatten_otlp_attributes(span.get("attributes", [])),
                             },
                         }
-                        if _is_low_level_codex_span(flat_span):
-                            continue
+                        if _is_codex_runtime_internal_span(flat_span):
+                            flat_span["attributes"][
+                                "reflect.telemetry.classification"
+                            ] = "runtime_internal"
                         yield flat_span
 
 
-def _is_low_level_codex_span(span: dict) -> bool:
-    """Return true for noisy native Codex runtime spans.
+def _is_codex_runtime_internal_span(span: dict) -> bool:
+    """Return true for native Codex spans without session semantics.
 
     Codex emits useful session/model/tool records as OTLP logs today. Its trace
     stream is dominated by Rust HTTP/runtime internals (`h2`, `hyper`, etc.)
-    under `codex_cli_rs` / `codex-app-server`, which would otherwise swamp the
-    agent dashboard with transport spans.
+    under `codex_cli_rs` / `codex-app-server` / `Codex Desktop`. Preserve these
+    spans as raw evidence while excluding them from normalized analytics.
     """
     attrs = span.get("attributes") or {}
     service = str(attrs.get("service.name") or "").lower()
-    if service not in {"codex_cli_rs", "codex-app-server"}:
+    if not is_codex_otel_service(service):
         return False
     useful_keys = {
         "gen_ai.client.hook.event",
@@ -210,7 +213,7 @@ def _iter_codex_log_spans(records: Iterable[dict], since_ns: int = 0) -> Iterabl
     for index, record in enumerate(records):
         attrs = record.get("attributes") or {}
         service = str(attrs.get("service.name") or "")
-        if service not in {"codex_cli_rs", "codex-app-server"}:
+        if not is_codex_otel_service(service):
             continue
 
         event_name = str(attrs.get("event.name") or "")
@@ -606,6 +609,18 @@ def _discover_rich_session_files() -> list[tuple[str, Path]]:
     candidates.extend(("claude", p) for p in sorted((home / ".claude" / "projects").glob("**/*.jsonl")))
     candidates.extend(("gemini", p) for p in sorted((home / ".gemini" / "tmp").glob("**/chats/session-*.json")))
     return candidates
+
+
+def _native_session_path_matches_id(file_path: Path, session_id: str) -> bool:
+    target = session_id.strip()
+    if not target:
+        return False
+    stem = file_path.stem
+    return (
+        target in file_path.parts
+        or stem in {target, f"session-{target}", f"rollout-{target}"}
+        or stem.endswith(f"-{target}")
+    )
 
 
 def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:

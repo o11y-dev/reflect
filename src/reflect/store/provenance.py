@@ -22,7 +22,8 @@ NATIVE_OTLP_ORIGINS = {ORIGIN_NATIVE_OTLP_LOG, ORIGIN_NATIVE_OTLP_TRACE}
 HOOK_OTLP_ORIGINS = {ORIGIN_HOOK_OTLP_LOG, ORIGIN_HOOK_OTLP_TRACE}
 HOOK_ORIGINS = HOOK_OTLP_ORIGINS | {ORIGIN_HOOK_JSONL}
 
-_NATIVE_LOG_SERVICES = {"claude-code", "codex_cli_rs", "codex-app-server", "gemini-cli"}
+CODEX_OTLP_SERVICES = frozenset({"codex_cli_rs", "codex-app-server", "codex desktop"})
+_NATIVE_LOG_SERVICES = {"claude-code", "gemini-cli"} | set(CODEX_OTLP_SERVICES)
 
 _ORIGIN_LABELS = {
     ORIGIN_NATIVE_OTLP_LOG: "Native OTLP logs",
@@ -48,6 +49,10 @@ def normalize_origin_kind(value: object) -> str | None:
         return None
     cleaned = value.strip()
     return cleaned if cleaned in KNOWN_ORIGIN_KINDS else None
+
+
+def is_codex_otel_service(value: object) -> bool:
+    return str(value or "").strip().lower() in CODEX_OTLP_SERVICES
 
 
 def has_hook_semantics(attrs: dict[str, Any]) -> bool:
@@ -89,10 +94,15 @@ def apply_origin_kind(attrs: dict[str, Any], origin_kind: str | None) -> dict[st
 
 
 def stable_hash_attrs(attrs: dict[str, Any]) -> dict[str, Any]:
-    if "reflect.telemetry.origin" not in attrs:
+    derived_keys = {
+        "reflect.telemetry.classification",
+        "reflect.telemetry.origin",
+    }
+    if not derived_keys.intersection(attrs):
         return attrs
     sanitized = dict(attrs)
-    sanitized.pop("reflect.telemetry.origin", None)
+    for key in derived_keys:
+        sanitized.pop(key, None)
     return sanitized
 
 

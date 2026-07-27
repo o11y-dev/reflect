@@ -118,7 +118,7 @@ class TestLoadOtlpTraces:
         result = list(_load_otlp_traces(p))
         assert result[0]["attributes"].get("service.name") == "ide-agent"
 
-    def test_low_level_codex_runtime_spans_skipped(self, tmp_path):
+    def test_low_level_codex_runtime_spans_retained_for_raw_ingestion(self, tmp_path):
         payload = {
             "resourceSpans": [{
                 "resource": {
@@ -142,7 +142,39 @@ class TestLoadOtlpTraces:
         }
         p = tmp_path / "traces.json"
         p.write_text(json.dumps(payload) + "\n")
-        assert list(_load_otlp_traces(p)) == []
+        result = list(_load_otlp_traces(p))
+        assert len(result) == 1
+        assert result[0]["name"] == "FramedRead::poll_next"
+        assert result[0]["attributes"]["code.module.name"] == "h2::codec"
+
+    def test_low_level_codex_desktop_runtime_spans_retained_for_raw_ingestion(self, tmp_path):
+        payload = {
+            "resourceSpans": [{
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "Codex Desktop"}},
+                    ],
+                },
+                "scopeSpans": [{
+                    "spans": [{
+                        "traceId": "a" * 32,
+                        "spanId": "b" * 16,
+                        "name": "FramedRead::poll_next",
+                        "startTimeUnixNano": str(DAY1),
+                        "endTimeUnixNano": str(DAY1 + 1),
+                        "attributes": [
+                            {"key": "code.module.name", "value": {"stringValue": "h2::codec"}},
+                        ],
+                    }],
+                }],
+            }],
+        }
+        p = tmp_path / "traces.json"
+        p.write_text(json.dumps(payload) + "\n")
+        result = list(_load_otlp_traces(p))
+        assert len(result) == 1
+        assert result[0]["name"] == "FramedRead::poll_next"
+        assert result[0]["attributes"]["service.name"] == "Codex Desktop"
 
     def test_start_end_time_ns(self, tmp_path):
         span = make_span("UserPromptSubmit", start_ns=DAY1 + 5*HOUR, duration_ms=100)
@@ -159,13 +191,13 @@ class TestLoadOtlpTraces:
 
 
 class TestCodexOtlpLogs:
-    def _write_logs(self, tmp_path, records):
+    def _write_logs(self, tmp_path, records, *, service="codex_cli_rs"):
         p = tmp_path / "otel-logs.json"
         p.write_text(json.dumps({
             "resourceLogs": [{
                 "resource": {
                     "attributes": [
-                        {"key": "service.name", "value": {"stringValue": "codex_cli_rs"}},
+                        {"key": "service.name", "value": {"stringValue": service}},
                     ],
                 },
                 "scopeLogs": [{
@@ -213,6 +245,26 @@ class TestCodexOtlpLogs:
         assert {s["attributes"]["gen_ai.client.name"] for s in spans} == {"codex"}
         assert spans[0]["attributes"]["gen_ai.client.session_id"] == "codex-session-1"
         assert spans[0]["attributes"]["gen_ai.request.model"] == "gpt-5.5"
+
+    def test_codex_desktop_log_events_preserve_conversation_id(self, tmp_path):
+        p = self._write_logs(
+            tmp_path,
+            [
+                self._record({
+                    "event.name": "codex.conversation_starts",
+                    "event.timestamp": "2026-07-26T11:52:46Z",
+                    "conversation.id": "codex-desktop-session",
+                    "model": "gpt-5.6-sol",
+                }),
+            ],
+            service="Codex Desktop",
+        )
+
+        spans = list(_iter_codex_log_spans(_load_otlp_logs(p)))
+
+        assert len(spans) == 1
+        assert spans[0]["attributes"]["gen_ai.client.session_id"] == "codex-desktop-session"
+        assert spans[0]["attributes"]["reflect.telemetry.origin"] == "native_otlp_log"
 
     def test_codex_log_tool_and_token_events_normalize(self, tmp_path):
         p = self._write_logs(tmp_path, [

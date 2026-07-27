@@ -715,7 +715,12 @@ def normalize_pending_raw_events(
             try:
                 conn.execute(f"SAVEPOINT {savepoint}")
                 attrs = _load_json(row["attrs_json"])
-                session_id = row["session_id"] or attrs.get("session.id") or attrs.get("gen_ai.client.session_id")
+                session_id = (
+                    row["session_id"]
+                    or attrs.get("session.id")
+                    or attrs.get("gen_ai.client.session_id")
+                    or attrs.get("conversation.id")
+                )
                 if not session_id:
                     session_id = _stable_id("session", row["source_id"])
                 session_id = str(session_id)

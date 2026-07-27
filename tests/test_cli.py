@@ -599,6 +599,30 @@ class TestBrowserReportCommandSurface:
             assert worker.wait(timeout=2) is True
             mock_prepare.assert_called_once()
 
+    def test_existing_snapshot_can_be_served_without_refresh(self, otlp_file, tmp_path):
+        db_path = tmp_path / "reflect.db"
+        core._prepare_sql_report_db(
+            db_path,
+            otlp_traces=otlp_file,
+            include_native_sessions=False,
+        )
+        with patch("reflect.core._start_publish_server") as mock_server, \
+             patch("reflect.core._prepare_sql_report_db") as mock_prepare:
+            core._run_browser_report(
+                otlp_traces=None,
+                sessions_dir=None,
+                spans_dir=None,
+                time_range="week",
+                demo=False,
+                dashboard_artifact=None,
+                output=None,
+                db_path=db_path,
+                refresh=False,
+            )
+
+        mock_prepare.assert_not_called()
+        assert mock_server.call_args.kwargs["preparation_worker"] is None
+
     def test_foreground_report_ingests_inferred_otlp_logs(self, runner, tmp_path):
         otlp_file = tmp_path / "otel-traces.json"
         otlp_file.write_text(json.dumps({"resourceSpans": []}) + "\n", encoding="utf-8")

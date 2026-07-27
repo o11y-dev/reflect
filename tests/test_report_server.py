@@ -30,6 +30,24 @@ def test_report_server_daemon_start_is_idempotent(tmp_path):
     assert daemon.status().url == "http://127.0.0.1:9876/?report=api/data"
 
 
+def test_report_server_daemon_passes_refresh_to_child(tmp_path):
+    config = ReportServerConfig(
+        port=9876,
+        db_path=tmp_path / "reflect.db",
+        refresh=True,
+    )
+    daemon = ReportServerDaemon(config, state_dir=tmp_path / "state")
+    with patch("reflect.report_server.subprocess.Popen") as popen, patch.object(
+        daemon, "_port_in_use", return_value=False
+    ):
+        popen.return_value.pid = 4321
+
+        daemon.start()
+
+    command = popen.call_args.args[0]
+    assert "--refresh" in command
+
+
 def test_report_server_daemon_rejects_unmanaged_port_conflict(tmp_path):
     daemon = _daemon(tmp_path)
     with patch.object(daemon, "_port_in_use", return_value=True):
@@ -120,8 +138,60 @@ def test_bare_reflect_detaches_report_server(tmp_path):
         result = runner.invoke(main, ["--db-path", str(db_path)])
 
     assert result.exit_code == 0
-    start.assert_called_once_with(db_path=db_path, otlp_traces=None)
+    start.assert_called_once_with(db_path=db_path, otlp_traces=None, refresh=True)
     foreground.assert_not_called()
+
+
+def test_server_start_defaults_to_snapshot_only(tmp_path):
+    runner = CliRunner()
+    db_path = tmp_path / "reflect.db"
+    with patch("reflect.core._start_background_report_server") as start:
+        result = runner.invoke(
+            main,
+            ["server", "--db-path", str(db_path), "start"],
+        )
+
+    assert result.exit_code == 0
+    start.assert_called_once_with(
+        db_path=db_path,
+        otlp_traces=None,
+        refresh=False,
+    )
+
+
+def test_server_start_can_opt_into_refresh(tmp_path):
+    runner = CliRunner()
+    db_path = tmp_path / "reflect.db"
+    with patch("reflect.core._start_background_report_server") as start:
+        result = runner.invoke(
+            main,
+            ["server", "--db-path", str(db_path), "--refresh", "start"],
+        )
+
+    assert result.exit_code == 0
+    start.assert_called_once_with(
+        db_path=db_path,
+        otlp_traces=None,
+        refresh=True,
+    )
+
+
+def test_server_otlp_source_requires_refresh(tmp_path):
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "server",
+            "--db-path",
+            str(tmp_path / "reflect.db"),
+            "--otlp-traces",
+            str(tmp_path / "traces.json"),
+            "start",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--otlp-traces requires --refresh" in result.output
 
 
 def test_server_commands_are_exposed():
