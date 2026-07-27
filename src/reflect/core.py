@@ -47,10 +47,12 @@ import subprocess
 import sys
 import time
 import zipfile
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from importlib import metadata as importlib_metadata
 from importlib import resources as importlib_resources
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -58,6 +60,9 @@ import click
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+
+if TYPE_CHECKING:
+    from reflect.preparation import PreparationProgressReporter
 
 # ---------------------------------------------------------------------------
 # Reflect home directory
@@ -1310,25 +1315,57 @@ def usage(
 @click.option("--demo", is_flag=True, help="Use bundled sample telemetry in an isolated database.")
 @click.option("--json", "as_json", is_flag=True, help="Print the result as JSON.")
 @click.option(
+    "--refresh/--no-refresh",
+    default=True,
+    help="Refresh local telemetry before reading the improvement ledger.",
+)
+@click.option(
     "--db-path",
     type=click.Path(path_type=Path),
     default=REFLECT_HOME / "state" / "reflect.db",
     help="SQLite improvement ledger.",
 )
-def improve(observation_id: str | None, demo: bool, as_json: bool, db_path: Path) -> None:
+def improve(
+    observation_id: str | None,
+    demo: bool,
+    as_json: bool,
+    refresh: bool,
+    db_path: Path,
+) -> None:
     """Show the highest-impact local improvement or inspect OBSERVATION_ID."""
     import tempfile
+
+    from reflect.preparation import PreparationProgress
 
     temporary: tempfile.TemporaryDirectory[str] | None = None
     if demo:
         temporary = tempfile.TemporaryDirectory(prefix="reflect-improve-demo-")
         db_path = Path(temporary.name) / "reflect.db"
     try:
-        _prepare_sql_report_db(
-            db_path,
-            otlp_traces=_demo_otlp_traces() if demo else _default_otlp_traces(),
-            include_native_sessions=not demo,
-        )
+        if refresh:
+            progress_console = Console(stderr=True)
+            status_context = (
+                progress_console.status(
+                    "[bold orange3]Opening the local telemetry store...[/bold orange3]",
+                    spinner="dots",
+                )
+                if progress_console.is_terminal
+                else nullcontext()
+            )
+            with status_context as status:
+                def update_status(progress: PreparationProgress) -> None:
+                    message = f"[bold orange3]{progress.message}[/bold orange3]"
+                    if status is None:
+                        progress_console.print(message)
+                    else:
+                        status.update(message)
+
+                _prepare_sql_report_db(
+                    db_path,
+                    otlp_traces=_demo_otlp_traces() if demo else _default_otlp_traces(),
+                    include_native_sessions=not demo,
+                    progress=update_status,
+                )
         conn, service = _open_improvement_service(db_path)
         try:
             result = service.improve(observation_id, refresh=False)
@@ -4298,7 +4335,9 @@ def _prepare_sql_report_db(
     *,
     otlp_traces: Path | None,
     include_native_sessions: bool = False,
+    progress: PreparationProgressReporter | None = None,
 ) -> dict[str, object]:
+    from reflect.preparation import PreparationStage, report_preparation_progress
     from reflect.store.cursor_adapter import apply_cursor_transcript_usage_estimates
     from reflect.store.graph_normalize import rebuild_graph, refresh_graph
     from reflect.store.ingest import (
@@ -4312,10 +4351,16 @@ def _prepare_sql_report_db(
         backfill_tool_call_hashes,
         normalize_pending_raw_events,
     )
+    from reflect.store.refresh_plan import RefreshMode, plan_derived_refresh
     from reflect.store.rollups import rebuild_rollups, refresh_rollups, rollup_rebuild_pending
     from reflect.store.sqlite import connect_sqlite
     from reflect.store.workspaces import backfill_session_context
 
+    report_preparation_progress(
+        progress,
+        PreparationStage.OPENING_STORE,
+        "Opening the local telemetry store...",
+    )
     conn = connect_sqlite(db_path)
     try:
         applied = migrate(conn)
@@ -4325,6 +4370,11 @@ def _prepare_sql_report_db(
         source_types: dict[str, str] = {}
         cursor_native_files: list[Path] = []
         if otlp_traces is not None and otlp_traces.exists():
+            report_preparation_progress(
+                progress,
+                PreparationStage.INGESTING_TRACES,
+                "Reading new OTLP traces...",
+            )
             traces_result = ingest_otlp_traces_file(
                 conn,
                 file_path=otlp_traces,
@@ -4338,6 +4388,11 @@ def _prepare_sql_report_db(
             ingest_result["skipped"] += traces_result["skipped"]
             otlp_logs = _infer_otlp_logs_file(otlp_traces)
             if otlp_logs is not None and otlp_logs.exists():
+                report_preparation_progress(
+                    progress,
+                    PreparationStage.INGESTING_LOGS,
+                    "Reading new OTLP logs...",
+                )
                 logs_result = ingest_otlp_logs_file(
                     conn,
                     file_path=otlp_logs,
@@ -4350,6 +4405,11 @@ def _prepare_sql_report_db(
                 ingest_result["inserted"] += logs_result["inserted"]
                 ingest_result["skipped"] += logs_result["skipped"]
         if include_native_sessions:
+            report_preparation_progress(
+                progress,
+                PreparationStage.INGESTING_SESSIONS,
+                "Reading local agent sessions...",
+            )
             native_result = {"inserted": 0, "skipped": 0, "unchanged": 0}
             native_refs: list[str] = []
             for agent, session_file in _discover_rich_session_files():
@@ -4385,6 +4445,11 @@ def _prepare_sql_report_db(
             ).fetchone()
         )
         changed_session_ids: set[str] = set()
+        report_preparation_progress(
+            progress,
+            PreparationStage.NORMALIZING,
+            "Normalizing new telemetry...",
+        )
         normalize_result = (
             normalize_pending_raw_events(
                 conn,
@@ -4392,6 +4457,11 @@ def _prepare_sql_report_db(
             )
             if needs_normalize
             else {"processed": 0, "failed": 0, "skipped": 0}
+        )
+        report_preparation_progress(
+            progress,
+            PreparationStage.UPDATING_CANONICAL_STATE,
+            "Updating canonical session state...",
         )
         fingerprint_result = backfill_tool_call_hashes(conn)
         mcp_backfill_result = backfill_mcp_calls(
@@ -4415,54 +4485,100 @@ def _prepare_sql_report_db(
         cursor_adapter_result = (
             apply_cursor_transcript_usage_estimates(conn, cursor_native_files)
             if cursor_native_files
-            else {"updated": 0, "skipped": 0, "missing": 0}
+            else {"updated": 0, "skipped": 0, "missing": 0, "session_ids": []}
         )
-        session_count = int(conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0])
-        rollup_count = int(conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0])
-        graph_count = int(conn.execute("SELECT COUNT(*) FROM graph_nodes").fetchone()[0])
+        changed_session_ids.update(
+            str(session_id)
+            for session_id in cursor_adapter_result.get("session_ids", [])
+            if session_id
+        )
         reconciled_legacy_data = rollup_rebuild_pending(conn)
-        canonical_changed = bool(
-            normalize_result["processed"]
-            or mcp_backfill_result["inserted"]
-            or mcp_backfill_result["updated_status"]
-            or cursor_adapter_result["updated"]
-            or context_result["sessions_updated"]
+        all_session_ids = {str(row[0]) for row in conn.execute("SELECT id FROM sessions")}
+        rollup_session_ids = {
+            str(row[0]) for row in conn.execute("SELECT session_id FROM session_rollups")
+        }
+        graph_session_ids = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT DISTINCT session_id FROM graph_nodes "
+                "WHERE kind = 'Session' AND session_id IS NOT NULL"
+            )
+        }
+        refresh_plan = plan_derived_refresh(
+            changed_session_ids=changed_session_ids,
+            all_session_ids=all_session_ids,
+            graph_session_ids=graph_session_ids,
+            rollup_session_ids=rollup_session_ids,
+            graph_exists=bool(graph_session_ids),
+            force_full_rollup_reason=(
+                "Codex Desktop telemetry migration requires reconciliation"
+                if reconciled_legacy_data
+                else ""
+            ),
         )
-        derived_state_missing = bool(
-            session_count != rollup_count
-            or (session_count and not graph_count)
-        )
-        incremental_refresh = bool(
-            canonical_changed
-            and 0 < len(changed_session_ids) <= 400
-            and not cursor_adapter_result["updated"]
-        )
-        if (
-            reconciled_legacy_data
-            or derived_state_missing
-            or (canonical_changed and not incremental_refresh)
-        ):
+
+        if refresh_plan.cost_mode is RefreshMode.FULL:
             _ensure_sql_costs(conn)
+        elif refresh_plan.cost_mode is RefreshMode.INCREMENTAL:
+            _ensure_sql_costs(conn, session_ids=set(refresh_plan.cost_session_ids))
+
+        if refresh_plan.graph_mode is RefreshMode.FULL:
+            report_preparation_progress(
+                progress,
+                PreparationStage.REFRESHING_GRAPH,
+                f"Rebuilding the evidence graph ({refresh_plan.graph_reason})...",
+            )
             graph_result = rebuild_graph(conn)
-            rollup_result = rebuild_rollups(conn)
-        elif incremental_refresh:
-            _ensure_sql_costs(conn, session_ids=changed_session_ids)
-            graph_result = refresh_graph(conn, changed_session_ids)
-            rollup_result = refresh_rollups(conn, changed_session_ids)
+        elif refresh_plan.graph_mode is RefreshMode.INCREMENTAL:
+            graph_targets = set(refresh_plan.graph_session_ids)
+            report_preparation_progress(
+                progress,
+                PreparationStage.REFRESHING_GRAPH,
+                f"Refreshing the evidence graph for {len(graph_targets):,} session(s)...",
+            )
+            graph_result = refresh_graph(conn, graph_targets)
         else:
-            graph_result = {"nodes": 0, "edges": 0, "skipped": 1}
+            graph_result = {
+                "nodes": 0,
+                "edges": 0,
+                "skipped": 1,
+                "reason": refresh_plan.graph_reason,
+            }
+
+        if refresh_plan.rollup_mode is RefreshMode.FULL:
+            report_preparation_progress(
+                progress,
+                PreparationStage.REFRESHING_ROLLUPS,
+                f"Rebuilding session rollups ({refresh_plan.rollup_reason})...",
+            )
+            rollup_result = rebuild_rollups(conn)
+        elif refresh_plan.rollup_mode is RefreshMode.INCREMENTAL:
+            rollup_targets = set(refresh_plan.rollup_session_ids)
+            report_preparation_progress(
+                progress,
+                PreparationStage.REFRESHING_ROLLUPS,
+                f"Refreshing rollups for {len(rollup_targets):,} session(s)...",
+            )
+            rollup_result = refresh_rollups(conn, rollup_targets)
+        else:
             rollup_result = {
-                "session_rollups": rollup_count,
+                "session_rollups": len(rollup_session_ids),
                 "daily_rollups": int(conn.execute("SELECT COUNT(*) FROM daily_rollups").fetchone()[0]),
                 "tool_rollups": int(conn.execute("SELECT COUNT(*) FROM tool_rollups").fetchone()[0]),
                 "skipped": 1,
+                "reason": refresh_plan.rollup_reason,
             }
         from reflect.improvements.service import ImprovementService
 
+        report_preparation_progress(
+            progress,
+            PreparationStage.REFRESHING_IMPROVEMENTS,
+            "Refreshing evidence-backed improvements...",
+        )
         improvement_result = ImprovementService(conn).refresh()
     finally:
         conn.close()
-    return {
+    result = {
         "applied_migrations": applied,
         "ingest": ingest_result,
         "ingest_sources": ingest_sources,
@@ -4471,10 +4587,17 @@ def _prepare_sql_report_db(
         "tool_call_fingerprints": fingerprint_result,
         "session_context": context_result,
         "cursor_adapter": cursor_adapter_result,
+        "refresh_plan": refresh_plan.as_dict(),
         "graph": graph_result,
         "rollups": rollup_result,
         "improvements": improvement_result,
     }
+    report_preparation_progress(
+        progress,
+        PreparationStage.COMPLETE,
+        "Preparation complete.",
+    )
+    return result
 
 
 def _raw_event_agent_breakdown(conn, *, source_ids_by_type: dict[str, list[str]]) -> dict[str, dict[str, int]]:

@@ -48,7 +48,45 @@ def _flatten_otlp_attributes(otlp_attrs: list[dict]) -> dict:
     return flat
 
 
-def _load_otlp_traces(file_path: Path, since_ns: int = 0) -> Iterable[dict]:
+def _iter_jsonl_bytes(
+    file_path: Path,
+    *,
+    start_offset: int = 0,
+    end_offset: int | None = None,
+) -> Iterable[bytes]:
+    """Yield JSONL records from a stable byte range.
+
+    The caller bounds active files at the last complete JSON record so a writer
+    cannot make ingestion checkpoint a partial final record.
+    """
+    with file_path.open("rb") as handle:
+        handle.seek(max(0, start_offset))
+        while True:
+            if end_offset is None:
+                raw_line = handle.readline()
+            else:
+                remaining = end_offset - handle.tell()
+                if remaining <= 0:
+                    break
+                raw_line = handle.readline(remaining)
+                if (
+                    raw_line
+                    and not raw_line.endswith(b"\n")
+                    and handle.tell() != end_offset
+                ):
+                    break
+            if not raw_line:
+                break
+            yield raw_line
+
+
+def _load_otlp_traces(
+    file_path: Path,
+    since_ns: int = 0,
+    *,
+    start_offset: int = 0,
+    end_offset: int | None = None,
+) -> Iterable[dict]:
     """Load spans from an OTLP JSON file (collector file exporter format).
 
     Flattens the nested resourceSpans → scopeSpans → spans structure
@@ -58,42 +96,45 @@ def _load_otlp_traces(file_path: Path, since_ns: int = 0) -> Iterable[dict]:
     When *since_ns* is set, spans older than the cutoff are skipped
     **before** attribute flattening for performance.
     """
-    with file_path.open("r", encoding="utf-8") as handle:
-        for raw_line in handle:
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                payload = _json_loads(line)
-            except (ValueError, _json_stdlib.JSONDecodeError):
-                continue
+    for raw_line in _iter_jsonl_bytes(
+        file_path,
+        start_offset=start_offset,
+        end_offset=end_offset,
+    ):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = _json_loads(line)
+        except (ValueError, _json_stdlib.JSONDecodeError):
+            continue
 
-            for resource_span in payload.get("resourceSpans", []):
-                resource_attrs = _flatten_otlp_attributes(
-                    resource_span.get("resource", {}).get("attributes", [])
-                )
-                for scope_span in resource_span.get("scopeSpans", []):
-                    for span in scope_span.get("spans", []):
-                        start_ns = int(span.get("startTimeUnixNano", 0))
-                        if since_ns and start_ns and start_ns < since_ns:
-                            continue
-                        flat_span = {
-                            "name": span.get("name", ""),
-                            "traceId": span.get("traceId", ""),
-                            "spanId": span.get("spanId", ""),
-                            "parentSpanId": span.get("parentSpanId", ""),
-                            "start_time_ns": start_ns,
-                            "end_time_ns": int(span.get("endTimeUnixNano", 0)),
-                            "attributes": {
-                                **resource_attrs,
-                                **_flatten_otlp_attributes(span.get("attributes", [])),
-                            },
-                        }
-                        if _is_codex_runtime_internal_span(flat_span):
-                            flat_span["attributes"][
-                                "reflect.telemetry.classification"
-                            ] = "runtime_internal"
-                        yield flat_span
+        for resource_span in payload.get("resourceSpans", []):
+            resource_attrs = _flatten_otlp_attributes(
+                resource_span.get("resource", {}).get("attributes", [])
+            )
+            for scope_span in resource_span.get("scopeSpans", []):
+                for span in scope_span.get("spans", []):
+                    start_ns = int(span.get("startTimeUnixNano", 0))
+                    if since_ns and start_ns and start_ns < since_ns:
+                        continue
+                    flat_span = {
+                        "name": span.get("name", ""),
+                        "traceId": span.get("traceId", ""),
+                        "spanId": span.get("spanId", ""),
+                        "parentSpanId": span.get("parentSpanId", ""),
+                        "start_time_ns": start_ns,
+                        "end_time_ns": int(span.get("endTimeUnixNano", 0)),
+                        "attributes": {
+                            **resource_attrs,
+                            **_flatten_otlp_attributes(span.get("attributes", [])),
+                        },
+                    }
+                    if _is_codex_runtime_internal_span(flat_span):
+                        flat_span["attributes"][
+                            "reflect.telemetry.classification"
+                        ] = "runtime_internal"
+                    yield flat_span
 
 
 def _is_codex_runtime_internal_span(span: dict) -> bool:
@@ -118,41 +159,49 @@ def _is_codex_runtime_internal_span(span: dict) -> bool:
     return not any(attrs.get(key) for key in useful_keys)
 
 
-def _load_otlp_logs(file_path: Path) -> Iterable[dict]:
+def _load_otlp_logs(
+    file_path: Path,
+    *,
+    start_offset: int = 0,
+    end_offset: int | None = None,
+) -> Iterable[dict]:
     """Load log records from an OTLP JSON logs file."""
-    with file_path.open("r", encoding="utf-8") as handle:
-        for raw_line in handle:
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                payload = _json_loads(line)
-            except _json_stdlib.JSONDecodeError:
-                continue
+    for raw_line in _iter_jsonl_bytes(
+        file_path,
+        start_offset=start_offset,
+        end_offset=end_offset,
+    ):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = _json_loads(line)
+        except _json_stdlib.JSONDecodeError:
+            continue
 
-            for resource_log in payload.get("resourceLogs", []):
-                resource_attrs = _flatten_otlp_attributes(
-                    resource_log.get("resource", {}).get("attributes", [])
-                )
-                for scope_log in resource_log.get("scopeLogs", []):
-                    for record in scope_log.get("logRecords", []):
-                        body = record.get("body", {})
-                        body_value = None
-                        if isinstance(body, dict) and body:
-                            body_value = next(iter(body.values()))
-                        yield {
-                            "time_ns": int(record.get("timeUnixNano", 0)),
-                            "observed_time_ns": int(record.get("observedTimeUnixNano", 0) or 0),
-                            "severity_text": record.get("severityText", ""),
-                            "severity_number": int(record.get("severityNumber", 0) or 0),
-                            "trace_id": record.get("traceId", ""),
-                            "span_id": record.get("spanId", ""),
-                            "body": body_value,
-                            "attributes": {
-                                **resource_attrs,
-                                **_flatten_otlp_attributes(record.get("attributes", [])),
-                            },
-                        }
+        for resource_log in payload.get("resourceLogs", []):
+            resource_attrs = _flatten_otlp_attributes(
+                resource_log.get("resource", {}).get("attributes", [])
+            )
+            for scope_log in resource_log.get("scopeLogs", []):
+                for record in scope_log.get("logRecords", []):
+                    body = record.get("body", {})
+                    body_value = None
+                    if isinstance(body, dict) and body:
+                        body_value = next(iter(body.values()))
+                    yield {
+                        "time_ns": int(record.get("timeUnixNano", 0)),
+                        "observed_time_ns": int(record.get("observedTimeUnixNano", 0) or 0),
+                        "severity_text": record.get("severityText", ""),
+                        "severity_number": int(record.get("severityNumber", 0) or 0),
+                        "trace_id": record.get("traceId", ""),
+                        "span_id": record.get("spanId", ""),
+                        "body": body_value,
+                        "attributes": {
+                            **resource_attrs,
+                            **_flatten_otlp_attributes(record.get("attributes", [])),
+                        },
+                    }
 
 
 def _coerce_bool(value) -> bool:

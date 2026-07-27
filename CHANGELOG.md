@@ -12,6 +12,9 @@
 - Prevented local native transcripts from duplicating sessions already normalized from native OTLP telemetry.
 - Scoped session-level `reflect usage --refresh` native imports to the explicit or active runtime session instead of scanning unrelated session history.
 - Made `reflect server --db-path ...` serve bounded SQLite snapshots without importing unrelated local history; background telemetry ingestion now requires explicit `--refresh`.
+- Made `reflect improve` report preparation stages immediately, keep JSON output clean, and support `--no-refresh` for reading the existing improvement ledger without reprocessing telemetry.
+- Added append-safe OTLP JSONL checkpoints so growing trace and log files ingest only complete appended records, with safe full-scan fallback after truncation or rewrite.
+- Decoupled graph and rollup refresh planning so bounded missing-session gaps are repaired incrementally instead of triggering an unnecessary full evidence-graph rebuild.
 
 ## 0.9.2 (2026-07-26)
 

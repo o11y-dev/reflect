@@ -191,6 +191,7 @@ reflect memory search "query" . # search local SQLite memory
 reflect memory candidates .    # derive evidence-backed memory candidates from the graph
 reflect memory providers       # inspect configured memory providers
 reflect improve                # show highest-impact recurring problems and proposals
+reflect improve --no-refresh   # read the existing ledger without ingesting telemetry
 reflect improve OBSERVATION_ID # inspect one finding and its exact evidence
 reflect ask "How should I debug CI here?" # retrieve workflows, evidence, and scoped memory
 reflect loops                  # list stalled and productive repeated behavior
@@ -209,6 +210,12 @@ reflect workflows add SKILL.md # import a procedure from an existing skill file
 reflect feedback SESSION_ID --outcome corrected --reason "why"
 reflect --demo                 # instant demo with Claude/Codex/Copilot/Cursor/Gemini data
 ```
+
+`reflect improve` reports each preparation stage on stderr while keeping `--json`
+stdout machine-readable. Growing OTLP trace and log files are read from the last
+complete JSONL checkpoint, and only changed or missing session graph and rollup
+state is refreshed. Use `--no-refresh` when you need the current ledger
+immediately or want to defer ingestion of a large new source.
 
 The browser uses the same SQLite ledger as the CLI and follows one evidence-to-value path. **Inbox** contains only findings and observed loops. **Sessions** contains session inspection and direct A/B comparison. **Workflows** contains reusable procedures with source evidence, exact review, delivery target, and rollback. **Skills** contains only durable packages, versions, installations, observed usage, and measurements, with instant multi-word search across identity, purpose, lifecycle, provenance, source agent, availability, and installation target. **Impact** is reserved for measured outcomes after a workflow is applied. **Explore** contains Usage, Tools, Graph, and Context views; generic cohort analysis lives under Explore → Usage, while Improvement Rule definitions and extension guidance live under Explore → Context, away from daily triage. A selected loop remains evidence until `reflect loops build LOOP_ID` asks an agent to author one pending workflow packaged as a skill; no loop is installed or converted automatically.
 

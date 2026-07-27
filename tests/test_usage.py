@@ -483,7 +483,7 @@ def test_usage_rebuilds_rollups_after_codex_desktop_migration(tmp_path, monkeypa
         conn.close()
     conn = connect_sqlite(db_path)
     try:
-        assert migrate(conn) == [19]
+        assert migrate(conn) == [19, 20]
     finally:
         conn.close()
     monkeypatch.setattr("reflect.core._default_otlp_traces", lambda: None)

@@ -1,6 +1,12 @@
 import threading
 
-from reflect.preparation import BackgroundPreparationWorker, PreparationState
+from reflect.preparation import (
+    BackgroundPreparationWorker,
+    PreparationProgress,
+    PreparationStage,
+    PreparationState,
+    report_preparation_progress,
+)
 
 
 def test_background_preparation_worker_completes_and_runs_callbacks():
@@ -39,3 +45,20 @@ def test_background_preparation_worker_exposes_failures():
     snapshot = worker.snapshot()
     assert snapshot.state is PreparationState.FAILED
     assert snapshot.error == "preparation failed"
+
+
+def test_report_preparation_progress_emits_a_typed_stage():
+    progress = []
+
+    report_preparation_progress(
+        progress.append,
+        PreparationStage.INGESTING_TRACES,
+        "Reading new OTLP traces...",
+    )
+
+    assert progress == [
+        PreparationProgress(
+            stage=PreparationStage.INGESTING_TRACES,
+            message="Reading new OTLP traces...",
+        )
+    ]

@@ -1539,7 +1539,12 @@ class TestUpdateAdvisor:
 
         result = core._prepare_sql_report_db(db_path, otlp_traces=None, include_native_sessions=True)
 
-        assert result["cursor_adapter"] == {"updated": 1, "skipped": 0, "missing": 0}
+        assert result["cursor_adapter"] == {
+            "updated": 1,
+            "skipped": 0,
+            "missing": 0,
+            "session_ids": ["cursor-native-sess-1"],
+        }
         assert result["rollups"] == {"session_rollups": 1, "daily_rollups": 1, "tool_rollups": 0}
         conn = connect_sqlite(db_path)
         try:
@@ -1641,10 +1646,8 @@ class TestUpdateAdvisor:
             tool="Read",
             start_ns=initial_span["start_time_ns"] + 1_000_000_000,
         )
-        otlp_traces.write_text(
-            wrap_otlp([initial_span, changed_span]) + "\n",
-            encoding="utf-8",
-        )
+        with otlp_traces.open("a", encoding="utf-8") as handle:
+            handle.write(wrap_otlp([changed_span]) + "\n")
 
         result = core._prepare_sql_report_db(
             db_path,
@@ -1653,9 +1656,64 @@ class TestUpdateAdvisor:
         )
 
         assert result["ingest"]["inserted"] == 1
+        assert result["ingest_sources"]["otlp_traces"]["mode"] == "append"
         assert result["normalize"]["processed"] == 1
         assert result["graph"]["refreshed_sessions"] == 1
         assert result["rollups"]["refreshed_sessions"] == 1
+
+    def test_prepare_sql_report_db_repairs_rollup_gap_without_rebuilding_graph(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        from reflect.store.sqlite import connect_sqlite
+
+        db_path = tmp_path / "reflect.db"
+        otlp_traces = tmp_path / "otel-traces.json"
+        otlp_traces.write_text(
+            wrap_otlp(
+                [
+                    make_span("UserPromptSubmit", session="sess-current"),
+                    make_span(
+                        "UserPromptSubmit",
+                        session="sess-gap",
+                        start_ns=2_000_000_000,
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(core, "_infer_otlp_logs_file", lambda *_args, **_kwargs: None)
+
+        core._prepare_sql_report_db(
+            db_path,
+            otlp_traces=otlp_traces,
+            include_native_sessions=False,
+        )
+        conn = connect_sqlite(db_path)
+        try:
+            conn.execute("DELETE FROM session_rollups WHERE session_id = 'sess-gap'")
+            conn.commit()
+        finally:
+            conn.close()
+
+        def fail_if_rebuilt(*_args, **_kwargs):
+            raise AssertionError("the current graph should not be rebuilt for a rollup-only gap")
+
+        monkeypatch.setattr("reflect.store.graph_normalize.rebuild_graph", fail_if_rebuilt)
+        monkeypatch.setattr("reflect.store.rollups.rebuild_rollups", fail_if_rebuilt)
+
+        result = core._prepare_sql_report_db(
+            db_path,
+            otlp_traces=otlp_traces,
+            include_native_sessions=False,
+        )
+
+        assert result["graph"]["skipped"] == 1
+        assert result["rollups"]["refreshed_sessions"] == 1
+        assert result["refresh_plan"]["graph_mode"] == "skip"
+        assert result["refresh_plan"]["rollup_mode"] == "incremental"
 
     def test_update_apply_uses_pipx_upgrade(self, runner):
         advisor = {

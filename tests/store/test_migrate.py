@@ -11,7 +11,7 @@ def test_migrate_applies_initial_schema(tmp_path):
     try:
         applied = migrate(conn)
         assert applied == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
         ]
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "raw_events" in tables
@@ -68,7 +68,7 @@ def test_migrate_is_idempotent(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
         assert migrate(conn) == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
         ]
         assert migrate(conn) == []
     finally:
@@ -88,8 +88,8 @@ def test_migrate_serializes_concurrent_background_requests(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: run_migration(), range(2)))
 
-    assert sorted(len(result) for result in results) == [0, 19]
-    assert sorted(version for result in results for version in result) == list(range(1, 20))
+    assert sorted(len(result) for result in results) == [0, 20]
+    assert sorted(version for result in results for version in result) == list(range(1, 21))
 
 
 def test_migrate_uses_read_only_fast_path_when_schema_is_current(tmp_path):
@@ -236,7 +236,7 @@ def test_database_doctor_reports_pending_migrations(tmp_path):
     assert status["ok"] is False
     assert status["applied_migrations"] == []
     assert status["pending_migrations"] == [
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
     ]
 
 
@@ -266,7 +266,7 @@ def test_migrate_adds_task_reconciliation_state_without_losing_phase_one_runs(tm
         )
         conn.commit()
 
-        assert migrate(conn) == [17, 18, 19]
+        assert migrate(conn) == [17, 18, 19, 20]
         row = conn.execute(
             """
             SELECT id, session_linked_at, session_outcome_recorded,
@@ -308,7 +308,7 @@ def test_migrate_adds_change_reviews_without_changing_phase_two_task_runs(tmp_pa
         )
         conn.commit()
 
-        assert migrate(conn) == [18, 19]
+        assert migrate(conn) == [18, 19, 20]
         assert tuple(
             conn.execute(
                 """
@@ -431,7 +431,7 @@ def test_migrate_reingests_codex_desktop_logs_and_removes_noisy_trace_session(tm
         )
         conn.commit()
 
-        assert migrate(conn) == [19]
+        assert migrate(conn) == [19, 20]
         assert conn.execute(
             "SELECT COUNT(*) FROM source_ingestion_state"
         ).fetchone()[0] == 0

@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 
 
 class PreparationState(StrEnum):
@@ -13,6 +13,38 @@ class PreparationState(StrEnum):
     RUNNING = "running"
     COMPLETE = "complete"
     FAILED = "failed"
+
+
+class PreparationStage(StrEnum):
+    OPENING_STORE = "opening_store"
+    INGESTING_TRACES = "ingesting_traces"
+    INGESTING_LOGS = "ingesting_logs"
+    INGESTING_SESSIONS = "ingesting_sessions"
+    NORMALIZING = "normalizing"
+    UPDATING_CANONICAL_STATE = "updating_canonical_state"
+    REFRESHING_GRAPH = "refreshing_graph"
+    REFRESHING_ROLLUPS = "refreshing_rollups"
+    REFRESHING_IMPROVEMENTS = "refreshing_improvements"
+    COMPLETE = "complete"
+
+
+@dataclass(frozen=True)
+class PreparationProgress:
+    stage: PreparationStage
+    message: str
+
+
+class PreparationProgressReporter(Protocol):
+    def __call__(self, progress: PreparationProgress) -> None: ...
+
+
+def report_preparation_progress(
+    reporter: PreparationProgressReporter | None,
+    stage: PreparationStage,
+    message: str,
+) -> None:
+    if reporter is not None:
+        reporter(PreparationProgress(stage=stage, message=message))
 
 
 @dataclass(frozen=True)
@@ -49,7 +81,9 @@ class BackgroundPreparationWorker:
     def add_completion_callback(self, callback: Callable[[dict[str, Any]], None]) -> None:
         with self._lock:
             if self._snapshot.state is not PreparationState.IDLE:
-                raise RuntimeError("completion callbacks must be registered before preparation starts")
+                raise RuntimeError(
+                    "completion callbacks must be registered before preparation starts"
+                )
             self._callbacks.append(callback)
 
     def start(self) -> bool:
