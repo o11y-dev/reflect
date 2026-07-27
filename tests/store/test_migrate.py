@@ -1,3 +1,4 @@
+import json
 from concurrent.futures import ThreadPoolExecutor
 
 from reflect.store.migrate import load_migrations, migrate
@@ -434,7 +435,11 @@ def test_migrate_reingests_codex_desktop_logs_and_removes_noisy_trace_session(tm
         assert conn.execute(
             "SELECT COUNT(*) FROM source_ingestion_state"
         ).fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM raw_events").fetchone()[0] == 0
+        raw = conn.execute(
+            "SELECT normalized_status, session_id, attrs_json FROM raw_events"
+        ).fetchone()
+        assert raw[:2] == ("ignored", None)
+        assert json.loads(raw[2])["reflect.telemetry.classification"] == "runtime_internal"
         assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM steps").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0] == 0

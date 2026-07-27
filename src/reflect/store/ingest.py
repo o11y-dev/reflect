@@ -104,6 +104,7 @@ def _session_id(attrs: dict) -> str | None:
         attrs.get("session.id")
         or attrs.get("gen_ai.session.id")
         or attrs.get("gen_ai.client.session_id")
+        or attrs.get("conversation.id")
         or attrs.get("session_id")
         or None
     )
@@ -120,6 +121,7 @@ def _insert_raw_span(
     attrs = span.get("attributes", {}) or {}
     origin_kind = classify_origin_kind(source_type, attrs)
     attrs = apply_origin_kind(attrs, origin_kind)
+    runtime_internal = attrs.get("reflect.telemetry.classification") == "runtime_internal"
     observed_at = _iso8601_from_ns(int(span.get("start_time_ns", 0) or 0))
     received_at = _iso8601_from_ns(int(span.get("end_time_ns", 0) or 0))
     content_hash = _event_hash({**span, "attributes": attrs})
@@ -141,13 +143,13 @@ def _insert_raw_span(
             span.get("traceId", ""),
             span.get("spanId", ""),
             span.get("parentSpanId", ""),
-            _session_id(attrs),
+            None if runtime_internal else _session_id(attrs),
             observed_at,
             received_at,
             origin_kind,
             json.dumps(attrs, sort_keys=True),
             json.dumps(span.get("body", {}) or {}, sort_keys=True),
-            "pending",
+            "ignored" if runtime_internal else "pending",
             None,
             content_hash,
             created_at,

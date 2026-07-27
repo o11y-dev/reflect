@@ -94,10 +94,15 @@ def apply_origin_kind(attrs: dict[str, Any], origin_kind: str | None) -> dict[st
 
 
 def stable_hash_attrs(attrs: dict[str, Any]) -> dict[str, Any]:
-    if "reflect.telemetry.origin" not in attrs:
+    derived_keys = {
+        "reflect.telemetry.classification",
+        "reflect.telemetry.origin",
+    }
+    if not derived_keys.intersection(attrs):
         return attrs
     sanitized = dict(attrs)
-    sanitized.pop("reflect.telemetry.origin", None)
+    for key in derived_keys:
+        sanitized.pop(key, None)
     return sanitized
 
 

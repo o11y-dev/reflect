@@ -89,18 +89,20 @@ def _load_otlp_traces(file_path: Path, since_ns: int = 0) -> Iterable[dict]:
                                 **_flatten_otlp_attributes(span.get("attributes", [])),
                             },
                         }
-                        if _is_low_level_codex_span(flat_span):
-                            continue
+                        if _is_codex_runtime_internal_span(flat_span):
+                            flat_span["attributes"][
+                                "reflect.telemetry.classification"
+                            ] = "runtime_internal"
                         yield flat_span
 
 
-def _is_low_level_codex_span(span: dict) -> bool:
-    """Return true for noisy native Codex runtime spans.
+def _is_codex_runtime_internal_span(span: dict) -> bool:
+    """Return true for native Codex spans without session semantics.
 
     Codex emits useful session/model/tool records as OTLP logs today. Its trace
     stream is dominated by Rust HTTP/runtime internals (`h2`, `hyper`, etc.)
-    under `codex_cli_rs` / `codex-app-server`, which would otherwise swamp the
-    agent dashboard with transport spans.
+    under `codex_cli_rs` / `codex-app-server` / `Codex Desktop`. Preserve these
+    spans as raw evidence while excluding them from normalized analytics.
     """
     attrs = span.get("attributes") or {}
     service = str(attrs.get("service.name") or "").lower()

@@ -29,7 +29,15 @@ WHERE session_id IN (SELECT id FROM reflect_noisy_codex_desktop_sessions);
 DELETE FROM sessions
 WHERE id IN (SELECT id FROM reflect_noisy_codex_desktop_sessions);
 
-DELETE FROM raw_events
+UPDATE raw_events
+SET session_id = NULL,
+    normalized_status = 'ignored',
+    normalization_error = NULL,
+    attrs_json = json_set(
+      attrs_json,
+      '$."reflect.telemetry.classification"',
+      'runtime_internal'
+    )
 WHERE source_type = 'otlp_traces_json'
   AND lower(trim(json_extract(attrs_json, '$."service.name"'))) = 'codex desktop'
   AND json_extract(attrs_json, '$."gen_ai.client.hook.event"') IS NULL

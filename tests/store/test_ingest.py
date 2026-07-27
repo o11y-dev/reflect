@@ -39,6 +39,39 @@ def _write_otlp_file(path):
     path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
 
+def _write_codex_trace_file(path, *, attributes):
+    payload = {
+        "resourceSpans": [
+            {
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "Codex Desktop"}}
+                    ]
+                },
+                "scopeSpans": [
+                    {
+                        "spans": [
+                            {
+                                "name": "FramedRead::poll_next",
+                                "traceId": "codex-trace",
+                                "spanId": "codex-span",
+                                "parentSpanId": "",
+                                "startTimeUnixNano": "100",
+                                "endTimeUnixNano": "200",
+                                "attributes": [
+                                    {"key": key, "value": {"stringValue": value}}
+                                    for key, value in attributes.items()
+                                ],
+                            }
+                        ]
+                    }
+                ],
+            }
+        ]
+    }
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
 def _write_spans_file(path):
     payload = {
         "name": "PreToolUse",
@@ -263,6 +296,78 @@ def test_ingest_otlp_traces_dedupes(tmp_path):
         attrs = json.loads(row[4])
         assert row[:4] == ("otlp_traces_json", "UserPromptSubmit", "sess-1", "native_otlp_trace")
         assert attrs["reflect.telemetry.origin"] == "native_otlp_trace"
+    finally:
+        conn.close()
+
+
+def test_ingest_retains_codex_runtime_trace_without_creating_session(tmp_path):
+    db = tmp_path / "reflect.db"
+    otlp = tmp_path / "traces.json"
+    _write_codex_trace_file(otlp, attributes={"code.module.name": "h2::codec"})
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+
+        assert ingest_otlp_traces_file(conn, file_path=otlp) == {
+            "inserted": 1,
+            "skipped": 0,
+        }
+        assert normalize_pending_raw_events(conn) == {
+            "processed": 0,
+            "failed": 0,
+            "skipped": 0,
+        }
+
+        row = conn.execute(
+            """
+            SELECT normalized_status, session_id, attrs_json
+            FROM raw_events
+            """
+        ).fetchone()
+        attrs = json.loads(row[2])
+        assert row[:2] == ("ignored", None)
+        assert attrs["reflect.telemetry.classification"] == "runtime_internal"
+        assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM steps").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
+def test_ingest_links_semantic_codex_trace_by_conversation_id(tmp_path):
+    db = tmp_path / "reflect.db"
+    otlp = tmp_path / "traces.json"
+    _write_codex_trace_file(
+        otlp,
+        attributes={
+            "conversation.id": "codex-conversation",
+            "event.name": "codex.semantic_operation",
+        },
+    )
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+
+        assert ingest_otlp_traces_file(conn, file_path=otlp) == {
+            "inserted": 1,
+            "skipped": 0,
+        }
+        assert normalize_pending_raw_events(conn) == {
+            "processed": 1,
+            "failed": 0,
+            "skipped": 0,
+        }
+
+        raw = conn.execute(
+            "SELECT normalized_status, session_id, attrs_json FROM raw_events"
+        ).fetchone()
+        assert raw[:2] == ("ok", "codex-conversation")
+        assert "reflect.telemetry.classification" not in json.loads(raw[2])
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sessions WHERE id = 'codex-conversation'"
+        ).fetchone()[0] == 1
     finally:
         conn.close()
 

@@ -118,7 +118,7 @@ class TestLoadOtlpTraces:
         result = list(_load_otlp_traces(p))
         assert result[0]["attributes"].get("service.name") == "ide-agent"
 
-    def test_low_level_codex_runtime_spans_skipped(self, tmp_path):
+    def test_low_level_codex_runtime_spans_retained_for_raw_ingestion(self, tmp_path):
         payload = {
             "resourceSpans": [{
                 "resource": {
@@ -142,9 +142,12 @@ class TestLoadOtlpTraces:
         }
         p = tmp_path / "traces.json"
         p.write_text(json.dumps(payload) + "\n")
-        assert list(_load_otlp_traces(p)) == []
+        result = list(_load_otlp_traces(p))
+        assert len(result) == 1
+        assert result[0]["name"] == "FramedRead::poll_next"
+        assert result[0]["attributes"]["code.module.name"] == "h2::codec"
 
-    def test_low_level_codex_desktop_runtime_spans_skipped(self, tmp_path):
+    def test_low_level_codex_desktop_runtime_spans_retained_for_raw_ingestion(self, tmp_path):
         payload = {
             "resourceSpans": [{
                 "resource": {
@@ -168,7 +171,10 @@ class TestLoadOtlpTraces:
         }
         p = tmp_path / "traces.json"
         p.write_text(json.dumps(payload) + "\n")
-        assert list(_load_otlp_traces(p)) == []
+        result = list(_load_otlp_traces(p))
+        assert len(result) == 1
+        assert result[0]["name"] == "FramedRead::poll_next"
+        assert result[0]["attributes"]["service.name"] == "Codex Desktop"
 
     def test_start_end_time_ns(self, tmp_path):
         span = make_span("UserPromptSubmit", start_ns=DAY1 + 5*HOUR, duration_ms=100)
