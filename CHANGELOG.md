@@ -6,6 +6,7 @@
 
 - Repositioned the README and public landing page around evidence-backed AI improvement: ask through the coding agent for explanations and shareable internal requests, use the local UI for visual evidence and review, and measure whether approved workflows and skills improve later sessions. Added people-first search copy that balances personal reflection on token limits and failed sessions with organizational reflection on cost, reusable practices, capacity, and budget, presented through an accessible interactive agent window. Replaced CLI-like use-case labels with agent-native prompts and an invocation-style selector for Codex and slash-command agents.
 - Renamed the `reflect improve` CLI table to `Observed Improvements` so it parallels `Observed Loops`.
+- Made the landing-page release badge load GitHub's latest release at runtime with a version-neutral fallback, removing manual landing-page edits from version bumps.
 
 ### Fixed
 
