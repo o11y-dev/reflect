@@ -1277,6 +1277,24 @@ def test_simplified_cli_contract_reads_the_durable_ledger(tmp_path):
     } == {"verification"}
 
 
+def test_improve_labels_cli_table_as_observed_improvements(tmp_path):
+    service, conn = _service(tmp_path)
+    db_path = tmp_path / "reflect.db"
+    try:
+        service.refresh()
+    finally:
+        conn.close()
+
+    result = CliRunner().invoke(
+        main,
+        ["improve", "--no-refresh", "--db-path", str(db_path)],
+    )
+
+    assert result.exit_code == 0
+    assert "Observed Improvements" in result.output
+    assert "Improvement Inbox" not in result.output
+
+
 def test_improve_reports_progress_on_stderr_without_corrupting_json(tmp_path):
     from reflect.preparation import PreparationProgress, PreparationStage
 

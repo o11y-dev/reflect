@@ -1379,7 +1379,7 @@ def improve(
             if not result.observations:
                 console.print("[green]No actionable recurring observations found.[/green]")
                 return
-            table = Table(title="Improvement Inbox", border_style="orange3")
+            table = Table(title="Observed Improvements", border_style="orange3")
             table.add_column("ID", style="cyan", no_wrap=True)
             table.add_column("Finding")
             table.add_column("Impact", justify="right")
