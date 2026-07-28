@@ -1327,6 +1327,93 @@ def test_observation_sessions_endpoint_populates_ledger_without_candidate(tmp_pa
     assert missing.status_code == 404
 
 
+def test_observation_sessions_endpoint_reflects_grouped_finding(tmp_path):
+    """Two candidate-less observations sharing a rule_id/title (different scopes) form a
+    single inbox finding; hitting the sessions endpoint with either member's id must return
+    the combined session ledger, matching the finding's affected_session_count."""
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    conn = connect_sqlite(db_path)
+    try:
+        for session_id in ("session-a", "session-b"):
+            conn.execute(
+                """
+                INSERT INTO sessions(
+                  id, agent_id, started_at, ended_at, status, title, input_tokens,
+                  output_tokens, estimated_cost_usd, created_at, updated_at
+                )
+                VALUES (?, 'agent-codex', '2026-05-01T10:00:00+00:00',
+                  '2026-05-01T10:02:00+00:00', 'completed', 'Grouped session',
+                  10, 5, 0.1, '2026-05-01T11:00:00+00:00', '2026-05-01T11:00:00+00:00')
+                """,
+                (session_id,),
+            )
+        repository = ImprovementRepository(conn)
+        rule = RuleDefinition(
+            id="test_rule_grouped",
+            version=1,
+            category="reliability",
+            title="Test rule grouped across scopes",
+            description="Synthetic rule used to test multi-scope finding grouping over HTTP.",
+        )
+        repository.sync_rule_definitions((rule,), now="2026-05-01T11:00:00+00:00")
+
+        def _observation(scope_id: str, session_id: str) -> str:
+            return repository.upsert_observation(
+                ObservationDraft(
+                    rule_id=rule.id,
+                    rule_version=rule.version,
+                    scope_type="project",
+                    scope_id=scope_id,
+                    fingerprint=f"test-fingerprint-grouped-{scope_id}",
+                    category=rule.category,
+                    title="Grouped finding with no proposed workflow",
+                    summary="Example summary",
+                    metric_name="identical_retry_calls",
+                    metric_value=3,
+                    metric_unit="calls",
+                    metric_direction="lower_is_better",
+                    impact_score=90,
+                    severity=Severity.HIGH,
+                    confidence=0.9,
+                    evidence=[
+                        EvidenceRef(
+                            entity_type="session",
+                            entity_id=session_id,
+                            session_id=session_id,
+                            summary_redacted="Session shows repeated retries",
+                        )
+                    ],
+                ),
+                now="2026-05-01T11:00:00+00:00",
+            )
+
+        first_id = _observation("scope-a", "session-a")
+        _observation("scope-b", "session-b")
+        conn.commit()
+    finally:
+        conn.close()
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+    client = TestClient(app)
+
+    inbox = client.get("/api/inbox")
+    sessions = client.get(f"/api/observations/{first_id}/sessions")
+
+    assert inbox.status_code == 200
+    # A 2+ member finding surfaces the rule title, not the individual observation title.
+    finding = next(
+        item
+        for item in inbox.json()["findings"]
+        if item["title"] == "Test rule grouped across scopes"
+    )
+    assert finding["affected_session_count"] == 2
+
+    assert sessions.status_code == 200
+    ledger = sessions.json()
+    assert ledger["source_session_count"] == 2
+    assert {row["session_id"] for row in ledger["source_sessions"]} == {"session-a", "session-b"}
+
+
 def test_dashboard_sql_sessions_endpoint_filters_from_sql(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)

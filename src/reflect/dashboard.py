@@ -4854,9 +4854,12 @@ def _build_dashboard_app(
 
         conn = connect_sqlite(db_path)
         try:
-            ledger = ImprovementService(conn).repository.observation_session_ledger(
+            service = ImprovementService(conn)
+            observation_ids = service.resolve_finding_observation_ids(observation_id)
+            ledger = service.repository.observation_session_ledger(
                 observation_id,
                 limit=min(200, max(1, int(request.query_params.get("limit") or 50))),
+                observation_ids=observation_ids,
             )
             return JSONResponse(ledger.model_dump(mode="json"))
         except KeyError as exc:

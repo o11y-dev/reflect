@@ -184,6 +184,60 @@ class ImprovementService:
             return observation
         return self.repository.summary()
 
+    def _group_observations_by_finding(
+        self,
+        observations: list[ObservationRecord],
+    ) -> tuple[dict[tuple[str, ...], list[ObservationRecord]], dict[tuple[str, ...], str]]:
+        """Group scope-specific observations by the durable-finding key used across the inbox.
+
+        Observations linked to a workflow candidate group by that candidate's slug; everything
+        else groups by (rule_id, title), so unrelated observations sharing a rule can still be
+        told apart. Shared by list_inbox_findings and resolve_finding_observation_ids so both
+        see the same grouping.
+        """
+        candidate_by_id = {
+            candidate.id: candidate for candidate in self.repository.list_candidates(limit=500)
+        }
+        grouped: dict[tuple[str, ...], list[ObservationRecord]] = {}
+        group_slug: dict[tuple[str, ...], str] = {}
+        for observation in observations:
+            candidate = candidate_by_id.get(observation.candidate_id or "")
+            slug = str(candidate.content.get("slug") or "") if candidate else ""
+            if slug:
+                key = ("workflow", slug)
+                group_slug[key] = slug
+            else:
+                key = ("observation", observation.rule_id, observation.title)
+            grouped.setdefault(key, []).append(observation)
+        return grouped, group_slug
+
+    def resolve_finding_observation_ids(
+        self,
+        observation_id: str,
+        *,
+        status: str | None = None,
+        include_resolved: bool = False,
+    ) -> list[str]:
+        """Resolve every observation ID grouped into the same finding as observation_id.
+
+        Mirrors the grouping list_inbox_findings uses, so a session ledger fetched by a single
+        member observation still reflects the full finding rather than just that one scope.
+        Falls back to the observation alone when the current filters exclude it from the inbox.
+        """
+        if self.repository.get_observation(observation_id) is None:
+            raise KeyError(f"Observation not found: {observation_id}")
+
+        observations = self.repository.list_observations(
+            limit=500,
+            status=status,
+            include_resolved=include_resolved,
+        )
+        grouped, _ = self._group_observations_by_finding(observations)
+        for members in grouped.values():
+            if any(item.id == observation_id for item in members):
+                return [item.id for item in members]
+        return [observation_id]
+
     def list_inbox_findings(
         self,
         *,
@@ -200,8 +254,6 @@ class ImprovementService:
         if not observations:
             return []
 
-        candidates = self.repository.list_candidates(limit=500)
-        candidate_by_id = {candidate.id: candidate for candidate in candidates}
         workflows = self.workflows.list(limit=500)
         workflow_by_slug = {
             str(workflow.content.get("slug") or workflow.id): workflow
@@ -212,17 +264,7 @@ class ImprovementService:
             for rule in self.repository.list_rule_summaries()
         }
 
-        grouped: dict[tuple[str, ...], list[ObservationRecord]] = {}
-        group_slug: dict[tuple[str, ...], str] = {}
-        for observation in observations:
-            candidate = candidate_by_id.get(observation.candidate_id or "")
-            slug = str(candidate.content.get("slug") or "") if candidate else ""
-            if slug:
-                key = ("workflow", slug)
-                group_slug[key] = slug
-            else:
-                key = ("observation", observation.rule_id, observation.title)
-            grouped.setdefault(key, []).append(observation)
+        grouped, group_slug = self._group_observations_by_finding(observations)
 
         findings: list[InboxFindingRecord] = []
         status_priority = {

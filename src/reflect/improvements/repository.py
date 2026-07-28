@@ -699,18 +699,20 @@ class ImprovementRepository:
         observation_id: str,
         *,
         limit: int = 50,
+        observation_ids: list[str] | None = None,
     ) -> WorkflowSessionLedger:
         observation = self.get_observation(observation_id)
         if observation is None:
             raise KeyError(f"Observation not found: {observation_id}")
         bounded_limit = max(1, min(limit, 200))
-        source_sessions = self._source_session_records([observation_id], limit=bounded_limit)
+        group_ids = observation_ids or [observation_id]
+        source_sessions = self._source_session_records(group_ids, limit=bounded_limit)
         return WorkflowSessionLedger(
             candidate_id=observation.candidate_id or "",
             observation_id=observation.id,
-            observation_ids=[observation.id],
+            observation_ids=group_ids,
             skill_slug="",
-            source_session_count=self.observation_session_count([observation_id]),
+            source_session_count=self.observation_session_count(group_ids),
             source_sessions=source_sessions,
             exposure_session_count=0,
             exposure_sessions=[],
