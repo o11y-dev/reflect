@@ -1266,6 +1266,67 @@ def test_dashboard_session_detail_reads_hook_fact_contract(tmp_path):
     assert summary["agent_relationships"] == 1
 
 
+def test_observation_sessions_endpoint_populates_ledger_without_candidate(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    conn = connect_sqlite(db_path)
+    try:
+        repository = ImprovementRepository(conn)
+        rule = RuleDefinition(
+            id="test_rule_no_candidate",
+            version=1,
+            category="reliability",
+            title="Test rule with no candidate",
+            description="Synthetic rule used to test the no-candidate session ledger route.",
+        )
+        repository.sync_rule_definitions((rule,), now="2026-05-01T11:00:00+00:00")
+        observation_id = repository.upsert_observation(
+            ObservationDraft(
+                rule_id=rule.id,
+                rule_version=rule.version,
+                scope_type="user",
+                scope_id="local",
+                fingerprint="test-fingerprint-no-candidate",
+                category=rule.category,
+                title="Example finding with no proposed workflow",
+                summary="Example summary",
+                metric_name="identical_retry_calls",
+                metric_value=3,
+                metric_unit="calls",
+                metric_direction="lower_is_better",
+                impact_score=90,
+                severity=Severity.HIGH,
+                confidence=0.9,
+                evidence=[
+                    EvidenceRef(
+                        entity_type="session",
+                        entity_id="sess-sql",
+                        session_id="sess-sql",
+                        summary_redacted="Session shows repeated retries",
+                    )
+                ],
+            ),
+            now="2026-05-01T11:00:00+00:00",
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+    client = TestClient(app)
+
+    detail = client.get(f"/api/inbox/{observation_id}")
+    sessions = client.get(f"/api/observations/{observation_id}/sessions")
+    missing = client.get("/api/observations/does-not-exist/sessions")
+
+    assert detail.status_code == 200
+    assert detail.json()["candidate_id"] is None
+    assert sessions.status_code == 200
+    assert sessions.json()["candidate_id"] == ""
+    assert sessions.json()["source_session_count"] == 1
+    assert sessions.json()["source_sessions"][0]["session_id"] == "sess-sql"
+    assert missing.status_code == 404
+
+
 def test_dashboard_sql_sessions_endpoint_filters_from_sql(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)

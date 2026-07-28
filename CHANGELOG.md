@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Populated the "Source Sessions" panel for inbox findings that have no proposed workflow yet, instead of showing "0 linked" / no session ledger. Added `repository.observation_session_ledger` and `/api/observations/{observation_id}/sessions` alongside the existing candidate-scoped ledger.
 - Recognized ChatGPT's `Codex Desktop` OTLP service, re-ingested native logs with real conversation IDs, preserved low-level runtime traces as raw evidence, and excluded their synthetic sessions from analytics.
 - Prevented local native transcripts from duplicating sessions already normalized from native OTLP telemetry.
 - Scoped session-level `reflect usage --refresh` native imports to the explicit or active runtime session instead of scanning unrelated session history.

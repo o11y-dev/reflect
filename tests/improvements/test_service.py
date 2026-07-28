@@ -10,9 +10,12 @@ from click.testing import CliRunner
 
 from reflect.core import main
 from reflect.improvements.models import (
+    EvidenceRef,
     ImprovementSummary,
     ObservationDraft,
     ObservationStatus,
+    RuleDefinition,
+    Severity,
     WorkflowProposal,
     WorkflowStatus,
 )
@@ -562,6 +565,79 @@ def test_workflow_apply_and_rollback_are_hash_guarded(tmp_path):
         assert rolled_back["status"] == "rolled_back"
         assert not target.exists()
         assert service.workflows.show(candidate.id).status == WorkflowStatus.ROLLED_BACK
+    finally:
+        conn.close()
+
+
+def test_observation_session_ledger_without_workflow_candidate(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        service.repository.sync_rule_definitions(
+            [
+                RuleDefinition(
+                    id="test_rule_no_candidate",
+                    version=1,
+                    category="reliability",
+                    title="Test rule with no candidate",
+                    description="Synthetic rule used to test the no-candidate session ledger path.",
+                )
+            ],
+            now=NOW,
+        )
+        draft = ObservationDraft(
+            rule_id="test_rule_no_candidate",
+            rule_version=1,
+            scope_type="user",
+            scope_id="local",
+            fingerprint="test-fingerprint-no-candidate",
+            category="reliability",
+            title="Example finding with no proposed workflow",
+            summary="Example summary",
+            metric_name="identical_retry_calls",
+            metric_value=3,
+            metric_unit="calls",
+            metric_direction="lower_is_better",
+            impact_score=90,
+            severity=Severity.HIGH,
+            confidence=0.9,
+            affected_session_count=2,
+            evidence=[
+                EvidenceRef(
+                    entity_type="session",
+                    entity_id="session-1",
+                    session_id="session-1",
+                    summary_redacted="Session shows repeated retries",
+                ),
+                EvidenceRef(
+                    entity_type="session",
+                    entity_id="session-2",
+                    session_id="session-2",
+                    summary_redacted="Session shows repeated retries",
+                ),
+            ],
+        )
+        observation_id = service.repository.upsert_observation(draft, now=NOW)
+        conn.commit()
+
+        observation = service.repository.get_observation(observation_id)
+        assert observation.candidate_id is None
+
+        ledger = service.repository.observation_session_ledger(observation_id)
+        assert ledger.candidate_id == ""
+        assert ledger.observation_id == observation_id
+        assert ledger.source_session_count == 2
+        assert {row.session_id for row in ledger.source_sessions} == {"session-1", "session-2"}
+        assert ledger.exposure_session_count == 0
+        assert ledger.exposure_sessions == []
+    finally:
+        conn.close()
+
+
+def test_observation_session_ledger_missing_observation_raises(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        with pytest.raises(KeyError):
+            service.repository.observation_session_ledger("missing-observation")
     finally:
         conn.close()
 
