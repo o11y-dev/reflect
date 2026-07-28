@@ -181,12 +181,6 @@ def test_landing_page_agent_rail_uses_accessible_logo_marks():
 
 def test_landing_page_repo_proof_progressively_loads_github_stats():
     text = _landing_text()
-    version_match = re.search(
-        r'^version\s*=\s*"([^"]+)"',
-        PYPROJECT.read_text(encoding="utf-8"),
-        re.MULTILINE,
-    )
-    assert version_match is not None
 
     assert 'class="repo-proof nav-repo-proof" href="https://github.com/o11y-dev/reflect"' in text
     nav_start = text.index('<nav class="nav"')
@@ -194,7 +188,7 @@ def test_landing_page_repo_proof_progressively_loads_github_stats():
     repo_proof = text.index('class="repo-proof nav-repo-proof"')
     assert nav_start < repo_proof < nav_end
     assert 'id="repo-stats" aria-live="polite" aria-atomic="true" aria-busy="true"' in text
-    assert f'id="repo-release">v{version_match.group(1)}</span>' in text
+    assert 'id="repo-release">Latest release</span>' in text
     assert 'id="repo-stars">Stars</span>' in text
     assert 'id="repo-forks">Forks</span>' in text
     assert "new Intl.NumberFormat" in text

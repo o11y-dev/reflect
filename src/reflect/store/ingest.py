@@ -24,6 +24,11 @@ from reflect.parsing import (
 )
 from reflect.store.provenance import apply_origin_kind, classify_origin_kind, stable_hash_attrs
 
+CHECKPOINT_HASH_WINDOW_BYTES = 64 * 1024
+JSONL_SCAN_CHUNK_BYTES = 64 * 1024
+
+IngestionResult = dict[str, int | str]
+
 
 @dataclass(frozen=True)
 class SourceFingerprint:
@@ -36,37 +41,74 @@ class SourceFingerprint:
         return cls(size_bytes=stat.st_size, modified_ns=stat.st_mtime_ns)
 
 
+@dataclass(frozen=True)
+class SourceCheckpoint:
+    size_bytes: int
+    modified_ns: int
+    processed_offset_bytes: int
+    checkpoint_tail_sha256: str
+
+
 class SourceIngestionState:
     """Persist cheap file fingerprints so repeated report preparation can skip unchanged inputs."""
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
 
-    def matches(self, source_id: str, source_type: str, fingerprint: SourceFingerprint) -> bool:
+    def load(self, source_id: str, source_type: str) -> SourceCheckpoint | None:
         row = self._conn.execute(
             """
-            SELECT size_bytes, modified_ns
+            SELECT size_bytes, modified_ns, processed_offset_bytes,
+                   COALESCE(checkpoint_tail_sha256, '')
             FROM source_ingestion_state
             WHERE source_id = ? AND source_type = ?
             """,
             (source_id, source_type),
         ).fetchone()
-        return bool(
-            row
-            and int(row[0]) == fingerprint.size_bytes
-            and int(row[1]) == fingerprint.modified_ns
+        if row is None:
+            return None
+        return SourceCheckpoint(
+            size_bytes=int(row[0]),
+            modified_ns=int(row[1]),
+            processed_offset_bytes=int(row[2]),
+            checkpoint_tail_sha256=str(row[3] or ""),
         )
 
-    def record(self, source_id: str, source_type: str, fingerprint: SourceFingerprint) -> None:
+    def matches(self, source_id: str, source_type: str, fingerprint: SourceFingerprint) -> bool:
+        checkpoint = self.load(source_id, source_type)
+        return bool(
+            checkpoint
+            and checkpoint.size_bytes == fingerprint.size_bytes
+            and checkpoint.modified_ns == fingerprint.modified_ns
+            and (
+                checkpoint.processed_offset_bytes == fingerprint.size_bytes
+                or (
+                    checkpoint.processed_offset_bytes == 0 and not checkpoint.checkpoint_tail_sha256
+                )
+            )
+        )
+
+    def record(
+        self,
+        source_id: str,
+        source_type: str,
+        fingerprint: SourceFingerprint,
+        *,
+        processed_offset_bytes: int,
+        checkpoint_tail_sha256: str,
+    ) -> None:
         self._conn.execute(
             """
             INSERT INTO source_ingestion_state(
-              source_id, source_type, size_bytes, modified_ns, updated_at
-            ) VALUES (?, ?, ?, ?, ?)
+              source_id, source_type, size_bytes, modified_ns, updated_at,
+              processed_offset_bytes, checkpoint_tail_sha256
+            ) VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''))
             ON CONFLICT(source_id, source_type) DO UPDATE SET
               size_bytes = excluded.size_bytes,
               modified_ns = excluded.modified_ns,
-              updated_at = excluded.updated_at
+              updated_at = excluded.updated_at,
+              processed_offset_bytes = excluded.processed_offset_bytes,
+              checkpoint_tail_sha256 = excluded.checkpoint_tail_sha256
             """,
             (
                 source_id,
@@ -74,8 +116,67 @@ class SourceIngestionState:
                 fingerprint.size_bytes,
                 fingerprint.modified_ns,
                 datetime.now(tz=UTC).isoformat(),
+                processed_offset_bytes,
+                checkpoint_tail_sha256,
             ),
         )
+
+
+def _checkpoint_tail_sha256(file_path: Path, offset: int) -> str:
+    if offset <= 0:
+        return ""
+    start = max(0, offset - CHECKPOINT_HASH_WINDOW_BYTES)
+    with file_path.open("rb") as handle:
+        handle.seek(start)
+        content = handle.read(offset - start)
+    return hashlib.sha256(content).hexdigest()
+
+
+def _complete_jsonl_offset(file_path: Path, size_bytes: int) -> int:
+    if size_bytes <= 0:
+        return 0
+    with file_path.open("rb") as handle:
+        handle.seek(size_bytes - 1)
+        if handle.read(1) == b"\n":
+            return size_bytes
+        scan_end = size_bytes
+        record_start = 0
+        while scan_end > 0:
+            scan_start = max(0, scan_end - JSONL_SCAN_CHUNK_BYTES)
+            handle.seek(scan_start)
+            chunk = handle.read(scan_end - scan_start)
+            newline = chunk.rfind(b"\n")
+            if newline >= 0:
+                record_start = scan_start + newline + 1
+                break
+            scan_end = scan_start
+        handle.seek(record_start)
+        final_record = handle.read(size_bytes - record_start).strip()
+    if not final_record:
+        return size_bytes
+    try:
+        payload = json.loads(final_record)
+    except (TypeError, ValueError):
+        return record_start
+    return size_bytes if isinstance(payload, dict) else record_start
+
+
+def _append_start_offset(
+    file_path: Path,
+    fingerprint: SourceFingerprint,
+    checkpoint: SourceCheckpoint | None,
+) -> int | None:
+    if (
+        checkpoint is None
+        or checkpoint.processed_offset_bytes <= 0
+        or checkpoint.processed_offset_bytes >= fingerprint.size_bytes
+        or not checkpoint.checkpoint_tail_sha256
+    ):
+        return None
+    current_tail = _checkpoint_tail_sha256(file_path, checkpoint.processed_offset_bytes)
+    if current_tail != checkpoint.checkpoint_tail_sha256:
+        return None
+    return checkpoint.processed_offset_bytes
 
 
 def _iso8601_from_ns(value_ns: int) -> str:
@@ -231,16 +332,79 @@ def _ingest_file_spans(
     file_path: Path,
     source: str,
     source_type: str,
-    spans_factory: Callable[[], Iterable[dict]],
+    spans_factory: Callable[[int, int | None], Iterable[dict]],
     skip_unchanged: bool,
+    append_only_jsonl: bool = False,
     skip_existing_session: bool = False,
     respect_session_ownership: bool = False,
-) -> dict[str, int]:
+) -> IngestionResult:
     fingerprint = SourceFingerprint.from_path(file_path)
     state = SourceIngestionState(db_conn)
     if skip_unchanged and state.matches(source, source_type, fingerprint):
-        return {"inserted": 0, "skipped": 0, "unchanged": 1}
-    spans = iter(spans_factory())
+        checkpoint = state.load(source, source_type)
+        if (
+            append_only_jsonl
+            and checkpoint is not None
+            and checkpoint.processed_offset_bytes != fingerprint.size_bytes
+        ):
+            processed_offset = _complete_jsonl_offset(file_path, fingerprint.size_bytes)
+            state.record(
+                source,
+                source_type,
+                fingerprint,
+                processed_offset_bytes=processed_offset,
+                checkpoint_tail_sha256=_checkpoint_tail_sha256(
+                    file_path,
+                    processed_offset,
+                ),
+            )
+            db_conn.commit()
+        else:
+            processed_offset = fingerprint.size_bytes
+        result = {"inserted": 0, "skipped": 0, "unchanged": 1}
+        if append_only_jsonl:
+            result.update(
+                {
+                    "mode": "unchanged",
+                    "bytes_read": 0,
+                    "processed_offset_bytes": processed_offset,
+                    "pending_bytes": fingerprint.size_bytes - processed_offset,
+                }
+            )
+        return result
+
+    start_offset = 0
+    end_offset = (
+        _complete_jsonl_offset(file_path, fingerprint.size_bytes)
+        if append_only_jsonl
+        else None
+    )
+    mode = "full"
+    checkpoint = state.load(source, source_type)
+    if skip_unchanged and append_only_jsonl:
+        append_start = _append_start_offset(file_path, fingerprint, checkpoint)
+        if append_start is not None:
+            start_offset = append_start
+            mode = "append"
+        assert end_offset is not None
+        if end_offset < start_offset:
+            start_offset = 0
+            mode = "full"
+    if end_offset is not None and end_offset == start_offset:
+        result = {"inserted": 0, "skipped": 0}
+        if skip_unchanged:
+            result.update(
+                {
+                    "unchanged": 0,
+                    "mode": mode,
+                    "bytes_read": 0,
+                    "processed_offset_bytes": start_offset,
+                    "pending_bytes": fingerprint.size_bytes - start_offset,
+                }
+            )
+        return result
+
+    spans = iter(spans_factory(start_offset, end_offset))
     if skip_existing_session:
         first_span = next(spans, None)
         if first_span is not None:
@@ -250,7 +414,20 @@ def _ingest_file_spans(
                 source=source,
                 source_type=source_type,
             ):
-                state.record(source, source_type, fingerprint)
+                processed_offset = (
+                    end_offset if end_offset is not None else fingerprint.size_bytes
+                )
+                state.record(
+                    source,
+                    source_type,
+                    fingerprint,
+                    processed_offset_bytes=processed_offset,
+                    checkpoint_tail_sha256=(
+                        _checkpoint_tail_sha256(file_path, processed_offset)
+                        if append_only_jsonl
+                        else ""
+                    ),
+                )
                 db_conn.commit()
                 result = {"inserted": 0, "skipped": 0}
                 if skip_unchanged:
@@ -264,10 +441,28 @@ def _ingest_file_spans(
         source_type=source_type,
         respect_session_ownership=respect_session_ownership,
     )
-    state.record(source, source_type, fingerprint)
+    processed_offset = end_offset if end_offset is not None else fingerprint.size_bytes
+    state.record(
+        source,
+        source_type,
+        fingerprint,
+        processed_offset_bytes=processed_offset,
+        checkpoint_tail_sha256=(
+            _checkpoint_tail_sha256(file_path, processed_offset) if append_only_jsonl else ""
+        ),
+    )
     db_conn.commit()
     if skip_unchanged:
         result["unchanged"] = 0
+        if append_only_jsonl:
+            result.update(
+                {
+                    "mode": mode,
+                    "bytes_read": processed_offset - start_offset,
+                    "processed_offset_bytes": processed_offset,
+                    "pending_bytes": fingerprint.size_bytes - processed_offset,
+                }
+            )
     return result
 
 
@@ -277,15 +472,20 @@ def ingest_otlp_traces_file(
     file_path: Path,
     source_id: str | None = None,
     skip_unchanged: bool = False,
-) -> dict[str, int]:
+) -> IngestionResult:
     source = source_id or str(file_path)
     return _ingest_file_spans(
         db_conn,
         file_path=file_path,
         source=source,
         source_type="otlp_traces_json",
-        spans_factory=lambda: _load_otlp_traces(file_path),
+        spans_factory=lambda start, end: _load_otlp_traces(
+            file_path,
+            start_offset=start,
+            end_offset=end,
+        ),
         skip_unchanged=skip_unchanged,
+        append_only_jsonl=True,
     )
 
 
@@ -295,11 +495,17 @@ def ingest_otlp_logs_file(
     file_path: Path,
     source_id: str | None = None,
     skip_unchanged: bool = False,
-) -> dict[str, int]:
+) -> IngestionResult:
     source = source_id or str(file_path)
 
-    def spans():
-        records = list(_load_otlp_logs(file_path))
+    def spans(start_offset: int, end_offset: int | None):
+        records = list(
+            _load_otlp_logs(
+                file_path,
+                start_offset=start_offset,
+                end_offset=end_offset,
+            )
+        )
         yield from _iter_claude_log_spans(records)
         yield from _iter_codex_log_spans(records)
         yield from _iter_gemini_log_spans(records)
@@ -311,6 +517,7 @@ def ingest_otlp_logs_file(
         source_type="otlp_logs_json",
         spans_factory=spans,
         skip_unchanged=skip_unchanged,
+        append_only_jsonl=True,
         respect_session_ownership=True,
     )
 
@@ -321,14 +528,14 @@ def ingest_local_spans_file(
     file_path: Path,
     source_id: str | None = None,
     skip_unchanged: bool = False,
-) -> dict[str, int]:
+) -> IngestionResult:
     source = source_id or str(file_path)
     return _ingest_file_spans(
         db_conn,
         file_path=file_path,
         source=source,
         source_type="local_spans_jsonl",
-        spans_factory=lambda: _load_json_lines(file_path),
+        spans_factory=lambda _start, _end: _load_json_lines(file_path),
         skip_unchanged=skip_unchanged,
     )
 
@@ -341,7 +548,7 @@ def ingest_native_session_file(
     source_id: str | None = None,
     skip_existing_sessions: bool = False,
     skip_unchanged: bool = False,
-) -> dict[str, int]:
+) -> IngestionResult:
     source = source_id or f"native_session:{agent}:{file_path}"
     if agent == "codex":
         spans = _iter_codex_session_spans(file_path)
@@ -360,7 +567,7 @@ def ingest_native_session_file(
         file_path=file_path,
         source=source,
         source_type="native_session",
-        spans_factory=lambda: spans,
+        spans_factory=lambda _start, _end: spans,
         skip_unchanged=skip_unchanged,
         skip_existing_session=skip_existing_sessions,
     )

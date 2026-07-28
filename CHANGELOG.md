@@ -5,6 +5,8 @@
 ### Changed
 
 - Repositioned the README and public landing page around evidence-backed AI improvement: ask through the coding agent for explanations and shareable internal requests, use the local UI for visual evidence and review, and measure whether approved workflows and skills improve later sessions. Added people-first search copy that balances personal reflection on token limits and failed sessions with organizational reflection on cost, reusable practices, capacity, and budget, presented through an accessible interactive agent window. Replaced CLI-like use-case labels with agent-native prompts and an invocation-style selector for Codex and slash-command agents.
+- Renamed the `reflect improve` CLI table to `Observed Improvements` so it parallels `Observed Loops`.
+- Made the landing-page release badge load GitHub's latest release at runtime with a version-neutral fallback, removing manual landing-page edits from version bumps.
 
 ### Fixed
 
@@ -12,6 +14,9 @@
 - Prevented local native transcripts from duplicating sessions already normalized from native OTLP telemetry.
 - Scoped session-level `reflect usage --refresh` native imports to the explicit or active runtime session instead of scanning unrelated session history.
 - Made `reflect server --db-path ...` serve bounded SQLite snapshots without importing unrelated local history; background telemetry ingestion now requires explicit `--refresh`.
+- Made `reflect improve` report preparation stages immediately, keep JSON output clean, and support `--no-refresh` for reading the existing improvement ledger without reprocessing telemetry.
+- Added append-safe OTLP JSONL checkpoints so growing trace and log files ingest only complete appended records, with safe full-scan fallback after truncation or rewrite.
+- Decoupled graph and rollup refresh planning so bounded missing-session gaps are repaired incrementally instead of triggering an unnecessary full evidence-graph rebuild.
 
 ## 0.9.2 (2026-07-26)
 

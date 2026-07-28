@@ -2,6 +2,7 @@ import json
 
 from reflect.store.cursor_adapter import apply_cursor_transcript_usage_estimates
 from reflect.store.ingest import (
+    _complete_jsonl_offset,
     ingest_local_spans_file,
     ingest_native_session_file,
     ingest_otlp_logs_file,
@@ -372,6 +373,156 @@ def test_ingest_links_semantic_codex_trace_by_conversation_id(tmp_path):
         conn.close()
 
 
+def test_incremental_otlp_ingest_reads_only_appended_jsonl_records(tmp_path):
+    db = tmp_path / "reflect.db"
+    otlp = tmp_path / "traces.json"
+    _write_otlp_file(otlp)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        first = ingest_otlp_traces_file(conn, file_path=otlp, skip_unchanged=True)
+        first_size = otlp.stat().st_size
+
+        payload = json.loads(otlp.read_text(encoding="utf-8"))
+        span = payload["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+        span["traceId"] = "t2"
+        span["spanId"] = "s2"
+        span["attributes"][0]["value"]["stringValue"] = "sess-2"
+        appended = (json.dumps(payload) + "\n").encode()
+        with otlp.open("ab") as handle:
+            handle.write(appended)
+
+        second = ingest_otlp_traces_file(conn, file_path=otlp, skip_unchanged=True)
+        third = ingest_otlp_traces_file(conn, file_path=otlp, skip_unchanged=True)
+
+        assert first["mode"] == "full"
+        assert first["bytes_read"] == first_size
+        assert second["inserted"] == 1
+        assert second["skipped"] == 0
+        assert second["mode"] == "append"
+        assert second["bytes_read"] == len(appended)
+        assert second["processed_offset_bytes"] == otlp.stat().st_size
+        assert third["mode"] == "unchanged"
+        assert third["bytes_read"] == 0
+    finally:
+        conn.close()
+
+
+def test_incremental_otlp_ingest_does_not_checkpoint_a_partial_record(tmp_path):
+    db = tmp_path / "reflect.db"
+    otlp = tmp_path / "traces.json"
+    _write_otlp_file(otlp)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        first = ingest_otlp_traces_file(conn, file_path=otlp, skip_unchanged=True)
+        checkpoint = first["processed_offset_bytes"]
+
+        payload = json.loads(otlp.read_text(encoding="utf-8"))
+        span = payload["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+        span["traceId"] = "partial-trace"
+        span["spanId"] = "partial-span"
+        encoded = json.dumps(payload).encode()
+        split_at = len(encoded) // 2
+        with otlp.open("ab") as handle:
+            handle.write(encoded[:split_at])
+
+        partial = ingest_otlp_traces_file(conn, file_path=otlp, skip_unchanged=True)
+        assert partial["inserted"] == 0
+        assert partial["bytes_read"] == 0
+        assert partial["processed_offset_bytes"] == checkpoint
+        assert partial["pending_bytes"] == split_at
+
+        with otlp.open("ab") as handle:
+            handle.write(encoded[split_at:] + b"\n")
+        completed = ingest_otlp_traces_file(conn, file_path=otlp, skip_unchanged=True)
+        assert completed["inserted"] == 1
+        assert completed["mode"] == "append"
+        assert completed["bytes_read"] == len(encoded) + 1
+    finally:
+        conn.close()
+
+
+def test_otlp_ingest_never_checkpoints_an_initial_partial_record(tmp_path):
+    db = tmp_path / "reflect.db"
+    otlp = tmp_path / "traces.json"
+    _write_otlp_file(otlp)
+    encoded = otlp.read_bytes().removesuffix(b"\n")
+    split_at = len(encoded) // 2
+    otlp.write_bytes(encoded[:split_at])
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+
+        first = ingest_otlp_traces_file(conn, file_path=otlp)
+        with otlp.open("ab") as handle:
+            handle.write(encoded[split_at:] + b"\n")
+        second = ingest_otlp_traces_file(conn, file_path=otlp, skip_unchanged=True)
+
+        assert first == {"inserted": 0, "skipped": 0}
+        assert second["inserted"] == 1
+        assert second["mode"] == "full"
+        assert second["processed_offset_bytes"] == otlp.stat().st_size
+    finally:
+        conn.close()
+
+
+def test_otlp_ingest_accepts_a_complete_record_without_a_final_newline(tmp_path):
+    db = tmp_path / "reflect.db"
+    otlp = tmp_path / "traces.json"
+    _write_otlp_file(otlp)
+    otlp.write_bytes(otlp.read_bytes().removesuffix(b"\n"))
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+
+        result = ingest_otlp_traces_file(conn, file_path=otlp, skip_unchanged=True)
+
+        assert result["inserted"] == 1
+        assert result["processed_offset_bytes"] == otlp.stat().st_size
+        assert result["pending_bytes"] == 0
+    finally:
+        conn.close()
+
+
+def test_complete_jsonl_offset_scans_back_to_the_last_record(tmp_path, monkeypatch):
+    otlp = tmp_path / "traces.json"
+    complete_record = b'{"complete":true}\n'
+    otlp.write_bytes(complete_record + b"x" * 40)
+    monkeypatch.setattr("reflect.store.ingest.JSONL_SCAN_CHUNK_BYTES", 8)
+
+    assert _complete_jsonl_offset(otlp, otlp.stat().st_size) == len(complete_record)
+
+
+def test_incremental_otlp_ingest_falls_back_after_truncation(tmp_path):
+    db = tmp_path / "reflect.db"
+    otlp = tmp_path / "traces.json"
+    _write_otlp_file(otlp)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        ingest_otlp_traces_file(conn, file_path=otlp, skip_unchanged=True)
+
+        payload = json.loads(otlp.read_text(encoding="utf-8"))
+        span = payload["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+        span["traceId"] = "replacement-trace"
+        span["spanId"] = "replacement-span"
+        span["attributes"][0]["value"]["stringValue"] = "replacement-session"
+        otlp.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+        result = ingest_otlp_traces_file(conn, file_path=otlp, skip_unchanged=True)
+        assert result["mode"] == "full"
+        assert result["inserted"] == 1
+        assert result["processed_offset_bytes"] == otlp.stat().st_size
+    finally:
+        conn.close()
+
+
 def test_ingest_otlp_logs_normalizes_codex_records(tmp_path):
     db = tmp_path / "reflect.db"
     logs = tmp_path / "otel-logs.json"
@@ -601,6 +752,7 @@ def test_ingest_native_cursor_session_file_extracts_tool_and_mcp_calls(tmp_path)
             "updated": 1,
             "skipped": 0,
             "missing": 0,
+            "session_ids": ["cursor-native-sess-1"],
         }
         assert rebuild_rollups(conn) == {"session_rollups": 1, "daily_rollups": 1, "tool_rollups": 1}
         rollup = conn.execute(

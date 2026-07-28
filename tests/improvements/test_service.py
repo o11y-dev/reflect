@@ -1246,11 +1246,12 @@ def test_simplified_cli_contract_reads_the_durable_ledger(tmp_path):
         conn.close()
     runner = CliRunner()
 
-    with patch("reflect.core._prepare_sql_report_db"):
+    with patch("reflect.core._prepare_sql_report_db") as prepare:
         improve_result = runner.invoke(
             main,
-            ["improve", "--json", "--db-path", str(db_path)],
+            ["improve", "--json", "--no-refresh", "--db-path", str(db_path)],
         )
+        prepare.assert_not_called()
         ask_result = runner.invoke(
             main,
             ["ask", "How should I stop retry loops?", "--json", "--db-path", str(db_path)],
@@ -1274,6 +1275,57 @@ def test_simplified_cli_contract_reads_the_durable_ledger(tmp_path):
     assert {
         item["content"]["behavior_type"] for item in json.loads(verification_result.output)
     } == {"verification"}
+
+
+def test_improve_labels_cli_table_as_observed_improvements(tmp_path):
+    service, conn = _service(tmp_path)
+    db_path = tmp_path / "reflect.db"
+    try:
+        service.refresh()
+    finally:
+        conn.close()
+
+    result = CliRunner().invoke(
+        main,
+        ["improve", "--no-refresh", "--db-path", str(db_path)],
+    )
+
+    assert result.exit_code == 0
+    assert "Observed Improvements" in result.output
+    assert "Improvement Inbox" not in result.output
+
+
+def test_improve_reports_progress_on_stderr_without_corrupting_json(tmp_path):
+    from reflect.preparation import PreparationProgress, PreparationStage
+
+    service, conn = _service(tmp_path)
+    db_path = tmp_path / "reflect.db"
+    try:
+        service.refresh()
+    finally:
+        conn.close()
+    runner = CliRunner()
+
+    def prepare(*_args, progress=None, **_kwargs):
+        assert progress is not None
+        progress(
+            PreparationProgress(
+                stage=PreparationStage.INGESTING_TRACES,
+                message="Reading new OTLP traces...",
+            )
+        )
+        return {}
+
+    with patch("reflect.core._prepare_sql_report_db", side_effect=prepare):
+        result = runner.invoke(
+            main,
+            ["improve", "--json", "--db-path", str(db_path)],
+        )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["observations"]
+    assert "Reading new OTLP traces" in result.stderr
+    assert "\x1b" not in result.stderr
 
 
 def test_workflows_add_stages_an_existing_skill_without_installing_it(tmp_path):

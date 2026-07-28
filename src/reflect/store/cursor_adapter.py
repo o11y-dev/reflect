@@ -110,10 +110,11 @@ def _insert_provenance_step(
 def apply_cursor_transcript_usage_estimates(
     conn: sqlite3.Connection,
     file_paths: list[Path] | tuple[Path, ...],
-) -> dict[str, int]:
+) -> dict[str, int | list[str]]:
     updated = 0
     skipped = 0
     missing = 0
+    updated_session_ids: list[str] = []
     timestamp = datetime.now(tz=UTC).isoformat()
     for file_path in file_paths:
         session_id = file_path.stem
@@ -153,5 +154,11 @@ def apply_cursor_transcript_usage_estimates(
             timestamp=timestamp,
         )
         updated += 1
+        updated_session_ids.append(session_id)
     conn.commit()
-    return {"updated": updated, "skipped": skipped, "missing": missing}
+    return {
+        "updated": updated,
+        "skipped": skipped,
+        "missing": missing,
+        "session_ids": sorted(updated_session_ids),
+    }
