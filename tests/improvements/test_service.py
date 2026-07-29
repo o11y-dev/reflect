@@ -10,9 +10,12 @@ from click.testing import CliRunner
 
 from reflect.core import main
 from reflect.improvements.models import (
+    EvidenceRef,
     ImprovementSummary,
     ObservationDraft,
     ObservationStatus,
+    RuleDefinition,
+    Severity,
     WorkflowProposal,
     WorkflowStatus,
 )
@@ -562,6 +565,150 @@ def test_workflow_apply_and_rollback_are_hash_guarded(tmp_path):
         assert rolled_back["status"] == "rolled_back"
         assert not target.exists()
         assert service.workflows.show(candidate.id).status == WorkflowStatus.ROLLED_BACK
+    finally:
+        conn.close()
+
+
+def test_observation_session_ledger_without_workflow_candidate(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        service.repository.sync_rule_definitions(
+            [
+                RuleDefinition(
+                    id="test_rule_no_candidate",
+                    version=1,
+                    category="reliability",
+                    title="Test rule with no candidate",
+                    description="Synthetic rule used to test the no-candidate session ledger path.",
+                )
+            ],
+            now=NOW,
+        )
+        draft = ObservationDraft(
+            rule_id="test_rule_no_candidate",
+            rule_version=1,
+            scope_type="user",
+            scope_id="local",
+            fingerprint="test-fingerprint-no-candidate",
+            category="reliability",
+            title="Example finding with no proposed workflow",
+            summary="Example summary",
+            metric_name="identical_retry_calls",
+            metric_value=3,
+            metric_unit="calls",
+            metric_direction="lower_is_better",
+            impact_score=90,
+            severity=Severity.HIGH,
+            confidence=0.9,
+            affected_session_count=2,
+            evidence=[
+                EvidenceRef(
+                    entity_type="session",
+                    entity_id="session-1",
+                    session_id="session-1",
+                    summary_redacted="Session shows repeated retries",
+                ),
+                EvidenceRef(
+                    entity_type="session",
+                    entity_id="session-2",
+                    session_id="session-2",
+                    summary_redacted="Session shows repeated retries",
+                ),
+            ],
+        )
+        observation_id = service.repository.upsert_observation(draft, now=NOW)
+        conn.commit()
+
+        observation = service.repository.get_observation(observation_id)
+        assert observation.candidate_id is None
+
+        ledger = service.repository.observation_session_ledger(observation_id)
+        assert ledger.candidate_id == ""
+        assert ledger.observation_id == observation_id
+        assert ledger.source_session_count == 2
+        assert {row.session_id for row in ledger.source_sessions} == {"session-1", "session-2"}
+        assert ledger.exposure_session_count == 0
+        assert ledger.exposure_sessions == []
+    finally:
+        conn.close()
+
+
+def test_observation_session_ledger_missing_observation_raises(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        with pytest.raises(KeyError):
+            service.repository.observation_session_ledger("missing-observation")
+    finally:
+        conn.close()
+
+
+def test_observation_session_ledger_reflects_grouped_finding(tmp_path):
+    """A candidate-less finding groups same rule_id/title observations across scopes;
+    the session ledger fetched from any one member must reflect the whole group, not
+    just that member's own evidence."""
+    service, conn = _service(tmp_path)
+    try:
+        service.repository.sync_rule_definitions(
+            [
+                RuleDefinition(
+                    id="test_rule_grouped",
+                    version=1,
+                    category="reliability",
+                    title="Test rule grouped across scopes",
+                    description="Synthetic rule used to test multi-scope finding grouping.",
+                )
+            ],
+            now=NOW,
+        )
+
+        def _draft(scope_id: str, session_id: str) -> ObservationDraft:
+            return ObservationDraft(
+                rule_id="test_rule_grouped",
+                rule_version=1,
+                scope_type="project",
+                scope_id=scope_id,
+                fingerprint=f"test-fingerprint-grouped-{scope_id}",
+                category="reliability",
+                title="Grouped finding with no proposed workflow",
+                summary="Example summary",
+                metric_name="identical_retry_calls",
+                metric_value=3,
+                metric_unit="calls",
+                metric_direction="lower_is_better",
+                impact_score=90,
+                severity=Severity.HIGH,
+                confidence=0.9,
+                affected_session_count=1,
+                evidence=[
+                    EvidenceRef(
+                        entity_type="session",
+                        entity_id=session_id,
+                        session_id=session_id,
+                        summary_redacted="Session shows repeated retries",
+                    ),
+                ],
+            )
+
+        first_id = service.repository.upsert_observation(_draft("scope-a", "session-1"), now=NOW)
+        second_id = service.repository.upsert_observation(_draft("scope-b", "session-2"), now=NOW)
+        conn.commit()
+
+        findings = service.list_inbox_findings()
+        # A 2+ member finding surfaces the rule title, not the individual observation title.
+        finding = next(item for item in findings if item.title == "Test rule grouped across scopes")
+        assert finding.observation_count == 2
+        assert finding.affected_session_count == 2
+        assert finding.candidate_id is None
+
+        resolved_ids = service.resolve_finding_observation_ids(first_id)
+        assert set(resolved_ids) == {first_id, second_id}
+
+        ledger = service.repository.observation_session_ledger(
+            first_id,
+            observation_ids=resolved_ids,
+        )
+        assert ledger.source_session_count == 2
+        assert {row.session_id for row in ledger.source_sessions} == {"session-1", "session-2"}
     finally:
         conn.close()
 

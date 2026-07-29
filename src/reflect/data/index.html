@@ -3828,9 +3828,11 @@ async function showObservationEvidence(observationId){
   openLedgerDialog({title:'Loading evidence…'});
   try {
     const item = await ledgerRequest(`/api/inbox/${encodeURIComponent(observationId)}`);
-    const ledger = item.candidate_id
-      ? await ledgerRequest(`/api/workflows/${encodeURIComponent(item.candidate_id)}/sessions`)
-      : null;
+    const ledger = await ledgerRequest(
+      item.candidate_id
+        ? `/api/workflows/${encodeURIComponent(item.candidate_id)}/sessions`
+        : `/api/observations/${encodeURIComponent(observationId)}/sessions`
+    );
     const rawEvidence = (item.evidence || []).map(entry => `<div class="evidence-item">
       <div class="ledger-meta" style="margin-top:0"><span class="ledger-pill" translate="no">${escHtml(entry.entity_type)}:${escHtml(entry.entity_id)}</span><span class="ledger-pill">${Math.round(Number(entry.confidence || 0)*100)}% confidence</span></div>
       <div class="inbox-copy" style="margin-top:8px">${escHtml(entry.summary_redacted || '')}</div>

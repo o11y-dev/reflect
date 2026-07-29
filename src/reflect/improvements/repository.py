@@ -561,6 +561,50 @@ class ImprovementRepository:
         ).fetchone()
         return self._candidate_from_row(row) if row else None
 
+    def _source_session_records(
+        self,
+        observation_ids: list[str],
+        *,
+        limit: int,
+    ) -> list[WorkflowSessionRecord]:
+        observation_placeholders = ", ".join("?" for _ in observation_ids)
+        source_rows = self.conn.execute(
+            f"""
+            SELECT s.id, s.title, a.name, s.started_at, s.status,
+                   COUNT(oe.id) AS evidence_count,
+                   MAX(oe.confidence) AS evidence_confidence
+            FROM observation_evidence oe
+            JOIN sessions s ON s.id = oe.session_id
+            LEFT JOIN agents a ON a.id = s.agent_id
+            WHERE oe.observation_id IN ({observation_placeholders})
+            GROUP BY s.id, s.title, a.name, s.started_at, s.status
+            ORDER BY evidence_count DESC, evidence_confidence DESC, s.started_at DESC
+            LIMIT ?
+            """,
+            (*observation_ids, limit),
+        ).fetchall()
+        return [
+            WorkflowSessionRecord(
+                session_id=str(row[0]),
+                relationship="source",
+                title=row[1],
+                agent=row[2],
+                started_at=row[3],
+                status=row[4],
+                workspace=self._session_workspace(str(row[0])),
+                evidence_count=int(row[5]),
+                evidence_summaries=self._session_evidence_summaries(
+                    observation_ids,
+                    str(row[0]),
+                ),
+                evidence_focus_id=self._session_evidence_focus_id(
+                    observation_ids,
+                    str(row[0]),
+                ),
+            )
+            for row in source_rows
+        ]
+
     def workflow_session_ledger(
         self,
         candidate_id: str,
@@ -590,42 +634,7 @@ class ImprovementRepository:
         observation_placeholders = ", ".join("?" for _ in observation_ids)
         candidate_placeholders = ", ".join("?" for _ in candidate_ids)
         bounded_limit = max(1, min(limit, 200))
-        source_rows = self.conn.execute(
-            f"""
-            SELECT s.id, s.title, a.name, s.started_at, s.status,
-                   COUNT(oe.id) AS evidence_count,
-                   MAX(oe.confidence) AS evidence_confidence
-            FROM observation_evidence oe
-            JOIN sessions s ON s.id = oe.session_id
-            LEFT JOIN agents a ON a.id = s.agent_id
-            WHERE oe.observation_id IN ({observation_placeholders})
-            GROUP BY s.id, s.title, a.name, s.started_at, s.status
-            ORDER BY evidence_count DESC, evidence_confidence DESC, s.started_at DESC
-            LIMIT ?
-            """,
-            (*observation_ids, bounded_limit),
-        ).fetchall()
-        source_sessions = [
-            WorkflowSessionRecord(
-                session_id=str(row[0]),
-                relationship="source",
-                title=row[1],
-                agent=row[2],
-                started_at=row[3],
-                status=row[4],
-                workspace=self._session_workspace(str(row[0])),
-                evidence_count=int(row[5]),
-                evidence_summaries=self._session_evidence_summaries(
-                    observation_ids,
-                    str(row[0]),
-                ),
-                evidence_focus_id=self._session_evidence_focus_id(
-                    observation_ids,
-                    str(row[0]),
-                ),
-            )
-            for row in source_rows
-        ]
+        source_sessions = self._source_session_records(observation_ids, limit=bounded_limit)
         exposure_rows = self.conn.execute(
             f"""
             SELECT s.id, s.title, a.name, s.started_at, s.status,
@@ -683,6 +692,30 @@ class ImprovementRepository:
             source_sessions=source_sessions,
             exposure_session_count=exposure_count,
             exposure_sessions=exposure_sessions,
+        )
+
+    def observation_session_ledger(
+        self,
+        observation_id: str,
+        *,
+        limit: int = 50,
+        observation_ids: list[str] | None = None,
+    ) -> WorkflowSessionLedger:
+        observation = self.get_observation(observation_id)
+        if observation is None:
+            raise KeyError(f"Observation not found: {observation_id}")
+        bounded_limit = max(1, min(limit, 200))
+        group_ids = observation_ids or [observation_id]
+        source_sessions = self._source_session_records(group_ids, limit=bounded_limit)
+        return WorkflowSessionLedger(
+            candidate_id=observation.candidate_id or "",
+            observation_id=observation.id,
+            observation_ids=group_ids,
+            skill_slug="",
+            source_session_count=self.observation_session_count(group_ids),
+            source_sessions=source_sessions,
+            exposure_session_count=0,
+            exposure_sessions=[],
         )
 
     def record_feedback(

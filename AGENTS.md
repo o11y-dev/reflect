@@ -89,7 +89,7 @@ Use the current `docs/showcase.html` page as the product visual baseline for pub
 - **Brand palette:** near-black `#050505`, signal orange `#F28A1A`, warm off-white `#F5F2EA`, muted warm text such as `#D7D1C6` / `#BEB8AD`, and graphite panels. Avoid reverting primary chrome to blue/purple gradients.
 - **Logo:** use the clean product mark: off-white triangle with an orange ring/lens centered optically low, around 60% of mark height, on a near-black field. The dashboard header mark should match the showcase mark and link to `https://reflect.o11y.dev/`.
 - **Surface language:** prefer sharp, technical, premium UI: 6-8px panel/card radii, restrained borders, warm shadows, dense information hierarchy, and orange used as signal/activity/insight.
-- **Dashboard parity:** keep `src/reflect/data/index.html` and `docs/index.html` in sync for browser dashboard changes. If validating through pipx, also sync the installed package copy before checking `reflect report`.
+- **Dashboard parity:** keep `src/reflect/data/index.html` and `docs/report.html` byte-for-byte in sync — `docs/report.html` is what local `reflect`/`reflect report` actually serves, not `docs/index.html` (that's the public marketing page). Skipping the sync means the browser keeps showing old JS even after a hard refresh. If validating through pipx, also sync the installed package copy.
 - **Compare/report emphasis:** active tabs, filters, compare cards, selection states, and key dashboard accents should visibly use orange; do not rely only on subtle token swaps that leave a tab visually neutral.
 - **Copy tone:** lead with concrete workflow pain and evidence: failures, stalls, limits, loops, token/cost burn, and better future human + AI runs.
 

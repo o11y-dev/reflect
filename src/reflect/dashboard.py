@@ -4845,6 +4845,28 @@ def _build_dashboard_app(
         finally:
             conn.close()
 
+    @app.get("/api/observations/{observation_id}/sessions")
+    def api_observation_sessions(observation_id: str, request: Request):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite
+
+        conn = connect_sqlite(db_path)
+        try:
+            service = ImprovementService(conn)
+            observation_ids = service.resolve_finding_observation_ids(observation_id)
+            ledger = service.repository.observation_session_ledger(
+                observation_id,
+                limit=min(200, max(1, int(request.query_params.get("limit") or 50))),
+                observation_ids=observation_ids,
+            )
+            return JSONResponse(ledger.model_dump(mode="json"))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        finally:
+            conn.close()
+
     @app.get("/api/workflows/{candidate_id}/preview")
     def api_workflow_preview(candidate_id: str, request: Request):
         if db_path is None:
