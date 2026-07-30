@@ -78,7 +78,7 @@ For a fast terminal usage snapshot without opening the browser:
 
 ```bash
 reflect usage                 # current session usage
-reflect usage --global --week # exact local usage across the last 7 days
+reflect usage --global --period week # exact local usage across the last 7 days
 ```
 
 `reflect setup` detects Bash, Zsh, or Fish and installs [Click's generated completion script](https://click.palletsprojects.com/en/stable/shell-completion/) idempotently by default. Use `--no-shell-completion` to opt out, or `reflect completion --install` to install it separately. Restart your shell once; command names, nested commands, flags, choices, paths, and local workflow, loop, skill, session, observation, and memory IDs will then complete with Tab. To inspect a script without changing shell files, run `reflect completion --shell zsh` (or `bash` / `fish`) without `--install`.
@@ -183,16 +183,19 @@ A loop can motivate a workflow, and a workflow can be packaged as a skill, but n
 reflect                        # open local browser report (default)
 reflect usage                  # show current-session tokens, cost, tools, models, and failures
 reflect usage --session SESSION_ID # inspect one selected session
-reflect usage --global --week  # aggregate every matching local session from the last 7 days
+reflect usage --global --period week # aggregate matching sessions from the last 7 days
 reflect usage --refresh         # ingest local sources first when freshness matters
+reflect refresh                 # explicitly rebuild the complete local snapshot
 reflect memory sync .          # sync local instruction memories for this folder
 reflect memory list .          # list memories for this folder
 reflect memory search "query" . # search local SQLite memory
 reflect memory candidates .    # derive evidence-backed memory candidates from the graph
 reflect memory providers       # inspect configured memory providers
-reflect improve                # show highest-impact recurring problems and proposals
-reflect improve --no-refresh   # read the existing ledger without ingesting telemetry
-reflect improve OBSERVATION_ID # inspect one finding and its exact evidence
+reflect improve                # read current-project findings from the existing snapshot
+reflect improve --session SESSION_ID # inspect one run plus child-agent sessions
+reflect improve --global --period week # opt into a bounded global findings view
+reflect improve --refresh      # explicitly ingest telemetry and rerun detectors
+reflect improve OBSERVATION_ID # inspect one finding and its producing sessions
 reflect ask "How should I debug CI here?" # retrieve workflows, evidence, and scoped memory
 reflect loops                  # list stalled and productive repeated behavior
 reflect loops show LOOP_ID     # inspect bounded source-session evidence
@@ -201,25 +204,55 @@ reflect workflows list         # list reusable procedures and review states
 reflect workflows show WORKFLOW_ID # inspect steps, evidence, target, and exact diff
 reflect workflows apply WORKFLOW_ID # approve and package the workflow as a repo-local skill
 reflect workflows rollback WORKFLOW_ID # restore the prior repo-local file state
-reflect skills                 # reconcile and list the durable Skills v2 registry
+reflect skills                 # list the current durable Skills v2 registry
+reflect skills sync            # reconcile files, drafts, usage, and measurements
+reflect skills sync --path .agents/skills # include another skill root
 reflect skills show SKILL_ID   # inspect versions, evidence, installs, and usage
-reflect skills discover --week # discover evidence-backed drafts with an agent
+reflect skills discover --period week # discover evidence-backed drafts with an agent
 reflect skills apply SKILL_ID  # explicitly install a reviewed repo-local version
 reflect skills rollback SKILL_ID # restore the prior repo-local file state
 reflect workflows add SKILL.md # import a procedure from an existing skill file
 reflect feedback SESSION_ID --outcome corrected --reason "why"
+reflect db prune-sessions --older-than-days 60 # preview stale invalid-start sessions
+reflect db prune-sessions --older-than-days 60 --apply # back up, then prune
 reflect --demo                 # instant demo with Claude/Codex/Copilot/Cursor/Gemini data
 ```
 
-`reflect improve` reports each preparation stage on stderr while keeping `--json`
+`reflect improve` reads the current SQLite snapshot by default and resolves the
+current directory to a repository or workspace without silently falling back to
+all local data. Use `--session current|SESSION_ID` for one run and descendants,
+or `--global --period day|week|month|all`. The older individual period flags
+remain compatibility aliases and print a deprecation warning.
+`--refresh` reports each preparation stage on stderr while keeping `--json`
 stdout machine-readable. Growing OTLP trace and log files are read from the last
 complete JSONL checkpoint, and only changed or missing session graph and rollup
-state is refreshed. Use `--no-refresh` when you need the current ledger
-immediately or want to defer ingestion of a large new source.
+state is refreshed.
+
+`reflect usage`, `reflect improve`, `reflect ask`, `reflect workflows list`,
+`reflect loops`, and the corresponding read-only MCP tools never ingest,
+migrate, reconcile, or rebuild the store. A missing, outdated, empty, or
+maintenance-stale snapshot returns an actionable error. Run `reflect refresh`
+for a complete rebuild or pass a command's explicit `--refresh` option when a
+narrow command-owned refresh is available. `reflect skills` and
+`reflect skills show` similarly read the registry without scanning files;
+`reflect skills sync` is the explicit filesystem, workflow, usage, and
+measurement reconciliation point. `reflect skills discover` uses existing SQL
+graph evidence when available and only prepares it with `--refresh`.
+`reflect feedback` records one label without a hidden full preparation and
+tells you to refresh if the session is not present.
+
+Session retention is deliberately narrow and opt-in. `reflect db prune-sessions`
+only considers inactive sessions with an invalid pre-2000 start and trusted
+activity older than the selected cutoff. It defaults to a dry run; `--apply`
+creates a consistent SQLite backup unless `--no-backup` is supplied, and
+`--vacuum` is always explicit. Durable memories, reviewed evidence, and
+operator feedback retain a pruned-session tombstone for provenance.
 
 The browser uses the same SQLite ledger as the CLI and follows one evidence-to-value path. **Inbox** contains only findings and observed loops. **Sessions** contains session inspection and direct A/B comparison. **Workflows** contains reusable procedures with source evidence, exact review, delivery target, and rollback. **Skills** contains only durable packages, versions, installations, observed usage, and measurements, with instant multi-word search across identity, purpose, lifecycle, provenance, source agent, availability, and installation target. **Impact** is reserved for measured outcomes after a workflow is applied. **Explore** contains Usage, Tools, Graph, and Context views; generic cohort analysis lives under Explore → Usage, while Improvement Rule definitions and extension guidance live under Explore → Context, away from daily triage. A selected loop remains evidence until `reflect loops build LOOP_ID` asks an agent to author one pending workflow packaged as a skill; no loop is installed or converted automatically.
 
 Browser links use the same product names: `tab=inbox|sessions|workflows|skills|impact|explore`, with `view=usage|tools|graph|context` when Explore is active. The matching read APIs are `/api/inbox`, `/api/impact`, and `/api/explore/{view}`; older tab names and endpoints remain read-only compatibility aliases for existing bookmarks and integrations.
+
+The grouped finding-to-session contract is defined in [`docs/inbox-finding-source-session-ledger.md`](docs/inbox-finding-source-session-ledger.md).
 
 Skill review links both the sessions that produced a draft and sessions that used it after activation. Selecting a repository chooses where `.agents/skills/<slug>/SKILL.md` will be created and does not change the evidence scope. Reflect records one active owner for that exact repository path so apply and rollback are hash-guarded and safe—this is ledger ownership, not a Git lock or filesystem lock. Session detail can record `good`, `bad`, `corrected`, or `no-change-correct` outcomes. Applying the same active version twice is idempotent. As comparable sessions arrive, Reflect records a new measurement only when the before/after cohort changes and surfaces regressions with a rollback path.
 
@@ -571,13 +604,21 @@ Commands:
   workflows Review, package, apply, and roll back reusable workflows
   feedback Record a cheap session outcome label
   memory   Sync, search, validate, and route evidence-backed memories
-  skills   Reconcile, discover, version, apply, and inspect durable skills
+  skills   List, sync, discover, version, apply, and inspect durable skills
   gateway  Manage the local OTLP gateway (start/stop/status)
 ```
 
 ## Skills
 
-`reflect skills` is the Skills v2 registry. It reconciles staged candidates, known skill directories, and telemetry-observed skill usage into stable skill identities. Each skill keeps immutable content versions plus source-agent, source-loop, source-session, installation-path, usage, and measurement links. The browser Skills tab loads the bounded registry and provides URL-persisted free-text search over names, descriptions, lifecycle, provenance, source agents, availability, and installation targets. If a tracked file disappears, its installation is marked missing rather than deleting its history.
+`reflect skills` is the read-only Skills v2 registry view. `reflect skills sync`
+explicitly reconciles staged candidates, known skill directories, and
+telemetry-observed skill usage into stable skill identities. Each skill keeps
+immutable content versions plus source-agent, source-loop, source-session,
+installation-path, usage, and measurement links. The browser Skills tab loads
+the bounded registry and provides URL-persisted free-text search over names,
+descriptions, lifecycle, provenance, source agents, availability, and
+installation targets. If a tracked file disappears, its installation is
+marked missing on the next sync rather than deleting its history.
 
 The registry is intentionally broader than the skills available to the current agent. A Codex-visible skill must have an active package under a Codex or shared repository skill root; pending drafts, other-agent installations, and telemetry-only historical names remain reviewable registry records but are not presented as installed. The browser labels these states explicitly as **Available in Codex**, **Available in workspace**, **Pending review**, **Available to other agents**, **Telemetry only**, or **Not installed**.
 

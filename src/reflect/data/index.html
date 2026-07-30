@@ -3828,22 +3828,16 @@ async function showObservationEvidence(observationId){
   openLedgerDialog({title:'Loading evidence…'});
   try {
     const item = await ledgerRequest(`/api/inbox/${encodeURIComponent(observationId)}`);
-    const ledger = await ledgerRequest(
-      item.candidate_id
-        ? `/api/workflows/${encodeURIComponent(item.candidate_id)}/sessions`
-        : `/api/observations/${encodeURIComponent(observationId)}/sessions`
-    );
+    const ledger = await ledgerRequest(`/api/inbox/${encodeURIComponent(observationId)}/sessions`);
     const rawEvidence = (item.evidence || []).map(entry => `<div class="evidence-item">
       <div class="ledger-meta" style="margin-top:0"><span class="ledger-pill" translate="no">${escHtml(entry.entity_type)}:${escHtml(entry.entity_id)}</span><span class="ledger-pill">${Math.round(Number(entry.confidence || 0)*100)}% confidence</span></div>
       <div class="inbox-copy" style="margin-top:8px">${escHtml(entry.summary_redacted || '')}</div>
     </div>`).join('');
-    const sourceSessions = ledger
-      ? renderWorkflowSessionLedger(ledger.source_sessions, {
-          empty:'No source sessions are linked to this observation.',
-          total:ledger.source_session_count,
-          initial:6,
-        })
-      : '<div class="session-ledger-empty">This observation has no workflow session ledger.</div>';
+    const sourceSessions = renderWorkflowSessionLedger(ledger.source_sessions, {
+      empty:'No source sessions are linked to this finding.',
+      total:ledger.source_session_count,
+      initial:6,
+    });
     const confidence = Math.round(Number(item.confidence || 0) * 100);
     const metricValue = Number(item.metric_value);
     const metricDisplay = Number.isFinite(metricValue) ? fmt(metricValue) : String(item.metric_value ?? '—');
@@ -7128,7 +7122,7 @@ function buildImprovementSurfaces(){
         </article>`;
       }).join('') : query.trim()
         ? `<div class="session-ledger-empty">No skills match <strong>${escHtml(query.trim())}</strong>. Clear the search to return to the full registry.</div>`
-        : `<div class="session-ledger-empty">No current skills are registered. Run <code>reflect skills</code> to reconcile installed skills or <code>reflect skills discover</code> to stage evidence-backed drafts.</div>`;
+        : `<div class="session-ledger-empty">No current skills are registered. Run <code>reflect skills sync</code> to reconcile installed skills or <code>reflect skills discover</code> to stage evidence-backed drafts.</div>`;
     };
     if (searchInput) searchInput.oninput = renderSkillRegistry;
     renderSkillRegistry();

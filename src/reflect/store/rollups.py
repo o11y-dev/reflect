@@ -27,7 +27,46 @@ def rollup_rebuild_pending(conn: sqlite3.Connection) -> bool:
         return False
 
 
-def rebuild_rollups(conn: sqlite3.Connection) -> dict[str, int]:
+class UsageRollupReadinessProbe:
+    """Detect usage rollup maintenance and structural coverage gaps."""
+
+    def inspect(self, conn: sqlite3.Connection) -> tuple[str, ...]:
+        reasons: list[str] = []
+        if rollup_rebuild_pending(conn):
+            reasons.append("usage rollups are stale because a rebuild is pending")
+        missing, orphaned = conn.execute(
+            """
+            SELECT
+              (
+                SELECT COUNT(*)
+                FROM sessions s
+                LEFT JOIN session_rollups sr ON sr.session_id = s.id
+                WHERE sr.session_id IS NULL
+              ),
+              (
+                SELECT COUNT(*)
+                FROM session_rollups sr
+                LEFT JOIN sessions s ON s.id = sr.session_id
+                WHERE s.id IS NULL
+              )
+            """
+        ).fetchone()
+        if missing:
+            reasons.append(
+                f"usage rollups are stale: {int(missing)} session(s) are missing rollups"
+            )
+        if orphaned:
+            reasons.append(
+                f"usage rollups are stale: {int(orphaned)} orphan rollup row(s) exist"
+            )
+        return tuple(reasons)
+
+
+def rebuild_rollups(
+    conn: sqlite3.Connection,
+    *,
+    commit: bool = True,
+) -> dict[str, int]:
     timestamp = _now()
     refresh_all_session_statuses(conn)
     conn.execute("DELETE FROM session_rollups")
@@ -165,7 +204,8 @@ def rebuild_rollups(conn: sqlite3.Connection) -> dict[str, int]:
             "DELETE FROM maintenance_tasks WHERE task = ?",
             (CODEX_DESKTOP_ROLLUP_REBUILD_TASK,),
         )
-    conn.commit()
+    if commit:
+        conn.commit()
     return {
         "session_rollups": conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0],
         "daily_rollups": conn.execute("SELECT COUNT(*) FROM daily_rollups").fetchone()[0],

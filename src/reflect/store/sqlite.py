@@ -23,6 +23,38 @@ def connect_sqlite(db_path: str | Path, *, strict_durability: bool = False) -> s
     return conn
 
 
+def connect_sqlite_read_only(db_path: str | Path) -> sqlite3.Connection:
+    """Open an existing Reflect store without creating or mutating it."""
+    path = Path(db_path).expanduser().resolve()
+    conn = sqlite3.connect(
+        f"{path.as_uri()}?mode=ro",
+        uri=True,
+        timeout=DEFAULT_BUSY_TIMEOUT_MS / 1000,
+    )
+    try:
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.execute(f"PRAGMA busy_timeout = {DEFAULT_BUSY_TIMEOUT_MS};")
+        conn.execute("PRAGMA query_only = ON;")
+    except Exception:
+        conn.close()
+        raise
+    return conn
+
+
+def backup_sqlite(source_path: str | Path, target_path: str | Path) -> None:
+    """Create a consistent backup without mutating the source database."""
+
+    source = connect_sqlite_read_only(source_path)
+    try:
+        target = sqlite3.connect(Path(target_path))
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+    finally:
+        source.close()
+
+
 def _apply_runtime_pragmas(conn: sqlite3.Connection, *, strict_durability: bool) -> None:
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.execute(f"PRAGMA busy_timeout = {DEFAULT_BUSY_TIMEOUT_MS};")

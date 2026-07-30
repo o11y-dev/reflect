@@ -55,9 +55,10 @@ def _normalize_slug(value: str) -> str:
 class SkillRegistryService:
     """Durable skill identity, version, evidence, installation, and usage registry."""
 
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn: sqlite3.Connection, *, initialize_schema: bool = True):
         self.conn = conn
-        migrate(conn)
+        if initialize_schema:
+            migrate(conn)
         self.repository = ImprovementRepository(conn)
         self.workflows = WorkflowService(conn)
 

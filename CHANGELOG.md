@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.9.4 (unreleased)
+
+### Changed
+
+- Made `reflect improve` snapshot-first and current-project scoped by default, with explicit path, parent/child session, and bounded global time scopes shared by CLI and MCP guidance.
+- Added reusable object-oriented snapshot inspection, preparation policy, and refresh strategy layers; `usage`, `improve`, `ask`, workflow/loop/skill reads, memory reads, and read-only MCP tools now use query-only SQLite connections and return actionable errors instead of implicitly migrating, ingesting, reconciling, or rebuilding.
+- Added `reflect refresh` as the explicit complete snapshot rebuild and `reflect skills sync` as the explicit skill-file, workflow, usage, and measurement reconciliation point; plain skill listing and inspection no longer create revisions.
+- Standardized new usage, improvement, and skill-discovery examples on `--period day|week|month|all`; the individual period flags remain deprecated compatibility aliases.
+- Moved identical-input retry analysis exclusively to the stricter `reflect loops` ledger and retired historical duplicate retry observations without deleting their evidence.
+- Kept direct SQLite guidance as an advanced skill fallback while making scoped commands and Source Sessions the primary analysis path.
+
+### Added
+
+- Added complete observation-to-session attribution, scoped finding statistics, actionable CLI drilldown, and `/api/inbox/{observation_id}/sessions`.
+- Added exact, transcript-estimated, and unavailable token provenance to `reflect usage`.
+- Added trusted session activity timestamps, pruned-session tombstones, and a dry-run-first `reflect db prune-sessions` command with a default pre-apply backup plus opt-in apply and vacuum behavior.
+
+### Fixed
+
+- Prevented `reflect_context` and improvement queries from selecting higher-impact findings from unrelated repositories on large multi-project stores.
+- Preserved all producing-session links even when detailed observation evidence is capped at 20 rows.
+- Corrected sticky epoch session starts when valid source timestamps arrive, preserved durable memory and evidence provenance during pruning, and blocked old source files from resurrecting tombstoned sessions.
+- Kept retention previews query-only, created apply backups before schema migration, rolled back pruning when derived rebuilds fail, rejected structurally incomplete usage rollups, preserved the feedback lookup index, and retained deprecated `reflect skills --path` compatibility.
+
 ## 0.9.3 (2026-07-28)
 
 ### Changed

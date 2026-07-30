@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+from unittest.mock import patch
 
 import pytest
 from mcp import ClientSession, StdioServerParameters
@@ -50,6 +51,35 @@ def test_context_service_combines_memory_with_guidance(tmp_path):
     assert answer.memories[0].provenance == "local_memory"
     assert answer.evidence == []
     assert "no matching approved workflow" in answer.answer
+
+
+def test_mcp_read_service_factory_does_not_run_migrations(tmp_path, monkeypatch):
+    from reflect.mcp import _with_service
+
+    db_path = tmp_path / "reflect.db"
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+    finally:
+        conn.close()
+    monkeypatch.setenv("REFLECT_DB_PATH", str(db_path))
+
+    with (
+        patch("reflect.mcp.migrate") as mcp_migrate,
+        patch("reflect.improvements.service.migrate") as improvement_migrate,
+        patch("reflect.improvements.loops.migrate") as loop_migrate,
+        patch("reflect.improvements.skills.migrate") as skill_migrate,
+    ):
+        count = _with_service(
+            lambda service: service.skills_search(limit=1).count,
+            read_only=True,
+        )
+
+    assert count == 0
+    mcp_migrate.assert_not_called()
+    improvement_migrate.assert_not_called()
+    loop_migrate.assert_not_called()
+    skill_migrate.assert_not_called()
 
 
 def test_context_service_records_and_completes_an_agent_task(tmp_path):

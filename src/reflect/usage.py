@@ -46,6 +46,14 @@ class UsageSession(ReflectModel):
     ended_at: str | None = None
 
 
+class TokenProvenance(ReflectModel):
+    exact_sessions: int = 0
+    estimated_sessions: int = 0
+    unavailable_sessions: int = 0
+    sources: list[str]
+    proxy_order: list[str]
+
+
 class UsageReport(ReflectModel):
     scope: str
     period: str | None = None
@@ -57,6 +65,7 @@ class UsageReport(ReflectModel):
     models: list[UsageBreakdown]
     tools: list[UsageBreakdown]
     limitations: list[str]
+    token_provenance: TokenProvenance
 
 
 class RuntimeSessionHint(ReflectModel):
@@ -124,6 +133,19 @@ class UsageService:
             scope = "session"
 
         totals = self._totals(where_sql, params)
+        token_provenance = self._token_provenance(where_sql, params)
+        if token_provenance.estimated_sessions:
+            limitations.append(
+                f"{token_provenance.estimated_sessions} session(s) use transcript-derived "
+                "token estimates, not exact provider counts."
+            )
+        if token_provenance.unavailable_sessions:
+            limitations.append(
+                "Exact or adapter-estimated token counts are unavailable for "
+                f"{token_provenance.unavailable_sessions} session(s) with LLM activity. "
+                "Use output size when captured, then LLM calls, tool calls, and duration "
+                "as inference-only proxies."
+            )
         return UsageReport(
             scope=scope,
             period=period if global_scope else None,
@@ -135,6 +157,7 @@ class UsageService:
             models=self._model_breakdown(where_sql, params),
             tools=self._tool_breakdown(where_sql, params),
             limitations=limitations,
+            token_provenance=token_provenance,
         )
 
     def _resolve_session(self, explicit_session_id: str | None) -> tuple[str, str, str | None]:
@@ -169,14 +192,24 @@ class UsageService:
     def runtime_session_hints(self) -> list[RuntimeSessionHint]:
         """Return runtime identities in precedence order, including unflushed sessions."""
 
+        return self.environment_session_hints(self.environ)
+
+    @classmethod
+    def environment_session_hints(
+        cls,
+        environ: Mapping[str, str] | None = None,
+    ) -> list[RuntimeSessionHint]:
+        """Resolve runtime identities without requiring an open telemetry store."""
+
+        source = environ if environ is not None else os.environ
         return [
             RuntimeSessionHint(
                 session_id=runtime_id,
                 agent=candidate_agent,
                 environment_key=env_key,
             )
-            for env_key, candidate_agent in self._SESSION_ENV_KEYS
-            if (runtime_id := str(self.environ.get(env_key, "")).strip())
+            for env_key, candidate_agent in cls._SESSION_ENV_KEYS
+            if (runtime_id := str(source.get(env_key, "")).strip())
         ]
 
     def runtime_session_hint(self) -> RuntimeSessionHint | None:
@@ -306,6 +339,82 @@ class UsageService:
             params,
         ).fetchone()
         return int(row[0])
+
+    def _token_provenance(
+        self,
+        where_sql: str,
+        params: list[object],
+    ) -> TokenProvenance:
+        rows = self.conn.execute(
+            self._scope_cte(where_sql)
+            + """
+            SELECT
+              s.id,
+              (
+                s.input_tokens + s.output_tokens + s.cache_creation_tokens
+                + s.cache_read_tokens + s.reasoning_tokens
+              ) AS total_tokens,
+              EXISTS (
+                SELECT 1
+                FROM steps st
+                WHERE st.session_id = s.id
+                  AND json_extract(st.raw_attrs_json, '$."reflect.token.source"')
+                      = 'estimated_cursor_transcript'
+              ) AS has_cursor_estimate,
+              EXISTS (
+                SELECT 1
+                FROM llm_calls exact_lc
+                WHERE exact_lc.session_id = s.id
+                  AND (
+                    exact_lc.input_tokens + exact_lc.output_tokens
+                    + exact_lc.cache_creation_input_tokens
+                    + exact_lc.cache_read_input_tokens
+                    + exact_lc.reasoning_output_tokens
+                  ) > 0
+              ) AS has_exact_llm_tokens,
+              EXISTS (
+                SELECT 1 FROM llm_calls lc WHERE lc.session_id = s.id
+              ) AS has_llm_calls
+            FROM sessions s
+            JOIN scoped_sessions scoped ON scoped.id = s.id
+            """,
+            params,
+        ).fetchall()
+        exact = 0
+        estimated = 0
+        unavailable = 0
+        sources: set[str] = set()
+        for (
+            _session_id,
+            total_tokens,
+            has_estimate,
+            has_exact_llm_tokens,
+            has_llm_calls,
+        ) in rows:
+            if bool(has_exact_llm_tokens):
+                exact += 1
+                sources.add("local_telemetry")
+            elif bool(has_estimate):
+                estimated += 1
+                sources.add("estimated_cursor_transcript")
+            elif int(total_tokens or 0) > 0:
+                exact += 1
+                sources.add("local_telemetry")
+            elif bool(has_llm_calls):
+                unavailable += 1
+                sources.add("unavailable")
+        return TokenProvenance(
+            exact_sessions=exact,
+            estimated_sessions=estimated,
+            unavailable_sessions=unavailable,
+            sources=sorted(sources),
+            proxy_order=[
+                "captured_output_size",
+                "llm_call_count",
+                "tool_call_count",
+                "session_duration",
+            ],
+        )
 
     def _subagent_count(self, where_sql: str, params: list[object]) -> int:
         row = self.conn.execute(

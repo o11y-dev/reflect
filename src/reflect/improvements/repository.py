@@ -11,9 +11,12 @@ from typing import Any
 
 from reflect.improvements.models import (
     EvidenceRef,
+    FindingSessionLedger,
+    ImprovementScope,
     ImprovementSummary,
     ObservationDraft,
     ObservationRecord,
+    ObservationSessionRef,
     ObservationStatus,
     RuleDefinition,
     RuleSummary,
@@ -23,6 +26,7 @@ from reflect.improvements.models import (
     WorkflowSessionRecord,
     WorkflowStatus,
 )
+from reflect.improvements.scope import session_scope_predicate
 
 _ACTIVE_OBSERVATION_STATUSES = {
     ObservationStatus.NEW.value,
@@ -120,6 +124,28 @@ class ImprovementRepository:
                 ),
             )
 
+    def retire_rule(self, rule_id: str, *, now: str) -> int:
+        """Retire a detector while retaining its historical evidence."""
+
+        self.conn.execute(
+            """
+            UPDATE rule_definitions
+            SET lifecycle_state = 'retired', updated_at = ?
+            WHERE id = ?
+            """,
+            (now, rule_id),
+        )
+        cursor = self.conn.execute(
+            f"""
+            UPDATE observations
+            SET status = 'resolved', updated_at = ?, last_evaluated_at = ?
+            WHERE rule_id = ?
+              AND status IN ({",".join("?" for _ in _ACTIVE_OBSERVATION_STATUSES)})
+            """,
+            (now, now, rule_id, *_ACTIVE_OBSERVATION_STATUSES),
+        )
+        return int(cursor.rowcount or 0)
+
     def list_rule_summaries(self) -> list[RuleSummary]:
         rows = self.conn.execute(
             """
@@ -158,6 +184,9 @@ class ImprovementRepository:
 
     def upsert_observation(self, draft: ObservationDraft, *, now: str) -> str:
         observation_id = _observation_id(draft)
+        source_sessions = draft.source_sessions or self._session_refs_from_evidence(draft.evidence)
+        source_times = self._session_source_times(source_sessions)
+        source_seen_at = max(source_times.values(), default=now)
         self.conn.execute(
             """
             INSERT INTO observations(
@@ -211,8 +240,8 @@ class ImprovementRepository:
                 draft.impact_score,
                 draft.severity.value,
                 draft.confidence,
-                now,
-                now,
+                source_seen_at,
+                source_seen_at,
                 now,
                 draft.occurrence_count,
                 draft.affected_session_count,
@@ -222,7 +251,13 @@ class ImprovementRepository:
                 now,
             ),
         )
-        self._replace_evidence(observation_id, draft.evidence, now=now)
+        self._replace_evidence(observation_id, draft.evidence[:20], now=now)
+        self._replace_observation_sessions(
+            observation_id,
+            source_sessions,
+            source_times=source_times,
+            now=now,
+        )
         return observation_id
 
     def resolve_missing(
@@ -462,6 +497,7 @@ class ImprovementRepository:
         limit: int = 50,
         status: str | None = None,
         include_resolved: bool = False,
+        scope: ImprovementScope | None = None,
     ) -> list[ObservationRecord]:
         clauses: list[str] = []
         params: list[Any] = []
@@ -471,6 +507,27 @@ class ImprovementRepository:
         elif not include_resolved:
             clauses.append("o.status NOT IN ('resolved', 'dismissed', 'rejected', 'rolled_back')")
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        if scope is None:
+            rows = self.conn.execute(
+                f"""
+                SELECT o.id, o.rule_id, o.rule_version, o.scope_type, o.scope_id, o.repo_id,
+                       o.fingerprint, o.category, o.title, o.summary, o.metric_name,
+                       o.metric_value, o.metric_unit, o.metric_direction, o.baseline_value,
+                       o.baseline_query_json, o.impact_score, o.severity, o.confidence,
+                       o.occurrence_count, o.affected_session_count, o.actionability,
+                       o.status, o.first_seen_at, o.last_seen_at, o.last_evaluated_at,
+                       o.suppression_reason, o.suppressed_until, wc.id, wc.status
+                FROM observations o
+                LEFT JOIN workflow_candidates wc ON wc.observation_id = o.id
+                {where}
+                ORDER BY o.impact_score DESC, o.last_seen_at DESC
+                LIMIT ?
+                """,
+                (*params, max(1, min(limit, 500))),
+            ).fetchall()
+            return [self._observation_from_row(row) for row in rows]
+
+        session_predicate, session_params = session_scope_predicate(scope, alias="s")
         rows = self.conn.execute(
             f"""
             SELECT o.id, o.rule_id, o.rule_version, o.scope_type, o.scope_id, o.repo_id,
@@ -479,16 +536,68 @@ class ImprovementRepository:
                    o.baseline_query_json, o.impact_score, o.severity, o.confidence,
                    o.occurrence_count, o.affected_session_count, o.actionability,
                    o.status, o.first_seen_at, o.last_seen_at, o.last_evaluated_at,
-                   o.suppression_reason, o.suppressed_until, wc.id, wc.status
+                   o.suppression_reason, o.suppressed_until, wc.id, wc.status,
+                   scoped.affected_sessions, scoped.occurrences, scoped.latest_source_at
             FROM observations o
             LEFT JOIN workflow_candidates wc ON wc.observation_id = o.id
+            JOIN (
+              SELECT os.observation_id,
+                     COUNT(DISTINCT os.session_id) AS affected_sessions,
+                     COALESCE(SUM(os.occurrence_count), 0) AS occurrences,
+                     MAX(os.latest_source_at) AS latest_source_at
+              FROM observation_sessions os
+              JOIN sessions s ON s.id = os.session_id
+              WHERE {session_predicate}
+              GROUP BY os.observation_id
+            ) scoped ON scoped.observation_id = o.id
             {where}
-            ORDER BY o.impact_score DESC, o.last_seen_at DESC
+            ORDER BY
+              CASE o.status
+                WHEN 'regressed' THEN 0
+                WHEN 'active' THEN 1
+                WHEN 'approved' THEN 2
+                WHEN 'proposal_ready' THEN 3
+                WHEN 'acknowledged' THEN 4
+                WHEN 'new' THEN 5
+                ELSE 9
+              END,
+              CASE WHEN wc.id IS NULL THEN 1 ELSE 0 END,
+              scoped.affected_sessions DESC,
+              scoped.latest_source_at DESC,
+              o.confidence DESC,
+              o.impact_score DESC
             LIMIT ?
             """,
-            (*params, max(1, min(limit, 500))),
+            (*session_params, *params, max(1, min(limit, 500))),
         ).fetchall()
-        return [self._observation_from_row(row) for row in rows]
+        eligible = scope.eligible_session_count
+        scoped: list[ObservationRecord] = []
+        for row in rows:
+            observation = self._observation_from_row(row)
+            affected = int(row[30] or 0)
+            summary = observation.summary
+            if affected != observation.affected_session_count:
+                summary = (
+                    f"{affected} supporting session(s) match {scope.label}; "
+                    f"the durable observation contains "
+                    f"{observation.affected_session_count} session(s) overall. {summary}"
+                )
+            scoped.append(
+                observation.model_copy(
+                    update={
+                        "summary": summary,
+                        "scope_affected_session_count": affected,
+                        "scope_occurrence_count": int(row[31] or 0),
+                        "eligible_session_count": eligible,
+                        "affected_session_ratio": (
+                            float(affected) / eligible if eligible else 0.0
+                        ),
+                        "latest_source_at": str(row[32]) if row[32] else None,
+                        "resolved_scope": scope,
+                    }
+                )
+            )
+        return scoped
 
     def get_observation(self, observation_id: str) -> ObservationRecord | None:
         rows = self.conn.execute(
@@ -515,9 +624,96 @@ class ImprovementRepository:
         placeholders = ",".join("?" for _ in ids)
         return int(
             self.conn.execute(
-                f"SELECT COUNT(DISTINCT session_id) FROM observation_evidence WHERE observation_id IN ({placeholders})",
+                f"SELECT COUNT(DISTINCT session_id) FROM observation_sessions WHERE observation_id IN ({placeholders})",
                 ids,
             ).fetchone()[0]
+        )
+
+    def observation_session_ledger_complete(self) -> bool:
+        row = self.conn.execute(
+            """
+            SELECT value FROM store_metadata
+            WHERE key = 'observation_session_ledger_v1'
+            """
+        ).fetchone()
+        return row is None or str(row[0]) == "complete"
+
+    def observation_session_ledger(
+        self,
+        observation_id: str,
+        observation_ids: Iterable[str],
+        *,
+        candidate_id: str | None = None,
+        scope: ImprovementScope | None = None,
+        limit: int = 50,
+    ) -> FindingSessionLedger:
+        ids = sorted({str(item) for item in observation_ids if str(item)})
+        if not ids:
+            raise KeyError(f"Finding not found: {observation_id}")
+        placeholders = ",".join("?" for _ in ids)
+        clauses = [f"os.observation_id IN ({placeholders})"]
+        params: list[object] = list(ids)
+        if scope is not None:
+            predicate, scope_params = session_scope_predicate(scope, alias="s")
+            clauses.append(f"({predicate})")
+            params.extend(scope_params)
+        bounded_limit = max(1, min(limit, 200))
+        rows = self.conn.execute(
+            f"""
+            SELECT s.id, s.title, a.name, s.started_at, s.status,
+                   SUM(os.occurrence_count) AS occurrence_count,
+                   GROUP_CONCAT(NULLIF(os.summary_redacted, ''), ' | ') AS summaries,
+                   MAX(COALESCE(os.focus_entity_id, '')) AS focus_id,
+                   COALESCE(w.root_path, r.full_name, '') AS workspace
+            FROM observation_sessions os
+            JOIN sessions s ON s.id = os.session_id
+            LEFT JOIN agents a ON a.id = s.agent_id
+            LEFT JOIN workspaces w ON w.id = s.workspace_id
+            LEFT JOIN repos r ON r.id = s.repo_id
+            WHERE {' AND '.join(clauses)}
+            GROUP BY s.id, s.title, a.name, s.started_at, s.status,
+                     w.root_path, r.full_name
+            ORDER BY occurrence_count DESC, MAX(os.latest_source_at) DESC
+            LIMIT ?
+            """,
+            (*params, bounded_limit),
+        ).fetchall()
+        count = int(
+            self.conn.execute(
+                f"""
+                SELECT COUNT(DISTINCT os.session_id)
+                FROM observation_sessions os
+                JOIN sessions s ON s.id = os.session_id
+                WHERE {' AND '.join(clauses)}
+                """,
+                params,
+            ).fetchone()[0]
+        )
+        return FindingSessionLedger(
+            observation_id=observation_id,
+            observation_ids=ids,
+            candidate_id=candidate_id,
+            source_session_count=count,
+            source_sessions=[
+                WorkflowSessionRecord(
+                    session_id=str(row[0]),
+                    relationship="source",
+                    title=row[1],
+                    agent=row[2],
+                    started_at=str(row[3]),
+                    status=str(row[4]),
+                    workspace=str(row[8] or ""),
+                    evidence_count=int(row[5] or 0),
+                    evidence_summaries=[
+                        item.strip()
+                        for item in str(row[6] or "").split(" | ")
+                        if item.strip()
+                    ][:4],
+                    evidence_focus_id=str(row[7] or "") or None,
+                )
+                for row in rows
+            ],
+            resolved_scope=scope,
         )
 
     def list_candidates(
@@ -775,8 +971,13 @@ class ImprovementRepository:
         self.conn.commit()
         return feedback_id
 
-    def summary(self, *, limit: int = 50) -> ImprovementSummary:
-        observations = self.list_observations(limit=limit)
+    def summary(
+        self,
+        *,
+        limit: int = 50,
+        scope: ImprovementScope | None = None,
+    ) -> ImprovementSummary:
+        observations = self.list_observations(limit=limit, scope=scope)
         counts = Counter(
             str(row[0]) for row in self.conn.execute("SELECT status FROM observations").fetchall()
         )
@@ -810,6 +1011,9 @@ class ImprovementRepository:
             pending_workflows=pending,
             active_interventions=active,
             verified_improvement_rate=rate,
+            resolved_scope=scope,
+            eligible_session_count=scope.eligible_session_count if scope else 0,
+            attribution_complete=self.observation_session_ledger_complete(),
         )
 
     def record_event(
@@ -862,6 +1066,139 @@ class ImprovementRepository:
                     now,
                 ),
             )
+
+    def _replace_observation_sessions(
+        self,
+        observation_id: str,
+        source_sessions: list[ObservationSessionRef],
+        *,
+        source_times: dict[str, str],
+        now: str,
+    ) -> None:
+        self.conn.execute(
+            "DELETE FROM observation_sessions WHERE observation_id = ?",
+            (observation_id,),
+        )
+        for item in source_sessions:
+            source_at = source_times.get(item.session_id)
+            if source_at is None:
+                continue
+            self.conn.execute(
+                """
+                INSERT INTO observation_sessions(
+                  observation_id, session_id, occurrence_count, summary_redacted,
+                  focus_entity_type, focus_entity_id, latest_source_at, attrs_json,
+                  created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    observation_id,
+                    item.session_id,
+                    item.occurrence_count,
+                    item.summary_redacted,
+                    item.focus_entity_type,
+                    item.focus_entity_id,
+                    source_at,
+                    _json(item.attrs),
+                    now,
+                    now,
+                ),
+            )
+
+    @staticmethod
+    def _session_refs_from_evidence(
+        evidence: list[EvidenceRef],
+    ) -> list[ObservationSessionRef]:
+        grouped: dict[str, list[EvidenceRef]] = {}
+        for item in evidence:
+            if item.session_id:
+                grouped.setdefault(item.session_id, []).append(item)
+        return [
+            ObservationSessionRef(
+                session_id=session_id,
+                occurrence_count=len(items),
+                summary_redacted=items[0].summary_redacted,
+                focus_entity_type=items[0].entity_type,
+                focus_entity_id=items[0].entity_id,
+            )
+            for session_id, items in grouped.items()
+        ]
+
+    def _session_source_times(
+        self,
+        source_sessions: list[ObservationSessionRef],
+    ) -> dict[str, str]:
+        ids = sorted({item.session_id for item in source_sessions if item.session_id})
+        if not ids:
+            return {}
+        source_times: dict[str, str] = {}
+        for offset in range(0, len(ids), 500):
+            chunk = ids[offset : offset + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self.conn.execute(
+                f"""
+                SELECT id, COALESCE(last_observed_at, ended_at, started_at)
+                FROM sessions
+                WHERE id IN ({placeholders})
+                """,
+                chunk,
+            ).fetchall()
+            source_times.update(
+                {
+                    str(row[0]): str(row[1])
+                    for row in rows
+                    if row[0] is not None and row[1] is not None
+                }
+            )
+        return source_times
+
+    def with_scope_stats(
+        self,
+        observation: ObservationRecord,
+        scope: ImprovementScope,
+    ) -> ObservationRecord:
+        predicate, params = session_scope_predicate(scope, alias="s")
+        row = self.conn.execute(
+            f"""
+            SELECT COUNT(DISTINCT os.session_id), COALESCE(SUM(os.occurrence_count), 0),
+                   MAX(os.latest_source_at)
+            FROM observation_sessions os
+            JOIN sessions s ON s.id = os.session_id
+            WHERE os.observation_id = ?
+              AND ({predicate})
+            """,
+            (observation.id, *params),
+        ).fetchone()
+        affected = int(row[0] or 0)
+        eligible = scope.eligible_session_count
+        ratio = float(affected) / eligible if eligible else 0.0
+        summary = observation.summary
+        if affected != observation.affected_session_count:
+            summary = (
+                f"{affected} supporting session(s) match {scope.label}; "
+                f"the durable observation contains {observation.affected_session_count} session(s) overall. "
+                f"{summary}"
+            )
+        return observation.model_copy(
+            update={
+                "summary": summary,
+                "scope_affected_session_count": affected,
+                "scope_occurrence_count": int(row[1] or 0),
+                "eligible_session_count": eligible,
+                "affected_session_ratio": ratio,
+                "latest_source_at": str(row[2]) if row[2] else None,
+                "resolved_scope": scope,
+            }
+        )
+
+    @staticmethod
+    def _timestamp(value: str | None) -> float:
+        if not value:
+            return 0.0
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return 0.0
 
     def _evidence(self, observation_id: str) -> list[EvidenceRef]:
         rows = self.conn.execute(

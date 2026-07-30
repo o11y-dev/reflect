@@ -280,6 +280,8 @@ def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(p
     assert "DEFAULT_RULE_REGISTRY" in text
     assert "Session Rules score one session" in text
     assert "View Source Sessions" in text
+    assert "/api/inbox/${encodeURIComponent(observationId)}/sessions" in text
+    assert "This observation has no workflow session ledger." not in text
     assert "Source Evidence" in text
     assert "Related Sessions" in text
     assert "Observed Uses" in text

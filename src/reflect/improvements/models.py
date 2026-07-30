@@ -97,6 +97,25 @@ class Severity(StrEnum):
     CRITICAL = "critical"
 
 
+class ImprovementScopeKind(StrEnum):
+    PATH = "path"
+    SESSION = "session"
+    GLOBAL = "global"
+
+
+class ImprovementScope(ReflectModel):
+    kind: ImprovementScopeKind
+    label: str
+    path: str | None = None
+    workspace_id: str | None = None
+    repo_id: str | None = None
+    root_session_id: str | None = None
+    period: str | None = None
+    since: str | None = None
+    eligible_session_count: int = Field(default=0, ge=0)
+    matched: bool = True
+
+
 class RuleDefinition(ReflectModel):
     id: str
     version: int = Field(ge=1)
@@ -130,6 +149,15 @@ class EvidenceRef(ReflectModel):
     attrs: dict[str, Any] = Field(default_factory=dict)
 
 
+class ObservationSessionRef(ReflectModel):
+    session_id: str
+    occurrence_count: int = Field(default=1, ge=1)
+    summary_redacted: str = ""
+    focus_entity_type: str | None = None
+    focus_entity_id: str | None = None
+    attrs: dict[str, Any] = Field(default_factory=dict)
+
+
 class ObservationDraft(ReflectModel):
     rule_id: str
     rule_version: int = Field(ge=1)
@@ -153,6 +181,7 @@ class ObservationDraft(ReflectModel):
     actionability: str = "review"
     repo_id: str | None = None
     evidence: list[EvidenceRef] = Field(default_factory=list)
+    source_sessions: list[ObservationSessionRef] = Field(default_factory=list)
 
 
 class WorkflowDefinition(ReflectModel):
@@ -200,6 +229,12 @@ class ObservationRecord(ObservationDraft):
     suppressed_until: str | None = None
     candidate_id: str | None = None
     candidate_status: WorkflowStatus | None = None
+    scope_affected_session_count: int | None = Field(default=None, ge=0)
+    scope_occurrence_count: int | None = Field(default=None, ge=0)
+    eligible_session_count: int | None = Field(default=None, ge=0)
+    affected_session_ratio: float | None = Field(default=None, ge=0, le=1)
+    latest_source_at: str | None = None
+    resolved_scope: ImprovementScope | None = None
 
 
 class InboxFindingRecord(ObservationRecord):
@@ -261,6 +296,15 @@ class WorkflowSessionLedger(ReflectModel):
     source_sessions: list[WorkflowSessionRecord] = Field(default_factory=list)
     exposure_session_count: int = Field(default=0, ge=0)
     exposure_sessions: list[WorkflowSessionRecord] = Field(default_factory=list)
+
+
+class FindingSessionLedger(ReflectModel):
+    observation_id: str
+    observation_ids: list[str] = Field(default_factory=list)
+    candidate_id: str | None = None
+    source_session_count: int = Field(default=0, ge=0)
+    source_sessions: list[WorkflowSessionRecord] = Field(default_factory=list)
+    resolved_scope: ImprovementScope | None = None
 
 
 class SkillRecord(ReflectModel):
@@ -398,6 +442,9 @@ class ImprovementSummary(ReflectModel):
     pending_workflows: int
     active_interventions: int
     verified_improvement_rate: float | None = None
+    resolved_scope: ImprovementScope | None = None
+    eligible_session_count: int = Field(default=0, ge=0)
+    attribution_complete: bool = True
 
 
 class AskEvidence(ReflectModel):

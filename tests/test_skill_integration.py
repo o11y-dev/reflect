@@ -80,10 +80,32 @@ class TestSkillMd:
         assert "Do not run `reflect setup`" in content
         assert "only as an agent-operated fallback after explicit operator approval" in content
 
+    def test_reflect_skill_packages_session_evidence_guidance(self):
+        required_fragments = (
+            "Making `reflect improve` actionable",
+            "reflect improve --session current|SESSION_ID",
+            "reflect improve --global --period day|week|month|all",
+            "Repeated identical-input behavior lives in `reflect loops`",
+            "cross-join inflation warning",
+            "parent_session_id",
+            "Do not use `sessions.agent` or `llm_calls.model`",
+            "current schema does have `sessions.title`",
+            "Missing token telemetry — cross-agent estimation fallback",
+            "Cursor token counts are unavailable",
+            "`token_provenance`",
+            "Codex, OpenCode, or another normalized agent/session source",
+        )
+
+        content = SKILL_MD.read_text(encoding="utf-8")
+        for fragment in required_fragments:
+            assert fragment in content, f"{fragment!r} missing from {SKILL_MD}"
+        assert "artifact file mtimes" not in content
+        assert "SELECT session_id, tool_name, input_hash" not in content
+
     def test_reflect_usage_skill_uses_exact_cli_contract(self):
         content = REFLECT_USAGE_MD.read_text(encoding="utf-8")
         assert "reflect usage --json" in content
-        assert "reflect usage --global --week --json" in content
+        assert "reflect usage --global --period week --json" in content
         assert "complete matching SQLite cohort" in content
         assert "Do not run `reflect setup`" in content
         assert '"where did my tokens go?"' in content

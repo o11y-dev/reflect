@@ -42,6 +42,16 @@ def _to_int(value: object) -> int:
         return 0
 
 
+def _valid_source_timestamp(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return parsed.year >= 2000
+
+
 def _duration_ms(observed_at: str, received_at: str) -> int | None:
     try:
         start = datetime.fromisoformat(observed_at)
@@ -225,20 +235,44 @@ def _upsert_session(
     cache_creation = _to_int(attrs.get("gen_ai.usage.cache_creation.input_tokens"))
     cache_read = _to_int(attrs.get("gen_ai.usage.cache_read.input_tokens"))
     reasoning = _to_int(attrs.get("gen_ai.usage.reasoning_output_tokens"))
+    source_timestamps = [
+        str(value)
+        for value in (raw_event["observed_at"], raw_event["received_at"])
+        if _valid_source_timestamp(str(value) if value else None)
+    ]
+    last_observed_at = max(source_timestamps, default=None)
     conn.execute(
         """
         INSERT INTO sessions(
           id, agent_id, started_at, ended_at, status, input_tokens, output_tokens,
           cache_creation_tokens, cache_read_tokens, reasoning_tokens, source_kind,
-          source_ref, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          source_ref, last_observed_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           agent_id = COALESCE(sessions.agent_id, excluded.agent_id),
-          started_at = MIN(sessions.started_at, excluded.started_at),
+          started_at = CASE
+            WHEN (
+              sessions.started_at IS NULL OR sessions.started_at = ''
+              OR substr(sessions.started_at, 1, 4) < '2000'
+            ) AND excluded.started_at <> ''
+              AND substr(excluded.started_at, 1, 4) >= '2000'
+              THEN excluded.started_at
+            WHEN sessions.started_at <> ''
+              AND substr(sessions.started_at, 1, 4) >= '2000'
+              AND excluded.started_at <> ''
+              AND substr(excluded.started_at, 1, 4) >= '2000'
+              THEN MIN(sessions.started_at, excluded.started_at)
+            ELSE sessions.started_at
+          END,
           ended_at = CASE
             WHEN sessions.ended_at IS NULL THEN excluded.ended_at
             WHEN excluded.ended_at IS NULL THEN sessions.ended_at
             ELSE MAX(sessions.ended_at, excluded.ended_at)
+          END,
+          last_observed_at = CASE
+            WHEN sessions.last_observed_at IS NULL THEN excluded.last_observed_at
+            WHEN excluded.last_observed_at IS NULL THEN sessions.last_observed_at
+            ELSE MAX(sessions.last_observed_at, excluded.last_observed_at)
           END,
           input_tokens = sessions.input_tokens + excluded.input_tokens,
           output_tokens = sessions.output_tokens + excluded.output_tokens,
@@ -274,6 +308,7 @@ def _upsert_session(
             reasoning,
             raw_event["source_type"],
             raw_event["source_id"],
+            last_observed_at,
             timestamp,
             timestamp,
         ),

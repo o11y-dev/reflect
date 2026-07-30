@@ -14,9 +14,17 @@ from reflect.store.instruction_memory import _classify_instruction, discover_ins
 
 
 class MemoryService:
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        maintain_search_index: bool = True,
+    ):
         self.conn = conn
-        self.local = LocalSQLiteMemoryProvider(conn)
+        self.local = LocalSQLiteMemoryProvider(
+            conn,
+            maintain_search_index=maintain_search_index,
+        )
         self.registry = MemoryProviderRegistry(self.local)
 
     def provider_health(self) -> list[dict[str, Any]]:

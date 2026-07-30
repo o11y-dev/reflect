@@ -615,6 +615,7 @@ def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
 
     inbox = client.get("/api/inbox")
     detail = client.get(f"/api/inbox/{observation_id}")
+    source_sessions = client.get(f"/api/inbox/{observation_id}/sessions")
     legacy_inbox = client.get("/api/improvements")
     legacy_detail = client.get(f"/api/improvements/{observation_id}")
     workflows = client.get("/api/workflows")
@@ -633,6 +634,10 @@ def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
     assert inbox.json()["raw_observation_count"] == 1
     assert detail.status_code == 200
     assert detail.json()["evidence"][0]["session_id"] == "sess-sql"
+    assert source_sessions.status_code == 200
+    assert source_sessions.json()["observation_id"] == observation_id
+    assert source_sessions.json()["source_session_count"] == 1
+    assert source_sessions.json()["source_sessions"][0]["session_id"] == "sess-sql"
     assert legacy_inbox.json()["observations"][0]["id"] == observation_id
     assert legacy_detail.json() == detail.json()
     assert workflows.status_code == 200

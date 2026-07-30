@@ -25,6 +25,7 @@ Use this skill when the user asks for any of the following:
 - "why did Gemini say capacity was exhausted?"
 - "what reset am I waiting for?"
 - Claude Code, Cursor, or Copilot usage observability
+- Codex, OpenCode, or another normalized agent/session source supported by Reflect
 
 ## Core workflow
 
@@ -70,6 +71,26 @@ Always follow this order:
    - Use `reflect loops build <loop-id>` or `reflect workflows add <SKILL.md>` only when the operator wants a selected source turned into a pending workflow. Neither operation installs the skill package.
    - Run `reflect skills apply`, `reflect workflows apply`, or rollback CLI commands only as an agent-operated fallback after explicit operator approval.
 
+### Making `reflect improve` actionable
+
+Use the command's first-class scopes and source-session ledger before querying SQLite:
+
+- `reflect improve`: read the existing snapshot for the current repository or workspace.
+- `reflect improve --session current|SESSION_ID`: inspect one ingested run plus child-agent sessions.
+- `reflect improve --global --period day|week|month|all`: opt into a clearly bounded global view.
+- `reflect improve OBSERVATION_ID`: show the finding and its producing sessions.
+- `reflect improve --refresh`: explicitly ingest telemetry and rerun detectors.
+- `reflect refresh`: explicitly ingest telemetry and rebuild the complete prepared snapshot.
+
+Repeated identical-input behavior lives in `reflect loops`, which applies stricter consecutive-run and noise filtering. Do not treat generic retry counts as improvement findings.
+
+Read commands use query-only SQLite connections and never migrate, ingest,
+reconcile, or rebuild implicitly. If the snapshot is missing, outdated, empty,
+or maintenance-stale, report the error and offer `reflect refresh` or the
+command's explicit `--refresh` option. Use `reflect skills sync` to reconcile
+skill files and registry revisions; plain `reflect skills` only lists the
+current registry.
+
 4. **Baseline from local telemetry**
    - For current-session, selected-session, or global token/cost/tool/model statistics, use `$reflect-usage` and run `reflect usage --json` with the matching scope. Keep provider limit and billing reconciliation in this skill.
    - Prefer OTLP JSON traces such as `~/.reflect/state/otlp/otel-traces.json`.
@@ -82,11 +103,43 @@ Always follow this order:
       - `reflect memory providers`: report local SQLite plus optional OMEGA, LiteLLM, Memory Palace, Agent Memory, Mem0, Graphiti, and TencentDB-Agent-Memory adapters
    - If local traces are unavailable, fall back to legacy local state such as Cursor hook directories when present.
 
+### `reflect.db` direct queries — known schema and pitfalls
+
+Verify the schema of the database being analyzed with `PRAGMA table_info(...)`, especially for older snapshots. Analysis-relevant columns in the current schema are:
+
+- `sessions`: `id`, `started_at`, `ended_at`, `status`, `title`, `input_tokens`, `output_tokens`, `estimated_cost_usd`, `parent_session_id`, `agent_id`, `workspace_id`
+- `agents`: `id`, `name` (join via `sessions.agent_id = agents.id`)
+- `llm_calls`: `id`, `session_id`, `step_id`, `request_model`, `response_model`, `input_tokens`, `output_tokens`, `latency_ms`, `provider`, `finish_reason`
+- `tool_calls`: `id`, `session_id`, `step_id`, `tool_name`, `tool_type`, `duration_ms`, `status`, `input_hash`
+- `steps`: `id`, `session_id`, `parent_step_id`, `seq`, `type`, `started_at`, `ended_at`, `duration_ms`, `status`, `summary`
+- Do not use `sessions.agent` or `llm_calls.model`. The current schema does have `sessions.title`; older evidence that treated it as missing is stale.
+
+A cross-join inflation warning: joining `sessions` with both `llm_calls` and `tool_calls` inflates `COUNT` and `GROUP_CONCAT` by the opposing table's row count. Always use separate queries:
+
+```python
+llm_count = db.execute("SELECT COUNT(*) FROM llm_calls WHERE session_id = ?", (sid,)).fetchone()[0]
+tools = db.execute("SELECT tool_name, COUNT(*) FROM tool_calls WHERE session_id = ? GROUP BY tool_name", (sid,)).fetchall()
+```
+
+Use `reflect improve --session SESSION_ID` for parent/child traversal and the finding's Source Sessions ledger for task correlation. Treat direct SQL as an advanced compatibility/debugging fallback only.
+
 5. **Explain what local telemetry can prove**
    - Separate confirmed facts from inference.
    - Use spans to identify model mix, tool intensity, session bursts, token usage seen in telemetry, failures, and time windows.
    - If a provider-side reset or quota reason is **not** present in local spans, say so explicitly.
    - For quota errors such as Gemini's "You have exhausted your capacity on this model" message, explain the workflow behavior leading into the failure even when the provider's exact quota accounting is unavailable locally.
+
+### Missing token telemetry — cross-agent estimation fallback
+
+Apply this fallback to Cursor, Codex, Claude, Copilot, Gemini, OpenCode, and future adapters whenever the selected source has LLM calls but exact token fields are 0. Do not assume that one agent's capture limitation applies to every adapter or ingestion path.
+
+State the limitation in source-specific terms: "Token counts are unavailable for this session — the selected agent or telemetry source did not export exact per-call token data." For the verified Cursor OTLP case, state explicitly: "Cursor token counts are unavailable — Cursor does not export per-call token data into local OTLP spans."
+
+Read `reflect usage --json` and preserve its `token_provenance`: exact local telemetry, `estimated_cursor_transcript`, or unavailable. If exact and adapter-estimated values remain unavailable, rank likely token consumption with these proxies, from strongest to weakest:
+
+`output file size` → `LLM call count` → `tool call count` → `session duration`
+
+Keep the proxy result labeled `Inference`; it ranks likely consumption and is not an exact token or billing calculation. Compare like-for-like tasks and sources where possible because tool density and duration differ across agents.
 
 6. **Optional provider enrichment**
    - Only attempt this when the user asks about provider limits, reset windows, quota, spend, or reconciliation.

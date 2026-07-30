@@ -80,6 +80,11 @@ class TestHelp:
         assert "--refresh" in result.output
         assert "--global" in result.output
 
+    def test_refresh_help(self, runner):
+        result = runner.invoke(main, ["refresh", "--help"])
+        assert result.exit_code == 0
+        assert "--native-sessions" in result.output
+
     def test_db_doctor_help(self, runner):
         result = runner.invoke(main, ["db", "doctor", "--help"])
         assert result.exit_code == 0
@@ -983,10 +988,9 @@ class TestSkillsSubcommand:
         }
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]), \
-             patch("reflect.core._prepare_sql_report_db"), \
              patch("reflect.core._build_skill_evidence_bundle_from_sql", return_value=sql_bundle):
             result = runner.invoke(main, [
-                "skills", "--yes", "--agent", "claude",
+                "skills", "discover", "--yes", "--agent", "claude", "--refresh",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
