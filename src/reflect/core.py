@@ -1497,7 +1497,11 @@ def usage(
     _ensure_command_snapshot(
         db_path,
         refresh=refresh,
-        readiness_probes=(UsageRollupReadinessProbe(),),
+        readiness_probes=(
+            UsageRollupReadinessProbe(
+                session_ids=(session_id,) if session_id and not global_scope else None
+            ),
+        ),
         prepare=lambda: _prepare_usage_db(
             db_path,
             otlp_traces=_default_otlp_traces(),
@@ -5608,19 +5612,25 @@ def db_prune_sessions(
         finally:
             conn.close()
     else:
-        if backup:
-            stamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%S%fZ")
-            backup_path = db_path.with_name(f"{db_path.name}.backup-{stamp}")
-            backup_sqlite(db_path, backup_path)
         conn = connect_sqlite(db_path)
         try:
-            migrate(conn)
+            conn.execute("BEGIN IMMEDIATE")
+            if backup:
+                stamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%S%fZ")
+                backup_path = db_path.with_name(f"{db_path.name}.backup-{stamp}")
+                backup_sqlite(db_path, backup_path)
+            migrate(conn, commit=False)
             result = SessionPruner(
                 conn,
                 SessionRetentionPolicy(older_than_days=older_than_days),
             ).run(apply=True)
+            conn.commit()
             if vacuum and result.pruned_session_ids:
                 conn.execute("VACUUM")
+        except Exception:
+            if conn.in_transaction:
+                conn.rollback()
+            raise
         finally:
             conn.close()
 

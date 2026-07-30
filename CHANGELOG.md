@@ -23,6 +23,7 @@
 - Preserved all producing-session links even when detailed observation evidence is capped at 20 rows.
 - Corrected sticky epoch session starts when valid source timestamps arrive, preserved durable memory and evidence provenance during pruning, and blocked old source files from resurrecting tombstoned sessions.
 - Kept retention previews query-only, created apply backups before schema migration, rolled back pruning when derived rebuilds fail, rejected structurally incomplete usage rollups, preserved the feedback lookup index, and retained deprecated `reflect skills --path` compatibility.
+- Held the pruning write lock across backup, migration, and deletion, published backup files only after a complete copy, and scoped explicit-session usage readiness to that session instead of unrelated rollup gaps.
 
 ## 0.9.3 (2026-07-28)
 

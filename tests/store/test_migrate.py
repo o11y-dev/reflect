@@ -140,6 +140,26 @@ def test_migrate_uses_read_only_fast_path_when_schema_is_current(tmp_path):
         writer.close()
 
 
+def test_migrate_can_preserve_a_caller_owned_transaction(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        _apply_migrations_through(conn, 21)
+        conn.execute("BEGIN IMMEDIATE")
+
+        assert migrate(conn, commit=False) == [22]
+        assert conn.in_transaction is True
+        assert conn.execute(
+            "SELECT MAX(version) FROM schema_migrations"
+        ).fetchone()[0] == 22
+
+        conn.rollback()
+        assert conn.execute(
+            "SELECT MAX(version) FROM schema_migrations"
+        ).fetchone()[0] == 21
+    finally:
+        conn.close()
+
+
 def test_migrate_creates_rollup_indexes(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:

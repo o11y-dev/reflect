@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from collections.abc import Callable
 from pathlib import Path
+from uuid import uuid4
 
 DEFAULT_BUSY_TIMEOUT_MS = 30000
 DEFAULT_WAL_AUTOCHECKPOINT = 1000
@@ -41,18 +43,42 @@ def connect_sqlite_read_only(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
+class SQLiteBackupService:
+    """Create and atomically publish SQLite backups."""
+
+    def __init__(
+        self,
+        source_factory: Callable[[str | Path], sqlite3.Connection] | None = None,
+    ) -> None:
+        self._source_factory = source_factory or connect_sqlite_read_only
+
+    def create(self, source_path: str | Path, target_path: str | Path) -> None:
+        target_path = Path(target_path)
+        if target_path.exists():
+            raise FileExistsError(f"Backup target already exists: {target_path}")
+        partial_path = target_path.with_name(
+            f".{target_path.name}.{uuid4().hex}.partial"
+        )
+        try:
+            source = self._source_factory(source_path)
+            try:
+                target = sqlite3.connect(partial_path)
+                try:
+                    source.backup(target)
+                finally:
+                    target.close()
+            finally:
+                source.close()
+            partial_path.replace(target_path)
+        except Exception:
+            partial_path.unlink(missing_ok=True)
+            raise
+
+
 def backup_sqlite(source_path: str | Path, target_path: str | Path) -> None:
     """Create a consistent backup without mutating the source database."""
 
-    source = connect_sqlite_read_only(source_path)
-    try:
-        target = sqlite3.connect(Path(target_path))
-        try:
-            source.backup(target)
-        finally:
-            target.close()
-    finally:
-        source.close()
+    SQLiteBackupService().create(source_path, target_path)
 
 
 def _apply_runtime_pragmas(conn: sqlite3.Connection, *, strict_durability: bool) -> None:

@@ -52,7 +52,8 @@ def _migration_statements(sql: str) -> list[str]:
     return statements
 
 
-def migrate(conn: sqlite3.Connection) -> list[int]:
+def migrate(conn: sqlite3.Connection, *, commit: bool = True) -> list[int]:
+    """Apply pending migrations, optionally inside a caller-owned transaction."""
     migrations = load_migrations()
     try:
         applied_fast = {
@@ -64,10 +65,16 @@ def migrate(conn: sqlite3.Connection) -> list[int]:
         applied_fast = set()
     if all(migration.version in applied_fast for migration in migrations):
         return []
-    if conn.in_transaction:
-        conn.commit()
+    savepoint = "reflect_schema_migrate"
+    if commit:
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+    elif not conn.in_transaction:
+        raise ValueError("commit=False requires a caller-owned transaction")
+    else:
+        conn.execute(f"SAVEPOINT {savepoint}")
     applied_now: list[int] = []
-    conn.execute("BEGIN IMMEDIATE")
     try:
         applied = applied_migration_versions(conn)
         for migration in migrations:
@@ -80,8 +87,15 @@ def migrate(conn: sqlite3.Connection) -> list[int]:
                 (migration.version, migration.name, datetime.now(UTC).isoformat()),
             )
             applied_now.append(migration.version)
-        conn.commit()
+        if commit:
+            conn.commit()
+        else:
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
         return applied_now
     except Exception:
-        conn.rollback()
+        if commit:
+            conn.rollback()
+        else:
+            conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
         raise

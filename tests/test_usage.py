@@ -663,6 +663,37 @@ def test_usage_rejects_structurally_incomplete_rollups(tmp_path):
     assert "usage rollups are stale: 1 session(s) are missing rollups" in result.output
 
 
+def test_usage_session_ignores_an_unrelated_missing_rollup(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    conn = _open_db(db_path)
+    try:
+        _seed_session(conn, "session-current")
+        _seed_session(conn, "session-unrelated")
+        conn.execute(
+            "DELETE FROM session_rollups WHERE session_id = 'session-unrelated'"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "usage",
+            "--session",
+            "session-current",
+            "--json",
+            "--db-path",
+            str(db_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["session"]["id"] == "session-current"
+    assert payload["totals"]["sessions"] == 1
+
+
 def test_usage_cli_rejects_conflicting_scopes():
     result = CliRunner().invoke(main, ["usage", "--session", "session", "--global"])
 

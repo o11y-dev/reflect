@@ -507,6 +507,69 @@ def test_prune_cli_is_dry_run_first_and_creates_consistent_backup(tmp_path):
         conn.close()
 
 
+def test_prune_cli_holds_write_lock_across_backup_and_apply(
+    tmp_path,
+    monkeypatch,
+):
+    from reflect.store.sqlite import backup_sqlite as real_backup_sqlite
+
+    db_path = tmp_path / "reflect.db"
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        _seed_identity(conn)
+        _insert_session(conn, "before-backup")
+        conn.commit()
+    finally:
+        conn.close()
+
+    writer_errors = []
+
+    def backup_then_attempt_write(source_path, target_path):
+        real_backup_sqlite(source_path, target_path)
+        writer = sqlite3.connect(source_path, timeout=0.05)
+        try:
+            _insert_session(writer, "after-backup")
+            writer.commit()
+        except sqlite3.OperationalError as exc:
+            writer_errors.append(str(exc))
+        finally:
+            writer.close()
+
+    monkeypatch.setattr(
+        "reflect.store.sqlite.backup_sqlite",
+        backup_then_attempt_write,
+    )
+    result = CliRunner().invoke(
+        main,
+        [
+            "db",
+            "prune-sessions",
+            "--older-than-days",
+            "60",
+            "--apply",
+            "--json",
+            "--db-path",
+            str(db_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["pruned_session_ids"] == ["before-backup"]
+    assert writer_errors == ["database is locked"]
+    backup_conn = sqlite3.connect(payload["backup_path"])
+    conn = sqlite3.connect(db_path)
+    try:
+        assert backup_conn.execute(
+            "SELECT id FROM sessions ORDER BY id"
+        ).fetchall() == [("before-backup",)]
+        assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+    finally:
+        conn.close()
+        backup_conn.close()
+
+
 def test_prune_cli_dry_run_does_not_migrate_an_outdated_store(tmp_path):
     db_path = tmp_path / "reflect.db"
     conn = connect_sqlite(db_path)
