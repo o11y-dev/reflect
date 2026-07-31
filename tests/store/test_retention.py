@@ -491,7 +491,7 @@ def test_prune_cli_is_dry_run_first_and_creates_consistent_backup(tmp_path):
         ],
     )
     assert applied.exit_code == 0, applied.output
-    payload = json.loads(applied.output)
+    payload = json.loads(applied.stdout)
     assert payload["pruned_session_ids"] == ["stale-invalid"]
     backup_path = payload["backup_path"]
     assert backup_path
@@ -525,8 +525,8 @@ def test_prune_cli_holds_write_lock_across_backup_and_apply(
 
     writer_errors = []
 
-    def backup_then_attempt_write(source_path, target_path):
-        real_backup_sqlite(source_path, target_path)
+    def backup_then_attempt_write(source_path, target_path, *, progress=None):
+        real_backup_sqlite(source_path, target_path, progress=progress)
         writer = sqlite3.connect(source_path, timeout=0.05)
         try:
             _insert_session(writer, "after-backup")
@@ -555,9 +555,12 @@ def test_prune_cli_holds_write_lock_across_backup_and_apply(
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["pruned_session_ids"] == ["before-backup"]
     assert writer_errors == ["database is locked"]
+    assert "Backing up the local telemetry store... 100%" in result.stderr
+    assert "Pruning eligible sessions and rebuilding derived data..." in result.stderr
+    assert "Session pruning complete." in result.stderr
     backup_conn = sqlite3.connect(payload["backup_path"])
     conn = sqlite3.connect(db_path)
     try:
@@ -613,7 +616,7 @@ def test_prune_cli_backs_up_before_migrating_for_apply(tmp_path):
     )
 
     assert result.exit_code == 0, result.output
-    backup_path = json.loads(result.output)["backup_path"]
+    backup_path = json.loads(result.stdout)["backup_path"]
     assert backup_path
     conn = sqlite3.connect(db_path)
     backup_conn = sqlite3.connect(backup_path)

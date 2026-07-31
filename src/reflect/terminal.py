@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import UTC, datetime
+from typing import TypeVar
 
 from reflect.graph import _compute_tool_transitions, _compute_weekly_trends
 from reflect.insights import (
@@ -11,6 +14,7 @@ from reflect.insights import (
     compute_token_economy,
 )
 from reflect.models import TelemetryStats
+from reflect.preparation import PreparationProgress, PreparationProgressReporter
 from reflect.utils import (
     _bar,
     _fmt_model,
@@ -19,6 +23,44 @@ from reflect.utils import (
     _sanitize_command_counter,
     _stat_panel,
 )
+
+_PreparationResult = TypeVar("_PreparationResult")
+
+
+class TerminalPreparationProgress:
+    """Render typed preparation stages without contaminating stdout."""
+
+    def __init__(self, console=None) -> None:
+        if console is None:
+            from rich.console import Console
+
+            console = Console(stderr=True)
+        self.console = console
+
+    def run(
+        self,
+        prepare: Callable[[PreparationProgressReporter], _PreparationResult],
+        *,
+        initial_message: str = "Opening the local telemetry store...",
+    ) -> _PreparationResult:
+        status_context = (
+            self.console.status(
+                f"[bold orange3]{initial_message}[/bold orange3]",
+                spinner="dots",
+            )
+            if self.console.is_terminal
+            else nullcontext()
+        )
+        with status_context as status:
+
+            def update(progress: PreparationProgress) -> None:
+                message = f"[bold orange3]{progress.message}[/bold orange3]"
+                if status is None:
+                    self.console.print(message)
+                else:
+                    status.update(message)
+
+            return prepare(update)
 
 
 def _render_terminal(  # noqa: C901

@@ -80,6 +80,21 @@ def test_dashboard_html_shows_branded_loader_during_report_fetch(path: Path):
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_html_surfaces_background_refresh_progress(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert 'id="preparation-status"' in text
+    assert 'id="preparation-status-copy"' in text
+    assert "function pollPreparationStatus()" in text
+    assert "fetch('/api/status'" in text
+    assert "preparation.message || 'Refreshing local telemetry...'" in text
+    assert "'Refresh complete. Loading the new snapshot...'" in text
+    assert "window.location.reload()" in text
+    assert "startPreparationStatusPolling();" in text
+    assert "hdr-ts').textContent = 'Loaded '" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_html_uses_persistent_session_and_filter_rails(path: Path):
     text = path.read_text(encoding="utf-8")
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 from collections.abc import Callable, Iterable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -19,14 +19,18 @@ class PreparationState(StrEnum):
 
 class PreparationStage(StrEnum):
     OPENING_STORE = "opening_store"
+    BACKING_UP_STORE = "backing_up_store"
+    MIGRATING_SCHEMA = "migrating_schema"
     INGESTING_TRACES = "ingesting_traces"
     INGESTING_LOGS = "ingesting_logs"
     INGESTING_SESSIONS = "ingesting_sessions"
     NORMALIZING = "normalizing"
     UPDATING_CANONICAL_STATE = "updating_canonical_state"
+    PRUNING_SESSIONS = "pruning_sessions"
     REFRESHING_GRAPH = "refreshing_graph"
     REFRESHING_ROLLUPS = "refreshing_rollups"
     REFRESHING_IMPROVEMENTS = "refreshing_improvements"
+    VACUUMING_STORE = "vacuuming_store"
     COMPLETE = "complete"
 
 
@@ -296,12 +300,15 @@ class PreparationSnapshot:
     generation: int
     started_at: str = ""
     finished_at: str = ""
+    stage: PreparationStage | None = None
+    message: str = ""
     error: str = ""
     result: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["state"] = self.state.value
+        payload["stage"] = self.stage.value if self.stage is not None else None
         return payload
 
 
@@ -347,6 +354,16 @@ class BackgroundPreparationWorker:
         with self._lock:
             return self._snapshot
 
+    def report_progress(self, progress: PreparationProgress) -> None:
+        """Publish the latest typed stage while background preparation is running."""
+        with self._lock:
+            if self._snapshot.state is PreparationState.RUNNING:
+                self._snapshot = replace(
+                    self._snapshot,
+                    stage=progress.stage,
+                    message=progress.message,
+                )
+
     def wait(self, timeout: float | None = None) -> bool:
         with self._lock:
             thread = self._thread
@@ -373,6 +390,8 @@ class BackgroundPreparationWorker:
                     generation=current.generation,
                     started_at=current.started_at,
                     finished_at=_now(),
+                    stage=current.stage,
+                    message=current.message,
                     error=str(exc),
                 )
             return
@@ -384,6 +403,8 @@ class BackgroundPreparationWorker:
                 generation=current.generation + 1,
                 started_at=current.started_at,
                 finished_at=_now(),
+                stage=PreparationStage.COMPLETE,
+                message="Preparation complete.",
                 result=result,
             )
 

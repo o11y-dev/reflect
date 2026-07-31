@@ -48,7 +48,6 @@ import sys
 import time
 import zipfile
 from collections.abc import Callable
-from contextlib import nullcontext
 from datetime import UTC, datetime
 from importlib import metadata as importlib_metadata
 from importlib import resources as importlib_resources
@@ -1102,32 +1101,16 @@ def _prepare_sql_snapshot_with_progress(
     otlp_traces: Path | None,
     include_native_sessions: bool,
 ) -> dict[str, object]:
-    from reflect.preparation import PreparationProgress
+    from reflect.terminal import TerminalPreparationProgress
 
-    progress_console = Console(stderr=True)
-    status_context = (
-        progress_console.status(
-            "[bold orange3]Opening the local telemetry store...[/bold orange3]",
-            spinner="dots",
-        )
-        if progress_console.is_terminal
-        else nullcontext()
-    )
-    with status_context as status:
-
-        def update_status(progress: PreparationProgress) -> None:
-            message = f"[bold orange3]{progress.message}[/bold orange3]"
-            if status is None:
-                progress_console.print(message)
-            else:
-                status.update(message)
-
-        return _prepare_sql_report_db(
+    return TerminalPreparationProgress().run(
+        lambda progress: _prepare_sql_report_db(
             db_path,
             otlp_traces=otlp_traces,
             include_native_sessions=include_native_sessions,
-            progress=update_status,
+            progress=progress,
         )
+    )
 
 
 def _ensure_command_snapshot(
@@ -1278,8 +1261,10 @@ def _prepare_usage_db(
     otlp_traces: Path | None,
     include_native_sessions: bool,
     native_session_ids: tuple[str, ...] = (),
+    progress: PreparationProgressReporter | None = None,
 ) -> dict[str, object]:
     """Refresh usage facts without rebuilding graph or improvement state."""
+    from reflect.preparation import PreparationStage, report_preparation_progress
     from reflect.store.cursor_adapter import apply_cursor_transcript_usage_estimates
     from reflect.store.ingest import (
         ingest_native_session_file,
@@ -1292,23 +1277,53 @@ def _prepare_usage_db(
     from reflect.store.sqlite import connect_sqlite
     from reflect.store.workspaces import backfill_session_context
 
+    report_preparation_progress(
+        progress,
+        PreparationStage.OPENING_STORE,
+        "Opening the local telemetry store...",
+    )
     conn = connect_sqlite(db_path)
     try:
+        report_preparation_progress(
+            progress,
+            PreparationStage.MIGRATING_SCHEMA,
+            "Checking database migrations...",
+        )
         applied = migrate(conn)
         if otlp_traces is not None and otlp_traces.exists():
+            report_preparation_progress(
+                progress,
+                PreparationStage.INGESTING_TRACES,
+                "Reading new OTLP traces...",
+            )
             ingest_otlp_traces_file(conn, file_path=otlp_traces, skip_unchanged=True)
             otlp_logs = _infer_otlp_logs_file(otlp_traces)
             if otlp_logs is not None and otlp_logs.exists():
+                report_preparation_progress(
+                    progress,
+                    PreparationStage.INGESTING_LOGS,
+                    "Reading new OTLP logs...",
+                )
                 ingest_otlp_logs_file(conn, file_path=otlp_logs, skip_unchanged=True)
 
         changed_session_ids: set[str] = set()
         if conn.execute(
             "SELECT 1 FROM raw_events WHERE normalized_status = 'pending' LIMIT 1"
         ).fetchone():
+            report_preparation_progress(
+                progress,
+                PreparationStage.NORMALIZING,
+                "Normalizing usage telemetry...",
+            )
             normalize_pending_raw_events(conn, changed_session_ids=changed_session_ids)
 
         cursor_native_files: list[Path] = []
         if include_native_sessions:
+            report_preparation_progress(
+                progress,
+                PreparationStage.INGESTING_SESSIONS,
+                "Reading local agent sessions...",
+            )
             for native_agent, session_file in _discover_rich_session_files():
                 if native_session_ids and not any(
                     _native_session_path_matches_id(session_file, candidate)
@@ -1325,7 +1340,17 @@ def _prepare_usage_db(
                 )
                 if native_agent == "cursor" and not result.get("unchanged"):
                     cursor_native_files.append(session_file)
+            report_preparation_progress(
+                progress,
+                PreparationStage.NORMALIZING,
+                "Normalizing usage telemetry...",
+            )
             normalize_pending_raw_events(conn, changed_session_ids=changed_session_ids)
+        report_preparation_progress(
+            progress,
+            PreparationStage.UPDATING_CANONICAL_STATE,
+            "Updating canonical usage state...",
+        )
         backfill_mcp_calls(
             conn,
             session_ids=None if 14 in applied else changed_session_ids,
@@ -1348,17 +1373,52 @@ def _prepare_usage_db(
             or session_count != rollup_count
             or cursor_result.get("updated")
         ):
+            report_preparation_progress(
+                progress,
+                PreparationStage.REFRESHING_ROLLUPS,
+                "Rebuilding usage rollups...",
+            )
             _ensure_sql_costs(conn)
             rebuild_rollups(conn)
         elif changed_session_ids or context_result["sessions_updated"]:
+            report_preparation_progress(
+                progress,
+                PreparationStage.REFRESHING_ROLLUPS,
+                f"Refreshing usage rollups for {len(changed_session_ids):,} session(s)...",
+            )
             _ensure_sql_costs(conn, session_ids=changed_session_ids)
             refresh_rollups(conn, changed_session_ids)
+        report_preparation_progress(
+            progress,
+            PreparationStage.COMPLETE,
+            "Usage refresh complete.",
+        )
         return {
             "refreshed": True,
             "changed_sessions": len(changed_session_ids),
         }
     finally:
         conn.close()
+
+
+def _prepare_usage_db_with_progress(
+    db_path: Path,
+    *,
+    otlp_traces: Path | None,
+    include_native_sessions: bool,
+    native_session_ids: tuple[str, ...] = (),
+) -> dict[str, object]:
+    from reflect.terminal import TerminalPreparationProgress
+
+    return TerminalPreparationProgress().run(
+        lambda progress: _prepare_usage_db(
+            db_path,
+            otlp_traces=otlp_traces,
+            include_native_sessions=include_native_sessions,
+            native_session_ids=native_session_ids,
+            progress=progress,
+        )
+    )
 
 
 def _resolve_period_option(
@@ -1502,7 +1562,7 @@ def usage(
                 session_ids=(session_id,) if session_id and not global_scope else None
             ),
         ),
-        prepare=lambda: _prepare_usage_db(
+        prepare=lambda: _prepare_usage_db_with_progress(
             db_path,
             otlp_traces=_default_otlp_traces(),
             include_native_sessions=True,
@@ -2566,13 +2626,16 @@ def _run_browser_report(
     else:
         from reflect.preparation import BackgroundPreparationWorker
 
-        preparation_worker = BackgroundPreparationWorker(
-            lambda: _prepare_sql_report_db(
+        def prepare_in_background():
+            assert preparation_worker is not None
+            return _prepare_sql_report_db(
                 db_path,
                 otlp_traces=otlp_traces,
                 include_native_sessions=include_native_sessions,
+                progress=preparation_worker.report_progress,
             )
-        )
+
+        preparation_worker = BackgroundPreparationWorker(prepare_in_background)
         click.echo("Serving the current snapshot; refreshing telemetry in the background.")
 
     stats = TelemetryStats(
@@ -4862,6 +4925,11 @@ def _prepare_sql_report_db(
     )
     conn = connect_sqlite(db_path)
     try:
+        report_preparation_progress(
+            progress,
+            PreparationStage.MIGRATING_SCHEMA,
+            "Checking database migrations...",
+        )
         applied = migrate(conn)
         ingest_result = {"inserted": 0, "skipped": 0}
         ingest_sources: dict[str, dict[str, object]] = {}
@@ -5581,13 +5649,16 @@ def db_prune_sessions(
     """Preview or prune obsolete invalid-start sessions."""
     from dataclasses import asdict
 
+    from reflect.preparation import PreparationStage, report_preparation_progress
     from reflect.store.migrate import migrate
     from reflect.store.retention import SessionPruner, SessionRetentionPolicy
     from reflect.store.sqlite import (
+        SQLiteBackupProgress,
         backup_sqlite,
         connect_sqlite,
         connect_sqlite_read_only,
     )
+    from reflect.terminal import TerminalPreparationProgress
 
     if vacuum and not apply_changes:
         raise click.UsageError("--vacuum requires --apply")
@@ -5612,27 +5683,86 @@ def db_prune_sessions(
         finally:
             conn.close()
     else:
-        conn = connect_sqlite(db_path)
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            if backup:
-                stamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%S%fZ")
-                backup_path = db_path.with_name(f"{db_path.name}.backup-{stamp}")
-                backup_sqlite(db_path, backup_path)
-            migrate(conn, commit=False)
-            result = SessionPruner(
-                conn,
-                SessionRetentionPolicy(older_than_days=older_than_days),
-            ).run(apply=True)
-            conn.commit()
-            if vacuum and result.pruned_session_ids:
-                conn.execute("VACUUM")
-        except Exception:
-            if conn.in_transaction:
-                conn.rollback()
-            raise
-        finally:
-            conn.close()
+        def apply_pruning(progress):
+            report_preparation_progress(
+                progress,
+                PreparationStage.OPENING_STORE,
+                "Opening the local telemetry store...",
+            )
+            conn = connect_sqlite(db_path)
+            applied_backup_path: Path | None = None
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                if backup:
+                    stamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%S%fZ")
+                    applied_backup_path = db_path.with_name(
+                        f"{db_path.name}.backup-{stamp}"
+                    )
+                    report_preparation_progress(
+                        progress,
+                        PreparationStage.BACKING_UP_STORE,
+                        "Backing up the local telemetry store...",
+                    )
+                    last_backup_percent = -5
+
+                    def update_backup(snapshot: SQLiteBackupProgress) -> None:
+                        nonlocal last_backup_percent
+                        percent = snapshot.percent_complete
+                        if percent < 100 and percent < last_backup_percent + 5:
+                            return
+                        last_backup_percent = percent
+                        report_preparation_progress(
+                            progress,
+                            PreparationStage.BACKING_UP_STORE,
+                            f"Backing up the local telemetry store... {percent}% "
+                            f"({snapshot.completed_pages:,}/{snapshot.total_pages:,} pages)",
+                        )
+
+                    backup_sqlite(
+                        db_path,
+                        applied_backup_path,
+                        progress=update_backup,
+                    )
+                report_preparation_progress(
+                    progress,
+                    PreparationStage.MIGRATING_SCHEMA,
+                    "Checking database migrations...",
+                )
+                migrate(conn, commit=False)
+                report_preparation_progress(
+                    progress,
+                    PreparationStage.PRUNING_SESSIONS,
+                    "Pruning eligible sessions and rebuilding derived data...",
+                )
+                applied_result = SessionPruner(
+                    conn,
+                    SessionRetentionPolicy(older_than_days=older_than_days),
+                ).run(apply=True)
+                conn.commit()
+                if vacuum and applied_result.pruned_session_ids:
+                    report_preparation_progress(
+                        progress,
+                        PreparationStage.VACUUMING_STORE,
+                        "Vacuuming the local telemetry store...",
+                    )
+                    conn.execute("VACUUM")
+                report_preparation_progress(
+                    progress,
+                    PreparationStage.COMPLETE,
+                    "Session pruning complete.",
+                )
+                return applied_result, applied_backup_path
+            except Exception:
+                if conn.in_transaction:
+                    conn.rollback()
+                raise
+            finally:
+                conn.close()
+
+        result, backup_path = TerminalPreparationProgress().run(
+            apply_pruning,
+            initial_message="Preparing session pruning...",
+        )
 
     payload = {
         "dry_run": result.dry_run,

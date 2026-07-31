@@ -59,6 +59,39 @@ def test_background_preparation_worker_exposes_failures():
     assert snapshot.error == "preparation failed"
 
 
+def test_background_preparation_worker_exposes_current_progress():
+    started = threading.Event()
+    release = threading.Event()
+
+    def prepare():
+        worker.report_progress(
+            PreparationProgress(
+                stage=PreparationStage.REFRESHING_ROLLUPS,
+                message="Refreshing usage rollups...",
+            )
+        )
+        started.set()
+        release.wait(timeout=2)
+        return {"sessions": 3}
+
+    worker = BackgroundPreparationWorker(prepare)
+    assert worker.start() is True
+    assert started.wait(timeout=1) is True
+
+    running = worker.snapshot()
+    assert running.state is PreparationState.RUNNING
+    assert running.stage is PreparationStage.REFRESHING_ROLLUPS
+    assert running.message == "Refreshing usage rollups..."
+    assert running.as_dict()["stage"] == "refreshing_rollups"
+
+    release.set()
+    assert worker.wait(timeout=2) is True
+    completed = worker.snapshot()
+    assert completed.state is PreparationState.COMPLETE
+    assert completed.stage is PreparationStage.COMPLETE
+    assert completed.message == "Preparation complete."
+
+
 def test_report_preparation_progress_emits_a_typed_stage():
     progress = []
 

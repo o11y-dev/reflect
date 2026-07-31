@@ -3,11 +3,13 @@ from __future__ import annotations
 import sqlite3
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
 DEFAULT_BUSY_TIMEOUT_MS = 30000
 DEFAULT_WAL_AUTOCHECKPOINT = 1000
+DEFAULT_BACKUP_PAGES_PER_STEP = 2048
 _CONNECTION_INIT_LOCK = threading.Lock()
 
 
@@ -52,7 +54,13 @@ class SQLiteBackupService:
     ) -> None:
         self._source_factory = source_factory or connect_sqlite_read_only
 
-    def create(self, source_path: str | Path, target_path: str | Path) -> None:
+    def create(
+        self,
+        source_path: str | Path,
+        target_path: str | Path,
+        *,
+        progress: Callable[[SQLiteBackupProgress], None] | None = None,
+    ) -> None:
         target_path = Path(target_path)
         if target_path.exists():
             raise FileExistsError(f"Backup target already exists: {target_path}")
@@ -64,7 +72,19 @@ class SQLiteBackupService:
             try:
                 target = sqlite3.connect(partial_path)
                 try:
-                    source.backup(target)
+                    if progress is None:
+                        source.backup(target)
+                    else:
+                        source.backup(
+                            target,
+                            pages=DEFAULT_BACKUP_PAGES_PER_STEP,
+                            progress=lambda _status, remaining, total: progress(
+                                SQLiteBackupProgress(
+                                    remaining_pages=remaining,
+                                    total_pages=total,
+                                )
+                            ),
+                        )
                 finally:
                     target.close()
             finally:
@@ -75,10 +95,31 @@ class SQLiteBackupService:
             raise
 
 
-def backup_sqlite(source_path: str | Path, target_path: str | Path) -> None:
+@dataclass(frozen=True)
+class SQLiteBackupProgress:
+    remaining_pages: int
+    total_pages: int
+
+    @property
+    def completed_pages(self) -> int:
+        return max(self.total_pages - self.remaining_pages, 0)
+
+    @property
+    def percent_complete(self) -> int:
+        if self.total_pages <= 0:
+            return 100 if self.remaining_pages <= 0 else 0
+        return min(self.completed_pages * 100 // self.total_pages, 100)
+
+
+def backup_sqlite(
+    source_path: str | Path,
+    target_path: str | Path,
+    *,
+    progress: Callable[[SQLiteBackupProgress], None] | None = None,
+) -> None:
     """Create a consistent backup without mutating the source database."""
 
-    SQLiteBackupService().create(source_path, target_path)
+    SQLiteBackupService().create(source_path, target_path, progress=progress)
 
 
 def _apply_runtime_pragmas(conn: sqlite3.Connection, *, strict_durability: bool) -> None:

@@ -485,8 +485,11 @@ def test_usage_refresh_ingests_only_the_runtime_native_session(tmp_path, monkeyp
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["session"]["id"] == "session-runtime"
+    assert "Reading local agent sessions..." in result.stderr
+    assert "Normalizing usage telemetry..." in result.stderr
+    assert "Usage refresh complete." in result.stderr
     conn = connect_sqlite(db_path)
     try:
         assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 1

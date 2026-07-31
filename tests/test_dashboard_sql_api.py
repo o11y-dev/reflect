@@ -17,7 +17,11 @@ from reflect.improvements.models import (
 from reflect.improvements.repository import ImprovementRepository
 from reflect.improvements.skills import SkillRegistryService
 from reflect.models import TelemetryStats
-from reflect.preparation import BackgroundPreparationWorker
+from reflect.preparation import (
+    BackgroundPreparationWorker,
+    PreparationProgress,
+    PreparationStage,
+)
 from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite
 
@@ -848,6 +852,12 @@ def test_dashboard_api_serves_current_snapshot_during_background_preparation(tmp
     release = threading.Event()
 
     def prepare():
+        worker.report_progress(
+            PreparationProgress(
+                stage=PreparationStage.REFRESHING_GRAPH,
+                message="Refreshing the evidence graph...",
+            )
+        )
         started.set()
         release.wait(timeout=2)
         return {"refreshed_sessions": 1}
@@ -867,7 +877,10 @@ def test_dashboard_api_serves_current_snapshot_during_background_preparation(tmp
 
     assert response.status_code == 200
     assert response.json()["sessions"][0]["id"] == "sess-sql"
-    assert client.get("/api/status").json()["preparation"]["state"] == "running"
+    preparation = client.get("/api/status").json()["preparation"]
+    assert preparation["state"] == "running"
+    assert preparation["stage"] == "refreshing_graph"
+    assert preparation["message"] == "Refreshing the evidence graph..."
     release.set()
     assert worker.wait(timeout=2) is True
 

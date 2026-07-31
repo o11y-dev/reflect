@@ -198,6 +198,8 @@ header{
   letter-spacing:.08em;
 }
 .header-meta{display:flex;flex-direction:column;justify-content:center;text-align:right;font-size:13px;color:var(--text-3);line-height:1.6}
+.preparation-status{position:fixed;top:68px;right:max(24px,env(safe-area-inset-right));z-index:220;display:flex;max-width:min(460px,calc(100vw - 48px));align-items:center;gap:9px;padding:9px 12px;border:1px solid rgba(242,138,26,.32);border-radius:7px;background:rgba(12,10,7,.94);box-shadow:0 14px 38px rgba(0,0,0,.34),0 0 24px rgba(242,138,26,.1);color:var(--text-2);font-size:11px;line-height:1.4;backdrop-filter:blur(14px)}
+.preparation-status[hidden]{display:none}.preparation-status-dot{width:7px;height:7px;flex:0 0 auto;border-radius:999px;background:var(--signal);box-shadow:0 0 0 0 rgba(242,138,26,.5);animation:preparation-pulse 1.4s ease-out infinite}.preparation-status.complete{border-color:rgba(48,209,88,.28)}.preparation-status.complete .preparation-status-dot{background:var(--green);box-shadow:none;animation:none}.preparation-status.failed{border-color:rgba(255,69,58,.34);color:#ffb0aa}.preparation-status.failed .preparation-status-dot{background:var(--red);box-shadow:none;animation:none}@keyframes preparation-pulse{0%{box-shadow:0 0 0 0 rgba(242,138,26,.5)}70%,100%{box-shadow:0 0 0 8px rgba(242,138,26,0)}}@media(prefers-reduced-motion:reduce){.preparation-status-dot{animation:none}}
 
 /* ── Report loader ──────────────────────────────────────── */
 .report-loader{
@@ -2790,6 +2792,10 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
     <div id="hdr-ts"></div>
   </div>
 </header>
+<div id="preparation-status" class="preparation-status" role="status" aria-live="polite" hidden>
+  <span class="preparation-status-dot" aria-hidden="true"></span>
+  <span id="preparation-status-copy">Refreshing local telemetry...</span>
+</div>
 
 <!-- ── Nav tabs ── -->
 <nav id="tabs" role="tablist" aria-label="Dashboard sections">
@@ -3371,6 +3377,70 @@ function showReportLoader(message){
 function hideReportLoader(){
   const loader = document.getElementById('report-loader');
   if (loader) loader.classList.add('is-hidden');
+}
+
+let preparationStatusPollTimer = null;
+function renderPreparationStatus(preparation){
+  const status = document.getElementById('preparation-status');
+  const copy = document.getElementById('preparation-status-copy');
+  if (!status || !copy) return false;
+  const state = preparation?.state || 'idle';
+  status.className = `preparation-status ${state}`;
+  if (state === 'running') {
+    status.hidden = false;
+    copy.textContent = preparation.message || 'Refreshing local telemetry...';
+    return true;
+  }
+  if (state === 'failed') {
+    status.hidden = false;
+    copy.textContent = preparation.error
+      ? `Refresh failed: ${preparation.error}`
+      : 'Refresh failed. Check the server log for details.';
+    return false;
+  }
+  if (state === 'complete') {
+    const completion = preparation.finished_at || `generation:${preparation.generation || 0}`;
+    let previousCompletion = '';
+    try {
+      previousCompletion = window.sessionStorage.getItem('reflect.preparation.finished_at') || '';
+      window.sessionStorage.setItem('reflect.preparation.finished_at', completion);
+    } catch {}
+    status.hidden = false;
+    copy.textContent = previousCompletion === completion
+      ? 'Local telemetry is current.'
+      : 'Refresh complete. Loading the new snapshot...';
+    if (previousCompletion !== completion) {
+      window.setTimeout(() => window.location.reload(), 450);
+      return false;
+    }
+    window.setTimeout(() => { status.hidden = true; }, 5000);
+    return false;
+  }
+  status.hidden = true;
+  return false;
+}
+
+async function pollPreparationStatus(){
+  try {
+    const response = await fetch('/api/status', {
+      headers: {Accept: 'application/json'},
+      cache: 'no-store',
+    });
+    if (!response.ok) throw new Error('status-unavailable');
+    const payload = await response.json();
+    if (renderPreparationStatus(payload.preparation)) {
+      preparationStatusPollTimer = window.setTimeout(pollPreparationStatus, 750);
+    }
+  } catch {
+    const status = document.getElementById('preparation-status');
+    if (status) status.hidden = true;
+  }
+}
+
+function startPreparationStatusPolling(){
+  if (!D?.sql_backed || !reportSupportsServerFiltering()) return;
+  if (preparationStatusPollTimer) window.clearTimeout(preparationStatusPollTimer);
+  pollPreparationStatus();
 }
 
 async function loadDashboardData(){
@@ -4509,7 +4579,8 @@ activateTab(requestedInitialTab || defaultProductTab, {
 
 /* ── Header ── */
 document.getElementById('hdr-range').textContent = D.first_event_ts + ' — ' + D.last_event_ts;
-document.getElementById('hdr-ts').textContent = 'Refreshed ' + new Date().toLocaleString();
+document.getElementById('hdr-ts').textContent = 'Loaded ' + new Date().toLocaleString();
+startPreparationStatusPolling();
 
 /* ════════════════════ SESSION BROWSER ════════════════════ */
 class SessionConversationPlayhead {

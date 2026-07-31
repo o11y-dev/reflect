@@ -6,6 +6,7 @@ import reflect.store.sqlite as sqlite_store
 from reflect.store.sqlite import (
     DEFAULT_BUSY_TIMEOUT_MS,
     SQLiteBackupService,
+    backup_sqlite,
     connect_sqlite,
     optimize,
 )
@@ -71,6 +72,33 @@ def test_backup_service_does_not_publish_a_partial_backup(tmp_path):
 
     assert not target_path.exists()
     assert not any(path.name.endswith(".partial") for path in tmp_path.iterdir())
+
+
+def test_backup_service_reports_page_progress(tmp_path):
+    source_path = tmp_path / "reflect.db"
+    target_path = tmp_path / "reflect.db.backup"
+    conn = connect_sqlite(source_path)
+    try:
+        conn.execute("CREATE TABLE samples(value TEXT)")
+        conn.executemany(
+            "INSERT INTO samples(value) VALUES (?)",
+            [(f"sample-{index}",) for index in range(100)],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    progress = []
+    backup_sqlite(source_path, target_path, progress=progress.append)
+
+    assert progress
+    assert progress[-1].remaining_pages == 0
+    assert progress[-1].percent_complete == 100
+    backup = sqlite3.connect(target_path)
+    try:
+        assert backup.execute("SELECT COUNT(*) FROM samples").fetchone()[0] == 100
+    finally:
+        backup.close()
 
 
 def test_optimize_runs(tmp_path):

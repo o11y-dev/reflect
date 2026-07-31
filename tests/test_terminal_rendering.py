@@ -9,6 +9,8 @@ from rich.console import Console
 
 from reflect.core import _render_terminal, analyze_telemetry
 from reflect.models import TelemetryStats
+from reflect.preparation import PreparationProgress, PreparationStage
+from reflect.terminal import TerminalPreparationProgress
 
 
 def render_to_string(stats, **kwargs) -> str:
@@ -17,6 +19,26 @@ def render_to_string(stats, **kwargs) -> str:
     console = Console(file=buf, force_terminal=True, width=120, highlight=False)
     _render_terminal(stats, console=console, **kwargs)
     return buf.getvalue()
+
+
+def test_terminal_preparation_progress_keeps_non_terminal_feedback_visible():
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, highlight=False)
+
+    result = TerminalPreparationProgress(console).run(
+        lambda report: (
+            report(
+                PreparationProgress(
+                    stage=PreparationStage.INGESTING_SESSIONS,
+                    message="Reading local agent sessions...",
+                )
+            )
+            or {"sessions": 2}
+        )
+    )
+
+    assert result == {"sessions": 2}
+    assert "Reading local agent sessions..." in buf.getvalue()
 
 
 @pytest.fixture
