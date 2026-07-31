@@ -302,8 +302,11 @@ class FindingSessionLedger(ReflectModel):
     observation_id: str
     observation_ids: list[str] = Field(default_factory=list)
     candidate_id: str | None = None
+    skill_slug: str = ""
     source_session_count: int = Field(default=0, ge=0)
     source_sessions: list[WorkflowSessionRecord] = Field(default_factory=list)
+    exposure_session_count: int = Field(default=0, ge=0)
+    exposure_sessions: list[WorkflowSessionRecord] = Field(default_factory=list)
     resolved_scope: ImprovementScope | None = None
 
 

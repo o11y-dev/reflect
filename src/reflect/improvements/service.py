@@ -365,7 +365,7 @@ class ImprovementService:
             distinct_titles = {item.title for item in members}
             member_ids = [item.id for item in members]
             linked_sessions = (
-                self.repository.observation_session_ledger(
+                self.repository.finding_session_ledger(
                     representative.id,
                     member_ids,
                     candidate_id=workflow.id if workflow is not None else representative.candidate_id,
@@ -481,7 +481,7 @@ class ImprovementService:
         if target is None:
             raise KeyError(f"Observation not found: {observation_id}")
         ids = self.finding_observation_ids(observation_id, scope=scope)
-        return self.repository.observation_session_ledger(
+        return self.repository.finding_session_ledger(
             observation_id,
             ids,
             candidate_id=target.candidate_id,
