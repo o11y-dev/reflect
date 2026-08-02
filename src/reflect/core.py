@@ -101,6 +101,7 @@ from reflect.graph import (  # noqa: F401
     _compute_tool_transitions,
     _compute_weekly_trends,
 )
+from reflect.hook_runtime import HookMigrationError, HookPipxMigrator, HookRuntime
 from reflect.insights import (  # noqa: F401
     _percentile,
     build_observations,
@@ -783,7 +784,7 @@ def _claude_hooks_registered() -> bool | None:
 
 
 def _detect_hook_drift() -> dict | None:
-    if not shutil.which("otel-hook"):
+    if HookRuntime.discover() is None:
         return None
 
     config_path = HOOK_HOME / "otel_config.json"
@@ -3977,7 +3978,8 @@ def _run_doctor() -> None:
     from rich.table import Table
 
     console = Console(force_terminal=True)
-    otel_hook = shutil.which("otel-hook")
+    hook_runtime = HookRuntime.discover()
+    otel_hook = hook_runtime.executable if hook_runtime else None
     hook_config = HOOK_HOME / "otel_config.json"
     spans_dir = _default_spans_dir()
     sessions_dir = _default_sessions_dir()
@@ -4289,15 +4291,19 @@ def doctor_cost(db_path: Path, alias_path: Path | None) -> None:
         console.print(f"[yellow]Unresolved models:[/] {unresolved}")
 
 
-def _pipx_upgrade_package(pipx: str, package: str) -> None:
-    subprocess.check_call([pipx, "upgrade", package])
+def _pipx_upgrade_package(pipx: str, package: str, *, force: bool = False) -> None:
+    command = [pipx, "upgrade"]
+    if force:
+        command.append("--force")
+    command.append(package)
+    subprocess.check_call(command)
 
 
 @main.command()
 @click.option(
     "--apply",
     is_flag=True,
-    help="Attempt package upgrades via pipx when a newer reflect release is available.",
+    help="Upgrade Reflect and migrate its bundled otel-hook command via pipx.",
 )
 def update(apply: bool) -> None:
     """Check reflect release drift and show concrete repair steps."""
@@ -4315,25 +4321,50 @@ def update(apply: bool) -> None:
         pipx = shutil.which("pipx")
         if not pipx:
             console.print("[red]pipx is not installed or not on PATH.[/]")
-            console.print("Install pipx, then run [bold]pipx upgrade o11y-reflect[/] and [bold]pipx upgrade opentelemetry-hooks[/].")
+            console.print("Install pipx, then run [bold]pipx upgrade o11y-reflect[/].")
             raise SystemExit(1)
         try:
-            for package in ("o11y-reflect", "opentelemetry-hooks"):
-                console.print(f"Upgrading [bold]{package}[/]...")
-                _pipx_upgrade_package(pipx, package)
-            console.print("[green]Package upgrades finished.[/] Re-run [bold]reflect doctor[/] to refresh the cached status.")
-        except subprocess.CalledProcessError as exc:
-            console.print(f"[red]pipx upgrade failed:[/] {exc}")
-            raise SystemExit(exc.returncode or 1) from exc
+            console.print(
+                "Upgrading [bold]o11y-reflect[/] "
+                "(including bundled [bold]opentelemetry-hooks[/])..."
+            )
+            _pipx_upgrade_package(pipx, "o11y-reflect")
+            migration = HookPipxMigrator(pipx).migrate()
+            if migration.action == "migrated":
+                version = f" {migration.standalone_version}" if migration.standalone_version else ""
+                console.print(
+                    "[green]✓[/] Removed the standalone "
+                    f"[bold]opentelemetry-hooks{version}[/] pipx environment."
+                )
+            elif migration.action == "repaired":
+                console.print(
+                    "[green]✓[/] Restored the public [bold]otel-hook[/] command from Reflect."
+                )
+            else:
+                console.print(
+                    "[green]✓[/] The public [bold]otel-hook[/] command is already owned by Reflect."
+                )
+            console.print(
+                "[green]Package upgrade and hook validation finished.[/] "
+                "Re-run [bold]reflect doctor[/] to refresh the cached status."
+            )
+        except (subprocess.CalledProcessError, HookMigrationError) as exc:
+            console.print(f"[red]pipx upgrade or hook migration failed:[/] {exc}")
+            raise SystemExit(getattr(exc, "returncode", 1) or 1) from exc
 
         if advisor["local_issues"]:
             console.print("Local drift remains. Run [bold]reflect setup[/] to refresh global hooks and skill copies.")
     else:
         if release["update_available"]:
-            console.print("Use [bold]reflect update --apply[/] to upgrade reflect and opentelemetry-hooks.")
+            console.print(
+                "Use [bold]reflect update --apply[/] to upgrade Reflect and its bundled hooks."
+            )
         else:
             console.print("[green]No newer reflect release is available right now.[/]")
-            console.print("Use [bold]reflect update --apply[/] to force-check pipx upgrades for reflect and opentelemetry-hooks.")
+            console.print(
+                "Use [bold]reflect update --apply[/] to force-check Reflect, its bundled hooks, "
+                "and the otel-hook command handoff."
+            )
         if advisor["local_issues"]:
             console.print("For local hook or skill drift, run [bold]reflect setup[/] to refresh global wiring.")
     console.print()

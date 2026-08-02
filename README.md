@@ -33,14 +33,14 @@ No hosted backend. No Reflect account. Your telemetry and SQLite ledger stay on 
 
 ## Quick Start
 
-Requires Python 3.11+ and [pipx](https://pipx.pypa.io/stable/installation/).
+Requires Python 3.12+ and [pipx](https://pipx.pypa.io/stable/installation/).
 
 ```bash
 pipx install o11y-reflect
 reflect setup
 ```
 
-`reflect setup` detects supported agents, asks which ones to connect, installs or upgrades `opentelemetry-hooks` through pipx, starts the local OTLP gateway, configures verified telemetry paths and the local `reflect-mcp` server, and installs Reflect's agent skills. On macOS it also registers the gateway and browser report server to start automatically after login; use `--no-autostart` to opt out. Re-running setup refreshes the hook package and MCP registration before rewiring agents.
+Reflect installs `opentelemetry-hooks` in its own environment and exposes the existing `otel-hook` command. `reflect setup` detects supported agents, asks which ones to connect, starts the local OTLP gateway, configures verified telemetry paths and the local `reflect-mcp` server, and installs Reflect's agent skills. On macOS it also registers the gateway and browser report server to start automatically after login; use `--no-autostart` to opt out. Re-running setup refreshes MCP registration and rewires agents with the bundled hook runtime.
 
 ### Ask through your agent
 
@@ -512,7 +512,7 @@ reflect doctor
 reflect update
 ```
 
-`reflect doctor` checks that your installation is healthy, shows which integrations are implemented vs still planned, and reports whether hooks are wired correctly, the OTLP gateway is running, LiteLLM pricing metadata is available for cost estimates, the installed package matches the latest release, and skill files are up to date. `reflect update --apply` upgrades the pipx package when a newer release is available.
+`reflect doctor` checks that your installation is healthy, shows which integrations are implemented vs still planned, and reports whether hooks are wired correctly, the OTLP gateway is running, LiteLLM pricing metadata is available for cost estimates, the installed package matches the latest release, and skill files are up to date. `reflect update --apply` upgrades Reflect and its bundled hook dependency. When it finds the former standalone `opentelemetry-hooks` pipx environment, it validates the bundled CLI, removes the old environment, restores the same public `otel-hook` command from Reflect, and rolls back if the handoff fails.
 
 ### Native OTel details by agent
 
@@ -646,7 +646,7 @@ Nothing is installed until an operator runs `reflect skills apply SKILL_ID` or `
 ```mermaid
 flowchart LR
     subgraph Setup["reflect setup"]
-        A[Install opentelemetry-hooks]
+        A[Load bundled opentelemetry-hooks]
         B[Write agent telemetry config]
         C[Start local OTLP gateway<br/>gRPC :4317 / HTTP :4318]
         D[Distribute skill packages]

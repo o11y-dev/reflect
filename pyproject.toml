@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "o11y-reflect"
 version = "0.9.5"
 description = "See why your AI coding agents fail, stall, or burn budget — local-first telemetry for Claude, Copilot, Gemini, and Cursor"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 readme = "README.md"
 license = "Apache-2.0"
 keywords = ["observability", "opentelemetry", "ai-agents", "claude", "copilot", "gemini", "telemetry"]
@@ -15,8 +15,8 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Quality Assurance",
     "Topic :: System :: Monitoring",
 ]
@@ -30,6 +30,7 @@ dependencies = [
     "opentelemetry-proto>=1.20",
     "pydantic>=2.0",
     "mcp>=1.28,<2",
+    "opentelemetry-hooks>=0.14,<0.15",
 ]
 
 [project.urls]
@@ -45,6 +46,7 @@ packages = [{ include = "reflect", from = "src" }]
 [project.scripts]
 reflect = "reflect.core:main"
 reflect-mcp = "reflect.mcp:main"
+otel-hook = "otel_hook:cli"
 
 [project.optional-dependencies]
 test = ["pytest>=7.0", "pytest-cov>=4.0", "httpx>=0.24"]
@@ -59,7 +61,7 @@ markers = [
 ]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 100
 exclude = ["serve.py"]
 

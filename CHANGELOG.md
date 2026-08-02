@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Bundled `opentelemetry-hooks` inside Reflect while preserving the public `otel-hook` command. `reflect setup` now uses the bundled runtime, and `reflect update --apply` removes a verified legacy standalone pipx environment, hands the command to Reflect, validates `otel-hook doctor --json`, and restores the prior package if the handoff fails.
+- Raised the minimum supported Python version from 3.11 to 3.12 to match the bundled hook runtime.
 - Made `reflect setup` register the OTLP gateway and report server for automatic startup after macOS user login by default, with `--no-autostart` as an explicit opt-out.
 - Made `reflect improve` snapshot-first and current-project scoped by default, with explicit path, parent/child session, and bounded global time scopes shared by CLI and MCP guidance.
 - Added reusable object-oriented snapshot inspection, preparation policy, and refresh strategy layers; `usage`, `improve`, `ask`, workflow/loop/skill reads, memory reads, and read-only MCP tools now use query-only SQLite connections and return actionable errors instead of implicitly migrating, ingesting, reconciling, or rebuilding.
@@ -28,6 +30,10 @@
 - Kept retention previews query-only, created apply backups before schema migration, rolled back pruning when derived rebuilds fail, rejected structurally incomplete usage rollups, preserved the feedback lookup index, and retained deprecated `reflect skills --path` compatibility.
 - Held the pruning write lock across backup, migration, and deletion, published backup files only after a complete copy, and scoped explicit-session usage readiness to that session instead of unrelated rollup gaps.
 - Added reusable terminal refresh stages, percentage-aware SQLite backup feedback, usage and pruning progress, and a dashboard background-refresh status banner that reloads the completed snapshot.
+
+### Dependencies
+
+- Added `opentelemetry-hooks>=0.14,<0.15` as a required dependency so Reflect and its hook integration upgrade together.
 
 ## 0.9.3 (2026-07-28)
 

@@ -18,6 +18,7 @@ from conftest import make_span, wrap_otlp
 
 import reflect.core as core
 from reflect.core import main
+from reflect.hook_runtime import HookMigrationError, HookMigrationResult, HookRuntime
 
 
 @pytest.fixture
@@ -1719,7 +1720,65 @@ class TestUpdateAdvisor:
         assert result["refresh_plan"]["graph_mode"] == "skip"
         assert result["refresh_plan"]["rollup_mode"] == "incremental"
 
-    def test_update_apply_uses_pipx_upgrade(self, runner):
+    def test_update_apply_upgrades_reflect_and_migrates_standalone_hooks(self, runner):
+        advisor = {
+            "release": {
+                "current_version": "1.0.0",
+                "latest_version": "1.1.0",
+                "checked_at": "2025-01-01T00:00:00Z",
+                "update_available": True,
+                "source": "remote",
+            },
+            "local_issues": [],
+        }
+        migration_result = HookMigrationResult(
+            action="migrated",
+            bundled_executable=Path("/pipx/reflect/bin/otel-hook"),
+            standalone_version="0.14.0",
+        )
+        with patch("reflect.core._collect_update_advisor", return_value=advisor), \
+             patch("reflect.core.shutil.which", return_value="/usr/local/bin/pipx"), \
+             patch("reflect.core.subprocess.check_call") as mock_check_call, \
+             patch("reflect.core.HookPipxMigrator") as migrator:
+            migrator.return_value.migrate.return_value = migration_result
+            result = runner.invoke(main, ["update", "--apply"])
+        assert result.exit_code == 0
+        assert mock_check_call.call_args_list == [
+            call(["/usr/local/bin/pipx", "upgrade", "o11y-reflect"]),
+        ]
+        migrator.assert_called_once_with("/usr/local/bin/pipx")
+        assert "Removed the standalone" in result.output
+        assert "opentelemetry-hooks" in result.output
+        assert "Package upgrade and hook validation finished." in result.output
+
+    def test_update_apply_validates_bundled_hooks_without_new_release(self, runner):
+        advisor = {
+            "release": {
+                "current_version": "1.1.0",
+                "latest_version": "1.1.0",
+                "checked_at": "2025-01-01T00:00:00Z",
+                "update_available": False,
+                "source": "remote",
+            },
+            "local_issues": [],
+        }
+        migration_result = HookMigrationResult(
+            action="already-bundled",
+            bundled_executable=Path("/pipx/reflect/bin/otel-hook"),
+        )
+        with patch("reflect.core._collect_update_advisor", return_value=advisor), \
+             patch("reflect.core.shutil.which", return_value="/usr/local/bin/pipx"), \
+             patch("reflect.core.subprocess.check_call") as mock_check_call, \
+             patch("reflect.core.HookPipxMigrator") as migrator:
+            migrator.return_value.migrate.return_value = migration_result
+            result = runner.invoke(main, ["update", "--apply"])
+        assert result.exit_code == 0
+        assert mock_check_call.call_args_list == [
+            call(["/usr/local/bin/pipx", "upgrade", "o11y-reflect"]),
+        ]
+        assert "already owned by Reflect" in result.output
+
+    def test_update_apply_reports_hook_migration_failure(self, runner):
         advisor = {
             "release": {
                 "current_version": "1.0.0",
@@ -1732,35 +1791,13 @@ class TestUpdateAdvisor:
         }
         with patch("reflect.core._collect_update_advisor", return_value=advisor), \
              patch("reflect.core.shutil.which", return_value="/usr/local/bin/pipx"), \
-             patch("reflect.core.subprocess.check_call") as mock_check_call:
+             patch("reflect.core.subprocess.check_call"), \
+             patch("reflect.core.HookPipxMigrator") as migrator:
+            migrator.return_value.migrate.side_effect = HookMigrationError("rollback restored it")
             result = runner.invoke(main, ["update", "--apply"])
-        assert result.exit_code == 0
-        assert mock_check_call.call_args_list == [
-            call(["/usr/local/bin/pipx", "upgrade", "o11y-reflect"]),
-            call(["/usr/local/bin/pipx", "upgrade", "opentelemetry-hooks"]),
-        ]
-        assert "Package upgrades finished." in result.output
 
-    def test_update_apply_upgrades_hooks_even_without_new_reflect_release(self, runner):
-        advisor = {
-            "release": {
-                "current_version": "1.1.0",
-                "latest_version": "1.1.0",
-                "checked_at": "2025-01-01T00:00:00Z",
-                "update_available": False,
-                "source": "remote",
-            },
-            "local_issues": [],
-        }
-        with patch("reflect.core._collect_update_advisor", return_value=advisor), \
-             patch("reflect.core.shutil.which", return_value="/usr/local/bin/pipx"), \
-             patch("reflect.core.subprocess.check_call") as mock_check_call:
-            result = runner.invoke(main, ["update", "--apply"])
-        assert result.exit_code == 0
-        assert mock_check_call.call_args_list == [
-            call(["/usr/local/bin/pipx", "upgrade", "o11y-reflect"]),
-            call(["/usr/local/bin/pipx", "upgrade", "opentelemetry-hooks"]),
-        ]
+        assert result.exit_code == 1
+        assert "rollback restored it" in result.output
 
     def test_release_update_status_uses_cache_when_fresh(self, tmp_path):
         cache_path = tmp_path / "update-check.json"
@@ -1839,7 +1876,8 @@ class TestUpdateAdvisor:
         hook_home.mkdir()
 
         with patch("reflect.core.HOOK_HOME", hook_home), \
-             patch("reflect.core.shutil.which", return_value=None):
+             patch("reflect.core.shutil.which", return_value=None), \
+             patch("reflect.core.HookRuntime.discover", return_value=None):
             drift = core._detect_hook_drift()
 
         assert drift is None
@@ -1850,7 +1888,8 @@ class TestUpdateAdvisor:
         (hook_home / "otel_config.json").write_text('{"IDE_OTEL_LOCAL_SPANS": "true"}')
 
         with patch("reflect.core.HOOK_HOME", hook_home), \
-             patch("reflect.core.shutil.which", return_value=None):
+             patch("reflect.core.shutil.which", return_value=None), \
+             patch("reflect.core.HookRuntime.discover", return_value=None):
             drift = core._detect_hook_drift()
 
         assert drift is None
@@ -2189,7 +2228,7 @@ class TestSetup:
         assert "native OTel" in result.output
         assert "Gemini" in result.output
 
-    def test_setup_upgrades_or_installs_hooks_before_wiring(self, runner, tmp_path):
+    def test_setup_uses_bundled_hooks_before_wiring(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
         hook_home = tmp_path / ".otel-hook-home"
         home_dir = tmp_path / "home"
@@ -2206,32 +2245,26 @@ class TestSetup:
              patch("reflect.core.HOOK_HOME", hook_home), \
              patch("reflect.core.shutil.which", side_effect=executable), \
              patch("reflect.core.subprocess.check_call") as check_call, \
+             patch(
+                 "reflect.instrumentation.HookRuntime.discover",
+                 return_value=HookRuntime(Path("/usr/local/bin/otel-hook"), bundled=True),
+             ), \
              patch("reflect.core._distribute_skills"), \
              patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
             result = runner.invoke(main, ["setup", "--agent", "Claude Code"])
 
         assert result.exit_code == 0
-        upgrade_call = call(
-            [
-                "/usr/local/bin/pipx",
-                "upgrade",
-                "--install",
-                "opentelemetry-hooks",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
         hook_setup_call = call(
             ["/usr/local/bin/otel-hook", "setup", "--global", "--agent", "claude"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        assert upgrade_call in check_call.call_args_list
         assert hook_setup_call in check_call.call_args_list
-        assert check_call.call_args_list.index(upgrade_call) < check_call.call_args_list.index(
-            hook_setup_call
+        assert not any(
+            args[0][0] == "/usr/local/bin/pipx"
+            for args, _kwargs in check_call.call_args_list
         )
-        assert "opentelemetry-hooks ready" in result.output
+        assert "Bundled opentelemetry-hooks dependency ready" in result.output
 
     def test_setup_persists_cursor_reflect_mcp_config(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
@@ -2281,6 +2314,10 @@ class TestSetup:
              patch("reflect.core.HOOK_HOME", hook_home), \
              patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
              patch("reflect.core.subprocess.check_call") as check_call, \
+             patch(
+                 "reflect.instrumentation.HookRuntime.discover",
+                 return_value=HookRuntime(Path("/usr/bin/otel-hook"), bundled=True),
+             ), \
              patch("reflect.core._distribute_skills") as distribute_skills, \
              patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
             result = runner.invoke(main, ["setup", "--agent", "Claude Code"])
@@ -2325,6 +2362,10 @@ class TestSetup:
              patch("reflect.core.HOOK_HOME", hook_home), \
              patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
              patch("reflect.core.subprocess.check_call") as check_call, \
+             patch(
+                 "reflect.instrumentation.HookRuntime.discover",
+                 return_value=HookRuntime(Path("/usr/bin/otel-hook"), bundled=True),
+             ), \
              patch("reflect.core._distribute_skills"), \
              patch.dict(os.environ, {"WINDSURF_HOME": str(windsurf_home)}, clear=False):
             result = runner.invoke(main, ["setup", "--agent", "windsurf"])
@@ -2349,6 +2390,10 @@ class TestSetup:
              patch("reflect.core.HOOK_HOME", hook_home), \
              patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
              patch("reflect.core.subprocess.check_call") as check_call, \
+             patch(
+                 "reflect.instrumentation.HookRuntime.discover",
+                 return_value=HookRuntime(Path("/usr/bin/otel-hook"), bundled=True),
+             ), \
              patch("reflect.core._distribute_skills") as distribute_skills, \
              patch.dict(os.environ, {"HOME": str(home_dir)}, clear=False):
             result = runner.invoke(main, ["setup", "--agent", "Claude Code", "--local-agent", "Claude Code"])

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -47,7 +47,6 @@ positive feedback is not approval. Never use these tools as a generic command ex
 """.strip()
 
 mcp = FastMCP("Reflect", instructions=SERVER_INSTRUCTIONS)
-ResultT = TypeVar("ResultT")
 READ_ONLY_TOOL = ToolAnnotations(
     readOnlyHint=True,
     destructiveHint=False,
@@ -88,7 +87,7 @@ def _db_path() -> Path:
     return home / "state" / "reflect.db"
 
 
-def _with_service(
+def _with_service[ResultT](
     operation: Callable[[ReflectContextService], ResultT],
     *,
     read_only: bool = False,
