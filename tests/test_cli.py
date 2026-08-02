@@ -2039,7 +2039,10 @@ class TestDoctor:
         }
         with patch("reflect.core.REFLECT_HOME", reflect_home), \
              patch("reflect.core.HOOK_HOME", hook_home), \
-             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
+             patch(
+                 "reflect.core.HookRuntime.discover",
+                 return_value=HookRuntime(Path("/usr/bin/otel-hook"), bundled=True),
+             ), \
              patch("reflect.core._collect_update_advisor", return_value=advisor), \
              patch.dict(os.environ, {"HOME": str(tmp_path)}, clear=False):
             result = runner.invoke(main, ["doctor"])
@@ -2104,7 +2107,7 @@ class TestDoctor:
         }
         with patch("reflect.core.REFLECT_HOME", reflect_home), \
              patch("reflect.core.HOOK_HOME", hook_home), \
-             patch("reflect.core.shutil.which", return_value=None), \
+             patch("reflect.core.HookRuntime.discover", return_value=None), \
              patch("reflect.core._collect_update_advisor", return_value=advisor), \
              patch.dict(os.environ, {"HOME": str(tmp_path)}, clear=False):
             result = runner.invoke(main, ["doctor"])
