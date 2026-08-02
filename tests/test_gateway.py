@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -359,6 +360,25 @@ class TestDaemonHelpers:
 
             with pytest.raises(RuntimeError, match="already owned by PID 777"):
                 daemon_start()
+
+    def test_managed_gateway_records_and_clears_its_own_pid(self, tmp_path):
+        pid_file = tmp_path / "gateway.pid"
+
+        def assert_pid_is_owned(*, grpc_port: int, http_port: int) -> None:
+            assert grpc_port == 4317
+            assert http_port == 4318
+            assert int(pid_file.read_text()) == os.getpid()
+
+        with (
+            patch("reflect.gateway._PID_FILE", pid_file),
+            patch("reflect.gateway._probe_gateway", return_value=None),
+            patch("reflect.gateway.start_gateway", side_effect=assert_pid_is_owned),
+        ):
+            from reflect.gateway import run_managed_gateway
+
+            run_managed_gateway()
+
+        assert not pid_file.exists()
 
     def test_gateway_disables_grpc_port_reuse_and_fails_on_bind_conflict(self, tmp_path):
         fake_server = MagicMock()

@@ -4333,6 +4333,7 @@ def _start_publish_server(
     db_path: Path | None = None,
     sql_only: bool = False,
     preparation_worker: BackgroundPreparationWorker | None = None,
+    open_browser: bool = True,
 ) -> None:
     """Start a local FastAPI server and open the dashboard in a browser.
 
@@ -4348,6 +4349,7 @@ def _start_publish_server(
         db_path=db_path,
         sql_only=sql_only,
         preparation_worker=preparation_worker,
+        open_browser=open_browser,
     )
 
 
@@ -5078,6 +5080,7 @@ def _start_publish_server_inline(
     db_path: Path | None = None,
     sql_only: bool = False,
     preparation_worker: BackgroundPreparationWorker | None = None,
+    open_browser: bool = True,
 ) -> None:
     """Inline FastAPI server for the local `reflect` browser report."""
     import threading
@@ -5105,7 +5108,8 @@ def _start_publish_server_inline(
         preparation_worker=preparation_worker,
     )
     url = f"http://127.0.0.1:{port}/?report=api/data"
-    threading.Timer(0.5, webbrowser.open, args=[url]).start()
+    if open_browser:
+        threading.Timer(0.5, webbrowser.open, args=[url]).start()
     print(f"\n  Serving at: {url}")
     print("  Press Ctrl-C to stop\n")
     if preparation_worker is not None:

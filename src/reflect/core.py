@@ -2578,6 +2578,7 @@ def _run_browser_report(
     output: Path | None,
     db_path: Path,
     refresh: bool,
+    open_browser: bool = True,
 ) -> None:
     from collections import Counter
 
@@ -2669,6 +2670,7 @@ def _run_browser_report(
         db_path=db_path,
         sql_only=False,
         preparation_worker=preparation_worker,
+        open_browser=open_browser,
     )
 
 
@@ -3869,6 +3871,14 @@ def _resolve_setup_agent_selection(
     show_default=True,
     help="Install autocomplete during setup; use --no-shell-completion to opt out.",
 )
+@click.option(
+    "--autostart/--no-autostart",
+    default=None,
+    help=(
+        "Enable persistent OTLP gateway and report server startup on supported systems. "
+        "Defaults to enabled on macOS."
+    ),
+)
 def setup(
     capture_text: bool | None,
     text_capture_mode: str | None,
@@ -3878,6 +3888,7 @@ def setup(
     all_agents: bool,
     local_agent_names: tuple[str, ...],
     shell_completion: bool | None,
+    autostart: bool | None,
 ) -> None:
     """Install opentelemetry-hooks, configure local data export, and suggest agent enablement."""
     from rich.console import Console
@@ -3946,6 +3957,8 @@ def setup(
             else:
                 state = "installed" if result.changed else "already current"
                 console.print(f"[green]✓[/] Shell autocomplete {state}: {result.script_path}")
+    if autostart is not False:
+        _enable_autostart(console, required=autostart is True)
 
 
 @main.group("doctor", invoke_without_command=True)
@@ -4324,6 +4337,112 @@ def update(apply: bool) -> None:
         if advisor["local_issues"]:
             console.print("For local hook or skill drift, run [bold]reflect setup[/] to refresh global wiring.")
     console.print()
+
+
+def _get_autostart_manager():
+    from reflect.autostart import create_autostart_manager
+
+    return create_autostart_manager(REFLECT_HOME)
+
+
+def _enable_autostart(console, *, required: bool) -> bool:
+    manager = _get_autostart_manager()
+    if manager is None:
+        if required:
+            raise click.ClickException(
+                "Persistent service startup is not supported on this operating system."
+            )
+        return False
+    try:
+        statuses = manager.enable()
+    except (OSError, RuntimeError) as exc:
+        if required:
+            raise click.ClickException(str(exc)) from exc
+        console.print(
+            "[yellow]Telemetry setup completed, but automatic service startup could not "
+            f"be enabled: {exc}[/yellow]"
+        )
+        console.print("  Run [bold]reflect autostart enable[/] after fixing the service error.")
+        return False
+    enabled = sum(status.enabled for status in statuses)
+    console.print(
+        f"[green]✓[/] Automatic startup enabled for {enabled} Reflect services "
+        f"via {manager.platform_name}"
+    )
+    return True
+
+
+def _require_autostart_manager():
+    manager = _get_autostart_manager()
+    if manager is None:
+        raise click.ClickException(
+            "Persistent service startup is not supported on this operating system."
+        )
+    return manager
+
+
+def _render_autostart_status(console, statuses) -> None:
+    for status in statuses:
+        if status.enabled and status.loaded:
+            state = "[green]enabled and loaded[/]"
+        elif status.enabled:
+            state = "[yellow]enabled for next login[/]"
+        elif status.loaded:
+            state = "[yellow]loaded without an installed definition[/]"
+        else:
+            state = "[red]disabled[/]"
+        console.print(f"  {status.name:<14} {state}")
+        console.print(f"    {status.definition_path}")
+
+
+@main.group("autostart", invoke_without_command=True)
+@click.pass_context
+def autostart(ctx: click.Context) -> None:
+    """Start the OTLP gateway and report server automatically after login."""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(autostart_status)
+
+
+@autostart.command("enable")
+def autostart_enable() -> None:
+    """Install and load persistent user services."""
+    from rich.console import Console
+
+    manager = _require_autostart_manager()
+    try:
+        statuses = manager.enable()
+    except (OSError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    console = Console(force_terminal=True)
+    console.print(f"[green]✓[/] Reflect auto-start enabled via {manager.platform_name}")
+    console.print("  Services start after user login and remain local to this account.")
+    _render_autostart_status(console, statuses)
+
+
+@autostart.command("disable")
+def autostart_disable() -> None:
+    """Unload and remove persistent user services."""
+    from rich.console import Console
+
+    manager = _require_autostart_manager()
+    try:
+        statuses = manager.disable()
+    except (OSError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    console = Console(force_terminal=True)
+    console.print("[green]✓[/] Reflect auto-start disabled")
+    _render_autostart_status(console, statuses)
+
+
+@autostart.command("status")
+def autostart_status() -> None:
+    """Show persistent service registration state."""
+    from rich.console import Console
+
+    manager = _require_autostart_manager()
+    console = Console(force_terminal=True)
+    console.print(f"Reflect auto-start ({manager.platform_name})")
+    _render_autostart_status(console, manager.status())
 
 
 @main.group(invoke_without_command=True)

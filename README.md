@@ -40,7 +40,7 @@ pipx install o11y-reflect
 reflect setup
 ```
 
-`reflect setup` detects supported agents, asks which ones to connect, installs or upgrades `opentelemetry-hooks` through pipx, starts the local OTLP gateway, configures verified telemetry paths and the local `reflect-mcp` server, and installs Reflect's agent skills. Re-running setup refreshes the hook package and MCP registration before rewiring agents.
+`reflect setup` detects supported agents, asks which ones to connect, installs or upgrades `opentelemetry-hooks` through pipx, starts the local OTLP gateway, configures verified telemetry paths and the local `reflect-mcp` server, and installs Reflect's agent skills. On macOS it also registers the gateway and browser report server to start automatically after login; use `--no-autostart` to opt out. Re-running setup refreshes the hook package and MCP registration before rewiring agents.
 
 ### Ask through your agent
 
@@ -377,6 +377,16 @@ reflect --foreground           # run in the foreground for debugging
 
 The default dashboard is served at `http://127.0.0.1:8765/?report=api/data`. The background server reads the SQLite store under `~/.reflect/state/`; `reflect doctor` reports whether it is running.
 
+On macOS, `reflect setup` installs per-user LaunchAgents for both the report server and OTLP gateway. They start after you log in following a restart, without opening a browser window automatically. Manage that registration explicitly with:
+
+```bash
+reflect autostart enable       # install and load both user services
+reflect autostart status       # show installed and loaded state
+reflect autostart disable      # unload and remove both definitions
+```
+
+Stopping a service with `reflect server stop` or `reflect gateway stop` keeps it stopped for the current login; the enabled LaunchAgent starts it again after the next login.
+
 Session detail uses one normalized conversation contract across native Claude, Codex, Copilot, Cursor, and Gemini adapters, with telemetry-derived events as the fallback when a native transcript is unavailable. The SQL-backed dashboard follows each session's local source provenance and prefers the native transcript when it contains assistant responses, while keeping normalized telemetry for execution and diagnostics. Common agent aliases such as `claude-code`, `openai-codex`, `github-copilot`, and `gemini-cli` resolve through the same registry; integrations can add formats by implementing `SessionConversationAdapter` and registering it with `SessionConversationAdapterRegistry`.
 
 The Conversation view defaults to a readable turn-focused transcript, keeps tool and MCP activity grouped beneath the relevant turn, and can switch to Full activity when every intermediate response is needed. Search matches prompts, responses, tools, models, servers, and subagents; result and failure navigation stay synchronized with the session timeline.
@@ -493,6 +503,8 @@ reflect gateway status         # check if running, show file sizes
 reflect gateway --foreground   # run in foreground (for debugging)
 ```
 
+On macOS, the gateway and report server are registered for automatic startup by `reflect setup`. Use `reflect autostart status` to verify persistence separately from current process health.
+
 ## Health check
 
 ```bash
@@ -595,7 +607,8 @@ Options:
 
 Commands:
   completion Generate or install autocomplete for every Reflect command
-  setup    Install hooks, wire agents, configure telemetry, start gateway
+  setup    Install hooks, wire agents, configure telemetry, start services
+  autostart Manage persistent gateway and report-server startup
   doctor   Check installation health and agent status
   update   Check release drift and optional package upgrade
   improve  Calculate or inspect durable, evidence-backed observations

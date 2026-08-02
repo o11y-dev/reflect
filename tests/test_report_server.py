@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import signal
 from pathlib import Path
 from unittest.mock import patch
@@ -127,6 +129,34 @@ def test_report_server_daemon_stop_terminates_process(tmp_path):
 
     assert kill.call_args_list[1].args == (4321, signal.SIGTERM)
     assert not pid_file.exists()
+
+
+def test_direct_report_server_claims_state_without_opening_browser(tmp_path):
+    from reflect.report_server import _run_daemon
+
+    config = ReportServerConfig(
+        port=9876,
+        db_path=tmp_path / "reflect.db",
+        refresh=True,
+        open_browser=False,
+    )
+    daemon = ReportServerDaemon(config, state_dir=tmp_path / "state")
+    pid_file = tmp_path / "state" / "report-server.pid"
+    metadata_file = tmp_path / "state" / "report-server.json"
+
+    def assert_state(**kwargs) -> None:
+        assert int(pid_file.read_text()) == os.getpid()
+        assert json.loads(metadata_file.read_text())["open_browser"] is False
+        assert kwargs["open_browser"] is False
+
+    with patch.object(daemon, "_port_in_use", return_value=False), patch(
+        "reflect.core._run_browser_report",
+        side_effect=assert_state,
+    ):
+        _run_daemon(config, daemon)
+
+    assert not pid_file.exists()
+    assert not metadata_file.exists()
 
 
 def test_bare_reflect_detaches_report_server(tmp_path):

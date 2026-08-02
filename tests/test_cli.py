@@ -2123,13 +2123,54 @@ class TestDoctor:
 class TestSetup:
     @pytest.fixture(autouse=True)
     def _do_not_start_real_gateway(self):
-        """Setup tests must never mutate live gateway or shell state."""
+        """Setup tests must never mutate live gateway, services, or shell state."""
         with (
             patch("reflect.gateway._is_running", return_value=12345),
             patch.object(core.ShellCompletionManager, "detect_shell", return_value="zsh"),
             patch.object(core.ShellCompletionManager, "install"),
+            patch("reflect.core._enable_autostart") as enable_autostart,
         ):
-            yield
+            yield enable_autostart
+
+    def test_setup_enables_autostart_by_default(
+        self,
+        runner,
+        _do_not_start_real_gateway,
+    ):
+        with patch("reflect.core._run_setup"), patch(
+            "reflect.core._detect_agents",
+            return_value=[],
+        ):
+            result = runner.invoke(
+                main,
+                ["setup", "--all-agents", "--no-shell-completion"],
+        )
+
+        assert result.exit_code == 0
+        _do_not_start_real_gateway.assert_called_once()
+        assert _do_not_start_real_gateway.call_args.kwargs == {"required": False}
+
+    def test_setup_can_disable_autostart(
+        self,
+        runner,
+        _do_not_start_real_gateway,
+    ):
+        with patch("reflect.core._run_setup"), patch(
+            "reflect.core._detect_agents",
+            return_value=[],
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "setup",
+                    "--all-agents",
+                    "--no-shell-completion",
+                    "--no-autostart",
+                ],
+            )
+
+        assert result.exit_code == 0
+        _do_not_start_real_gateway.assert_not_called()
 
     def test_setup_surfaces_detected_agent_guidance(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"

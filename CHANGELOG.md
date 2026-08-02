@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Made `reflect setup` register the OTLP gateway and report server for automatic startup after macOS user login by default, with `--no-autostart` as an explicit opt-out.
 - Made `reflect improve` snapshot-first and current-project scoped by default, with explicit path, parent/child session, and bounded global time scopes shared by CLI and MCP guidance.
 - Added reusable object-oriented snapshot inspection, preparation policy, and refresh strategy layers; `usage`, `improve`, `ask`, workflow/loop/skill reads, memory reads, and read-only MCP tools now use query-only SQLite connections and return actionable errors instead of implicitly migrating, ingesting, reconciling, or rebuilding.
 - Added `reflect refresh` as the explicit complete snapshot rebuild and `reflect skills sync` as the explicit skill-file, workflow, usage, and measurement reconciliation point; plain skill listing and inspection no longer create revisions.
@@ -13,12 +14,14 @@
 
 ### Added
 
+- Added `reflect autostart enable|status|disable` and a swappable user-service manager, with macOS LaunchAgent support for restart-safe local services.
 - Added complete observation-to-session attribution, scoped finding statistics, actionable CLI drilldown, and `/api/inbox/{observation_id}/sessions`.
 - Added exact, transcript-estimated, and unavailable token provenance to `reflect usage`.
 - Added trusted session activity timestamps, pruned-session tombstones, and a dry-run-first `reflect db prune-sessions` command with a default pre-apply backup plus opt-in apply and vacuum behavior.
 
 ### Fixed
 
+- Preserved gateway and report-server PID ownership when launchd starts them directly, and suppressed automatic browser windows during login startup.
 - Prevented `reflect_context` and improvement queries from selecting higher-impact findings from unrelated repositories on large multi-project stores.
 - Preserved all producing-session links even when detailed observation evidence is capped at 20 rows.
 - Corrected sticky epoch session starts when valid source timestamps arrive, preserved durable memory and evidence provenance during pruning, and blocked old source files from resurrecting tombstoned sessions.
