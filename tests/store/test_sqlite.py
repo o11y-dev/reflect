@@ -1,7 +1,15 @@
 import sqlite3
 
+import pytest
+
 import reflect.store.sqlite as sqlite_store
-from reflect.store.sqlite import DEFAULT_BUSY_TIMEOUT_MS, connect_sqlite, optimize
+from reflect.store.sqlite import (
+    DEFAULT_BUSY_TIMEOUT_MS,
+    SQLiteBackupService,
+    backup_sqlite,
+    connect_sqlite,
+    optimize,
+)
 
 
 def _pragma(conn: sqlite3.Connection, key: str):
@@ -44,6 +52,53 @@ def test_connect_sqlite_reads_while_wal_writer_is_active(tmp_path, monkeypatch):
         reader.close()
         writer.rollback()
         writer.close()
+
+
+def test_backup_service_does_not_publish_a_partial_backup(tmp_path):
+    class FailingSource:
+        def backup(self, target):
+            target.execute("CREATE TABLE partial(value INTEGER)")
+            target.commit()
+            raise sqlite3.OperationalError("simulated backup failure")
+
+        def close(self):
+            return None
+
+    target_path = tmp_path / "reflect.db.backup"
+    service = SQLiteBackupService(source_factory=lambda _path: FailingSource())
+
+    with pytest.raises(sqlite3.OperationalError, match="simulated backup failure"):
+        service.create(tmp_path / "reflect.db", target_path)
+
+    assert not target_path.exists()
+    assert not any(path.name.endswith(".partial") for path in tmp_path.iterdir())
+
+
+def test_backup_service_reports_page_progress(tmp_path):
+    source_path = tmp_path / "reflect.db"
+    target_path = tmp_path / "reflect.db.backup"
+    conn = connect_sqlite(source_path)
+    try:
+        conn.execute("CREATE TABLE samples(value TEXT)")
+        conn.executemany(
+            "INSERT INTO samples(value) VALUES (?)",
+            [(f"sample-{index}",) for index in range(100)],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    progress = []
+    backup_sqlite(source_path, target_path, progress=progress.append)
+
+    assert progress
+    assert progress[-1].remaining_pages == 0
+    assert progress[-1].percent_complete == 100
+    backup = sqlite3.connect(target_path)
+    try:
+        assert backup.execute("SELECT COUNT(*) FROM samples").fetchone()[0] == 100
+    finally:
+        backup.close()
 
 
 def test_optimize_runs(tmp_path):

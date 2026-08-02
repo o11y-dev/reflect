@@ -14,17 +14,22 @@ Run the narrowest matching command and prefer JSON when preparing an answer:
 ```bash
 reflect usage --json                         # current runtime session
 reflect usage --session SESSION_ID --json    # selected session
-reflect usage --global --day --json          # all local usage in 24 hours
-reflect usage --global --week --json         # all local usage in 7 days
-reflect usage --global --month --json        # all local usage in 30 days
-reflect usage --global --all --json           # all captured local usage
-reflect usage --global --week --agent codex --json
+reflect usage --global --period day --json   # all local usage in 24 hours
+reflect usage --global --period week --json  # all local usage in 7 days
+reflect usage --global --period month --json # all local usage in 30 days
+reflect usage --global --period all --json   # all captured local usage
+reflect usage --global --period week --agent codex --json
 reflect usage --refresh --json                # ingest local sources first when freshness matters
 ```
 
 `--agent` is valid only with `--global`. Global queries aggregate the complete matching SQLite cohort and do not inherit the browser's session-page limit.
 
-Normal usage reads the prepared SQLite store immediately. Use `--refresh` when the active session is missing or the operator explicitly needs newly captured native sessions; this can take longer on large local stores.
+Normal usage opens the prepared SQLite store in query-only mode. It never
+migrates the schema or repairs rollups. A missing, outdated, empty, or
+maintenance-stale snapshot returns an actionable error. Use `--refresh` when
+the active session is missing or the operator explicitly needs newly captured
+native sessions; use `reflect refresh` for a complete snapshot rebuild. Either
+refresh can take longer on large local stores.
 
 ## Analysis workflow
 

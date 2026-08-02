@@ -14,6 +14,8 @@ from reflect.improvements.models import (
     AskAnswer,
     AskEvidence,
     EvidenceRef,
+    FindingSessionLedger,
+    ImprovementScope,
     ImprovementSummary,
     InboxFindingRecord,
     ObservationDraft,
@@ -24,6 +26,7 @@ from reflect.improvements.models import (
 )
 from reflect.improvements.repository import ImprovementRepository, utc_now
 from reflect.improvements.rules import DEFAULT_RULE_REGISTRY
+from reflect.improvements.scope import ImprovementScopeResolver
 from reflect.improvements.skills import SkillRegistryService
 from reflect.improvements.workflows import WorkflowService
 from reflect.store.migrate import migrate
@@ -37,9 +40,11 @@ class ImprovementService:
         conn: sqlite3.Connection,
         *,
         rules: Iterable[BaseImprovementRule] | RuleRegistry | None = None,
+        initialize_schema: bool = True,
     ):
         self.conn = conn
-        migrate(conn)
+        if initialize_schema:
+            migrate(conn)
         source_registry = DEFAULT_RULE_REGISTRY if rules is None else rules
         self.rule_registry = (
             source_registry.copy()
@@ -50,15 +55,18 @@ class ImprovementService:
         self.repository = ImprovementRepository(conn)
         self.workflows = WorkflowService(conn)
         self.measurements = MeasurementService(conn)
-        self.loops = LoopService(conn)
-        self.skills = SkillRegistryService(conn)
+        self.loops = LoopService(conn, initialize_schema=False)
+        self.skills = SkillRegistryService(conn, initialize_schema=False)
         self.archetypes = TaskArchetypeService(conn)
         self.adherence = WorkflowAdherenceService(conn)
 
     def refresh(self) -> dict[str, int]:
         now = utc_now()
         detected = 0
-        resolved = 0
+        resolved = self.repository.retire_rule(
+            "retry_loop_without_state_change",
+            now=now,
+        )
         candidates = 0
         archetype_result = self.archetypes.refresh()
         self.repository.sync_rule_definitions(
@@ -96,6 +104,33 @@ class ImprovementService:
             measurement_result = self.measurements.measure_active()
             loop_result = self.loops.refresh(commit=False)
             skill_result = self.skills.refresh(commit=False)
+            incomplete_attribution = bool(
+                self.conn.execute(
+                    """
+                    SELECT 1
+                    FROM observations o
+                    WHERE o.status NOT IN (
+                      'resolved', 'dismissed', 'rejected', 'rolled_back'
+                    )
+                      AND o.affected_session_count > (
+                      SELECT COUNT(*)
+                      FROM observation_sessions os
+                      WHERE os.observation_id = o.id
+                    )
+                    LIMIT 1
+                    """
+                ).fetchone()
+            )
+            self.conn.execute(
+                """
+                INSERT INTO store_metadata(key, value, updated_at)
+                VALUES ('observation_session_ledger_v1', ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                  value = excluded.value,
+                  updated_at = excluded.updated_at
+                """,
+                ("incomplete_after_rebuild" if incomplete_attribution else "complete", now),
+            )
             self.conn.commit()
         except Exception:
             self.conn.rollback()
@@ -113,6 +148,20 @@ class ImprovementService:
             "loops": loop_result["detected"],
             "skills": skill_result["workflow_skills"],
         }
+
+    def ensure_observation_session_ledger(self) -> bool:
+        """Rebuild legacy capped attribution once from the canonical snapshot."""
+
+        row = self.conn.execute(
+            """
+            SELECT value FROM store_metadata
+            WHERE key = 'observation_session_ledger_v1'
+            """
+        ).fetchone()
+        if row is None or str(row[0]) != "pending_rebuild":
+            return False
+        self.refresh()
+        return True
 
     def _backfill_workflow_metadata(self) -> None:
         """Add rule-owned behavior and authorship metadata to candidates from older builds."""
@@ -174,15 +223,21 @@ class ImprovementService:
             """
         )
 
-    def improve(self, observation_id: str | None = None, *, refresh: bool = True) -> ImprovementSummary | ObservationRecord:
+    def improve(
+        self,
+        observation_id: str | None = None,
+        *,
+        refresh: bool = True,
+        scope: ImprovementScope | None = None,
+    ) -> ImprovementSummary | ObservationRecord:
         if refresh:
             self.refresh()
         if observation_id:
             observation = self.repository.get_observation(observation_id)
             if observation is None:
                 raise KeyError(f"Observation not found: {observation_id}")
-            return observation
-        return self.repository.summary()
+            return self.repository.with_scope_stats(observation, scope) if scope else observation
+        return self.repository.summary(scope=scope)
 
     def _group_observations_by_finding(
         self,
@@ -244,12 +299,14 @@ class ImprovementService:
         limit: int = 100,
         status: str | None = None,
         include_resolved: bool = False,
+        scope: ImprovementScope | None = None,
     ) -> list[InboxFindingRecord]:
         """Group scope-specific observations into durable reviewable findings."""
         observations = self.repository.list_observations(
             limit=500,
             status=status,
             include_resolved=include_resolved,
+            scope=scope,
         )
         if not observations:
             return []
@@ -292,8 +349,11 @@ class ImprovementService:
                     members,
                     key=lambda item: (
                         status_priority.get(item.status.value, 9),
-                        -item.impact_score,
+                        0 if item.candidate_id else 1,
+                        -(item.affected_session_ratio or 0.0),
+                        -self.repository._timestamp(item.latest_source_at),
                         -item.confidence,
+                        -item.impact_score,
                         item.id,
                     ),
                 )
@@ -303,10 +363,24 @@ class ImprovementService:
             )
             rule = rule_by_id.get(representative.rule_id)
             distinct_titles = {item.title for item in members}
+            member_ids = [item.id for item in members]
             linked_sessions = (
-                workflow.support_count
-                if workflow is not None
-                else self.repository.observation_session_count(item.id for item in members)
+                self.repository.finding_session_ledger(
+                    representative.id,
+                    member_ids,
+                    candidate_id=workflow.id if workflow is not None else representative.candidate_id,
+                    scope=scope,
+                    limit=1,
+                ).source_session_count
+            )
+            latest_source_at = max(
+                (
+                    item.latest_source_at
+                    for item in members
+                    if item.latest_source_at is not None
+                ),
+                key=self.repository._timestamp,
+                default=None,
             )
             data = representative.model_dump(mode="python")
             data.update(
@@ -329,6 +403,17 @@ class ImprovementService:
                     ),
                     "confidence": max(item.confidence for item in members),
                     "affected_session_count": linked_sessions,
+                    "scope_affected_session_count": linked_sessions if scope else None,
+                    "eligible_session_count": (
+                        scope.eligible_session_count if scope is not None else 0
+                    ),
+                    "affected_session_ratio": (
+                        float(linked_sessions) / scope.eligible_session_count
+                        if scope is not None and scope.eligible_session_count
+                        else 0.0
+                    ),
+                    "latest_source_at": latest_source_at,
+                    "resolved_scope": scope,
                     "candidate_id": workflow.id if workflow is not None else representative.candidate_id,
                     "candidate_status": (
                         workflow.status if workflow is not None else representative.candidate_status
@@ -344,12 +429,65 @@ class ImprovementService:
         findings.sort(
             key=lambda item: (
                 status_priority.get(item.status.value, 9),
-                -item.impact_score,
+                0 if item.candidate_id else 1,
+                -(item.affected_session_ratio or 0.0),
+                -self.repository._timestamp(item.latest_source_at),
                 -item.confidence,
+                -item.impact_score,
                 item.title,
             )
         )
         return findings[: max(1, min(limit, 500))]
+
+    def finding_observation_ids(
+        self,
+        observation_id: str,
+        *,
+        scope: ImprovementScope | None = None,
+    ) -> list[str]:
+        target = self.repository.get_observation(observation_id)
+        if target is None:
+            raise KeyError(f"Observation not found: {observation_id}")
+        if target.candidate_id:
+            candidate = self.repository.get_candidate(target.candidate_id)
+            if candidate is not None:
+                slug = str(candidate.content.get("slug") or "")
+                if slug:
+                    allowed = (
+                        {item.id for item in self.repository.list_observations(limit=500, scope=scope)}
+                        if scope
+                        else None
+                    )
+                    return [
+                        item.observation_id
+                        for item in self.repository.list_candidates_by_slug(slug)
+                        if item.status.value not in {"rejected", "rolled_back"}
+                        and (allowed is None or item.observation_id in allowed)
+                    ]
+        return [
+            item.id
+            for item in self.repository.list_observations(limit=500, scope=scope)
+            if item.rule_id == target.rule_id and item.title == target.title
+        ] or [observation_id]
+
+    def finding_session_ledger(
+        self,
+        observation_id: str,
+        *,
+        scope: ImprovementScope | None = None,
+        limit: int = 50,
+    ) -> FindingSessionLedger:
+        target = self.repository.get_observation(observation_id)
+        if target is None:
+            raise KeyError(f"Observation not found: {observation_id}")
+        ids = self.finding_observation_ids(observation_id, scope=scope)
+        return self.repository.finding_session_ledger(
+            observation_id,
+            ids,
+            candidate_id=target.candidate_id,
+            scope=scope,
+            limit=limit,
+        )
 
     def ask(
         self,
@@ -367,12 +505,25 @@ class ImprovementService:
         limitations: list[str] = []
         if task_file is not None:
             context_parts.append(task_file.expanduser().read_text(encoding="utf-8")[:20_000])
-        if path is not None:
-            context_parts.append(str(path.expanduser().resolve()))
         context = " ".join(context_parts).lower()
 
-        candidates = self.repository.list_candidates(limit=200)
-        observations = self.repository.list_observations(limit=200)
+        scope = ImprovementScopeResolver(
+            self.conn,
+            cwd=path or Path.cwd(),
+        ).path(path)
+        observations = self.repository.list_observations(limit=200, scope=scope)
+        allowed_observation_ids = {item.id for item in observations}
+        candidates = [
+            item
+            for item in self.repository.list_candidates(limit=500)
+            if item.observation_id in allowed_observation_ids
+            or self._candidate_is_unscoped_guidance(item.observation_id)
+            or self._candidate_is_installed_for_path(item.id, path)
+        ][:200]
+        if not scope.matched:
+            limitations.append(
+                f"No telemetry workspace matches {scope.label}; Reflect did not fall back to global findings."
+            )
         ranked_candidates = sorted(
             candidates,
             key=lambda item: self._match_score(context, terms, item.title, item.hypothesis, str(item.content)),
@@ -452,6 +603,51 @@ class ImprovementService:
             ),
             limitations=limitations,
         )
+
+    def _candidate_is_unscoped_guidance(
+        self,
+        observation_id: str,
+    ) -> bool:
+        row = self.conn.execute(
+            """
+            SELECT o.scope_type, o.scope_id,
+                   EXISTS (
+                     SELECT 1 FROM observation_sessions os
+                     WHERE os.observation_id = o.id
+                   )
+            FROM observations o
+            WHERE o.id = ?
+            """,
+            (observation_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        return str(row[0]) == "user" and str(row[1]) == "local" and not bool(row[2])
+
+    def _candidate_is_installed_for_path(
+        self,
+        candidate_id: str,
+        path: Path | None,
+    ) -> bool:
+        if path is None:
+            return False
+        requested = path.expanduser().resolve()
+        rows = self.conn.execute(
+            """
+            SELECT i.target_path
+            FROM interventions i
+            JOIN workflow_versions wv ON wv.id = i.workflow_version_id
+            WHERE wv.candidate_id = ?
+              AND i.status = 'active'
+            """,
+            (candidate_id,),
+        ).fetchall()
+        for row in rows:
+            target = Path(str(row[0])).expanduser().resolve()
+            target_root = target if target.is_dir() else target.parent
+            if requested == target_root or target_root in requested.parents or requested in target_root.parents:
+                return True
+        return False
 
     def stage_extracted_skills(
         self,

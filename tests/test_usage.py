@@ -155,6 +155,9 @@ def test_current_session_usage_uses_runtime_session_id(tmp_path):
 
     assert report.resolution == "environment:CODEX_THREAD_ID"
     assert report.session is not None and report.session.id == "session-current"
+    assert report.token_provenance.exact_sessions == 1
+    assert report.token_provenance.estimated_sessions == 0
+    assert report.token_provenance.unavailable_sessions == 0
     assert report.totals.model_dump() == {
         "sessions": 1,
         "prompts": 2,
@@ -174,6 +177,60 @@ def test_current_session_usage_uses_runtime_session_id(tmp_path):
     }
     assert report.models[0].name == "gpt-5"
     assert report.tools[0].name == "exec_command"
+
+
+def test_usage_labels_estimated_and_unavailable_token_sources(tmp_path):
+    conn = _open_db(tmp_path / "reflect.db")
+    try:
+        _seed_session(conn, "session-estimated")
+        conn.execute(
+            """
+            UPDATE steps
+            SET raw_attrs_json = '{"reflect.token.source":"estimated_cursor_transcript"}'
+            WHERE id = 'session-estimated-step'
+            """
+        )
+        conn.execute(
+            """
+            UPDATE llm_calls
+            SET input_tokens = 0, output_tokens = 0,
+                cache_creation_input_tokens = 0, cache_read_input_tokens = 0,
+                reasoning_output_tokens = 0
+            WHERE session_id = 'session-estimated'
+            """
+        )
+        estimated = UsageService(conn, environ={}, cwd=tmp_path, now=NOW).report(
+            session_id="session-estimated"
+        )
+
+        conn.execute(
+            """
+            UPDATE sessions
+            SET input_tokens = 0, output_tokens = 0, cache_creation_tokens = 0,
+                cache_read_tokens = 0, reasoning_tokens = 0
+            WHERE id = 'session-estimated'
+            """
+        )
+        conn.execute(
+            "UPDATE steps SET raw_attrs_json = '{}' WHERE id = 'session-estimated-step'"
+        )
+        unavailable = UsageService(conn, environ={}, cwd=tmp_path, now=NOW).report(
+            session_id="session-estimated"
+        )
+    finally:
+        conn.close()
+
+    assert estimated.token_provenance.estimated_sessions == 1
+    assert estimated.token_provenance.sources == ["estimated_cursor_transcript"]
+    assert any("transcript-derived" in item for item in estimated.limitations)
+    assert unavailable.token_provenance.unavailable_sessions == 1
+    assert unavailable.token_provenance.proxy_order == [
+        "captured_output_size",
+        "llm_call_count",
+        "tool_call_count",
+        "session_duration",
+    ]
+    assert any("inference-only proxies" in item for item in unavailable.limitations)
 
 
 def test_current_session_usage_labels_workspace_fallback(tmp_path):
@@ -342,6 +399,39 @@ def test_usage_cli_emits_json(tmp_path, monkeypatch):
     assert payload["totals"]["estimated_cost_usd"] == 1.25
 
 
+def test_refresh_command_explicitly_prepares_a_missing_snapshot(
+    tmp_path,
+    monkeypatch,
+):
+    db_path = tmp_path / "reflect.db"
+    native_session = tmp_path / "rollout-session.jsonl"
+    _write_codex_session(
+        native_session,
+        "session-refresh",
+        timestamp="2026-07-30T10:00:00Z",
+    )
+    monkeypatch.setattr("reflect.core._default_otlp_traces", lambda: None)
+    monkeypatch.setattr(
+        "reflect.core._discover_rich_session_files",
+        lambda: [("codex", native_session)],
+    )
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "refresh",
+            "--json",
+            "--db-path",
+            str(db_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["sessions"] == 1
+    assert "Opening the local telemetry store" in result.stderr
+    assert db_path.exists()
+
+
 def test_usage_refresh_skips_native_discovery_when_store_has_sessions(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     conn = _open_db(db_path)
@@ -395,8 +485,11 @@ def test_usage_refresh_ingests_only_the_runtime_native_session(tmp_path, monkeyp
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    payload = json.loads(result.stdout)
     assert payload["session"]["id"] == "session-runtime"
+    assert "Reading local agent sessions..." in result.stderr
+    assert "Normalizing usage telemetry..." in result.stderr
+    assert "Usage refresh complete." in result.stderr
     conn = connect_sqlite(db_path)
     try:
         assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 1
@@ -405,7 +498,10 @@ def test_usage_refresh_ingests_only_the_runtime_native_session(tmp_path, monkeyp
         conn.close()
 
 
-def test_usage_rebuilds_rollups_after_codex_desktop_migration(tmp_path, monkeypatch):
+def test_usage_requires_explicit_refresh_for_pending_rollup_rebuild(
+    tmp_path,
+    monkeypatch,
+):
     db_path = tmp_path / "reflect.db"
     conn = connect_sqlite(db_path)
     try:
@@ -483,18 +579,47 @@ def test_usage_rebuilds_rollups_after_codex_desktop_migration(tmp_path, monkeypa
         conn.close()
     conn = connect_sqlite(db_path)
     try:
-        assert migrate(conn) == [19, 20]
+        assert migrate(conn) == [19, 20, 21, 22]
     finally:
         conn.close()
     monkeypatch.setattr("reflect.core._default_otlp_traces", lambda: None)
     monkeypatch.setattr("reflect.core._discover_rich_session_files", lambda: [])
 
-    result = CliRunner().invoke(
+    read_result = CliRunner().invoke(
         main,
         ["usage", "--session", "session-current", "--json", "--db-path", str(db_path)],
     )
 
-    assert result.exit_code == 0, result.output
+    assert read_result.exit_code == 1
+    assert "usage rollups are stale" in read_result.output
+    conn = connect_sqlite(db_path)
+    try:
+        assert conn.execute(
+            """
+            SELECT COUNT(*) FROM maintenance_tasks
+            WHERE task = 'rebuild_rollups_after_codex_desktop_otel'
+            """
+        ).fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT tool_name FROM tool_rollups"
+        ).fetchone()[0] == "stale_tool"
+    finally:
+        conn.close()
+
+    refresh_result = CliRunner().invoke(
+        main,
+        [
+            "usage",
+            "--session",
+            "session-current",
+            "--refresh",
+            "--json",
+            "--db-path",
+            str(db_path),
+        ],
+    )
+
+    assert refresh_result.exit_code == 0, refresh_result.output
     conn = connect_sqlite(db_path)
     try:
         assert conn.execute(
@@ -513,8 +638,105 @@ def test_usage_rebuilds_rollups_after_codex_desktop_migration(tmp_path, monkeypa
         conn.close()
 
 
+def test_usage_rejects_structurally_incomplete_rollups(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    conn = _open_db(db_path)
+    try:
+        _seed_session(conn)
+        conn.execute(
+            "DELETE FROM session_rollups WHERE session_id = 'session-current'"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "usage",
+            "--session",
+            "session-current",
+            "--json",
+            "--db-path",
+            str(db_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "usage rollups are stale: 1 session(s) are missing rollups" in result.output
+
+
+def test_usage_session_ignores_an_unrelated_missing_rollup(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    conn = _open_db(db_path)
+    try:
+        _seed_session(conn, "session-current")
+        _seed_session(conn, "session-unrelated")
+        conn.execute(
+            "DELETE FROM session_rollups WHERE session_id = 'session-unrelated'"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "usage",
+            "--session",
+            "session-current",
+            "--json",
+            "--db-path",
+            str(db_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["session"]["id"] == "session-current"
+    assert payload["totals"]["sessions"] == 1
+
+
 def test_usage_cli_rejects_conflicting_scopes():
     result = CliRunner().invoke(main, ["usage", "--session", "session", "--global"])
 
     assert result.exit_code == 2
     assert "cannot be used together" in result.output
+
+
+def test_usage_cli_prefers_period_and_warns_for_legacy_alias(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    conn = _open_db(db_path)
+    try:
+        _seed_session(conn)
+    finally:
+        conn.close()
+
+    runner = CliRunner()
+    current = runner.invoke(
+        main,
+        ["usage", "--global", "--period", "all", "--json", "--db-path", str(db_path)],
+    )
+    legacy = runner.invoke(
+        main,
+        ["usage", "--global", "--all", "--json", "--db-path", str(db_path)],
+    )
+    conflict = runner.invoke(
+        main,
+        [
+            "usage",
+            "--global",
+            "--period",
+            "all",
+            "--week",
+            "--db-path",
+            str(db_path),
+        ],
+    )
+
+    assert current.exit_code == 0, current.output
+    assert json.loads(current.stdout)["period"] == "all"
+    assert legacy.exit_code == 0, legacy.output
+    assert "--all is deprecated for usage" in legacy.stderr
+    assert conflict.exit_code == 2
+    assert "cannot be combined" in conflict.output

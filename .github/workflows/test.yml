@@ -20,7 +20,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -44,6 +44,11 @@ jobs:
         run: |
           pip install pipx
           pipx install .
+
+      - name: Bundled otel-hook is exposed
+        run: |
+          otel-hook --help
+          pipx list --json | python -c 'import json,sys; data=json.load(sys.stdin); apps=data["venvs"]["o11y-reflect"]["metadata"]["main_package"]["apps"]; assert "otel-hook" in apps'
 
       - name: reflect --demo (dashboard server starts)
         run: |

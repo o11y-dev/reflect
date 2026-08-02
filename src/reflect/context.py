@@ -20,6 +20,7 @@ from reflect.improvements.models import (
     SkillLifecycleState,
     WorkflowStatus,
 )
+from reflect.improvements.scope import ImprovementScopeResolver
 from reflect.improvements.service import ImprovementService
 from reflect.inspection import (
     AgentInspectionService,
@@ -119,10 +120,16 @@ class TaskCompletionAnswer(MCPTaskRunResult):
 class ReflectContextService:
     """Compose Reflect evidence, workflows, usage, and memory for agent clients."""
 
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn: sqlite3.Connection, *, initialize_schema: bool = True):
         self.conn = conn
-        self.improvements = ImprovementService(conn)
-        self.memory = MemoryService(conn)
+        self.improvements = ImprovementService(
+            conn,
+            initialize_schema=initialize_schema,
+        )
+        self.memory = MemoryService(
+            conn,
+            maintain_search_index=initialize_schema,
+        )
         self.usage = UsageService(conn)
         self.task_runs = MCPTaskRunService(conn, usage=self.usage)
         self.agent_inspection = AgentInspectionService(
@@ -270,12 +277,48 @@ class ReflectContextService:
             ),
         )
 
-    def improvements_summary(self, *, limit: int = 20) -> dict[str, Any]:
-        findings = self.improvements.list_inbox_findings(limit=max(1, min(limit, 100)))
+    def improvements_summary(
+        self,
+        *,
+        limit: int = 20,
+        path: Path | None = None,
+        session_id: str | None = None,
+        global_scope: bool = False,
+        period: str | None = None,
+    ) -> dict[str, Any]:
+        selectors = int(path is not None) + int(session_id is not None) + int(global_scope)
+        if selectors > 1:
+            raise ValueError("path, session_id, and global_scope are mutually exclusive")
+        resolver = ImprovementScopeResolver(self.conn, cwd=path or Path.cwd())
+        if global_scope:
+            if period is None:
+                raise ValueError("global_scope requires a period")
+            scope = resolver.global_period(period)
+        elif session_id:
+            scope = resolver.session(session_id)
+        else:
+            scope = resolver.path(path)
+        findings = self.improvements.list_inbox_findings(
+            limit=max(1, min(limit, 100)),
+            scope=scope,
+        )
+        attribution_complete = (
+            self.improvements.repository.observation_session_ledger_complete()
+        )
         return {
             "findings": [finding.model_dump(mode="json") for finding in findings],
             "count": len(findings),
             "provenance": "local_telemetry",
+            "resolved_scope": scope.model_dump(mode="json"),
+            "attribution_complete": attribution_complete,
+            "limitations": (
+                []
+                if attribution_complete
+                else [
+                    "Some legacy findings still have capped source-session attribution. "
+                    "Run reflect improve --refresh to rebuild supported detectors."
+                ]
+            ),
         }
 
     def skills_search(
@@ -352,11 +395,15 @@ class ReflectContextService:
     def explain(self, entity_id: str) -> dict[str, Any]:
         observation = self.improvements.repository.get_observation(entity_id)
         if observation is not None:
+            ledger = self.improvements.finding_session_ledger(entity_id, limit=50)
             return {
                 "found": True,
                 "kind": "observation",
                 "provenance": "local_telemetry",
-                "entity": observation.model_dump(mode="json"),
+                "entity": {
+                    **observation.model_dump(mode="json"),
+                    "session_ledger": ledger.model_dump(mode="json"),
+                },
             }
         workflow = self.improvements.repository.get_candidate(entity_id)
         if workflow is not None:

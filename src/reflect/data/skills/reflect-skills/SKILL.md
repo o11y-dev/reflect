@@ -10,10 +10,12 @@ Use the Skills v2 registry as the durable source of truth for reusable behavior.
 ## Usage
 
 ```bash
-reflect skills                         # reconcile installed and staged skills, then list the registry
-reflect skills --path .agents/skills   # include another skill root in reconciliation
+reflect skills                         # list the current registry without reconciling sources
+reflect skills sync                    # reconcile files, drafts, usage, and measurements
+reflect skills sync --path .agents/skills # include another skill root in reconciliation
 reflect skills show <skill-id>         # inspect versions, evidence, installs, and usage
-reflect skills discover --week         # ask an agent to discover skill drafts from recent sessions
+reflect skills discover --period week  # ask an agent to discover skill drafts from recent sessions
+reflect skills discover --refresh      # refresh SQL graph evidence before discovery
 reflect skills discover --agent codex  # choose the authoring agent CLI
 reflect skills apply <skill-id>         # explicitly install a reviewed pending version
 reflect skills rollback <skill-id>      # restore the prior repo-local file state
@@ -32,13 +34,22 @@ Use `reflect loops` separately to inspect repeated behavior. A loop does not bec
 
 Nothing is installed automatically. Never run `reflect skills apply` without explicit operator approval.
 
+Plain `reflect skills` and `reflect skills show` are query-only. File edits,
+new installations, missing files, workflow drafts, observed uses, and
+measurements become new registry revisions only when `reflect skills sync` is
+run. Discovery reuses existing SQL graph evidence and does not ingest telemetry
+unless `--refresh` is explicit.
+
 ## Options for discovery
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--agent` | auto-detect | Agent CLI used to author drafts |
 | `--yes` / `-y` | off | Stage all valid extracted drafts without the selection prompt |
-| `--all` / `--week` / `--month` / `--day` | `--week` | Session evidence range |
+| `--period day|week|month|all` | `week` | Session evidence range |
 | `--demo` | off | Use bundled sample telemetry |
+| `--refresh` | off | Explicitly prepare current SQL graph evidence before discovery |
 
-Older invocations such as `reflect skills --agent codex --week` remain accepted in compatibility mode, but new automation should use `reflect skills discover` explicitly.
+Older individual period flags remain accepted with deprecation warnings. Older root
+invocations such as `reflect skills --agent codex --week` also remain accepted in
+compatibility mode, but new automation should use `reflect skills discover --period ...`.

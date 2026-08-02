@@ -312,6 +312,46 @@ def _is_running() -> int | None:
     return pid
 
 
+def _record_current_process() -> None:
+    """Claim the managed PID file for a directly launched gateway process."""
+    current_pid = os.getpid()
+    existing = _is_running()
+    if existing is not None and existing != current_pid:
+        raise RuntimeError(f"Gateway already running (PID {existing})")
+    _PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _PID_FILE.write_text(str(current_pid))
+
+
+def _clear_current_process() -> None:
+    """Remove the managed PID file only when the current process owns it."""
+    try:
+        recorded_pid = int(_PID_FILE.read_text().strip())
+    except (OSError, ValueError):
+        return
+    if recorded_pid == os.getpid():
+        _PID_FILE.unlink(missing_ok=True)
+
+
+def run_managed_gateway(
+    grpc_port: int = 4317,
+    http_port: int = 4318,
+) -> None:
+    """Run a foreground gateway while preserving daemon status ownership."""
+    listener = _probe_gateway(http_port)
+    if listener and listener.get("pid") != os.getpid():
+        listener_pid = listener.get("pid")
+        destination = listener.get("traces_path") or "an unknown trace store"
+        owner = f"PID {listener_pid}" if listener_pid else "an unmanaged process"
+        raise RuntimeError(
+            f"OTLP gateway port is already owned by {owner}; traces route to {destination}"
+        )
+    _record_current_process()
+    try:
+        start_gateway(grpc_port=grpc_port, http_port=http_port)
+    finally:
+        _clear_current_process()
+
+
 def _probe_gateway(http_port: int = 4318, *, timeout: float = 0.25) -> dict | None:
     """Return health metadata for a Reflect gateway listening on ``http_port``."""
     from urllib.error import HTTPError, URLError
@@ -435,4 +475,4 @@ if __name__ == "__main__":
     parser.add_argument("--grpc-port", type=int, default=4317)
     parser.add_argument("--http-port", type=int, default=4318)
     args = parser.parse_args()
-    start_gateway(grpc_port=args.grpc_port, http_port=args.http_port)
+    run_managed_gateway(grpc_port=args.grpc_port, http_port=args.http_port)

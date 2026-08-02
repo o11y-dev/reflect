@@ -4333,6 +4333,7 @@ def _start_publish_server(
     db_path: Path | None = None,
     sql_only: bool = False,
     preparation_worker: BackgroundPreparationWorker | None = None,
+    open_browser: bool = True,
 ) -> None:
     """Start a local FastAPI server and open the dashboard in a browser.
 
@@ -4348,6 +4349,7 @@ def _start_publish_server(
         db_path=db_path,
         sql_only=sql_only,
         preparation_worker=preparation_worker,
+        open_browser=open_browser,
     )
 
 
@@ -4689,6 +4691,25 @@ def _build_dashboard_app(
             if observation is None:
                 return JSONResponse({"error": f"Finding {finding_id} not found"}, status_code=404)
             return JSONResponse(observation.model_dump(mode="json"))
+        finally:
+            conn.close()
+
+    @app.get("/api/inbox/{observation_id}/sessions")
+    def api_inbox_sessions(observation_id: str, request: Request):
+        if db_path is None:
+            return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
+        from reflect.improvements.service import ImprovementService
+        from reflect.store.sqlite import connect_sqlite_read_only
+
+        conn = connect_sqlite_read_only(db_path)
+        try:
+            ledger = ImprovementService(conn, initialize_schema=False).finding_session_ledger(
+                observation_id,
+                limit=min(200, max(1, int(request.query_params.get("limit") or 50))),
+            )
+            return JSONResponse(ledger.model_dump(mode="json"))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
         finally:
             conn.close()
 
@@ -5059,6 +5080,7 @@ def _start_publish_server_inline(
     db_path: Path | None = None,
     sql_only: bool = False,
     preparation_worker: BackgroundPreparationWorker | None = None,
+    open_browser: bool = True,
 ) -> None:
     """Inline FastAPI server for the local `reflect` browser report."""
     import threading
@@ -5086,7 +5108,8 @@ def _start_publish_server_inline(
         preparation_worker=preparation_worker,
     )
     url = f"http://127.0.0.1:{port}/?report=api/data"
-    threading.Timer(0.5, webbrowser.open, args=[url]).start()
+    if open_browser:
+        threading.Timer(0.5, webbrowser.open, args=[url]).start()
     print(f"\n  Serving at: {url}")
     print("  Press Ctrl-C to stop\n")
     if preparation_worker is not None:

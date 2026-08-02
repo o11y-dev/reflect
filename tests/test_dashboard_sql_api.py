@@ -17,7 +17,11 @@ from reflect.improvements.models import (
 from reflect.improvements.repository import ImprovementRepository
 from reflect.improvements.skills import SkillRegistryService
 from reflect.models import TelemetryStats
-from reflect.preparation import BackgroundPreparationWorker
+from reflect.preparation import (
+    BackgroundPreparationWorker,
+    PreparationProgress,
+    PreparationStage,
+)
 from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite
 
@@ -615,6 +619,7 @@ def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
 
     inbox = client.get("/api/inbox")
     detail = client.get(f"/api/inbox/{observation_id}")
+    source_sessions = client.get(f"/api/inbox/{observation_id}/sessions")
     legacy_inbox = client.get("/api/improvements")
     legacy_detail = client.get(f"/api/improvements/{observation_id}")
     workflows = client.get("/api/workflows")
@@ -633,6 +638,10 @@ def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
     assert inbox.json()["raw_observation_count"] == 1
     assert detail.status_code == 200
     assert detail.json()["evidence"][0]["session_id"] == "sess-sql"
+    assert source_sessions.status_code == 200
+    assert source_sessions.json()["observation_id"] == observation_id
+    assert source_sessions.json()["source_session_count"] == 1
+    assert source_sessions.json()["source_sessions"][0]["session_id"] == "sess-sql"
     assert legacy_inbox.json()["observations"][0]["id"] == observation_id
     assert legacy_detail.json() == detail.json()
     assert workflows.status_code == 200
@@ -843,6 +852,12 @@ def test_dashboard_api_serves_current_snapshot_during_background_preparation(tmp
     release = threading.Event()
 
     def prepare():
+        worker.report_progress(
+            PreparationProgress(
+                stage=PreparationStage.REFRESHING_GRAPH,
+                message="Refreshing the evidence graph...",
+            )
+        )
         started.set()
         release.wait(timeout=2)
         return {"refreshed_sessions": 1}
@@ -862,7 +877,10 @@ def test_dashboard_api_serves_current_snapshot_during_background_preparation(tmp
 
     assert response.status_code == 200
     assert response.json()["sessions"][0]["id"] == "sess-sql"
-    assert client.get("/api/status").json()["preparation"]["state"] == "running"
+    preparation = client.get("/api/status").json()["preparation"]
+    assert preparation["state"] == "running"
+    assert preparation["stage"] == "refreshing_graph"
+    assert preparation["message"] == "Refreshing the evidence graph..."
     release.set()
     assert worker.wait(timeout=2) is True
 

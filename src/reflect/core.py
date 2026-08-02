@@ -47,7 +47,7 @@ import subprocess
 import sys
 import time
 import zipfile
-from contextlib import nullcontext
+from collections.abc import Callable
 from datetime import UTC, datetime
 from importlib import metadata as importlib_metadata
 from importlib import resources as importlib_resources
@@ -62,7 +62,14 @@ from rich.panel import Panel
 from rich.table import Table
 
 if TYPE_CHECKING:
-    from reflect.preparation import PreparationProgressReporter
+    from reflect.improvements.service import ImprovementService
+    from reflect.memory import MemoryService
+    from reflect.preparation import (
+        PreparationProgressReporter,
+        SnapshotPreparationResult,
+        SnapshotReadinessProbe,
+        SnapshotStatus,
+    )
 
 # ---------------------------------------------------------------------------
 # Reflect home directory
@@ -94,6 +101,7 @@ from reflect.graph import (  # noqa: F401
     _compute_tool_transitions,
     _compute_weekly_trends,
 )
+from reflect.hook_runtime import HookMigrationError, HookPipxMigrator, HookRuntime
 from reflect.insights import (  # noqa: F401
     _percentile,
     build_observations,
@@ -776,7 +784,7 @@ def _claude_hooks_registered() -> bool | None:
 
 
 def _detect_hook_drift() -> dict | None:
-    if not shutil.which("otel-hook"):
+    if HookRuntime.discover() is None:
         return None
 
     config_path = HOOK_HOME / "otel_config.json"
@@ -1066,12 +1074,107 @@ def _demo_otlp_traces() -> Path:
     return bundled
 
 
-def _open_improvement_service(db_path: Path):
+def _open_improvement_service(
+    db_path: Path,
+    *,
+    read_only: bool = False,
+) -> tuple[sqlite3.Connection, ImprovementService]:
     from reflect.improvements.service import ImprovementService
-    from reflect.store.sqlite import connect_sqlite
+    from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only
 
-    conn = connect_sqlite(db_path)
-    return conn, ImprovementService(conn)
+    conn = (
+        connect_sqlite_read_only(db_path)
+        if read_only
+        else connect_sqlite(db_path)
+    )
+    return conn, ImprovementService(conn, initialize_schema=not read_only)
+
+
+def _improvement_snapshot_status(db_path: Path) -> SnapshotStatus:
+    from reflect.preparation import SQLiteSnapshotInspector
+
+    return SQLiteSnapshotInspector(db_path).inspect()
+
+
+def _prepare_sql_snapshot_with_progress(
+    db_path: Path,
+    *,
+    otlp_traces: Path | None,
+    include_native_sessions: bool,
+) -> dict[str, object]:
+    from reflect.terminal import TerminalPreparationProgress
+
+    return TerminalPreparationProgress().run(
+        lambda progress: _prepare_sql_report_db(
+            db_path,
+            otlp_traces=otlp_traces,
+            include_native_sessions=include_native_sessions,
+            progress=progress,
+        )
+    )
+
+
+def _ensure_command_snapshot(
+    db_path: Path,
+    *,
+    refresh: bool | None,
+    otlp_traces: Path | None = None,
+    include_native_sessions: bool = True,
+    prepare: Callable[[], dict[str, object]] | None = None,
+    readiness_probes: tuple[SnapshotReadinessProbe, ...] = (),
+) -> SnapshotPreparationResult:
+    from reflect.preparation import (
+        CallableSnapshotRefresher,
+        SnapshotLifecycleService,
+        SnapshotUnavailableError,
+        SQLiteSnapshotInspector,
+    )
+
+    refresh_operation = prepare or (
+        lambda: _prepare_sql_snapshot_with_progress(
+            db_path,
+            otlp_traces=(
+                otlp_traces
+                if otlp_traces is not None
+                else _default_otlp_traces()
+            ),
+            include_native_sessions=include_native_sessions,
+        )
+    )
+    lifecycle = SnapshotLifecycleService(
+        SQLiteSnapshotInspector(
+            db_path,
+            readiness_probes=readiness_probes,
+        ),
+        refresher=CallableSnapshotRefresher(refresh_operation),
+        refresh_hint=(
+            f"Run `reflect refresh --db-path {db_path}` or re-run this command "
+            "with `--refresh`."
+        ),
+    )
+    try:
+        return lifecycle.prepare(requested_refresh=refresh)
+    except SnapshotUnavailableError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+def _require_snapshot_schema(db_path: Path, *, refresh_hint: str) -> None:
+    from reflect.preparation import (
+        CommandPreparationPolicy,
+        SnapshotLifecycleService,
+        SnapshotUnavailableError,
+        SQLiteSnapshotInspector,
+    )
+
+    lifecycle = SnapshotLifecycleService(
+        SQLiteSnapshotInspector(db_path),
+        policy=CommandPreparationPolicy(require_sessions=False),
+        refresh_hint=refresh_hint,
+    )
+    try:
+        lifecycle.prepare(requested_refresh=None)
+    except SnapshotUnavailableError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _format_usage_duration(duration_ms: int) -> str:
@@ -1120,6 +1223,13 @@ def _render_usage_report(console: Console, report) -> None:
         f"{totals.reasoning_tokens:,}",
     )
     console.print(tokens)
+    provenance = report.token_provenance
+    console.print(
+        "[dim]Token provenance: "
+        f"{provenance.exact_sessions} exact · "
+        f"{provenance.estimated_sessions} estimated · "
+        f"{provenance.unavailable_sessions} unavailable[/dim]"
+    )
 
     for heading, entries in (("Models", report.models), ("Tools", report.tools), ("Agents", report.agents)):
         if not entries:
@@ -1152,8 +1262,10 @@ def _prepare_usage_db(
     otlp_traces: Path | None,
     include_native_sessions: bool,
     native_session_ids: tuple[str, ...] = (),
-) -> None:
+    progress: PreparationProgressReporter | None = None,
+) -> dict[str, object]:
     """Refresh usage facts without rebuilding graph or improvement state."""
+    from reflect.preparation import PreparationStage, report_preparation_progress
     from reflect.store.cursor_adapter import apply_cursor_transcript_usage_estimates
     from reflect.store.ingest import (
         ingest_native_session_file,
@@ -1166,23 +1278,53 @@ def _prepare_usage_db(
     from reflect.store.sqlite import connect_sqlite
     from reflect.store.workspaces import backfill_session_context
 
+    report_preparation_progress(
+        progress,
+        PreparationStage.OPENING_STORE,
+        "Opening the local telemetry store...",
+    )
     conn = connect_sqlite(db_path)
     try:
+        report_preparation_progress(
+            progress,
+            PreparationStage.MIGRATING_SCHEMA,
+            "Checking database migrations...",
+        )
         applied = migrate(conn)
         if otlp_traces is not None and otlp_traces.exists():
+            report_preparation_progress(
+                progress,
+                PreparationStage.INGESTING_TRACES,
+                "Reading new OTLP traces...",
+            )
             ingest_otlp_traces_file(conn, file_path=otlp_traces, skip_unchanged=True)
             otlp_logs = _infer_otlp_logs_file(otlp_traces)
             if otlp_logs is not None and otlp_logs.exists():
+                report_preparation_progress(
+                    progress,
+                    PreparationStage.INGESTING_LOGS,
+                    "Reading new OTLP logs...",
+                )
                 ingest_otlp_logs_file(conn, file_path=otlp_logs, skip_unchanged=True)
 
         changed_session_ids: set[str] = set()
         if conn.execute(
             "SELECT 1 FROM raw_events WHERE normalized_status = 'pending' LIMIT 1"
         ).fetchone():
+            report_preparation_progress(
+                progress,
+                PreparationStage.NORMALIZING,
+                "Normalizing usage telemetry...",
+            )
             normalize_pending_raw_events(conn, changed_session_ids=changed_session_ids)
 
         cursor_native_files: list[Path] = []
         if include_native_sessions:
+            report_preparation_progress(
+                progress,
+                PreparationStage.INGESTING_SESSIONS,
+                "Reading local agent sessions...",
+            )
             for native_agent, session_file in _discover_rich_session_files():
                 if native_session_ids and not any(
                     _native_session_path_matches_id(session_file, candidate)
@@ -1199,7 +1341,17 @@ def _prepare_usage_db(
                 )
                 if native_agent == "cursor" and not result.get("unchanged"):
                     cursor_native_files.append(session_file)
+            report_preparation_progress(
+                progress,
+                PreparationStage.NORMALIZING,
+                "Normalizing usage telemetry...",
+            )
             normalize_pending_raw_events(conn, changed_session_ids=changed_session_ids)
+        report_preparation_progress(
+            progress,
+            PreparationStage.UPDATING_CANONICAL_STATE,
+            "Updating canonical usage state...",
+        )
         backfill_mcp_calls(
             conn,
             session_ids=None if 14 in applied else changed_session_ids,
@@ -1222,23 +1374,142 @@ def _prepare_usage_db(
             or session_count != rollup_count
             or cursor_result.get("updated")
         ):
+            report_preparation_progress(
+                progress,
+                PreparationStage.REFRESHING_ROLLUPS,
+                "Rebuilding usage rollups...",
+            )
             _ensure_sql_costs(conn)
             rebuild_rollups(conn)
         elif changed_session_ids or context_result["sessions_updated"]:
+            report_preparation_progress(
+                progress,
+                PreparationStage.REFRESHING_ROLLUPS,
+                f"Refreshing usage rollups for {len(changed_session_ids):,} session(s)...",
+            )
             _ensure_sql_costs(conn, session_ids=changed_session_ids)
             refresh_rollups(conn, changed_session_ids)
+        report_preparation_progress(
+            progress,
+            PreparationStage.COMPLETE,
+            "Usage refresh complete.",
+        )
+        return {
+            "refreshed": True,
+            "changed_sessions": len(changed_session_ids),
+        }
     finally:
         conn.close()
+
+
+def _prepare_usage_db_with_progress(
+    db_path: Path,
+    *,
+    otlp_traces: Path | None,
+    include_native_sessions: bool,
+    native_session_ids: tuple[str, ...] = (),
+) -> dict[str, object]:
+    from reflect.terminal import TerminalPreparationProgress
+
+    return TerminalPreparationProgress().run(
+        lambda progress: _prepare_usage_db(
+            db_path,
+            otlp_traces=otlp_traces,
+            include_native_sessions=include_native_sessions,
+            native_session_ids=native_session_ids,
+            progress=progress,
+        )
+    )
+
+
+def _resolve_period_option(
+    period: str | None,
+    *,
+    day: bool,
+    week: bool,
+    month: bool,
+    all_time: bool,
+    command: str,
+    default: str | None = None,
+) -> str | None:
+    legacy_periods = [
+        name
+        for name, enabled in (
+            ("day", day),
+            ("week", week),
+            ("month", month),
+            ("all", all_time),
+        )
+        if enabled
+    ]
+    if len(legacy_periods) > 1:
+        raise click.UsageError("Use only one deprecated period flag")
+    if period is not None and legacy_periods:
+        raise click.UsageError("--period cannot be combined with deprecated period flags")
+    if legacy_periods:
+        click.echo(
+            f"--{legacy_periods[0]} is deprecated for {command}; "
+            f"use --period {legacy_periods[0]}.",
+            err=True,
+        )
+    return period or (legacy_periods[0] if legacy_periods else default)
+
+
+@main.command("refresh")
+@click.option(
+    "--otlp-traces",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="OTLP JSON traces file. Defaults to the configured local trace file.",
+)
+@click.option(
+    "--native-sessions/--no-native-sessions",
+    default=True,
+    help="Include discoverable native agent session stores.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print the refresh result as JSON.")
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+    help="SQLite telemetry store.",
+)
+def refresh_snapshot(
+    otlp_traces: Path | None,
+    native_sessions: bool,
+    as_json: bool,
+    db_path: Path,
+) -> None:
+    """Explicitly ingest telemetry and rebuild the prepared local snapshot."""
+    result = _ensure_command_snapshot(
+        db_path,
+        refresh=True,
+        otlp_traces=otlp_traces,
+        include_native_sessions=native_sessions,
+    )
+    payload = result.refresh_result or {}
+    if as_json:
+        _echo_json(payload)
+        return
+    click.echo(
+        "Refreshed local snapshot "
+        f"(sessions={payload.get('sessions', 'unknown')}, db={db_path})"
+    )
 
 
 @main.command("usage")
 @click.option("--session", "session_id", shell_complete=complete_session_id, help="Inspect one session ID.")
 @click.option("--global", "global_scope", is_flag=True, help="Aggregate all matching local sessions.")
 @click.option("--agent", help="Limit global usage to one agent name or ID.")
-@click.option("--day", "period", flag_value="day", help="Use the last 24 hours.")
-@click.option("--week", "period", flag_value="week", default=True, help="Use the last 7 days (default).")
-@click.option("--month", "period", flag_value="month", help="Use the last 30 days.")
-@click.option("--all", "period", flag_value="all", help="Use all available data.")
+@click.option(
+    "--period",
+    type=click.Choice(["day", "week", "month", "all"]),
+    help="Evidence period. Defaults to week.",
+)
+@click.option("--day", is_flag=True, help="Deprecated: use --period day.")
+@click.option("--week", is_flag=True, help="Deprecated: use --period week.")
+@click.option("--month", is_flag=True, help="Deprecated: use --period month.")
+@click.option("--all", "all_time", is_flag=True, help="Deprecated: use --period all.")
 @click.option(
     "--refresh",
     is_flag=True,
@@ -1255,32 +1526,44 @@ def usage(
     session_id: str | None,
     global_scope: bool,
     agent: str | None,
-    period: str,
+    period: str | None,
+    day: bool,
+    week: bool,
+    month: bool,
+    all_time: bool,
     refresh: bool,
     as_json: bool,
     db_path: Path,
 ) -> None:
     """Show exact local usage for the current session or a global period."""
-    from reflect.store.migrate import migrate
-    from reflect.store.rollups import rollup_rebuild_pending
-    from reflect.store.sqlite import connect_sqlite
+    from reflect.store.rollups import UsageRollupReadinessProbe
+    from reflect.store.sqlite import connect_sqlite_read_only
     from reflect.usage import UsageService
 
     if session_id and global_scope:
         raise click.UsageError("--session and --global cannot be used together")
     if agent and not global_scope:
         raise click.UsageError("--agent is only valid with --global")
+    selected_period = _resolve_period_option(
+        period,
+        day=day,
+        week=week,
+        month=month,
+        all_time=all_time,
+        command="usage",
+        default="week",
+    )
 
-    conn = connect_sqlite(db_path)
-    try:
-        migrate(conn)
-        has_sessions = conn.execute("SELECT 1 FROM sessions LIMIT 1").fetchone() is not None
-        runtime_hints = UsageService(conn).runtime_session_hints()
-        reconciled_legacy_data = rollup_rebuild_pending(conn)
-    finally:
-        conn.close()
-    if refresh or not has_sessions or reconciled_legacy_data:
-        _prepare_usage_db(
+    runtime_hints = UsageService.environment_session_hints()
+    _ensure_command_snapshot(
+        db_path,
+        refresh=refresh,
+        readiness_probes=(
+            UsageRollupReadinessProbe(
+                session_ids=(session_id,) if session_id and not global_scope else None
+            ),
+        ),
+        prepare=lambda: _prepare_usage_db_with_progress(
             db_path,
             otlp_traces=_default_otlp_traces(),
             include_native_sessions=True,
@@ -1290,14 +1573,15 @@ def usage(
                 else (session_id,) if session_id
                 else tuple(hint.session_id for hint in runtime_hints)
             ),
-        )
+        ),
+    )
 
-    conn = connect_sqlite(db_path)
+    conn = connect_sqlite_read_only(db_path)
     try:
         report = UsageService(conn).report(
             session_id=session_id,
             global_scope=global_scope,
-            period=period,
+            period=selected_period or "week",
             agent=agent,
         )
     except (LookupError, ValueError) as exc:
@@ -1315,9 +1599,30 @@ def usage(
 @click.option("--demo", is_flag=True, help="Use bundled sample telemetry in an isolated database.")
 @click.option("--json", "as_json", is_flag=True, help="Print the result as JSON.")
 @click.option(
+    "--path",
+    "scope_path",
+    type=click.Path(path_type=Path, exists=True),
+    help="Use prior evidence for the matching repository or workspace.",
+)
+@click.option(
+    "--session",
+    "session_id",
+    help="Use one session and its child-agent sessions. Pass 'current' for the active runtime.",
+)
+@click.option("--global", "global_scope", is_flag=True, help="Use all local sessions in one explicit time range.")
+@click.option(
+    "--period",
+    type=click.Choice(["day", "week", "month", "all"]),
+    help="Global evidence period. Replaces the deprecated individual period flags.",
+)
+@click.option("--day", is_flag=True, help="Deprecated: use --period day.")
+@click.option("--week", is_flag=True, help="Deprecated: use --period week.")
+@click.option("--month", is_flag=True, help="Deprecated: use --period month.")
+@click.option("--all", "all_time", is_flag=True, help="Deprecated: use --period all.")
+@click.option(
     "--refresh/--no-refresh",
-    default=True,
-    help="Refresh local telemetry before reading the improvement ledger.",
+    default=None,
+    help="Refresh local telemetry before reading; the default reads the existing snapshot.",
 )
 @click.option(
     "--db-path",
@@ -1329,71 +1634,130 @@ def improve(
     observation_id: str | None,
     demo: bool,
     as_json: bool,
-    refresh: bool,
+    scope_path: Path | None,
+    session_id: str | None,
+    global_scope: bool,
+    period: str | None,
+    day: bool,
+    week: bool,
+    month: bool,
+    all_time: bool,
+    refresh: bool | None,
     db_path: Path,
 ) -> None:
-    """Show the highest-impact local improvement or inspect OBSERVATION_ID."""
+    """Show scoped actionable improvements or inspect OBSERVATION_ID."""
     import tempfile
 
-    from reflect.preparation import PreparationProgress
+    from reflect.improvements.scope import ImprovementScopeResolver
+
+    selectors = int(scope_path is not None) + int(session_id is not None) + int(global_scope)
+    if selectors > 1:
+        raise click.UsageError("--path, --session, and --global are mutually exclusive")
+    selected_period = _resolve_period_option(
+        period,
+        day=day,
+        week=week,
+        month=month,
+        all_time=all_time,
+        command="improve",
+    )
+    if selected_period and not global_scope:
+        raise click.UsageError("--period requires --global")
+    if global_scope and selected_period is None:
+        raise click.UsageError("--global requires --period day|week|month|all")
 
     temporary: tempfile.TemporaryDirectory[str] | None = None
     if demo:
         temporary = tempfile.TemporaryDirectory(prefix="reflect-improve-demo-")
         db_path = Path(temporary.name) / "reflect.db"
+        refresh = True
     try:
-        if refresh:
-            progress_console = Console(stderr=True)
-            status_context = (
-                progress_console.status(
-                    "[bold orange3]Opening the local telemetry store...[/bold orange3]",
-                    spinner="dots",
-                )
-                if progress_console.is_terminal
-                else nullcontext()
-            )
-            with status_context as status:
-                def update_status(progress: PreparationProgress) -> None:
-                    message = f"[bold orange3]{progress.message}[/bold orange3]"
-                    if status is None:
-                        progress_console.print(message)
-                    else:
-                        status.update(message)
-
-                _prepare_sql_report_db(
-                    db_path,
-                    otlp_traces=_demo_otlp_traces() if demo else _default_otlp_traces(),
-                    include_native_sessions=not demo,
-                    progress=update_status,
-                )
-        conn, service = _open_improvement_service(db_path)
+        _ensure_command_snapshot(
+            db_path,
+            refresh=refresh,
+            otlp_traces=_demo_otlp_traces() if demo else _default_otlp_traces(),
+            include_native_sessions=not demo,
+        )
+        conn, service = _open_improvement_service(db_path, read_only=True)
         try:
-            result = service.improve(observation_id, refresh=False)
+            resolver = ImprovementScopeResolver(conn)
+            explicit_scope = bool(scope_path is not None or session_id is not None or global_scope)
+            if global_scope:
+                scope = resolver.global_period(selected_period or "week")
+            elif session_id:
+                scope = resolver.session(session_id)
+            elif observation_id and not explicit_scope:
+                scope = None
+            elif demo:
+                scope = resolver.global_period("all")
+            else:
+                scope = resolver.path(scope_path)
+            result = service.improve(observation_id, refresh=False, scope=scope)
+            ledger = (
+                service.finding_session_ledger(observation_id, scope=scope, limit=50)
+                if observation_id
+                else None
+            )
             if as_json:
-                _echo_json(result.model_dump(mode="json"))
+                if ledger is not None:
+                    payload = result.model_dump(mode="json")
+                    payload["session_ledger"] = ledger.model_dump(mode="json")
+                    _echo_json(payload)
+                else:
+                    _echo_json(result.model_dump(mode="json"))
                 return
             console = Console(force_terminal=True)
             if observation_id:
-                _render_improvement_detail(console, result)
+                _render_improvement_detail(console, result, ledger=ledger)
                 return
             if not result.observations:
-                console.print("[green]No actionable recurring observations found.[/green]")
+                label = result.resolved_scope.label if result.resolved_scope else "the selected scope"
+                console.print(
+                    f"[green]No actionable recurring observations found for {label}.[/green]"
+                )
+                if result.resolved_scope and not result.resolved_scope.matched:
+                    console.print(
+                        "[dim]Reflect did not fall back to global data. "
+                        "Use --global --period day|week|month|all.[/dim]"
+                    )
+                if not result.attribution_complete:
+                    console.print(
+                        "[yellow]Some legacy findings still have capped source-session "
+                        "attribution. Run with --refresh to rebuild supported detectors.[/yellow]"
+                    )
                 return
-            table = Table(title="Observed Improvements", border_style="orange3")
+            scope_label = result.resolved_scope.label if result.resolved_scope else "local"
+            table = Table(
+                title=f"Observed Improvements · {scope_label}",
+                border_style="orange3",
+            )
             table.add_column("ID", style="cyan", no_wrap=True)
             table.add_column("Finding")
             table.add_column("Impact", justify="right")
             table.add_column("Sessions", justify="right")
+            table.add_column("Latest")
             table.add_column("State")
             for observation in result.observations[:10]:
+                affected = (
+                    observation.scope_affected_session_count
+                    if observation.scope_affected_session_count is not None
+                    else observation.affected_session_count
+                )
+                eligible = observation.eligible_session_count
                 table.add_row(
                     observation.id,
                     observation.title,
                     f"{observation.impact_score:.0f}",
-                    str(observation.affected_session_count),
+                    f"{affected}/{eligible}" if eligible is not None else str(affected),
+                    (observation.latest_source_at or observation.last_seen_at)[:10],
                     observation.status.value.replace("_", " "),
                 )
             console.print(table)
+            if not result.attribution_complete:
+                console.print(
+                    "[yellow]Some legacy findings still have capped source-session "
+                    "attribution. Run with --refresh to rebuild supported detectors.[/yellow]"
+                )
             console.print(
                 f"[dim]{result.pending_workflows} pending workflow(s). "
                 "Inspect one with: reflect improve <ID>[/dim]"
@@ -1405,15 +1769,25 @@ def improve(
             temporary.cleanup()
 
 
-def _render_improvement_detail(console: Console, observation) -> None:
+def _render_improvement_detail(console: Console, observation, *, ledger=None) -> None:
     body = [
         f"[bold]{observation.title}[/bold]",
         observation.summary,
         "",
         f"Impact: {observation.impact_score:.0f}/100  •  Severity: {observation.severity.value}",
-        f"Confidence: {observation.confidence:.0%}  •  Sessions: {observation.affected_session_count}",
+        (
+            f"Confidence: {observation.confidence:.0%}  •  Sessions: "
+            f"{observation.scope_affected_session_count if observation.scope_affected_session_count is not None else observation.affected_session_count}"
+        ),
         f"Rule: {observation.rule_id} v{observation.rule_version}",
     ]
+    if observation.resolved_scope:
+        body.extend(
+            [
+                f"Scope: {observation.resolved_scope.label}",
+                f"Latest source evidence: {observation.latest_source_at or 'unknown'}",
+            ]
+        )
     if observation.candidate_id:
         body.extend(
             [
@@ -1430,6 +1804,27 @@ def _render_improvement_detail(console: Console, observation) -> None:
         for item in observation.evidence[:20]:
             evidence.add_row(f"{item.entity_type}:{item.entity_id}", item.summary_redacted)
         console.print(evidence)
+    if ledger is not None and ledger.source_sessions:
+        sessions = Table(title="Source Sessions", border_style="dim")
+        sessions.add_column("Session", style="cyan")
+        sessions.add_column("Agent")
+        sessions.add_column("Workspace")
+        sessions.add_column("Started")
+        sessions.add_column("Evidence", justify="right")
+        sessions.add_column("Why")
+        for item in ledger.source_sessions:
+            sessions.add_row(
+                item.session_id,
+                item.agent or "unknown",
+                item.workspace or "unknown",
+                item.started_at[:19],
+                str(item.evidence_count),
+                item.evidence_summaries[0] if item.evidence_summaries else "",
+            )
+        console.print(sessions)
+        console.print(
+            "[dim]Inspect one run with: reflect usage --session <SESSION_ID> --json[/dim]"
+        )
 
 
 @main.command("ask")
@@ -1438,24 +1833,32 @@ def _render_improvement_detail(console: Console, observation) -> None:
 @click.option("--task-file", type=click.Path(path_type=Path, exists=True, dir_okay=False))
 @click.option("--path", "context_path", type=click.Path(path_type=Path, exists=True))
 @click.option(
+    "--refresh/--no-refresh",
+    default=None,
+    help="Refresh telemetry first; the default reads an existing snapshot.",
+)
+@click.option(
     "--db-path",
     type=click.Path(path_type=Path),
     default=REFLECT_HOME / "state" / "reflect.db",
     help="SQLite improvement ledger.",
 )
-def ask(question: str, as_json: bool, task_file: Path | None, context_path: Path | None, db_path: Path) -> None:
+def ask(
+    question: str,
+    as_json: bool,
+    task_file: Path | None,
+    context_path: Path | None,
+    refresh: bool | None,
+    db_path: Path,
+) -> None:
     """Answer QUESTION from reviewed workflows, linked evidence, and scoped memory."""
-    _prepare_sql_report_db(
-        db_path,
-        otlp_traces=_default_otlp_traces(),
-        include_native_sessions=True,
-    )
+    _ensure_command_snapshot(db_path, refresh=refresh)
     from reflect.context import ReflectContextService
-    from reflect.store.sqlite import connect_sqlite
+    from reflect.store.sqlite import connect_sqlite_read_only
 
-    conn = connect_sqlite(db_path)
+    conn = connect_sqlite_read_only(db_path)
     try:
-        service = ReflectContextService(conn)
+        service = ReflectContextService(conn, initialize_schema=False)
         answer = service.ask(question, task_file=task_file, path=context_path)
     finally:
         conn.close()
@@ -1534,11 +1937,31 @@ def _print_workflow_table(candidates, *, title: str = "Workflows") -> None:
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--type", "behavior_type", type=click.Choice(_WORKFLOW_BEHAVIOR_TYPES))
 @click.option("--status", type=click.Choice(_WORKFLOW_STATUSES))
+@click.option(
+    "--refresh/--no-refresh",
+    default=None,
+    help="Refresh telemetry first; the default reads an existing snapshot.",
+)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
-def workflows_list(as_json: bool, behavior_type: str | None, status: str | None, db_path: Path) -> None:
+def workflows_list(
+    as_json: bool,
+    behavior_type: str | None,
+    status: str | None,
+    refresh: bool | None,
+    db_path: Path,
+) -> None:
     """List pending, active, and rolled-back workflows."""
-    _prepare_sql_report_db(db_path, otlp_traces=_default_otlp_traces(), include_native_sessions=True)
-    conn, service = _open_improvement_service(db_path)
+    if refresh is True:
+        _ensure_command_snapshot(db_path, refresh=True)
+    else:
+        _require_snapshot_schema(
+            db_path,
+            refresh_hint=(
+                f"Run `reflect refresh --db-path {db_path}` to prepare telemetry "
+                "or `reflect workflows add SKILL.md` to create a manual workflow."
+            ),
+        )
+    conn, service = _open_improvement_service(db_path, read_only=True)
     try:
         candidates = service.workflows.list(
             behavior_types={behavior_type} if behavior_type else None,
@@ -1650,7 +2073,13 @@ def workflows_add(
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def workflows_show(candidate_id: str, as_json: bool, db_path: Path) -> None:
     """Show a workflow proposal and its review state."""
-    conn, service = _open_improvement_service(db_path)
+    _require_snapshot_schema(
+        db_path,
+        refresh_hint=(
+            f"Run `reflect refresh --db-path {db_path}` to prepare the workflow ledger."
+        ),
+    )
+    conn, service = _open_improvement_service(db_path, read_only=True)
     try:
         candidate = service.workflows.show(candidate_id)
         preview = service.workflows.preview(candidate_id, project_root=Path.cwd())
@@ -1726,6 +2155,11 @@ def workflows_rollback(candidate_id: str, db_path: Path) -> None:
     type=click.Choice(["detected", "acknowledged", "promoted", "dismissed", "resolved"]),
 )
 @click.option(
+    "--refresh/--no-refresh",
+    default=None,
+    help="Refresh loop detection first; the default reads the existing loop registry.",
+)
+@click.option(
     "--db-path",
     type=click.Path(path_type=Path),
     default=REFLECT_HOME / "state" / "reflect.db",
@@ -1736,6 +2170,7 @@ def loops(
     as_json: bool,
     kind: str | None,
     status: str | None,
+    refresh: bool | None,
     db_path: Path,
 ) -> None:
     """Inspect agent-native continuations and observed behavioral loops."""
@@ -1743,10 +2178,9 @@ def loops(
         return
     from reflect.improvements.models import LoopKind, LoopStatus
 
-    _prepare_improvement_store_if_empty(db_path)
-    conn, improvement_service = _open_improvement_service(db_path)
+    preparation = _ensure_command_snapshot(db_path, refresh=refresh)
+    conn, improvement_service = _open_improvement_service(db_path, read_only=True)
     try:
-        refresh = improvement_service.loops.refresh()
         records = improvement_service.loops.list(
             kind=LoopKind(kind) if kind else None,
             status=LoopStatus(status) if status else None,
@@ -1757,12 +2191,16 @@ def loops(
     if as_json:
         _echo_json(
             {
-                "refresh": refresh,
+                "refresh": {"prepared": 1} if preparation.refreshed else None,
+                "prepared": preparation.refreshed,
                 "loops": [item.model_dump(mode="json") for item in records],
             }
         )
         return
-    _print_loops(records, refresh=refresh)
+    _print_loops(
+        records,
+        refresh={"prepared": 1} if preparation.refreshed else None,
+    )
 
 
 def _print_loops(records, *, refresh: dict[str, int] | None = None) -> None:
@@ -1786,6 +2224,9 @@ def _print_loops(records, *, refresh: dict[str, int] | None = None) -> None:
         )
     Console(force_terminal=True).print(table)
     if refresh:
+        if refresh.get("prepared"):
+            click.echo("Refreshed telemetry and the loop registry.")
+            return
         click.echo(
             f"Detected {refresh.get('agent_native', 0)} agent-native, "
             f"{refresh.get('stalled', 0)} stalled, and "
@@ -1793,24 +2234,9 @@ def _print_loops(records, *, refresh: dict[str, int] | None = None) -> None:
         )
 
 
-def _prepare_improvement_store_if_empty(db_path: Path) -> None:
-    """Populate canonical session data only when the local ledger is empty."""
-    from reflect.store.migrate import migrate
-    from reflect.store.sqlite import connect_sqlite
-
-    conn = connect_sqlite(db_path)
-    try:
-        migrate(conn)
-        has_sessions = bool(conn.execute("SELECT 1 FROM sessions LIMIT 1").fetchone())
-    finally:
-        conn.close()
-    if has_sessions:
-        return
-    _prepare_sql_report_db(
-        db_path,
-        otlp_traces=_default_otlp_traces(),
-        include_native_sessions=True,
-    )
+def _require_improvement_snapshot(db_path: Path) -> None:
+    """Require an existing prepared snapshot without mutating it."""
+    _ensure_command_snapshot(db_path, refresh=False)
 
 
 @loops.command("show")
@@ -1823,10 +2249,9 @@ def _prepare_improvement_store_if_empty(db_path: Path) -> None:
 )
 def loops_show(loop_id: str, as_json: bool, db_path: Path) -> None:
     """Show one loop's classification and bounded source-session evidence."""
-    _prepare_improvement_store_if_empty(db_path)
-    conn, improvement_service = _open_improvement_service(db_path)
+    _require_improvement_snapshot(db_path)
+    conn, improvement_service = _open_improvement_service(db_path, read_only=True)
     try:
-        improvement_service.loops.refresh()
         detail = improvement_service.loops.show(loop_id)
     except KeyError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -1880,10 +2305,9 @@ def loops_build(loop_id: str, agent: str | None, as_json: bool, db_path: Path) -
     import json as _json
     import subprocess
 
-    _prepare_improvement_store_if_empty(db_path)
-    conn, improvement_service = _open_improvement_service(db_path)
+    _require_improvement_snapshot(db_path)
+    conn, improvement_service = _open_improvement_service(db_path, read_only=True)
     try:
-        improvement_service.loops.refresh()
         detail = improvement_service.loops.show(loop_id, limit=50)
         evidence_bundle = improvement_service.loops.evidence_bundle(loop_id)
     except KeyError as exc:
@@ -1967,10 +2391,27 @@ def loops_build(loop_id: str, agent: str | None, as_json: bool, db_path: Path) -
     required=True,
 )
 @click.option("--reason", default=None, help="Optional concise reason; stored only in the local database.")
+@click.option(
+    "--refresh/--no-refresh",
+    default=False,
+    help="Explicitly ingest telemetry before recording; never refreshes by default.",
+)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
-def feedback(session_id: str, outcome: str, reason: str | None, db_path: Path) -> None:
+def feedback(
+    session_id: str,
+    outcome: str,
+    reason: str | None,
+    refresh: bool,
+    db_path: Path,
+) -> None:
     """Record an explicit outcome for SESSION_ID."""
-    _prepare_sql_report_db(db_path, otlp_traces=_default_otlp_traces(), include_native_sessions=True)
+    if refresh:
+        _ensure_command_snapshot(db_path, refresh=True)
+    elif not db_path.exists() or db_path.stat().st_size == 0:
+        raise click.ClickException(
+            f"Session {session_id} is not available in the local snapshot. "
+            "Run this command with --refresh after telemetry ingestion."
+        )
     conn, service = _open_improvement_service(db_path)
     try:
         feedback_id = service.repository.record_feedback(
@@ -1979,7 +2420,9 @@ def feedback(session_id: str, outcome: str, reason: str | None, db_path: Path) -
             reason_redacted=reason,
         )
     except KeyError as exc:
-        raise click.ClickException(str(exc)) from exc
+        raise click.ClickException(
+            f"{exc}. Re-run with --refresh if this session has not been ingested yet."
+        ) from exc
     finally:
         conn.close()
     click.echo(f"Recorded {outcome.lower()} feedback for {session_id} ({feedback_id})")
@@ -2136,6 +2579,7 @@ def _run_browser_report(
     output: Path | None,
     db_path: Path,
     refresh: bool,
+    open_browser: bool = True,
 ) -> None:
     from collections import Counter
 
@@ -2184,13 +2628,16 @@ def _run_browser_report(
     else:
         from reflect.preparation import BackgroundPreparationWorker
 
-        preparation_worker = BackgroundPreparationWorker(
-            lambda: _prepare_sql_report_db(
+        def prepare_in_background():
+            assert preparation_worker is not None
+            return _prepare_sql_report_db(
                 db_path,
                 otlp_traces=otlp_traces,
                 include_native_sessions=include_native_sessions,
+                progress=preparation_worker.report_progress,
             )
-        )
+
+        preparation_worker = BackgroundPreparationWorker(prepare_in_background)
         click.echo("Serving the current snapshot; refreshing telemetry in the background.")
 
     stats = TelemetryStats(
@@ -2224,6 +2671,7 @@ def _run_browser_report(
         db_path=db_path,
         sql_only=False,
         preparation_worker=preparation_worker,
+        open_browser=open_browser,
     )
 
 
@@ -2243,7 +2691,7 @@ _SKILL_AGENT_SPECS: list[tuple[str, list[str]]] = [
     ("qwen", ["--print"]),
 ]
 _SKILL_AGENT_NAMES = ", ".join(name for name, _ in _SKILL_AGENT_SPECS)
-_AGENT_ERROR_LIMIT = 2000
+_AGENT_ERROR_LIMIT = 1500
 
 
 def _format_agent_failure(stderr: str, stdout: str = "") -> str:
@@ -2601,7 +3049,7 @@ def _validate_skill_name(name: object) -> str:
     "scan_paths",
     type=click.Path(path_type=Path),
     multiple=True,
-    help="Additional skill root or SKILL.md to reconcile into the registry.",
+    help="Deprecated compatibility alias for `skills sync --path`.",
 )
 @click.option(
     "--status",
@@ -2624,7 +3072,7 @@ def skills(
     scan_paths: tuple[Path, ...],
     lifecycle: str | None,
 ) -> None:
-    """Sync and inspect the durable Skills v2 registry."""
+    """Inspect the durable Skills v2 registry without reconciling sources."""
     if ctx.invoked_subcommand:
         return
     legacy_discovery = bool(
@@ -2650,14 +3098,34 @@ def skills(
             agent=agent,
             yes=yes,
             db_path=db_path,
+            refresh=None,
+        )
+        return
+    if scan_paths:
+        click.echo(
+            "--path on `reflect skills` is deprecated; use "
+            "`reflect skills sync --path ...`.",
+            err=True,
+        )
+        ctx.invoke(
+            skills_sync,
+            scan_paths=scan_paths,
+            lifecycle=lifecycle,
+            as_json=as_json,
+            db_path=db_path,
         )
         return
     from reflect.improvements.models import SkillLifecycleState
 
-    conn, improvement_service = _open_improvement_service(db_path)
+    _require_snapshot_schema(
+        db_path,
+        refresh_hint=(
+            f"Run `reflect skills sync --db-path {db_path}` to create or "
+            "reconcile the skill registry."
+        ),
+    )
+    conn, improvement_service = _open_improvement_service(db_path, read_only=True)
     try:
-        roots = list(scan_paths) or _default_skill_scan_paths()
-        refresh = improvement_service.skills.refresh(scan_paths=roots)
         records = improvement_service.skills.list(
             lifecycle=SkillLifecycleState(lifecycle) if lifecycle else None,
             limit=500,
@@ -2667,12 +3135,62 @@ def skills(
     if as_json:
         _echo_json(
             {
-                "refresh": refresh,
+                "refresh": None,
                 "skills": [item.model_dump(mode="json") for item in records],
             }
         )
         return
-    _print_skill_registry(records, refresh=refresh)
+    _print_skill_registry(records)
+
+
+@skills.command("sync")
+@click.option(
+    "--path",
+    "scan_paths",
+    type=click.Path(path_type=Path),
+    multiple=True,
+    help="Additional skill root or SKILL.md to reconcile into the registry.",
+)
+@click.option(
+    "--status",
+    "lifecycle",
+    type=click.Choice(["pending", "active", "stale", "retired", "rejected"]),
+    help="Filter the returned registry by lifecycle state.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print the sync result as JSON.")
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+)
+def skills_sync(
+    scan_paths: tuple[Path, ...],
+    lifecycle: str | None,
+    as_json: bool,
+    db_path: Path,
+) -> None:
+    """Reconcile skill files, workflow drafts, usage, and measurements."""
+    from reflect.improvements.models import SkillLifecycleState
+
+    conn, improvement_service = _open_improvement_service(db_path)
+    try:
+        roots = list(scan_paths) or _default_skill_scan_paths()
+        refresh_result = improvement_service.skills.refresh(scan_paths=roots)
+        records = improvement_service.skills.list(
+            lifecycle=SkillLifecycleState(lifecycle) if lifecycle else None,
+            limit=500,
+        )
+    finally:
+        conn.close()
+    if as_json:
+        _echo_json(
+            {
+                "refresh": refresh_result,
+                "skills": [item.model_dump(mode="json") for item in records],
+            }
+        )
+        return
+    _print_skill_registry(records, refresh=refresh_result)
 
 
 def _discover_skills(
@@ -2685,6 +3203,7 @@ def _discover_skills(
     agent: str | None,
     yes: bool,
     db_path: Path,
+    refresh: bool | None,
 ) -> None:
     """Run bounded agent-assisted discovery and stage versioned skill drafts."""
     import json as _json
@@ -2719,7 +3238,7 @@ def _discover_skills(
     try:
         from sqlite3 import Error as _SQLiteError
 
-        from reflect.store.sqlite import connect_sqlite
+        from reflect.store.sqlite import connect_sqlite_read_only
 
         include_native_sessions = False
         sql_otlp_traces = otlp_traces
@@ -2738,12 +3257,20 @@ def _discover_skills(
                 and sql_otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
             )
 
-        _prepare_sql_report_db(
-            db_path,
-            otlp_traces=sql_otlp_traces,
-            include_native_sessions=include_native_sessions,
-        )
-        conn = connect_sqlite(db_path)
+        snapshot = _improvement_snapshot_status(db_path)
+        if demo or refresh is True:
+            _ensure_command_snapshot(
+                db_path,
+                refresh=True,
+                otlp_traces=sql_otlp_traces,
+                include_native_sessions=include_native_sessions,
+            )
+        elif not snapshot.ready:
+            raise _SQLiteError(
+                "prepared snapshot unavailable; run `reflect skills discover --refresh` "
+                "to include SQL graph evidence"
+            )
+        conn = connect_sqlite_read_only(db_path)
         try:
             sql_bundle = _build_skill_evidence_bundle_from_sql(
                 conn,
@@ -2890,10 +3417,21 @@ def _print_skill_registry(records, *, refresh: dict[str, int] | None = None) -> 
 @click.option("--otlp-traces", type=click.Path(path_type=Path), default=None)
 @click.option("--sessions-dir", type=click.Path(path_type=Path), default=None)
 @click.option("--spans-dir", type=click.Path(path_type=Path), default=None)
-@click.option("--day", "time_range", flag_value="day")
-@click.option("--week", "time_range", flag_value="week", default=True)
-@click.option("--month", "time_range", flag_value="month")
-@click.option("--all", "time_range", flag_value="all")
+@click.option(
+    "--period",
+    type=click.Choice(["day", "week", "month", "all"]),
+    default=None,
+    help="Evidence period. Replaces the deprecated individual period flags.",
+)
+@click.option("--day", is_flag=True, help="Deprecated: use --period day.")
+@click.option("--week", is_flag=True, help="Deprecated: use --period week.")
+@click.option("--month", is_flag=True, help="Deprecated: use --period month.")
+@click.option("--all", "all_time", is_flag=True, help="Deprecated: use --period all.")
+@click.option(
+    "--refresh/--no-refresh",
+    default=None,
+    help="Refresh SQLite evidence first; the default reuses an existing snapshot.",
+)
 @click.option("--demo", is_flag=True)
 @click.option("--agent", default=None, shell_complete=_complete_skill_agent_cli)
 @click.option("--yes", "yes", is_flag=True)
@@ -2906,22 +3444,37 @@ def skills_discover(
     otlp_traces: Path | None,
     sessions_dir: Path | None,
     spans_dir: Path | None,
-    time_range: str,
+    period: str | None,
+    day: bool,
+    week: bool,
+    month: bool,
+    all_time: bool,
+    refresh: bool | None,
     demo: bool,
     agent: str | None,
     yes: bool,
     db_path: Path,
 ) -> None:
     """Use a coding agent to discover evidence-backed pending skill drafts."""
+    time_range = _resolve_period_option(
+        period,
+        day=day,
+        week=week,
+        month=month,
+        all_time=all_time,
+        command="skills discovery",
+        default="week",
+    )
     _discover_skills(
         otlp_traces=otlp_traces,
         sessions_dir=sessions_dir,
         spans_dir=spans_dir,
-        time_range=time_range,
+        time_range=time_range or "week",
         demo=demo,
         agent=agent,
         yes=yes,
         db_path=db_path,
+        refresh=refresh,
     )
 
 
@@ -2935,9 +3488,12 @@ def skills_discover(
 )
 def skills_show(skill_id: str, as_json: bool, db_path: Path) -> None:
     """Show a skill's versions, evidence, installations, and usage summary."""
-    conn, improvement_service = _open_improvement_service(db_path)
+    _require_snapshot_schema(
+        db_path,
+        refresh_hint=f"Run `reflect skills sync --db-path {db_path}` first.",
+    )
+    conn, improvement_service = _open_improvement_service(db_path, read_only=True)
     try:
-        improvement_service.skills.refresh()
         detail = improvement_service.skills.show(skill_id)
     except KeyError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -2976,7 +3532,6 @@ def skills_apply(skill_id: str, project_root: Path, db_path: Path) -> None:
     """Apply a reviewed pending skill version to a Git repository."""
     conn, improvement_service = _open_improvement_service(db_path)
     try:
-        improvement_service.skills.refresh()
         candidate_id = improvement_service.skills.workflow_candidate_for(skill_id)
         result = improvement_service.workflows.apply(candidate_id, project_root=project_root)
         improvement_service.skills.sync_workflow_candidates([candidate_id])
@@ -3000,7 +3555,6 @@ def skills_rollback(skill_id: str, db_path: Path) -> None:
     """Roll back the active installation owned by a Reflect skill version."""
     conn, improvement_service = _open_improvement_service(db_path)
     try:
-        improvement_service.skills.refresh()
         candidate_id = improvement_service.skills.workflow_candidate_for(skill_id)
         result = improvement_service.workflows.rollback(candidate_id)
         improvement_service.skills.sync_workflow_candidates([candidate_id])
@@ -3318,6 +3872,14 @@ def _resolve_setup_agent_selection(
     show_default=True,
     help="Install autocomplete during setup; use --no-shell-completion to opt out.",
 )
+@click.option(
+    "--autostart/--no-autostart",
+    default=None,
+    help=(
+        "Enable persistent OTLP gateway and report server startup on supported systems. "
+        "Defaults to enabled on macOS."
+    ),
+)
 def setup(
     capture_text: bool | None,
     text_capture_mode: str | None,
@@ -3327,6 +3889,7 @@ def setup(
     all_agents: bool,
     local_agent_names: tuple[str, ...],
     shell_completion: bool | None,
+    autostart: bool | None,
 ) -> None:
     """Install opentelemetry-hooks, configure local data export, and suggest agent enablement."""
     from rich.console import Console
@@ -3395,6 +3958,8 @@ def setup(
             else:
                 state = "installed" if result.changed else "already current"
                 console.print(f"[green]✓[/] Shell autocomplete {state}: {result.script_path}")
+    if autostart is not False:
+        _enable_autostart(console, required=autostart is True)
 
 
 @main.group("doctor", invoke_without_command=True)
@@ -3413,7 +3978,8 @@ def _run_doctor() -> None:
     from rich.table import Table
 
     console = Console(force_terminal=True)
-    otel_hook = shutil.which("otel-hook")
+    hook_runtime = HookRuntime.discover()
+    otel_hook = hook_runtime.executable if hook_runtime else None
     hook_config = HOOK_HOME / "otel_config.json"
     spans_dir = _default_spans_dir()
     sessions_dir = _default_sessions_dir()
@@ -3725,15 +4291,19 @@ def doctor_cost(db_path: Path, alias_path: Path | None) -> None:
         console.print(f"[yellow]Unresolved models:[/] {unresolved}")
 
 
-def _pipx_upgrade_package(pipx: str, package: str) -> None:
-    subprocess.check_call([pipx, "upgrade", package])
+def _pipx_upgrade_package(pipx: str, package: str, *, force: bool = False) -> None:
+    command = [pipx, "upgrade"]
+    if force:
+        command.append("--force")
+    command.append(package)
+    subprocess.check_call(command)
 
 
 @main.command()
 @click.option(
     "--apply",
     is_flag=True,
-    help="Attempt package upgrades via pipx when a newer reflect release is available.",
+    help="Upgrade Reflect and migrate its bundled otel-hook command via pipx.",
 )
 def update(apply: bool) -> None:
     """Check reflect release drift and show concrete repair steps."""
@@ -3751,28 +4321,159 @@ def update(apply: bool) -> None:
         pipx = shutil.which("pipx")
         if not pipx:
             console.print("[red]pipx is not installed or not on PATH.[/]")
-            console.print("Install pipx, then run [bold]pipx upgrade o11y-reflect[/] and [bold]pipx upgrade opentelemetry-hooks[/].")
+            console.print("Install pipx, then run [bold]pipx upgrade o11y-reflect[/].")
             raise SystemExit(1)
         try:
-            for package in ("o11y-reflect", "opentelemetry-hooks"):
-                console.print(f"Upgrading [bold]{package}[/]...")
-                _pipx_upgrade_package(pipx, package)
-            console.print("[green]Package upgrades finished.[/] Re-run [bold]reflect doctor[/] to refresh the cached status.")
-        except subprocess.CalledProcessError as exc:
-            console.print(f"[red]pipx upgrade failed:[/] {exc}")
-            raise SystemExit(exc.returncode or 1) from exc
+            console.print(
+                "Upgrading [bold]o11y-reflect[/] "
+                "(including bundled [bold]opentelemetry-hooks[/])..."
+            )
+            _pipx_upgrade_package(pipx, "o11y-reflect")
+            migration = HookPipxMigrator(pipx).migrate()
+            if migration.action == "migrated":
+                version = f" {migration.standalone_version}" if migration.standalone_version else ""
+                console.print(
+                    "[green]✓[/] Removed the standalone "
+                    f"[bold]opentelemetry-hooks{version}[/] pipx environment."
+                )
+            elif migration.action == "repaired":
+                console.print(
+                    "[green]✓[/] Restored the public [bold]otel-hook[/] command from Reflect."
+                )
+            else:
+                console.print(
+                    "[green]✓[/] The public [bold]otel-hook[/] command is already owned by Reflect."
+                )
+            console.print(
+                "[green]Package upgrade and hook validation finished.[/] "
+                "Re-run [bold]reflect doctor[/] to refresh the cached status."
+            )
+        except (subprocess.CalledProcessError, HookMigrationError) as exc:
+            console.print(f"[red]pipx upgrade or hook migration failed:[/] {exc}")
+            raise SystemExit(getattr(exc, "returncode", 1) or 1) from exc
 
         if advisor["local_issues"]:
             console.print("Local drift remains. Run [bold]reflect setup[/] to refresh global hooks and skill copies.")
     else:
         if release["update_available"]:
-            console.print("Use [bold]reflect update --apply[/] to upgrade reflect and opentelemetry-hooks.")
+            console.print(
+                "Use [bold]reflect update --apply[/] to upgrade Reflect and its bundled hooks."
+            )
         else:
             console.print("[green]No newer reflect release is available right now.[/]")
-            console.print("Use [bold]reflect update --apply[/] to force-check pipx upgrades for reflect and opentelemetry-hooks.")
+            console.print(
+                "Use [bold]reflect update --apply[/] to force-check Reflect, its bundled hooks, "
+                "and the otel-hook command handoff."
+            )
         if advisor["local_issues"]:
             console.print("For local hook or skill drift, run [bold]reflect setup[/] to refresh global wiring.")
     console.print()
+
+
+def _get_autostart_manager():
+    from reflect.autostart import create_autostart_manager
+
+    return create_autostart_manager(REFLECT_HOME)
+
+
+def _enable_autostart(console, *, required: bool) -> bool:
+    manager = _get_autostart_manager()
+    if manager is None:
+        if required:
+            raise click.ClickException(
+                "Persistent service startup is not supported on this operating system."
+            )
+        return False
+    try:
+        statuses = manager.enable()
+    except (OSError, RuntimeError) as exc:
+        if required:
+            raise click.ClickException(str(exc)) from exc
+        console.print(
+            "[yellow]Telemetry setup completed, but automatic service startup could not "
+            f"be enabled: {exc}[/yellow]"
+        )
+        console.print("  Run [bold]reflect autostart enable[/] after fixing the service error.")
+        return False
+    enabled = sum(status.enabled for status in statuses)
+    console.print(
+        f"[green]✓[/] Automatic startup enabled for {enabled} Reflect services "
+        f"via {manager.platform_name}"
+    )
+    return True
+
+
+def _require_autostart_manager():
+    manager = _get_autostart_manager()
+    if manager is None:
+        raise click.ClickException(
+            "Persistent service startup is not supported on this operating system."
+        )
+    return manager
+
+
+def _render_autostart_status(console, statuses) -> None:
+    for status in statuses:
+        if status.enabled and status.loaded:
+            state = "[green]enabled and loaded[/]"
+        elif status.enabled:
+            state = "[yellow]enabled for next login[/]"
+        elif status.loaded:
+            state = "[yellow]loaded without an installed definition[/]"
+        else:
+            state = "[red]disabled[/]"
+        console.print(f"  {status.name:<14} {state}")
+        console.print(f"    {status.definition_path}")
+
+
+@main.group("autostart", invoke_without_command=True)
+@click.pass_context
+def autostart(ctx: click.Context) -> None:
+    """Start the OTLP gateway and report server automatically after login."""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(autostart_status)
+
+
+@autostart.command("enable")
+def autostart_enable() -> None:
+    """Install and load persistent user services."""
+    from rich.console import Console
+
+    manager = _require_autostart_manager()
+    try:
+        statuses = manager.enable()
+    except (OSError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    console = Console(force_terminal=True)
+    console.print(f"[green]✓[/] Reflect auto-start enabled via {manager.platform_name}")
+    console.print("  Services start after user login and remain local to this account.")
+    _render_autostart_status(console, statuses)
+
+
+@autostart.command("disable")
+def autostart_disable() -> None:
+    """Unload and remove persistent user services."""
+    from rich.console import Console
+
+    manager = _require_autostart_manager()
+    try:
+        statuses = manager.disable()
+    except (OSError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    console = Console(force_terminal=True)
+    console.print("[green]✓[/] Reflect auto-start disabled")
+    _render_autostart_status(console, statuses)
+
+
+@autostart.command("status")
+def autostart_status() -> None:
+    """Show persistent service registration state."""
+    from rich.console import Console
+
+    manager = _require_autostart_manager()
+    console = Console(force_terminal=True)
+    console.print(f"Reflect auto-start ({manager.platform_name})")
+    _render_autostart_status(console, manager.status())
 
 
 @main.group(invoke_without_command=True)
@@ -3966,14 +4667,25 @@ def memory() -> None:
     """Evidence-backed local and provider memory commands."""
 
 
-def _open_memory_service(db_path: Path):
+def _open_memory_service(
+    db_path: Path,
+    *,
+    read_only: bool = False,
+) -> tuple[sqlite3.Connection, MemoryService]:
     from reflect.memory import MemoryService
     from reflect.store.migrate import migrate
-    from reflect.store.sqlite import connect_sqlite
+    from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only
 
-    conn = connect_sqlite(db_path)
-    migrate(conn)
-    return conn, MemoryService(conn)
+    if read_only:
+        _require_snapshot_schema(
+            db_path,
+            refresh_hint=f"Run `reflect memory sync --db-path {db_path}` first.",
+        )
+        conn = connect_sqlite_read_only(db_path)
+    else:
+        conn = connect_sqlite(db_path)
+        migrate(conn)
+    return conn, MemoryService(conn, maintain_search_index=not read_only)
 
 
 def _memory_filters(
@@ -4010,7 +4722,7 @@ def _echo_json(payload: object) -> None:
 @click.option("--json", "as_json", is_flag=True, help="Print provider health as JSON.")
 def memory_providers(db_path: Path, as_json: bool) -> None:
     """List memory providers and health."""
-    conn, service = _open_memory_service(db_path)
+    conn, service = _open_memory_service(db_path, read_only=True)
     try:
         health = service.provider_health()
     finally:
@@ -4082,7 +4794,7 @@ def memory_list(
     as_json: bool,
 ) -> None:
     """List memories for PATH. PATH defaults to the current directory."""
-    conn, service = _open_memory_service(db_path)
+    conn, service = _open_memory_service(db_path, read_only=True)
     try:
         rows = service.list_memories(
             path=path or Path.cwd(),
@@ -4140,7 +4852,7 @@ def memory_search(
     as_json: bool,
 ) -> None:
     """Search memories, optionally scoped to PATH."""
-    conn, service = _open_memory_service(db_path)
+    conn, service = _open_memory_service(db_path, read_only=True)
     try:
         rows = service.search(
             query,
@@ -4174,7 +4886,7 @@ def memory_search(
 @click.option("--json", "as_json", is_flag=True, help="Print memory as JSON.")
 def memory_inspect(memory_id: str, db_path: Path, as_json: bool) -> None:
     """Inspect one memory by ID."""
-    conn, service = _open_memory_service(db_path)
+    conn, service = _open_memory_service(db_path, read_only=True)
     try:
         row = service.inspect(memory_id)
     finally:
@@ -4363,6 +5075,11 @@ def _prepare_sql_report_db(
     )
     conn = connect_sqlite(db_path)
     try:
+        report_preparation_progress(
+            progress,
+            PreparationStage.MIGRATING_SCHEMA,
+            "Checking database migrations...",
+        )
         applied = migrate(conn)
         ingest_result = {"inserted": 0, "skipped": 0}
         ingest_sources: dict[str, dict[str, object]] = {}
@@ -4579,6 +5296,7 @@ def _prepare_sql_report_db(
     finally:
         conn.close()
     result = {
+        "sessions": len(all_session_ids),
         "applied_migrations": applied,
         "ingest": ingest_result,
         "ingest_sources": ingest_sources,
@@ -5043,6 +5761,189 @@ def db_doctor(db_path: Path) -> None:
 
     click.echo("SQLite store health: needs attention")
     raise click.ClickException("SQLite store health checks failed")
+
+
+@db.command("prune-sessions")
+@click.option(
+    "--older-than-days",
+    type=click.IntRange(min=1),
+    default=60,
+    show_default=True,
+    help="Prune only invalid-start sessions with no trusted activity for this many days.",
+)
+@click.option("--apply", "apply_changes", is_flag=True, help="Apply the previewed deletion.")
+@click.option(
+    "--backup/--no-backup",
+    default=True,
+    help="Create a timestamped database backup before applying.",
+)
+@click.option(
+    "--vacuum",
+    is_flag=True,
+    help="Reclaim disk space after applying. Never runs during a dry run.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print the result as JSON.")
+@click.option(
+    "--db-path",
+    type=click.Path(path_type=Path),
+    default=REFLECT_HOME / "state" / "reflect.db",
+)
+def db_prune_sessions(
+    older_than_days: int,
+    apply_changes: bool,
+    backup: bool,
+    vacuum: bool,
+    as_json: bool,
+    db_path: Path,
+) -> None:
+    """Preview or prune obsolete invalid-start sessions."""
+    from dataclasses import asdict
+
+    from reflect.preparation import PreparationStage, report_preparation_progress
+    from reflect.store.migrate import migrate
+    from reflect.store.retention import SessionPruner, SessionRetentionPolicy
+    from reflect.store.sqlite import (
+        SQLiteBackupProgress,
+        backup_sqlite,
+        connect_sqlite,
+        connect_sqlite_read_only,
+    )
+    from reflect.terminal import TerminalPreparationProgress
+
+    if vacuum and not apply_changes:
+        raise click.UsageError("--vacuum requires --apply")
+    if not db_path.exists():
+        raise click.ClickException(f"SQLite store not found: {db_path}")
+
+    backup_path: Path | None = None
+    if not apply_changes:
+        _require_snapshot_schema(
+            db_path,
+            refresh_hint=(
+                f"Run `reflect db migrate --db-path {db_path}` before previewing "
+                "session retention."
+            ),
+        )
+        conn = connect_sqlite_read_only(db_path)
+        try:
+            result = SessionPruner(
+                conn,
+                SessionRetentionPolicy(older_than_days=older_than_days),
+            ).run()
+        finally:
+            conn.close()
+    else:
+        def apply_pruning(progress):
+            report_preparation_progress(
+                progress,
+                PreparationStage.OPENING_STORE,
+                "Opening the local telemetry store...",
+            )
+            conn = connect_sqlite(db_path)
+            applied_backup_path: Path | None = None
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                if backup:
+                    stamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%S%fZ")
+                    applied_backup_path = db_path.with_name(
+                        f"{db_path.name}.backup-{stamp}"
+                    )
+                    report_preparation_progress(
+                        progress,
+                        PreparationStage.BACKING_UP_STORE,
+                        "Backing up the local telemetry store...",
+                    )
+                    last_backup_percent = -5
+
+                    def update_backup(snapshot: SQLiteBackupProgress) -> None:
+                        nonlocal last_backup_percent
+                        percent = snapshot.percent_complete
+                        if percent < 100 and percent < last_backup_percent + 5:
+                            return
+                        last_backup_percent = percent
+                        report_preparation_progress(
+                            progress,
+                            PreparationStage.BACKING_UP_STORE,
+                            f"Backing up the local telemetry store... {percent}% "
+                            f"({snapshot.completed_pages:,}/{snapshot.total_pages:,} pages)",
+                        )
+
+                    backup_sqlite(
+                        db_path,
+                        applied_backup_path,
+                        progress=update_backup,
+                    )
+                report_preparation_progress(
+                    progress,
+                    PreparationStage.MIGRATING_SCHEMA,
+                    "Checking database migrations...",
+                )
+                migrate(conn, commit=False)
+                report_preparation_progress(
+                    progress,
+                    PreparationStage.PRUNING_SESSIONS,
+                    "Pruning eligible sessions and rebuilding derived data...",
+                )
+                applied_result = SessionPruner(
+                    conn,
+                    SessionRetentionPolicy(older_than_days=older_than_days),
+                ).run(apply=True)
+                conn.commit()
+                if vacuum and applied_result.pruned_session_ids:
+                    report_preparation_progress(
+                        progress,
+                        PreparationStage.VACUUMING_STORE,
+                        "Vacuuming the local telemetry store...",
+                    )
+                    conn.execute("VACUUM")
+                report_preparation_progress(
+                    progress,
+                    PreparationStage.COMPLETE,
+                    "Session pruning complete.",
+                )
+                return applied_result, applied_backup_path
+            except Exception:
+                if conn.in_transaction:
+                    conn.rollback()
+                raise
+            finally:
+                conn.close()
+
+        result, backup_path = TerminalPreparationProgress().run(
+            apply_pruning,
+            initial_message="Preparing session pruning...",
+        )
+
+    payload = {
+        "dry_run": result.dry_run,
+        "older_than_days": older_than_days,
+        "candidate_count": len(result.candidates),
+        "candidates": [asdict(candidate) for candidate in result.candidates],
+        "pruned_session_ids": list(result.pruned_session_ids),
+        "backup_path": str(backup_path) if backup_path else None,
+        "vacuumed": bool(vacuum and result.pruned_session_ids),
+        "foreign_key_violations": [list(row) for row in result.foreign_key_violations],
+        "graph": result.graph,
+        "rollups": result.rollups,
+    }
+    if as_json:
+        _echo_json(payload)
+        return
+    action = "Pruned" if apply_changes else "Would prune"
+    click.echo(
+        f"{action} {len(result.candidates)} invalid-start session(s) "
+        f"with no trusted activity for {older_than_days} days."
+    )
+    for candidate in result.candidates:
+        click.echo(
+            f"  {candidate.session_id} · {candidate.agent or 'unknown'} · "
+            f"{candidate.last_observed_at or 'no trusted activity'} · "
+            f"{sum(candidate.dependent_rows.values())} dependent row(s)"
+        )
+    if backup_path:
+        click.echo(f"Backup: {backup_path}")
+    if not apply_changes and result.candidates:
+        click.echo("Dry run only. Re-run with --apply to prune these exact policy matches.")
 
 
 @main.group()

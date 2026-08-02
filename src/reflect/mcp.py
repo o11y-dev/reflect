@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -17,8 +17,13 @@ from reflect.improvements.models import (
     WorkflowStatus,
 )
 from reflect.inspection import PatternType, SkillAvailability
+from reflect.preparation import (
+    CommandPreparationPolicy,
+    SnapshotLifecycleService,
+    SQLiteSnapshotInspector,
+)
 from reflect.store.migrate import migrate
-from reflect.store.sqlite import connect_sqlite
+from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only
 from reflect.task_runs import MCPTaskOutcome
 
 SERVER_INSTRUCTIONS = """
@@ -42,7 +47,6 @@ positive feedback is not approval. Never use these tools as a generic command ex
 """.strip()
 
 mcp = FastMCP("Reflect", instructions=SERVER_INSTRUCTIONS)
-ResultT = TypeVar("ResultT")
 READ_ONLY_TOOL = ToolAnnotations(
     readOnlyHint=True,
     destructiveHint=False,
@@ -83,11 +87,28 @@ def _db_path() -> Path:
     return home / "state" / "reflect.db"
 
 
-def _with_service(operation: Callable[[ReflectContextService], ResultT]) -> ResultT:
-    conn = connect_sqlite(_db_path())
+def _with_service[ResultT](
+    operation: Callable[[ReflectContextService], ResultT],
+    *,
+    read_only: bool = False,
+    require_sessions: bool = False,
+) -> ResultT:
+    db_path = _db_path()
+    if read_only:
+        SnapshotLifecycleService(
+            SQLiteSnapshotInspector(db_path),
+            policy=CommandPreparationPolicy(require_sessions=require_sessions),
+            refresh_hint="Run `reflect refresh` before using this read-only tool.",
+        ).prepare(requested_refresh=None)
+        conn = connect_sqlite_read_only(db_path)
+    else:
+        conn = connect_sqlite(db_path)
     try:
-        migrate(conn)
-        return operation(ReflectContextService(conn))
+        if not read_only:
+            migrate(conn)
+        return operation(
+            ReflectContextService(conn, initialize_schema=not read_only)
+        )
     finally:
         conn.close()
 
@@ -135,10 +156,27 @@ def reflect_complete(
 
 
 @mcp.tool(annotations=READ_ONLY_TOOL)
-def reflect_improvements(limit: int = 20) -> dict[str, Any]:
-    """List current evidence-backed findings without running detectors or applying changes."""
+def reflect_improvements(
+    limit: int = 20,
+    path: str = "",
+    session_id: str = "",
+    global_scope: bool = False,
+    period: str = "",
+) -> dict[str, Any]:
+    """List scoped evidence-backed findings without running detectors or applying changes."""
 
-    return _with_service(lambda service: service.improvements_summary(limit=limit))
+    resolved_path = Path(path).expanduser().resolve() if path else None
+    return _with_service(
+        lambda service: service.improvements_summary(
+            limit=limit,
+            path=resolved_path,
+            session_id=session_id or None,
+            global_scope=global_scope,
+            period=period or None,
+        ),
+        read_only=True,
+        require_sessions=True,
+    )
 
 
 @mcp.tool(annotations=READ_ONLY_TOOL)
@@ -160,7 +198,8 @@ def reflect_skills(
             source_agent=source_agent or None,
             minimum_evidence=minimum_evidence,
             limit=limit,
-        ).model_dump(mode="json")
+        ).model_dump(mode="json"),
+        read_only=True,
     )
 
 
@@ -183,7 +222,8 @@ def reflect_patterns(
             loop_kind=loop_kind,
             loop_status=loop_status,
             limit=limit,
-        ).model_dump(mode="json")
+        ).model_dump(mode="json"),
+        read_only=True,
     )
 
 
@@ -192,7 +232,8 @@ def reflect_task_status(task_run_id: str) -> dict[str, Any]:
     """Inspect task completion and late-ingestion linkage without changing either."""
 
     return _with_service(
-        lambda service: service.task_status(task_run_id).model_dump(mode="json")
+        lambda service: service.task_status(task_run_id).model_dump(mode="json"),
+        read_only=True,
     )
 
 
@@ -231,7 +272,10 @@ def reflect_apply_change(approval_token: str) -> dict[str, Any]:
 def reflect_explain(entity_id: str) -> dict[str, Any]:
     """Explain evidence, workflows, skills, task runs, change reviews, or memory."""
 
-    return _with_service(lambda service: service.explain(entity_id))
+    return _with_service(
+        lambda service: service.explain(entity_id),
+        read_only=True,
+    )
 
 
 @mcp.tool(annotations=READ_ONLY_TOOL)
@@ -249,7 +293,9 @@ def reflect_usage(
             global_scope=global_scope,
             period=period,
             agent=agent or None,
-        )
+        ),
+        read_only=True,
+        require_sessions=True,
     )
 
 

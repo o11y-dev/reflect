@@ -15,6 +15,7 @@ from reflect.improvements.base import (
 from reflect.improvements.models import (
     EvidenceRef,
     ObservationDraft,
+    ObservationSessionRef,
     RuleDefinition,
     WorkflowBehaviorType,
     WorkflowDefinition,
@@ -82,6 +83,22 @@ class RepeatedToolFailureRule(BaseImprovementRule):
         ).fetchall()
         findings: list[ObservationDraft] = []
         for repo_id, tool_key, tool_name, failures, affected_sessions, total_calls in rows:
+            source_rows = conn.execute(
+                """
+                SELECT tc.session_id, COUNT(*) AS failures
+                FROM tool_calls tc
+                JOIN sessions s ON s.id = tc.session_id
+                WHERE lower(trim(tc.tool_name)) = ?
+                  AND COALESCE(s.repo_id, '') = COALESCE(?, '')
+                  AND (
+                    lower(COALESCE(tc.status, '')) IN ('error', 'failed', 'failure')
+                    OR NULLIF(tc.error_type, '') IS NOT NULL
+                  )
+                GROUP BY tc.session_id
+                ORDER BY failures DESC, tc.session_id
+                """,
+                (tool_key, repo_id),
+            ).fetchall()
             evidence_rows = conn.execute(
                 """
                 SELECT tc.id, tc.session_id, tc.step_id, tc.status, tc.error_type
@@ -92,7 +109,7 @@ class RepeatedToolFailureRule(BaseImprovementRule):
                   AND (
                     lower(COALESCE(tc.status, '')) IN ('error', 'failed', 'failure')
                     OR NULLIF(tc.error_type, '') IS NOT NULL
-                  )
+                )
                 ORDER BY tc.created_at DESC
                 LIMIT 20
                 """,
@@ -146,6 +163,18 @@ class RepeatedToolFailureRule(BaseImprovementRule):
                         )
                         for row in evidence_rows
                     ],
+                    source_sessions=[
+                        ObservationSessionRef(
+                            session_id=str(row[0]),
+                            occurrence_count=int(row[1]),
+                            summary_redacted=(
+                                f"Session contains {int(row[1])} failed {tool_name} call(s)"
+                            ),
+                            focus_entity_type="tool",
+                            focus_entity_id=str(tool_name),
+                        )
+                        for row in source_rows
+                    ],
                 )
             )
         return findings
@@ -198,6 +227,9 @@ class RetryLoopRule(BaseImprovementRule):
             repeated_calls = sum(row[3] for row in loop_rows)
             affected_sessions = len({row[0] for row in loop_rows})
             evidence_rows = loop_rows[:20]
+            session_occurrences: dict[str, int] = defaultdict(int)
+            for session_id, _tool_name, _input_hash, call_count in loop_rows:
+                session_occurrences[str(session_id)] += int(call_count)
             impact = min(100.0, 40.0 + repeated_calls * 4.0 + affected_sessions * 6.0)
             scope_type, scope_id = _scope(repo_id)
             findings.append(
@@ -235,7 +267,22 @@ class RetryLoopRule(BaseImprovementRule):
                             ),
                             attrs={"input_hash": row[2], "call_count": row[3]},
                         )
-                        for row in evidence_rows
+                        for row in evidence_rows[:20]
+                    ],
+                    source_sessions=[
+                        ObservationSessionRef(
+                            session_id=session_id,
+                            occurrence_count=call_count,
+                            summary_redacted=(
+                                f"Session contains {call_count} identical-input retry call(s)"
+                            ),
+                            focus_entity_type="tool",
+                            focus_entity_id=tool_key,
+                        )
+                        for session_id, call_count in sorted(
+                            session_occurrences.items(),
+                            key=lambda item: (-item[1], item[0]),
+                        )
                     ],
                 )
             )
@@ -320,7 +367,6 @@ class MissingVerificationRule(BaseImprovementRule):
                 SELECT session_id, writes FROM classified
                 WHERE writes > 0 AND verification_calls = 0
                 ORDER BY writes DESC
-                LIMIT 20
                 """,
                 (repo_id,),
             ).fetchall()
@@ -358,6 +404,19 @@ class MissingVerificationRule(BaseImprovementRule):
                             session_id=row[0],
                             summary_redacted=f"Session contains {row[1]} write/edit call(s) and no visible verification call",
                             confidence=0.8,
+                        )
+                        for row in evidence_rows[:20]
+                    ],
+                    source_sessions=[
+                        ObservationSessionRef(
+                            session_id=str(row[0]),
+                            occurrence_count=int(row[1]),
+                            summary_redacted=(
+                                f"Session contains {int(row[1])} write/edit call(s) "
+                                "and no visible verification call"
+                            ),
+                            focus_entity_type="session",
+                            focus_entity_id=str(row[0]),
                         )
                         for row in evidence_rows
                     ],
@@ -452,7 +511,23 @@ class ContextExplosionRule(BaseImprovementRule):
                             summary_redacted=f"Session used {tokens:,} input and output tokens",
                             attrs={"total_tokens": tokens, "threshold": threshold},
                         )
-                        for session_id, tokens in sorted(outliers, key=lambda item: item[1], reverse=True)[:20]
+                        for session_id, tokens in sorted(
+                            outliers,
+                            key=lambda item: item[1],
+                            reverse=True,
+                        )[:20]
+                    ],
+                    source_sessions=[
+                        ObservationSessionRef(
+                            session_id=session_id,
+                            summary_redacted=(
+                                f"Session used {tokens:,} input and output tokens"
+                            ),
+                            focus_entity_type="session",
+                            focus_entity_id=session_id,
+                            attrs={"total_tokens": tokens, "threshold": threshold},
+                        )
+                        for session_id, tokens in outliers
                     ],
                 )
             )
@@ -530,7 +605,6 @@ class RepeatedExplorationRule(BaseImprovementRule):
                 SELECT session_id, reads FROM classified
                 WHERE reads >= 8 AND writes = 0
                 ORDER BY reads DESC
-                LIMIT 20
                 """,
                 (repo_id,),
             ).fetchall()
@@ -567,6 +641,18 @@ class RepeatedExplorationRule(BaseImprovementRule):
                             session_id=row[0],
                             summary_redacted=f"Session made {row[1]} read/search calls",
                             confidence=0.7,
+                        )
+                        for row in evidence_rows[:20]
+                    ],
+                    source_sessions=[
+                        ObservationSessionRef(
+                            session_id=str(row[0]),
+                            occurrence_count=int(row[1]),
+                            summary_redacted=(
+                                f"Session made {int(row[1])} read/search calls"
+                            ),
+                            focus_entity_type="session",
+                            focus_entity_id=str(row[0]),
                         )
                         for row in evidence_rows
                     ],
@@ -611,13 +697,26 @@ class UserCorrectionRule(BaseImprovementRule):
         ).fetchall()
         findings: list[ObservationDraft] = []
         for repo_id, corrections, affected_sessions in rows:
+            source_rows = conn.execute(
+                """
+                SELECT so.session_id, COUNT(*) AS corrections
+                FROM session_outcomes so
+                JOIN sessions s ON s.id = so.session_id
+                WHERE so.outcome = 'corrected'
+                  AND COALESCE(s.repo_id, '') = COALESCE(?, '')
+                GROUP BY so.session_id
+                ORDER BY corrections DESC, so.session_id
+                """,
+                (repo_id,),
+            ).fetchall()
             evidence_rows = conn.execute(
                 """
                 SELECT so.session_id, so.source
                 FROM session_outcomes so JOIN sessions s ON s.id = so.session_id
                 WHERE so.outcome = 'corrected'
                   AND COALESCE(s.repo_id, '') = COALESCE(?, '')
-                ORDER BY so.updated_at DESC LIMIT 20
+                ORDER BY so.updated_at DESC
+                LIMIT 20
                 """,
                 (repo_id,),
             ).fetchall()
@@ -656,6 +755,18 @@ class UserCorrectionRule(BaseImprovementRule):
                             summary_redacted="Operator explicitly marked the completed session as corrected",
                         )
                         for row in evidence_rows
+                    ],
+                    source_sessions=[
+                        ObservationSessionRef(
+                            session_id=str(row[0]),
+                            occurrence_count=int(row[1]),
+                            summary_redacted=(
+                                "Operator explicitly marked the completed session as corrected"
+                            ),
+                            focus_entity_type="session_outcome",
+                            focus_entity_id=str(row[0]),
+                        )
+                        for row in source_rows
                     ],
                 )
             )
@@ -704,12 +815,24 @@ class IgnoredConstraintRule(BaseImprovementRule):
         ).fetchall()
         findings: list[ObservationDraft] = []
         for repo_id, violations, affected_sessions in rows:
+            source_rows = conn.execute(
+                f"""
+                SELECT tc.session_id, COUNT(*) AS violations
+                FROM tool_calls tc
+                JOIN sessions s ON s.id = tc.session_id
+                WHERE COALESCE(s.repo_id, '') = COALESCE(?, '') AND ({match})
+                GROUP BY tc.session_id
+                ORDER BY violations DESC, tc.session_id
+                """,
+                (repo_id,),
+            ).fetchall()
             evidence_rows = conn.execute(
                 f"""
                 SELECT tc.id, tc.session_id, tc.step_id, tc.error_type
                 FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id
                 WHERE COALESCE(s.repo_id, '') = COALESCE(?, '') AND ({match})
-                ORDER BY tc.created_at DESC LIMIT 20
+                ORDER BY tc.created_at DESC
+                LIMIT 20
                 """,
                 (repo_id,),
             ).fetchall()
@@ -750,6 +873,18 @@ class IgnoredConstraintRule(BaseImprovementRule):
                             summary_redacted=f"Tool call hit an enforced boundary ({row[3] or 'policy'})",
                         )
                         for row in evidence_rows
+                    ],
+                    source_sessions=[
+                        ObservationSessionRef(
+                            session_id=str(row[0]),
+                            occurrence_count=int(row[1]),
+                            summary_redacted=(
+                                f"Session hit {int(row[1])} enforced boundary violation(s)"
+                            ),
+                            focus_entity_type="policy",
+                            focus_entity_id="constraint-violations",
+                        )
+                        for row in source_rows
                     ],
                 )
             )
@@ -796,7 +931,7 @@ class SuccessfulRecoveryRule(BaseImprovementRule):
                 WHERE COALESCE(repo_id, '') = COALESCE(?, '')
                   AND recovered_failure_count > 0
                   AND lower(COALESCE(status, '')) IN ('completed', 'ok', 'success')
-                ORDER BY recovered_failure_count DESC LIMIT 20
+                ORDER BY recovered_failure_count DESC
                 """,
                 (repo_id,),
             ).fetchall()
@@ -833,6 +968,18 @@ class SuccessfulRecoveryRule(BaseImprovementRule):
                             entity_id=row[0],
                             session_id=row[0],
                             summary_redacted=f"Completed session recovered {row[1]} failure(s)",
+                        )
+                        for row in evidence_rows[:20]
+                    ],
+                    source_sessions=[
+                        ObservationSessionRef(
+                            session_id=str(row[0]),
+                            occurrence_count=int(row[1]),
+                            summary_redacted=(
+                                f"Completed session recovered {int(row[1])} failure(s)"
+                            ),
+                            focus_entity_type="session",
+                            focus_entity_id=str(row[0]),
                         )
                         for row in evidence_rows
                     ],
@@ -923,6 +1070,18 @@ class HighPerformingWorkflowRule(BaseImprovementRule):
                         )
                         for session_id in session_ids[:20]
                     ],
+                    source_sessions=[
+                        ObservationSessionRef(
+                            session_id=session_id,
+                            summary_redacted=(
+                                "Completed without recorded tool failures using "
+                                "the repeated sequence"
+                            ),
+                            focus_entity_type="task_archetype",
+                            focus_entity_id=archetype_id,
+                        )
+                        for session_id in session_ids
+                    ],
                 )
             )
         return findings
@@ -961,13 +1120,26 @@ class CorrectNoChangeRule(BaseImprovementRule):
         ).fetchall()
         findings: list[ObservationDraft] = []
         for repo_id, affected_sessions in rows:
+            source_rows = conn.execute(
+                """
+                SELECT so.session_id, COUNT(*) AS outcomes
+                FROM session_outcomes so
+                JOIN sessions s ON s.id = so.session_id
+                WHERE so.outcome = 'no-change-correct'
+                  AND COALESCE(s.repo_id, '') = COALESCE(?, '')
+                GROUP BY so.session_id
+                ORDER BY outcomes DESC, so.session_id
+                """,
+                (repo_id,),
+            ).fetchall()
             evidence_rows = conn.execute(
                 """
                 SELECT so.session_id FROM session_outcomes so
                 JOIN sessions s ON s.id = so.session_id
                 WHERE so.outcome = 'no-change-correct'
                   AND COALESCE(s.repo_id, '') = COALESCE(?, '')
-                ORDER BY so.updated_at DESC LIMIT 20
+                ORDER BY so.updated_at DESC
+                LIMIT 20
                 """,
                 (repo_id,),
             ).fetchall()
@@ -1006,6 +1178,18 @@ class CorrectNoChangeRule(BaseImprovementRule):
                         )
                         for row in evidence_rows
                     ],
+                    source_sessions=[
+                        ObservationSessionRef(
+                            session_id=str(row[0]),
+                            occurrence_count=int(row[1]),
+                            summary_redacted=(
+                                "Operator confirmed that making no change was correct"
+                            ),
+                            focus_entity_type="session_outcome",
+                            focus_entity_id=str(row[0]),
+                        )
+                        for row in source_rows
+                    ],
                 )
             )
         return findings
@@ -1014,7 +1198,6 @@ class CorrectNoChangeRule(BaseImprovementRule):
 DEFAULT_RULE_REGISTRY = RuleRegistry(
     (
         RepeatedToolFailureRule(),
-        RetryLoopRule(),
         MissingVerificationRule(),
         ContextExplosionRule(),
         RepeatedExplorationRule(),

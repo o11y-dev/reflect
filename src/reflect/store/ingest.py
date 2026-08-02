@@ -181,8 +181,21 @@ def _append_start_offset(
 
 def _iso8601_from_ns(value_ns: int) -> str:
     if value_ns <= 0:
-        return datetime.now(tz=UTC).isoformat()
+        return datetime(1970, 1, 1, tzinfo=UTC).isoformat()
     return datetime.fromtimestamp(value_ns / 1_000_000_000, tz=UTC).isoformat()
+
+
+def _source_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    parsed = parsed.astimezone(UTC)
+    return parsed if parsed.year >= 2000 else None
 
 
 def _event_hash(span: dict) -> str:
@@ -225,6 +238,32 @@ def _insert_raw_span(
     runtime_internal = attrs.get("reflect.telemetry.classification") == "runtime_internal"
     observed_at = _iso8601_from_ns(int(span.get("start_time_ns", 0) or 0))
     received_at = _iso8601_from_ns(int(span.get("end_time_ns", 0) or 0))
+    session_id = None if runtime_internal else _session_id(attrs)
+    if session_id:
+        tombstone = db_conn.execute(
+            """
+            SELECT last_observed_at
+            FROM pruned_sessions
+            WHERE id = ?
+            """,
+            (session_id,),
+        ).fetchone()
+        if tombstone is not None:
+            last_observed_at = _source_timestamp(str(tombstone[0] or ""))
+            observed_timestamp = _source_timestamp(observed_at)
+            if observed_timestamp is None or (
+                last_observed_at is not None
+                and observed_timestamp <= last_observed_at
+            ):
+                return False
+            db_conn.execute(
+                """
+                UPDATE pruned_sessions
+                SET resurrected_at = ?, newer_observed_at = ?
+                WHERE id = ?
+                """,
+                (created_at, observed_at, session_id),
+            )
     content_hash = _event_hash({**span, "attributes": attrs})
     event_id = hashlib.sha1(f"{source}:{content_hash}".encode()).hexdigest()
 
@@ -244,7 +283,7 @@ def _insert_raw_span(
             span.get("traceId", ""),
             span.get("spanId", ""),
             span.get("parentSpanId", ""),
-            None if runtime_internal else _session_id(attrs),
+            session_id,
             observed_at,
             received_at,
             origin_kind,

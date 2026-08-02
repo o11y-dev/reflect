@@ -47,10 +47,12 @@ class LoopService:
         conn: sqlite3.Connection,
         *,
         recurring_commands: RecurringCommandRegistry | None = None,
+        initialize_schema: bool = True,
     ):
         self.conn = conn
         self.recurring_commands = recurring_commands or RecurringCommandRegistry()
-        migrate(conn)
+        if initialize_schema:
+            migrate(conn)
 
     def refresh(self, *, commit: bool = True) -> dict[str, int]:
         """Refresh behavioral and agent-native loops from canonical evidence."""

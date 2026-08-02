@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from reflect.store.normalize import refresh_all_session_statuses, refresh_session_statuses
@@ -27,7 +28,66 @@ def rollup_rebuild_pending(conn: sqlite3.Connection) -> bool:
         return False
 
 
-def rebuild_rollups(conn: sqlite3.Connection) -> dict[str, int]:
+class UsageRollupReadinessProbe:
+    """Detect usage rollup maintenance and structural coverage gaps."""
+
+    def __init__(self, *, session_ids: Iterable[str] | None = None) -> None:
+        normalized = tuple(
+            sorted({str(session_id) for session_id in session_ids or () if session_id})
+        )
+        self.session_ids = normalized or None
+
+    def inspect(self, conn: sqlite3.Connection) -> tuple[str, ...]:
+        reasons: list[str] = []
+        if rollup_rebuild_pending(conn):
+            reasons.append("usage rollups are stale because a rebuild is pending")
+        if self.session_ids is None:
+            missing, orphaned = conn.execute(
+                """
+                SELECT
+                  (
+                    SELECT COUNT(*)
+                    FROM sessions s
+                    LEFT JOIN session_rollups sr ON sr.session_id = s.id
+                    WHERE sr.session_id IS NULL
+                  ),
+                  (
+                    SELECT COUNT(*)
+                    FROM session_rollups sr
+                    LEFT JOIN sessions s ON s.id = sr.session_id
+                    WHERE s.id IS NULL
+                  )
+                """
+            ).fetchone()
+        else:
+            placeholders = ",".join("?" for _ in self.session_ids)
+            missing = conn.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM sessions s
+                LEFT JOIN session_rollups sr ON sr.session_id = s.id
+                WHERE s.id IN ({placeholders})
+                  AND sr.session_id IS NULL
+                """,
+                self.session_ids,
+            ).fetchone()[0]
+            orphaned = 0
+        if missing:
+            reasons.append(
+                f"usage rollups are stale: {int(missing)} session(s) are missing rollups"
+            )
+        if orphaned:
+            reasons.append(
+                f"usage rollups are stale: {int(orphaned)} orphan rollup row(s) exist"
+            )
+        return tuple(reasons)
+
+
+def rebuild_rollups(
+    conn: sqlite3.Connection,
+    *,
+    commit: bool = True,
+) -> dict[str, int]:
     timestamp = _now()
     refresh_all_session_statuses(conn)
     conn.execute("DELETE FROM session_rollups")
@@ -165,7 +225,8 @@ def rebuild_rollups(conn: sqlite3.Connection) -> dict[str, int]:
             "DELETE FROM maintenance_tasks WHERE task = ?",
             (CODEX_DESKTOP_ROLLUP_REBUILD_TASK,),
         )
-    conn.commit()
+    if commit:
+        conn.commit()
     return {
         "session_rollups": conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0],
         "daily_rollups": conn.execute("SELECT COUNT(*) FROM daily_rollups").fetchone()[0],

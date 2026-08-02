@@ -59,7 +59,7 @@ def _seed_loop(db_path):
     return loop_id
 
 
-def test_skills_default_reconciles_and_lists_versioned_registry(tmp_path):
+def test_skills_sync_is_explicit_and_read_only_list_does_not_reconcile(tmp_path):
     root = tmp_path / ".agents" / "skills" / "bounded-recovery"
     root.mkdir(parents=True)
     (root / "SKILL.md").write_text(
@@ -72,24 +72,64 @@ def test_skills_default_reconciles_and_lists_versioned_registry(tmp_path):
     )
     db_path = tmp_path / "reflect.db"
 
-    listed = CliRunner().invoke(
+    synced = CliRunner().invoke(
         main,
-        ["skills", "--json", "--path", str(root.parent), "--db-path", str(db_path)],
+        [
+            "skills",
+            "sync",
+            "--json",
+            "--path",
+            str(root.parent),
+            "--db-path",
+            str(db_path),
+        ],
     )
 
-    assert listed.exit_code == 0, listed.output
-    payload = json.loads(listed.output)
+    assert synced.exit_code == 0, synced.output
+    payload = json.loads(synced.output)
     assert payload["refresh"]["filesystem_skills"] == 1
     assert payload["skills"][0]["slug"] == "bounded-recovery"
     assert payload["skills"][0]["version_count"] == 1
+    skill_id = payload["skills"][0]["id"]
+
+    skill_file = root / "SKILL.md"
+    skill_file.write_text(
+        skill_file.read_text(encoding="utf-8")
+        + "\n4. Record the verified result.\n",
+        encoding="utf-8",
+    )
+    listed = CliRunner().invoke(
+        main,
+        ["skills", "--json", "--db-path", str(db_path)],
+    )
+    assert listed.exit_code == 0, listed.output
+    listed_payload = json.loads(listed.output)
+    assert listed_payload["refresh"] is None
+    assert listed_payload["skills"][0]["version_count"] == 1
 
     shown = CliRunner().invoke(
         main,
-        ["skills", "show", payload["skills"][0]["id"], "--json", "--db-path", str(db_path)],
+        ["skills", "show", skill_id, "--json", "--db-path", str(db_path)],
     )
     assert shown.exit_code == 0, shown.output
     detail = json.loads(shown.output)
+    assert len(detail["versions"]) == 1
     assert detail["installations"][0]["path"].endswith("bounded-recovery/SKILL.md")
+
+    resynced = CliRunner().invoke(
+        main,
+        [
+            "skills",
+            "--json",
+            "--path",
+            str(root.parent),
+            "--db-path",
+            str(db_path),
+        ],
+    )
+    assert resynced.exit_code == 0, resynced.output
+    assert "--path on `reflect skills` is deprecated" in resynced.stderr
+    assert json.loads(resynced.stdout)["skills"][0]["version_count"] == 2
 
 
 def test_loops_list_show_and_build_promote_selected_evidence_to_pending_skill(tmp_path):

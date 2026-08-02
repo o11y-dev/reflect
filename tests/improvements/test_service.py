@@ -21,6 +21,7 @@ from reflect.improvements.models import (
 )
 from reflect.improvements.nudge_exchange import NudgeFileExchange
 from reflect.improvements.nudges import HookNudgeBridge, NudgeService
+from reflect.improvements.rules import RetryLoopRule
 from reflect.improvements.service import ImprovementService
 from reflect.improvements.team import TeamBundleService
 from reflect.store.migrate import migrate
@@ -109,6 +110,20 @@ def _service(tmp_path: Path) -> tuple[ImprovementService, object]:
     conn = connect_sqlite(tmp_path / "reflect.db")
     migrate(conn)
     _seed(conn)
+    conn.execute(
+        """
+        INSERT INTO workspaces(
+          id, root_path, path_hash, label, repo_id, source_key, confidence,
+          raw_json, created_at, updated_at
+        ) VALUES ('workspace-1', ?, 'workspace-1-hash', 'reflect', 'repo-1',
+                  'test', 1, '{}', ?, ?)
+        """,
+        (str(tmp_path), NOW, NOW),
+    )
+    conn.execute(
+        "UPDATE sessions SET workspace_id = 'workspace-1' WHERE repo_id = 'repo-1'"
+    )
+    conn.commit()
     return ImprovementService(conn), conn
 
 
@@ -126,22 +141,15 @@ def test_refresh_persists_versioned_observations_and_pending_candidates(tmp_path
             for row in conn.execute("SELECT rule_id, id FROM observations").fetchall()
         }
 
-        assert first["detected"] >= 3
+        assert first["detected"] >= 2
         assert first["skills"] == len(service.workflows.list())
         assert second["detected"] == first["detected"]
         assert second_ids == first_ids
         assert "repeated_tool_failure_chain" in first_ids
-        assert "retry_loop_without_state_change" in first_ids
+        assert "retry_loop_without_state_change" not in first_ids
         assert "missing_or_late_verification" in first_ids
-        assert conn.execute("SELECT COUNT(*) FROM rule_definitions").fetchone()[0] == 10
-        assert conn.execute("SELECT COUNT(*) FROM workflow_candidates").fetchone()[0] < len(first_ids)
-        assert conn.execute(
-            """
-            SELECT COUNT(*) FROM workflow_candidates wc
-            JOIN observations o ON o.id = wc.observation_id
-            WHERE o.rule_id = 'retry_loop_without_state_change'
-            """
-        ).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM rule_definitions").fetchone()[0] == 9
+        assert conn.execute("SELECT COUNT(*) FROM workflow_candidates").fetchone()[0] <= len(first_ids)
         assert conn.execute("SELECT COUNT(*) FROM loop_patterns").fetchone()[0] >= 1
         assert {
             row[0] for row in conn.execute("SELECT DISTINCT status FROM workflow_candidates")
@@ -248,6 +256,55 @@ def test_retry_loop_detection_normalizes_tool_name_case_before_fingerprinting(tm
 
         assert conn.execute(
             "SELECT COUNT(*) FROM observations WHERE rule_id = 'retry_loop_without_state_change'"
+        ).fetchone()[0] == 0
+        assert any(item.tool_name and item.tool_name.lower() == "exec" for item in service.loops.list())
+    finally:
+        conn.close()
+
+
+def test_refresh_retires_legacy_retry_observations_without_deleting_history(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        definition = RetryLoopRule.definition
+        service.repository.sync_rule_definitions((definition,), now=NOW)
+        observation_id = service.repository.upsert_observation(
+            ObservationDraft(
+                rule_id=definition.id,
+                rule_version=definition.version,
+                scope_type="repository",
+                scope_id="repo-1",
+                repo_id="repo-1",
+                fingerprint="legacy-retry",
+                category=definition.category,
+                title="exec retries repeat without a changed input",
+                summary="Legacy retry observation.",
+                metric_name="identical_retry_calls",
+                metric_value=3,
+                metric_unit="calls",
+                metric_direction="lower_is_better",
+                impact_score=80,
+                severity="high",
+                confidence=0.9,
+                occurrence_count=3,
+                affected_session_count=1,
+            ),
+            now=NOW,
+        )
+        conn.commit()
+
+        service.refresh()
+
+        assert conn.execute(
+            "SELECT lifecycle_state FROM rule_definitions WHERE id = ?",
+            (definition.id,),
+        ).fetchone()[0] == "retired"
+        assert conn.execute(
+            "SELECT status FROM observations WHERE id = ?",
+            (observation_id,),
+        ).fetchone()[0] == "resolved"
+        assert conn.execute(
+            "SELECT COUNT(*) FROM observations WHERE id = ?",
+            (observation_id,),
         ).fetchone()[0] == 1
     finally:
         conn.close()
@@ -1257,7 +1314,7 @@ def test_ask_labels_pending_guidance_as_unapproved(tmp_path):
     service, conn = _service(tmp_path)
     try:
         service.refresh()
-        answer = service.ask("How should I stop retrying failed exec calls?")
+        answer = service.ask("How should I stop retrying failed exec calls?", path=tmp_path)
 
         assert answer.evidence
         assert answer.guidance
@@ -1279,7 +1336,10 @@ def test_ask_returns_one_active_workflow_with_constraints_and_fallback(tmp_path)
         )
         service.workflows.apply(candidate.id, project_root=project_root)
 
-        answer = service.ask("How should I stop retrying an unchanged failed exec call?")
+        answer = service.ask(
+            "How should I stop retrying an unchanged failed exec call?",
+            path=tmp_path,
+        )
 
         assert answer.workflow_id == candidate.id
         assert answer.freshness
@@ -1396,7 +1456,7 @@ def test_simplified_cli_contract_reads_the_durable_ledger(tmp_path):
     with patch("reflect.core._prepare_sql_report_db") as prepare:
         improve_result = runner.invoke(
             main,
-            ["improve", "--json", "--no-refresh", "--db-path", str(db_path)],
+            ["improve", "--global", "--all", "--json", "--db-path", str(db_path)],
         )
         prepare.assert_not_called()
         ask_result = runner.invoke(
@@ -1411,6 +1471,7 @@ def test_simplified_cli_contract_reads_the_durable_ledger(tmp_path):
             main,
             ["workflows", "list", "--type", "verification", "--json", "--db-path", str(db_path)],
         )
+        prepare.assert_not_called()
 
     assert improve_result.exit_code == 0
     assert '"observations"' in improve_result.output
@@ -1434,7 +1495,7 @@ def test_improve_labels_cli_table_as_observed_improvements(tmp_path):
 
     result = CliRunner().invoke(
         main,
-        ["improve", "--no-refresh", "--db-path", str(db_path)],
+        ["improve", "--global", "--all", "--no-refresh", "--db-path", str(db_path)],
     )
 
     assert result.exit_code == 0
@@ -1466,13 +1527,138 @@ def test_improve_reports_progress_on_stderr_without_corrupting_json(tmp_path):
     with patch("reflect.core._prepare_sql_report_db", side_effect=prepare):
         result = runner.invoke(
             main,
-            ["improve", "--json", "--db-path", str(db_path)],
+            [
+                "improve",
+                "--global",
+                "--all",
+                "--refresh",
+                "--json",
+                "--db-path",
+                str(db_path),
+            ],
         )
 
     assert result.exit_code == 0
     assert json.loads(result.stdout)["observations"]
     assert "Reading new OTLP traces" in result.stderr
     assert "\x1b" not in result.stderr
+
+
+def test_improve_requires_an_explicit_global_time_flag(tmp_path):
+    service, conn = _service(tmp_path)
+    db_path = tmp_path / "reflect.db"
+    try:
+        service.refresh()
+    finally:
+        conn.close()
+
+    runner = CliRunner()
+    missing_period = runner.invoke(
+        main,
+        ["improve", "--global", "--db-path", str(db_path)],
+    )
+    unscoped_period = runner.invoke(
+        main,
+        ["improve", "--week", "--db-path", str(db_path)],
+    )
+    multiple_periods = runner.invoke(
+        main,
+        ["improve", "--global", "--day", "--week", "--db-path", str(db_path)],
+    )
+
+    assert missing_period.exit_code == 2
+    assert "--global requires" in missing_period.output
+    assert unscoped_period.exit_code == 2
+    assert "--period requires --global" in unscoped_period.output
+    assert "--week is deprecated for improve" in unscoped_period.output
+    assert multiple_periods.exit_code == 2
+    assert "Use only one" in multiple_periods.output
+
+
+def test_snapshot_commands_refresh_only_when_explicit(tmp_path):
+    service, conn = _service(tmp_path)
+    db_path = tmp_path / "reflect.db"
+    try:
+        service.refresh()
+    finally:
+        conn.close()
+
+    runner = CliRunner()
+    with patch("reflect.core._prepare_sql_report_db", return_value={}) as prepare:
+        ask_result = runner.invoke(
+            main,
+            ["ask", "What should I do?", "--json", "--db-path", str(db_path)],
+        )
+        workflow_result = runner.invoke(
+            main,
+            ["workflows", "list", "--json", "--db-path", str(db_path)],
+        )
+        loops_result = runner.invoke(
+            main,
+            ["loops", "--json", "--db-path", str(db_path)],
+        )
+        prepare.assert_not_called()
+
+        refreshed = runner.invoke(
+            main,
+            [
+                "ask",
+                "What should I do?",
+                "--refresh",
+                "--json",
+                "--db-path",
+                str(db_path),
+            ],
+        )
+
+    assert ask_result.exit_code == 0
+    assert workflow_result.exit_code == 0
+    assert loops_result.exit_code == 0
+    assert refreshed.exit_code == 0
+    prepare.assert_called_once()
+
+
+def test_feedback_never_refreshes_implicitly(tmp_path):
+    service, conn = _service(tmp_path)
+    db_path = tmp_path / "reflect.db"
+    try:
+        service.refresh()
+    finally:
+        conn.close()
+
+    with patch("reflect.core._prepare_sql_report_db") as prepare:
+        result = CliRunner().invoke(
+            main,
+            [
+                "feedback",
+                "missing-session",
+                "--outcome",
+                "good",
+                "--db-path",
+                str(db_path),
+            ],
+        )
+
+    assert result.exit_code == 1
+    assert "Re-run with --refresh" in result.output
+    prepare.assert_not_called()
+
+
+@pytest.mark.parametrize("refresh_flag", [[], ["--no-refresh"]])
+def test_improve_never_prepares_a_missing_snapshot_without_refresh(
+    tmp_path,
+    refresh_flag,
+):
+    db_path = tmp_path / "missing.db"
+    with patch("reflect.core._prepare_sql_report_db") as prepare:
+        result = CliRunner().invoke(
+            main,
+            ["improve", *refresh_flag, "--db-path", str(db_path)],
+        )
+
+    assert result.exit_code == 1
+    assert "reflect refresh" in result.output
+    prepare.assert_not_called()
 
 
 def test_workflows_add_stages_an_existing_skill_without_installing_it(tmp_path):

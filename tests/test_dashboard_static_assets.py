@@ -80,6 +80,21 @@ def test_dashboard_html_shows_branded_loader_during_report_fetch(path: Path):
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_html_surfaces_background_refresh_progress(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert 'id="preparation-status"' in text
+    assert 'id="preparation-status-copy"' in text
+    assert "function pollPreparationStatus()" in text
+    assert "fetch('/api/status'" in text
+    assert "preparation.message || 'Refreshing local telemetry...'" in text
+    assert "'Refresh complete. Loading the new snapshot...'" in text
+    assert "window.location.reload()" in text
+    assert "startPreparationStatusPolling();" in text
+    assert "hdr-ts').textContent = 'Loaded '" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_html_uses_persistent_session_and_filter_rails(path: Path):
     text = path.read_text(encoding="utf-8")
 
@@ -280,6 +295,8 @@ def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(p
     assert "DEFAULT_RULE_REGISTRY" in text
     assert "Session Rules score one session" in text
     assert "View Source Sessions" in text
+    assert "/api/inbox/${encodeURIComponent(observationId)}/sessions" in text
+    assert "This observation has no workflow session ledger." not in text
     assert "Source Evidence" in text
     assert "Related Sessions" in text
     assert "Observed Uses" in text

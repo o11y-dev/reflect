@@ -367,7 +367,12 @@ def _refresh_node(
     )
 
 
-def rebuild_graph(conn: sqlite3.Connection, *, reset: bool = True) -> dict[str, int]:
+def rebuild_graph(
+    conn: sqlite3.Connection,
+    *,
+    reset: bool = True,
+    commit: bool = True,
+) -> dict[str, int]:
     previous_row_factory = conn.row_factory
     conn.row_factory = sqlite3.Row
     try:
@@ -1446,7 +1451,8 @@ def rebuild_graph(conn: sqlite3.Connection, *, reset: bool = True) -> dict[str, 
                 )
                 edges += int(inserted)
 
-        conn.commit()
+        if commit:
+            conn.commit()
         return {"nodes": nodes, "edges": edges}
     finally:
         conn.execute("DROP TABLE IF EXISTS temp.reflect_graph_seen_edges")

@@ -17,6 +17,7 @@ class ReportServerConfig:
     db_path: Path
     otlp_traces: Path | None = None
     refresh: bool = False
+    open_browser: bool = True
 
     @property
     def url(self) -> str:
@@ -73,17 +74,34 @@ class ReportServerDaemon:
                 stderr=log_fd,
                 start_new_session=True,
             )
-        self._pid_file.write_text(str(process.pid), encoding="utf-8")
+        self._record_state(process.pid)
+        return process.pid, True
+
+    def claim_current_process(self) -> None:
+        """Claim lifecycle state when an OS user service launches us directly."""
+        current_pid = os.getpid()
+        existing = self._running_pid()
+        if existing is not None and existing != current_pid:
+            raise RuntimeError(f"Report server already running (PID {existing})")
+        if existing is None and self._port_in_use():
+            raise RuntimeError(
+                f"Port {self.config.port} is already in use by an unmanaged process"
+            )
+        self._pid_file.parent.mkdir(parents=True, exist_ok=True)
+        self._record_state(current_pid)
+
+    def _record_state(self, pid: int) -> None:
+        self._pid_file.write_text(str(pid), encoding="utf-8")
         self._metadata_file.write_text(
             json.dumps({
                 "port": self.config.port,
                 "db_path": str(self.config.db_path),
                 "otlp_traces": str(self.config.otlp_traces) if self.config.otlp_traces else None,
                 "refresh": self.config.refresh,
+                "open_browser": self.config.open_browser,
             }),
             encoding="utf-8",
         )
-        return process.pid, True
 
     def stop(self, *, timeout: float = 3.0) -> bool:
         pid = self._running_pid()
@@ -156,6 +174,7 @@ class ReportServerDaemon:
                 db_path=Path(payload["db_path"]),
                 otlp_traces=Path(otlp_traces) if otlp_traces else None,
                 refresh=bool(payload.get("refresh", False)),
+                open_browser=bool(payload.get("open_browser", True)),
             )
         except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
             return self.config
@@ -169,6 +188,7 @@ def _run_daemon(config: ReportServerConfig, daemon: ReportServerDaemon) -> None:
     from reflect.core import _run_browser_report
 
     os.environ["REFLECT_PORT"] = str(config.port)
+    daemon.claim_current_process()
     try:
         _run_browser_report(
             otlp_traces=config.otlp_traces,
@@ -180,6 +200,7 @@ def _run_daemon(config: ReportServerConfig, daemon: ReportServerDaemon) -> None:
             output=None,
             db_path=config.db_path,
             refresh=config.refresh,
+            open_browser=config.open_browser,
         )
     finally:
         daemon.clear_pid(os.getpid())
@@ -193,12 +214,19 @@ def main() -> None:
     parser.add_argument("--db-path", type=Path, required=True)
     parser.add_argument("--otlp-traces", type=Path)
     parser.add_argument("--refresh", action="store_true")
+    parser.add_argument(
+        "--no-open-browser",
+        action="store_false",
+        dest="open_browser",
+        help="Serve without opening a browser window.",
+    )
     args = parser.parse_args()
     config = ReportServerConfig(
         port=args.port,
         db_path=args.db_path,
         otlp_traces=args.otlp_traces,
         refresh=args.refresh,
+        open_browser=args.open_browser,
     )
     state_dir = Path(os.environ.get("REFLECT_HOME", Path.home() / ".reflect")) / "state"
     _run_daemon(config, ReportServerDaemon(config, state_dir=state_dir))

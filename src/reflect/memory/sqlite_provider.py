@@ -79,8 +79,9 @@ def _filter_clause(filters: dict | None) -> tuple[str, list[str]]:
 class LocalSQLiteMemoryProvider:
     name = "local_sqlite"
 
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn: sqlite3.Connection, *, maintain_search_index: bool = True):
         self.conn = conn
+        self.maintain_search_index = maintain_search_index
 
     def health(self) -> MemoryProviderHealth:
         try:
@@ -218,27 +219,32 @@ class LocalSQLiteMemoryProvider:
         filters: dict | None = None,
         limit: int = 20,
     ) -> list[MemorySearchResult]:
-        self.rebuild_fts_if_empty()
+        if self.maintain_search_index:
+            self.rebuild_fts_if_empty()
         previous = self.conn.row_factory
         self.conn.row_factory = sqlite3.Row
         try:
             path_clause, path_params = _path_scope_clause(path)
             filter_clause, filter_params = _filter_clause(filters)
-            try:
-                rows = self.conn.execute(
-                    f"""
-                    SELECT m.*, bm25(memory_fts) AS score
-                    FROM memory_fts
-                    JOIN memories m ON m.id = memory_fts.memory_id
-                    WHERE memory_fts MATCH ?
-                      {path_clause}
-                      {filter_clause}
-                    ORDER BY score ASC
-                    LIMIT ?
-                    """,
-                    [query, *path_params, *filter_params, limit],
-                ).fetchall()
-            except sqlite3.OperationalError:
+            rows = None
+            if self.maintain_search_index:
+                try:
+                    rows = self.conn.execute(
+                        f"""
+                        SELECT m.*, bm25(memory_fts) AS score
+                        FROM memory_fts
+                        JOIN memories m ON m.id = memory_fts.memory_id
+                        WHERE memory_fts MATCH ?
+                          {path_clause}
+                          {filter_clause}
+                        ORDER BY score ASC
+                        LIMIT ?
+                        """,
+                        [query, *path_params, *filter_params, limit],
+                    ).fetchall()
+                except sqlite3.OperationalError:
+                    rows = None
+            if rows is None:
                 like = f"%{query}%"
                 rows = self.conn.execute(
                     f"""

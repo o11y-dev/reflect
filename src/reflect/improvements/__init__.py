@@ -5,6 +5,9 @@ from reflect.improvements.loops import LoopService
 from reflect.improvements.models import (
     AskAnswer,
     EvidenceRef,
+    FindingSessionLedger,
+    ImprovementScope,
+    ImprovementScopeKind,
     ImprovementSummary,
     InboxFindingRecord,
     LoopDetail,
@@ -13,6 +16,7 @@ from reflect.improvements.models import (
     LoopStatus,
     ObservationDraft,
     ObservationRecord,
+    ObservationSessionRef,
     RuleDefinition,
     SkillDetail,
     SkillLifecycleState,
@@ -29,6 +33,7 @@ from reflect.improvements.models import (
 )
 from reflect.improvements.nudge_exchange import NudgeExchangePaths, NudgeFileExchange
 from reflect.improvements.rules import DEFAULT_RULE_REGISTRY, DEFAULT_RULES
+from reflect.improvements.scope import ImprovementScopeResolver
 from reflect.improvements.service import ImprovementService
 from reflect.improvements.skills import SkillRegistryService
 
@@ -38,6 +43,10 @@ __all__ = [
     "DEFAULT_RULE_REGISTRY",
     "DEFAULT_RULES",
     "EvidenceRef",
+    "FindingSessionLedger",
+    "ImprovementScope",
+    "ImprovementScopeKind",
+    "ImprovementScopeResolver",
     "InboxFindingRecord",
     "ImprovementRule",
     "ImprovementService",
@@ -51,6 +60,7 @@ __all__ = [
     "NudgeFileExchange",
     "ObservationDraft",
     "ObservationRecord",
+    "ObservationSessionRef",
     "RuleDefinition",
     "RuleRegistry",
     "SkillDetail",
