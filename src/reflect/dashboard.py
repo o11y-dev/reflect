@@ -4699,11 +4699,11 @@ def _build_dashboard_app(
         if db_path is None:
             return JSONResponse({"error": "SQLite improvement ledger is not configured"}, status_code=404)
         from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite
+        from reflect.store.sqlite import connect_sqlite_read_only
 
-        conn = connect_sqlite(db_path)
+        conn = connect_sqlite_read_only(db_path)
         try:
-            ledger = ImprovementService(conn).finding_session_ledger(
+            ledger = ImprovementService(conn, initialize_schema=False).finding_session_ledger(
                 observation_id,
                 limit=min(200, max(1, int(request.query_params.get("limit") or 50))),
             )
