@@ -1369,25 +1369,36 @@ def _prepare_usage_db(
         )
         session_count = int(conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0])
         rollup_count = int(conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0])
+        from reflect.store.cost_refresh import CostRefreshState
+
+        cost_state = CostRefreshState(conn)
+        cost_inputs = cost_state.inspect(session_ids=changed_session_ids) if session_count else None
         if (
             rollup_rebuild_pending(conn)
             or session_count != rollup_count
             or cursor_result.get("updated")
+            or (cost_inputs is not None and cost_inputs.requires_full_refresh)
         ):
             report_preparation_progress(
                 progress,
                 PreparationStage.REFRESHING_ROLLUPS,
                 "Rebuilding usage rollups...",
             )
-            _ensure_sql_costs(conn)
+            _ensure_sql_costs(conn, refresh_inputs=cost_inputs)
             rebuild_rollups(conn)
+            if cost_inputs is not None and cost_inputs.requires_full_refresh:
+                cost_state.mark_current(cost_inputs)
         elif changed_session_ids or context_result["sessions_updated"]:
             report_preparation_progress(
                 progress,
                 PreparationStage.REFRESHING_ROLLUPS,
                 f"Refreshing usage rollups for {len(changed_session_ids):,} session(s)...",
             )
-            _ensure_sql_costs(conn, session_ids=changed_session_ids)
+            _ensure_sql_costs(
+                conn,
+                session_ids=changed_session_ids,
+                refresh_inputs=cost_inputs,
+            )
             refresh_rollups(conn, changed_session_ids)
         report_preparation_progress(
             progress,
@@ -4241,6 +4252,7 @@ def doctor_cost(db_path: Path, alias_path: Path | None) -> None:
     from rich.console import Console
     from rich.table import Table
 
+    from reflect.store.cost_refresh import CostRefreshState
     from reflect.store.migrate import migrate
     from reflect.store.rollups import rebuild_rollups
     from reflect.store.sqlite import connect_sqlite
@@ -4252,8 +4264,16 @@ def doctor_cost(db_path: Path, alias_path: Path | None) -> None:
         conn = connect_sqlite(db_path)
         try:
             migrate(conn)
-            alias_result = _ensure_sql_costs(conn, alias_path=alias_path)
+            cost_state = CostRefreshState(conn)
+            cost_inputs = cost_state.inspect(alias_path=alias_path)
+            alias_result = _ensure_sql_costs(
+                conn,
+                alias_path=alias_path,
+                refresh_inputs=cost_inputs,
+            )
             rebuild_rollups(conn)
+            if cost_inputs.requires_full_refresh:
+                cost_state.mark_current(cost_inputs)
             break
         except sqlite3.OperationalError as exc:
             if "database is locked" not in str(exc).lower() or attempt >= max_attempts:
@@ -4987,6 +5007,7 @@ def _ingest_into_db(
     otlp_traces: Path | None = None,
     spans_file: Path | None = None,
 ) -> dict[str, int]:
+    from reflect.store.cost_refresh import CostRefreshState
     from reflect.store.ingest import ingest_local_spans_file, ingest_otlp_traces_file
     from reflect.store.migrate import migrate
     from reflect.store.normalize import backfill_mcp_calls, normalize_pending_raw_events
@@ -5009,8 +5030,12 @@ def _ingest_into_db(
             conn,
             session_ids=None if 14 in applied else changed_session_ids,
         )
-        _ensure_sql_costs(conn)
+        cost_state = CostRefreshState(conn)
+        cost_inputs = cost_state.inspect(session_ids=changed_session_ids)
+        _ensure_sql_costs(conn, refresh_inputs=cost_inputs)
         rebuild_rollups(conn)
+        if cost_inputs.requires_full_refresh:
+            cost_state.mark_current(cost_inputs)
     finally:
         conn.close()
     return result
@@ -5021,18 +5046,33 @@ def _ensure_sql_costs(
     *,
     alias_path: Path | None = None,
     session_ids: set[str] | None = None,
+    refresh_inputs=None,
 ):
+    from reflect.config import load_model_aliases
     from reflect.cost_aliases import ensure_cost_aliases
+    from reflect.pricing import load_pricing_table
 
-    alias_result = ensure_cost_aliases(
-        conn,
-        alias_path=alias_path,
-        session_ids=session_ids,
-    )
+    if refresh_inputs is None:
+        pricing_table = load_pricing_table()
+        alias_result = ensure_cost_aliases(
+            conn,
+            alias_path=alias_path,
+            pricing_table=pricing_table,
+            session_ids=session_ids,
+        )
+        aliases = load_model_aliases(alias_result.alias_path)
+    else:
+        pricing_table = refresh_inputs.pricing_table
+        alias_result = refresh_inputs.alias_result
+        aliases = refresh_inputs.aliases
+        if refresh_inputs.requires_full_refresh:
+            session_ids = None
     _reprice_sql_store(
         conn,
         alias_path=alias_result.alias_path,
         session_ids=session_ids,
+        pricing_table=pricing_table,
+        aliases=aliases,
     )
     return alias_result
 
@@ -5050,6 +5090,7 @@ def _prepare_sql_report_db(
     progress: PreparationProgressReporter | None = None,
 ) -> dict[str, object]:
     from reflect.preparation import PreparationStage, report_preparation_progress
+    from reflect.store.cost_refresh import CostRefreshState
     from reflect.store.cursor_adapter import apply_cursor_transcript_usage_estimates
     from reflect.store.graph_normalize import rebuild_graph, refresh_graph
     from reflect.store.ingest import (
@@ -5221,12 +5262,23 @@ def _prepare_sql_report_db(
                 "WHERE kind = 'Session' AND session_id IS NOT NULL"
             )
         }
+        cost_state = CostRefreshState(conn)
+        cost_inputs = (
+            cost_state.inspect(session_ids=changed_session_ids)
+            if all_session_ids
+            else None
+        )
         refresh_plan = plan_derived_refresh(
             changed_session_ids=changed_session_ids,
             all_session_ids=all_session_ids,
             graph_session_ids=graph_session_ids,
             rollup_session_ids=rollup_session_ids,
             graph_exists=bool(graph_session_ids),
+            force_full_cost_reason=(
+                cost_inputs.reason
+                if cost_inputs is not None and cost_inputs.requires_full_refresh
+                else ""
+            ),
             force_full_rollup_reason=(
                 "Codex Desktop telemetry migration requires reconciliation"
                 if reconciled_legacy_data
@@ -5235,9 +5287,13 @@ def _prepare_sql_report_db(
         )
 
         if refresh_plan.cost_mode is RefreshMode.FULL:
-            _ensure_sql_costs(conn)
+            _ensure_sql_costs(conn, refresh_inputs=cost_inputs)
         elif refresh_plan.cost_mode is RefreshMode.INCREMENTAL:
-            _ensure_sql_costs(conn, session_ids=set(refresh_plan.cost_session_ids))
+            _ensure_sql_costs(
+                conn,
+                session_ids=set(refresh_plan.cost_session_ids),
+                refresh_inputs=cost_inputs,
+            )
 
         if refresh_plan.graph_mode is RefreshMode.FULL:
             report_preparation_progress(
@@ -5285,6 +5341,8 @@ def _prepare_sql_report_db(
                 "skipped": 1,
                 "reason": refresh_plan.rollup_reason,
             }
+        if cost_inputs is not None and cost_inputs.requires_full_refresh:
+            cost_state.mark_current(cost_inputs)
         from reflect.improvements.service import ImprovementService
 
         report_preparation_progress(
@@ -5364,12 +5422,15 @@ def _reprice_sql_store(
     *,
     alias_path: Path | None = None,
     session_ids: set[str] | None = None,
+    pricing_table=None,
+    aliases: dict[str, str] | None = None,
 ) -> None:
     from reflect.config import load_model_aliases
     from reflect.pricing import calculate_cost, load_pricing_table
 
-    pricing_table = load_pricing_table()
-    aliases = load_model_aliases(alias_path)
+    pricing_table = pricing_table or load_pricing_table()
+    if aliases is None:
+        aliases = load_model_aliases(alias_path)
     import sqlite3
 
     previous_row_factory = conn.row_factory
@@ -5771,6 +5832,11 @@ def db_doctor(db_path: Path) -> None:
     show_default=True,
     help="Prune only invalid-start sessions with no trusted activity for this many days.",
 )
+@click.option(
+    "--all-inactive-sessions",
+    is_flag=True,
+    help="Also prune inactive sessions with valid timestamps older than the cutoff.",
+)
 @click.option("--apply", "apply_changes", is_flag=True, help="Apply the previewed deletion.")
 @click.option(
     "--backup/--no-backup",
@@ -5790,13 +5856,14 @@ def db_doctor(db_path: Path) -> None:
 )
 def db_prune_sessions(
     older_than_days: int,
+    all_inactive_sessions: bool,
     apply_changes: bool,
     backup: bool,
     vacuum: bool,
     as_json: bool,
     db_path: Path,
 ) -> None:
-    """Preview or prune obsolete invalid-start sessions."""
+    """Preview or prune inactive sessions selected by the retention policy."""
     from dataclasses import asdict
 
     from reflect.preparation import PreparationStage, report_preparation_progress
@@ -5828,7 +5895,10 @@ def db_prune_sessions(
         try:
             result = SessionPruner(
                 conn,
-                SessionRetentionPolicy(older_than_days=older_than_days),
+                SessionRetentionPolicy(
+                    older_than_days=older_than_days,
+                    include_valid_starts=all_inactive_sessions,
+                ),
             ).run()
         finally:
             conn.close()
@@ -5882,11 +5952,14 @@ def db_prune_sessions(
                 report_preparation_progress(
                     progress,
                     PreparationStage.PRUNING_SESSIONS,
-                    "Pruning eligible sessions and rebuilding derived data...",
+                    "Pruning eligible sessions and updating affected derived data...",
                 )
                 applied_result = SessionPruner(
                     conn,
-                    SessionRetentionPolicy(older_than_days=older_than_days),
+                    SessionRetentionPolicy(
+                        older_than_days=older_than_days,
+                        include_valid_starts=all_inactive_sessions,
+                    ),
                 ).run(apply=True)
                 conn.commit()
                 if vacuum and applied_result.pruned_session_ids:
@@ -5917,6 +5990,7 @@ def db_prune_sessions(
     payload = {
         "dry_run": result.dry_run,
         "older_than_days": older_than_days,
+        "all_inactive_sessions": all_inactive_sessions,
         "candidate_count": len(result.candidates),
         "candidates": [asdict(candidate) for candidate in result.candidates],
         "pruned_session_ids": list(result.pruned_session_ids),
@@ -5930,8 +6004,9 @@ def db_prune_sessions(
         _echo_json(payload)
         return
     action = "Pruned" if apply_changes else "Would prune"
+    session_scope = "inactive" if all_inactive_sessions else "invalid-start"
     click.echo(
-        f"{action} {len(result.candidates)} invalid-start session(s) "
+        f"{action} {len(result.candidates)} {session_scope} session(s) "
         f"with no trusted activity for {older_than_days} days."
     )
     for candidate in result.candidates:

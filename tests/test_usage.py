@@ -579,7 +579,7 @@ def test_usage_requires_explicit_refresh_for_pending_rollup_rebuild(
         conn.close()
     conn = connect_sqlite(db_path)
     try:
-        assert migrate(conn) == [19, 20, 21, 22]
+        assert migrate(conn) == [19, 20, 21, 22, 23, 24]
     finally:
         conn.close()
     monkeypatch.setattr("reflect.core._default_otlp_traces", lambda: None)

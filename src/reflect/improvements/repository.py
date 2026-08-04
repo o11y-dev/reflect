@@ -27,6 +27,7 @@ from reflect.improvements.models import (
     WorkflowStatus,
 )
 from reflect.improvements.scope import session_scope_predicate
+from reflect.improvements.workflow_identity import workflow_proposal_signature
 
 _ACTIVE_OBSERVATION_STATUSES = {
     ObservationStatus.NEW.value,
@@ -143,6 +144,23 @@ class ImprovementRepository:
               AND status IN ({",".join("?" for _ in _ACTIVE_OBSERVATION_STATUSES)})
             """,
             (now, now, rule_id, *_ACTIVE_OBSERVATION_STATUSES),
+        )
+        self.conn.execute(
+            """
+            UPDATE workflow_candidates
+            SET status = 'stale',
+                checks_json = json_set(
+                  COALESCE(NULLIF(checks_json, ''), '{}'),
+                  '$.stale_reason',
+                  'source_rule_retired'
+                ),
+                updated_at = ?
+            WHERE status = 'pending'
+              AND observation_id IN (
+                SELECT id FROM observations WHERE rule_id = ?
+              )
+            """,
+            (now, rule_id),
         )
         return int(cursor.rowcount or 0)
 
@@ -854,22 +872,19 @@ class ImprovementRepository:
         if candidate is None:
             raise KeyError(f"Workflow candidate not found: {candidate_id}")
         slug = str(candidate.content.get("slug") or candidate.id)
-        grouped_candidates = self.conn.execute(
-            """
-            SELECT id, observation_id, status
-            FROM workflow_candidates
-            WHERE json_extract(content_json, '$.slug') = ?
-              AND status NOT IN ('rejected', 'rolled_back')
-            ORDER BY created_at, id
-            """,
-            (slug,),
-        ).fetchall()
-        current_rows = [row for row in grouped_candidates if str(row[2]) != "stale"]
-        evidence_rows = current_rows or grouped_candidates or [
-            (candidate.id, candidate.observation_id, candidate.status.value)
+        signature = workflow_proposal_signature(candidate.title, candidate.content)
+        grouped_candidates = [
+            item
+            for item in self.list_candidates_by_slug(slug)
+            if item.status.value not in {"rejected", "rolled_back"}
+            and workflow_proposal_signature(item.title, item.content) == signature
         ]
-        candidate_ids = [str(row[0]) for row in evidence_rows]
-        observation_ids = [str(row[1]) for row in evidence_rows]
+        current_candidates = [
+            item for item in grouped_candidates if item.status.value != "stale"
+        ]
+        evidence_candidates = current_candidates or grouped_candidates or [candidate]
+        candidate_ids = [item.id for item in evidence_candidates]
+        observation_ids = [item.observation_id for item in evidence_candidates]
         observation_placeholders = ", ".join("?" for _ in observation_ids)
         candidate_placeholders = ", ".join("?" for _ in candidate_ids)
         bounded_limit = max(1, min(limit, 200))

@@ -315,6 +315,10 @@ def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(p
     assert "Verify Folder" in text
     assert 'id="workflow-type-filter"' in text
     assert 'id="workflow-status-filter"' in text
+    assert '<option value="reviewable">Reviewable</option>' in text
+    assert "workflowParams.get('workflow_status') || 'reviewable'" in text
+    assert "reviewableWorkflowStates.has(status)" in text
+    assert "String(reviewableWorkflows.length)" in text
     assert "not a Git or filesystem lock" in text
     assert "Why Reflect Suggested This" in text
     assert 'aria-label="Workflow approval summary"' in text
@@ -409,8 +413,17 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "params.delete('view')" in text
     assert "groupImpactMeasurements(measurements)" in text
     assert 'data-ledger-action="review-impact-sessions"' in text
-    assert "View Compared Sessions" in text
-    assert "Post-application session collection progress" in text
+    assert "View Compared ${taskLevel ? 'Tasks' : 'Sessions'}" in text
+    assert "function formatImpactSessionValue(metricName, value, item = {})" in text
+    assert "evidence_label:formatImpactSessionValue(ledger.metric_name, item.metric_value, item)" in text
+    assert "evidence_count:0" not in text
+    assert "No unverified change" in text
+    assert "Procedure followed" in text
+    assert "Post-application ${unit} collection progress" in text
+    assert "workflow_adherence:{goal:'Preserve the Proven Procedure'" in text
+    assert "minimum_after_execution_units" in text
+    assert "const evidenceId = session.execution_unit_id || session.session_id" in text
+    assert "linked ${taskLevel ? 'execution units' : 'sessions'}" in text
     assert "function impactTrendPresentation(item, previous, metric)" in text
     assert "metric?.direction || 'lower_is_better'" in text
     assert "direction:'higher_is_better'" in text
@@ -427,6 +440,8 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "showLoopReview(trigger.dataset.loopId || '')" in text
     assert "showSkillReview(trigger.dataset.skillId || '')" in text
     assert "showWorkflowReview(candidateId)" in text
+    assert "Review Active Workflow" in text
+    assert "Review Approved Workflow" in text
     assert "submitSessionFeedback(sessionId, outcome, button)" in text
     assert 'data-session-feedback="no-change-correct"' in text
     assert "trigger.textContent = 'Applying…'" in text

@@ -183,13 +183,16 @@ def test_context_service_returns_and_measures_the_selected_versioned_skill(
         assert selected.installation_state == "installed"
         assert selected.installation_requires_operator_approval is True
         assert "Run the focused release validation" in selected.instructions
-        assert context.task_status(answer.task_run_id).link_state == "session_available"
+        started_status = context.task_status(answer.task_run_id)
+        assert started_status.link_state == "session_available"
+        assert started_status.execution_unit_id is not None
         completed = context.complete_task(
             answer.task_run_id,
             outcome="success",
             verification_passed=True,
         )
         assert completed.linked_to_session is True
+        assert completed.execution_unit_id == started_status.execution_unit_id
         assert tuple(
             conn.execute(
                 "SELECT state, outcome FROM skill_usage WHERE skill_id = ?",
@@ -410,6 +413,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
         "reflect_explain",
         "reflect_improvements",
         "reflect_patterns",
+        "reflect_record_milestone",
         "reflect_review_change",
         "reflect_skills",
         "reflect_task_status",
@@ -438,6 +442,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
     assert not {"memory_search", "memory_remember", "memory_validate"} & names
     assert discovered["reflect_context"].annotations.readOnlyHint is False
     assert discovered["reflect_complete"].annotations.readOnlyHint is False
+    assert discovered["reflect_record_milestone"].annotations.readOnlyHint is False
     assert discovered["reflect_review_change"].annotations.readOnlyHint is False
     assert discovered["reflect_apply_change"].annotations.readOnlyHint is False
     assert discovered["reflect_apply_change"].annotations.destructiveHint is True
@@ -447,6 +452,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
         - {
             "reflect_context",
             "reflect_complete",
+            "reflect_record_milestone",
             "reflect_review_change",
             "reflect_apply_change",
         }

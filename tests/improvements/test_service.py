@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import stat
 from pathlib import Path
 from unittest.mock import patch
@@ -9,6 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from reflect.core import main
+from reflect.improvements.milestones import WorkflowMilestoneService
 from reflect.improvements.models import (
     EvidenceRef,
     ImprovementSummary,
@@ -24,11 +26,13 @@ from reflect.improvements.nudges import HookNudgeBridge, NudgeService
 from reflect.improvements.rules import RetryLoopRule
 from reflect.improvements.service import ImprovementService
 from reflect.improvements.team import TeamBundleService
+from reflect.improvements.workflow_identity import workflow_proposal_signature
 from reflect.store.migrate import migrate
 from reflect.store.normalize import backfill_tool_call_hashes
 from reflect.store.sqlite import connect_sqlite
 
 NOW = "2026-07-01T10:00:00+00:00"
+CONTRACT_SIGNALS = (("Read", "inspect"), ("Edit", "apply patch"), ("exec", "pytest"))
 
 
 def _seed(conn) -> None:
@@ -125,6 +129,147 @@ def _service(tmp_path: Path) -> tuple[ImprovementService, object]:
     )
     conn.commit()
     return ImprovementService(conn), conn
+
+
+def _workflow_contract(
+    signature_hash: str,
+    *,
+    applicability: dict[str, str] | None = None,
+    validation: dict[str, int] | None = None,
+) -> dict[str, object]:
+    contract: dict[str, object] = {
+        "signature_hash": signature_hash,
+        "milestones": [
+            {"id": role, "role": role, "required": True, "evidence": "corroborated"}
+            for role in ("observe", "act", "verify")
+        ],
+    }
+    if applicability:
+        contract["applicability"] = applicability
+    if validation:
+        contract["validation"] = validation
+    return contract
+
+
+def _configure_contract(
+    conn: sqlite3.Connection,
+    *,
+    candidate_id: str,
+    intervention_id: str,
+    contract: dict[str, object],
+    exposed_at: str,
+    target_metric: str | None = None,
+    measurement_window: int | None = None,
+    metric_direction: str | None = None,
+) -> None:
+    conn.execute(
+        """
+        UPDATE workflow_candidates
+        SET target_metric = COALESCE(?, target_metric),
+            task_archetype_id = 'implementation',
+            measurement_window = COALESCE(?, measurement_window),
+            content_json = json_set(content_json, '$.workflow_contract', json(?))
+        WHERE id = ?
+        """,
+        (target_metric, measurement_window, json.dumps(contract), candidate_id),
+    )
+    conn.execute(
+        """
+        UPDATE workflow_versions
+        SET content_json = json_set(content_json, '$.workflow_contract', json(?))
+        WHERE id = (
+          SELECT workflow_version_id FROM interventions WHERE id = ?
+        )
+        """,
+        (json.dumps(contract), intervention_id),
+    )
+    if metric_direction:
+        conn.execute(
+            """
+            UPDATE observations SET metric_direction = ?
+            WHERE id = (SELECT observation_id FROM workflow_candidates WHERE id = ?)
+            """,
+            (metric_direction, candidate_id),
+        )
+    conn.execute(
+        "UPDATE interventions SET exposure_started_at = ? WHERE id = ?",
+        (exposed_at, intervention_id),
+    )
+
+
+def _insert_contract_execution(
+    conn: sqlite3.Connection,
+    execution_unit_id: str,
+    *,
+    started_at: str,
+    sequence_base: int,
+    verification_passed: bool = True,
+    mcp_task_run_id: str | None = None,
+    tool_count: int = len(CONTRACT_SIGNALS),
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO execution_units(
+          id, session_id, mcp_task_run_id, source, source_confidence,
+          workspace_id, repo_id, agent_id, started_at, ended_at, status,
+          outcome, verification_passed, eligible, boundary_json, created_at, updated_at
+        ) VALUES (?, 'session-1', ?, 'mcp_task_run', 1, 'workspace-1', 'repo-1',
+                  'agent-1', ?, ?, 'completed', 'success', ?, 1, '{}', ?, ?)
+        """,
+        (
+            execution_unit_id,
+            mcp_task_run_id,
+            started_at,
+            started_at,
+            int(verification_passed),
+            NOW,
+            NOW,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO execution_unit_archetypes(
+          execution_unit_id, task_archetype_id, confidence, mixed, features_json,
+          classified_at, updated_at
+        ) VALUES (?, 'implementation', 1, 0, '{}', ?, ?)
+        """,
+        (execution_unit_id, NOW, NOW),
+    )
+    for offset, (tool_name, preview) in enumerate(CONTRACT_SIGNALS):
+        step_id = f"{execution_unit_id}-step-{offset}"
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status, raw_attrs_json,
+              created_at, updated_at
+            ) VALUES (?, 'session-1', ?, 'tool_call', ?, 'ok', '{}', ?, ?)
+            """,
+            (step_id, sequence_base + offset, started_at, NOW, NOW),
+        )
+        conn.execute(
+            """
+            INSERT INTO execution_unit_steps(execution_unit_id, step_id, session_id, created_at)
+            VALUES (?, ?, 'session-1', ?)
+            """,
+            (execution_unit_id, step_id, NOW),
+        )
+        if offset < tool_count:
+            conn.execute(
+                """
+                INSERT INTO tool_calls(
+                  id, step_id, session_id, tool_name, status,
+                  input_preview_redacted, raw_attrs_json, created_at, updated_at
+                ) VALUES (?, ?, 'session-1', ?, 'ok', ?, '{}', ?, ?)
+                """,
+                (
+                    f"{execution_unit_id}-tool-{offset}",
+                    step_id,
+                    tool_name,
+                    preview,
+                    NOW,
+                    NOW,
+                ),
+            )
 
 
 def test_refresh_persists_versioned_observations_and_pending_candidates(tmp_path):
@@ -267,8 +412,7 @@ def test_refresh_retires_legacy_retry_observations_without_deleting_history(tmp_
     try:
         definition = RetryLoopRule.definition
         service.repository.sync_rule_definitions((definition,), now=NOW)
-        observation_id = service.repository.upsert_observation(
-            ObservationDraft(
+        draft = ObservationDraft(
                 rule_id=definition.id,
                 rule_version=definition.version,
                 scope_type="repository",
@@ -287,8 +431,52 @@ def test_refresh_retires_legacy_retry_observations_without_deleting_history(tmp_
                 confidence=0.9,
                 occurrence_count=3,
                 affected_session_count=1,
+            )
+        observation_id = service.repository.upsert_observation(
+            draft,
+            now=NOW,
+        )
+        proposal = WorkflowProposal(
+            title="Workflow: legacy retry",
+            hypothesis="Changing state before retrying should reduce identical calls.",
+            risk="low",
+            content={
+                "slug": "legacy-retry",
+                "behavior_type": "loop",
+                "suggested_artifact": "skill",
+                "steps": ["Change relevant state before retrying."],
+            },
+            target_metric="identical_retry_calls",
+            target_value=0,
+            measurement_window=5,
+        )
+        pending_candidate_id = service.repository.ensure_candidate(
+            observation_id,
+            proposal=proposal,
+            now=NOW,
+        )
+        active_observation_id = service.repository.upsert_observation(
+            draft.model_copy(
+                update={
+                    "fingerprint": "legacy-retry-active",
+                    "title": "active exec retries repeat without a changed input",
+                }
             ),
             now=NOW,
+        )
+        active_candidate_id = service.repository.ensure_candidate(
+            active_observation_id,
+            proposal=proposal.model_copy(
+                update={
+                    "title": "Workflow: active legacy retry",
+                    "content": {**proposal.content, "slug": "legacy-retry-active"},
+                }
+            ),
+            now=NOW,
+        )
+        conn.execute(
+            "UPDATE workflow_candidates SET status = 'active' WHERE id = ?",
+            (active_candidate_id,),
         )
         conn.commit()
 
@@ -306,6 +494,16 @@ def test_refresh_retires_legacy_retry_observations_without_deleting_history(tmp_
             "SELECT COUNT(*) FROM observations WHERE id = ?",
             (observation_id,),
         ).fetchone()[0] == 1
+        pending_status, pending_checks = conn.execute(
+            "SELECT status, checks_json FROM workflow_candidates WHERE id = ?",
+            (pending_candidate_id,),
+        ).fetchone()
+        assert pending_status == "stale"
+        assert json.loads(pending_checks)["stale_reason"] == "source_rule_retired"
+        assert conn.execute(
+            "SELECT status FROM workflow_candidates WHERE id = ?",
+            (active_candidate_id,),
+        ).fetchone()[0] == "active"
     finally:
         conn.close()
 
@@ -568,25 +766,61 @@ def test_inbox_groups_scope_specific_observations_by_workflow(tmp_path):
             ),
             now=NOW,
         )
+        variant_data = dict(clone_data)
+        variant_data.update(
+            {
+                "scope_id": f"{source.scope_id}-different-procedure",
+                "fingerprint": f"{source.fingerprint}-different-procedure",
+            }
+        )
+        variant_observation_id = service.repository.upsert_observation(
+            ObservationDraft.model_validate(variant_data),
+            now=NOW,
+        )
+        variant_content = {
+            **candidate.content,
+            "description": "Use when a different tool repeats without a changed input.",
+        }
+        variant_candidate_id = service.repository.ensure_candidate(
+            variant_observation_id,
+            proposal=WorkflowProposal(
+                title="Workflow: Different tool retries repeat without a changed input",
+                hypothesis=candidate.hypothesis,
+                risk=candidate.risk,
+                content=variant_content,
+                target_metric=candidate.target_metric,
+                target_value=candidate.target_value,
+                measurement_window=candidate.measurement_window,
+            ),
+            now=NOW,
+        )
         conn.commit()
 
         observations = service.repository.list_observations(limit=500)
         candidates = {
             item.id: item for item in service.repository.list_candidates(limit=500)
         }
-        target_slug = str(candidate.content["slug"])
+        target_signature = workflow_proposal_signature(candidate.title, candidate.content)
         target_observations = [
             item
             for item in observations
             if item.candidate_id
-            and str(candidates[item.candidate_id].content.get("slug")) == target_slug
+            and workflow_proposal_signature(
+                candidates[item.candidate_id].title,
+                candidates[item.candidate_id].content,
+            )
+            == target_signature
         ]
         findings = service.list_inbox_findings(limit=500)
         target_finding = next(
             item
             for item in findings
             if item.candidate_id
-            and str(candidates[item.candidate_id].content.get("slug")) == target_slug
+            and workflow_proposal_signature(
+                candidates[item.candidate_id].title,
+                candidates[item.candidate_id].content,
+            )
+            == target_signature
         )
 
         assert len(target_observations) >= 2
@@ -594,6 +828,20 @@ def test_inbox_groups_scope_specific_observations_by_workflow(tmp_path):
         assert target_finding.source_scope_count == len(
             {f"{item.scope_type}:{item.scope_id}" for item in target_observations}
         )
+        assert target_finding.title == candidate.title
+        assert target_finding.summary == candidate.content["description"]
+        variant_finding = next(
+            item for item in findings if item.candidate_id == variant_candidate_id
+        )
+        assert variant_finding.observation_count == 1
+        assert variant_finding.candidate_id == variant_candidate_id
+        assert variant_observation_id not in service.finding_observation_ids(source.id)
+        assert variant_observation_id not in service.repository.workflow_session_ledger(
+            candidate.id
+        ).observation_ids
+        assert variant_candidate_id in {
+            item.id for item in service.workflows.list(limit=500)
+        }
         assert len(findings) < len(observations)
     finally:
         conn.close()
@@ -766,6 +1014,59 @@ def test_observation_session_ledger_reflects_grouped_finding(tmp_path):
         )
         assert ledger.source_session_count == 2
         assert {row.session_id for row in ledger.source_sessions} == {"session-1", "session-2"}
+    finally:
+        conn.close()
+
+
+def test_inbox_omits_findings_without_retained_source_sessions(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        service.repository.sync_rule_definitions(
+            [
+                RuleDefinition(
+                    id="test_rule_pruned_source",
+                    version=1,
+                    category="reliability",
+                    title="Test pruned source rule",
+                    description="Synthetic rule used to test retained evidence filtering.",
+                )
+            ],
+            now=NOW,
+        )
+        draft = ObservationDraft(
+            rule_id="test_rule_pruned_source",
+            rule_version=1,
+            scope_type="project",
+            scope_id="repo-1",
+            fingerprint="test-fingerprint-pruned-source",
+            category="reliability",
+            title="Finding whose source session was pruned",
+            summary="Example summary",
+            metric_name="retries",
+            metric_value=3,
+            metric_unit="calls",
+            metric_direction="lower_is_better",
+            impact_score=70,
+            severity=Severity.MEDIUM,
+            confidence=0.9,
+            affected_session_count=1,
+            evidence=[
+                EvidenceRef(
+                    entity_type="session",
+                    entity_id="session-1",
+                    session_id="session-1",
+                    summary_redacted="Source evidence",
+                )
+            ],
+        )
+        observation_id = service.repository.upsert_observation(draft, now=NOW)
+        conn.commit()
+        assert any(item.id == observation_id for item in service.list_inbox_findings())
+
+        conn.execute("DELETE FROM sessions WHERE id = 'session-1'")
+        conn.commit()
+
+        assert all(item.id != observation_id for item in service.list_inbox_findings())
     finally:
         conn.close()
 
@@ -1012,6 +1313,196 @@ def test_task_archetypes_scope_workflow_adherence(tmp_path):
         conn.close()
 
 
+def test_procedure_impact_uses_first_five_comparable_execution_units(tmp_path):
+    service, conn = _service(tmp_path)
+    project_root = tmp_path / "project"
+    (project_root / ".git").mkdir(parents=True)
+    try:
+        service.refresh()
+        candidate = service.workflows.list()[0]
+        applied = service.workflows.apply(candidate.id, project_root=project_root)
+        contract = _workflow_contract(
+            "observe-act-verify",
+            applicability={
+                "repo_id": "repo-1",
+                "workspace_id": "workspace-1",
+                "task_archetype_id": "implementation",
+            },
+            validation={"baseline_minimum": 3, "baseline_maximum": 20},
+        )
+        _configure_contract(
+            conn,
+            candidate_id=candidate.id,
+            intervention_id=applied["intervention_id"],
+            contract=contract,
+            exposed_at="2026-07-10T00:00:00+00:00",
+            target_metric="workflow_adherence",
+            measurement_window=5,
+            metric_direction="higher_is_better",
+        )
+        for index in range(8):
+            task_id = f"procedure-task-{index}"
+            started_at = (
+                f"2026-07-0{index + 4}T10:00:00+00:00"
+                if index < 3
+                else f"2026-07-{index + 8:02d}T10:00:00+00:00"
+            )
+            _insert_contract_execution(
+                conn,
+                task_id,
+                started_at=started_at,
+                sequence_base=100 + index * 3,
+                verification_passed=index != 7,
+            )
+            if index >= 3:
+                state = "ignored" if index == 7 else "followed"
+                conn.execute(
+                    """
+                    INSERT INTO workflow_exposures(
+                      id, intervention_id, session_id, execution_unit_id,
+                      state, evidence_json, created_at
+                    ) VALUES (?, ?, 'session-1', ?, ?, '{}', ?)
+                    """,
+                    (
+                        f"procedure-exposure-{index}",
+                        applied["intervention_id"],
+                        task_id,
+                        state,
+                        NOW,
+                    ),
+                )
+        conn.commit()
+
+        result = service.measurements.measure(candidate.id)
+        ledger = service.measurements.sessions(result["id"])
+
+        assert result["before_count"] == 3
+        assert result["after_count"] == 5
+        assert result["before_value"] == 1.0
+        assert result["after_value"] == 0.8
+        assert result["verdict"] == "regressed"
+        assert result["cohort"]["unit"] == "execution_units"
+        assert ledger["unit"] == "execution_units"
+        assert len(ledger["before_execution_units"]) == 3
+        assert len(ledger["after_execution_units"]) == 5
+        assert all(item["evidence_count"] == 3 for item in ledger["before_execution_units"])
+        assert all(item["metric_value"] == 1.0 for item in ledger["before_execution_units"])
+        assert ledger["after_execution_units"][-1]["adherence_state"] == "not_followed"
+        assert ledger["after_execution_units"][-1]["metric_value"] == 0.0
+        assert ledger["after_execution_units"][0]["evidence_summaries"] == [
+            "Observed roles: observe → act → verify",
+            "100% required milestone coverage",
+        ]
+    finally:
+        conn.close()
+
+
+def test_reported_procedure_milestones_require_independent_tool_corroboration(tmp_path):
+    service, conn = _service(tmp_path)
+    project_root = tmp_path / "project"
+    (project_root / ".git").mkdir(parents=True)
+    try:
+        service.refresh()
+        candidate = service.workflows.list()[0]
+        applied = service.workflows.apply(candidate.id, project_root=project_root)
+        contract = _workflow_contract("corroboration-sequence")
+        _configure_contract(
+            conn,
+            candidate_id=candidate.id,
+            intervention_id=applied["intervention_id"],
+            contract=contract,
+            exposed_at="2026-07-01T00:00:00+00:00",
+        )
+        service.skills.refresh()
+        version_id = conn.execute(
+            """
+            SELECT sv.id
+            FROM skill_versions sv
+            JOIN skills s ON s.id = sv.skill_id
+            WHERE json_extract(sv.workflow_json, '$.workflow_contract.signature_hash')
+                  = 'corroboration-sequence'
+            """
+        ).fetchone()[0]
+        conn.execute(
+            """
+            INSERT INTO mcp_task_runs(
+              id, runtime_session_id, runtime_agent, workspace_path, question_hash,
+              selected_skills_json, status, started_at, completed_at, outcome,
+              verification_passed, created_at, updated_at
+                ) VALUES ('procedure-run', 'session-1', 'codex', ?, 'question', ?,
+                          'started', ?, ?, 'success', 1, ?, ?)
+            """,
+            (
+                str(project_root),
+                json.dumps([{"skill_id": "unused", "version_id": version_id}]),
+                "2026-07-03T10:00:00+00:00",
+                "2026-07-03T10:10:00+00:00",
+                NOW,
+                NOW,
+            ),
+        )
+        _insert_contract_execution(
+            conn,
+            "procedure-unit",
+            started_at="2026-07-03T10:00:00+00:00",
+            sequence_base=200,
+            mcp_task_run_id="procedure-run",
+            tool_count=1,
+        )
+        conn.execute(
+            "UPDATE mcp_task_runs SET execution_unit_id = 'procedure-unit' WHERE id = 'procedure-run'"
+        )
+        conn.commit()
+        milestones = WorkflowMilestoneService(conn)
+        for role in ("observe", "act", "verify"):
+            milestones.record(
+                task_run_id="procedure-run",
+                skill_version_id=version_id,
+                milestone_id=role,
+                state="completed",
+                idempotency_key=f"{role}-done",
+            )
+
+        service.adherence.refresh()
+        assert conn.execute(
+            "SELECT state FROM workflow_exposures WHERE execution_unit_id = 'procedure-unit'"
+        ).fetchone()[0] == "invoked"
+
+        for offset, (tool_name, preview) in enumerate(
+            CONTRACT_SIGNALS[1:],
+            start=1,
+        ):
+            conn.execute(
+                """
+                INSERT INTO tool_calls(
+                  id, step_id, session_id, tool_name, status,
+                  input_preview_redacted, raw_attrs_json, created_at, updated_at
+                ) VALUES (?, ?, 'session-1', ?, 'ok', ?, '{}', ?, ?)
+                """,
+                (
+                    f"procedure-unit-tool-{offset}",
+                    f"procedure-unit-step-{offset}",
+                    tool_name,
+                    preview,
+                    NOW,
+                    NOW,
+                ),
+            )
+        conn.commit()
+        service.adherence.refresh()
+
+        state, evidence_json = conn.execute(
+            """
+            SELECT state, evidence_json FROM workflow_exposures
+            WHERE execution_unit_id = 'procedure-unit'
+            """
+        ).fetchone()
+        assert state == "followed"
+        assert json.loads(evidence_json)["corroborated"] is True
+    finally:
+        conn.close()
+
+
 def test_feedback_records_explicit_session_outcome(tmp_path):
     service, conn = _service(tmp_path)
     try:
@@ -1053,9 +1544,9 @@ def test_remaining_p0_rules_use_explicit_outcomes_and_canonical_signals(tmp_path
             conn.execute(
                 """
                 INSERT INTO sessions(
-                  id, agent_id, repo_id, started_at, ended_at, status,
+                  id, agent_id, workspace_id, repo_id, started_at, ended_at, status,
                   created_at, updated_at
-                ) VALUES (?, 'agent-1', 'repo-1', ?, ?, 'completed', ?, ?)
+                ) VALUES (?, 'agent-1', 'workspace-1', 'repo-1', ?, ?, 'completed', ?, ?)
                 """,
                 (
                     session_id,
@@ -1070,10 +1561,11 @@ def test_remaining_p0_rules_use_explicit_outcomes_and_canonical_signals(tmp_path
                     step_id = f"p0-step-{index}-{seq}"
                     conn.execute(
                         """
-                        INSERT INTO steps(
-                          id, session_id, seq, type, started_at, status, raw_attrs_json,
-                          created_at, updated_at
-                        ) VALUES (?, ?, ?, 'tool_call', ?, 'ok', '{}', ?, ?)
+                            INSERT INTO steps(
+                              id, session_id, seq, type, started_at, status, raw_attrs_json,
+                              summary, created_at, updated_at
+                            ) VALUES (?, ?, ?, 'tool_call', ?, 'ok', '{}',
+                                      'Implement feature change', ?, ?)
                         """,
                         (step_id, session_id, seq, NOW, NOW, NOW),
                     )
@@ -1092,8 +1584,24 @@ def test_remaining_p0_rules_use_explicit_outcomes_and_canonical_signals(tmp_path
                             f"p0-input-{index}-{seq}",
                             NOW,
                             NOW,
-                        ),
-                    )
+                            ),
+                        )
+                conn.execute(
+                    """
+                    INSERT INTO conversation_facts(
+                      id, step_id, session_id, kind, role, content_hash,
+                      content_length, raw_attrs_json, created_at, updated_at
+                    ) VALUES (?, ?, ?, 'prompt', 'user', ?, 24, '{}', ?, ?)
+                    """,
+                    (
+                        f"p0-prompt-{index}",
+                        f"p0-step-{index}-1",
+                        session_id,
+                        f"p0-prompt-hash-{index}",
+                        NOW,
+                        NOW,
+                    ),
+                )
             else:
                 conn.execute(
                     """
@@ -1127,7 +1635,38 @@ def test_remaining_p0_rules_use_explicit_outcomes_and_canonical_signals(tmp_path
             JOIN observations o ON o.id = wc.observation_id
             WHERE o.rule_id = 'high_performing_repeated_workflow'
             """
-        ).fetchone()[0] == 0
+        ).fetchone()[0] == 1
+        candidate_row = conn.execute(
+            """
+            SELECT wc.id, wc.measurement_window,
+                   json_extract(wc.content_json, '$.workflow_contract.signature_hash')
+            FROM workflow_candidates wc
+            JOIN observations o ON o.id = wc.observation_id
+            WHERE o.rule_id = 'high_performing_repeated_workflow'
+            """
+        ).fetchone()
+        assert candidate_row[1] == 5
+        assert candidate_row[2]
+
+        project_root = tmp_path
+        (project_root / ".git").mkdir(parents=True)
+        service.workflows.apply(candidate_row[0], project_root=project_root)
+        service.skills.refresh()
+        service.refresh()
+
+        assert conn.execute(
+            """
+            SELECT status FROM observations
+            WHERE rule_id = 'high_performing_repeated_workflow'
+            """
+        ).fetchone()[0] == "resolved"
+        assert conn.execute(
+            """
+            SELECT COUNT(*) FROM workflow_candidates wc
+            JOIN observations o ON o.id = wc.observation_id
+            WHERE o.rule_id = 'high_performing_repeated_workflow'
+            """
+        ).fetchone()[0] == 1
     finally:
         conn.close()
 
@@ -1220,6 +1759,13 @@ def test_refresh_automatically_measures_new_comparable_sessions_once(tmp_path):
             "measure-session-6",
             "measure-session-10",
         }
+        metric_values = {
+            item["session_id"]: item["metric_value"]
+            for item in [*cohorts["before_sessions"], *cohorts["after_sessions"]]
+        }
+        assert metric_values["measure-session-3"] == 0.0
+        assert metric_values["measure-session-6"] == 1.0
+        assert all(item["metric_value"] is not None for item in cohorts["after_sessions"])
         skill = service.skills.skill_for_candidate(candidate.id)
         assert skill.measurement_count == 1
         assert service.skills.show(skill.id).measurements[0].verdict == "regressed"

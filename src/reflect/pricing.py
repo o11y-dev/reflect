@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import time
 import urllib.request
@@ -103,6 +105,37 @@ class PricingStatus:
     cache_age_seconds: int | None = None
     cache_fresh: bool = False
     error: str = ""
+
+
+def pricing_inputs_fingerprint(
+    pricing_table: PricingTable,
+    aliases: dict[str, str],
+) -> str:
+    """Hash only pricing inputs that can change persisted cost estimates."""
+
+    prices = {
+        str(key).strip().lower(): {
+            "model_key": value.model_key,
+            "input": value.input_cost_per_token,
+            "output": value.output_cost_per_token,
+            "cache_creation": value.cache_creation_cost_per_token,
+            "cache_read": value.cache_read_cost_per_token,
+        }
+        for key, value in pricing_table.prices.items()
+    }
+    normalized_aliases = {
+        str(key).strip().lower(): str(value).strip().lower()
+        for key, value in aliases.items()
+        if str(key).strip() and str(value).strip()
+    }
+    payload = {
+        "schema_version": 1,
+        "pricing_unit": pricing_table.pricing_unit,
+        "prices": prices,
+        "aliases": normalized_aliases,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def canonicalize_model_name(model: str, aliases: dict[str, str] | None = None) -> str:

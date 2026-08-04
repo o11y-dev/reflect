@@ -12,6 +12,12 @@ from reflect.improvements.base import (
     severity_for_impact,
     stable_fingerprint,
 )
+from reflect.improvements.contracts import (
+    WorkflowContract,
+    WorkflowContractApplicability,
+    WorkflowContractValidation,
+    WorkflowMilestoneContract,
+)
 from reflect.improvements.models import (
     EvidenceRef,
     ObservationDraft,
@@ -19,7 +25,9 @@ from reflect.improvements.models import (
     RuleDefinition,
     WorkflowBehaviorType,
     WorkflowDefinition,
+    WorkflowProposal,
 )
+from reflect.improvements.workflow_roles import WorkflowEvidenceRepository, workflow_roles
 
 _stable_fingerprint = stable_fingerprint
 _scope = scope_for_repository
@@ -991,46 +999,104 @@ class SuccessfulRecoveryRule(BaseImprovementRule):
 class HighPerformingWorkflowRule(BaseImprovementRule):
     definition = RuleDefinition(
         id="high_performing_repeated_workflow",
-        version=1,
+        version=2,
         category="workflow",
         title="High-performing repeated workflow worth preserving",
-        description="Finds repeated failure-free tool sequences within the same task archetype.",
-        detector_config={"minimum_sessions": 3, "maximum_signature_tools": 8},
-        required_signals=["tool_calls.tool_name", "session_task_archetypes.task_archetype_id"],
+        description="Finds repeated failure-free task procedures within one workspace and archetype.",
+        detector_config={
+            "minimum_execution_units": 3,
+            "minimum_source_sessions": 2,
+            "minimum_cohort_coverage": 0.6,
+            "maximum_milestones": 8,
+        },
+        required_signals=[
+            "execution_units.eligible",
+            "execution_unit_archetypes.task_archetype_id",
+            "execution_unit_steps.step_id",
+            "tool_calls.tool_name",
+        ],
     )
-    # Confirmed productive routines enter the loop ledger first. An agent may
-    # later turn one into a versioned skill through an explicit build action.
     workflow = None
 
     def detect(self, conn: sqlite3.Connection) -> list[ObservationDraft]:
         rows = conn.execute(
             """
-            SELECT s.id, s.repo_id, sta.task_archetype_id,
-                   COALESCE((
-                     SELECT GROUP_CONCAT(tool_name, ' > ') FROM (
-                       SELECT lower(tc.tool_name) AS tool_name
-                       FROM tool_calls tc WHERE tc.session_id = s.id
-                       ORDER BY tc.created_at LIMIT 8
-                     )
-                   ), '') AS signature
-            FROM sessions s
-            JOIN session_task_archetypes sta ON sta.session_id = s.id
-            WHERE s.failure_count = 0
-              AND lower(COALESCE(s.status, '')) IN ('completed', 'ok', 'success')
+            SELECT eu.id, eu.session_id, eu.repo_id, eu.workspace_id,
+                   eua.task_archetype_id
+            FROM execution_units eu
+            JOIN execution_unit_archetypes eua ON eua.execution_unit_id = eu.id
+            WHERE eu.eligible = 1 AND eua.mixed = 0
+              AND lower(COALESCE(eu.status, '')) IN ('completed', 'ok', 'success')
+              AND COALESCE(eu.outcome, 'success')
+                  NOT IN ('failure', 'partial', 'abandoned')
+              AND COALESCE(eu.verification_passed, 1) <> 0
+            ORDER BY eu.started_at, eu.id
             """
         ).fetchall()
-        groups: dict[tuple[str | None, str, str], list[str]] = defaultdict(list)
-        for session_id, repo_id, archetype_id, signature in rows:
-            if signature:
-                groups[(repo_id, str(archetype_id), str(signature))].append(str(session_id))
+        signals_by_execution = WorkflowEvidenceRepository(conn).signals_for_execution_units(
+            [str(row[0]) for row in rows]
+        )
+        executions: dict[str, dict[str, object]] = {}
+        for row in rows:
+            execution_unit_id = str(row[0])
+            signals = signals_by_execution.get(execution_unit_id, [])
+            executions[execution_unit_id] = {
+                "session_id": str(row[1]),
+                "repo_id": row[2],
+                "workspace_id": row[3],
+                "archetype_id": str(row[4]),
+                "signals": signals,
+                "failed": any(signal.failed for signal in signals),
+            }
+
+        cohort_sizes: dict[tuple[str | None, str | None, str], int] = defaultdict(int)
+        groups: dict[tuple[str | None, str | None, str, str], list[str]] = defaultdict(list)
+        signatures: dict[str, list[str]] = {}
+        for execution_unit_id, execution in executions.items():
+            cohort = (
+                execution["repo_id"],
+                execution["workspace_id"],
+                str(execution["archetype_id"]),
+            )
+            cohort_sizes[cohort] += 1
+            roles = workflow_roles(execution["signals"])  # type: ignore[arg-type]
+            if bool(execution["failed"]) or len(set(roles)) < 2:
+                continue
+            signature = " > ".join(roles)
+            signatures[execution_unit_id] = roles
+            groups[(*cohort, signature)].append(execution_unit_id)
+
         findings: list[ObservationDraft] = []
-        for (repo_id, archetype_id, signature), session_ids in groups.items():
-            if len(session_ids) < 3:
+        for (repo_id, workspace_id, archetype_id, signature), execution_unit_ids in groups.items():
+            session_ids = sorted(
+                {str(executions[item]["session_id"]) for item in execution_unit_ids}
+            )
+            coverage = len(execution_unit_ids) / cohort_sizes[(repo_id, workspace_id, archetype_id)]
+            if len(execution_unit_ids) < 3 or len(session_ids) < 2 or coverage < 0.6:
                 continue
-            signature_tools = [tool.strip() for tool in signature.split(" > ") if tool.strip()]
-            if len(set(signature_tools)) < 2:
+            signature_hash = _stable_fingerprint(archetype_id, signature)
+            if conn.execute(
+                """
+                SELECT 1
+                FROM skill_installations si
+                JOIN skill_versions sv ON sv.id = si.skill_version_id
+                WHERE si.status = 'active'
+                  AND json_extract(
+                    sv.workflow_json, '$.workflow_contract.signature_hash'
+                  ) = ?
+                  AND (
+                    si.target_kind <> 'repository'
+                    OR EXISTS (
+                      SELECT 1 FROM workspaces w
+                      WHERE w.id = ? AND rtrim(w.root_path, '/') = rtrim(si.target_ref, '/')
+                    )
+                  )
+                LIMIT 1
+                """,
+                (signature_hash, workspace_id),
+            ).fetchone():
                 continue
-            impact = min(78.0, 30.0 + len(session_ids) * 6.0)
+            impact = min(82.0, 30.0 + len(execution_unit_ids) * 6.0 + coverage * 10.0)
             scope_type, scope_id = _scope(repo_id)
             findings.append(
                 ObservationDraft(
@@ -1039,43 +1105,57 @@ class HighPerformingWorkflowRule(BaseImprovementRule):
                     scope_type=scope_type,
                     scope_id=scope_id,
                     repo_id=repo_id,
-                    fingerprint=_stable_fingerprint(archetype_id, signature),
+                    fingerprint=_stable_fingerprint(workspace_id, archetype_id, signature),
                     category=self.definition.category,
                     title=f"A reliable {archetype_id} workflow repeats",
                     summary=(
-                        f"{len(session_ids)} completed, failure-free session(s) used the bounded "
-                        f"tool sequence: {signature}."
+                        f"{len(execution_unit_ids)} comparable task(s) across {len(session_ids)} "
+                        f"session(s) used the failure-free procedure: {signature}."
                     ),
-                    metric_name="successful_workflow_sessions",
-                    metric_value=float(len(session_ids)),
-                    metric_unit="sessions",
+                    metric_name="workflow_adherence",
+                    metric_value=coverage,
+                    metric_unit="ratio",
                     metric_direction="higher_is_better",
-                    baseline_value=float(len(session_ids)),
+                    baseline_value=coverage,
                     baseline_query={
                         "repo_id": repo_id,
+                        "workspace_id": workspace_id,
                         "task_archetype_id": archetype_id,
-                        "tool_signature": signature,
+                        "milestone_roles": signature.split(" > "),
+                        "signature_hash": signature_hash,
+                        "cohort_execution_unit_count": cohort_sizes[
+                            (repo_id, workspace_id, archetype_id)
+                        ],
+                        "coverage": coverage,
                     },
                     impact_score=impact,
                     severity=_severity(impact),
-                    confidence=min(0.92, 0.58 + len(session_ids) * 0.06),
-                    occurrence_count=len(session_ids),
+                    confidence=min(0.94, 0.58 + len(execution_unit_ids) * 0.06),
+                    occurrence_count=len(execution_unit_ids),
                     affected_session_count=len(session_ids),
                     evidence=[
                         EvidenceRef(
-                            entity_type="session",
-                            entity_id=session_id,
-                            session_id=session_id,
-                            summary_redacted="Completed without recorded tool failures using the repeated sequence",
+                            entity_type="execution_unit",
+                            entity_id=execution_unit_id,
+                            session_id=str(executions[execution_unit_id]["session_id"]),
+                            summary_redacted=(
+                                "Completed without recorded tool failures using the repeated procedure"
+                            ),
+                            attrs={"milestone_roles": signatures[execution_unit_id]},
                         )
-                        for session_id in session_ids[:20]
+                        for execution_unit_id in execution_unit_ids[:20]
                     ],
                     source_sessions=[
                         ObservationSessionRef(
                             session_id=session_id,
+                            occurrence_count=sum(
+                                1
+                                for execution_unit_id in execution_unit_ids
+                                if str(executions[execution_unit_id]["session_id"])
+                                == session_id
+                            ),
                             summary_redacted=(
-                                "Completed without recorded tool failures using "
-                                "the repeated sequence"
+                                "Contained comparable tasks using the repeated procedure"
                             ),
                             focus_entity_type="task_archetype",
                             focus_entity_id=archetype_id,
@@ -1086,6 +1166,73 @@ class HighPerformingWorkflowRule(BaseImprovementRule):
             )
         return findings
 
+    def propose(self, finding: ObservationDraft) -> WorkflowProposal | None:
+        roles = [str(item) for item in finding.baseline_query.get("milestone_roles") or []]
+        if len(roles) < 2:
+            return None
+        archetype = str(finding.baseline_query.get("task_archetype_id") or "task")
+        signature_hash = str(finding.baseline_query.get("signature_hash") or finding.fingerprint)
+        steps = [f"Complete and record the {role} milestone." for role in roles]
+        evidence_fields = {
+            "authorize": ["preview_fingerprint", "approval_fingerprint"],
+            "act": ["provider", "target_ref", "write_fingerprint"],
+            "verify": ["readback_fingerprint"],
+        }
+        contract = WorkflowContract(
+            signature_hash=signature_hash,
+            applicability=WorkflowContractApplicability(
+                repo_id=finding.repo_id,
+                workspace_id=finding.baseline_query.get("workspace_id"),
+                task_archetype_id=archetype,
+            ),
+            milestones=[
+                WorkflowMilestoneContract(
+                    id=role,
+                    role=role,
+                    evidence_fields=evidence_fields.get(role, []),
+                )
+                for role in roles
+            ],
+            validation=WorkflowContractValidation(
+                baseline_minimum=3,
+                baseline_maximum=20,
+                minimum_evidence_coverage=0.8,
+            ),
+        )
+        return WorkflowProposal(
+            title=f"Workflow: preserve the {archetype} procedure",
+            hypothesis=(
+                f"Installing this bounded workflow will preserve or improve workflow_adherence. "
+                f"{finding.summary}"
+            ),
+            risk="low",
+            content={
+                "schema_version": 2,
+                "slug": f"proven-{archetype.replace('_', '-')}-{signature_hash[:8]}",
+                "behavior_type": WorkflowBehaviorType.PROVEN_PATTERN.value,
+                "suggested_artifact": "skill",
+                "description": f"Use for comparable {archetype} tasks in this workspace.",
+                "steps": steps,
+                "abstain_when": [
+                    "The task is outside the recorded workspace or task archetype.",
+                    "The linked execution-unit evidence is mixed or low confidence.",
+                ],
+                "verification": [
+                    "Record every required milestone against the active Reflect task run.",
+                    "Verify the task outcome independently from milestone self-reporting.",
+                ],
+                "workflow_contract": contract.model_dump(mode="json"),
+                "source": {
+                    "kind": "rule_blueprint",
+                    "observation_title": finding.title,
+                    "rule_id": self.definition.id,
+                    "rule_version": self.definition.version,
+                },
+            },
+            target_metric="workflow_adherence",
+            target_value=1.0,
+            measurement_window=5,
+        )
 
 class CorrectNoChangeRule(BaseImprovementRule):
     definition = RuleDefinition(

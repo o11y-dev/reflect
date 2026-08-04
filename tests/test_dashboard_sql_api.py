@@ -1498,6 +1498,27 @@ def test_dashboard_api_filters_by_session_param_from_sql(tmp_path):
     assert [session["id"] for session in payload["sessions"]] == ["sess-sql"]
 
 
+def test_dashboard_api_uses_canonical_events_when_rollup_is_missing(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    conn = connect_sqlite(db_path)
+    try:
+        expected = conn.execute(
+            "SELECT COUNT(*) FROM steps WHERE session_id = 'sess-sql'"
+        ).fetchone()[0]
+        conn.execute("DELETE FROM session_rollups WHERE session_id = 'sess-sql'")
+        conn.commit()
+    finally:
+        conn.close()
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+
+    payload = TestClient(app).get("/api/data", params={"session": "sess-sql"}).json()
+    session = next(item for item in payload["sessions"] if item["id"] == "sess-sql")
+
+    assert expected > 0
+    assert session["event_count"] == expected
+
+
 def test_dashboard_api_applies_sql_filters_and_comparison(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)

@@ -1624,6 +1624,116 @@ class TestUpdateAdvisor:
         assert result["graph"]["skipped"] == 1
         assert result["rollups"]["skipped"] == 1
 
+    def test_prepare_sql_report_db_reprices_when_pricing_inputs_change(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        from reflect.pricing import ModelPricing, PricingTable
+        from reflect.store.sqlite import connect_sqlite
+
+        db_path = tmp_path / "reflect.db"
+        otlp_traces = tmp_path / "otel-traces.json"
+        otlp_traces.write_text(
+            wrap_otlp(
+                [
+                    make_span(
+                        "UserPromptSubmit",
+                        session="sess-reprice",
+                        model="gpt-4o-mini",
+                        input_tokens=100,
+                        output_tokens=50,
+                    )
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        current_table = {
+            "value": PricingTable(
+                prices={
+                    "gpt-4o-mini": ModelPricing(
+                        model_key="gpt-4o-mini",
+                        input_cost_per_token=0.1,
+                        output_cost_per_token=0.2,
+                    )
+                },
+                source="test",
+                fetched_at_unix=1,
+            )
+        }
+        monkeypatch.setattr(core, "_infer_otlp_logs_file", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(
+            "reflect.store.cost_refresh.load_pricing_table",
+            lambda: current_table["value"],
+        )
+
+        first = core._prepare_sql_report_db(
+            db_path,
+            otlp_traces=otlp_traces,
+            include_native_sessions=False,
+        )
+        conn = connect_sqlite(db_path)
+        try:
+            first_cost = float(
+                conn.execute(
+                    "SELECT estimated_cost_usd FROM sessions WHERE id = 'sess-reprice'"
+                ).fetchone()[0]
+            )
+            first_rollup_cost = float(
+                conn.execute(
+                    "SELECT total_cost FROM session_rollups WHERE session_id = 'sess-reprice'"
+                ).fetchone()[0]
+            )
+        finally:
+            conn.close()
+
+        current_table["value"] = PricingTable(
+            prices={
+                "gpt-4o-mini": ModelPricing(
+                    model_key="gpt-4o-mini",
+                    input_cost_per_token=0.2,
+                    output_cost_per_token=0.4,
+                )
+            },
+            source="test",
+            fetched_at_unix=2,
+        )
+        second = core._prepare_sql_report_db(
+            db_path,
+            otlp_traces=otlp_traces,
+            include_native_sessions=False,
+        )
+        third = core._prepare_sql_report_db(
+            db_path,
+            otlp_traces=otlp_traces,
+            include_native_sessions=False,
+        )
+
+        conn = connect_sqlite(db_path)
+        try:
+            second_cost = float(
+                conn.execute(
+                    "SELECT estimated_cost_usd FROM sessions WHERE id = 'sess-reprice'"
+                ).fetchone()[0]
+            )
+            second_rollup_cost = float(
+                conn.execute(
+                    "SELECT total_cost FROM session_rollups WHERE session_id = 'sess-reprice'"
+                ).fetchone()[0]
+            )
+        finally:
+            conn.close()
+
+        assert first["refresh_plan"]["cost_mode"] == "full"
+        assert first_cost == first_rollup_cost
+        assert second["refresh_plan"]["cost_mode"] == "full"
+        assert second["refresh_plan"]["rollup_mode"] == "full"
+        assert second_cost == pytest.approx(first_cost * 2)
+        assert second_rollup_cost == second_cost
+        assert third["refresh_plan"]["cost_mode"] == "skip"
+        assert third["refresh_plan"]["rollup_mode"] == "skip"
+
     def test_prepare_sql_report_db_refreshes_only_changed_session_rollups(
         self,
         tmp_path,

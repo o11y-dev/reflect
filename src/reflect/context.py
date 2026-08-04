@@ -13,6 +13,12 @@ from reflect.changes import (
     ChangeReviewAnswer,
     ChangeReviewService,
 )
+from reflect.improvements.contracts import WorkflowContract, WorkflowMilestoneEvidence
+from reflect.improvements.milestones import (
+    WorkflowMilestoneResult,
+    WorkflowMilestoneService,
+    WorkflowMilestoneState,
+)
 from reflect.improvements.models import (
     AskAnswer,
     LoopKind,
@@ -97,6 +103,7 @@ class ContextSkill(ReflectModel):
     installation_state: SkillInstallationState
     installation_requires_operator_approval: bool
     content_hash: str
+    workflow_contract: WorkflowContract | None = None
     instructions: str
     instructions_truncated: bool = False
     full_instructions_action: ContextNextAction | None = None
@@ -132,6 +139,7 @@ class ReflectContextService:
         )
         self.usage = UsageService(conn)
         self.task_runs = MCPTaskRunService(conn, usage=self.usage)
+        self.milestones = WorkflowMilestoneService(conn)
         self.agent_inspection = AgentInspectionService(
             conn,
             skills=self.improvements.skills,
@@ -368,6 +376,27 @@ class ReflectContextService:
 
         return self.task_runs.status(task_run_id)
 
+    def record_milestone(
+        self,
+        *,
+        task_run_id: str,
+        skill_version_id: str,
+        milestone_id: str,
+        state: WorkflowMilestoneState | str,
+        idempotency_key: str,
+        evidence: WorkflowMilestoneEvidence | None = None,
+    ) -> WorkflowMilestoneResult:
+        """Record one typed checkpoint for a workflow selected on this task."""
+
+        return self.milestones.record(
+            task_run_id=task_run_id,
+            skill_version_id=skill_version_id,
+            milestone_id=milestone_id,
+            state=state,
+            idempotency_key=idempotency_key,
+            evidence=evidence,
+        )
+
     def review_change(
         self,
         *,
@@ -546,6 +575,9 @@ class ReflectContextService:
                 ),
                 installation_requires_operator_approval=True,
                 content_hash=current.content_hash,
+                workflow_contract=WorkflowContract.from_raw(
+                    current.workflow.get("workflow_contract")
+                ),
                 instructions=current.content_markdown[:instructions_limit],
                 instructions_truncated=instructions_truncated,
                 full_instructions_action=(

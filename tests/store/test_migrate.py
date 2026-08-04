@@ -29,7 +29,7 @@ def test_migrate_applies_initial_schema(tmp_path):
     try:
         applied = migrate(conn)
         assert applied == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24
         ]
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "raw_events" in tables
@@ -80,6 +80,9 @@ def test_migrate_applies_initial_schema(tmp_path):
         assert "skill_usage" in tables
         assert "skill_measurements" in tables
         assert "mcp_task_runs" in tables
+        assert "execution_units" in tables
+        assert "execution_unit_steps" in tables
+        assert "execution_unit_archetypes" in tables
         assert "change_reviews" in tables
         session_columns = {
             row[1] for row in conn.execute("PRAGMA table_info('sessions')")
@@ -101,9 +104,38 @@ def test_migrate_is_idempotent(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
         assert migrate(conn) == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24
         ]
         assert migrate(conn) == []
+    finally:
+        conn.close()
+
+
+def test_migrate_indexes_session_retention_foreign_key_paths(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        expected = {
+            "execution_unit_steps": {"session_id"},
+            "loop_occurrences": {"session_id"},
+            "skill_usage": {"session_id"},
+            "workflow_exposures": {"session_id"},
+            "evidence": {"step_id"},
+            "llm_calls": {"step_id"},
+            "mcp_calls": {"step_id"},
+            "memories": {"step_id"},
+            "observation_evidence": {"step_id", "llm_call_id", "tool_call_id"},
+            "privacy_findings": {"step_id"},
+            "tool_calls": {"step_id"},
+        }
+        for table, columns in expected.items():
+            leading_columns = {
+                str(info[2])
+                for index in conn.execute(f"PRAGMA index_list('{table}')")
+                for info in conn.execute(f"PRAGMA index_info('{index[1]}')")
+                if int(info[0]) == 0
+            }
+            assert columns <= leading_columns
     finally:
         conn.close()
 
@@ -121,8 +153,8 @@ def test_migrate_serializes_concurrent_background_requests(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: run_migration(), range(2)))
 
-    assert sorted(len(result) for result in results) == [0, 22]
-    assert sorted(version for result in results for version in result) == list(range(1, 23))
+    assert sorted(len(result) for result in results) == [0, 24]
+    assert sorted(version for result in results for version in result) == list(range(1, 25))
 
 
 def test_migrate_uses_read_only_fast_path_when_schema_is_current(tmp_path):
@@ -146,11 +178,11 @@ def test_migrate_can_preserve_a_caller_owned_transaction(tmp_path):
         _apply_migrations_through(conn, 21)
         conn.execute("BEGIN IMMEDIATE")
 
-        assert migrate(conn, commit=False) == [22]
+        assert migrate(conn, commit=False) == [22, 23, 24]
         assert conn.in_transaction is True
         assert conn.execute(
             "SELECT MAX(version) FROM schema_migrations"
-        ).fetchone()[0] == 22
+        ).fetchone()[0] == 24
 
         conn.rollback()
         assert conn.execute(
@@ -295,7 +327,7 @@ def test_database_doctor_reports_pending_migrations(tmp_path):
     assert status["ok"] is False
     assert status["applied_migrations"] == []
     assert status["pending_migrations"] == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24
     ]
 
 
@@ -325,7 +357,7 @@ def test_migrate_adds_task_reconciliation_state_without_losing_phase_one_runs(tm
         )
         conn.commit()
 
-        assert migrate(conn) == [17, 18, 19, 20, 21, 22]
+        assert migrate(conn) == [17, 18, 19, 20, 21, 22, 23, 24]
         row = conn.execute(
             """
             SELECT id, session_linked_at, session_outcome_recorded,
@@ -367,7 +399,7 @@ def test_migrate_adds_change_reviews_without_changing_phase_two_task_runs(tmp_pa
         )
         conn.commit()
 
-        assert migrate(conn) == [18, 19, 20, 21, 22]
+        assert migrate(conn) == [18, 19, 20, 21, 22, 23, 24]
         assert tuple(
             conn.execute(
                 """
@@ -490,7 +522,7 @@ def test_migrate_reingests_codex_desktop_logs_and_removes_noisy_trace_session(tm
         )
         conn.commit()
 
-        assert migrate(conn) == [19, 20, 21, 22]
+        assert migrate(conn) == [19, 20, 21, 22, 23, 24]
         assert conn.execute(
             "SELECT COUNT(*) FROM source_ingestion_state"
         ).fetchone()[0] == 0
@@ -542,7 +574,7 @@ def test_retention_migration_keeps_unrecoverable_epoch_start(tmp_path):
         )
         conn.commit()
 
-        assert migrate(conn) == [22]
+        assert migrate(conn) == [22, 23, 24]
         assert conn.execute(
             "SELECT started_at FROM sessions WHERE id = 'session-epoch'"
         ).fetchone()[0] == "1970-01-01T00:00:00+00:00"
@@ -705,7 +737,7 @@ def test_retention_migration_marks_capped_attribution_for_one_time_rebuild(tmp_p
             (observation_id,),
         ).fetchone()[0] == 20
 
-        assert migrate(conn) == [22]
+        assert migrate(conn) == [22, 23, 24]
         assert conn.execute(
             """
             SELECT value FROM store_metadata

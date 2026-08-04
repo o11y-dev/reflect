@@ -9,6 +9,7 @@ from pathlib import Path
 
 from pydantic import Field
 
+from reflect.execution_units import ExecutionUnitRepository
 from reflect.improvements.repository import utc_now
 from reflect.schema.base import ReflectModel
 from reflect.usage import UsageService
@@ -55,6 +56,8 @@ class MCPTaskRunStatus(ReflectModel):
     task_file_path: str | None = None
     runtime_session_id: str | None = None
     runtime_agent: str | None = None
+    execution_unit_id: str | None = None
+    milestone_count: int = Field(default=0, ge=0)
     link_state: MCPTaskRunLinkState
     session_outcome_recorded: bool = False
     skill_usage_recorded_count: int = Field(default=0, ge=0)
@@ -81,6 +84,7 @@ class MCPTaskRunResult(ReflectModel):
     verification_passed: bool | None = None
     completed_at: str | None = None
     runtime_session_id: str | None = None
+    execution_unit_id: str | None = None
     linked_to_session: bool
     idempotent: bool
 
@@ -96,7 +100,11 @@ class MCPTaskRunService:
     ) -> None:
         self.conn = conn
         self.usage = usage or UsageService(conn)
-        self.reconciler = TaskRunReconciler(conn)
+        self.execution_units = ExecutionUnitRepository(conn)
+        self.reconciler = TaskRunReconciler(
+            conn,
+            execution_units=self.execution_units,
+        )
 
     def start(
         self,
@@ -135,6 +143,12 @@ class MCPTaskRunService:
                 now,
             ),
         )
+        if session_hint:
+            self.execution_units.sync_task_run(
+                task_run_id,
+                session_hint.session_id,
+                now=now,
+            )
         self.conn.commit()
         return task_run_id
 
@@ -212,7 +226,14 @@ class MCPTaskRunService:
                    task_file_path, workflow_id, selected_skills_json, status,
                    outcome, verification_passed, completion_summary_redacted,
                    started_at, completed_at, updated_at, session_linked_at,
-                   session_outcome_recorded, skill_usage_recorded_count
+                   session_outcome_recorded, skill_usage_recorded_count,
+                   execution_unit_id,
+                   (
+                     SELECT COUNT(*) FROM improvement_events ie
+                     WHERE ie.entity_type = 'mcp_task_run'
+                       AND ie.entity_id = mcp_task_runs.id
+                       AND ie.event_type = 'workflow_milestone'
+                   ) AS milestone_count
             FROM mcp_task_runs WHERE id = ?
             """,
             (task_run_id,),
@@ -242,6 +263,8 @@ class MCPTaskRunService:
             task_run_id=str(row[0]),
             runtime_session_id=runtime_session_id,
             runtime_agent=str(row[2]) if row[2] else None,
+            execution_unit_id=str(row[17]) if row[17] else None,
+            milestone_count=int(row[18] or 0),
             workspace_path=str(row[3]),
             task_file_path=str(row[4]) if row[4] else None,
             workflow_id=str(row[5]) if row[5] else None,
@@ -268,7 +291,7 @@ class MCPTaskRunService:
         row = self.conn.execute(
             """
             SELECT runtime_session_id, status, outcome, verification_passed,
-                   completed_at, session_linked_at
+                   completed_at, session_linked_at, execution_unit_id
             FROM mcp_task_runs WHERE id = ?
             """,
             (task_run_id,),
@@ -285,6 +308,7 @@ class MCPTaskRunService:
             verification_passed=None if row[3] is None else bool(row[3]),
             completed_at=row[4],
             runtime_session_id=session_id or None,
+            execution_unit_id=str(row[6]) if row[6] else None,
             linked_to_session=linked_to_session,
             idempotent=idempotent,
         )
@@ -293,8 +317,14 @@ class MCPTaskRunService:
 class TaskRunReconciler:
     """Link completed MCP task runs after their runtime sessions are normalized."""
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        execution_units: ExecutionUnitRepository | None = None,
+    ) -> None:
         self.conn = conn
+        self.execution_units = execution_units or ExecutionUnitRepository(conn)
 
     def reconcile(
         self,
@@ -348,6 +378,13 @@ class TaskRunReconciler:
                 now = utc_now()
                 outcome = MCPTaskOutcome(str(row[3]))
                 verification_passed = None if row[4] is None else bool(row[4])
+                execution_unit_id = self.execution_units.sync_task_run(
+                    str(row[0]),
+                    str(row[1]),
+                    now=now,
+                )
+                if execution_unit_id is None:
+                    raise KeyError(f"Session not found: {row[1]}")
                 self._record_session_outcome(
                     str(row[0]),
                     str(row[1]),
@@ -358,6 +395,7 @@ class TaskRunReconciler:
                 )
                 usage_count = self._record_skill_outcomes(
                     str(row[1]),
+                    execution_unit_id,
                     selected_skills,
                     outcome=outcome,
                     verification_passed=verification_passed,
@@ -430,6 +468,7 @@ class TaskRunReconciler:
     def _record_skill_outcomes(
         self,
         session_id: str,
+        execution_unit_id: str,
         selected_skills: list[MCPSelectedSkillRef],
         *,
         outcome: MCPTaskOutcome,
@@ -442,15 +481,15 @@ class TaskRunReconciler:
                 continue
             usage_id = (
                 "skill_usage_"
-                + hashlib.sha256(f"{skill.skill_id}:{session_id}".encode()).hexdigest()[:24]
+                + hashlib.sha256(f"{skill.skill_id}:{execution_unit_id}".encode()).hexdigest()[:24]
             )
             self.conn.execute(
                 """
                 INSERT INTO skill_usage(
-                  id, skill_id, skill_version_id, session_id, state, outcome,
+                  id, skill_id, skill_version_id, session_id, execution_unit_id, state, outcome,
                   confidence, evidence_json, observed_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, 'reported', ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(skill_id, session_id) DO UPDATE SET
+                ) VALUES (?, ?, ?, ?, ?, 'reported', ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(skill_id, execution_unit_id) DO UPDATE SET
                   skill_version_id = excluded.skill_version_id,
                   state = excluded.state,
                   outcome = excluded.outcome,
@@ -464,6 +503,7 @@ class TaskRunReconciler:
                     skill.skill_id,
                     skill.version_id or None,
                     session_id,
+                    execution_unit_id,
                     outcome.value,
                     0.9 if verification_passed is not None else 0.7,
                     json.dumps(

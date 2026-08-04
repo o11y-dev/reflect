@@ -125,6 +125,20 @@ def test_retention_policy_keeps_boundary_active_valid_and_parent_sessions(tmp_pa
         ).preview()
 
         assert [candidate.session_id for candidate in candidates] == ["stale-invalid"]
+
+        all_inactive_candidates = SessionPruner(
+            conn,
+            SessionRetentionPolicy(
+                older_than_days=60,
+                include_valid_starts=True,
+                now=NOW,
+            ),
+        ).preview()
+
+        assert [candidate.session_id for candidate in all_inactive_candidates] == [
+            "stale-invalid",
+            "valid-history",
+        ]
     finally:
         conn.close()
 
@@ -351,6 +365,29 @@ def test_dry_run_makes_no_mutations(tmp_path):
         conn.close()
 
 
+def test_prune_apply_requires_foreign_key_enforcement(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        _seed_identity(conn)
+        _insert_session(conn, "stale-invalid")
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys = OFF")
+
+        with pytest.raises(RuntimeError, match="requires SQLite foreign keys"):
+            SessionPruner(
+                conn,
+                SessionRetentionPolicy(older_than_days=60, now=NOW),
+            ).run(apply=True)
+
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sessions WHERE id = 'stale-invalid'"
+        ).fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM pruned_sessions").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
 def test_pruner_preserves_caller_owned_transaction(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
@@ -372,7 +409,7 @@ def test_pruner_preserves_caller_owned_transaction(tmp_path):
         conn.close()
 
 
-def test_prune_apply_rolls_back_when_derived_rebuild_fails(
+def test_prune_apply_rolls_back_when_bounded_rollup_refresh_fails(
     tmp_path,
     monkeypatch,
 ):
@@ -383,14 +420,14 @@ def test_prune_apply_rolls_back_when_derived_rebuild_fails(
         _insert_session(conn, "stale-invalid")
         conn.commit()
 
-        def fail_rebuild(*_args, **_kwargs):
-            raise RuntimeError("rollup rebuild failed")
+        def fail_refresh(*_args, **_kwargs):
+            raise RuntimeError("rollup refresh failed")
 
         monkeypatch.setattr(
-            "reflect.store.rollups.rebuild_rollups",
-            fail_rebuild,
+            "reflect.store.rollups.RollupDeletionDelta.apply",
+            fail_refresh,
         )
-        with pytest.raises(RuntimeError, match="rollup rebuild failed"):
+        with pytest.raises(RuntimeError, match="rollup refresh failed"):
             SessionPruner(
                 conn,
                 SessionRetentionPolicy(older_than_days=60, now=NOW),
@@ -402,6 +439,108 @@ def test_prune_apply_rolls_back_when_derived_rebuild_fails(
         assert conn.execute(
             "SELECT COUNT(*) FROM pruned_sessions WHERE id = 'stale-invalid'"
         ).fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
+def test_prune_cleans_only_affected_graph_and_rollup_rows(tmp_path, monkeypatch):
+    from reflect.store.rollups import rebuild_rollups
+
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        _seed_identity(conn)
+        _insert_session(conn, "stale-invalid")
+        _insert_session(conn, "recent", last_observed_at=RECENT)
+        for index, session_id in enumerate(("stale-invalid", "recent")):
+            conn.execute(
+                """
+                INSERT INTO steps(
+                  id, session_id, seq, type, started_at, status,
+                  raw_attrs_json, created_at, updated_at
+                ) VALUES (?, ?, 0, 'tool_call', ?, 'ok', '{}', ?, ?)
+                """,
+                (f"step-{index}", session_id, OLD, OLD, OLD),
+            )
+            conn.execute(
+                """
+                INSERT INTO tool_calls(
+                  id, step_id, session_id, tool_name, status,
+                  raw_attrs_json, created_at, updated_at
+                ) VALUES (?, ?, ?, 'Read', 'ok', '{}', ?, ?)
+                """,
+                (f"tool-{index}", f"step-{index}", session_id, OLD, OLD),
+            )
+
+        for node_id, session_id in (
+            ("shared", None),
+            ("stale-only", None),
+            ("stale-session", "stale-invalid"),
+            ("recent-session", "recent"),
+        ):
+            conn.execute(
+                """
+                INSERT INTO graph_nodes(
+                  id, kind, label, session_id, attrs_json, created_at, updated_at
+                ) VALUES (?, 'test', ?, ?, '{}', ?, ?)
+                """,
+                (node_id, node_id, session_id, OLD, OLD),
+            )
+        for edge_id, source, target, session_id in (
+            ("stale-shared", "shared", "stale-session", "stale-invalid"),
+            ("stale-orphan", "stale-only", "stale-session", "stale-invalid"),
+            ("recent-shared", "shared", "recent-session", "recent"),
+        ):
+            conn.execute(
+                """
+                INSERT INTO graph_edges(
+                  id, source_node_id, target_node_id, kind, session_id,
+                  attrs_json, created_at, updated_at
+                ) VALUES (?, ?, ?, 'test', ?, '{}', ?, ?)
+                """,
+                (edge_id, source, target, session_id, OLD, OLD),
+            )
+        conn.commit()
+        rebuild_rollups(conn)
+
+        def fail_full_rebuild(*_args, **_kwargs):
+            raise AssertionError("full derived rebuild must not run during retention")
+
+        monkeypatch.setattr(
+            "reflect.store.graph_normalize.rebuild_graph",
+            fail_full_rebuild,
+        )
+        monkeypatch.setattr(
+            "reflect.store.rollups.rebuild_rollups",
+            fail_full_rebuild,
+        )
+
+        result = SessionPruner(
+            conn,
+            SessionRetentionPolicy(older_than_days=60, now=NOW),
+        ).run(apply=True)
+
+        assert result.pruned_session_ids == ("stale-invalid",)
+        assert conn.execute("SELECT id FROM sessions ORDER BY id").fetchall() == [
+            ("recent",)
+        ]
+        assert conn.execute("SELECT id FROM graph_nodes ORDER BY id").fetchall() == [
+            ("recent-session",),
+            ("shared",),
+        ]
+        assert conn.execute("SELECT id FROM graph_edges ORDER BY id").fetchall() == [
+            ("recent-shared",)
+        ]
+        assert conn.execute(
+            "SELECT session_id FROM session_rollups ORDER BY session_id"
+        ).fetchall() == [("recent",)]
+        assert conn.execute(
+            "SELECT day, agent, session_count FROM daily_rollups ORDER BY day, agent"
+        ).fetchall() == [(RECENT[:10], "codex", 1)]
+        assert conn.execute(
+            "SELECT tool_name, agent, call_count FROM tool_rollups"
+        ).fetchall() == [("Read", "codex", 1)]
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         conn.close()
 
@@ -559,7 +698,7 @@ def test_prune_cli_holds_write_lock_across_backup_and_apply(
     assert payload["pruned_session_ids"] == ["before-backup"]
     assert writer_errors == ["database is locked"]
     assert "Backing up the local telemetry store... 100%" in result.stderr
-    assert "Pruning eligible sessions and rebuilding derived data..." in result.stderr
+    assert "Pruning eligible sessions and updating affected derived data..." in result.stderr
     assert "Session pruning complete." in result.stderr
     backup_conn = sqlite3.connect(payload["backup_path"])
     conn = sqlite3.connect(db_path)
@@ -587,7 +726,7 @@ def test_prune_cli_dry_run_does_not_migrate_an_outdated_store(tmp_path):
     )
 
     assert result.exit_code == 1
-    assert "pending migrations: 22" in result.output
+    assert "pending migrations: 22, 23, 24" in result.output
     conn = sqlite3.connect(db_path)
     try:
         assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 21
@@ -621,7 +760,7 @@ def test_prune_cli_backs_up_before_migrating_for_apply(tmp_path):
     conn = sqlite3.connect(db_path)
     backup_conn = sqlite3.connect(backup_path)
     try:
-        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 22
+        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 24
         assert backup_conn.execute(
             "SELECT MAX(version) FROM schema_migrations"
         ).fetchone()[0] == 21

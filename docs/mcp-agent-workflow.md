@@ -10,23 +10,25 @@ The CLI and browser remain useful for debugging, automation, audit, and deep rev
 
 | Layer | Responsibility |
 |---|---|
-| Skills | Reusable execution steps, preconditions, recovery, verification, and exit conditions |
-| MCP | Task-time skill selection, evidence delivery, outcome capture, and reviewed change execution |
+| Workflow contracts | Applicability, required milestones, evidence fields, and validation thresholds |
+| Skills | Durable rendering of approved workflow contracts into reusable instructions |
+| MCP | Execution-time skill selection, typed evidence capture, outcomes, and reviewed change execution |
 | Telemetry and SQLite | Evidence, provenance, adherence, outcomes, and before/after measurement |
 | CLI and browser | Optional audit, administration, automation, and recovery surfaces |
 
-MCP must not become a second workflow renderer. `WorkflowDefinition` remains the structured behavior contract and Skills v2 remains the durable versioned package registry. MCP selects and measures those records.
+MCP must not become a second workflow renderer. `WorkflowContract` is the structured procedure, `ExecutionUnit` is one bounded occurrence, and Skills v2 remains the durable versioned package registry. MCP selects and measures those records.
 
 ## Agent lifecycle
 
 1. After identifying a non-trivial repository task and its path, the agent calls `reflect_context`.
 2. Reflect returns approved guidance, selected skill versions, one explicit execution state, constraints, verification, and a `task_run_id`.
 3. The agent follows a complete selected skill when `execution_state` is `follow_allowed` and its preconditions match. If the state is `retrieve_full_instructions`, it retrieves the complete version first.
-4. After validation, the agent calls `reflect_complete` with the task outcome.
-5. Reflect links the task run to the runtime session when ingestion is available and records selected-skill usage.
-6. Existing detectors and measurements use the completed session evidence to identify improvements.
-7. MCP review tools present an exact proposed change to the user and allow conversational revision.
-8. Only an explicitly approved, immutable, unexpired change may be applied.
+4. When the selected skill has a workflow contract, the agent records its required checkpoints with `reflect_record_milestone`; these reports remain uncorroborated until task evidence supports them.
+5. After validation, the agent calls `reflect_complete` with the task outcome.
+6. Reflect links the task run to the runtime session and canonical execution unit when ingestion is available and records selected-skill usage.
+7. Detectors and measurements evaluate the same contract against comparable execution evidence.
+8. MCP review tools present an exact proposed change to the user and allow conversational revision.
+9. Only an explicitly approved, immutable, unexpired change may be applied.
 
 ## Delivery plan
 
@@ -80,11 +82,16 @@ The agent presents the exact review in the conversation and waits for explicit u
 
 ### Phase 5. Evidence-backed self-improvement
 
-- compare outcomes across skill versions and task archetypes
-- generate pending versions only from bounded supporting evidence
-- include the expected metric improvement and required validation
-- dogfood the same lifecycle on the Reflect repository
-- preserve prior versions and rollback state
+Implemented as a closed, bounded workflow loop by reusing the existing observation, workflow candidate, Skills v2, intervention, and measurement records:
+
+- segment long-lived provider sessions into canonical execution units, preferring explicit MCP task runs and using conservative prompt/session fallbacks
+- classify execution units by archetype and exclude mixed or low-confidence cohorts
+- detect repeated successful procedure signatures and suppress a proposal when an active installation already covers that signature in the applicable scope
+- generate pending workflow contracts with typed milestones and a five-comparable-execution validation window
+- keep milestone self-report separate from independently observed tool and conversation evidence
+- compare frozen baseline execution units with the first five comparable post-installation execution units and show progress in Impact
+
+Future extensions can add richer outcome metrics and semantic coverage matching without introducing a second workflow or connector registry.
 
 Reflect may propose improvements to itself. It must never silently apply them.
 

@@ -479,6 +479,22 @@ def test_list_sessions_paginates_and_filters_from_sql(tmp_path):
         conn.close()
 
 
+def test_list_sessions_uses_canonical_events_when_rollup_is_missing(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        _seed_view_db(conn)
+        conn.execute("DELETE FROM session_rollups WHERE session_id = 'sess-2'")
+
+        row = list_sessions(conn, agent="codex").rows[0]
+
+        assert row.event_count == 4
+        assert row.prompt_count == 0
+        assert row.tool_call_count == 0
+    finally:
+        conn.close()
+
+
 def test_list_sessions_prefers_valid_end_time_over_epoch_start(tmp_path):
     db = tmp_path / "views.db"
     conn = connect_sqlite(db)

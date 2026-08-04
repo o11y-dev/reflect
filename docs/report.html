@@ -3050,7 +3050,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   </div>
   <div class="workflow-toolbar" aria-label="Workflow filters">
     <div class="workflow-filter-field"><label for="workflow-type-filter">Behavior</label><select id="workflow-type-filter"><option value="all">All behavior types</option><option value="recovery">Recovery</option><option value="verification">Verification</option><option value="exploration">Exploration</option><option value="proven_pattern">Proven Pattern</option></select></div>
-    <div class="workflow-filter-field"><label for="workflow-status-filter">State</label><select id="workflow-status-filter"><option value="all">All states</option><option value="pending">Pending</option><option value="active">Active</option><option value="stale">Stale</option><option value="rejected">Rejected</option><option value="rolled_back">Rolled Back</option></select></div>
+    <div class="workflow-filter-field"><label for="workflow-status-filter">State</label><select id="workflow-status-filter"><option value="reviewable">Reviewable</option><option value="all">All states</option><option value="pending">Pending</option><option value="active">Active</option><option value="stale">Stale</option><option value="rejected">Rejected</option><option value="rolled_back">Rolled Back</option></select></div>
     <div class="workflow-filter-summary" id="workflow-filter-summary" aria-live="polite"></div>
   </div>
   <div class="workflow-list workflow-tile-grid" id="workflow-ledger" aria-live="polite"></div>
@@ -3860,24 +3860,27 @@ function sessionInspectionUrl(session){
 function renderWorkflowSessionLedger(sessions, {empty, total, initial = 5} = {}){
   const items = sessions || [];
   if (!items.length) return `<div class="session-ledger-empty">${escHtml(empty || 'No linked sessions yet.')}</div>`;
+  const taskLevel = items.some(item => item.execution_unit_id);
   const renderRow = session => {
     const agent = humanizeLedgerLabel(session.agent || 'Agent');
     const workspace = ledgerWorkspaceName(session.workspace);
     const displayTitle = session.title || `${agent}${workspace ? ` · ${workspace}` : ' Session'}`;
     const summary = (session.evidence_summaries || [])[0] || '';
     const signalCount = Number(session.evidence_count || 0);
+    const evidenceLabel = session.evidence_label || `${fmt(signalCount)} ${signalCount === 1 ? 'signal' : 'signals'}`;
+    const evidenceId = session.execution_unit_id || session.session_id;
     return `<article class="session-ledger-item">
       <div class="session-ledger-main">
         <div class="session-ledger-head">
           <div class="session-ledger-title">${escHtml(displayTitle)}</div>
           <span class="ledger-pill">${escHtml(humanizeLedgerLabel(session.status || 'unknown'))}</span>
         </div>
-        <div class="session-ledger-meta"><span>${escHtml(fmtWorkflowDate(session.started_at))}</span>${session.workspace ? `<span title="${escHtml(session.workspace)}" translate="no">${escHtml(workspace)}</span>` : ''}</div>
+        <div class="session-ledger-meta"><span>${escHtml(fmtWorkflowDate(session.started_at))}</span>${session.workspace ? `<span title="${escHtml(session.workspace)}" translate="no">${escHtml(workspace)}</span>` : ''}${session.task_archetype_id ? `<span>${escHtml(humanizeLedgerLabel(session.task_archetype_id))} task</span>` : ''}</div>
         ${summary ? `<div class="session-ledger-summary" title="${escHtml(summary)}">${escHtml(summary)}</div>` : ''}
-        <div class="session-ledger-id" title="${escHtml(session.session_id)}" translate="no">${escHtml(compactLedgerId(session.session_id))}</div>
+        <div class="session-ledger-id" title="${escHtml(evidenceId)}" translate="no">${session.execution_unit_id ? 'Task ' : ''}${escHtml(compactLedgerId(evidenceId))}</div>
       </div>
       <div class="session-ledger-side">
-        ${session.exposure_state ? `<span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(session.exposure_state))}</span>` : `<span class="ledger-pill">${fmt(signalCount)} ${signalCount === 1 ? 'signal' : 'signals'}</span>`}
+        ${session.exposure_state ? `<span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(session.exposure_state))}</span>` : `<span class="ledger-pill">${escHtml(evidenceLabel)}</span>`}
         <a class="ledger-button" data-related-session-link href="${escHtml(sessionInspectionUrl(session))}">Open Session</a>
       </div>
     </article>`;
@@ -3889,7 +3892,7 @@ function renderWorkflowSessionLedger(sessions, {empty, total, initial = 5} = {})
     ? `<details class="session-more"><summary>Show ${fmt(items.length - initial)} More Sessions</summary><div class="session-ledger">${remainingRows}</div></details>`
     : '';
   const countNote = count > items.length
-    ? `<div class="ledger-status">Showing ${fmt(items.length)} bounded examples from ${fmt(count)} linked sessions.</div>`
+    ? `<div class="ledger-status">Showing ${fmt(items.length)} bounded examples from ${fmt(count)} linked ${taskLevel ? 'execution units' : 'sessions'}.</div>`
     : '';
   return `<div class="session-ledger">${visibleRows}</div>${more}${countNote}`;
 }
@@ -4058,9 +4061,11 @@ async function showSkillReview(skillId){
       const verdict = impactVerdictPresentation(item.verdict);
       const ready = item.verdict !== 'insufficient_data';
       const afterCount = Number(item.details?.after_count || 0);
+      const taskLevel = item.details?.cohort?.unit === 'execution_units';
+      const minimumAfter = Number(item.details?.cohort?.minimum_after_execution_units || item.details?.cohort?.minimum_after_sessions || 5);
       return `<article class="skill-detail-tile">
         <div class="inbox-card-head"><div class="inbox-title">${escHtml(metric.goal)}</div><span class="ledger-pill ${item.verdict === 'improved' ? 'signal' : ''}">${escHtml(verdict.label)}</span></div>
-        <div class="inbox-copy">${ready ? `${escHtml(formatImpactValue(metric, item.before_value))} before → ${escHtml(formatImpactValue(metric, item.after_value))} after · ${Math.round(Number(item.confidence || 0) * 100)}% confidence` : `${fmt(afterCount)} of ${fmt(Number(item.details?.cohort?.minimum_after_sessions || 5))} post-application sessions collected`}</div>
+        <div class="inbox-copy">${ready ? `${escHtml(formatImpactValue(metric, item.before_value))} before → ${escHtml(formatImpactValue(metric, item.after_value))} after · ${Math.round(Number(item.confidence || 0) * 100)}% confidence` : `${fmt(afterCount)} of ${fmt(minimumAfter)} post-application ${taskLevel ? 'tasks' : 'sessions'} collected`}</div>
       </article>`;
     }).join('');
     const sessionEvidence = evidence.filter(item => item.entity_type === 'session');
@@ -4144,6 +4149,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
         ? ''
         : `<button type="button" class="ledger-button" data-ledger-action="save-edit" data-candidate-id="${escHtml(candidateId)}">Save Draft</button><button type="button" class="ledger-button danger" data-ledger-action="reject" data-candidate-id="${escHtml(candidateId)}">Reject</button><button type="button" class="ledger-button primary" data-ledger-action="apply" data-candidate-id="${escHtml(candidateId)}" ${applyAllowed ? '' : 'disabled'}>${applyAllowed ? 'Approve &amp; Apply to This Project' : 'Choose a Project Folder'}</button>`;
     const content = candidate.content || {};
+    const contractWorkflow = Boolean(content.workflow_contract);
     const suggestions = (preview.suggested_project_roots || []).map(item => `<option value="${escHtml(item.path)}">${fmt(Number(item.source_sessions || 0))} source sessions${item.is_repository ? ' · Git repository' : item.is_directory ? ' · project folder' : ' · unavailable'}</option>`).join('');
     const issues = preview.checks?.issues || [];
     const checkClass = applyAllowed ? 'review-check' : 'review-check blocked';
@@ -4215,7 +4221,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
           <p class="review-panel-copy">${escHtml(origin.detail)}</p>
         </div>
         <div class="workflow-approval-summary" aria-label="Workflow approval summary">
-          <div class="workflow-approval-item"><div class="workflow-approval-label">Evidence</div><div class="workflow-approval-value signal">${fmt(Number(candidate.support_count || 0))} supporting sessions</div><div class="workflow-approval-copy">${escHtml(origin.label)} · ${escHtml(behaviorType)} behavior</div></div>
+          <div class="workflow-approval-item"><div class="workflow-approval-label">Evidence</div><div class="workflow-approval-value signal">${fmt(Number(candidate.support_count || 0))} supporting ${contractWorkflow ? 'executions' : 'sessions'}</div><div class="workflow-approval-copy">${escHtml(origin.label)} · ${escHtml(behaviorType)} behavior</div></div>
           <div class="workflow-approval-item"><div class="workflow-approval-label">Selected Project</div><div class="workflow-approval-value">${escHtml(projectName)}</div><div class="workflow-approval-copy">${escHtml(relationLabel)}</div></div>
           <div class="workflow-approval-item"><div class="workflow-approval-label">File Change</div><div class="workflow-approval-value">${escHtml(changeLabel)}</div><div class="workflow-approval-copy" translate="no">${escHtml(targetFile || 'Target file unavailable')}</div></div>
         </div>
@@ -4247,12 +4253,12 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
           <aside class="review-stack">
             <section class="review-panel">
               <div class="review-panel-head"><h3 class="review-panel-title">Source Evidence</h3><span class="ledger-pill signal">${fmt(Number(ledger.source_session_count || 0))} examples</span></div>
-              <p class="review-panel-copy">Representative sessions behind this proposal. ${fmt(Number(candidate.support_count || 0))} sessions support the aggregate finding.</p>
+              <p class="review-panel-copy">Representative sessions behind this proposal. ${fmt(Number(candidate.support_count || 0))} ${contractWorkflow ? 'execution units' : 'sessions'} support the aggregate finding.</p>
               ${sourceSessions}
             </section>
             <section class="review-panel">
-              <div class="review-panel-head"><h3 class="review-panel-title">After Activation</h3><span class="ledger-pill">${fmt(Number(ledger.exposure_session_count || 0))} sessions</span></div>
-              <p class="review-panel-copy">Sessions where Reflect observed this workflow after it was applied.</p>
+              <div class="review-panel-head"><h3 class="review-panel-title">After Activation</h3><span class="ledger-pill">${fmt(Number(ledger.exposure_session_count || 0))} ${contractWorkflow ? 'executions' : 'sessions'}</span></div>
+              <p class="review-panel-copy">${contractWorkflow ? 'Comparable executions' : 'Sessions'} where Reflect observed this workflow after it was applied.</p>
               ${exposureSessions}
             </section>
           </aside>
@@ -4285,42 +4291,44 @@ async function submitSessionFeedback(sessionId, outcome, button){
 }
 
 async function showImpactSessions(measurementId){
-  openLedgerDialog({title:'Loading comparison sessions…'});
+  openLedgerDialog({title:'Loading comparison evidence…'});
   try {
     const ledger = await ledgerRequest(`/api/impact/${encodeURIComponent(measurementId)}/sessions`);
     const metric = impactMetricPresentation(ledger.metric_name);
+    const taskLevel = ledger.unit === 'execution_units';
+    const unit = taskLevel ? 'task' : 'session';
+    const unitPlural = taskLevel ? 'tasks' : 'sessions';
     const cohortCopy = ledger.snapshot_exact
-      ? 'These are the stored session cohorts behind this impact snapshot.'
+      ? `These are the stored ${unit} cohorts behind this impact snapshot.`
       : 'This older snapshot predates stored cohort IDs, so Reflect reconstructed the closest bounded session cohorts.';
     const prepare = (items, relationship) => (items || []).map(item => ({
       ...item,
       relationship,
-      evidence_count:0,
-      evidence_summaries:[],
+      evidence_label:formatImpactSessionValue(ledger.metric_name, item.metric_value, item),
     }));
     const beforeSessions = renderWorkflowSessionLedger(prepare(ledger.before_sessions, 'baseline'), {
-      empty:'No baseline sessions remain available for this snapshot.',
+      empty:`No baseline ${unitPlural} remain available for this snapshot.`,
       total:ledger.before_count,
       initial:5,
     });
     const afterSessions = renderWorkflowSessionLedger(prepare(ledger.after_sessions, 'after activation'), {
-      empty:'No post-application sessions have been collected yet.',
+      empty:`No post-application ${unitPlural} have been collected yet.`,
       total:ledger.after_count,
       initial:5,
     });
     openLedgerDialog({
-      title:`Sessions Compared for ${metric.goal}`,
+      title:`${taskLevel ? 'Tasks' : 'Sessions'} Compared for ${metric.goal}`,
       subtitle:cohortCopy,
-      body:`<div class="review-lead"><div class="review-eyebrow">Impact Evidence</div><p>${escHtml(cohortCopy)} Open any session to inspect the underlying conversation, tools, and outcome.</p></div>
+      body:`<div class="review-lead"><div class="review-eyebrow">Impact Evidence</div><p>${escHtml(cohortCopy)} Open the containing session to inspect the underlying conversation, tools, and outcome.</p></div>
         <div class="review-grid">
           <section class="review-panel">
-            <div class="review-panel-head"><h3 class="review-panel-title">Before Activation</h3><span class="ledger-pill">${fmt(Number(ledger.before_count || 0))} sessions</span></div>
-            <p class="review-panel-copy">Baseline sessions used to establish the earlier behavior.</p>
+            <div class="review-panel-head"><h3 class="review-panel-title">Before Activation</h3><span class="ledger-pill">${fmt(Number(ledger.before_count || 0))} ${unitPlural}</span></div>
+            <p class="review-panel-copy">Baseline ${unitPlural} used to establish the earlier behavior.</p>
             ${beforeSessions}
           </section>
           <section class="review-panel">
-            <div class="review-panel-head"><h3 class="review-panel-title">After Activation</h3><span class="ledger-pill signal">${fmt(Number(ledger.after_count || 0))} sessions</span></div>
-            <p class="review-panel-copy">Comparable sessions available after the workflow was applied.</p>
+            <div class="review-panel-head"><h3 class="review-panel-title">After Activation</h3><span class="ledger-pill signal">${fmt(Number(ledger.after_count || 0))} ${unitPlural}</span></div>
+            <p class="review-panel-copy">Comparable ${unitPlural} available after the workflow was applied.</p>
             ${afterSessions}
           </section>
         </div>`,
@@ -6952,6 +6960,7 @@ const IMPACT_METRIC_PRESENTATION = Object.freeze({
   recovered_failure_sessions:{goal:'Improve Failure Recovery',measure:'Recovered failure sessions',format:'percent',direction:'higher_is_better'},
   successful_workflow_sessions:{goal:'Increase Successful Workflow Runs',measure:'Successful workflow sessions',format:'percent',direction:'higher_is_better'},
   correct_no_change_sessions:{goal:'Recognize Correct No-Change Outcomes',measure:'Correct no-change sessions',format:'percent',direction:'higher_is_better'},
+  workflow_adherence:{goal:'Preserve the Proven Procedure',measure:'Procedure adherence',format:'percent',direction:'higher_is_better'},
 });
 
 function impactMetricPresentation(metricName){
@@ -6980,6 +6989,24 @@ function formatImpactValue(metric, value){
   if (metric.format === 'percent') return `${fmt(number * 100)}%`;
   if (metric.format === 'tokens') return `${fmt(Math.round(number))} tokens/session`;
   return `${fmt(Number(number.toFixed(2)))} per session`;
+}
+
+function formatImpactSessionValue(metricName, value, item = {}){
+  if (item.adherence_state === 'followed') return 'Procedure followed';
+  if (item.adherence_state === 'not_followed') return 'Procedure not followed';
+  if (value == null || !Number.isFinite(Number(value))) return 'Metric unavailable';
+  const number = Number(value);
+  if (metricName === 'tool_failure_rate') return `${fmt(Number((number * 100).toFixed(2)))}% failed`;
+  if (metricName === 'identical_retry_calls') return `${fmt(number)} retry ${number === 1 ? 'call' : 'calls'}`;
+  if (metricName === 'unverified_change_sessions') return number > 0 ? 'Unverified change' : 'No unverified change';
+  if (metricName === 'context_outlier_sessions') return `${fmt(Math.round(number))} tokens`;
+  if (metricName === 'read_only_exploration_calls') return `${fmt(number)} read-only ${number === 1 ? 'call' : 'calls'}`;
+  if (metricName === 'operator_correction_rate') return number > 0 ? 'Correction recorded' : 'No correction';
+  if (metricName === 'constraint_violation_rate') return `${fmt(number)} ${number === 1 ? 'violation' : 'violations'}`;
+  if (metricName === 'recovered_failure_sessions') return number > 0 ? 'Failure recovered' : 'No recovered failure';
+  if (metricName === 'successful_workflow_sessions') return number > 0 ? 'Successful run' : 'Run not successful';
+  if (metricName === 'correct_no_change_sessions') return number > 0 ? 'Correct no-change' : 'No no-change outcome';
+  return formatImpactValue(impactMetricPresentation(metricName), number);
 }
 
 function impactVerdictPresentation(verdict){
@@ -7011,13 +7038,16 @@ function impactSummary(item, metric, trend = null){
   const before = Number(item.before_value);
   const after = Number(item.after_value);
   const afterCount = Number(item.after_count || 0);
-  const minimumAfter = Number(item.cohort?.minimum_after_sessions || 5);
-  const minimumBefore = Number(item.cohort?.minimum_before_sessions || 5);
+  const taskLevel = item.cohort?.unit === 'execution_units';
+  const unit = taskLevel ? 'task' : 'session';
+  const units = taskLevel ? 'tasks' : 'sessions';
+  const minimumAfter = Number(item.cohort?.minimum_after_execution_units || item.cohort?.minimum_after_sessions || 5);
+  const minimumBefore = Number(item.cohort?.minimum_before_execution_units || item.cohort?.minimum_before_sessions || 5);
   if (verdict === 'insufficient_data') {
     const afterNeeded = Math.max(0, minimumAfter - afterCount);
     const beforeNeeded = Math.max(0, minimumBefore - Number(item.before_count || 0));
-    if (beforeNeeded > 0) return `Reflect still needs ${fmt(beforeNeeded)} baseline and ${fmt(afterNeeded)} post-application session${afterNeeded === 1 ? '' : 's'} before evaluating this change.`;
-    if (afterNeeded > 0) return `${fmt(afterCount)} of ${fmt(minimumAfter)} post-application sessions collected. Reflect needs ${fmt(afterNeeded)} more before evaluating this change.`;
+    if (beforeNeeded > 0) return `Reflect still needs ${fmt(beforeNeeded)} baseline and ${fmt(afterNeeded)} post-application ${unit}${afterNeeded === 1 ? '' : 's'} before evaluating this change.`;
+    if (afterNeeded > 0) return `${fmt(afterCount)} of ${fmt(minimumAfter)} post-application ${units} collected. Reflect needs ${fmt(afterNeeded)} more before evaluating this change.`;
     return 'The minimum sample is available. Reflect will publish a result on the next impact refresh.';
   }
   const percent = Number.isFinite(before) && Number.isFinite(after) && before !== 0
@@ -7025,14 +7055,14 @@ function impactSummary(item, metric, trend = null){
     : null;
   const movement = after > before ? 'increased' : after < before ? 'decreased' : 'did not change';
   const amount = percent == null ? '' : ` by ${fmt(Number(percent.toFixed(1)))}%`;
-  if (verdict === 'unchanged') return `${metric.measure} stayed within the 10% decision threshold across ${fmt(afterCount)} post-application sessions.`;
+  if (verdict === 'unchanged') return `${metric.measure} stayed within the 10% decision threshold across ${fmt(afterCount)} post-application ${units}.`;
   if (verdict === 'regressed' && trend?.kind === 'improving') {
     const baselinePosition = after > before ? 'above' : 'below';
     const baselineGap = percent == null ? '' : `${fmt(Number(percent.toFixed(1)))}% `;
     const trendAmount = trend.percent == null ? '' : ` by ${fmt(Number(trend.percent.toFixed(1)))}%`;
     return `${metric.measure} remains ${baselineGap}${baselinePosition} the pre-activation baseline. It improved${trendAmount} since the previous check—moving in the right direction, but not enough yet.`;
   }
-  return `${metric.measure} ${movement}${amount} across ${fmt(afterCount)} post-application sessions.`;
+  return `${metric.measure} ${movement}${amount} across ${fmt(afterCount)} post-application ${units}.`;
 }
 
 function impactScope(item){
@@ -7069,7 +7099,9 @@ function buildImprovementSurfaces(){
   if (inboxLoopsCount) inboxLoopsCount.textContent = String(loops.length);
   if (inboxLoopsDetail && actionableLoopCount) inboxLoopsDetail.textContent = `${fmt(actionableLoopCount)} ready to review and build`;
   if (loopCount) loopCount.firstChild.textContent = String(loops.length);
-  if (workflowCount) workflowCount.firstChild.textContent = String(workflows.length);
+  const reviewableWorkflowStates = new Set(['pending','approved','active']);
+  const reviewableWorkflows = workflows.filter(item => reviewableWorkflowStates.has(String(item.status || 'pending')));
+  if (workflowCount) workflowCount.firstChild.textContent = String(reviewableWorkflows.length);
   if (skillCount) skillCount.firstChild.textContent = String(skillTotal);
   if (measurementCount) measurementCount.firstChild.textContent = String(measurementGroups.length);
 
@@ -7128,6 +7160,11 @@ function buildImprovementSurfaces(){
   if (inbox) {
     inbox.innerHTML = observations.length ? observations.map(item => {
       const proposedWorkflow = workflows.find(workflow => workflow.id === item.candidate_id);
+      const workflowReviewLabel = proposedWorkflow?.status === 'active'
+        ? 'Review Active Workflow'
+        : proposedWorkflow?.status === 'approved'
+          ? 'Review Approved Workflow'
+          : 'Review Proposed Workflow';
       const candidate = proposedWorkflow
         ? `<div class="ledger-command">reflect workflows show ${escHtml(String(proposedWorkflow.id))}</div>`
         : '';
@@ -7144,7 +7181,7 @@ function buildImprovementSurfaces(){
           <span class="ledger-pill">${fmt(Number(item.observation_count || 1))} evidence pattern(s)</span>
           <span class="ledger-pill">${fmt(Number(item.source_scope_count || 1))} scope(s)</span>
         </div>${candidate}
-        <div class="ledger-actions"><button type="button" class="ledger-button" data-ledger-action="evidence" data-observation-id="${escHtml(String(item.id))}">View Source Sessions</button>${proposedWorkflow ? `<button type="button" class="ledger-button primary" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(proposedWorkflow.id))}">Review Proposed Workflow</button>` : ''}</div>
+        <div class="ledger-actions"><button type="button" class="ledger-button" data-ledger-action="evidence" data-observation-id="${escHtml(String(item.id))}">View Source Sessions</button>${proposedWorkflow ? `<button type="button" class="ledger-button primary" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(proposedWorkflow.id))}">${workflowReviewLabel}</button>` : ''}</div>
       </article>`;
     }).join('') : `<div class="panel"><div class="panel-title">Inbox clear</div><div class="inbox-copy">No actionable recurring finding is currently open. Review recent sessions or capture health in Explore while Reflect gathers more comparable evidence.</div></div>`;
   }
@@ -7206,20 +7243,25 @@ function buildImprovementSurfaces(){
     const filterSummary = document.getElementById('workflow-filter-summary');
     const workflowParams = currentParams();
     if (typeFilter) typeFilter.value = workflowParams.get('workflow_type') || 'all';
-    if (statusFilter) statusFilter.value = workflowParams.get('workflow_status') || 'all';
+    if (statusFilter) statusFilter.value = workflowParams.get('workflow_status') || 'reviewable';
     const renderWorkflowLedger = () => {
       const selectedType = typeFilter?.value || 'all';
       const selectedStatus = statusFilter?.value || 'all';
       const visible = workflows.filter(item => {
         const behavior = String((item.content || {}).behavior_type || 'proven_pattern');
+        const status = String(item.status || 'pending');
         return (selectedType === 'all' || behavior === selectedType)
-          && (selectedStatus === 'all' || item.status === selectedStatus);
+          && (
+            selectedStatus === 'all'
+            || (selectedStatus === 'reviewable' && reviewableWorkflowStates.has(status))
+            || status === selectedStatus
+          );
       });
       updateUrlParams(params => {
         selectedType === 'all' ? params.delete('workflow_type') : params.set('workflow_type', selectedType);
-        selectedStatus === 'all' ? params.delete('workflow_status') : params.set('workflow_status', selectedStatus);
+        selectedStatus === 'reviewable' ? params.delete('workflow_status') : params.set('workflow_status', selectedStatus);
       });
-      if (filterSummary) filterSummary.textContent = `Showing ${fmt(visible.length)} of ${fmt(workflows.length)} workflows`;
+      if (filterSummary) filterSummary.textContent = `Showing ${fmt(visible.length)} of ${fmt(workflows.length)} workflows · ${fmt(reviewableWorkflows.length)} reviewable`;
       workflowLedger.innerHTML = visible.length ? visible.map(item => {
         const content = item.content || {};
         const steps = Array.isArray(content.steps) ? content.steps : [];
@@ -7230,12 +7272,13 @@ function buildImprovementSurfaces(){
         const artifact = humanizeLedgerLabel(content.suggested_artifact || 'skill');
         const command = `reflect workflows show ${String(item.id)}`;
         const status = humanizeLedgerLabel(item.status || 'pending');
+        const evidenceUnit = content.workflow_contract ? 'Execution Units' : 'Sessions';
         return `<article class="workflow-card workflow-tile" data-state="${escHtml(String(item.status || 'pending'))}">
           <div class="tile-card-main">
             <div class="tile-card-kicker"><span>${escHtml(origin.label)}</span><span>${escHtml(humanizeLedgerLabel(behaviorType))}</span></div>
             <div class="tile-card-head"><div class="tile-card-heading"><h3 class="tile-card-title">${escHtml(humanizeLedgerLabel(slug))}</h3><p class="tile-card-description">${escHtml(String(content.description || item.hypothesis || 'No description is available yet.'))}</p></div><span class="ledger-pill signal tile-card-status">${escHtml(status)}</span></div>
             <dl class="tile-metric-grid">
-              <div class="tile-metric"><dt>Sessions</dt><dd>${fmt(Number(item.support_count || 0))}</dd></div>
+              <div class="tile-metric"><dt>${evidenceUnit}</dt><dd>${fmt(Number(item.support_count || 0))}</dd></div>
               <div class="tile-metric"><dt>Evidence Patterns</dt><dd>${fmt(Number(item.supporting_observation_count || 1))}</dd></div>
               <div class="tile-metric signal"><dt>Confidence</dt><dd>${Math.round(Number(item.confidence || 0) * 100)}%</dd></div>
             </dl>
@@ -7259,7 +7302,10 @@ function buildImprovementSurfaces(){
       const verdict = impactVerdictPresentation(item.verdict);
       const workflow = workflows.find(candidate => candidate.id === item.candidate_id);
       const workflowName = humanizeLedgerLabel(workflow?.content?.slug || 'Applied workflow');
-      const minimumAfter = Number(item.cohort?.minimum_after_sessions || 5);
+      const taskLevel = item.cohort?.unit === 'execution_units';
+      const unit = taskLevel ? 'task' : 'session';
+      const units = taskLevel ? 'tasks' : 'sessions';
+      const minimumAfter = Number(item.cohort?.minimum_after_execution_units || item.cohort?.minimum_after_sessions || 5);
       const afterCount = Number(item.after_count || 0);
       const ready = item.verdict !== 'insufficient_data';
       const previous = history[1] || null;
@@ -7275,14 +7321,14 @@ function buildImprovementSurfaces(){
           <div class="impact-status-stack"><span class="impact-status ${escHtml(verdict.className)}">${escHtml(verdict.label)}</span>${trend ? `<span class="impact-trend-status ${escHtml(trend.kind)}">${escHtml(trend.label)}</span>` : ''}</div>
         </div>
         <p class="impact-summary">${escHtml(impactSummary(item, metric, trend))}</p>
-        ${ready ? '' : `<div class="impact-progress"><div class="impact-progress-copy"><strong>${fmt(afterCount)} of ${fmt(minimumAfter)} sessions collected</strong><span>${fmt(Math.max(0, minimumAfter - afterCount))} remaining</span></div><progress value="${Math.min(afterCount, minimumAfter)}" max="${minimumAfter}" aria-label="Post-application session collection progress"></progress></div>`}
+        ${ready ? '' : `<div class="impact-progress"><div class="impact-progress-copy"><strong>${fmt(afterCount)} of ${fmt(minimumAfter)} ${units} collected</strong><span>${fmt(Math.max(0, minimumAfter - afterCount))} remaining</span></div><progress value="${Math.min(afterCount, minimumAfter)}" max="${minimumAfter}" aria-label="Post-application ${unit} collection progress"></progress></div>`}
         <div class="impact-comparison">
-          <div class="impact-period"><div class="impact-period-label">Before Activation</div><div class="impact-period-value">${ready ? escHtml(formatImpactValue(metric, item.before_value)) : `${fmt(Number(item.before_count || 0))} sessions`}</div><div class="impact-period-note">${ready ? `${fmt(Number(item.before_count || 0))} baseline sessions` : 'Baseline ready'}</div></div>
+          <div class="impact-period"><div class="impact-period-label">Before Activation</div><div class="impact-period-value">${ready ? escHtml(formatImpactValue(metric, item.before_value)) : `${fmt(Number(item.before_count || 0))} ${units}`}</div><div class="impact-period-note">${ready ? `${fmt(Number(item.before_count || 0))} baseline ${units}` : 'Baseline ready'}</div></div>
           <div class="impact-arrow" aria-hidden="true">→</div>
-          <div class="impact-period"><div class="impact-period-label">After Activation</div><div class="impact-period-value">${ready ? escHtml(formatImpactValue(metric, item.after_value)) : `${fmt(afterCount)} sessions`}</div><div class="impact-period-note">${ready ? `${fmt(afterCount)} comparable sessions${trend ? ` · ${escHtml(trend.shortLabel)}` : ''}` : 'Collecting comparable sessions'}</div></div>
+          <div class="impact-period"><div class="impact-period-label">After Activation</div><div class="impact-period-value">${ready ? escHtml(formatImpactValue(metric, item.after_value)) : `${fmt(afterCount)} ${units}`}</div><div class="impact-period-note">${ready ? `${fmt(afterCount)} comparable ${units}${trend ? ` · ${escHtml(trend.shortLabel)}` : ''}` : `Collecting comparable ${units}`}</div></div>
         </div>
         <div class="impact-scope">${escHtml(impactScope(item))}${ready ? ` · ${Math.round(Number(item.confidence || 0) * 100)}% confidence` : ''}</div>
-        <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-impact-sessions" data-measurement-id="${escHtml(String(item.id))}">View Compared Sessions</button><button type="button" class="ledger-button${item.verdict === 'regressed' && !regressedButImproving ? ' danger' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.candidate_id))}">${reviewLabel}</button></div>
+        <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-impact-sessions" data-measurement-id="${escHtml(String(item.id))}">View Compared ${taskLevel ? 'Tasks' : 'Sessions'}</button><button type="button" class="ledger-button${item.verdict === 'regressed' && !regressedButImproving ? ' danger' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.candidate_id))}">${reviewLabel}</button></div>
         ${historyRows ? `<details class="impact-history"><summary>${fmt(history.length - 1)} Previous Check${history.length === 2 ? '' : 's'}</summary><ol class="impact-history-list">${historyRows}</ol></details>` : ''}
       </article>`;
     }).join('') : `<div class="panel"><div class="panel-title">No Impact Checks Yet</div><div class="measurement-copy">Apply a reviewed workflow to start collecting comparable sessions. Reflect waits for at least 5 baseline and 5 post-application sessions before reporting a result.</div></div>`;

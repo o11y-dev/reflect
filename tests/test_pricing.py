@@ -8,6 +8,7 @@ from reflect.pricing import (
     canonicalize_model_name,
     load_pricing_status,
     load_pricing_table,
+    pricing_inputs_fingerprint,
 )
 
 
@@ -156,6 +157,33 @@ class TestCalculateCost:
 
         assert breakdown.total_cost_usd == (10 * 0.1) + (20 * 0.2)
         assert breakdown.resolution.matched_model_key == "claude-sonnet-4-20250514"
+
+
+def test_pricing_inputs_fingerprint_tracks_rates_and_aliases_not_fetch_metadata():
+    first = PricingTable(
+        prices={"gpt-4o-mini": pricing_row(0.1, 0.2, 0.05, 0.01)},
+        source="cache",
+        fetched_at_unix=1,
+    )
+    same_inputs = PricingTable(
+        prices={"gpt-4o-mini": pricing_row(0.1, 0.2, 0.05, 0.01)},
+        source="live",
+        fetched_at_unix=999,
+    )
+    changed_rate = PricingTable(
+        prices={"gpt-4o-mini": pricing_row(0.2, 0.2, 0.05, 0.01)},
+        source="live",
+        fetched_at_unix=999,
+    )
+
+    baseline = pricing_inputs_fingerprint(first, {"MODEL": "gpt-4o-mini"})
+
+    assert baseline == pricing_inputs_fingerprint(
+        same_inputs,
+        {"model": "GPT-4O-MINI"},
+    )
+    assert baseline != pricing_inputs_fingerprint(changed_rate, {"model": "gpt-4o-mini"})
+    assert baseline != pricing_inputs_fingerprint(first, {"model": "gpt-4o"})
 
 
 class TestFetchJsonUrl:

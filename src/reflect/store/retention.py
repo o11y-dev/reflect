@@ -60,17 +60,19 @@ class SessionRetentionResult:
 
 
 class SessionRetentionPolicy:
-    """Classify only stale sessions with missing or invalid start timestamps."""
+    """Classify stale inactive sessions under the configured timestamp policy."""
 
     def __init__(
         self,
         *,
         older_than_days: int = 60,
+        include_valid_starts: bool = False,
         now: datetime | None = None,
     ) -> None:
         if older_than_days < 1:
             raise ValueError("older_than_days must be at least 1")
         self.older_than_days = older_than_days
+        self.include_valid_starts = include_valid_starts
         self.now = (now or datetime.now(tz=UTC)).astimezone(UTC)
 
     @property
@@ -78,11 +80,13 @@ class SessionRetentionPolicy:
         return self.now - timedelta(days=self.older_than_days)
 
     def eligible(self, *, started_at: str, last_observed_at: str | None, status: str) -> bool:
-        if _valid_timestamp(started_at):
+        if not self.include_valid_starts and _valid_timestamp(started_at):
             return False
         if status.strip().lower() in _ACTIVE_STATUSES:
             return False
         observed = _parse_timestamp(last_observed_at)
+        if observed is None and _valid_timestamp(started_at):
+            observed = _parse_timestamp(started_at)
         return observed is not None and observed < self.cutoff
 
 
@@ -144,7 +148,9 @@ class SessionPruner:
                 ),
                 status=str(by_id[session_id][8] or ""),
                 reason=(
-                    f"invalid start timestamp and no trusted activity within "
+                    f"no trusted activity within {self.policy.older_than_days} days"
+                    if self.policy.include_valid_starts
+                    else f"invalid start timestamp and no trusted activity within "
                     f"{self.policy.older_than_days} days"
                 ),
                 dependent_rows=self._dependent_row_counts(session_id),
@@ -164,6 +170,11 @@ class SessionPruner:
         else:
             self.conn.execute("BEGIN IMMEDIATE")
         try:
+            foreign_keys_enabled = int(
+                self.conn.execute("PRAGMA foreign_keys").fetchone()[0]
+            )
+            if not foreign_keys_enabled:
+                raise RuntimeError("Session pruning requires SQLite foreign keys")
             candidates = self.preview()
             if not candidates:
                 if nested_transaction:
@@ -172,6 +183,10 @@ class SessionPruner:
                     self.conn.commit()
                 return SessionRetentionResult(dry_run=False, candidates=())
             candidate_ids = {candidate.session_id for candidate in candidates}
+            from reflect.store.rollups import RollupDeletionDelta
+
+            rollup_delta = RollupDeletionDelta.capture(self.conn, candidate_ids)
+            self._capture_graph_nodes(candidate_ids)
             for candidate in candidates:
                 row = self.conn.execute(
                     """
@@ -239,26 +254,8 @@ class SessionPruner:
                         """,
                         (candidate.session_id, candidate.session_id),
                     )
-                self.conn.execute(
-                    "DELETE FROM raw_events WHERE session_id = ?",
-                    (candidate.session_id,),
-                )
-                self.conn.execute(
-                    "DELETE FROM graph_edges WHERE session_id = ?",
-                    (candidate.session_id,),
-                )
-                self.conn.execute(
-                    "DELETE FROM graph_nodes WHERE session_id = ?",
-                    (candidate.session_id,),
-                )
-                self.conn.execute(
-                    "DELETE FROM session_rollups WHERE session_id = ?",
-                    (candidate.session_id,),
-                )
-                self.conn.execute(
-                    "DELETE FROM sessions WHERE id = ?",
-                    (candidate.session_id,),
-                )
+
+            self._delete_candidate_rows()
 
             remaining = {
                 str(row[0])
@@ -273,18 +270,12 @@ class SessionPruner:
                 raise RuntimeError(
                     f"Failed to prune session(s): {', '.join(sorted(remaining))}"
                 )
-            from reflect.store.graph_normalize import rebuild_graph
-            from reflect.store.rollups import rebuild_rollups
-
-            graph = rebuild_graph(self.conn, commit=False)
-            rollups = rebuild_rollups(self.conn, commit=False)
-            violations = tuple(
-                tuple(row) for row in self.conn.execute("PRAGMA foreign_key_check").fetchall()
-            )
-            if violations:
-                raise RuntimeError(
-                    f"Pruning introduced {len(violations)} foreign-key violation(s)"
-                )
+            graph = {
+                "nodes": self.conn.execute("SELECT COUNT(*) FROM graph_nodes").fetchone()[0],
+                "edges": self.conn.execute("SELECT COUNT(*) FROM graph_edges").fetchone()[0],
+                "pruned_sessions": len(candidate_ids),
+            }
+            rollups = rollup_delta.apply(self.conn, commit=False)
             if nested_transaction:
                 self.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
             else:
@@ -305,6 +296,77 @@ class SessionPruner:
             graph=graph,
             rollups=rollups,
         )
+
+    def _prepare_session_scope(self, session_ids: set[str]) -> None:
+        self.conn.execute(
+            """
+            CREATE TEMP TABLE IF NOT EXISTS
+              reflect_pruned_session_ids(session_id TEXT PRIMARY KEY)
+            """
+        )
+        self.conn.execute("DELETE FROM reflect_pruned_session_ids")
+        self.conn.executemany(
+            "INSERT INTO reflect_pruned_session_ids(session_id) VALUES (?)",
+            ((session_id,) for session_id in sorted(session_ids)),
+        )
+
+    def _capture_graph_nodes(self, session_ids: set[str]) -> None:
+        self._prepare_session_scope(session_ids)
+        self.conn.execute(
+            """
+            CREATE TEMP TABLE IF NOT EXISTS
+              reflect_pruned_graph_nodes(node_id TEXT PRIMARY KEY)
+            """
+        )
+        self.conn.execute("DELETE FROM reflect_pruned_graph_nodes")
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO reflect_pruned_graph_nodes(node_id)
+            SELECT source_node_id
+            FROM graph_edges
+            WHERE session_id IN (SELECT session_id FROM reflect_pruned_session_ids)
+            UNION
+            SELECT target_node_id
+            FROM graph_edges
+            WHERE session_id IN (SELECT session_id FROM reflect_pruned_session_ids)
+            """
+        )
+
+    def _delete_candidate_rows(self) -> None:
+        try:
+            for table in ("raw_events", "graph_edges", "graph_nodes", "session_rollups"):
+                self.conn.execute(
+                    f"""
+                    DELETE FROM {table}
+                    WHERE session_id IN (
+                      SELECT session_id FROM reflect_pruned_session_ids
+                    )
+                    """
+                )
+            self.conn.execute(
+                """
+                DELETE FROM sessions
+                WHERE id IN (SELECT session_id FROM reflect_pruned_session_ids)
+                """
+            )
+            self.conn.execute(
+                """
+                DELETE FROM graph_nodes
+                WHERE session_id IS NULL
+                  AND id IN (SELECT node_id FROM reflect_pruned_graph_nodes)
+                  AND NOT EXISTS (
+                    SELECT 1 FROM graph_edges
+                    WHERE source_node_id = graph_nodes.id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM graph_edges
+                    WHERE target_node_id = graph_nodes.id
+                  )
+                """
+            )
+        finally:
+            self.conn.execute("DROP TABLE IF EXISTS reflect_pruned_graph_nodes")
+            self.conn.execute("DROP TABLE IF EXISTS reflect_pruned_session_ids")
 
     def _dependent_row_counts(self, session_id: str) -> dict[str, int]:
         counts: dict[str, int] = {}

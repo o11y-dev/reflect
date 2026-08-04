@@ -15,6 +15,7 @@ from typing import Any
 
 from reflect.improvements.models import WorkflowCandidateRecord
 from reflect.improvements.repository import ImprovementRepository, utc_now
+from reflect.improvements.workflow_identity import workflow_proposal_signature
 
 _SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
@@ -46,8 +47,8 @@ class WorkflowService:
             ]
         grouped: dict[str, list[WorkflowCandidateRecord]] = {}
         for candidate in candidates:
-            slug = str(candidate.content.get("slug") or candidate.id)
-            grouped.setdefault(slug, []).append(candidate)
+            signature = workflow_proposal_signature(candidate.title, candidate.content)
+            grouped.setdefault(signature, []).append(candidate)
 
         reviewable: list[WorkflowCandidateRecord] = []
         for members in grouped.values():
@@ -82,8 +83,14 @@ class WorkflowService:
         candidate = self.repository.get_candidate(candidate_id)
         if candidate is None:
             raise KeyError(f"Workflow candidate not found: {candidate_id}")
-        slug = str(candidate.content.get("slug") or candidate.id)
-        members = self.repository.list_candidates_by_slug(slug)
+        signature = workflow_proposal_signature(candidate.title, candidate.content)
+        members = [
+            item
+            for item in self.repository.list_candidates_by_slug(
+                str(candidate.content.get("slug") or candidate.id)
+            )
+            if workflow_proposal_signature(item.title, item.content) == signature
+        ]
         ledger = self.repository.workflow_session_ledger(candidate.id, limit=1)
         ledger_observation_ids = set(ledger.observation_ids)
         evidence_members = [

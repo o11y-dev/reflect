@@ -1,9 +1,12 @@
 # Changelog
 
-## 0.9.5 (2026-08-02)
+## 0.9.6 (unreleased)
 
 ### Changed
 
+- Session retention now deletes only the selected sessions, refreshes their affected graph and usage-rollup keys, and relies on enforced SQLite constraints instead of rebuilding and globally validating the complete derived store.
+- Made improvement discovery and impact measurement execution-aware: long-lived sessions are segmented into canonical execution units, mixed or low-confidence archetypes are excluded from procedure cohorts, and workflow contracts are evaluated symmetrically against the first five comparable post-installation executions.
+- Reused the existing observation, workflow, skill, intervention, and measurement lifecycle for successful repeated procedures, suppressing duplicate proposals when an active installed skill already covers the same procedure signature.
 - Bundled `opentelemetry-hooks` inside Reflect while preserving the public `otel-hook` command. `reflect setup` now uses the bundled runtime, and `reflect update --apply` removes a verified legacy standalone pipx environment, hands the command to Reflect, validates `otel-hook doctor --json`, and restores the prior package if the handoff fails.
 - Raised the minimum supported Python version from 3.11 to 3.12 to match the bundled hook runtime.
 - Made `reflect setup` register the OTLP gateway and report server for automatic startup after macOS user login by default, with `--no-autostart` as an explicit opt-out.
@@ -16,6 +19,8 @@
 
 ### Added
 
+- Added typed workflow contracts and the idempotent `reflect_record_milestone` MCP tool, with task-run, skill-version, execution-unit, target, provider, approval, write, and read-back fingerprint evidence; self-reports remain separate from corroborated adherence.
+- Added contract-level procedure evidence and five-execution validation progress to workflow and Impact dashboard views.
 - Added `reflect autostart enable|status|disable` and a swappable user-service manager, with macOS LaunchAgent support for restart-safe local services.
 - Added complete observation-to-session attribution, scoped finding statistics, actionable CLI drilldown, and `/api/inbox/{observation_id}/sessions`.
 - Added exact, transcript-estimated, and unavailable token provenance to `reflect usage`.
@@ -23,6 +28,14 @@
 
 ### Fixed
 
+- Replaced misleading `0 signals` badges in Impact comparison details with each session's actual metric contribution, while contract-based task cohorts now expose observed signal counts, workflow roles, and adherence state.
+- Retired pending workflow candidates when their detector is retired, and made the dashboard default/count represent reviewable workflows while preserving stale history behind the State filter.
+- Omitted inbox findings whose source sessions were pruned, preventing the Improvements API from failing validation on evidence-less historical findings.
+- Added the missing SQLite child-key indexes used by session-retention cascades, and made execution-unit and task-archetype preparation session-scoped so recent workflow cohorts can refresh without rebuilding unrelated history.
+- Repriced persisted sessions and rebuilt dependent usage rollups when pricing rates or model aliases change, so recent session costs no longer remain at zero after the pricing cache learns a model.
+- Kept workflow inbox findings, review targets, and source-session ledgers bound to the exact proposed artifact instead of merging different procedures that share a skill slug.
+- Added an explicit `--all-inactive-sessions` retention mode so operators can enforce a true age cutoff while the conservative invalid-timestamp policy remains the default.
+- Derived dashboard session event counts from canonical steps so missing usage rollups cannot silently make active sessions appear to have zero events.
 - Preserved gateway and report-server PID ownership when launchd starts them directly, and suppressed automatic browser windows during login startup.
 - Prevented `reflect_context` and improvement queries from selecting higher-impact findings from unrelated repositories on large multi-project stores.
 - Preserved all producing-session links even when detailed observation evidence is capped at 20 rows.

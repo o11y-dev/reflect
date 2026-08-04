@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from reflect.execution_units import ExecutionUnitRepository
 from reflect.improvements.models import (
     SkillDetail,
     SkillInstallationRecord,
@@ -61,6 +62,7 @@ class SkillRegistryService:
             migrate(conn)
         self.repository = ImprovementRepository(conn)
         self.workflows = WorkflowService(conn)
+        self.execution_units = ExecutionUnitRepository(conn)
 
     def refresh(
         self,
@@ -281,15 +283,36 @@ class SkillRegistryService:
                 (skill_id,),
             ).fetchone()
             version_id = str(version_row[0]) if version_row and version_row[0] else None
-            usage_id = f"skill_usage_{_hash(f'{skill_id}:{session_id}')[:24]}"
             timestamp = str(observed_at or now)
+            execution_row = self.conn.execute(
+                """
+                SELECT id FROM execution_units
+                WHERE session_id = ?
+                  AND started_at <= ?
+                  AND (ended_at IS NULL OR ended_at >= ?)
+                ORDER BY source_confidence DESC, started_at DESC
+                LIMIT 1
+                """,
+                (session_id, timestamp, timestamp),
+            ).fetchone()
+            if execution_row is None:
+                execution_unit_id = self.execution_units.ensure_session_fallback(
+                    str(session_id),
+                    now=timestamp,
+                )
+                if execution_unit_id is None:
+                    continue
+            else:
+                execution_unit_id = str(execution_row[0])
+            usage_id = f"skill_usage_{_hash(f'{skill_id}:{execution_unit_id}')[:24]}"
             self.conn.execute(
                 """
                 INSERT INTO skill_usage(
-                  id, skill_id, skill_version_id, session_id, state, confidence,
+                  id, skill_id, skill_version_id, session_id, execution_unit_id,
+                  state, confidence,
                   evidence_json, observed_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, 'observed', ?, ?, ?, ?, ?)
-                ON CONFLICT(skill_id, session_id) DO UPDATE SET
+                ) VALUES (?, ?, ?, ?, ?, 'observed', ?, ?, ?, ?, ?)
+                ON CONFLICT(skill_id, execution_unit_id) DO UPDATE SET
                   skill_version_id = excluded.skill_version_id,
                   confidence = MAX(skill_usage.confidence, excluded.confidence),
                   evidence_json = excluded.evidence_json,
@@ -301,6 +324,7 @@ class SkillRegistryService:
                     skill_id,
                     version_id,
                     str(session_id),
+                    execution_unit_id,
                     min(0.95, 0.55 + float(weight or 1) * 0.05),
                     _json({"source": "behavioral_memory_graph", "edge_kind": "used_skill"}),
                     timestamp,

@@ -51,7 +51,9 @@ Always follow this order:
    - Treat pending workflow guidance as unapproved evidence: do not install or apply it automatically.
    - Stop and ask the operator when the answer's fallback applies.
 
-2. **Close the MCP task after validation**
+2. **Record contracted milestones, then close the MCP task after validation**
+   - When a selected skill includes a non-empty `workflow_contract`, call `reflect_record_milestone` for each named checkpoint as it changes state. Pass the selected skill `version_id`, the current `task_run_id`, a stable idempotency key, and the privacy-safe fingerprint fields requested by that milestone when available.
+   - Treat the milestone call as agent-reported procedure evidence. It does not prove the checkpoint by itself; Reflect evaluates the same contract against the canonical execution unit and observed tool and conversation evidence.
    - When `reflect_context` returned a `task_run_id`, call `reflect_complete` exactly once after validation and before the final response.
    - Report `success`, `partial`, `failure`, or `abandoned`, whether verification passed when known, and a short redacted summary.
    - If the task exposed a repeated success, failure, recovery pattern, or workflow gap, follow the returned `reflect_improvements` next action and explain any relevant finding to the operator. Do not apply it automatically.
