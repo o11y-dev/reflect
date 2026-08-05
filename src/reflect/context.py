@@ -371,6 +371,55 @@ class ReflectContextService:
             limit=limit,
         )
 
+    def impact(
+        self,
+        *,
+        impact_id: str | None = None,
+        workflow_id: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """Inspect persisted impact checks without recomputing measurements."""
+
+        bounded_limit = max(1, min(limit, 100))
+        if impact_id:
+            try:
+                comparison = self.improvements.measurements.sessions(impact_id)
+            except KeyError:
+                return {
+                    "found": False,
+                    "reason": "impact_not_found",
+                    "impact_id": impact_id,
+                    "provenance": "reflect_measurement_ledger",
+                }
+            impact_check = next(
+                (
+                    item
+                    for item in self.improvements.measurements.list(limit=500)
+                    if item["id"] == impact_id
+                ),
+                None,
+            )
+            return {
+                "found": True,
+                "provenance": "reflect_measurement_ledger",
+                "impact_check": impact_check,
+                "comparison": comparison,
+            }
+
+        query_limit = 500 if workflow_id else bounded_limit
+        impact_checks = self.improvements.measurements.list(limit=query_limit)
+        if workflow_id:
+            impact_checks = [
+                item
+                for item in impact_checks
+                if item["candidate_id"] == workflow_id
+            ][:bounded_limit]
+        return {
+            "impact_checks": impact_checks,
+            "count": len(impact_checks),
+            "provenance": "reflect_measurement_ledger",
+        }
+
     def task_status(self, task_run_id: str) -> MCPTaskRunStatus:
         """Return a read-only task lifecycle snapshot."""
 

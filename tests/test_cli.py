@@ -1624,6 +1624,34 @@ class TestUpdateAdvisor:
         assert result["graph"]["skipped"] == 1
         assert result["rollups"]["skipped"] == 1
 
+    def test_background_report_preparation_defers_replaced_otlp_replay(
+        self,
+        tmp_path,
+        monkeypatch,
+        otlp_file,
+    ):
+        db_path = tmp_path / "reflect.db"
+        monkeypatch.setattr(core, "_infer_otlp_logs_file", lambda *_args, **_kwargs: None)
+        core._prepare_sql_report_db(
+            db_path,
+            otlp_traces=otlp_file,
+            include_native_sessions=False,
+        )
+        otlp_file.write_text('{"resourceSpans": []}\n', encoding="utf-8")
+
+        result = core._prepare_sql_report_db(
+            db_path,
+            otlp_traces=otlp_file,
+            include_native_sessions=False,
+            defer_otlp_replay=True,
+        )
+
+        traces = result["ingest_sources"]["otlp_traces"]
+        assert traces["mode"] == "replay_deferred"
+        assert traces["bytes_read"] == 0
+        assert traces["replay_required"] == 1
+        assert result["deferred_replays"] == ["otlp_traces"]
+
     def test_prepare_sql_report_db_reprices_when_pricing_inputs_change(
         self,
         tmp_path,

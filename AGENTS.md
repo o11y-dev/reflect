@@ -46,7 +46,7 @@ poetry run reflect doctor
 | `src/reflect/terminal.py` | Terminal dashboard rendering |
 | `reports/` | Generated markdown reports |
 | `docs/` | Hosted docs and dashboard artifacts |
-| `skills/reflect/` | Canonical repo-root `reflect` skill package |
+| `src/reflect/data/skills/reflect/` | Canonical tracked and packaged `reflect` skill |
 | `tests/` | Fast regression coverage for parsing, CLI, dashboard JSON, graphs, terminal output, and skill packaging |
 
 ## Architecture in one paragraph

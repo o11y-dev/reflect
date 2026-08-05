@@ -2482,6 +2482,10 @@ def _start_background_report_server(
             f"No report snapshot found at {db_path}. "
             "Run `reflect server --refresh start` to create one."
         )
+    existing_status = daemon.status()
+    if refresh and existing_status.running and not existing_status.refresh:
+        console.print("[yellow]Restarting the snapshot-only report server with refresh enabled.[/]")
+        daemon.stop()
     try:
         pid, started = daemon.start()
     except RuntimeError as exc:
@@ -2495,6 +2499,15 @@ def _start_background_report_server(
         console.print(f"[green]\u2713[/] Reflect dashboard started in the background (PID {pid})")
     else:
         console.print(f"[green]\u2713[/] Reflect dashboard is already running (PID {pid})")
+        if refresh:
+            try:
+                refresh_result = daemon.request_refresh()
+            except (OSError, RuntimeError, ValueError) as exc:
+                console.print(f"[yellow]Could not request a dashboard refresh: {exc}[/]")
+            else:
+                refresh_state = refresh_result.get("preparation") or {}
+                state = refresh_state.get("state", "requested") if isinstance(refresh_state, dict) else "requested"
+                console.print(f"  Refresh:   {state}")
         webbrowser.open(status.url)
     console.print(f"  Dashboard: [link={status.url}]{status.url}[/link]")
     console.print(f"  Log:       {status.log_file}")
@@ -2646,6 +2659,7 @@ def _run_browser_report(
                 otlp_traces=otlp_traces,
                 include_native_sessions=include_native_sessions,
                 progress=preparation_worker.report_progress,
+                defer_otlp_replay=True,
             )
 
         preparation_worker = BackgroundPreparationWorker(prepare_in_background)
@@ -5088,12 +5102,14 @@ def _prepare_sql_report_db(
     otlp_traces: Path | None,
     include_native_sessions: bool = False,
     progress: PreparationProgressReporter | None = None,
+    defer_otlp_replay: bool = False,
 ) -> dict[str, object]:
     from reflect.preparation import PreparationStage, report_preparation_progress
     from reflect.store.cost_refresh import CostRefreshState
     from reflect.store.cursor_adapter import apply_cursor_transcript_usage_estimates
     from reflect.store.graph_normalize import rebuild_graph, refresh_graph
     from reflect.store.ingest import (
+        AppendOnlyReplayPolicy,
         ingest_native_session_file,
         ingest_otlp_logs_file,
         ingest_otlp_traces_file,
@@ -5127,6 +5143,11 @@ def _prepare_sql_report_db(
         source_refs: dict[str, list[str]] = {}
         source_types: dict[str, str] = {}
         cursor_native_files: list[Path] = []
+        replay_policy = (
+            AppendOnlyReplayPolicy.DEFER
+            if defer_otlp_replay
+            else AppendOnlyReplayPolicy.REPLAY
+        )
         if otlp_traces is not None and otlp_traces.exists():
             report_preparation_progress(
                 progress,
@@ -5137,6 +5158,7 @@ def _prepare_sql_report_db(
                 conn,
                 file_path=otlp_traces,
                 skip_unchanged=True,
+                replay_policy=replay_policy,
             )
             ingest_sources["otlp_traces"] = traces_result
             ingest_sources["otlp_traces"]["source_type"] = "otlp_traces_json"
@@ -5155,6 +5177,7 @@ def _prepare_sql_report_db(
                     conn,
                     file_path=otlp_logs,
                     skip_unchanged=True,
+                    replay_policy=replay_policy,
                 )
                 ingest_sources["otlp_logs"] = logs_result
                 ingest_sources["otlp_logs"]["source_type"] = "otlp_logs_json"
@@ -5353,6 +5376,11 @@ def _prepare_sql_report_db(
         improvement_result = ImprovementService(conn).refresh()
     finally:
         conn.close()
+    deferred_replays = [
+        name
+        for name, source_result in ingest_sources.items()
+        if source_result.get("mode") == "replay_deferred"
+    ]
     result = {
         "sessions": len(all_session_ids),
         "applied_migrations": applied,
@@ -5367,6 +5395,7 @@ def _prepare_sql_report_db(
         "graph": graph_result,
         "rollups": rollup_result,
         "improvements": improvement_result,
+        "deferred_replays": deferred_replays,
     }
     report_preparation_progress(
         progress,

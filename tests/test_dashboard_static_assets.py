@@ -42,6 +42,15 @@ def test_dashboard_html_surfaces_cost_controls(path: Path):
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_html_requests_bounded_background_refresh(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert "DASHBOARD_REFRESH_MIN_INTERVAL_MS = 30000" in text
+    assert "fetch('/api/refresh'" in text
+    assert "document.addEventListener('visibilitychange'" in text
+
+
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_html_links_bad_report_state_to_public_home(path: Path):
     text = path.read_text(encoding="utf-8")
 

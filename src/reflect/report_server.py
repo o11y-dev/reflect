@@ -9,6 +9,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from urllib import request as urllib_request
 
 
 @dataclass(frozen=True)
@@ -132,6 +133,20 @@ class ReportServerDaemon:
             db_path=config.db_path,
             refresh=config.refresh,
         )
+
+    def request_refresh(self, *, timeout: float = 2.0) -> dict[str, object]:
+        """Ask an existing refresh-capable server to prepare a new snapshot."""
+        request = urllib_request.Request(
+            f"http://127.0.0.1:{self.config.port}/api/refresh",
+            data=b"",
+            headers={"Accept": "application/json"},
+            method="POST",
+        )
+        with urllib_request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read())
+        if not isinstance(payload, dict):
+            raise RuntimeError("Report server returned an invalid refresh response")
+        return payload
 
     def clear_pid(self, pid: int) -> None:
         if self._read_pid() == pid:

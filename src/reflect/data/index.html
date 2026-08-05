@@ -3380,6 +3380,7 @@ function hideReportLoader(){
 }
 
 let preparationStatusPollTimer = null;
+const DASHBOARD_REFRESH_MIN_INTERVAL_MS = 30000;
 function renderPreparationStatus(preparation){
   const status = document.getElementById('preparation-status');
   const copy = document.getElementById('preparation-status-copy');
@@ -3400,15 +3401,18 @@ function renderPreparationStatus(preparation){
   }
   if (state === 'complete') {
     const completion = preparation.finished_at || `generation:${preparation.generation || 0}`;
+    const deferredReplays = preparation.result?.deferred_replays || [];
     let previousCompletion = '';
     try {
       previousCompletion = window.sessionStorage.getItem('reflect.preparation.finished_at') || '';
       window.sessionStorage.setItem('reflect.preparation.finished_at', completion);
     } catch {}
     status.hidden = false;
-    copy.textContent = previousCompletion === completion
-      ? 'Local telemetry is current.'
-      : 'Refresh complete. Loading the new snapshot...';
+    copy.textContent = deferredReplays.length
+      ? `Sessions refreshed. Deferred replay for replaced ${deferredReplays.join(', ')}; run reflect refresh to reconcile it.`
+      : previousCompletion === completion
+        ? 'Local telemetry is current.'
+        : 'Refresh complete. Loading the new snapshot...';
     if (previousCompletion !== completion) {
       window.setTimeout(() => window.location.reload(), 450);
       return false;
@@ -3441,6 +3445,34 @@ function startPreparationStatusPolling(){
   if (!D?.sql_backed || !reportSupportsServerFiltering()) return;
   if (preparationStatusPollTimer) window.clearTimeout(preparationStatusPollTimer);
   pollPreparationStatus();
+}
+
+async function requestDashboardRefresh(){
+  if (!D?.sql_backed || !reportSupportsServerFiltering()) return;
+  try {
+    const statusResponse = await fetch('/api/status', {
+      headers: {Accept: 'application/json'},
+      cache: 'no-store',
+    });
+    if (!statusResponse.ok) return;
+    const statusPayload = await statusResponse.json();
+    if (!statusPayload.refresh_available) return;
+    const preparation = statusPayload.preparation || {};
+    if (preparation.state === 'running') {
+      startPreparationStatusPolling();
+      return;
+    }
+    const finishedAt = Date.parse(preparation.finished_at || '');
+    if (Number.isFinite(finishedAt) && Date.now() - finishedAt < DASHBOARD_REFRESH_MIN_INTERVAL_MS) return;
+    const refreshResponse = await fetch('/api/refresh', {
+      method: 'POST',
+      headers: {Accept: 'application/json'},
+      cache: 'no-store',
+    });
+    if (!refreshResponse.ok) return;
+    const refreshPayload = await refreshResponse.json();
+    if (refreshPayload.preparation?.state === 'running') startPreparationStatusPolling();
+  } catch {}
 }
 
 async function loadDashboardData(){
@@ -4589,6 +4621,10 @@ activateTab(requestedInitialTab || defaultProductTab, {
 document.getElementById('hdr-range').textContent = D.first_event_ts + ' — ' + D.last_event_ts;
 document.getElementById('hdr-ts').textContent = 'Loaded ' + new Date().toLocaleString();
 startPreparationStatusPolling();
+window.setTimeout(requestDashboardRefresh, 250);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) requestDashboardRefresh();
+});
 
 /* ════════════════════ SESSION BROWSER ════════════════════ */
 class SessionConversationPlayhead {
@@ -5245,6 +5281,9 @@ class SessionConversationPlayhead {
       const tokens = (estimatedTokens?.input ?? s.input_tokens ?? 0) + (estimatedTokens?.output ?? s.output_tokens ?? 0);
       const cost = Number(s.total_cost_usd || s.total_cost || 0);
       const unit = String(s.pricing_unit || D.pricing_unit || 'usd').toUpperCase();
+      const costUnavailableReason = tokens > 0
+        ? 'Model pricing is unavailable for the captured token usage.'
+        : 'Token usage was not exported by this telemetry source.';
       return `<button type="button" class="sb-card${isActive ? ' active' : ''}" data-idx="${s._idx}" aria-pressed="${isActive ? 'true' : 'false'}">
         <div class="sb-card-header">
           <div class="sb-card-agent-icon">${agentIconSvg(s.agent)}</div>
@@ -5255,7 +5294,9 @@ class SessionConversationPlayhead {
         <div class="sb-card-badges">
           <div class="sb-card-badge">${fmt(s.event_count || 0)} events</div>
           ${tokens > 0 ? `<div class="sb-card-badge">${estimatedTokens ? '~' : ''}${fmtTokenShort(tokens)} tok</div>` : ''}
-          ${cost > 0 ? `<div class="sb-card-badge">${fmtCost(cost)} ${escHtml(unit)}</div>` : ''}
+          ${cost > 0
+            ? `<div class="sb-card-badge">${fmtCost(cost)} ${escHtml(unit)}</div>`
+            : `<div class="sb-card-badge" style="color:var(--text-3)" title="${escHtml(costUnavailableReason)}">Cost unavailable</div>`}
           ${s.quality_available ? `<div class="sb-card-badge" style="color:${Number(s.quality_score || 0) > 70 ? 'var(--green)' : 'var(--yellow)'}">${Number(s.quality_score || 0).toFixed(0)}%</div>` : '<div class="sb-card-badge" style="color:var(--text-3)">No score</div>'}
         </div>
       </button>`;
@@ -5289,6 +5330,9 @@ class SessionConversationPlayhead {
     const cacheTok = session.cache_read_tokens || 0;
     const sessionCost = Number(session.total_cost_usd || session.total_cost || 0);
     const sessionUnit = String(session.pricing_unit || D.pricing_unit || 'usd').toUpperCase();
+    const sessionCostUnavailableReason = (Number(session.input_tokens || 0) + Number(session.output_tokens || 0) + Number(session.cache_creation_tokens || 0) + Number(session.cache_read_tokens || 0)) > 0
+      ? 'Model pricing is unavailable for the captured token usage.'
+      : 'Token usage was not exported by this telemetry source.';
     const tokenMeta = estimatedTokens
       ? (session._fullLoaded ? 'Estimated from full Cursor transcript content.' : 'Estimated from available Cursor transcript preview.')
       : (session.token_note || '');
@@ -5317,7 +5361,9 @@ class SessionConversationPlayhead {
         <span title="${tokenMeta}">In: <strong>${estimatedTokens ? '~' : ''}${fmtTokenShort(inTok)}</strong></span>
         <span title="${tokenMeta}">Out: <strong>${estimatedTokens ? '~' : ''}${fmtTokenShort(outTok)}</strong></span>
         ${cacheTok > 0 ? `<span>Cache: <strong>${fmtTokenShort(cacheTok)}</strong></span>` : ''}
-        <span title="Cost basis: ${escHtml(session.pricing_source || D.pricing_source || 'unknown')}">Cost: <strong>${fmtCost(sessionCost)} ${escHtml(sessionUnit)}</strong></span>
+        ${sessionCost > 0
+          ? `<span title="Cost basis: ${escHtml(session.pricing_source || D.pricing_source || 'unknown')}">Cost: <strong>${fmtCost(sessionCost)} ${escHtml(sessionUnit)}</strong></span>`
+          : `<span title="${escHtml(sessionCostUnavailableReason)}">Cost: <strong>Unavailable</strong></span>`}
         ${session.failure_count > 0 ? `<span style="color:var(--red)">Failures: <strong>${session.failure_count}</strong></span>` : ''}
       </div>
       <div class="feedback-row" aria-label="Record session outcome">

@@ -44,6 +44,7 @@ Do this before the final response. Skip this flow for trivial factual lookups
 and tasks that do not involve a repository. Treat provider memory as context rather than
 Reflect-verified evidence, and never install or apply workflows without explicit operator approval.
 Use the read-only inspection tools when you need registry, pattern, provenance, or task-link status.
+Use reflect_impact before concluding that an installed workflow has no measured impact.
 For a requested workflow mutation, call reflect_review_change and present its exact target, diff,
 evidence, risks, and rollback plan. Do not expose or apply its approval token yet. If the user asks
 for a revision, prepare a new review and present the replacement diff. Call reflect_apply_change
@@ -257,6 +258,24 @@ def reflect_patterns(
             loop_status=loop_status,
             limit=limit,
         ).model_dump(mode="json"),
+        read_only=True,
+    )
+
+
+@mcp.tool(annotations=READ_ONLY_TOOL)
+def reflect_impact(
+    impact_id: str = "",
+    workflow_id: str = "",
+    limit: int = 20,
+) -> dict[str, Any]:
+    """List impact checks or inspect one persisted before/after comparison."""
+
+    return _with_service(
+        lambda service: service.impact(
+            impact_id=impact_id or None,
+            workflow_id=workflow_id or None,
+            limit=limit,
+        ),
         read_only=True,
     )
 

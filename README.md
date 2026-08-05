@@ -168,6 +168,10 @@ flowchart LR
     I --> J[Measured impact]
 ```
 
+See [`docs/current-architecture.md`](docs/current-architecture.md) for the current
+module boundaries, domain objects, decision register, transitional duplication, and
+known complexity hotspots.
+
 ## Commands
 
 Reflect keeps four concepts separate:

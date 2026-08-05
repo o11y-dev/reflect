@@ -19,6 +19,8 @@
 
 ### Added
 
+- Added read-only `reflect_impact` MCP inspection for persisted before/after measurements and their exact compared execution-unit or session cohorts.
+- Added a current architecture map and decision register covering canonical data flow, domain ownership, transitional duplication, complexity hotspots, and guardrails for keeping future changes lean.
 - Added typed workflow contracts and the idempotent `reflect_record_milestone` MCP tool, with task-run, skill-version, execution-unit, target, provider, approval, write, and read-back fingerprint evidence; self-reports remain separate from corroborated adherence.
 - Added contract-level procedure evidence and five-execution validation progress to workflow and Impact dashboard views.
 - Added `reflect autostart enable|status|disable` and a swappable user-service manager, with macOS LaunchAgent support for restart-safe local services.
@@ -28,6 +30,9 @@
 
 ### Fixed
 
+- Required Reflect case-study and ROI analysis to inspect existing impact measurements, distinguish outcome shifts from attributable intervention impact, and audit cohort comparability before reporting insufficient evidence.
+- Refreshed long-lived browser dashboards when reopened or focused so newly completed native sessions appear without a manual ingest, while deferring automatic replay when an OTLP JSONL was replaced or truncated.
+- Allowed richer native session telemetry to supply missing token usage when an existing OTLP-owned session has no tokens, while preserving source ownership when OTLP already contains usage; session cards now label unavailable cost instead of silently omitting it.
 - Replaced misleading `0 signals` badges in Impact comparison details with each session's actual metric contribution, while contract-based task cohorts now expose observed signal counts, workflow roles, and adherence state.
 - Retired pending workflow candidates when their detector is retired, and made the dashboard default/count represent reviewable workflows while preserving stale history behind the State filter.
 - Omitted inbox findings whose source sessions were pruned, preventing the Improvements API from failing validation on evidence-less historical findings.

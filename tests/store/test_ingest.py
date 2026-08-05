@@ -2,6 +2,7 @@ import json
 
 from reflect.store.cursor_adapter import apply_cursor_transcript_usage_estimates
 from reflect.store.ingest import (
+    AppendOnlyReplayPolicy,
     _complete_jsonl_offset,
     ingest_local_spans_file,
     ingest_native_session_file,
@@ -523,6 +524,45 @@ def test_incremental_otlp_ingest_falls_back_after_truncation(tmp_path):
         conn.close()
 
 
+def test_interactive_otlp_ingest_defers_replay_after_truncation(tmp_path):
+    db = tmp_path / "reflect.db"
+    otlp = tmp_path / "traces.json"
+    _write_otlp_file(otlp)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        ingest_otlp_traces_file(conn, file_path=otlp, skip_unchanged=True)
+
+        payload = json.loads(otlp.read_text(encoding="utf-8"))
+        span = payload["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+        span["traceId"] = "replacement-trace"
+        span["spanId"] = "replacement-span"
+        span["attributes"][0]["value"]["stringValue"] = "replacement-session"
+        otlp.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+        result = ingest_otlp_traces_file(
+            conn,
+            file_path=otlp,
+            skip_unchanged=True,
+            replay_policy=AppendOnlyReplayPolicy.DEFER,
+        )
+
+        assert result == {
+            "inserted": 0,
+            "skipped": 0,
+            "unchanged": 0,
+            "mode": "replay_deferred",
+            "bytes_read": 0,
+            "processed_offset_bytes": 0,
+            "pending_bytes": otlp.stat().st_size,
+            "replay_required": 1,
+        }
+        assert conn.execute("SELECT COUNT(*) FROM raw_events").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
 def test_ingest_otlp_logs_normalizes_codex_records(tmp_path):
     db = tmp_path / "reflect.db"
     logs = tmp_path / "otel-logs.json"
@@ -639,6 +679,73 @@ def test_ingest_native_session_skips_session_already_created_from_otlp(tmp_path)
             "failed": 0,
             "skipped": 0,
         }
+    finally:
+        conn.close()
+
+
+def test_ingest_native_session_enriches_normalized_otlp_without_tokens(tmp_path):
+    db = tmp_path / "reflect.db"
+    logs = tmp_path / "otel-logs.json"
+    session_file = tmp_path / "rollout-codex-native-sess-1.jsonl"
+    _write_codex_logs_file(logs, session_id="codex-native-sess-1")
+    _write_codex_session_file(session_file)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        ingest_otlp_logs_file(conn, file_path=logs)
+        normalize_pending_raw_events(conn)
+
+        result = ingest_native_session_file(
+            conn,
+            file_path=session_file,
+            agent="codex",
+            skip_existing_sessions=True,
+            skip_unchanged=True,
+        )
+        assert result == {"inserted": 6, "skipped": 0, "unchanged": 0}
+
+        normalize_pending_raw_events(conn)
+        row = conn.execute(
+            """
+            SELECT source_kind, input_tokens, output_tokens, cache_read_tokens
+            FROM sessions
+            WHERE id = 'codex-native-sess-1'
+            """
+        ).fetchone()
+        assert row == ("native_session", 750, 80, 250)
+    finally:
+        conn.close()
+
+
+def test_ingest_native_session_does_not_duplicate_normalized_otlp_tokens(tmp_path):
+    db = tmp_path / "reflect.db"
+    logs = tmp_path / "otel-logs.json"
+    session_file = tmp_path / "rollout-codex-native-sess-1.jsonl"
+    _write_codex_logs_file(logs, session_id="codex-native-sess-1")
+    _write_codex_session_file(session_file)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        ingest_otlp_logs_file(conn, file_path=logs)
+        normalize_pending_raw_events(conn)
+        conn.execute(
+            "UPDATE sessions SET input_tokens = 25 WHERE id = 'codex-native-sess-1'"
+        )
+        conn.commit()
+
+        result = ingest_native_session_file(
+            conn,
+            file_path=session_file,
+            agent="codex",
+            skip_existing_sessions=True,
+            skip_unchanged=True,
+        )
+        assert result == {"inserted": 0, "skipped": 0, "unchanged": 1}
+        assert conn.execute(
+            "SELECT COUNT(*) FROM raw_events WHERE source_type = 'native_session'"
+        ).fetchone()[0] == 0
     finally:
         conn.close()
 

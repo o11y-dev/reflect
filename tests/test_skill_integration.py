@@ -72,6 +72,7 @@ class TestSkillMd:
         assert 'reflect ask "<task question>" --json' in content
         assert "`reflect_skills`" in content
         assert "`reflect_patterns`" in content
+        assert "`reflect_impact`" in content
         assert "`reflect_task_status`" in content
         assert "`reflect_review_change`" in content
         assert "`reflect_apply_change`" in content
@@ -79,6 +80,16 @@ class TestSkillMd:
         assert "reflect loops build <loop-id>" in content
         assert "Do not run `reflect setup`" in content
         assert "only as an agent-operated fallback after explicit operator approval" in content
+
+    def test_reflect_skill_requires_impact_gate_before_insufficient_evidence(self):
+        content = SKILL_MD.read_text(encoding="utf-8")
+
+        assert "Impact gate for case studies and ROI" in content
+        assert "outcome shift" in content
+        assert "attributable intervention impact" in content
+        assert "comparable eligible, non-mixed execution units" in content
+        assert "never transfer impact from one workflow to another finding" in content
+        assert "impact not inspected" in content
 
     def test_reflect_skill_packages_session_evidence_guidance(self):
         required_fragments = (

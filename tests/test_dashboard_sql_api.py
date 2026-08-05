@@ -811,7 +811,9 @@ def test_dashboard_api_reports_background_preparation_status(tmp_path):
     )
     client = TestClient(app)
 
-    assert client.get("/api/status").json()["preparation"]["state"] == "idle"
+    initial_status = client.get("/api/status").json()
+    assert initial_status["preparation"]["state"] == "idle"
+    assert initial_status["refresh_available"] is True
     assert worker.start() is True
     assert worker.wait(timeout=2) is True
 
@@ -819,6 +821,38 @@ def test_dashboard_api_reports_background_preparation_status(tmp_path):
     assert status["state"] == "complete"
     assert status["generation"] == 1
     assert status["result"] == {"refreshed_sessions": 1}
+
+
+def test_dashboard_refresh_endpoint_starts_background_preparation(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    worker = BackgroundPreparationWorker(lambda: {"refreshed_sessions": 1})
+    app = _build_dashboard_app(
+        _stats(),
+        docs_dir=tmp_path,
+        db_path=db_path,
+        preparation_worker=worker,
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/refresh")
+
+    assert response.status_code in {200, 202}
+    assert response.json()["refresh_available"] is True
+    assert worker.wait(timeout=2) is True
+    assert worker.snapshot().generation == 1
+
+
+def test_dashboard_refresh_endpoint_rejects_snapshot_only_server(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    app = _build_dashboard_app(_stats(), docs_dir=tmp_path, db_path=db_path)
+    client = TestClient(app)
+
+    response = client.post("/api/refresh")
+
+    assert response.status_code == 409
+    assert response.json()["refresh_available"] is False
 
 
 def test_dashboard_minimal_snapshot_skips_all_tab_builders(tmp_path, monkeypatch):

@@ -363,6 +363,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
                 "reflect_patterns",
                 {"pattern_type": "all", "query": "release"},
             )
+            impact = await session.call_tool("reflect_impact", {})
             review = await session.call_tool(
                 "reflect_review_change",
                 {
@@ -384,6 +385,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
                 task_status,
                 skills,
                 patterns,
+                impact,
                 review,
                 applied,
             )
@@ -396,6 +398,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
         task_status,
         skills,
         patterns,
+        impact,
         review,
         applied,
     ) = asyncio.run(exercise_server())
@@ -405,12 +408,14 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
     assert "At the start of every non-trivial repository task" in initialized.instructions
     assert "execution_state is follow_allowed" in initialized.instructions
     assert "call reflect_complete exactly once" in initialized.instructions
+    assert "Use reflect_impact before concluding" in initialized.instructions
     assert "only after the user explicitly approves" in initialized.instructions
     assert names == {
         "reflect_apply_change",
         "reflect_complete",
         "reflect_context",
         "reflect_explain",
+        "reflect_impact",
         "reflect_improvements",
         "reflect_patterns",
         "reflect_record_milestone",
@@ -434,6 +439,8 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
     assert not patterns.isError
     assert patterns.structuredContent["workflow_count"] == 1
     assert patterns.structuredContent["loop_count"] == 0
+    assert not impact.isError
+    assert impact.structuredContent["count"] == 0
     assert not review.isError
     assert review.structuredContent["candidate_id"] == candidate_id
     assert review.structuredContent["state"] == "pending"

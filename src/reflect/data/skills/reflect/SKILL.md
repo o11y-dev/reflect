@@ -1,6 +1,6 @@
 ---
 name: reflect
-description: Use when the user wants task-specific guidance from prior AI coding sessions, actionable workflow improvements, a Reflect dashboard, telemetry analysis, tool/model/MCP/subagent investigation, provider usage explanations, or local-first versus gateway architecture advice. Start every non-trivial repository task with approved local guidance, close the task after validation, keep configuration changes explicitly approved, and distinguish local evidence from provider evidence and inference.
+description: Use when the user wants task-specific guidance from prior AI coding sessions, actionable workflow improvements, workflow or skill impact, an evidence-backed case study, a Reflect dashboard, telemetry analysis, tool/model/MCP/subagent investigation, provider usage explanations, or local-first versus gateway architecture advice. Start every non-trivial repository task with approved local guidance, close the task after validation, keep configuration changes explicitly approved, and distinguish local evidence from provider evidence and inference.
 ---
 
 # reflect skill
@@ -62,6 +62,7 @@ Always follow this order:
    - Prefer `reflect_improvements` for the highest-impact durable observations.
    - Use `reflect_skills` to search the durable registry by lifecycle, installation availability, source agent, or evidence count.
    - Use `reflect_patterns` to inspect existing stalled or productive loops and workflow candidates without running detectors.
+   - Use `reflect_impact` to inspect persisted before/after measurements and their exact compared-session or execution-unit ledger.
    - Use `reflect_explain` for bounded provenance on an observation, workflow, loop, skill version, task run, or local memory.
    - Use `reflect_task_status` when task completion or late-ingestion linkage is unclear. Treat it as inspection only; ingestion performs reconciliation.
    - When the user wants to approve, install, or roll back a workflow, call `reflect_review_change` first. Present its exact target, diff, evidence, risks, rollback plan, and expiration without displaying the approval token.
@@ -72,6 +73,18 @@ Always follow this order:
    - When MCP is unavailable, use the equivalent `reflect improve`, `reflect loops`, `reflect skills`, and `reflect workflows list|show` CLI commands as an agent-operated fallback.
    - Use `reflect loops build <loop-id>` or `reflect workflows add <SKILL.md>` only when the operator wants a selected source turned into a pending workflow. Neither operation installs the skill package.
    - Run `reflect skills apply`, `reflect workflows apply`, or rollback CLI commands only as an agent-operated fallback after explicit operator approval.
+
+### Impact gate for case studies and ROI
+
+Before concluding that an installed workflow has insufficient evidence, inspect its
+latest `reflect_impact` result and comparison ledger.
+
+- Report a measured before/after delta as an **outcome shift**, even when attribution is incomplete.
+- Claim **attributable intervention impact** only when the cohorts contain comparable eligible, non-mixed execution units and the workflow exposure was followed or used with corroborated contract evidence.
+- Audit repository or workspace scope, task archetype, agent/model composition, capture source, sample counts, and missing telemetry before comparing cohorts.
+- Keep each impact result attached to its own workflow; never transfer impact from one workflow to another finding.
+- Treat ignored or unobserved exposure as an attribution limitation, not as proof that no outcome shift exists.
+- If the impact surface is unavailable or was not inspected, say `impact not inspected`; do not say `no impact`.
 
 ### Making `reflect improve` actionable
 

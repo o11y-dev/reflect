@@ -4589,7 +4589,30 @@ def _build_dashboard_app(
             if preparation_worker is not None
             else PreparationSnapshot(state=PreparationState.IDLE, generation=0)
         )
-        return JSONResponse({"preparation": snapshot.as_dict()})
+        return JSONResponse({
+            "preparation": snapshot.as_dict(),
+            "refresh_available": preparation_worker is not None,
+        })
+
+    @app.post("/api/refresh")
+    def api_refresh():
+        if preparation_worker is None:
+            return JSONResponse(
+                {
+                    "error": "This report server is snapshot-only. Start Reflect normally or use `reflect server --refresh start`.",
+                    "refresh_available": False,
+                },
+                status_code=409,
+            )
+        started = preparation_worker.start()
+        return JSONResponse(
+            {
+                "started": started,
+                "refresh_available": True,
+                "preparation": preparation_worker.snapshot().as_dict(),
+            },
+            status_code=202 if started else 200,
+        )
 
     @app.get("/api/inbox")
     @app.get("/api/improvements")

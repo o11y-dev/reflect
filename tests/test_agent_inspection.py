@@ -100,6 +100,99 @@ def test_agent_skill_search_filters_existing_registry_without_refreshing(tmp_pat
         conn.close()
 
 
+def test_context_impact_lists_and_explains_persisted_measurements(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    project_root = tmp_path / "project"
+    (project_root / ".git").mkdir(parents=True)
+    try:
+        improvements = ImprovementService(conn)
+        now = "2026-07-24T10:00:00+00:00"
+        conn.execute(
+            "INSERT INTO agents(id, name, created_at, updated_at) VALUES ('agent-1', 'codex', ?, ?)",
+            (now, now),
+        )
+        conn.executemany(
+            """
+            INSERT INTO sessions(
+              id, agent_id, started_at, status, title, created_at, updated_at
+            ) VALUES (?, 'agent-1', ?, 'completed', ?, ?, ?)
+            """,
+            [
+                ("before-session", now, "Before", now, now),
+                ("after-session", now, "After", now, now),
+            ],
+        )
+        workflow_id = _stage_skill(
+            conn,
+            name="verify-release",
+            description="Verify a release before reporting completion.",
+        )
+        improvements.workflows.apply(workflow_id, project_root=project_root)
+        intervention_id = str(
+            conn.execute(
+                """
+                SELECT i.id
+                FROM interventions i
+                JOIN workflow_versions wv ON wv.id = i.workflow_version_id
+                WHERE wv.candidate_id = ?
+                """,
+                (workflow_id,),
+            ).fetchone()[0]
+        )
+        conn.execute(
+            """
+            INSERT INTO measurements(
+              id, intervention_id, metric_name, cohort_json, before_value,
+              after_value, before_count, after_count, delta, verdict,
+              confidence, confounders_json, measured_at, created_at, updated_at
+            ) VALUES (
+              'impact-1', ?, 'unverified_change_sessions', ?, 1.0,
+              0.0, 1, 1, -1.0, 'improved', 0.9, '[]', ?, ?, ?
+            )
+            """,
+            (
+                intervention_id,
+                json.dumps(
+                    {
+                        "before_session_ids": ["before-session"],
+                        "after_session_ids": ["after-session"],
+                        "unit": "sessions",
+                    }
+                ),
+                now,
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+
+        service = ReflectContextService(conn)
+        listed = service.impact(workflow_id=workflow_id)
+        explained = service.impact(impact_id="impact-1")
+        missing = service.impact(impact_id="missing")
+
+        assert listed["provenance"] == "reflect_measurement_ledger"
+        assert listed["count"] == 1
+        assert listed["impact_checks"][0]["id"] == "impact-1"
+        assert explained["found"] is True
+        assert explained["impact_check"]["verdict"] == "improved"
+        assert explained["comparison"]["snapshot_exact"] is True
+        assert explained["comparison"]["before_sessions"][0]["session_id"] == (
+            "before-session"
+        )
+        assert explained["comparison"]["after_sessions"][0]["session_id"] == (
+            "after-session"
+        )
+        assert missing == {
+            "found": False,
+            "reason": "impact_not_found",
+            "impact_id": "missing",
+            "provenance": "reflect_measurement_ledger",
+        }
+    finally:
+        conn.close()
+
+
 def test_agent_pattern_inspection_and_explain_cover_workflows_and_loops(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:

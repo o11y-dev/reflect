@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from itertools import chain
 from pathlib import Path
 
@@ -28,6 +29,13 @@ CHECKPOINT_HASH_WINDOW_BYTES = 64 * 1024
 JSONL_SCAN_CHUNK_BYTES = 64 * 1024
 
 IngestionResult = dict[str, int | str]
+
+
+class AppendOnlyReplayPolicy(StrEnum):
+    """Control whether an interactive read may replay a replaced JSONL source."""
+
+    REPLAY = "replay"
+    DEFER = "defer"
 
 
 @dataclass(frozen=True)
@@ -169,7 +177,7 @@ def _append_start_offset(
     if (
         checkpoint is None
         or checkpoint.processed_offset_bytes <= 0
-        or checkpoint.processed_offset_bytes >= fingerprint.size_bytes
+        or checkpoint.processed_offset_bytes > fingerprint.size_bytes
         or not checkpoint.checkpoint_tail_sha256
     ):
         return None
@@ -309,11 +317,24 @@ def _session_owned_by_other_source(
     if not session_id:
         return False
     row = db_conn.execute(
-        "SELECT source_kind, source_ref FROM sessions WHERE id = ?",
+        """
+        SELECT source_kind, source_ref, input_tokens, output_tokens,
+               cache_creation_tokens, cache_read_tokens, reasoning_tokens
+        FROM sessions
+        WHERE id = ?
+        """,
         (session_id,),
     ).fetchone()
     if row:
-        return (str(row[0] or ""), str(row[1] or "")) != (source_type, source)
+        existing_source = (str(row[0] or ""), str(row[1] or ""))
+        if existing_source == (source_type, source):
+            return False
+        has_token_usage = any(int(value or 0) > 0 for value in row[2:])
+        return not (
+            source_type == "native_session"
+            and existing_source[0] != "native_session"
+            and not has_token_usage
+        )
     raw_owner = db_conn.execute(
         """
         SELECT source_type, source_id
@@ -374,6 +395,7 @@ def _ingest_file_spans(
     spans_factory: Callable[[int, int | None], Iterable[dict]],
     skip_unchanged: bool,
     append_only_jsonl: bool = False,
+    replay_policy: AppendOnlyReplayPolicy = AppendOnlyReplayPolicy.REPLAY,
     skip_existing_session: bool = False,
     respect_session_ownership: bool = False,
 ) -> IngestionResult:
@@ -425,6 +447,22 @@ def _ingest_file_spans(
         if append_start is not None:
             start_offset = append_start
             mode = "append"
+        elif (
+            checkpoint is not None
+            and checkpoint.processed_offset_bytes > 0
+            and replay_policy is AppendOnlyReplayPolicy.DEFER
+        ):
+            assert end_offset is not None
+            return {
+                "inserted": 0,
+                "skipped": 0,
+                "unchanged": 0,
+                "mode": "replay_deferred",
+                "bytes_read": 0,
+                "processed_offset_bytes": 0,
+                "pending_bytes": end_offset,
+                "replay_required": 1,
+            }
         assert end_offset is not None
         if end_offset < start_offset:
             start_offset = 0
@@ -511,6 +549,7 @@ def ingest_otlp_traces_file(
     file_path: Path,
     source_id: str | None = None,
     skip_unchanged: bool = False,
+    replay_policy: AppendOnlyReplayPolicy = AppendOnlyReplayPolicy.REPLAY,
 ) -> IngestionResult:
     source = source_id or str(file_path)
     return _ingest_file_spans(
@@ -525,6 +564,7 @@ def ingest_otlp_traces_file(
         ),
         skip_unchanged=skip_unchanged,
         append_only_jsonl=True,
+        replay_policy=replay_policy,
     )
 
 
@@ -534,6 +574,7 @@ def ingest_otlp_logs_file(
     file_path: Path,
     source_id: str | None = None,
     skip_unchanged: bool = False,
+    replay_policy: AppendOnlyReplayPolicy = AppendOnlyReplayPolicy.REPLAY,
 ) -> IngestionResult:
     source = source_id or str(file_path)
 
@@ -557,6 +598,7 @@ def ingest_otlp_logs_file(
         spans_factory=spans,
         skip_unchanged=skip_unchanged,
         append_only_jsonl=True,
+        replay_policy=replay_policy,
         respect_session_ownership=True,
     )
 
