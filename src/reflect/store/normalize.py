@@ -276,7 +276,10 @@ def _upsert_session(
           source_ref, last_observed_at, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
-          agent_id = COALESCE(sessions.agent_id, excluded.agent_id),
+          agent_id = CASE
+            WHEN excluded.source_kind = 'native_session' THEN excluded.agent_id
+            ELSE COALESCE(sessions.agent_id, excluded.agent_id)
+          END,
           started_at = CASE
             WHEN (
               sessions.started_at IS NULL OR sessions.started_at = ''

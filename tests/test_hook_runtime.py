@@ -72,6 +72,33 @@ def test_hook_runtime_prefers_current_environment(monkeypatch, tmp_path):
     assert runtime == HookRuntime(bundled_hook, bundled=True)
 
 
+def test_hook_runtime_reads_doctor_report(monkeypatch, tmp_path):
+    executable = tmp_path / HOOK_COMMAND
+    executable.touch()
+    monkeypatch.setattr(
+        "reflect.hook_runtime.subprocess.run",
+        lambda args, **_kwargs: _completed(
+            args,
+            stdout='{"status":"healthy_recent","registrations":[]}',
+        ),
+    )
+
+    report = HookRuntime(executable, bundled=True).doctor_report()
+
+    assert report == {"status": "healthy_recent", "registrations": []}
+
+
+def test_hook_runtime_ignores_invalid_doctor_report(monkeypatch, tmp_path):
+    executable = tmp_path / HOOK_COMMAND
+    executable.touch()
+    monkeypatch.setattr(
+        "reflect.hook_runtime.subprocess.run",
+        lambda args, **_kwargs: _completed(args, stdout="not-json"),
+    )
+
+    assert HookRuntime(executable, bundled=True).doctor_report() is None
+
+
 def test_pipx_migration_uninstalls_standalone_after_validation(tmp_path):
     bundled_hook = tmp_path / "reflect-venv" / "bin" / HOOK_COMMAND
     bundled_hook.parent.mkdir(parents=True)

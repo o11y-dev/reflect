@@ -20,6 +20,7 @@ from reflect.parsing import (
     _iter_cursor_session_spans,
     _iter_gemini_log_spans,
     _iter_gemini_session_spans,
+    _iter_opencode_session_spans,
     _load_json_lines,
     _load_otlp_logs,
     _load_otlp_traces,
@@ -47,7 +48,18 @@ class SourceFingerprint:
     @classmethod
     def from_path(cls, path: Path) -> SourceFingerprint:
         stat = path.stat()
-        return cls(size_bytes=stat.st_size, modified_ns=stat.st_mtime_ns)
+        size_bytes = stat.st_size
+        modified_ns = stat.st_mtime_ns
+        if path.suffix in {".db", ".sqlite", ".sqlite3"}:
+            wal_path = Path(f"{path}-wal")
+            try:
+                wal_stat = wal_path.stat()
+            except OSError:
+                pass
+            else:
+                size_bytes += wal_stat.st_size
+                modified_ns = max(modified_ns, wal_stat.st_mtime_ns)
+        return cls(size_bytes=size_bytes, modified_ns=modified_ns)
 
 
 @dataclass(frozen=True)
@@ -642,6 +654,8 @@ def ingest_native_session_file(
         spans = _iter_claude_session_spans(file_path)
     elif agent == "gemini":
         spans = _iter_gemini_session_spans(file_path)
+    elif agent == "opencode":
+        spans = _iter_opencode_session_spans(file_path)
     else:
         spans = ()
     return _ingest_file_spans(

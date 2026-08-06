@@ -2030,6 +2030,52 @@ class TestDoctor:
         assert "running (PID 4321)" in result.output
         assert "127.0.0.1:8877" in result.output
 
+    def test_doctor_distinguishes_registration_from_delivered_events(
+        self,
+        runner,
+        tmp_path,
+    ):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        (reflect_home / "state").mkdir(parents=True)
+        hook_home.mkdir(parents=True)
+        runtime = HookRuntime(tmp_path / "otel-hook", bundled=True)
+        hook_report = {
+            "status": "degraded",
+            "exporter": {"status": "healthy_recent"},
+            "state": {"batches": 2},
+            "registrations": [
+                {"agent": "cursor", "registered_events": 15},
+                {"agent": "opencode", "registered_events": 1},
+            ],
+        }
+        advisor = {
+            "release": {
+                "current_version": "1.0.0",
+                "latest_version": None,
+                "checked_at": None,
+                "update_available": False,
+                "source": "unknown",
+            },
+            "local_issues": [],
+        }
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.HookRuntime.discover", return_value=runtime), \
+             patch.object(HookRuntime, "doctor_report", return_value=hook_report), \
+             patch(
+                 "reflect.core._load_agent_delivery",
+                 return_value={"cursor": ("2026-08-06T09:00:00+00:00", 12)},
+             ), \
+             patch("reflect.core._collect_update_advisor", return_value=advisor):
+            result = runner.invoke(main, ["doctor"])
+
+        assert result.exit_code == 0
+        assert "Hook registration vs delivery" in result.output
+        assert "healthy_recent" in result.output
+        assert "2026-08-06 09:00 UTC" in result.output
+        assert "never observed" in result.output
+
     def test_doctor_reports_detected_agents_and_files(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
         hook_home = tmp_path / ".otel-hook-home"

@@ -7,12 +7,14 @@ without teaching the dashboard about each provider's on-disk format.
 
 from __future__ import annotations
 
+import sqlite3
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from reflect.opencode_adapter import OpenCodeSessionStore, opencode_tool_success
 from reflect.utils import _flatten_text_content, _json_dumps, _json_loads, _load_json_lines
 
 MAX_CONTENT_CHARS = 20_000
@@ -69,6 +71,16 @@ def _file_fallback_timestamp(path: Path, index: int) -> str:
     except OSError:
         base = datetime(2000, 1, 1, tzinfo=UTC)
     return (base + timedelta(milliseconds=index)).isoformat()
+
+
+def _millisecond_timestamp(value: object) -> str:
+    try:
+        milliseconds = int(value or 0)
+    except (TypeError, ValueError):
+        return ""
+    if milliseconds <= 0:
+        return ""
+    return datetime.fromtimestamp(milliseconds / 1000, tz=UTC).isoformat()
 
 
 @dataclass(slots=True)
@@ -460,6 +472,106 @@ class CursorConversationAdapter(SessionConversationAdapter):
         return ConversationTranscript(session_id or path.stem, self.agent, events)
 
 
+class OpenCodeConversationAdapter(SessionConversationAdapter):
+    agent = "opencode"
+
+    def load(self, session_id: str, path: Path) -> ConversationTranscript:
+        try:
+            sessions = OpenCodeSessionStore(path).load(session_id)
+        except (OSError, sqlite3.DatabaseError, TypeError, ValueError) as exc:
+            return ConversationTranscript(
+                session_id,
+                self.agent,
+                warnings=[f"OpenCode's native session store could not be read: {exc}"],
+            )
+        if not sessions:
+            return ConversationTranscript(
+                session_id,
+                self.agent,
+                warnings=["The selected OpenCode session is not present in its native store."],
+            )
+
+        session = sessions[0]
+        events: list[ConversationEvent] = []
+        for message in session.messages:
+            usage = {
+                "input": 0,
+                "output": 0,
+                "cache_read": 0,
+            }
+            for part in message.parts:
+                if part.type != "step-finish":
+                    continue
+                tokens = part.data.get("tokens")
+                if not isinstance(tokens, dict):
+                    continue
+                cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+                usage["input"] += int(tokens.get("input") or 0)
+                usage["output"] += int(tokens.get("output") or 0)
+                usage["cache_read"] += int(cache.get("read") or 0)
+
+            usage_attached = False
+            for part in message.parts:
+                timestamp = _millisecond_timestamp(part.created_ms or message.created_ms)
+                if part.type == "text":
+                    text = _bounded(part.data.get("text"))
+                    if not text:
+                        continue
+                    if message.role == "user":
+                        events.append(
+                            ConversationEvent(
+                                type="prompt",
+                                timestamp=timestamp,
+                                content=text,
+                            )
+                        )
+                    elif message.role == "assistant":
+                        events.append(
+                            ConversationEvent(
+                                type="response",
+                                timestamp=timestamp,
+                                content=text,
+                                model=_bounded(message.model, 200),
+                                input_tokens=usage["input"] if not usage_attached else 0,
+                                output_tokens=usage["output"] if not usage_attached else 0,
+                                cache_read_tokens=usage["cache_read"] if not usage_attached else 0,
+                            )
+                        )
+                        usage_attached = True
+                elif part.type == "tool":
+                    state = part.data.get("state")
+                    state = state if isinstance(state, dict) else {}
+                    timing = state.get("time") if isinstance(state.get("time"), dict) else {}
+                    tool_name = _bounded(part.data.get("tool"), 300)
+                    tool_use_id = _bounded(part.data.get("callID") or part.id, 300)
+                    started_ms = int(timing.get("start") or part.created_ms or 0)
+                    ended_ms = int(timing.get("end") or started_ms)
+                    events.append(
+                        ConversationEvent(
+                            type="tool_call",
+                            timestamp=_millisecond_timestamp(started_ms),
+                            content=_bounded(_json_dumps(state.get("input") or {})),
+                            tool_name=tool_name,
+                            tool_use_id=tool_use_id,
+                        )
+                    )
+                    success = opencode_tool_success(state.get("status"))
+                    if success is None:
+                        continue
+                    events.append(
+                        ConversationEvent(
+                            type="tool_result",
+                            timestamp=_millisecond_timestamp(ended_ms),
+                            content=_content_text(state.get("output") or state.get("error")),
+                            tool_name=tool_name,
+                            tool_use_id=tool_use_id,
+                            duration_ms=max(ended_ms - started_ms, 0),
+                            success=success,
+                        )
+                    )
+        return ConversationTranscript(session.id, self.agent, events)
+
+
 class SessionConversationAdapterRegistry:
     def __init__(self, adapters: tuple[SessionConversationAdapter, ...] = ()) -> None:
         self._adapters: dict[str, SessionConversationAdapter] = {}
@@ -500,6 +612,7 @@ DEFAULT_SESSION_ADAPTERS = SessionConversationAdapterRegistry(
         CopilotConversationAdapter(),
         CursorConversationAdapter(),
         GeminiConversationAdapter(),
+        OpenCodeConversationAdapter(),
     )
 )
 
@@ -514,6 +627,7 @@ __all__ = [
     "CursorConversationAdapter",
     "DEFAULT_SESSION_ADAPTERS",
     "GeminiConversationAdapter",
+    "OpenCodeConversationAdapter",
     "SessionConversationAdapter",
     "SessionConversationAdapterRegistry",
 ]

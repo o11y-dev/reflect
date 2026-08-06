@@ -134,10 +134,15 @@ class UsageService:
 
         totals = self._totals(where_sql, params)
         token_provenance = self._token_provenance(where_sql, params)
+        unpriced_sessions = self._unpriced_token_sessions(where_sql, params)
         if token_provenance.estimated_sessions:
             limitations.append(
                 f"{token_provenance.estimated_sessions} session(s) use transcript-derived "
                 "token estimates, not exact provider counts."
+            )
+            limitations.append(
+                "Model token totals exclude transcript-derived estimates because their "
+                "model attribution is not exact; agent and overall totals retain them."
             )
         if token_provenance.unavailable_sessions:
             limitations.append(
@@ -145,6 +150,11 @@ class UsageService:
                 f"{token_provenance.unavailable_sessions} session(s) with LLM activity. "
                 "Use output size when captured, then LLM calls, tool calls, and duration "
                 "as inference-only proxies."
+            )
+        if unpriced_sessions:
+            limitations.append(
+                f"Cost is unavailable or zero-priced for {unpriced_sessions} token-bearing "
+                "session(s); $0 is not proof that provider usage was free."
             )
         return UsageReport(
             scope=scope,
@@ -340,6 +350,21 @@ class UsageService:
         ).fetchone()
         return int(row[0])
 
+    def _unpriced_token_sessions(self, where_sql: str, params: list[object]) -> int:
+        row = self.conn.execute(
+            self._scope_cte(where_sql)
+            + """
+            SELECT COUNT(*)
+            FROM sessions s
+            JOIN scoped_sessions scoped ON scoped.id = s.id
+            WHERE s.input_tokens + s.output_tokens + s.cache_creation_tokens
+                  + s.cache_read_tokens + s.reasoning_tokens > 0
+              AND s.estimated_cost_usd <= 0
+            """,
+            params,
+        ).fetchone()
+        return int(row[0])
+
     def _token_provenance(
         self,
         where_sql: str,
@@ -360,6 +385,7 @@ class UsageService:
                 WHERE st.session_id = s.id
                   AND json_extract(st.raw_attrs_json, '$."reflect.token.source"')
                       = 'estimated_cursor_transcript'
+                  AND lower(COALESCE(a.name, '')) = 'cursor'
               ) AS has_cursor_estimate,
               EXISTS (
                 SELECT 1
@@ -377,6 +403,7 @@ class UsageService:
               ) AS has_llm_calls
             FROM sessions s
             JOIN scoped_sessions scoped ON scoped.id = s.id
+            LEFT JOIN agents a ON a.id = s.agent_id
             """,
             params,
         ).fetchall()
@@ -461,14 +488,44 @@ class UsageService:
         rows = self.conn.execute(
             self._scope_cte(where_sql)
             + """
+            , model_calls AS (
+              SELECT
+                COALESCE(NULLIF(l.response_model, ''), NULLIF(l.request_model, ''), 'unknown') AS model,
+                COUNT(*) AS call_count,
+                COALESCE(SUM(l.estimated_cost_usd), 0) AS estimated_cost_usd
+              FROM llm_calls l
+              JOIN scoped_sessions scoped ON scoped.id = l.session_id
+              GROUP BY COALESCE(NULLIF(l.response_model, ''), NULLIF(l.request_model, ''), 'unknown')
+            ), canonical_usage AS (
+              SELECT DISTINCT
+                l.session_id,
+                COALESCE(NULLIF(l.response_model, ''), NULLIF(l.request_model, ''), 'unknown') AS model,
+                l.input_tokens,
+                l.output_tokens,
+                l.cache_creation_input_tokens,
+                l.cache_read_input_tokens,
+                l.reasoning_output_tokens
+              FROM llm_calls l
+              JOIN scoped_sessions scoped ON scoped.id = l.session_id
+              WHERE l.input_tokens + l.output_tokens + l.cache_creation_input_tokens
+                    + l.cache_read_input_tokens + l.reasoning_output_tokens > 0
+            ), model_usage AS (
+              SELECT
+                model,
+                COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                COALESCE(SUM(output_tokens), 0) AS output_tokens
+              FROM canonical_usage
+              GROUP BY model
+            )
             SELECT
-              COALESCE(NULLIF(l.response_model, ''), NULLIF(l.request_model, ''), 'unknown'), COUNT(*),
-              COALESCE(SUM(l.input_tokens), 0), COALESCE(SUM(l.output_tokens), 0),
-              COALESCE(SUM(l.estimated_cost_usd), 0)
-            FROM llm_calls l
-            JOIN scoped_sessions scoped ON scoped.id = l.session_id
-            GROUP BY COALESCE(NULLIF(l.response_model, ''), NULLIF(l.request_model, ''), 'unknown')
-            ORDER BY COUNT(*) DESC, 1
+              calls.model,
+              calls.call_count,
+              COALESCE(usage.input_tokens, 0),
+              COALESCE(usage.output_tokens, 0),
+              calls.estimated_cost_usd
+            FROM model_calls calls
+            LEFT JOIN model_usage usage ON usage.model = calls.model
+            ORDER BY calls.call_count DESC, calls.model
             LIMIT 10
             """,
             params,

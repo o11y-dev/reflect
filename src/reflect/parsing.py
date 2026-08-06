@@ -4,6 +4,7 @@ import hashlib
 import json as _json_stdlib
 import os
 import re
+import sqlite3
 import tomllib
 from collections import Counter
 from collections.abc import Iterable
@@ -12,6 +13,12 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from reflect.context_artifacts import codex_context_exposures
+from reflect.opencode_adapter import (
+    OpenCodeMessageRecord,
+    OpenCodeSessionRecord,
+    OpenCodeSessionStore,
+    opencode_tool_success,
+)
 from reflect.store.mcp import DEFAULT_MCP_CLASSIFIER
 from reflect.store.provenance import is_codex_otel_service
 from reflect.utils import (
@@ -674,6 +681,10 @@ def _discover_rich_session_files() -> list[tuple[str, Path]]:
     candidates.extend(("cursor", p) for p in sorted((home / ".cursor" / "projects").glob("**/agent-transcripts/**/*.jsonl")))
     candidates.extend(("claude", p) for p in sorted((home / ".claude" / "projects").glob("**/*.jsonl")))
     candidates.extend(("gemini", p) for p in sorted((home / ".gemini" / "tmp").glob("**/chats/session-*.json")))
+    data_home = Path(os.environ.get("XDG_DATA_HOME", home / ".local" / "share")).expanduser()
+    opencode_db = data_home / "opencode" / "opencode.db"
+    if opencode_db.is_file():
+        candidates.append(("opencode", opencode_db))
     return candidates
 
 
@@ -1155,6 +1166,184 @@ def _iter_cursor_session_spans(file_path: Path) -> Iterable[dict]:
         }, trace_id, "synthetic:session.end")
 
 
+def _opencode_message_usage(message: OpenCodeMessageRecord) -> dict[str, int]:
+    usage = {
+        "input": 0,
+        "output": 0,
+        "cache_write": 0,
+        "cache_read": 0,
+        "reasoning": 0,
+    }
+    for part in message.parts:
+        if part.type != "step-finish":
+            continue
+        tokens = part.data.get("tokens")
+        if not isinstance(tokens, dict):
+            continue
+        cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+        usage["input"] += _coerce_int(tokens.get("input"))
+        usage["output"] += _coerce_int(tokens.get("output"))
+        usage["reasoning"] += _coerce_int(tokens.get("reasoning"))
+        usage["cache_write"] += _coerce_int(cache.get("write"))
+        usage["cache_read"] += _coerce_int(cache.get("read"))
+    return usage
+
+
+def _opencode_base_attrs(session: OpenCodeSessionRecord) -> dict[str, object]:
+    attrs: dict[str, object] = {
+        "gen_ai.client.name": "opencode",
+        "gen_ai.client.session_id": session.id,
+        "session.id": session.id,
+        "service.name": "opencode",
+    }
+    if session.directory:
+        attrs["code.workspace.root"] = session.directory
+    if session.parent_id:
+        attrs["gen_ai.client.parent_session_id"] = session.parent_id
+    if session.title:
+        attrs["gen_ai.client.session_title"] = session.title
+    return attrs
+
+
+def _iter_opencode_session_spans(file_path: Path) -> Iterable[dict]:
+    try:
+        sessions = OpenCodeSessionStore(file_path).load()
+    except (OSError, sqlite3.DatabaseError) as exc:
+        logger.warning("Failed to read OpenCode session store %s: %s", file_path, exc)
+        return
+
+    for session in sessions:
+        trace_id = _stable_hex_id("opencode", session.id, length=32)
+        base_attrs = _opencode_base_attrs(session)
+        start_ns = _parse_timestamp_to_ns(session.created_ms)
+        end_ns = _parse_timestamp_to_ns(session.updated_ms) or start_ns
+        if start_ns:
+            yield _make_flat_span(
+                "gen_ai.client.hook.SessionStart",
+                start_ns,
+                start_ns,
+                {**base_attrs, "gen_ai.client.hook.event": "SessionStart"},
+                trace_id,
+                "synthetic:session.start",
+            )
+
+        for message in session.messages:
+            message_ns = _parse_timestamp_to_ns(message.created_ms) or start_ns
+            provider = message.provider or "opencode"
+            message_attrs = {
+                **base_attrs,
+                "gen_ai.provider.name": provider,
+                "gen_ai.system": provider,
+            }
+            text = "\n".join(
+                str(part.data.get("text") or "")
+                for part in message.parts
+                if part.type == "text" and part.data.get("text")
+            )
+            if message.role == "user" and text:
+                yield _make_flat_span(
+                    "gen_ai.client.hook.UserPromptSubmit",
+                    message_ns,
+                    message_ns,
+                    {
+                        **message_attrs,
+                        "gen_ai.client.hook.event": "UserPromptSubmit",
+                        "gen_ai.client.prompt": text,
+                    },
+                    trace_id,
+                    f"{message.id}:user",
+                )
+            elif message.role == "assistant":
+                usage = _opencode_message_usage(message)
+                stop_attrs: dict[str, object] = {
+                    **message_attrs,
+                    "gen_ai.client.hook.event": "Stop",
+                    "gen_ai.request.model": message.model,
+                    "gen_ai.usage.input_tokens": usage["input"],
+                    "gen_ai.usage.output_tokens": usage["output"],
+                    "gen_ai.usage.cache_creation.input_tokens": usage["cache_write"],
+                    "gen_ai.usage.cache_read.input_tokens": usage["cache_read"],
+                    "gen_ai.usage.reasoning_output_tokens": usage["reasoning"],
+                }
+                if text:
+                    stop_attrs["gen_ai.client.output"] = text
+                error = message.data.get("error")
+                if error:
+                    stop_attrs["gen_ai.client.status"] = "error"
+                    if isinstance(error, dict):
+                        stop_attrs["error.type"] = str(error.get("name") or "OpenCodeError")
+                    stop_attrs["error.message"] = _json_dumps(error)[:500]
+                message_end_ns = max(
+                    (
+                        _parse_timestamp_to_ns(part.created_ms)
+                        for part in message.parts
+                    ),
+                    default=message_ns,
+                )
+                yield _make_flat_span(
+                    "gen_ai.client.hook.Stop",
+                    message_ns,
+                    message_end_ns,
+                    stop_attrs,
+                    trace_id,
+                    f"{message.id}:assistant",
+                )
+
+            for part in message.parts:
+                if part.type != "tool":
+                    continue
+                state = part.data.get("state")
+                state = state if isinstance(state, dict) else {}
+                timing = state.get("time") if isinstance(state.get("time"), dict) else {}
+                tool_name = str(part.data.get("tool") or "")
+                call_id = str(part.data.get("callID") or part.id)
+                tool_start_ns = _parse_timestamp_to_ns(timing.get("start") or part.created_ms)
+                tool_end_ns = _parse_timestamp_to_ns(timing.get("end")) or tool_start_ns
+                tool_attrs = {
+                    **message_attrs,
+                    **_agent_tool_attrs(tool_name, state.get("input")),
+                    "gen_ai.tool.call.id": call_id,
+                }
+                yield _make_flat_span(
+                    "gen_ai.client.hook.PreToolUse",
+                    tool_start_ns,
+                    tool_start_ns,
+                    {**tool_attrs, "gen_ai.client.hook.event": "PreToolUse"},
+                    trace_id,
+                    f"{part.id}:tool:start",
+                )
+                success = opencode_tool_success(state.get("status"))
+                if success is None:
+                    continue
+                result_attrs: dict[str, object] = {
+                    **tool_attrs,
+                    "gen_ai.client.hook.event": "PostToolUse" if success else "PostToolUseFailure",
+                    "gen_ai.client.status": "ok" if success else "error",
+                }
+                if state.get("output") not in (None, ""):
+                    result_attrs["gen_ai.client.tool.output"] = str(state["output"])
+                if not success and state.get("error") not in (None, ""):
+                    result_attrs["error.message"] = str(state["error"])[:500]
+                yield _make_flat_span(
+                    f"gen_ai.client.hook.{result_attrs['gen_ai.client.hook.event']}",
+                    tool_start_ns,
+                    tool_end_ns,
+                    result_attrs,
+                    trace_id,
+                    f"{part.id}:tool:end",
+                )
+
+        if end_ns:
+            yield _make_flat_span(
+                "gen_ai.client.hook.SessionEnd",
+                end_ns,
+                end_ns,
+                {**base_attrs, "gen_ai.client.hook.event": "SessionEnd"},
+                trace_id,
+                "synthetic:session.end",
+            )
+
+
 def _iter_gemini_session_spans(file_path: Path) -> Iterable[dict]:
     try:
         payload = _json_loads(file_path.read_text())
@@ -1257,6 +1446,8 @@ def _load_rich_session_spans() -> tuple[list[dict], dict[str, int], dict[str, tu
             derived = list(_iter_claude_session_spans(file_path))
         elif source == "gemini":
             derived = list(_iter_gemini_session_spans(file_path))
+        elif source == "opencode":
+            derived = list(_iter_opencode_session_spans(file_path))
         else:
             derived = []
         if derived:

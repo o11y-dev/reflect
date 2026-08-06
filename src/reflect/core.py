@@ -346,7 +346,7 @@ _AGENT_SPECS = [
         "local_skill_path": ".opencode/skills/",
         "hook_agent": "opencode",
         "global_path": "~/.config/opencode/skills/",
-        "recommendation": "Use opencode run for skill extraction; opencode export for session telemetry.",
+        "recommendation": "Use opencode run for skill extraction; Reflect reads the native OpenCode session store.",
     },
 ]
 
@@ -384,7 +384,7 @@ _IMPLEMENTED_AGENT_SUPPORT: dict[str, tuple[str, str]] = {
     "GitHub Copilot": ("Native OTel + VS Code env", "High"),
     "OpenAI Codex CLI": ("Native OTel config", "Medium"),
     "Windsurf": ("Hook telemetry + config snapshots", "Medium"),
-    "OpenCode": ("opencode run + export", "Medium"),
+    "OpenCode": ("Native SQLite session adapter + hooks", "Medium"),
 }
 _DOCTOR_MATRIX_PLANNED = {"Antigravity", "OpenClaw"}
 
@@ -1171,7 +1171,10 @@ def _prepare_usage_db(
 ) -> dict[str, object]:
     """Refresh usage facts without rebuilding graph or improvement state."""
     from reflect.preparation import PreparationStage, report_preparation_progress
-    from reflect.store.cursor_adapter import apply_cursor_transcript_usage_estimates
+    from reflect.store.cursor_adapter import (
+        apply_cursor_transcript_usage_estimates,
+        repair_misattributed_cursor_transcript_usage,
+    )
     from reflect.store.ingest import (
         ingest_codex_context_file,
         ingest_native_session_file,
@@ -1232,7 +1235,7 @@ def _prepare_usage_db(
                 "Reading local agent sessions...",
             )
             for native_agent, session_file in _discover_rich_session_files():
-                if native_session_ids and not any(
+                if native_session_ids and native_agent != "opencode" and not any(
                     _native_session_path_matches_id(session_file, candidate)
                     for candidate in native_session_ids
                 ):
@@ -1244,7 +1247,7 @@ def _prepare_usage_db(
                     file_path=session_file,
                     agent=native_agent,
                     source_id=f"native_session:{native_agent}:{session_file}",
-                    skip_existing_sessions=True,
+                    skip_existing_sessions=native_agent != "opencode",
                     skip_unchanged=True,
                 )
                 if native_agent == "cursor" and not result.get("unchanged"):
@@ -1265,11 +1268,13 @@ def _prepare_usage_db(
             session_ids=None if 14 in applied else changed_session_ids,
             changed_session_ids=changed_session_ids,
         )
-        cursor_result = (
-            apply_cursor_transcript_usage_estimates(conn, cursor_native_files)
-            if cursor_native_files
-            else {"updated": 0}
+        cursor_provenance_result = repair_misattributed_cursor_transcript_usage(conn)
+        changed_session_ids.update(
+            str(session_id)
+            for session_id in cursor_provenance_result["session_ids"]
+            if session_id
         )
+        cursor_result = apply_cursor_transcript_usage_estimates(conn, cursor_native_files)
         context_result = backfill_session_context(
             conn,
             timestamp=datetime.now(UTC).isoformat(),
@@ -3638,16 +3643,76 @@ def doctor(ctx) -> None:
         _run_doctor()
 
 
+_DELIVERY_AGENT_ALIASES = {
+    "claude-code": "claude",
+    "gemini-cli": "gemini",
+    "github-copilot": "copilot",
+    "openai-codex": "codex",
+}
+
+
+def _delivery_agent_key(value: object) -> str:
+    normalized = str(value or "").strip().lower()
+    return _DELIVERY_AGENT_ALIASES.get(normalized, normalized)
+
+
+def _load_agent_delivery(db_path: Path) -> dict[str, tuple[str, int]]:
+    """Read the latest non-native event received for each normalized agent."""
+
+    if not db_path.is_file():
+        return {}
+    from reflect.store.sqlite import connect_sqlite_read_only
+
+    try:
+        conn = connect_sqlite_read_only(db_path)
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                  COALESCE(
+                    NULLIF(json_extract(attrs_json, '$."gen_ai.client.name"'), ''),
+                    NULLIF(json_extract(attrs_json, '$."agent.name"'), ''),
+                    NULLIF(json_extract(attrs_json, '$."service.name"'), '')
+                  ) AS agent,
+                  MAX(observed_at) AS last_observed_at,
+                  COUNT(*) AS event_count
+                FROM raw_events
+                WHERE source_type NOT LIKE 'native_%'
+                GROUP BY agent
+                HAVING agent IS NOT NULL AND agent <> ''
+                """
+            ).fetchall()
+        finally:
+            conn.close()
+    except (OSError, sqlite3.DatabaseError):
+        return {}
+    return {
+        _delivery_agent_key(agent): (str(last_observed_at or ""), int(event_count or 0))
+        for agent, last_observed_at, event_count in rows
+    }
+
+
+def _delivery_timestamp(value: str) -> str:
+    if not value:
+        return "never observed"
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+    except ValueError:
+        return value
+    return parsed.strftime("%Y-%m-%d %H:%M UTC")
+
+
 def _run_doctor() -> None:
     """Inspect local reflect, hook, and agent state and suggest the next telemetry step."""
     from rich import box
-    from rich.console import Console
+    from rich.console import Console, Group
     from rich.panel import Panel
     from rich.table import Table
 
     console = Console(force_terminal=True)
     hook_runtime = HookRuntime.discover()
     otel_hook = hook_runtime.executable if hook_runtime else None
+    hook_report = hook_runtime.doctor_report() if hook_runtime else None
     hook_config = HOOK_HOME / "otel_config.json"
     spans_dir = _default_spans_dir()
     sessions_dir = _default_sessions_dir()
@@ -3687,6 +3752,16 @@ def _run_doctor() -> None:
     summary.add_row("detected agents", f"[bold]{len(detected_agents)}[/] / {len(agents)}")
     summary.add_row("local spans", f"[bold]{span_files}[/] file(s)")
     summary.add_row("local sessions", f"[bold]{session_files}[/] file(s)")
+    if hook_report:
+        exporter = hook_report.get("exporter")
+        exporter = exporter if isinstance(exporter, dict) else {}
+        delivery_status = str(exporter.get("status") or hook_report.get("status") or "unknown")
+        delivery_markup = (
+            f"[green]{delivery_status}[/]"
+            if delivery_status in {"healthy", "healthy_recent", "ok"}
+            else f"[yellow]{delivery_status}[/]"
+        )
+        summary.add_row("hook delivery", delivery_markup)
     from reflect.gateway import daemon_status as _gateway_status
     try:
         gateway_health = _gateway_status()
@@ -3806,6 +3881,54 @@ def _run_doctor() -> None:
         str(sessions_dir),
     )
     console.print(Panel(exports, title="Telemetry files", border_style="magenta"))
+
+    if hook_report:
+        delivery = _load_agent_delivery(REFLECT_HOME / "state" / "reflect.db")
+        registrations = hook_report.get("registrations")
+        registrations = registrations if isinstance(registrations, list) else []
+        delivery_table = Table(box=box.SIMPLE, expand=True, show_header=True)
+        delivery_table.add_column("Agent", style="bold cyan")
+        delivery_table.add_column("Registered", no_wrap=True)
+        delivery_table.add_column("Delivered to Reflect", no_wrap=True)
+        delivery_table.add_column("Events", justify="right", no_wrap=True)
+        for registration in registrations:
+            if not isinstance(registration, dict):
+                continue
+            agent = _delivery_agent_key(registration.get("agent"))
+            registered_events = int(registration.get("registered_events") or 0)
+            last_observed_at, event_count = delivery.get(agent, ("", 0))
+            delivered = (
+                f"[green]{_delivery_timestamp(last_observed_at)}[/]"
+                if last_observed_at
+                else "[yellow]never observed[/]"
+            )
+            delivery_table.add_row(
+                agent,
+                f"{registered_events} event(s)" if registered_events else "no",
+                delivered,
+                str(event_count),
+            )
+        state = hook_report.get("state")
+        state = state if isinstance(state, dict) else {}
+        exporter = hook_report.get("exporter")
+        exporter = exporter if isinstance(exporter, dict) else {}
+        writable = state.get("state_directory_writable")
+        state_storage = (
+            "writable" if writable is True else "not writable" if writable is False else "unknown"
+        )
+        detail = (
+            f"Exporter: {exporter.get('status') or 'unknown'} · "
+            f"pending batches: {int(state.get('batches') or 0)} · "
+            f"hook state: {state_storage}. "
+            "Registration confirms configuration; only a received event confirms delivery."
+        )
+        console.print(
+            Panel(
+                Group(delivery_table, detail),
+                title="Hook registration vs delivery",
+                border_style="yellow",
+            )
+        )
 
     _render_native_otel_panel(console, hook_runtime_config)
 
@@ -4749,7 +4872,10 @@ def _prepare_sql_report_db(
 ) -> dict[str, object]:
     from reflect.preparation import PreparationStage, report_preparation_progress
     from reflect.store.cost_refresh import CostRefreshState
-    from reflect.store.cursor_adapter import apply_cursor_transcript_usage_estimates
+    from reflect.store.cursor_adapter import (
+        apply_cursor_transcript_usage_estimates,
+        repair_misattributed_cursor_transcript_usage,
+    )
     from reflect.store.graph_normalize import rebuild_graph, refresh_graph
     from reflect.store.ingest import (
         AppendOnlyReplayPolicy,
@@ -4845,7 +4971,7 @@ def _prepare_sql_report_db(
                     file_path=session_file,
                     agent=agent,
                     source_id=source_ref,
-                    skip_existing_sessions=True,
+                    skip_existing_sessions=agent != "opencode",
                     skip_unchanged=True,
                 )
                 native_result["inserted"] += result["inserted"]
@@ -4897,15 +5023,20 @@ def _prepare_sql_report_db(
             session_ids=None if 14 in applied else changed_session_ids,
             changed_session_ids=changed_session_ids,
         )
+        cursor_provenance_result = repair_misattributed_cursor_transcript_usage(conn)
+        changed_session_ids.update(
+            str(session_id)
+            for session_id in cursor_provenance_result["session_ids"]
+            if session_id
+        )
         context_result = backfill_session_context(
             conn,
             timestamp=datetime.now(UTC).isoformat(),
             changed_session_ids=changed_session_ids,
         )
-        cursor_adapter_result = (
-            apply_cursor_transcript_usage_estimates(conn, cursor_native_files)
-            if cursor_native_files
-            else {"updated": 0, "skipped": 0, "missing": 0, "session_ids": []}
+        cursor_adapter_result = apply_cursor_transcript_usage_estimates(
+            conn,
+            cursor_native_files,
         )
         changed_session_ids.update(
             str(session_id)
@@ -5041,6 +5172,7 @@ def _prepare_sql_report_db(
         "mcp_calls": mcp_backfill_result,
         "tool_call_fingerprints": fingerprint_result,
         "session_context": context_result,
+        "cursor_provenance": cursor_provenance_result,
         "cursor_adapter": cursor_adapter_result,
         "refresh_plan": refresh_plan.as_dict(),
         "graph": graph_result,

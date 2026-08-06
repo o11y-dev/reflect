@@ -23,6 +23,7 @@
 
 ### Added
 
+- Added a native OpenCode SQLite adapter shared by canonical ingestion and session-detail rendering, including prompts, responses, exact model/token/cache usage, tool results, workspace context, and parent-session lineage.
 - Added privacy-safe Codex context discovery for user instructions and memory files, canonical per-session memory exposure evidence with dashboard counts, and automatic task-contract registration when `reflect_context` receives an explicit task file.
 - Added read-only `reflect_impact` MCP inspection for persisted before/after measurements and their exact compared execution-unit or session cohorts.
 - Added a current architecture map and decision register covering canonical data flow, domain ownership, transitional duplication, complexity hotspots, and guardrails for keeping future changes lean.
@@ -35,6 +36,8 @@
 
 ### Fixed
 
+- Prevented Cursor transcript estimates from attaching to sessions owned by another agent, repaired retained cross-agent estimate provenance, let explicit native sources correct earlier agent attribution, made model token breakdowns deduplicate the same exact usage records used by canonical session totals, and labeled token-bearing zero-cost sessions as unpriced rather than implicitly free.
+- Made `reflect doctor` distinguish hook registration from events actually delivered to Reflect, while exposing exporter health, pending batches, and hook-state writability.
 - Lazy-loaded filtered Tools data when entering Explore, preserving agent and cohort filters so command patterns no longer remain empty after filtering from another dashboard view.
 - Made session, daily, and per-tool rollups count canonical `tool_calls` rows instead of raw phase steps or provider IDs reused across sessions.
 - Deferred full tool and graph calculation until their Explore views are requested, allowing snapshot-only dashboard servers to bind promptly on large stores instead of blocking startup on eager analysis.

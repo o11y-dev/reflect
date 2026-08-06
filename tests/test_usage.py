@@ -185,6 +185,13 @@ def test_usage_labels_estimated_and_unavailable_token_sources(tmp_path):
         _seed_session(conn, "session-estimated")
         conn.execute(
             """
+            INSERT INTO agents(id, name, kind, raw_json, created_at, updated_at)
+            VALUES ('cursor', 'cursor', 'desktop', '{}', ?, ?)
+            """,
+            (NOW.isoformat(), NOW.isoformat()),
+        )
+        conn.execute(
+            """
             UPDATE steps
             SET raw_attrs_json = '{"reflect.token.source":"estimated_cursor_transcript"}'
             WHERE id = 'session-estimated-step'
@@ -198,6 +205,12 @@ def test_usage_labels_estimated_and_unavailable_token_sources(tmp_path):
                 reasoning_output_tokens = 0
             WHERE session_id = 'session-estimated'
             """
+        )
+        wrong_agent = UsageService(conn, environ={}, cwd=tmp_path, now=NOW).report(
+            session_id="session-estimated"
+        )
+        conn.execute(
+            "UPDATE sessions SET agent_id = 'cursor' WHERE id = 'session-estimated'"
         )
         estimated = UsageService(conn, environ={}, cwd=tmp_path, now=NOW).report(
             session_id="session-estimated"
@@ -220,6 +233,7 @@ def test_usage_labels_estimated_and_unavailable_token_sources(tmp_path):
     finally:
         conn.close()
 
+    assert wrong_agent.token_provenance.estimated_sessions == 0
     assert estimated.token_provenance.estimated_sessions == 1
     assert estimated.token_provenance.sources == ["estimated_cursor_transcript"]
     assert any("transcript-derived" in item for item in estimated.limitations)
@@ -231,6 +245,64 @@ def test_usage_labels_estimated_and_unavailable_token_sources(tmp_path):
         "session_duration",
     ]
     assert any("inference-only proxies" in item for item in unavailable.limitations)
+
+
+def test_model_breakdown_deduplicates_repeated_exact_usage(tmp_path):
+    conn = _open_db(tmp_path / "reflect.db")
+    try:
+        _seed_session(conn)
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status, summary,
+              raw_attrs_json, created_at, updated_at
+            ) VALUES ('duplicate-step', 'session-current', 3, 'llm_call', ?, 'ok',
+                      'generation', '{}', ?, ?)
+            """,
+            (NOW.isoformat(), NOW.isoformat(), NOW.isoformat()),
+        )
+        conn.execute(
+            """
+            INSERT INTO llm_calls(
+              id, step_id, session_id, provider, request_model, response_model,
+              input_tokens, output_tokens, estimated_cost_usd,
+              raw_attrs_json, created_at, updated_at
+            ) VALUES ('duplicate-llm', 'duplicate-step', 'session-current', 'openai',
+                      'gpt-5', 'gpt-5', 1000, 250, 0, '{}', ?, ?)
+            """,
+            (NOW.isoformat(), NOW.isoformat()),
+        )
+        report = UsageService(
+            conn,
+            environ={"CODEX_THREAD_ID": "session-current"},
+            cwd=tmp_path,
+            now=NOW,
+        ).report()
+    finally:
+        conn.close()
+
+    assert report.models[0].count == 2
+    assert report.models[0].input_tokens == report.totals.input_tokens == 1000
+    assert report.models[0].output_tokens == report.totals.output_tokens == 250
+
+
+def test_usage_labels_token_bearing_zero_cost_sessions_as_unpriced(tmp_path):
+    conn = _open_db(tmp_path / "reflect.db")
+    try:
+        _seed_session(conn)
+        conn.execute(
+            "UPDATE sessions SET estimated_cost_usd = 0 WHERE id = 'session-current'"
+        )
+        report = UsageService(
+            conn,
+            environ={"CODEX_THREAD_ID": "session-current"},
+            cwd=tmp_path,
+            now=NOW,
+        ).report()
+    finally:
+        conn.close()
+
+    assert any("$0 is not proof" in limitation for limitation in report.limitations)
 
 
 def test_current_session_usage_labels_workspace_fallback(tmp_path):

@@ -39,18 +39,88 @@ def estimate_cursor_transcript_usage(file_path: Path) -> dict[str, int]:
     return {"input_tokens": input_tokens, "output_tokens": output_tokens}
 
 
-def _session_has_tokens(conn: sqlite3.Connection, session_id: str) -> bool:
+def _session_token_state(conn: sqlite3.Connection, session_id: str) -> tuple[bool, bool] | None:
     row = conn.execute(
         """
-        SELECT input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, reasoning_tokens
-        FROM sessions
-        WHERE id = ?
+        SELECT lower(COALESCE(a.name, '')), s.input_tokens, s.output_tokens,
+               s.cache_creation_tokens, s.cache_read_tokens, s.reasoning_tokens
+        FROM sessions s
+        LEFT JOIN agents a ON a.id = s.agent_id
+        WHERE s.id = ?
         """,
         (session_id,),
     ).fetchone()
     if row is None:
-        return False
-    return any(int(value or 0) > 0 for value in row)
+        return None
+    return str(row[0]) == "cursor", any(int(value or 0) > 0 for value in row[1:])
+
+
+def repair_misattributed_cursor_transcript_usage(
+    conn: sqlite3.Connection,
+) -> dict[str, int | list[str]]:
+    """Remove Cursor-only estimates from sessions attributed to another agent."""
+
+    rows = conn.execute(
+        """
+        SELECT DISTINCT st.session_id
+        FROM steps st
+        JOIN sessions s ON s.id = st.session_id
+        LEFT JOIN agents a ON a.id = s.agent_id
+        WHERE json_extract(st.raw_attrs_json, '$."reflect.token.source"')
+                = 'estimated_cursor_transcript'
+          AND lower(COALESCE(a.name, '')) <> 'cursor'
+        ORDER BY st.session_id
+        """
+    ).fetchall()
+    session_ids = [str(row[0]) for row in rows]
+    timestamp = datetime.now(tz=UTC).isoformat()
+    for session_id in session_ids:
+        usage = conn.execute(
+            """
+            WITH canonical_usage AS (
+              SELECT DISTINCT
+                COALESCE(NULLIF(response_model, ''), NULLIF(request_model, ''), '') AS model,
+                input_tokens,
+                output_tokens,
+                cache_creation_input_tokens,
+                cache_read_input_tokens,
+                reasoning_output_tokens
+              FROM llm_calls
+              WHERE session_id = ?
+                AND input_tokens + output_tokens + cache_creation_input_tokens
+                    + cache_read_input_tokens + reasoning_output_tokens > 0
+            )
+            SELECT
+              COALESCE(SUM(input_tokens), 0),
+              COALESCE(SUM(output_tokens), 0),
+              COALESCE(SUM(cache_creation_input_tokens), 0),
+              COALESCE(SUM(cache_read_input_tokens), 0),
+              COALESCE(SUM(reasoning_output_tokens), 0)
+            FROM canonical_usage
+            """,
+            (session_id,),
+        ).fetchone()
+        conn.execute(
+            """
+            UPDATE sessions
+            SET input_tokens = ?, output_tokens = ?, cache_creation_tokens = ?,
+                cache_read_tokens = ?, reasoning_tokens = ?,
+                estimated_cost_usd = 0, updated_at = ?
+            WHERE id = ?
+            """,
+            (*[int(value or 0) for value in usage], timestamp, session_id),
+        )
+        conn.execute(
+            """
+            DELETE FROM steps
+            WHERE session_id = ?
+              AND json_extract(raw_attrs_json, '$."reflect.token.source"')
+                  = 'estimated_cursor_transcript'
+            """,
+            (session_id,),
+        )
+    conn.commit()
+    return {"repaired": len(session_ids), "session_ids": session_ids}
 
 
 def _insert_provenance_step(
@@ -119,8 +189,12 @@ def apply_cursor_transcript_usage_estimates(
     for file_path in file_paths:
         session_id = file_path.stem
 
-        # OPTIMIZATION: Check if session already has tokens before reading file
-        if _session_has_tokens(conn, session_id):
+        state = _session_token_state(conn, session_id)
+        if state is None:
+            missing += 1
+            continue
+        is_cursor, has_tokens = state
+        if not is_cursor or has_tokens:
             skipped += 1
             continue
 
@@ -139,6 +213,10 @@ def apply_cursor_transcript_usage_estimates(
                 output_tokens = ?,
                 updated_at = ?
             WHERE id = ?
+              AND EXISTS (
+                SELECT 1 FROM agents a
+                WHERE a.id = sessions.agent_id AND lower(a.name) = 'cursor'
+              )
             """,
             (input_tokens, output_tokens, timestamp, session_id),
         )

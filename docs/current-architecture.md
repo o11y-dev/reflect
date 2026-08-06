@@ -94,6 +94,11 @@ details are normalized at the source boundary rather than spread through shared
 analysis code. `store/ingest.py` records source fingerprints and append checkpoints,
 then inserts durable raw events.
 
+Native store readers with shared state or query behavior live behind one adapter.
+For example, `opencode_adapter.py` owns OpenCode SQLite access and supplies both
+canonical span ingestion and high-fidelity session-detail rendering; neither the
+dashboard nor normalization layer knows the provider schema.
+
 Raw input files are capture inputs and replay sources. SQLite is the analytical store.
 Deleting a processed raw file must not redefine the canonical domain model, although
 it can remove the ability to replay that source.
@@ -312,7 +317,7 @@ Do not squash historical migrations to make the schema look simpler.
 
 | Area | Primary modules | Notes |
 |---|---|---|
-| Source discovery and adapters | `parsing.py`, `store/ingest.py`, provider adapters under `store/` | Normalize provider variation at the boundary. |
+| Source discovery and adapters | `parsing.py`, `opencode_adapter.py`, `session_adapters.py`, `store/ingest.py`, provider adapters under `store/` | Normalize provider variation once at the boundary and reuse native-store readers. |
 | Canonical normalization | `store/normalize.py`, `store/hook_facts.py`, `store/mcp.py`, `store/workspaces.py` | Canonical tables and provenance. |
 | Snapshot orchestration | `preparation.py`, currently `core._prepare_sql_report_db()` | Policy is separated; complete orchestration still lives in `core.py`. |
 | Canonical analysis | `processing.py`, `models.py`, `graph.py`, `insights/` | `TelemetryStats` is the renderer source of truth. |
