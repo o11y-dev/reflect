@@ -2,7 +2,7 @@
 
 import pytest
 
-from reflect.core import _bar, _fmt_dur, _fmt_model, _fmt_tokens, _safe_ratio
+from reflect.utils import _bar, _fmt_dur, _fmt_model, _fmt_tokens, _safe_ratio
 
 
 class TestFmtDur:
@@ -112,4 +112,3 @@ class TestBar:
     def test_zero_total(self):
         result = _bar(0, 0, "cyan")
         assert result.plain == ""
-

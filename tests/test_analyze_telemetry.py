@@ -16,7 +16,7 @@ from conftest import (
     wrap_otlp,
 )
 
-from reflect.core import analyze_telemetry
+from reflect.processing import analyze_telemetry
 
 
 class TestAnalyzeOtlpTraces:

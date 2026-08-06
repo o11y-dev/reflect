@@ -7,10 +7,10 @@ import pytest
 from conftest import make_span, wrap_otlp
 from rich.console import Console
 
-from reflect.core import _render_terminal, analyze_telemetry
 from reflect.models import TelemetryStats
 from reflect.preparation import PreparationProgress, PreparationStage
-from reflect.terminal import TerminalPreparationProgress
+from reflect.processing import analyze_telemetry
+from reflect.terminal import TerminalPreparationProgress, _render_terminal
 
 
 def render_to_string(stats, **kwargs) -> str:

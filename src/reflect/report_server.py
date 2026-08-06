@@ -211,7 +211,6 @@ def _run_daemon(config: ReportServerConfig, daemon: ReportServerDaemon) -> None:
             spans_dir=None,
             time_range="week",
             demo=False,
-            dashboard_artifact=None,
             output=None,
             db_path=config.db_path,
             refresh=config.refresh,

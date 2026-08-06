@@ -57,7 +57,7 @@ def test_completion_manager_uses_fish_autoload_directory(tmp_path: Path) -> None
 def test_setup_can_explicitly_install_shell_completion() -> None:
     install_result = SimpleNamespace(changed=True, script_path=Path("/tmp/reflect.zsh"))
     with (
-        patch.object(core, "_run_setup"),
+        patch.object(core, "_instrumentation_run_setup"),
         patch.object(core, "_detect_agents", return_value=[]),
         patch.object(core.ShellCompletionManager, "detect_shell", return_value="zsh"),
         patch.object(core.ShellCompletionManager, "install", return_value=install_result) as install,
@@ -75,7 +75,7 @@ def test_setup_can_explicitly_install_shell_completion() -> None:
 def test_setup_installs_shell_completion_by_default_for_automation() -> None:
     install_result = SimpleNamespace(changed=True, script_path=Path("/tmp/reflect.zsh"))
     with (
-        patch.object(core, "_run_setup"),
+        patch.object(core, "_instrumentation_run_setup"),
         patch.object(core, "_detect_agents", return_value=[]),
         patch.object(core.ShellCompletionManager, "detect_shell", return_value="zsh"),
         patch.object(core.ShellCompletionManager, "install", return_value=install_result) as install,
@@ -88,7 +88,7 @@ def test_setup_installs_shell_completion_by_default_for_automation() -> None:
 
 def test_setup_no_shell_completion_is_an_explicit_opt_out() -> None:
     with (
-        patch.object(core, "_run_setup"),
+        patch.object(core, "_instrumentation_run_setup"),
         patch.object(core, "_detect_agents", return_value=[]),
         patch.object(core.ShellCompletionManager, "install") as install,
     ):
@@ -103,7 +103,7 @@ def test_setup_no_shell_completion_is_an_explicit_opt_out() -> None:
 
 def test_setup_warns_when_optional_shell_completion_cannot_be_written() -> None:
     with (
-        patch.object(core, "_run_setup") as run_setup,
+        patch.object(core, "_instrumentation_run_setup") as run_setup,
         patch.object(core, "_detect_agents", return_value=[]),
         patch.object(core.ShellCompletionManager, "detect_shell", return_value="zsh"),
         patch.object(

@@ -579,7 +579,7 @@ def test_usage_requires_explicit_refresh_for_pending_rollup_rebuild(
         conn.close()
     conn = connect_sqlite(db_path)
     try:
-        assert migrate(conn) == [19, 20, 21, 22, 23, 24]
+        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25]
     finally:
         conn.close()
     monkeypatch.setattr("reflect.core._default_otlp_traces", lambda: None)
@@ -704,7 +704,7 @@ def test_usage_cli_rejects_conflicting_scopes():
     assert "cannot be used together" in result.output
 
 
-def test_usage_cli_prefers_period_and_warns_for_legacy_alias(tmp_path):
+def test_usage_cli_uses_period_option(tmp_path):
     db_path = tmp_path / "reflect.db"
     conn = _open_db(db_path)
     try:
@@ -717,26 +717,5 @@ def test_usage_cli_prefers_period_and_warns_for_legacy_alias(tmp_path):
         main,
         ["usage", "--global", "--period", "all", "--json", "--db-path", str(db_path)],
     )
-    legacy = runner.invoke(
-        main,
-        ["usage", "--global", "--all", "--json", "--db-path", str(db_path)],
-    )
-    conflict = runner.invoke(
-        main,
-        [
-            "usage",
-            "--global",
-            "--period",
-            "all",
-            "--week",
-            "--db-path",
-            str(db_path),
-        ],
-    )
-
     assert current.exit_code == 0, current.output
     assert json.loads(current.stdout)["period"] == "all"
-    assert legacy.exit_code == 0, legacy.output
-    assert "--all is deprecated for usage" in legacy.stderr
-    assert conflict.exit_code == 2
-    assert "cannot be combined" in conflict.output

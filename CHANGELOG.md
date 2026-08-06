@@ -13,9 +13,12 @@
 - Made `reflect improve` snapshot-first and current-project scoped by default, with explicit path, parent/child session, and bounded global time scopes shared by CLI and MCP guidance.
 - Added reusable object-oriented snapshot inspection, preparation policy, and refresh strategy layers; `usage`, `improve`, `ask`, workflow/loop/skill reads, memory reads, and read-only MCP tools now use query-only SQLite connections and return actionable errors instead of implicitly migrating, ingesting, reconciling, or rebuilding.
 - Added `reflect refresh` as the explicit complete snapshot rebuild and `reflect skills sync` as the explicit skill-file, workflow, usage, and measurement reconciliation point; plain skill listing and inspection no longer create revisions.
-- Standardized new usage, improvement, and skill-discovery examples on `--period day|week|month|all`; the individual period flags remain deprecated compatibility aliases.
+- Standardized usage, improvement, skill-discovery, and foreground-report filtering on `--period day|week|month|all`, removing the deprecated individual period aliases.
 - Moved identical-input retry analysis exclusively to the stricter `reflect loops` ledger and retired historical duplicate retry observations without deleting their evidence.
 - Kept direct SQLite guidance as an advanced skill fallback while making scoped commands and Source Sessions the primary analysis path.
+- Made the browser report SQLite-only, removed the legacy artifact, SQL-tab, and duplicate improvement/measurement APIs, and switched dashboard reads to query-only connections that never migrate during a request.
+- Made `tool_calls` the canonical logical-invocation ledger: invocation/result phases sharing a provider call ID are merged, MCP aliases resolve to one name, and migration 25 reconciles retained duplicates before rollups and command-pattern analysis.
+- Bounded `reflect_improvements` with summary-first responses, pagination, opt-in capped evidence, and explicit evidence cutoff, refresh, excluded-session, attribution, and before/after safety metadata.
 
 ### Added
 
@@ -30,6 +33,10 @@
 
 ### Fixed
 
+- Lazy-loaded filtered Tools data when entering Explore, preserving agent and cohort filters so command patterns no longer remain empty after filtering from another dashboard view.
+- Made session, daily, and per-tool rollups count canonical `tool_calls` rows instead of raw phase steps or provider IDs reused across sessions.
+- Deferred full tool and graph calculation until their Explore views are requested, allowing snapshot-only dashboard servers to bind promptly on large stores instead of blocking startup on eager analysis.
+- Kept Context & System project-wide when a session is selected, so specs, durable memory, privacy findings, and store records no longer render as empty session-owned data.
 - Required Reflect case-study and ROI analysis to inspect existing impact measurements, distinguish outcome shifts from attributable intervention impact, and audit cohort comparability before reporting insufficient evidence.
 - Refreshed long-lived browser dashboards when reopened or focused so newly completed native sessions appear without a manual ingest, while deferring automatic replay when an OTLP JSONL was replaced or truncated.
 - Allowed richer native session telemetry to supply missing token usage when an existing OTLP-owned session has no tokens, while preserving source ownership when OTLP already contains usage; session cards now label unavailable cost instead of silently omitting it.
@@ -45,7 +52,7 @@
 - Prevented `reflect_context` and improvement queries from selecting higher-impact findings from unrelated repositories on large multi-project stores.
 - Preserved all producing-session links even when detailed observation evidence is capped at 20 rows.
 - Corrected sticky epoch session starts when valid source timestamps arrive, preserved durable memory and evidence provenance during pruning, and blocked old source files from resurrecting tombstoned sessions.
-- Kept retention previews query-only, created apply backups before schema migration, rolled back pruning when derived rebuilds fail, rejected structurally incomplete usage rollups, preserved the feedback lookup index, and retained deprecated `reflect skills --path` compatibility.
+- Kept retention previews query-only, created apply backups before schema migration, rolled back pruning when derived rebuilds fail, rejected structurally incomplete usage rollups, and preserved the feedback lookup index.
 - Held the pruning write lock across backup, migration, and deletion, published backup files only after a complete copy, and scoped explicit-session usage readiness to that session instead of unrelated rollup gaps.
 - Added reusable terminal refresh stages, percentage-aware SQLite backup feedback, usage and pruning progress, and a dashboard background-refresh status banner that reloads the completed snapshot.
 

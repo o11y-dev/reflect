@@ -2,13 +2,15 @@
 
 from collections import Counter
 
-from reflect.core import (
-    TelemetryStats,
+from reflect.insights import (
     _percentile,
     build_observations,
     build_recommendations,
     build_strengths,
     compute_tool_percentiles,
+)
+from reflect.models import (
+    TelemetryStats,
 )
 
 

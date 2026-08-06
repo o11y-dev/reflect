@@ -50,6 +50,4 @@ unless `--refresh` is explicit.
 | `--demo` | off | Use bundled sample telemetry |
 | `--refresh` | off | Explicitly prepare current SQL graph evidence before discovery |
 
-Older individual period flags remain accepted with deprecation warnings. Older root
-invocations such as `reflect skills --agent codex --week` also remain accepted in
-compatibility mode, but new automation should use `reflect skills discover --period ...`.
+Use `reflect skills discover --agent codex --period week` for agent-authored discovery.

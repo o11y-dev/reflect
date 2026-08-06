@@ -193,6 +193,9 @@ def reflect_record_milestone(
 @mcp.tool(annotations=READ_ONLY_TOOL)
 def reflect_improvements(
     limit: int = 20,
+    offset: int = 0,
+    detail: str = "summary",
+    evidence_limit: int = 10,
     path: str = "",
     session_id: str = "",
     global_scope: bool = False,
@@ -204,6 +207,9 @@ def reflect_improvements(
     return _with_service(
         lambda service: service.improvements_summary(
             limit=limit,
+            offset=offset,
+            detail=detail,
+            evidence_limit=evidence_limit,
             path=resolved_path,
             session_id=session_id or None,
             global_scope=global_scope,

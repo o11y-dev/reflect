@@ -70,6 +70,32 @@ def _first_text(attrs: dict[str, Any], *keys: str) -> str | None:
     return None
 
 
+def _logical_tool_call_id(attrs: dict[str, Any], fallback: object) -> str:
+    """Return the provider-neutral identity shared by invocation and result events."""
+    return (
+        DEFAULT_MCP_CLASSIFIER.call_id(attrs)
+        or _first_text(
+            attrs,
+            "tool.id",
+            "tool_call.id",
+            "gen_ai.tool.call.id",
+        )
+        or str(fallback)
+    )
+
+
+def _canonical_tool_name(attrs: dict[str, Any], fallback: object) -> str:
+    raw_name = str(
+        attrs.get("gen_ai.client.tool_name")
+        or attrs.get("gen_ai.client.command")
+        or fallback
+    )
+    identity = DEFAULT_MCP_CLASSIFIER.identify(attrs)
+    if identity.server_name and identity.tool_name:
+        return f"mcp__{identity.server_name}__{identity.tool_name}"
+    return raw_name
+
+
 def _first_hash(attrs: dict[str, Any], text: str | None, *keys: str) -> str | None:
     for key in keys:
         value = attrs.get(key)
@@ -465,21 +491,53 @@ def _insert_call_record(
             ),
         )
     elif step_type == "tool_call":
-        tool_name = str(attrs.get("gen_ai.client.tool_name") or attrs.get("gen_ai.client.command") or raw_event["event_type"])
+        tool_name = _canonical_tool_name(attrs, raw_event["event_type"])
+        logical_call_id = _logical_tool_call_id(attrs, raw_event["id"])
         input_preview = _first_text(attrs, "gen_ai.client.tool.input", "tool.input")
         output_preview = _first_text(attrs, "gen_ai.client.tool.output", "tool.output")
         conn.execute(
             """
             INSERT OR IGNORE INTO tool_calls(
-              id, step_id, session_id, tool_name, tool_type, status, duration_ms,
+              id, step_id, session_id, logical_call_id, tool_name, tool_type, status, duration_ms,
               input_hash, output_hash, input_preview_redacted, output_preview_redacted, error_type,
               error_message_redacted, raw_attrs_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id, logical_call_id)
+              WHERE logical_call_id IS NOT NULL AND logical_call_id <> ''
+            DO UPDATE SET
+              tool_name = excluded.tool_name,
+              tool_type = COALESCE(excluded.tool_type, tool_calls.tool_type),
+              status = CASE
+                WHEN excluded.status = 'error' OR tool_calls.status = 'error' THEN 'error'
+                WHEN excluded.status = 'ok' OR tool_calls.status = 'ok' THEN 'ok'
+                ELSE excluded.status
+              END,
+              duration_ms = MAX(
+                COALESCE(tool_calls.duration_ms, 0),
+                COALESCE(excluded.duration_ms, 0)
+              ),
+              input_hash = COALESCE(tool_calls.input_hash, excluded.input_hash),
+              output_hash = COALESCE(excluded.output_hash, tool_calls.output_hash),
+              input_preview_redacted = COALESCE(
+                tool_calls.input_preview_redacted,
+                excluded.input_preview_redacted
+              ),
+              output_preview_redacted = COALESCE(
+                excluded.output_preview_redacted,
+                tool_calls.output_preview_redacted
+              ),
+              error_type = COALESCE(excluded.error_type, tool_calls.error_type),
+              error_message_redacted = COALESCE(
+                excluded.error_message_redacted,
+                tool_calls.error_message_redacted
+              ),
+              updated_at = excluded.updated_at
             """,
             (
                 _stable_id("tool", raw_event["id"]),
                 step_id,
                 session_id,
+                logical_call_id,
                 tool_name,
                 attrs.get("gen_ai.client.tool_type"),
                 status,

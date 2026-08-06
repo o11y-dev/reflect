@@ -225,8 +225,7 @@ reflect --demo                 # instant demo with Claude/Codex/Copilot/Cursor/G
 `reflect improve` reads the current SQLite snapshot by default and resolves the
 current directory to a repository or workspace without silently falling back to
 all local data. Use `--session current|SESSION_ID` for one run and descendants,
-or `--global --period day|week|month|all`. The older individual period flags
-remain compatibility aliases and print a deprecation warning.
+or `--global --period day|week|month|all`.
 `--refresh` reports each preparation stage on stderr while keeping `--json`
 stdout machine-readable. Growing OTLP trace and log files are read from the last
 complete JSONL checkpoint, and only changed or missing session graph and rollup
@@ -254,7 +253,7 @@ operator feedback retain a pruned-session tombstone for provenance.
 
 The browser uses the same SQLite ledger as the CLI and follows one evidence-to-value path. **Inbox** contains only findings and observed loops. **Sessions** contains session inspection and direct A/B comparison. **Workflows** contains reusable procedures with source evidence, exact review, delivery target, and rollback. **Skills** contains only durable packages, versions, installations, observed usage, and measurements, with instant multi-word search across identity, purpose, lifecycle, provenance, source agent, availability, and installation target. **Impact** is reserved for measured outcomes after a workflow is applied. **Explore** contains Usage, Tools, Graph, and Context views; generic cohort analysis lives under Explore → Usage, while Improvement Rule definitions and extension guidance live under Explore → Context, away from daily triage. A selected loop remains evidence until `reflect loops build LOOP_ID` asks an agent to author one pending workflow packaged as a skill; no loop is installed or converted automatically.
 
-Browser links use the same product names: `tab=inbox|sessions|workflows|skills|impact|explore`, with `view=usage|tools|graph|context` when Explore is active. The matching read APIs are `/api/inbox`, `/api/impact`, and `/api/explore/{view}`; older tab names and endpoints remain read-only compatibility aliases for existing bookmarks and integrations.
+Browser links use the same product names: `tab=inbox|sessions|workflows|skills|impact|explore`, with `view=usage|tools|graph|context` when Explore is active. The matching read APIs are `/api/inbox`, `/api/impact`, and `/api/explore/{view}`.
 
 The grouped finding-to-session contract is defined in [`docs/inbox-finding-source-session-ledger.md`](docs/inbox-finding-source-session-ledger.md).
 
@@ -582,14 +581,6 @@ otel-traces.json
 otel-logs.json
 ```
 
-### Legacy dashboard artifact
-
-The browser report is now served from SQLite by default. The JSON artifact path is kept for compatibility with older GitHub Pages/static dashboard workflows:
-
-```bash
-reflect --dashboard-artifact docs/reports/latest.json
-```
-
 For a safe public example, this repo also ships a curated GitHub Pages demo:
 
 - `https://reflect.o11y.dev/`
@@ -604,7 +595,6 @@ Options:
   --spans-dir PATH             Local span JSONL directory
   --otlp-traces PATH           OTLP JSON traces file
   --output PATH                Markdown report output path
-  --dashboard-artifact PATH    Dashboard JSON artifact
   --db-path PATH               SQLite store used by browser report endpoints
   --demo                       Run with bundled sample data
   --help                       Show help
@@ -639,7 +629,7 @@ marked missing on the next sync rather than deleting its history.
 
 The registry is intentionally broader than the skills available to the current agent. A Codex-visible skill must have an active package under a Codex or shared repository skill root; pending drafts, other-agent installations, and telemetry-only historical names remain reviewable registry records but are not presented as installed. The browser labels these states explicitly as **Available in Codex**, **Available in workspace**, **Pending review**, **Available to other agents**, **Telemetry only**, or **Not installed**.
 
-Discovery is now explicit: `reflect skills discover` feeds the selected coding agent a deterministic evidence bundle built from session scores, recurring tool flows, shell commands, recovery chains, graph relationships, and bounded context from high-signal sessions. Valid output is stored as a pending skill version with its authoring agent and evidence. Older invocations such as `reflect skills --agent codex --week` still run in compatibility mode, but new scripts should use the `discover` subcommand.
+Discovery is explicit: `reflect skills discover` feeds the selected coding agent a deterministic evidence bundle built from session scores, recurring tool flows, shell commands, recovery chains, graph relationships, and bounded context from high-signal sessions. Valid output is stored as a pending skill version with its authoring agent and evidence.
 
 `reflect loops` is independent from workflow and skill discovery. It combines behavioral evidence with strong agent-native continuation signals: Cursor `/loop` wake sentinels; Claude `/loop`, `/goal`, recurring `CronCreate`, and recurring `/schedule`; Copilot `/every` and its `/loop` alias; and Codex `/goal`. Gemini, Windsurf, and OpenCode reusable commands remain ordinary manual workflows unless telemetry shows repeated behavior. Reflect also records stalled loops from consecutive same-input runs with no intervening state change and productive routines with positive outcome evidence. Newly detected agent-native and stalled loops are listed before acknowledged or promoted history. `reflect loops build LOOP_ID` passes only the selected loop's bounded evidence to an agent and requires exactly one pending workflow packaged as a skill, with explicit state, iteration, exit, recovery, verification, and handoff contracts. The workflow and skill version remain linked to the loop and are never applied automatically.
 

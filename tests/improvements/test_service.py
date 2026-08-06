@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
+from reflect.context import ReflectContextService
 from reflect.core import main
 from reflect.improvements.milestones import WorkflowMilestoneService
 from reflect.improvements.models import (
@@ -33,6 +34,71 @@ from reflect.store.sqlite import connect_sqlite
 
 NOW = "2026-07-01T10:00:00+00:00"
 CONTRACT_SIGNALS = (("Read", "inspect"), ("Edit", "apply patch"), ("exec", "pytest"))
+
+
+def test_improvement_summary_is_paginated_and_summary_first(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        service.repository.sync_rule_definitions(
+            [
+                RuleDefinition(
+                    id="bounded_evidence",
+                    version=1,
+                    category="reliability",
+                    title="Bounded evidence",
+                    description="Exercise the bounded MCP response.",
+                )
+            ],
+            now=NOW,
+        )
+        observation_id = service.repository.upsert_observation(
+            ObservationDraft(
+                rule_id="bounded_evidence",
+                rule_version=1,
+                scope_type="project",
+                scope_id="repo-1",
+                fingerprint="bounded-evidence",
+                category="reliability",
+                title="Bounded evidence",
+                summary="A concise finding.",
+                metric_name="calls",
+                metric_value=1,
+                metric_unit="calls",
+                metric_direction="lower_is_better",
+                impact_score=50,
+                severity=Severity.MEDIUM,
+                confidence=0.8,
+                evidence=[
+                    EvidenceRef(
+                        entity_type="session",
+                        entity_id="session-1",
+                        session_id="session-1",
+                        summary_redacted="Evidence row",
+                    )
+                ],
+            ),
+            now=NOW,
+        )
+        conn.commit()
+
+        context = ReflectContextService(conn, initialize_schema=False)
+        summary = context.improvements_summary(path=tmp_path, limit=1)
+        full = context.improvements_summary(
+            path=tmp_path,
+            limit=1,
+            detail="full",
+            evidence_limit=1,
+        )
+
+        assert summary["count"] == 1
+        assert summary["findings"][0]["id"] == observation_id
+        assert "evidence" not in summary["findings"][0]
+        assert summary["findings"][0]["evidence_count"] == 1
+        assert summary["freshness"]["evidence_cutoff"] is not None
+        assert summary["freshness"]["safe_for_before_after"] is False
+        assert full["findings"][0]["evidence"][0]["session_id"] == "session-1"
+    finally:
+        conn.close()
 
 
 def _seed(conn) -> None:
@@ -2002,7 +2068,7 @@ def test_simplified_cli_contract_reads_the_durable_ledger(tmp_path):
     with patch("reflect.core._prepare_sql_report_db") as prepare:
         improve_result = runner.invoke(
             main,
-            ["improve", "--global", "--all", "--json", "--db-path", str(db_path)],
+            ["improve", "--global", "--period", "all", "--json", "--db-path", str(db_path)],
         )
         prepare.assert_not_called()
         ask_result = runner.invoke(
@@ -2041,7 +2107,7 @@ def test_improve_labels_cli_table_as_observed_improvements(tmp_path):
 
     result = CliRunner().invoke(
         main,
-        ["improve", "--global", "--all", "--no-refresh", "--db-path", str(db_path)],
+        ["improve", "--global", "--period", "all", "--no-refresh", "--db-path", str(db_path)],
     )
 
     assert result.exit_code == 0
@@ -2076,7 +2142,8 @@ def test_improve_reports_progress_on_stderr_without_corrupting_json(tmp_path):
             [
                 "improve",
                 "--global",
-                "--all",
+                "--period",
+                "all",
                 "--refresh",
                 "--json",
                 "--db-path",
@@ -2090,7 +2157,7 @@ def test_improve_reports_progress_on_stderr_without_corrupting_json(tmp_path):
     assert "\x1b" not in result.stderr
 
 
-def test_improve_requires_an_explicit_global_time_flag(tmp_path):
+def test_improve_requires_an_explicit_global_period(tmp_path):
     service, conn = _service(tmp_path)
     db_path = tmp_path / "reflect.db"
     try:
@@ -2105,20 +2172,13 @@ def test_improve_requires_an_explicit_global_time_flag(tmp_path):
     )
     unscoped_period = runner.invoke(
         main,
-        ["improve", "--week", "--db-path", str(db_path)],
-    )
-    multiple_periods = runner.invoke(
-        main,
-        ["improve", "--global", "--day", "--week", "--db-path", str(db_path)],
+        ["improve", "--period", "week", "--db-path", str(db_path)],
     )
 
     assert missing_period.exit_code == 2
     assert "--global requires" in missing_period.output
     assert unscoped_period.exit_code == 2
     assert "--period requires --global" in unscoped_period.output
-    assert "--week is deprecated for improve" in unscoped_period.output
-    assert multiple_periods.exit_code == 2
-    assert "Use only one" in multiple_periods.output
 
 
 def test_snapshot_commands_refresh_only_when_explicit(tmp_path):

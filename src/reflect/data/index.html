@@ -4442,8 +4442,14 @@ const lazySqlTabRequests = new Map();
 
 function exploreViewUrl(viewName){
   const url = new URL(`/api/explore/${encodeURIComponent(viewName)}`, window.location.href);
-  const sessionId = currentParams().get('session') || dashboardSelectedSessionId || '';
+  const sessionId = viewName === 'context' ? '' : currentParams().get('session') || dashboardSelectedSessionId || '';
   if (sessionId) url.searchParams.set('session', sessionId);
+  if (viewName !== 'context') {
+    ['q','agents','agent','model','status','range'].forEach(key => {
+      const value = currentParams().get(key);
+      if (value) url.searchParams.set(key, value);
+    });
+  }
   return {url, sessionId};
 }
 
@@ -4452,7 +4458,7 @@ async function loadExploreView(viewName){
   if (!D.sqlite) D.sqlite = {};
   if (!D.sqlite.tabs) D.sqlite.tabs = {};
   const {url, sessionId} = exploreViewUrl(viewName);
-  const cacheKey = `${viewName}:${sessionId || 'all'}`;
+  const cacheKey = url.toString();
   if (lazySqlTabRequests.has(cacheKey)) return lazySqlTabRequests.get(cacheKey);
   const request = fetch(url.toString(), {headers: {Accept: 'application/json'}})
     .then(response => {
@@ -4464,6 +4470,10 @@ async function loadExploreView(viewName){
         ['specs','memory','privacy','exports'].forEach(name => {
           if (payload[name]) D.sqlite.tabs[name] = payload[name];
         });
+      } else if (viewName === 'usage') {
+        ['activity','models','costs','tools','mcp','agents'].forEach(name => D.sqlite.tabs[name] = payload);
+      } else if (viewName === 'tools') {
+        ['tools','mcp'].forEach(name => D.sqlite.tabs[name] = payload);
       } else {
         D.sqlite.tabs[viewName] = payload;
       }
@@ -4491,6 +4501,19 @@ async function hydrateExploreView(viewName){
       renderSqlTabPayloads();
     } finally {
       hideReportLoader();
+    }
+    return;
+  }
+  if (viewName === 'tools') {
+    const tools = sqlTab('tools');
+    if (!Object.keys(tools.tools_by_count || {}).length) {
+      showReportLoader('Loading command and tool patterns...');
+      try {
+        await loadExploreView('tools');
+        renderToolsView();
+      } finally {
+        hideReportLoader();
+      }
     }
   }
 }
@@ -7586,17 +7609,19 @@ function buildBarList(elId, obj, color){
       <div class="bar-cnt">${count.toLocaleString()}</div>
     </div>`).join('');
 }
-const toolsTab = sqlTab('tools');
-buildBarList('tools-list', toolsTab.tools_by_count || D.tools_by_count || {}, P.blue);
-const sqlSkills = toolsTab.skills_by_count || {};
-const flatSkills = D.skills_by_count || {};
-const skillsOrSubagents = Object.keys(sqlSkills).length
-  ? sqlSkills
-  : (Object.keys(flatSkills).length ? flatSkills : (toolsTab.subagent_types_by_count || D.subagent_types_by_count || {}));
-buildBarList('skills-list', skillsOrSubagents, P.purple);
+function buildToolsLists(){
+  const toolsTab = sqlTab('tools');
+  buildBarList('tools-list', toolsTab.tools_by_count || D.tools_by_count || {}, P.blue);
+  const sqlSkills = toolsTab.skills_by_count || {};
+  const flatSkills = D.skills_by_count || {};
+  const skillsOrSubagents = Object.keys(sqlSkills).length
+    ? sqlSkills
+    : (Object.keys(flatSkills).length ? flatSkills : (toolsTab.subagent_types_by_count || D.subagent_types_by_count || {}));
+  buildBarList('skills-list', skillsOrSubagents, P.purple);
+}
 
 /* MCP availability table */
-(function buildMcpPanel(){
+function buildMcpPanel(){
   const mcpTab = sqlTab('mcp');
   const before = mcpTab.mcp_server_before || D.mcp_server_before || {};
   const after  = mcpTab.mcp_server_after  || D.mcp_server_after  || {};
@@ -7627,7 +7652,7 @@ buildBarList('skills-list', skillsOrSubagents, P.purple);
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
-})();
+}
 
 /* Weekly trends table */
 (function buildWeeklyTrends(){
@@ -7710,7 +7735,7 @@ buildBarList('skills-list', skillsOrSubagents, P.purple);
 /* ════════════════════ LATENCY (merged into Tools tab) ════════════════════ */
 
 /* Percentiles table */
-(function buildPercentiles(){
+function buildPercentiles(){
   const pctl = sqlTab('tools').tool_percentiles || D.tool_percentiles || [];
   const tbody = document.getElementById('pctl-tbody');
   if (!pctl.length) {
@@ -7736,15 +7761,27 @@ buildBarList('skills-list', skillsOrSubagents, P.purple);
       <td style="text-align:right;color:${pctlColor(r.p95)}">${fmtMs(r.p95)}</td>
       <td style="text-align:right;color:${pctlColor(r.p99)};font-weight:600">${fmtMs(r.p99)}</td>
     </tr>`).join('');
-})();
+}
 
-document.getElementById('cmd-unique').textContent='-- '+(sqlTab('tools').unique_commands ?? D.unique_commands ?? 0)+' unique patterns';
-document.getElementById('cmd-tbody').innerHTML=(sqlTab('tools').top_commands || D.top_commands || []).map((c,i)=>`
-  <tr>
-    <td style="color:var(--text-3);font-weight:600">${i+1}</td>
-    <td><span class="mono" style="color:var(--teal)">${c.command}</span></td>
-    <td style="text-align:right"><span class="run-badge">${c.count}x</span></td>
-  </tr>`).join('');
+function buildCommandPatterns(){
+  const toolsTab = sqlTab('tools');
+  const commands = toolsTab.top_commands || D.top_commands || [];
+  document.getElementById('cmd-unique').textContent='-- '+(toolsTab.unique_commands ?? D.unique_commands ?? 0)+' unique patterns';
+  document.getElementById('cmd-tbody').innerHTML=commands.length ? commands.map((c,i)=>`
+    <tr>
+      <td style="color:var(--text-3);font-weight:600">${i+1}</td>
+      <td><span class="mono" style="color:var(--teal)">${escHtml(c.command)}</span></td>
+      <td style="text-align:right"><span class="run-badge">${c.count}x</span></td>
+    </tr>`).join('') : '<tr><td colspan="3" class="empty-note">No command patterns match this cohort.</td></tr>';
+}
+
+function renderToolsView(){
+  buildToolsLists();
+  buildMcpPanel();
+  buildPercentiles();
+  buildCommandPatterns();
+}
+renderToolsView();
 
 /* ════════════════════ SESSION COMPARISON ════════════════════ */
 (function initSessionComparison(){

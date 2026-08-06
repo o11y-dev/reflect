@@ -16,7 +16,8 @@ from conftest import (
     make_span,
 )
 
-from reflect.core import AgentStats, _process_span
+from reflect.models import AgentStats
+from reflect.processing import _process_span
 
 
 def _fresh_counters():

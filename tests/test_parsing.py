@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from conftest import DAY1, HOUR, make_span, wrap_otlp
 
-from reflect.core import (
+from reflect.parsing import (
     _flatten_otlp_attributes,
     _iter_claude_log_spans,
     _iter_claude_session_spans,

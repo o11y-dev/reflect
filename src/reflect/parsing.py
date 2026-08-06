@@ -25,6 +25,22 @@ REFLECT_HOME = Path(os.environ.get("REFLECT_HOME", Path.home() / ".reflect"))
 HOOK_HOME = Path(os.environ.get("IDE_OTEL_HOOK_HOME", Path.home() / ".local" / "share" / "opentelemetry-hooks"))
 
 
+def _default_source_dir(name: str) -> Path:
+    """Resolve one local telemetry directory from the configured Reflect home."""
+    reflect_path = REFLECT_HOME / "state" / name
+    if reflect_path.is_dir() or Path.home() / ".reflect" != REFLECT_HOME:
+        return reflect_path
+    return HOOK_HOME / ".state" / name
+
+
+def _default_sessions_dir() -> Path:
+    return _default_source_dir("sessions")
+
+
+def _default_spans_dir() -> Path:
+    return _default_source_dir("local_spans")
+
+
 def _flatten_otlp_attributes(otlp_attrs: list[dict]) -> dict:
     """Convert OTLP attribute list to flat dict.
 
@@ -1433,9 +1449,3 @@ def _enrich_missing_session_models_from_logs(
                 )
                 model_counts[preferred] += 1
             session_models[session_id] = model_counts
-
-
-def _default_sessions_dir() -> Path:
-    """Lazy import to avoid circular dependency with core."""
-    from reflect.core import _default_sessions_dir as _core_default_sessions_dir
-    return _core_default_sessions_dir()

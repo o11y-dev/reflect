@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from reflect.models import AgentStats, TelemetryStats
+from reflect.parsing import _default_sessions_dir, _default_spans_dir
 
 if TYPE_CHECKING:
     pass
@@ -114,24 +115,6 @@ def _extract_file_path(attrs: dict) -> str:
         if value not in (None, ""):
             return str(value)
     return ""
-
-
-# These are duplicated here to avoid importing from core.py (which imports from us).
-# They stay in sync with the core.py definitions.
-def _default_sessions_dir() -> Path:
-    from reflect.parsing import HOOK_HOME, REFLECT_HOME
-    p = REFLECT_HOME / "state" / "sessions"
-    if p.is_dir():
-        return p
-    return HOOK_HOME / ".state" / "sessions"
-
-
-def _default_spans_dir() -> Path:
-    from reflect.parsing import HOOK_HOME, REFLECT_HOME
-    p = REFLECT_HOME / "state" / "local_spans"
-    if p.is_dir():
-        return p
-    return HOOK_HOME / ".state" / "local_spans"
 
 
 def _process_span(

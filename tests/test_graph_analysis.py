@@ -4,14 +4,16 @@ from collections import Counter
 
 from conftest import DAY1, HOUR, MIN
 
-from reflect.core import (
-    AgentStats,
+from reflect.graph import (
     _compute_dep_graph,
     _compute_latency_histograms,
     _compute_session_timeline,
     _compute_tool_cooccurrence,
     _compute_tool_transitions,
     _compute_weekly_trends,
+)
+from reflect.models import (
+    AgentStats,
 )
 
 

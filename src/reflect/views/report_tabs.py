@@ -798,15 +798,6 @@ def _and_scope(column: str, scoped_ids: list[str] | None) -> str:
 
 
 def _command_patterns(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Counter[str]:
-    step_rows = _dict_rows(conn.execute(
-        f"""
-        SELECT type, summary, raw_attrs_json
-        FROM steps
-        WHERE (raw_attrs_json LIKE '%command%' OR type = 'shell_command')
-        {_and_scope('session_id', scoped_ids)}
-        """,
-        scoped_ids or [],
-    ))
     tool_rows = _dict_rows(conn.execute(
         f"""
         SELECT input_preview_redacted, raw_attrs_json
@@ -819,14 +810,6 @@ def _command_patterns(conn: sqlite3.Connection, scoped_ids: list[str] | None) ->
         scoped_ids or [],
     ))
     commands: Counter[str] = Counter()
-    for row in step_rows:
-        command = _extract_command(
-            row["raw_attrs_json"],
-            row["summary"],
-            allow_text_fallback=str(row["type"] or "") == "shell_command",
-        )
-        if command:
-            commands[_sanitize_command(command)] += 1
     for row in tool_rows:
         command = _extract_command(row["raw_attrs_json"], row["input_preview_redacted"])
         if command:

@@ -377,27 +377,6 @@ class TestHelp:
         assert session_costs["sess-changed"] > 0
         assert session_costs["sess-untouched"] == 0
 
-    def test_db_ingest_spans_alias(self, runner, tmp_path):
-        db_path = tmp_path / "reflect.db"
-        spans_file = tmp_path / "spans.jsonl"
-        spans_file.write_text(json.dumps({
-            "name": "SessionStart",
-            "traceId": "trace-2",
-            "spanId": "span-2",
-            "start_time_ns": 100,
-            "end_time_ns": 200,
-            "attributes": {"session.id": "sess-db-cli"},
-        }) + "\n")
-
-        result = runner.invoke(main, [
-            "db", "ingest-spans",
-            "--db-path", str(db_path),
-            "--spans-file", str(spans_file),
-        ])
-
-        assert result.exit_code == 0
-        assert "inserted=1" in result.output
-
     def test_db_normalize(self, runner, tmp_path):
         db_path = tmp_path / "reflect.db"
         spans_file = tmp_path / "spans.jsonl"
@@ -534,8 +513,7 @@ class TestHelp:
 
 class TestBrowserMode:
     def test_foreground_opens_browser_report(self, runner, otlp_file, tmp_path):
-        with patch("reflect.core._start_publish_server") as mock_server, \
-             patch("reflect.core._render_terminal") as mock_render:
+        with patch("reflect.core._start_publish_server") as mock_server:
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "--foreground",
@@ -546,10 +524,9 @@ class TestBrowserMode:
             ])
             assert result.exit_code == 0
             mock_server.assert_called_once()
-            mock_render.assert_not_called()
             assert mock_server.call_args.kwargs["db_path"] == db_path
 
-    @pytest.mark.parametrize("flag", ["--terminal", "--no-terminal", "--sql-only"])
+    @pytest.mark.parametrize("flag", ["--terminal", "--no-terminal", "--sql-only", "--day", "--week", "--month", "--all"])
     def test_removed_legacy_flags_fail(self, runner, flag):
         result = runner.invoke(main, [flag])
         assert result.exit_code != 0
@@ -575,7 +552,6 @@ class TestBrowserReportCommandSurface:
         assert result.exit_code == 0
         assert "REFLECT" in result.output
         assert mock_server.call_args.kwargs["db_path"] == db_path
-        assert mock_server.call_args.kwargs["sql_only"] is False
         conn = sqlite3.connect(db_path)
         try:
             assert conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0] > 0
@@ -620,7 +596,6 @@ class TestBrowserReportCommandSurface:
                 spans_dir=None,
                 time_range="week",
                 demo=False,
-                dashboard_artifact=None,
                 output=None,
                 db_path=db_path,
                 refresh=False,
@@ -664,10 +639,8 @@ class TestBrowserReportCommandSurface:
 
         assert result.exit_code == 0
         assert "REFLECT" in result.output
-        assert "Otlp Traces" in result.output
-        assert "Otlp Logs" in result.output
-        assert "codex" in result.output
-        assert "1 native / 0 hook" in result.output
+        assert "Inserted" in result.output
+        assert "Normalized" in result.output
         conn = sqlite3.connect(db_path)
         try:
             row = conn.execute(
@@ -720,10 +693,8 @@ class TestBrowserReportCommandSurface:
             ])
 
         assert result.exit_code == 0
-        assert "Native Sessions" in result.output
-        assert "cursor" in result.output
-        assert "native /" in result.output
-        assert "hook event(s)" in result.output
+        assert "Inserted" in result.output
+        assert "Sessions" in result.output
 
     def test_report_reprices_token_rows_with_session_model_hint(self, runner, tmp_path):
         session_id = "copilot-priced-session"
@@ -790,24 +761,6 @@ class TestBrowserReportCommandSurface:
         assert result.exit_code == 0
         mock_report.assert_called_once()
 
-    def test_deprecated_dashboard_artifact_remains_compatible_until_removal(
-        self, runner, otlp_file, tmp_path
-    ):
-        artifact_path = tmp_path / "docs" / "reports" / "latest.json"
-        with patch("reflect.core._start_publish_server"):
-            db_path = tmp_path / "reflect.db"
-            result = runner.invoke(main, [
-                "--otlp-traces", str(otlp_file),
-                "--sessions-dir", str(tmp_path / "s"),
-                "--spans-dir", str(tmp_path / "sp"),
-                "--db-path", str(db_path),
-                "--dashboard-artifact", str(artifact_path),
-            ])
-        assert result.exit_code == 0
-        assert artifact_path.exists()
-        assert "agents" in json.loads(artifact_path.read_text())
-
-
 _FAKE_SKILLS = [
     {"name": "debug-loop", "description": "Iterative debug workflow", "content": "## Steps\n1. Do the thing"},
     {"name": "context-reset", "description": "Clear and re-establish scope", "content": "## Steps\n1. Reset"},
@@ -819,11 +772,18 @@ _R = lambda code, out, err="": type("R", (), {"returncode": code, "stdout": out,
 class TestSkillsSubcommand:
     @pytest.fixture(autouse=True)
     def _isolated_skills_db(self, tmp_path):
-        parameter = next(
-            item for item in main.commands["skills"].params if item.name == "db_path"
-        )
-        original = parameter.default
-        parameter.default = tmp_path / "skills-reflect.db"
+        skills_group = main.commands["skills"]
+        parameters = [
+            next(item for item in skills_group.params if item.name == "db_path"),
+            next(
+                item
+                for item in skills_group.commands["discover"].params
+                if item.name == "db_path"
+            ),
+        ]
+        originals = [parameter.default for parameter in parameters]
+        for parameter in parameters:
+            parameter.default = tmp_path / "skills-reflect.db"
         try:
             with patch(
                 "reflect.core.shutil.which",
@@ -831,7 +791,8 @@ class TestSkillsSubcommand:
             ):
                 yield
         finally:
-            parameter.default = original
+            for parameter, original in zip(parameters, originals, strict=True):
+                parameter.default = original
 
     def test_skills_missing_explicit_agent_is_a_clean_cli_error(self, runner, tmp_path):
         with patch("reflect.core.shutil.which", return_value=None):
@@ -839,6 +800,7 @@ class TestSkillsSubcommand:
                 main,
                 [
                     "skills",
+                    "discover",
                     "--yes",
                     "--agent",
                     "not-installed-agent",
@@ -862,6 +824,7 @@ class TestSkillsSubcommand:
                 main,
                 [
                     "skills",
+                    "discover",
                     "--yes",
                     "--agent",
                     "claude",
@@ -889,7 +852,7 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", return_value=_R(0, fake_output)), \
              patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
             result = runner.invoke(main, [
-                "skills", "--yes", "--agent", "claude",
+                "skills", "discover", "--yes", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -919,7 +882,7 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]):
             result = runner.invoke(main, [
-                "skills", "--yes", "--agent", "claude",
+                "skills", "discover", "--yes", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1012,7 +975,7 @@ class TestSkillsSubcommand:
              patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
             # --yes is NOT passed; input "1" selects only the first skill, then "y" confirms
             result = runner.invoke(main, [
-                "skills", "--agent", "claude",
+                "skills", "discover", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1043,7 +1006,7 @@ class TestSkillsSubcommand:
              patch("reflect.core._select_skills", return_value=[_FAKE_SKILLS[0]]), \
              patch("reflect.core._select_skill_install_agents") as selector:
             result = runner.invoke(main, [
-                "skills", "--agent", "claude",
+                "skills", "discover", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1061,7 +1024,7 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]):
             runner.invoke(main, [
-                "skills", "--yes", "--agent", "gemini",
+                "skills", "discover", "--yes", "--agent", "gemini",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1077,7 +1040,7 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]):
             runner.invoke(main, [
-                "skills", "--yes", "--agent", "codex",
+                "skills", "discover", "--yes", "--agent", "codex",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1092,7 +1055,7 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]):
             runner.invoke(main, [
-                "skills", "--yes", "--agent", "cursor-agent",
+                "skills", "discover", "--yes", "--agent", "cursor-agent",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1119,7 +1082,7 @@ class TestSkillsSubcommand:
              patch("reflect.core._detect_agents", return_value=[]), \
              patch("reflect.core.shutil.which", side_effect=fake_which):
             result = runner.invoke(main, [
-                "skills", "--yes",
+                "skills", "discover", "--yes",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1134,7 +1097,7 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", return_value=_R(1, "", noisy_error)), \
              patch("reflect.core._detect_agents", return_value=[]):
             result = runner.invoke(main, [
-                "skills", "--yes", "--agent", "claude",
+                "skills", "discover", "--yes", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1150,7 +1113,7 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]):
             runner.invoke(main, [
-                "skills", "--yes", "--agent", "copilot",
+                "skills", "discover", "--yes", "--agent", "copilot",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1166,7 +1129,7 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]):
             runner.invoke(main, [
-                "skills", "--yes", "--agent", "opencode",
+                "skills", "discover", "--yes", "--agent", "opencode",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1183,7 +1146,7 @@ class TestSkillsSubcommand:
              patch("reflect.core._detect_agents", return_value=[]), \
              patch("reflect.core.shutil.which", side_effect=lambda b: "/usr/bin/gemini" if b == "gemini" else None):
             runner.invoke(main, [
-                "skills", "--yes",
+                "skills", "discover", "--yes",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1196,6 +1159,7 @@ class TestSkillsSubcommand:
         with patch("reflect.core.shutil.which", return_value=None):
             result = runner.invoke(main, [
                 "skills",
+                "discover",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1206,7 +1170,7 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", return_value=_R(1, "", "error")), \
              patch("reflect.core._detect_agents", return_value=[]):
             result = runner.invoke(main, [
-                "skills", "--yes", "--agent", "claude",
+                "skills", "discover", "--yes", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1217,7 +1181,7 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", return_value=_R(0, "not json")), \
              patch("reflect.core._detect_agents", return_value=[]):
             result = runner.invoke(main, [
-                "skills", "--yes", "--agent", "claude",
+                "skills", "discover", "--yes", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1231,7 +1195,7 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", return_value=_R(0, fenced_output)), \
              patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
             result = runner.invoke(main, [
-                "skills", "--yes", "--agent", "claude",
+                "skills", "discover", "--yes", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1246,7 +1210,7 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", return_value=_R(0, fenced_output)), \
              patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
             result = runner.invoke(main, [
-                "skills", "--yes", "--agent", "claude",
+                "skills", "discover", "--yes", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1261,7 +1225,7 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", return_value=_R(0, noisy_output)), \
              patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
             result = runner.invoke(main, [
-                "skills", "--yes", "--agent", "claude",
+                "skills", "discover", "--yes", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
@@ -1271,7 +1235,7 @@ class TestSkillsSubcommand:
 
 
 def test_strip_json_fences_variants():
-    from reflect.core import _load_extracted_skills, _strip_json_fences
+    from reflect.skill_extraction import _load_extracted_skills, _strip_json_fences
 
     raw = '[{"name": "x"}]'
 
@@ -1455,68 +1419,6 @@ class TestUpdateAdvisor:
         assert payload["aliases"]["claude-4-5-sonnet-20250929"] == "claude-sonnet-4-5"
         assert "New aliases" in result.output
         assert "1" in result.output
-
-    def test_prepare_sql_report_db_repairs_provenance_before_summary_breakdown(self, tmp_path, monkeypatch):
-        from reflect.store.migrate import migrate
-        from reflect.store.sqlite import connect_sqlite
-
-        db_path = tmp_path / "reflect.db"
-        otlp_traces = tmp_path / "otel-traces.json"
-        otlp_traces.write_text("{}")
-
-        conn = connect_sqlite(db_path)
-        try:
-            migrate(conn)
-            conn.execute(
-                """
-                INSERT INTO raw_events(
-                  id, source_id, source_type, event_type, trace_id, span_id, parent_span_id,
-                  session_id, observed_at, received_at, attrs_json, body_json,
-                  normalized_status, normalization_error, content_hash, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "raw-legacy-hook-trace",
-                    str(otlp_traces),
-                    "otlp_traces_json",
-                    "tool_call",
-                    "trace-1",
-                    "span-1",
-                    "",
-                    "sess-1",
-                    "2026-01-01T00:00:00+00:00",
-                    "2026-01-01T00:00:01+00:00",
-                    json.dumps(
-                        {
-                            "gen_ai.client.name": "cursor",
-                            "gen_ai.client.hook.event": "PreToolUse",
-                            "session.id": "sess-1",
-                        },
-                        sort_keys=True,
-                    ),
-                    "{}",
-                    "pending",
-                    None,
-                    "legacy-hash",
-                    "2026-01-01T00:00:01+00:00",
-                ),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-        monkeypatch.setattr("reflect.store.ingest.ingest_otlp_traces_file", lambda *_args, **_kwargs: {"inserted": 0, "skipped": 1})
-        monkeypatch.setattr("reflect.store.graph_normalize.rebuild_graph", lambda *_args, **_kwargs: {"sessions": 0, "transitions": 0})
-        monkeypatch.setattr("reflect.store.rollups.rebuild_rollups", lambda *_args, **_kwargs: {"session_rollups": 0})
-        monkeypatch.setattr(core, "_ensure_sql_costs", lambda *_args, **_kwargs: None)
-        monkeypatch.setattr(core, "_infer_otlp_logs_file", lambda *_args, **_kwargs: None)
-
-        result = core._prepare_sql_report_db(db_path, otlp_traces=otlp_traces, include_native_sessions=False)
-
-        counts = result["ingest_sources"]["otlp_traces"]["agents"]["cursor"]
-        assert counts["events"] == 1
-        assert counts["native_events"] == 0
-        assert counts["hook_events"] == 1
 
     def test_prepare_sql_report_db_applies_cursor_adapter_before_rollups(self, tmp_path, monkeypatch):
         from reflect.store.sqlite import connect_sqlite
@@ -2317,7 +2219,7 @@ class TestSetup:
         runner,
         _do_not_start_real_gateway,
     ):
-        with patch("reflect.core._run_setup"), patch(
+        with patch("reflect.core._instrumentation_run_setup"), patch(
             "reflect.core._detect_agents",
             return_value=[],
         ):
@@ -2335,7 +2237,7 @@ class TestSetup:
         runner,
         _do_not_start_real_gateway,
     ):
-        with patch("reflect.core._run_setup"), patch(
+        with patch("reflect.core._instrumentation_run_setup"), patch(
             "reflect.core._detect_agents",
             return_value=[],
         ):

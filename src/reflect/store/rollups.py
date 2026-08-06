@@ -138,6 +138,7 @@ class RollupDeletionDelta:
                   tc.tool_name,
                   COALESCE(a.name, ''),
                   COALESCE(
+                    NULLIF(tc.logical_call_id, ''),
                     json_extract(
                       tc.raw_attrs_json,
                       '$."gen_ai.client.tool_use_id"'
@@ -278,15 +279,8 @@ def rebuild_rollups(
                 st.id
               )
           END), 0),
-          COALESCE(SUM(CASE WHEN st.type IN ('tool_call', 'mcp_call', 'shell_command') THEN 1 ELSE 0 END), 0),
-          COALESCE(COUNT(DISTINCT CASE
-            WHEN st.status = 'error'
-              THEN COALESCE(
-                json_extract(st.raw_attrs_json, '$."gen_ai.client.tool_use_id"'),
-                json_extract(st.raw_attrs_json, '$."tool.id"'),
-                st.id
-              )
-          END), 0),
+          (SELECT COUNT(*) FROM tool_calls tc WHERE tc.session_id = s.id),
+          (SELECT COUNT(*) FROM tool_calls tc WHERE tc.session_id = s.id AND tc.status = 'error'),
           s.input_tokens,
           s.output_tokens,
           s.cache_read_tokens,
@@ -350,30 +344,17 @@ def rebuild_rollups(
           total_duration_ms, updated_at
         )
         SELECT
-          tool_name,
-          agent,
+          tc.tool_name,
+          COALESCE(a.name, ''),
           COUNT(*),
-          SUM(CASE WHEN status <> 'error' THEN 1 ELSE 0 END),
-          SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END),
-          COALESCE(SUM(duration_ms), 0),
+          SUM(CASE WHEN tc.status <> 'error' THEN 1 ELSE 0 END),
+          SUM(CASE WHEN tc.status = 'error' THEN 1 ELSE 0 END),
+          COALESCE(SUM(tc.duration_ms), 0),
           ?
-        FROM (
-          SELECT
-            tc.tool_name,
-            COALESCE(a.name, '') AS agent,
-            COALESCE(
-              json_extract(tc.raw_attrs_json, '$."gen_ai.client.tool_use_id"'),
-              json_extract(tc.raw_attrs_json, '$."tool.id"'),
-              tc.id
-            ) AS call_identity,
-            CASE WHEN SUM(CASE WHEN tc.status = 'error' THEN 1 ELSE 0 END) > 0 THEN 'error' ELSE 'ok' END AS status,
-            MAX(COALESCE(tc.duration_ms, 0)) AS duration_ms
-          FROM tool_calls tc
-          JOIN sessions s ON s.id = tc.session_id
-          LEFT JOIN agents a ON a.id = s.agent_id
-          GROUP BY tc.tool_name, COALESCE(a.name, ''), call_identity
-        )
-        GROUP BY tool_name, agent
+        FROM tool_calls tc
+        JOIN sessions s ON s.id = tc.session_id
+        LEFT JOIN agents a ON a.id = s.agent_id
+        GROUP BY tc.tool_name, COALESCE(a.name, '')
         """,
         (timestamp,),
     )
@@ -433,29 +414,15 @@ def refresh_aggregate_rollups(
               total_duration_ms, updated_at
             )
             SELECT
-              tool_name, agent, COUNT(*),
-              SUM(CASE WHEN status <> 'error' THEN 1 ELSE 0 END),
-              SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END),
-              COALESCE(SUM(duration_ms), 0), ?
-            FROM (
-              SELECT
-                tc.tool_name,
-                COALESCE(a.name, '') AS agent,
-                COALESCE(
-                  json_extract(tc.raw_attrs_json, '$."gen_ai.client.tool_use_id"'),
-                  json_extract(tc.raw_attrs_json, '$."tool.id"'),
-                  tc.id
-                ) AS call_identity,
-                CASE WHEN SUM(CASE WHEN tc.status = 'error' THEN 1 ELSE 0 END) > 0
-                  THEN 'error' ELSE 'ok' END AS status,
-                MAX(COALESCE(tc.duration_ms, 0)) AS duration_ms
-              FROM tool_calls tc
-              JOIN sessions s ON s.id = tc.session_id
-              LEFT JOIN agents a ON a.id = s.agent_id
-              WHERE tc.tool_name = ? AND COALESCE(a.name, '') = ?
-              GROUP BY tc.tool_name, COALESCE(a.name, ''), call_identity
-            )
-            GROUP BY tool_name, agent
+              tc.tool_name, COALESCE(a.name, ''), COUNT(*),
+              SUM(CASE WHEN tc.status <> 'error' THEN 1 ELSE 0 END),
+              SUM(CASE WHEN tc.status = 'error' THEN 1 ELSE 0 END),
+              COALESCE(SUM(tc.duration_ms), 0), ?
+            FROM tool_calls tc
+            JOIN sessions s ON s.id = tc.session_id
+            LEFT JOIN agents a ON a.id = s.agent_id
+            WHERE tc.tool_name = ? AND COALESCE(a.name, '') = ?
+            GROUP BY tc.tool_name, COALESCE(a.name, '')
             """,
             (timestamp, tool_name, agent),
         )
@@ -544,15 +511,8 @@ def refresh_rollups(
                     st.id
                   )
               END), 0),
-              COALESCE(SUM(CASE WHEN st.type IN ('tool_call', 'mcp_call', 'shell_command') THEN 1 ELSE 0 END), 0),
-              COALESCE(COUNT(DISTINCT CASE
-                WHEN st.status = 'error'
-                  THEN COALESCE(
-                    json_extract(st.raw_attrs_json, '$."gen_ai.client.tool_use_id"'),
-                    json_extract(st.raw_attrs_json, '$."tool.id"'),
-                    st.id
-                  )
-              END), 0),
+              (SELECT COUNT(*) FROM tool_calls tc WHERE tc.session_id = s.id),
+              (SELECT COUNT(*) FROM tool_calls tc WHERE tc.session_id = s.id AND tc.status = 'error'),
               s.input_tokens,
               s.output_tokens,
               s.cache_read_tokens,

@@ -275,6 +275,7 @@ def test_dashboard_html_wires_sql_data_tab_surfaces(path: Path):
     assert 'id="sql-memory-panel"' in text
     assert 'id="sql-privacy-panel"' in text
     assert 'id="sql-exports-panel"' in text
+    assert "const sessionId = viewName === 'context' ? '' :" in text
     assert "function renderSqlTabPayloads()" in text
     assert "const tabs = (D.sqlite && D.sqlite.tabs) || {};" in text
     assert "tabs.specs" in text
@@ -412,6 +413,7 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "fetch('/api/skills?limit=500'" in text
     assert "fetch('/api/impact'" in text
     assert "new URL(`/api/explore/${encodeURIComponent(viewName)}`" in text
+    assert "Loading command and tool patterns..." in text
     assert "/api/improvements" not in text
     assert "/api/measurements" not in text
     assert "/api/tabs/" not in text

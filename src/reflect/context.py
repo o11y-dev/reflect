@@ -26,7 +26,7 @@ from reflect.improvements.models import (
     SkillLifecycleState,
     WorkflowStatus,
 )
-from reflect.improvements.scope import ImprovementScopeResolver
+from reflect.improvements.scope import ImprovementScopeResolver, session_scope_predicate
 from reflect.improvements.service import ImprovementService
 from reflect.inspection import (
     AgentInspectionService,
@@ -289,11 +289,19 @@ class ReflectContextService:
         self,
         *,
         limit: int = 20,
+        offset: int = 0,
+        detail: str = "summary",
+        evidence_limit: int = 10,
         path: Path | None = None,
         session_id: str | None = None,
         global_scope: bool = False,
         period: str | None = None,
     ) -> dict[str, Any]:
+        if detail not in {"summary", "full"}:
+            raise ValueError("detail must be 'summary' or 'full'")
+        page_limit = max(1, min(limit, 100))
+        page_offset = max(0, offset)
+        bounded_evidence = max(0, min(evidence_limit, 50))
         selectors = int(path is not None) + int(session_id is not None) + int(global_scope)
         if selectors > 1:
             raise ValueError("path, session_id, and global_scope are mutually exclusive")
@@ -306,19 +314,63 @@ class ReflectContextService:
             scope = resolver.session(session_id)
         else:
             scope = resolver.path(path)
-        findings = self.improvements.list_inbox_findings(
-            limit=max(1, min(limit, 100)),
-            scope=scope,
+        all_findings = self.improvements.list_inbox_findings(limit=500, scope=scope)
+        findings = all_findings[page_offset : page_offset + page_limit]
+        attribution_complete = self.improvements.repository.observation_session_ledger_complete()
+        serialized: list[dict[str, Any]] = []
+        for finding in findings:
+            evidence_count = len(finding.evidence)
+            source_session_count = len(finding.source_sessions)
+            if detail == "full":
+                item = finding.model_dump(mode="json")
+                item["evidence"] = item["evidence"][:bounded_evidence]
+                item["source_sessions"] = item["source_sessions"][:bounded_evidence]
+            else:
+                item = finding.model_dump(
+                    mode="json",
+                    exclude={"evidence", "source_sessions", "baseline_query"},
+                )
+            item["evidence_count"] = evidence_count
+            item["source_session_count"] = source_session_count
+            serialized.append(item)
+        evidence_cutoff = max(
+            (finding.latest_source_at or finding.last_seen_at for finding in all_findings),
+            default=None,
         )
-        attribution_complete = (
-            self.improvements.repository.observation_session_ledger_complete()
-        )
+        refresh_row = self.conn.execute(
+            "SELECT value FROM store_metadata WHERE key = 'last_successful_refresh'"
+        ).fetchone()
+        last_successful_refresh = str(refresh_row[0]) if refresh_row else None
+        excluded_new_sessions = 0
+        if evidence_cutoff:
+            scope_predicate, scope_params = session_scope_predicate(scope)
+            excluded_new_sessions = int(
+                self.conn.execute(
+                    f"SELECT COUNT(*) FROM sessions s WHERE julianday(s.started_at) > julianday(?) AND {scope_predicate}",
+                    [evidence_cutoff, *scope_params],
+                ).fetchone()[0]
+            )
         return {
-            "findings": [finding.model_dump(mode="json") for finding in findings],
-            "count": len(findings),
+            "findings": serialized,
+            "count": len(serialized),
+            "total": len(all_findings),
+            "offset": page_offset,
+            "limit": page_limit,
+            "has_more": page_offset + len(serialized) < len(all_findings),
+            "truncated": len(all_findings) == 500,
+            "detail": detail,
             "provenance": "local_telemetry",
             "resolved_scope": scope.model_dump(mode="json"),
             "attribution_complete": attribution_complete,
+            "freshness": {
+                "evidence_cutoff": evidence_cutoff,
+                "last_successful_refresh": last_successful_refresh,
+                "excluded_new_sessions": excluded_new_sessions,
+                "safe_for_before_after": bool(
+                    evidence_cutoff and last_successful_refresh and attribution_complete
+                    and excluded_new_sessions == 0
+                ),
+            },
             "limitations": (
                 []
                 if attribution_complete

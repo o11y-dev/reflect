@@ -29,7 +29,7 @@ def test_migrate_applies_initial_schema(tmp_path):
     try:
         applied = migrate(conn)
         assert applied == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25
         ]
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "raw_events" in tables
@@ -104,7 +104,7 @@ def test_migrate_is_idempotent(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
         assert migrate(conn) == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25
         ]
         assert migrate(conn) == []
     finally:
@@ -153,8 +153,8 @@ def test_migrate_serializes_concurrent_background_requests(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: run_migration(), range(2)))
 
-    assert sorted(len(result) for result in results) == [0, 24]
-    assert sorted(version for result in results for version in result) == list(range(1, 25))
+    assert sorted(len(result) for result in results) == [0, 25]
+    assert sorted(version for result in results for version in result) == list(range(1, 26))
 
 
 def test_migrate_uses_read_only_fast_path_when_schema_is_current(tmp_path):
@@ -178,11 +178,11 @@ def test_migrate_can_preserve_a_caller_owned_transaction(tmp_path):
         _apply_migrations_through(conn, 21)
         conn.execute("BEGIN IMMEDIATE")
 
-        assert migrate(conn, commit=False) == [22, 23, 24]
+        assert migrate(conn, commit=False) == [22, 23, 24, 25]
         assert conn.in_transaction is True
         assert conn.execute(
             "SELECT MAX(version) FROM schema_migrations"
-        ).fetchone()[0] == 24
+        ).fetchone()[0] == 25
 
         conn.rollback()
         assert conn.execute(
@@ -272,6 +272,74 @@ def test_migrate_creates_canonical_indexes(tmp_path):
         conn.close()
 
 
+def test_logical_tool_call_migration_merges_invocation_and_result(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        _apply_migrations_through(conn, 24)
+        now = "2026-08-05T10:00:00+00:00"
+        conn.execute(
+            "INSERT INTO agents(id, name, created_at, updated_at) VALUES ('a', 'codex', ?, ?)",
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO sessions(id, agent_id, started_at, status, created_at, updated_at)
+            VALUES ('s', 'a', ?, 'completed', ?, ?)
+            """,
+            (now, now, now),
+        )
+        attrs = json.dumps({"gen_ai.client.tool_use_id": "call-1"})
+        for index, status in enumerate(("unknown",) * 12_000 + ("ok",)):
+            conn.execute(
+                """
+                INSERT INTO steps(
+                  id, session_id, seq, type, started_at, status,
+                  raw_attrs_json, created_at, updated_at
+                ) VALUES (?, 's', ?, 'tool_call', ?, ?, ?, ?, ?)
+                """,
+                (f"step-{index}", index, now, status, attrs, now, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO tool_calls(
+                  id, step_id, session_id, tool_name, status, duration_ms,
+                  output_preview_redacted, raw_attrs_json, created_at, updated_at
+                ) VALUES (?, ?, 's', ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"tool-{index}",
+                    f"step-{index}",
+                    "CallMcpTool" if index == 0 else "mcp__reflect__reflect_context",
+                    status,
+                    index * 20,
+                    "done" if index else None,
+                    attrs,
+                    now,
+                    now,
+                ),
+            )
+        conn.commit()
+
+        assert migrate(conn) == [25]
+        row = conn.execute(
+            """
+            SELECT logical_call_id, tool_name, status, duration_ms,
+                   output_preview_redacted
+            FROM tool_calls
+            """
+        ).fetchone()
+        assert tuple(row) == (
+            "call-1",
+            "mcp__reflect__reflect_context",
+            "ok",
+            240_000,
+            "done",
+        )
+        assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
 def test_migrate_creates_canonical_foreign_keys(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
@@ -327,7 +395,7 @@ def test_database_doctor_reports_pending_migrations(tmp_path):
     assert status["ok"] is False
     assert status["applied_migrations"] == []
     assert status["pending_migrations"] == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25
     ]
 
 
@@ -357,7 +425,7 @@ def test_migrate_adds_task_reconciliation_state_without_losing_phase_one_runs(tm
         )
         conn.commit()
 
-        assert migrate(conn) == [17, 18, 19, 20, 21, 22, 23, 24]
+        assert migrate(conn) == [17, 18, 19, 20, 21, 22, 23, 24, 25]
         row = conn.execute(
             """
             SELECT id, session_linked_at, session_outcome_recorded,
@@ -399,7 +467,7 @@ def test_migrate_adds_change_reviews_without_changing_phase_two_task_runs(tmp_pa
         )
         conn.commit()
 
-        assert migrate(conn) == [18, 19, 20, 21, 22, 23, 24]
+        assert migrate(conn) == [18, 19, 20, 21, 22, 23, 24, 25]
         assert tuple(
             conn.execute(
                 """
@@ -522,7 +590,7 @@ def test_migrate_reingests_codex_desktop_logs_and_removes_noisy_trace_session(tm
         )
         conn.commit()
 
-        assert migrate(conn) == [19, 20, 21, 22, 23, 24]
+        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25]
         assert conn.execute(
             "SELECT COUNT(*) FROM source_ingestion_state"
         ).fetchone()[0] == 0
@@ -574,7 +642,7 @@ def test_retention_migration_keeps_unrecoverable_epoch_start(tmp_path):
         )
         conn.commit()
 
-        assert migrate(conn) == [22, 23, 24]
+        assert migrate(conn) == [22, 23, 24, 25]
         assert conn.execute(
             "SELECT started_at FROM sessions WHERE id = 'session-epoch'"
         ).fetchone()[0] == "1970-01-01T00:00:00+00:00"
@@ -737,7 +805,7 @@ def test_retention_migration_marks_capped_attribution_for_one_time_rebuild(tmp_p
             (observation_id,),
         ).fetchone()[0] == 20
 
-        assert migrate(conn) == [22, 23, 24]
+        assert migrate(conn) == [22, 23, 24, 25]
         assert conn.execute(
             """
             SELECT value FROM store_metadata

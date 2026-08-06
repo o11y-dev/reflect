@@ -120,6 +120,7 @@ def test_skills_sync_is_explicit_and_read_only_list_does_not_reconcile(tmp_path)
         main,
         [
             "skills",
+            "sync",
             "--json",
             "--path",
             str(root.parent),
@@ -128,7 +129,6 @@ def test_skills_sync_is_explicit_and_read_only_list_does_not_reconcile(tmp_path)
         ],
     )
     assert resynced.exit_code == 0, resynced.output
-    assert "--path on `reflect skills` is deprecated" in resynced.stderr
     assert json.loads(resynced.stdout)["skills"][0]["version_count"] == 2
 
 

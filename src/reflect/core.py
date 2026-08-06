@@ -79,39 +79,8 @@ REFLECT_HOME = Path(os.environ.get("REFLECT_HOME", Path.home() / ".reflect"))
 HOOK_HOME = Path(os.environ.get("IDE_OTEL_HOOK_HOME",
                                  Path.home() / ".local" / "share" / "opentelemetry-hooks"))
 
-# ---------------------------------------------------------------------------
-# Re-exports from split modules — keeps backward compatibility for legacy serve.py,
-# tests, and any external consumers that import from reflect.core.
-# ---------------------------------------------------------------------------
-
-from reflect.dashboard import (  # noqa: F401
-    _artifact_report_ref,
-    _build_dashboard_json,
-    _sql_dashboard_payload,
-    _start_publish_server,
-    _start_publish_server_inline,
-    _update_dashboard_data,
-    _write_dashboard_artifact,
-)
-from reflect.graph import (  # noqa: F401
-    _compute_dep_graph,
-    _compute_latency_histograms,
-    _compute_session_timeline,
-    _compute_tool_cooccurrence,
-    _compute_tool_transitions,
-    _compute_weekly_trends,
-)
+from reflect.dashboard import _start_publish_server
 from reflect.hook_runtime import HookMigrationError, HookPipxMigrator, HookRuntime
-from reflect.insights import (  # noqa: F401
-    _percentile,
-    build_observations,
-    build_practical_examples,
-    build_recommendations,
-    build_strengths,
-    compute_session_quality,
-    compute_token_economy,
-    compute_tool_percentiles,
-)
 from reflect.instrumentation import (  # noqa: F401
     _HOOK_CFG_ENDPOINT_DEFAULT,
     _HOOK_CFG_ENDPOINT_KEY,
@@ -142,40 +111,20 @@ from reflect.instrumentation import (  # noqa: F401
     _upsert_toml_section,
 )
 from reflect.instrumentation import (
-    _copy_config_snapshot as _instrumentation_copy_config_snapshot,
-)
-from reflect.instrumentation import (
-    _reflect_agent_dir as _instrumentation_reflect_agent_dir,
-)
-from reflect.instrumentation import (
     _run_setup as _instrumentation_run_setup,
 )
-from reflect.instrumentation import (
-    _snapshot_detected_agent_configs as _instrumentation_snapshot_detected_agent_configs,
-)
 from reflect.mcp_clients import get_mcp_client_capability
-from reflect.models import AgentStats, TelemetryStats  # noqa: F401
-from reflect.parsing import (  # noqa: F401
+from reflect.models import TelemetryStats
+from reflect.parsing import (
     _canonical_otlp_traces_path,
+    _default_sessions_dir,
+    _default_spans_dir,
     _discover_rich_session_files,
-    _extract_session_id,
-    _flatten_otlp_attributes,
-    _flatten_text_content,
     _infer_otlp_logs_file,
-    _iter_claude_log_spans,
-    _iter_claude_session_spans,
-    _iter_codex_log_spans,
-    _iter_codex_session_spans,
-    _iter_copilot_session_spans,
-    _iter_cursor_session_spans,
-    _iter_gemini_session_spans,
-    _load_json_lines,
-    _load_otlp_logs,
-    _load_otlp_traces,
     _native_session_path_matches_id,
 )
-from reflect.processing import _process_span, analyze_telemetry  # noqa: F401
-from reflect.report import render_report  # noqa: F401
+from reflect.processing import analyze_telemetry
+from reflect.report import render_report
 from reflect.shell_completion import (
     SUPPORTED_SHELLS,
     ShellCompletionManager,
@@ -191,31 +140,13 @@ from reflect.shell_completion import (
     complete_skill_id,
     complete_workflow_id,
 )
-from reflect.skill_extraction import (  # noqa: F401
-    _build_graph_evidence,
+from reflect.skill_extraction import (
     _build_skill_evidence_bundle,
     _build_skill_evidence_bundle_from_sql,
-    _build_skills_extraction_prompt,
     _build_skills_extraction_prompt_from_bundle,
-    _compress_tool_sequence,
-    _extract_recovery_chains,
     _load_extracted_skills,
-    _serialize_sessions_for_skills,
-    _strip_json_fences,
 )
-from reflect.store.provenance import HOOK_ORIGINS, NATIVE_OTLP_ORIGINS
-from reflect.terminal import _render_terminal  # noqa: F401
-from reflect.utils import (  # noqa: F401
-    _bar,
-    _fmt_dur,
-    _fmt_model,
-    _fmt_tokens,
-    _json_dumps,
-    _json_loads,
-    _safe_ratio,
-    _stat_panel,
-    logger,
-)
+from reflect.utils import _json_loads, logger
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -228,21 +159,6 @@ def _default_otlp_traces() -> Path | None:
         return p_otlp
     p = REFLECT_HOME / "state" / "otel-traces.json"
     return p if p.exists() else None
-
-
-def _default_spans_dir() -> Path:
-    """Return the default spans directory — prefer ~/.reflect, fallback to hook home."""
-    p = REFLECT_HOME / "state" / "local_spans"
-    if p.is_dir() or Path.home() / ".reflect" != REFLECT_HOME:
-        return p
-    return HOOK_HOME / ".state" / "local_spans"
-
-
-def _default_sessions_dir() -> Path:
-    p = REFLECT_HOME / "state" / "sessions"
-    if p.is_dir() or Path.home() / ".reflect" != REFLECT_HOME:
-        return p
-    return HOOK_HOME / ".state" / "sessions"
 
 
 def _default_vscode_copilot_dir() -> Path:
@@ -974,12 +890,6 @@ def _resolve_and_analyze(
     help="OTLP JSON traces file from the collector file exporter.",
 )
 @click.option(
-    "--dashboard-artifact",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="Also write the dashboard JSON artifact to a file.",
-)
-@click.option(
     "--db-path",
     type=click.Path(path_type=Path),
     default=REFLECT_HOME / "state" / "reflect.db",
@@ -991,10 +901,7 @@ def _resolve_and_analyze(
     help="Run with bundled sample data. Great for first-time users or screenshots.",
 )
 @click.option("--foreground", is_flag=True, help="Keep the browser report server attached to this terminal.")
-@click.option("--day", "time_range", flag_value="day", help="Analyze last 24 hours.")
-@click.option("--week", "time_range", flag_value="week", default=True, help="Analyze last 7 days (default).")
-@click.option("--month", "time_range", flag_value="month", help="Analyze last 30 days.")
-@click.option("--all", "time_range", flag_value="all", help="Analyze all available data.")
+@click.option("--period", "time_range", type=click.Choice(["day", "week", "month", "all"]), default="week", show_default=True)
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -1002,7 +909,6 @@ def main(
     spans_dir: Path | None,
     output: Path | None,
     otlp_traces: Path | None,
-    dashboard_artifact: Path | None,
     db_path: Path,
     demo: bool,
     foreground: bool,
@@ -1012,7 +918,7 @@ def main(
     if ctx.invoked_subcommand is not None:
         return
 
-    if not foreground and output is None and dashboard_artifact is None and not demo:
+    if not foreground and output is None and not demo:
         _start_background_report_server(
             db_path=db_path,
             otlp_traces=otlp_traces,
@@ -1026,7 +932,6 @@ def main(
         spans_dir=spans_dir,
         time_range=time_range,
         demo=demo,
-        dashboard_artifact=dashboard_artifact,
         output=output,
         db_path=db_path,
         refresh=True,
@@ -1433,39 +1338,6 @@ def _prepare_usage_db_with_progress(
     )
 
 
-def _resolve_period_option(
-    period: str | None,
-    *,
-    day: bool,
-    week: bool,
-    month: bool,
-    all_time: bool,
-    command: str,
-    default: str | None = None,
-) -> str | None:
-    legacy_periods = [
-        name
-        for name, enabled in (
-            ("day", day),
-            ("week", week),
-            ("month", month),
-            ("all", all_time),
-        )
-        if enabled
-    ]
-    if len(legacy_periods) > 1:
-        raise click.UsageError("Use only one deprecated period flag")
-    if period is not None and legacy_periods:
-        raise click.UsageError("--period cannot be combined with deprecated period flags")
-    if legacy_periods:
-        click.echo(
-            f"--{legacy_periods[0]} is deprecated for {command}; "
-            f"use --period {legacy_periods[0]}.",
-            err=True,
-        )
-    return period or (legacy_periods[0] if legacy_periods else default)
-
-
 @main.command("refresh")
 @click.option(
     "--otlp-traces",
@@ -1517,10 +1389,6 @@ def refresh_snapshot(
     type=click.Choice(["day", "week", "month", "all"]),
     help="Evidence period. Defaults to week.",
 )
-@click.option("--day", is_flag=True, help="Deprecated: use --period day.")
-@click.option("--week", is_flag=True, help="Deprecated: use --period week.")
-@click.option("--month", is_flag=True, help="Deprecated: use --period month.")
-@click.option("--all", "all_time", is_flag=True, help="Deprecated: use --period all.")
 @click.option(
     "--refresh",
     is_flag=True,
@@ -1538,10 +1406,6 @@ def usage(
     global_scope: bool,
     agent: str | None,
     period: str | None,
-    day: bool,
-    week: bool,
-    month: bool,
-    all_time: bool,
     refresh: bool,
     as_json: bool,
     db_path: Path,
@@ -1555,15 +1419,7 @@ def usage(
         raise click.UsageError("--session and --global cannot be used together")
     if agent and not global_scope:
         raise click.UsageError("--agent is only valid with --global")
-    selected_period = _resolve_period_option(
-        period,
-        day=day,
-        week=week,
-        month=month,
-        all_time=all_time,
-        command="usage",
-        default="week",
-    )
+    selected_period = period or "week"
 
     runtime_hints = UsageService.environment_session_hints()
     _ensure_command_snapshot(
@@ -1592,7 +1448,7 @@ def usage(
         report = UsageService(conn).report(
             session_id=session_id,
             global_scope=global_scope,
-            period=selected_period or "week",
+            period=selected_period,
             agent=agent,
         )
     except (LookupError, ValueError) as exc:
@@ -1624,12 +1480,8 @@ def usage(
 @click.option(
     "--period",
     type=click.Choice(["day", "week", "month", "all"]),
-    help="Global evidence period. Replaces the deprecated individual period flags.",
+    help="Global evidence period.",
 )
-@click.option("--day", is_flag=True, help="Deprecated: use --period day.")
-@click.option("--week", is_flag=True, help="Deprecated: use --period week.")
-@click.option("--month", is_flag=True, help="Deprecated: use --period month.")
-@click.option("--all", "all_time", is_flag=True, help="Deprecated: use --period all.")
 @click.option(
     "--refresh/--no-refresh",
     default=None,
@@ -1649,10 +1501,6 @@ def improve(
     session_id: str | None,
     global_scope: bool,
     period: str | None,
-    day: bool,
-    week: bool,
-    month: bool,
-    all_time: bool,
     refresh: bool | None,
     db_path: Path,
 ) -> None:
@@ -1664,14 +1512,7 @@ def improve(
     selectors = int(scope_path is not None) + int(session_id is not None) + int(global_scope)
     if selectors > 1:
         raise click.UsageError("--path, --session, and --global are mutually exclusive")
-    selected_period = _resolve_period_option(
-        period,
-        day=day,
-        week=week,
-        month=month,
-        all_time=all_time,
-        command="improve",
-    )
+    selected_period = period
     if selected_period and not global_scope:
         raise click.UsageError("--period requires --global")
     if global_scope and selected_period is None:
@@ -2520,20 +2361,14 @@ def _start_background_report_server(
 
 
 def _has_sql_report_snapshot(db_path: Path) -> bool:
-    if not db_path.exists():
+    from reflect.preparation import SQLiteSnapshotInspector
+    from reflect.store.sqlite import connect_sqlite_read_only
+
+    if not SQLiteSnapshotInspector(db_path).inspect().ready:
         return False
     try:
-        uri = f"file:{db_path.expanduser().resolve()}?mode=ro"
-        conn = sqlite3.connect(uri, uri=True)
+        conn = connect_sqlite_read_only(db_path)
         try:
-            tables = {
-                str(row[0])
-                for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'table'"
-                )
-            }
-            if not {"sessions", "session_rollups"} <= tables:
-                return False
             return bool(conn.execute("SELECT 1 FROM session_rollups LIMIT 1").fetchone())
         finally:
             conn.close()
@@ -2548,47 +2383,16 @@ def _render_preparation_summary(console: Console, preparation: dict[str, object]
     assert isinstance(ingest, dict)
     assert isinstance(normalize, dict)
     assert isinstance(rollups, dict)
-    ingest_sources = preparation.get("ingest_sources") or {}
-    assert isinstance(ingest_sources, dict)
     summary = Table.grid(padding=(0, 2))
     summary.add_column(style="bold")
     summary.add_column(justify="right")
-    summary.add_row("Inserted", f"{int(ingest['inserted']):,}")
-    summary.add_row("Skipped", f"{int(ingest['skipped']):,}")
-    summary.add_row("Normalized", f"{int(normalize['processed']):,}")
-    summary.add_row("Sessions", f"{int(rollups['session_rollups']):,}")
-    if ingest_sources:
-        summary.add_row("", "")
-        for name, result in ingest_sources.items():
-            assert isinstance(result, dict)
-            source_type = str(result.get("source_type") or "")
-            native_events = sum(
-                int(counts.get("native_events") or 0)
-                for counts in (result.get("agents") or {}).values()
-            )
-            hook_events = sum(
-                int(counts.get("hook_events") or 0)
-                for counts in (result.get("agents") or {}).values()
-            )
-            source_detail = (
-                f"{int(result['inserted']):,} inserted / "
-                f"{int(result['skipped']):,} skipped"
-            )
-            if source_type in {"otlp_traces_json", "otlp_logs_json"}:
-                source_detail += f" / {native_events:,} native / {hook_events:,} hook event(s)"
-            elif hook_events:
-                source_detail += f" / {hook_events:,} hook event(s)"
-            summary.add_row(str(name).replace("_", " ").title(), source_detail)
-            for agent, counts in sorted((result.get("agents") or {}).items()):
-                agent_detail = f"{int(counts['events']):,} event(s)"
-                if source_type in {"otlp_traces_json", "otlp_logs_json"}:
-                    agent_detail += (
-                        f" / {int(counts.get('native_events') or 0):,} native"
-                        f" / {int(counts.get('hook_events') or 0):,} hook"
-                    )
-                elif counts.get("hook_events"):
-                    agent_detail += f" / {int(counts['hook_events']):,} hook"
-                summary.add_row(f"  {agent}", agent_detail)
+    for label, value in (
+        ("Inserted", ingest["inserted"]),
+        ("Skipped", ingest["skipped"]),
+        ("Normalized", normalize["processed"]),
+        ("Sessions", rollups["session_rollups"]),
+    ):
+        summary.add_row(label, f"{int(value):,}")
     console.print(Panel(summary, title="[bold orange3]REFLECT[/bold orange3]", border_style="orange3"))
 
 
@@ -2599,14 +2403,11 @@ def _run_browser_report(
     spans_dir: Path | None,
     time_range: str,
     demo: bool,
-    dashboard_artifact: Path | None,
     output: Path | None,
     db_path: Path,
     refresh: bool,
     open_browser: bool = True,
 ) -> None:
-    from collections import Counter
-
     console = Console()
     update_notice = _build_startup_update_notice()
     if update_notice:
@@ -2631,7 +2432,6 @@ def _run_browser_report(
     preparation_worker = None
     requires_fresh_snapshot = bool(
         output is not None
-        or dashboard_artifact is not None
         or not _has_sql_report_snapshot(db_path)
     )
     if not refresh:
@@ -2665,13 +2465,6 @@ def _run_browser_report(
         preparation_worker = BackgroundPreparationWorker(prepare_in_background)
         click.echo("Serving the current snapshot; refreshing telemetry in the background.")
 
-    stats = TelemetryStats(
-        session_files=0,
-        span_files=0,
-        total_events=0,
-        events_by_type=Counter(),
-        events_by_file={},
-    )
     sessions_dir = sessions_dir or _default_sessions_dir()
     spans_dir = spans_dir or _default_spans_dir()
     if output is not None:
@@ -2684,17 +2477,8 @@ def _run_browser_report(
         )
         render_report(stats, sessions_dir, spans_dir, output)
         print(f"Report saved to: {output}")
-    if dashboard_artifact is not None:
-        click.echo("Note: --dashboard-artifact is deprecated; the browser report is served from SQLite by default.")
-        dashboard_artifact.parent.mkdir(parents=True, exist_ok=True)
-        dashboard_artifact.write_text(
-            _json_stdlib.dumps(_sql_dashboard_payload(db_path)),
-            encoding="utf-8",
-        )
     _start_publish_server(
-        stats,
         db_path=db_path,
-        sql_only=False,
         preparation_worker=preparation_worker,
         open_browser=open_browser,
     )
@@ -3021,61 +2805,12 @@ def _validate_skill_name(name: object) -> str:
 
 @main.group(invoke_without_command=True)
 @click.option(
-    "--otlp-traces",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="OTLP JSON traces file from the collector file exporter.",
-)
-@click.option(
-    "--sessions-dir",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="Directory containing session metadata JSON files.",
-)
-@click.option(
-    "--spans-dir",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="Directory containing local span JSONL files.",
-)
-@click.option("--day", "time_range", flag_value="day", help="Analyze last 24 hours.")
-@click.option("--week", "time_range", flag_value="week", default=True, help="Analyze last 7 days (default).")
-@click.option("--month", "time_range", flag_value="month", help="Analyze last 30 days.")
-@click.option("--all", "time_range", flag_value="all", help="Analyze all available data.")
-@click.option(
-    "--demo",
-    is_flag=True,
-    help="Run with bundled sample data.",
-)
-@click.option(
-    "--agent",
-    default=None,
-    help=(
-        "Agent CLI binary to use for skill extraction "
-        "(e.g. claude, gemini, codex). Auto-detected if not set."
-    ),
-    shell_complete=_complete_skill_agent_cli,
-)
-@click.option(
-    "--yes",
-    "-y",
-    is_flag=True,
-    help="Stage all extracted skills without prompting for selection.",
-)
-@click.option(
     "--db-path",
     type=click.Path(path_type=Path),
     default=REFLECT_HOME / "state" / "reflect.db",
     help="SQLite store used to derive SQL graph evidence for skill extraction.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Return the Skills v2 registry as JSON.")
-@click.option(
-    "--path",
-    "scan_paths",
-    type=click.Path(path_type=Path),
-    multiple=True,
-    help="Deprecated compatibility alias for `skills sync --path`.",
-)
 @click.option(
     "--status",
     "lifecycle",
@@ -3085,60 +2820,12 @@ def _validate_skill_name(name: object) -> str:
 @click.pass_context
 def skills(
     ctx: click.Context,
-    otlp_traces: Path | None,
-    sessions_dir: Path | None,
-    spans_dir: Path | None,
-    time_range: str,
-    demo: bool,
-    agent: str | None,
-    yes: bool,
     db_path: Path,
     as_json: bool,
-    scan_paths: tuple[Path, ...],
     lifecycle: str | None,
 ) -> None:
     """Inspect the durable Skills v2 registry without reconciling sources."""
     if ctx.invoked_subcommand:
-        return
-    legacy_discovery = bool(
-        otlp_traces
-        or sessions_dir
-        or spans_dir
-        or demo
-        or agent
-        or yes
-        or time_range != "week"
-    )
-    if legacy_discovery:
-        click.echo(
-            "Compatibility mode: use `reflect skills discover` for agent-assisted extraction.",
-            err=True,
-        )
-        _discover_skills(
-            otlp_traces=otlp_traces,
-            sessions_dir=sessions_dir,
-            spans_dir=spans_dir,
-            time_range=time_range,
-            demo=demo,
-            agent=agent,
-            yes=yes,
-            db_path=db_path,
-            refresh=None,
-        )
-        return
-    if scan_paths:
-        click.echo(
-            "--path on `reflect skills` is deprecated; use "
-            "`reflect skills sync --path ...`.",
-            err=True,
-        )
-        ctx.invoke(
-            skills_sync,
-            scan_paths=scan_paths,
-            lifecycle=lifecycle,
-            as_json=as_json,
-            db_path=db_path,
-        )
         return
     from reflect.improvements.models import SkillLifecycleState
 
@@ -3445,13 +3132,10 @@ def _print_skill_registry(records, *, refresh: dict[str, int] | None = None) -> 
 @click.option(
     "--period",
     type=click.Choice(["day", "week", "month", "all"]),
-    default=None,
-    help="Evidence period. Replaces the deprecated individual period flags.",
+    default="week",
+    show_default=True,
+    help="Evidence period.",
 )
-@click.option("--day", is_flag=True, help="Deprecated: use --period day.")
-@click.option("--week", is_flag=True, help="Deprecated: use --period week.")
-@click.option("--month", is_flag=True, help="Deprecated: use --period month.")
-@click.option("--all", "all_time", is_flag=True, help="Deprecated: use --period all.")
 @click.option(
     "--refresh/--no-refresh",
     default=None,
@@ -3469,11 +3153,7 @@ def skills_discover(
     otlp_traces: Path | None,
     sessions_dir: Path | None,
     spans_dir: Path | None,
-    period: str | None,
-    day: bool,
-    week: bool,
-    month: bool,
-    all_time: bool,
+    period: str,
     refresh: bool | None,
     demo: bool,
     agent: str | None,
@@ -3481,20 +3161,11 @@ def skills_discover(
     db_path: Path,
 ) -> None:
     """Use a coding agent to discover evidence-backed pending skill drafts."""
-    time_range = _resolve_period_option(
-        period,
-        day=day,
-        week=week,
-        month=month,
-        all_time=all_time,
-        command="skills discovery",
-        default="week",
-    )
     _discover_skills(
         otlp_traces=otlp_traces,
         sessions_dir=sessions_dir,
         spans_dir=spans_dir,
-        time_range=time_range or "week",
+        time_range=period,
         demo=demo,
         agent=agent,
         yes=yes,
@@ -3779,41 +3450,6 @@ def _distribute_skills(
 
 
 
-def _reflect_agent_dir(agent_name: str) -> Path:
-    return _instrumentation_reflect_agent_dir(REFLECT_HOME, agent_name)
-
-
-def _copy_config_snapshot(agent_name: str, source: Path) -> Path:
-    return _instrumentation_copy_config_snapshot(REFLECT_HOME, agent_name, source)
-
-
-def _snapshot_detected_agent_configs(console, agents: list[dict]) -> None:
-    _instrumentation_snapshot_detected_agent_configs(console, agents, reflect_home=REFLECT_HOME)
-
-
-def _run_setup(
-    console,
-    *,
-    capture_text: bool | None = None,
-    mask_captured_text: bool = True,
-    text_max_chars: int | None = None,
-    selected_agent_names: set[str] | None = None,
-    local_agent_names: set[str] | None = None,
-) -> None:
-    _instrumentation_run_setup(
-        console,
-        reflect_home=REFLECT_HOME,
-        hook_home=HOOK_HOME,
-        detect_agents=_detect_agents,
-        distribute_skills=_distribute_skills,
-        capture_text=capture_text,
-        mask_captured_text=mask_captured_text,
-        text_max_chars=text_max_chars,
-        selected_agent_names=selected_agent_names,
-        local_agent_names=local_agent_names,
-    )
-
-
 def _resolve_setup_agent_selection(
     console,
     *,
@@ -3955,8 +3591,12 @@ def setup(
         raise click.ClickException(
             "--local-agent must also be selected with --agent: " + ", ".join(sorted(unknown_local))
         )
-    _run_setup(
+    _instrumentation_run_setup(
         console,
+        reflect_home=REFLECT_HOME,
+        hook_home=HOOK_HOME,
+        detect_agents=_detect_agents,
+        distribute_skills=_distribute_skills,
         capture_text=capture_text,
         mask_captured_text=mask_captured_text,
         text_max_chars=text_max_chars,
@@ -5140,8 +4780,6 @@ def _prepare_sql_report_db(
         applied = migrate(conn)
         ingest_result = {"inserted": 0, "skipped": 0}
         ingest_sources: dict[str, dict[str, object]] = {}
-        source_refs: dict[str, list[str]] = {}
-        source_types: dict[str, str] = {}
         cursor_native_files: list[Path] = []
         replay_policy = (
             AppendOnlyReplayPolicy.DEFER
@@ -5162,8 +4800,6 @@ def _prepare_sql_report_db(
             )
             ingest_sources["otlp_traces"] = traces_result
             ingest_sources["otlp_traces"]["source_type"] = "otlp_traces_json"
-            source_refs["otlp_traces"] = [str(otlp_traces)]
-            source_types["otlp_traces"] = "otlp_traces_json"
             ingest_result["inserted"] += traces_result["inserted"]
             ingest_result["skipped"] += traces_result["skipped"]
             otlp_logs = _infer_otlp_logs_file(otlp_traces)
@@ -5181,8 +4817,6 @@ def _prepare_sql_report_db(
                 )
                 ingest_sources["otlp_logs"] = logs_result
                 ingest_sources["otlp_logs"]["source_type"] = "otlp_logs_json"
-                source_refs["otlp_logs"] = [str(otlp_logs)]
-                source_types["otlp_logs"] = "otlp_logs_json"
                 ingest_result["inserted"] += logs_result["inserted"]
                 ingest_result["skipped"] += logs_result["skipped"]
         if include_native_sessions:
@@ -5192,10 +4826,8 @@ def _prepare_sql_report_db(
                 "Reading local agent sessions...",
             )
             native_result = {"inserted": 0, "skipped": 0, "unchanged": 0}
-            native_refs: list[str] = []
             for agent, session_file in _discover_rich_session_files():
                 source_ref = f"native_session:{agent}:{session_file}"
-                native_refs.append(source_ref)
                 result = ingest_native_session_file(
                     conn,
                     file_path=session_file,
@@ -5212,8 +4844,6 @@ def _prepare_sql_report_db(
             if any(native_result.values()):
                 ingest_sources["native_sessions"] = native_result
                 ingest_sources["native_sessions"]["source_type"] = "native_session"
-                source_refs["native_sessions"] = native_refs
-                source_types["native_sessions"] = "native_session"
                 ingest_result["inserted"] += native_result["inserted"]
                 ingest_result["skipped"] += native_result["skipped"]
         needs_normalize = bool(
@@ -5255,14 +4885,6 @@ def _prepare_sql_report_db(
             timestamp=datetime.now(UTC).isoformat(),
             changed_session_ids=changed_session_ids,
         )
-        for name, refs in source_refs.items():
-            if name in ingest_sources:
-                if ingest_sources[name].get("unchanged"):
-                    continue
-                source_type = source_types.get(name, "")
-                ingest_sources[name]["agents"] = _raw_event_agent_breakdown(
-                    conn, source_ids_by_type={source_type: refs} if source_type else {}
-                )
         cursor_adapter_result = (
             apply_cursor_transcript_usage_estimates(conn, cursor_native_files)
             if cursor_native_files
@@ -5374,6 +4996,18 @@ def _prepare_sql_report_db(
             "Refreshing evidence-backed improvements...",
         )
         improvement_result = ImprovementService(conn).refresh()
+        refresh_completed_at = datetime.now(UTC).isoformat()
+        conn.execute(
+            """
+            INSERT INTO store_metadata(key, value, updated_at)
+            VALUES ('last_successful_refresh', ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+              value = excluded.value,
+              updated_at = excluded.updated_at
+            """,
+            (refresh_completed_at, refresh_completed_at),
+        )
+        conn.commit()
     finally:
         conn.close()
     deferred_replays = [
@@ -5403,47 +5037,6 @@ def _prepare_sql_report_db(
         "Preparation complete.",
     )
     return result
-
-
-def _raw_event_agent_breakdown(conn, *, source_ids_by_type: dict[str, list[str]]) -> dict[str, dict[str, int]]:
-    """Break down raw events by agent using durable provenance, not hook-shaped attrs."""
-    if not source_ids_by_type:
-        return {}
-    totals: dict[str, dict[str, int]] = {}
-    native_otlp_placeholders = ", ".join("?" for _ in NATIVE_OTLP_ORIGINS)
-    hook_placeholders = ", ".join("?" for _ in HOOK_ORIGINS)
-    all_source_ids = [sid for ids in source_ids_by_type.values() for sid in ids]
-    for offset in range(0, len(all_source_ids), 500):
-        chunk = all_source_ids[offset:offset + 500]
-        placeholders = ", ".join("?" for _ in chunk)
-        rows = conn.execute(
-            f"""
-            SELECT
-              COALESCE(
-                NULLIF(json_extract(attrs_json, '$."gen_ai.client.name"'), ''),
-                NULLIF(json_extract(attrs_json, '$."agent.name"'), ''),
-                NULLIF(json_extract(attrs_json, '$."service.name"'), ''),
-                'unknown'
-              ) AS agent,
-              COUNT(*) AS events,
-              SUM(CASE WHEN origin_kind IN ({native_otlp_placeholders}) THEN 1 ELSE 0 END) AS native_events,
-              SUM(CASE WHEN origin_kind IN ({hook_placeholders}) THEN 1 ELSE 0 END) AS hook_events
-            FROM raw_events
-            WHERE source_id IN ({placeholders})
-            GROUP BY agent
-            ORDER BY events DESC, agent ASC
-            """,
-            [*NATIVE_OTLP_ORIGINS, *HOOK_ORIGINS, *chunk],
-        ).fetchall()
-        for row in rows:
-            agent = str(row[0] or "unknown")
-            counts = totals.setdefault(agent, {"events": 0, "hook_events": 0, "native_events": 0})
-            counts["events"] += int(row[1] or 0)
-            counts["native_events"] += int(row[2] or 0)
-            counts["hook_events"] += int(row[3] or 0)
-    return dict(
-        sorted(totals.items(), key=lambda item: (-item[1]["events"], item[0]))
-    )
 
 
 def _reprice_sql_store(
@@ -5695,17 +5288,6 @@ def ingest(db_path: Path, otlp_traces: Path | None, spans_file: Path | None) -> 
     result = _ingest_into_db(db_path=db_path, otlp_traces=otlp_traces, spans_file=spans_file)
     click.echo(
         f"Ingested {source_path} -> {db_path} (inserted={result['inserted']}, skipped={result['skipped']})"
-    )
-
-
-@db.command("ingest-otlp")
-@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
-@click.option("--otlp-traces", type=click.Path(path_type=Path), required=True, help="Path to OTLP traces JSONL export file.")
-def db_ingest(db_path: Path, otlp_traces: Path) -> None:
-    """Ingest OTLP traces JSONL into raw_events with source/hash dedupe (legacy alias)."""
-    result = _ingest_into_db(db_path=db_path, otlp_traces=otlp_traces)
-    click.echo(
-        f"Ingested {otlp_traces} -> {db_path} (inserted={result['inserted']}, skipped={result['skipped']})"
     )
 
 
