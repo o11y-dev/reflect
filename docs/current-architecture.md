@@ -117,6 +117,19 @@ Canonical records retain native attributes for explanation while promoting share
 fields for queries and comparisons. The mapping contract is documented separately in
 [`ai-observability-schema.md`](ai-observability-schema.md).
 
+### Context artifacts
+
+| Object | Meaning | Current source of truth |
+|---|---|---|
+| Memory artifact | One durable instruction or memory identity, independent of how many sessions received it | `memories` |
+| Memory exposure | Privacy-safe fingerprint proving that a session received a memory artifact | `memory_exposures` |
+| Task contract | An explicit task file supplied at task start; retained as `specs` for API compatibility | `specs`, `mcp_task_runs.task_contract_id` |
+
+Provider adapters identify explicit source envelopes at ingestion. They do not infer
+memory from arbitrary conversation text or treat transient planning calls as task
+contracts. Task contracts describe one bounded task; workflow contracts describe a
+reusable procedure and remain separate objects.
+
 ### 3. Refresh derived state
 
 `core._prepare_sql_report_db()` currently orchestrates the complete preparation path:
@@ -231,6 +244,7 @@ and prior state.
 | A-012 | Accepted | `tool_calls` represents logical invocations, not telemetry phases. | Invocation/result duplicates are reconciled before rollups and procedure detection. |
 | A-013 | Accepted | Context & System is project/store context, not session-owned telemetry. | Selecting a session must not hide specs, durable memory, privacy findings, or store inventory. |
 | A-014 | Accepted | Full tool and graph views are calculated on demand. | Startup caches the lightweight usage summary and binds before command parsing or graph drill-down work. |
+| A-015 | Accepted | Context artifact identity is separate from per-session exposure. | Memory is stored once, exposure fingerprints prove use, and explicit task files become task contracts without treating transient plans as specs. |
 
 ## Transitional boundaries and known contradictions
 

@@ -272,6 +272,8 @@ def test_dashboard_html_wires_sql_data_tab_surfaces(path: Path):
     assert 'data-explore-view="context">Context &amp; system</button>' in text
     assert 'id="tab-explore-context"' in text
     assert 'id="sql-specs-panel"' in text
+    assert "Task Contracts" in text
+    assert "item.exposure_count" in text
     assert 'id="sql-memory-panel"' in text
     assert 'id="sql-privacy-panel"' in text
     assert 'id="sql-exports-panel"' in text

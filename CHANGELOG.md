@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Renamed the Context & System Specs presentation to Task Contracts while preserving the existing SQLite and report API contracts.
 - Session retention now deletes only the selected sessions, refreshes their affected graph and usage-rollup keys, and relies on enforced SQLite constraints instead of rebuilding and globally validating the complete derived store.
 - Made improvement discovery and impact measurement execution-aware: long-lived sessions are segmented into canonical execution units, mixed or low-confidence archetypes are excluded from procedure cohorts, and workflow contracts are evaluated symmetrically against the first five comparable post-installation executions.
 - Reused the existing observation, workflow, skill, intervention, and measurement lifecycle for successful repeated procedures, suppressing duplicate proposals when an active installed skill already covers the same procedure signature.
@@ -22,6 +23,7 @@
 
 ### Added
 
+- Added privacy-safe Codex context discovery for user instructions and memory files, canonical per-session memory exposure evidence with dashboard counts, and automatic task-contract registration when `reflect_context` receives an explicit task file.
 - Added read-only `reflect_impact` MCP inspection for persisted before/after measurements and their exact compared execution-unit or session cohorts.
 - Added a current architecture map and decision register covering canonical data flow, domain ownership, transitional duplication, complexity hotspots, and guardrails for keeping future changes lean.
 - Added typed workflow contracts and the idempotent `reflect_record_milestone` MCP tool, with task-run, skill-version, execution-unit, target, provider, approval, write, and read-back fingerprint evidence; self-reports remain separate from corroborated adherence.

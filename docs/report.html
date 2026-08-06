@@ -3221,7 +3221,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
   <div class="cols-2">
     <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Specs</div>
+      <div class="panel-title">Task Contracts</div>
       <div id="sql-specs-panel"></div>
     </div>
     <div class="panel" style="margin-bottom:0">
@@ -6671,7 +6671,7 @@ function renderSqlTabPayloads(){
 
   const rowCounts = exports.row_counts || {};
   statRow.innerHTML = [
-    {label:'Specs', value:fmt(specs.total_specs || 0), sub:`${fmt(Object.values(specs.requirements_by_status || {}).reduce((a,b)=>a+b,0))} requirements`},
+    {label:'Task Contracts', value:fmt(specs.total_specs || 0), sub:`${fmt(Object.values(specs.requirements_by_status || {}).reduce((a,b)=>a+b,0))} requirements`},
     {label:'Memory', value:fmt(memory.total_memories || 0), sub:`${fmt(Object.keys(memory.memories_by_type || {}).length)} types`},
     {label:'Privacy', value:fmt(privacy.total_findings || 0), sub:`${fmt(Object.keys(privacy.findings_by_severity || {}).length)} severities`},
     {label:'Records', value:fmt(Object.values(rowCounts).reduce((a,b)=>a + Number(b || 0), 0)), sub:(exports.export_ready ? 'Ready for export' : 'No records yet')},
@@ -6688,7 +6688,7 @@ function renderSqlTabPayloads(){
 
   const specRows = (specs.specs || []).slice(0, 8);
   specsEl.innerHTML = specRows.length
-    ? `<table class="data-table"><thead><tr><th>Spec</th><th>Status</th><th style="text-align:right">Req</th><th style="text-align:right">Evidence</th></tr></thead><tbody>${
+    ? `<table class="data-table"><thead><tr><th>Contract</th><th>Status</th><th style="text-align:right">Req</th><th style="text-align:right">Evidence</th></tr></thead><tbody>${
         specRows.map(spec => `<tr>
           <td><strong>${escHtml(spec.title || spec.id || 'Untitled')}</strong><div style="color:var(--text-3);font-size:12px">${escHtml(spec.source_path || spec.owner || '')}</div></td>
           <td>${escHtml(spec.status || 'unknown')}</td>
@@ -6700,11 +6700,12 @@ function renderSqlTabPayloads(){
 
   const memoryRows = (memory.recent_memories || []).slice(0, 8);
   memoryEl.innerHTML = memoryRows.length
-    ? `<table class="data-table"><thead><tr><th>Memory</th><th>Scope</th><th>Type</th><th style="text-align:right">Confidence</th></tr></thead><tbody>${
+    ? `<table class="data-table"><thead><tr><th>Memory</th><th>Scope</th><th>Type</th><th style="text-align:right">Sessions</th><th style="text-align:right">Confidence</th></tr></thead><tbody>${
         memoryRows.map(item => `<tr>
           <td><strong>${escHtml(item.preview || item.id || 'Memory')}</strong><div style="color:var(--text-3);font-size:12px">${escHtml(item.source || '')}</div></td>
           <td>${escHtml(item.scope || '')}</td>
           <td>${escHtml(item.type || '')}</td>
+          <td style="text-align:right">${fmt(item.exposure_count || 0)}</td>
           <td style="text-align:right">${Math.round(Number(item.confidence || 0) * 100)}%</td>
         </tr>`).join('')
       }</tbody></table>`

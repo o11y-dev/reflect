@@ -13,6 +13,7 @@ from pathlib import Path
 from reflect.parsing import (
     _iter_claude_log_spans,
     _iter_claude_session_spans,
+    _iter_codex_context_spans,
     _iter_codex_log_spans,
     _iter_codex_session_spans,
     _iter_copilot_session_spans,
@@ -651,4 +652,22 @@ def ingest_native_session_file(
         spans_factory=lambda _start, _end: spans,
         skip_unchanged=skip_unchanged,
         skip_existing_session=skip_existing_sessions,
+    )
+
+
+def ingest_codex_context_file(
+    db_conn: sqlite3.Connection,
+    *,
+    file_path: Path,
+    skip_unchanged: bool = True,
+) -> IngestionResult:
+    """Ingest only the bounded, privacy-safe context preamble from a Codex session."""
+
+    return _ingest_file_spans(
+        db_conn,
+        file_path=file_path,
+        source=f"native_context:codex:{file_path}",
+        source_type="native_context",
+        spans_factory=lambda _start, _end: _iter_codex_context_spans(file_path),
+        skip_unchanged=skip_unchanged,
     )

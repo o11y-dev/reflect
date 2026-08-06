@@ -217,18 +217,47 @@ def _scope_clause(column: str, scoped_ids: list[str] | None, *, prefix: str = "W
     return f"{prefix} {column} IN ({', '.join('?' for _ in scoped_ids)})", scoped_ids
 
 
+def _artifact_memory_scope_clause(
+    scoped_ids: list[str] | None,
+    *,
+    type_filter: str,
+    prefix: str = "WHERE",
+) -> tuple[str, list[str]]:
+    if scoped_ids is None:
+        return f"{prefix} {type_filter}", []
+    if not scoped_ids:
+        return f"{prefix} 1 = 0 AND {type_filter}", []
+    placeholders = ", ".join("?" for _ in scoped_ids)
+    return (
+        f"""
+        {prefix} {type_filter}
+          AND (
+            memories.session_id IN ({placeholders})
+            OR EXISTS (
+              SELECT 1 FROM memory_exposures me
+              WHERE me.memory_id = memories.id
+                AND me.session_id IN ({placeholders})
+            )
+          )
+        """,
+        [*scoped_ids, *scoped_ids],
+    )
+
+
 def _cursor_plan_scope_clause(scoped_ids: list[str] | None, *, prefix: str = "WHERE") -> tuple[str, list[str]]:
-    base_scope, params = _scope_clause("session_id", scoped_ids, prefix=prefix)
-    if not base_scope:
-        return f"{prefix} type = 'cursor_plan'", []
-    return f"{base_scope} AND type = 'cursor_plan'", params
+    return _artifact_memory_scope_clause(
+        scoped_ids,
+        type_filter="type = 'cursor_plan'",
+        prefix=prefix,
+    )
 
 
 def _memory_scope_clause(scoped_ids: list[str] | None, *, prefix: str = "WHERE") -> tuple[str, list[str]]:
-    base_scope, params = _scope_clause("session_id", scoped_ids, prefix=prefix)
-    if not base_scope:
-        return f"{prefix} type <> 'cursor_plan'", []
-    return f"{base_scope} AND type <> 'cursor_plan'", params
+    return _artifact_memory_scope_clause(
+        scoped_ids,
+        type_filter="type <> 'cursor_plan'",
+        prefix=prefix,
+    )
 
 
 def _dict_rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
@@ -1927,10 +1956,23 @@ def _scoped_spec_filter(scoped_ids: list[str] | None) -> tuple[str, list[str]]:
           UNION
           SELECT m.spec_id
           FROM memories m
-          WHERE m.session_id IN ({placeholders}) AND m.spec_id IS NOT NULL
+          WHERE m.spec_id IS NOT NULL
+            AND (
+              m.session_id IN ({placeholders})
+              OR EXISTS (
+                SELECT 1 FROM memory_exposures me
+                WHERE me.memory_id = m.id
+                  AND me.session_id IN ({placeholders})
+              )
+            )
+          UNION
+          SELECT tr.task_contract_id
+          FROM mcp_task_runs tr
+          WHERE tr.runtime_session_id IN ({placeholders})
+            AND tr.task_contract_id IS NOT NULL
         )
         """,
-        [*scoped_ids, *scoped_ids],
+        [*scoped_ids, *scoped_ids, *scoped_ids, *scoped_ids],
     )
 
 
@@ -2071,7 +2113,13 @@ def _build_memory(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Mem
     scope, params = _memory_scope_clause(scoped_ids)
     rows = _dict_rows(conn.execute(
         f"""
-        SELECT id, scope, type, sensitivity, source, confidence, content_preview_redacted, last_seen_at, session_id
+        SELECT id, scope, type, sensitivity, source, confidence,
+               content_preview_redacted, last_seen_at, session_id,
+               (
+                 SELECT COUNT(*)
+                 FROM memory_exposures me
+                 WHERE me.memory_id = memories.id
+               ) AS exposure_count
         FROM memories
         {scope}
         ORDER BY COALESCE(last_seen_at, updated_at, created_at) DESC, id ASC
@@ -2136,6 +2184,7 @@ def _build_memory(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Mem
                 "source": row["source"],
                 "confidence": float(row["confidence"] or 0),
                 "preview": row["content_preview_redacted"] or "",
+                "exposure_count": int(row["exposure_count"] or 0),
                 "last_seen_at": row["last_seen_at"] or "",
                 "session_id": row["session_id"] or "",
             }
@@ -2185,7 +2234,7 @@ def _build_exports(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Ex
         "llm_calls": _count_rows(conn, "llm_calls", "session_id", scoped_ids),
         "tool_calls": _count_rows(conn, "tool_calls", "session_id", scoped_ids),
         "mcp_calls": _count_rows(conn, "mcp_calls", "session_id", scoped_ids),
-        "memories": _count_rows(conn, "memories", "session_id", scoped_ids),
+        "memories": _count_memories(conn, scoped_ids),
         "privacy_findings": _count_rows(conn, "privacy_findings", "session_id", scoped_ids),
         "evidence": _count_evidence(conn, scoped_ids),
         "specs": _count_specs(conn, scoped_ids),
@@ -2227,6 +2276,11 @@ def _count_by(
 def _count_specs(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> int:
     spec_where, spec_params = _scoped_spec_filter(scoped_ids)
     return int(conn.execute(f"SELECT COUNT(*) FROM specs s {spec_where}", spec_params).fetchone()[0] or 0)
+
+
+def _count_memories(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> int:
+    scope, params = _artifact_memory_scope_clause(scoped_ids, type_filter="1 = 1")
+    return int(conn.execute(f"SELECT COUNT(*) FROM memories {scope}", params).fetchone()[0] or 0)
 
 
 def _count_evidence(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> int:

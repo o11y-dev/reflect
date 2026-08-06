@@ -124,6 +124,45 @@ def test_context_service_records_and_completes_an_agent_task(tmp_path):
         conn.close()
 
 
+def test_context_service_registers_explicit_task_file_as_contract(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    contract = workspace / "dashboard-contract.md"
+    contract.write_text("# Dashboard contract\n\nAcceptance: filtered context is visible.\n", encoding="utf-8")
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        service = ReflectContextService(conn)
+        answer = service.begin_task(
+            "Implement the reviewed dashboard contract",
+            path=workspace,
+            task_file=contract,
+        )
+
+        status = service.task_runs.status(str(answer.task_run_id))
+        task_run = conn.execute(
+            "SELECT task_contract_id FROM mcp_task_runs WHERE id = ?",
+            (answer.task_run_id,),
+        ).fetchone()
+        stored = conn.execute(
+            "SELECT id, title, status, source_path, content_hash FROM specs WHERE id = ?",
+            (task_run[0],),
+        ).fetchone()
+
+        assert status.task_contract_id == task_run[0]
+        assert status.task_contract_hash
+        assert stored == (
+            task_run[0],
+            "dashboard contract",
+            "tracked",
+            "dashboard-contract.md",
+            status.task_contract_hash,
+        )
+    finally:
+        conn.close()
+
+
 def test_context_service_returns_and_measures_the_selected_versioned_skill(
     tmp_path,
     monkeypatch,

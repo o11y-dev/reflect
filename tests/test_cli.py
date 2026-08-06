@@ -417,6 +417,10 @@ class TestHelp:
         (home / ".cursor" / "plans" / "workflow.plan.md").write_text("# cursor plan\n", encoding="utf-8")
         (home / ".claude").mkdir(parents=True)
         (home / ".claude" / "CLAUDE.md").write_text("# user\n", encoding="utf-8")
+        (home / ".codex" / "memories").mkdir(parents=True)
+        (home / ".codex" / "AGENTS.md").write_text("# codex\n", encoding="utf-8")
+        (home / ".codex" / "memories" / "MEMORY.md").write_text("# memory\n", encoding="utf-8")
+        (home / ".codex" / "memories" / "memory_summary.md").write_text("# summary\n", encoding="utf-8")
 
         with patch.dict(os.environ, {"HOME": str(home)}, clear=False):
             result = runner.invoke(
@@ -426,7 +430,7 @@ class TestHelp:
 
         assert result.exit_code == 0
         assert "Synced memories" in result.output
-        assert "discovered=4" in result.output
+        assert "discovered=7" in result.output
 
         list_result = runner.invoke(
             main,
@@ -452,6 +456,9 @@ class TestHelp:
         assert ("project", "agent_instruction", "filesystem_instruction_scan", "local_sqlite") in rows
         assert ("path", "copilot_instruction", "filesystem_instruction_scan", "local_sqlite") in rows
         assert ("user", "claude_memory", "filesystem_instruction_scan", "local_sqlite") in rows
+        assert ("user", "codex_instruction", "filesystem_instruction_scan", "local_sqlite") in rows
+        assert ("user", "codex_memory", "filesystem_instruction_scan", "local_sqlite") in rows
+        assert ("user", "codex_memory_summary", "filesystem_instruction_scan", "local_sqlite") in rows
         assert ("user", "cursor_plan", "filesystem_instruction_scan", "local_sqlite") in rows
 
     def test_db_rebuild_graph(self, runner, tmp_path):

@@ -267,6 +267,7 @@ def _upsert_session(
         if _valid_source_timestamp(str(value) if value else None)
     ]
     last_observed_at = max(source_timestamps, default=None)
+    context_only = bool(attrs.get("gen_ai.memory.id"))
     conn.execute(
         """
         INSERT INTO sessions(
@@ -332,8 +333,8 @@ def _upsert_session(
             cache_creation,
             cache_read,
             reasoning,
-            raw_event["source_type"],
-            raw_event["source_id"],
+            None if context_only else raw_event["source_type"],
+            None if context_only else raw_event["source_id"],
             last_observed_at,
             timestamp,
             timestamp,
@@ -608,11 +609,23 @@ def _insert_memory_record(
         return
     conn.execute(
         """
-        INSERT OR IGNORE INTO memories(
+        INSERT INTO memories(
           id, scope, type, session_id, step_id, content_hash,
           content_preview_redacted, confidence, sensitivity, source, expires_at,
           last_seen_at, raw_attrs_json, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          content_hash = COALESCE(excluded.content_hash, memories.content_hash),
+          content_preview_redacted = COALESCE(
+            excluded.content_preview_redacted,
+            memories.content_preview_redacted
+          ),
+          last_seen_at = CASE
+            WHEN memories.last_seen_at IS NULL THEN excluded.last_seen_at
+            WHEN excluded.last_seen_at IS NULL THEN memories.last_seen_at
+            ELSE MAX(memories.last_seen_at, excluded.last_seen_at)
+          END,
+          updated_at = excluded.updated_at
         """,
         (
             memory_id,
@@ -628,6 +641,30 @@ def _insert_memory_record(
             attrs.get("gen_ai.memory.expires_at"),
             attrs.get("gen_ai.memory.last_seen_at") or raw_event["observed_at"],
             raw_event["attrs_json"],
+            timestamp,
+            timestamp,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO memory_exposures(
+          memory_id, session_id, step_id, content_hash, source, observed_at,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(memory_id, session_id) DO UPDATE SET
+          step_id = excluded.step_id,
+          content_hash = excluded.content_hash,
+          source = excluded.source,
+          observed_at = excluded.observed_at,
+          updated_at = excluded.updated_at
+        """,
+        (
+            memory_id,
+            session_id,
+            step_id,
+            attrs.get("gen_ai.memory.content_hash"),
+            attrs.get("gen_ai.memory.source") or "opentelemetry_hook",
+            attrs.get("gen_ai.memory.last_seen_at") or raw_event["observed_at"],
             timestamp,
             timestamp,
         ),

@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from reflect.context_artifacts import context_artifact_id
 from reflect.memory.models import MemoryItem, MemorySourceMetadata, utc_now
 from reflect.memory.registry import MemoryProviderRegistry
 from reflect.memory.sqlite_provider import LocalSQLiteMemoryProvider
@@ -120,7 +121,7 @@ class MemoryService:
                 continue
             kind, scope = _classify_instruction(source_path, workspace_root, home_root=home_root or Path.home())
             content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-            memory_id = f"instruction_{hashlib.sha1(str(source_path).encode('utf-8')).hexdigest()}"
+            memory_id = context_artifact_id(source_path)
             existed = self.local.inspect(memory_id) is not None
             attrs = {
                 "path": str(source_path),

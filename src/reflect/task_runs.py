@@ -9,6 +9,7 @@ from pathlib import Path
 
 from pydantic import Field
 
+from reflect.context_artifacts import TaskContractArtifact, task_contract_artifact
 from reflect.execution_units import ExecutionUnitRepository
 from reflect.improvements.repository import utc_now
 from reflect.schema.base import ReflectModel
@@ -54,6 +55,8 @@ class MCPTaskRunStatus(ReflectModel):
     selected_skills: list[MCPSelectedSkillRef] = Field(default_factory=list)
     workspace_path: str
     task_file_path: str | None = None
+    task_contract_id: str | None = None
+    task_contract_hash: str | None = None
     runtime_session_id: str | None = None
     runtime_agent: str | None = None
     execution_unit_id: str | None = None
@@ -118,13 +121,20 @@ class MCPTaskRunService:
         session_hint = self.usage.runtime_session_hint()
         task_run_id = f"mcp_task_{uuid.uuid4().hex}"
         now = utc_now()
+        contract = self._register_task_contract(
+            task_file_path,
+            workspace_path=workspace_path,
+            owner=session_hint.agent if session_hint else None,
+            now=now,
+        )
         self.conn.execute(
             """
             INSERT INTO mcp_task_runs(
               id, runtime_session_id, runtime_agent, workspace_path, task_file_path,
-              question_hash, workflow_id, selected_skills_json, status,
+              task_contract_id, task_contract_hash, question_hash, workflow_id,
+              selected_skills_json, status,
               started_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'started', ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'started', ?, ?, ?)
             """,
             (
                 task_run_id,
@@ -132,6 +142,8 @@ class MCPTaskRunService:
                 session_hint.agent if session_hint else None,
                 str(workspace_path),
                 str(task_file_path) if task_file_path else None,
+                contract.artifact_id if contract else None,
+                contract.content_hash if contract else None,
                 hashlib.sha256(question.encode("utf-8")).hexdigest(),
                 workflow_id,
                 json.dumps(
@@ -151,6 +163,41 @@ class MCPTaskRunService:
             )
         self.conn.commit()
         return task_run_id
+
+    def _register_task_contract(
+        self,
+        path: Path | None,
+        *,
+        workspace_path: Path,
+        owner: str | None,
+        now: str,
+    ) -> TaskContractArtifact | None:
+        if path is None:
+            return None
+        contract = task_contract_artifact(path, workspace_root=workspace_path)
+        self.conn.execute(
+            """
+            INSERT INTO specs(
+              id, title, status, owner, source_path, content_hash, created_at, updated_at
+            ) VALUES (?, ?, 'tracked', ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              title = excluded.title,
+              owner = COALESCE(excluded.owner, specs.owner),
+              source_path = excluded.source_path,
+              content_hash = excluded.content_hash,
+              updated_at = excluded.updated_at
+            """,
+            (
+                contract.artifact_id,
+                contract.title,
+                owner,
+                contract.source_path,
+                contract.content_hash,
+                now,
+                now,
+            ),
+        )
+        return contract
 
     def complete(
         self,
@@ -227,7 +274,7 @@ class MCPTaskRunService:
                    outcome, verification_passed, completion_summary_redacted,
                    started_at, completed_at, updated_at, session_linked_at,
                    session_outcome_recorded, skill_usage_recorded_count,
-                   execution_unit_id,
+                   execution_unit_id, task_contract_id, task_contract_hash,
                    (
                      SELECT COUNT(*) FROM improvement_events ie
                      WHERE ie.entity_type = 'mcp_task_run'
@@ -264,7 +311,9 @@ class MCPTaskRunService:
             runtime_session_id=runtime_session_id,
             runtime_agent=str(row[2]) if row[2] else None,
             execution_unit_id=str(row[17]) if row[17] else None,
-            milestone_count=int(row[18] or 0),
+            task_contract_id=str(row[18]) if row[18] else None,
+            task_contract_hash=str(row[19]) if row[19] else None,
+            milestone_count=int(row[20] or 0),
             workspace_path=str(row[3]),
             task_file_path=str(row[4]) if row[4] else None,
             workflow_id=str(row[5]) if row[5] else None,

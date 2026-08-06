@@ -37,6 +37,30 @@ def _load_json_dict(value: object) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+def _memory_exposure_rows(conn: sqlite3.Connection, memory_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT session_id, MIN(created_at) AS first_seen_at,
+               MAX(updated_at) AS last_seen_at
+        FROM memory_exposures
+        WHERE memory_id = ?
+        GROUP BY session_id
+        UNION ALL
+        SELECT session_id, created_at, updated_at
+        FROM memories
+        WHERE id = ?
+          AND COALESCE(session_id, '') <> ''
+          AND NOT EXISTS (
+            SELECT 1 FROM memory_exposures me
+            WHERE me.memory_id = memories.id
+              AND me.session_id = memories.session_id
+          )
+        ORDER BY session_id
+        """,
+        (memory_id, memory_id),
+    ).fetchall()
+
+
 def _short_id(value: object, length: int = 10) -> str:
     text = str(value or "")
     return text[-length:] if len(text) > length else text
@@ -1310,12 +1334,12 @@ def rebuild_graph(
                             timestamp=timestamp,
                         )
                         edges += int(inserted)
-            if memory["session_id"]:
+            for exposure in _memory_exposure_rows(conn, str(memory["id"])):
                 session_node, _ = _insert_node(
                     conn,
                     kind="Session",
-                    label=memory["session_id"],
-                    session_id=memory["session_id"],
+                    label=exposure["session_id"],
+                    session_id=exposure["session_id"],
                     timestamp=timestamp,
                 )
                 _, inserted = _insert_edge(
@@ -1323,7 +1347,9 @@ def rebuild_graph(
                     source_node_id=session_node,
                     target_node_id=memory_node,
                     kind="recorded_memory",
-                    session_id=memory["session_id"],
+                    session_id=exposure["session_id"],
+                    first_seen_at=exposure["first_seen_at"],
+                    last_seen_at=exposure["last_seen_at"],
                     timestamp=timestamp,
                 )
                 edges += int(inserted)
@@ -1430,12 +1456,12 @@ def rebuild_graph(
                             timestamp=timestamp,
                         )
                         edges += int(inserted)
-            if memory["session_id"]:
+            for exposure in _memory_exposure_rows(conn, str(memory["id"])):
                 session_node, _ = _insert_node(
                     conn,
                     kind="Session",
-                    label=memory["session_id"],
-                    session_id=memory["session_id"],
+                    label=exposure["session_id"],
+                    session_id=exposure["session_id"],
                     timestamp=timestamp,
                 )
                 _, inserted = _insert_edge(
@@ -1443,10 +1469,10 @@ def rebuild_graph(
                     source_node_id=session_node,
                     target_node_id=spec_node,
                     kind="planned_spec",
-                    session_id=memory["session_id"],
+                    session_id=exposure["session_id"],
                     attrs={"memory_id": memory["id"]},
-                    first_seen_at=memory["created_at"],
-                    last_seen_at=memory["last_seen_at"],
+                    first_seen_at=exposure["first_seen_at"],
+                    last_seen_at=exposure["last_seen_at"],
                     timestamp=timestamp,
                 )
                 edges += int(inserted)

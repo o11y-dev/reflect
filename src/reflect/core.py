@@ -1173,6 +1173,7 @@ def _prepare_usage_db(
     from reflect.preparation import PreparationStage, report_preparation_progress
     from reflect.store.cursor_adapter import apply_cursor_transcript_usage_estimates
     from reflect.store.ingest import (
+        ingest_codex_context_file,
         ingest_native_session_file,
         ingest_otlp_logs_file,
         ingest_otlp_traces_file,
@@ -1236,6 +1237,8 @@ def _prepare_usage_db(
                     for candidate in native_session_ids
                 ):
                     continue
+                if native_agent == "codex":
+                    ingest_codex_context_file(conn, file_path=session_file)
                 result = ingest_native_session_file(
                     conn,
                     file_path=session_file,
@@ -4750,6 +4753,7 @@ def _prepare_sql_report_db(
     from reflect.store.graph_normalize import rebuild_graph, refresh_graph
     from reflect.store.ingest import (
         AppendOnlyReplayPolicy,
+        ingest_codex_context_file,
         ingest_native_session_file,
         ingest_otlp_logs_file,
         ingest_otlp_traces_file,
@@ -4826,8 +4830,16 @@ def _prepare_sql_report_db(
                 "Reading local agent sessions...",
             )
             native_result = {"inserted": 0, "skipped": 0, "unchanged": 0}
+            context_result = {"inserted": 0, "skipped": 0, "unchanged": 0}
             for agent, session_file in _discover_rich_session_files():
                 source_ref = f"native_session:{agent}:{session_file}"
+                if agent == "codex":
+                    context_file_result = ingest_codex_context_file(
+                        conn,
+                        file_path=session_file,
+                    )
+                    for key in context_result:
+                        context_result[key] += int(context_file_result.get(key, 0))
                 result = ingest_native_session_file(
                     conn,
                     file_path=session_file,
@@ -4846,6 +4858,11 @@ def _prepare_sql_report_db(
                 ingest_sources["native_sessions"]["source_type"] = "native_session"
                 ingest_result["inserted"] += native_result["inserted"]
                 ingest_result["skipped"] += native_result["skipped"]
+            if any(context_result.values()):
+                ingest_sources["context_artifacts"] = context_result
+                ingest_sources["context_artifacts"]["source_type"] = "native_context"
+                ingest_result["inserted"] += context_result["inserted"]
+                ingest_result["skipped"] += context_result["skipped"]
         needs_normalize = bool(
             ingest_result["inserted"]
             or conn.execute(

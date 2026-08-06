@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
+from reflect.context_artifacts import codex_context_exposures
 from reflect.store.mcp import DEFAULT_MCP_CLASSIFIER
 from reflect.store.provenance import is_codex_otel_service
 from reflect.utils import (
@@ -688,12 +689,7 @@ def _native_session_path_matches_id(file_path: Path, session_id: str) -> bool:
     )
 
 
-def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
-    records = list(_load_json_lines(file_path))
-    if not records:
-        return
-
-    meta = next((r.get("payload") or {} for r in records if r.get("type") == "session_meta"), {})
+def _codex_session_identity(meta: dict, file_path: Path) -> tuple[str, str, dict]:
     session_id = str(meta.get("id") or file_path.stem).removeprefix("rollout-")
     trace_id = _stable_hex_id("codex", session_id, length=32)
     base_attrs = {
@@ -714,6 +710,52 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
         base_attrs["gen_ai.system"] = str(meta["model_provider"])
     if meta.get("cwd"):
         base_attrs["code.workspace.root"] = str(meta["cwd"])
+    return session_id, trace_id, base_attrs
+
+
+def _iter_codex_context_spans(file_path: Path, *, max_records: int = 64) -> Iterable[dict]:
+    """Read only the bounded Codex preamble that carries injected context."""
+
+    records: list[dict] = []
+    for index, record in enumerate(_load_json_lines(file_path)):
+        if index >= max_records:
+            break
+        records.append(record)
+    if not records:
+        return
+    meta = next((r.get("payload") or {} for r in records if r.get("type") == "session_meta"), {})
+    _, trace_id, base_attrs = _codex_session_identity(meta, file_path)
+    workspace_root = Path(str(meta.get("cwd"))) if meta.get("cwd") else None
+    for index, record in enumerate(records):
+        payload = record.get("payload") or {}
+        if record.get("type") != "response_item" or payload.get("type") != "message":
+            continue
+        text = _codex_content_text(payload.get("content"))
+        for exposure_index, exposure in enumerate(
+            codex_context_exposures(text, workspace_root=workspace_root)
+        ):
+            timestamp_ns = _codex_record_timestamp_ns(record)
+            yield _make_flat_span(
+                "gen_ai.client.context.exposure",
+                timestamp_ns,
+                timestamp_ns,
+                {
+                    **base_attrs,
+                    "gen_ai.client.hook.event": "ContextExposure",
+                    **exposure.as_memory_attributes(),
+                },
+                trace_id,
+                f"{index}:context:{exposure_index}:{exposure.artifact_id}",
+            )
+
+
+def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
+    records = list(_load_json_lines(file_path))
+    if not records:
+        return
+
+    meta = next((r.get("payload") or {} for r in records if r.get("type") == "session_meta"), {})
+    _, trace_id, base_attrs = _codex_session_identity(meta, file_path)
 
     first_ts = 0
     last_ts = 0

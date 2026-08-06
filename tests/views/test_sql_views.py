@@ -479,6 +479,74 @@ def test_list_sessions_paginates_and_filters_from_sql(tmp_path):
         conn.close()
 
 
+def test_context_tabs_scope_artifacts_through_exposure_and_task_contract(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        _seed_view_db(conn)
+        now = "2026-05-03T12:00:00+00:00"
+        conn.execute(
+            """
+            INSERT INTO memories(
+              id, scope, type, content_hash, content_preview_redacted,
+              confidence, sensitivity, source, last_seen_at, raw_attrs_json,
+              created_at, updated_at
+            ) VALUES (
+              'codex-memory', 'user', 'codex_memory_summary', 'hash',
+              '[Codex memory summary]', 1.0, 'private', 'codex_session_context',
+              ?, '{}', ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO memory_exposures(
+              memory_id, session_id, content_hash, source, observed_at,
+              created_at, updated_at
+            ) VALUES (
+              'codex-memory', 'sess-2', 'hash', 'codex_session_context', ?, ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO specs(id, title, status, owner, source_path, created_at, updated_at)
+            VALUES ('task-contract', 'Dashboard contract', 'tracked', 'codex',
+                    'docs/dashboard-contract.md', ?, ?)
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO mcp_task_runs(
+              id, runtime_session_id, runtime_agent, workspace_path,
+              task_file_path, task_contract_id, question_hash,
+              selected_skills_json, status, started_at, created_at, updated_at
+            ) VALUES (
+              'task-run', 'sess-2', 'codex', '/workspace',
+              '/workspace/docs/dashboard-contract.md', 'task-contract', 'hash',
+              '[]', 'started', ?, ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+        conn.commit()
+
+        memory = build_report_tab(conn, "memory", session_ids={"sess-2"})
+        contracts = build_report_tab(conn, "specs", session_ids={"sess-2"})
+
+        assert memory["memories_by_type"]["codex_memory_summary"] == 1
+        codex_memory = next(
+            item for item in memory["recent_memories"] if item["id"] == "codex-memory"
+        )
+        assert codex_memory["exposure_count"] == 1
+        assert any(item["id"] == "task-contract" for item in contracts["specs"])
+    finally:
+        conn.close()
+
+
 def test_list_sessions_uses_canonical_events_when_rollup_is_missing(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:

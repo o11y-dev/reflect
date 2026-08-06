@@ -5,10 +5,12 @@ from pathlib import Path
 import pytest
 from conftest import DAY1, HOUR, make_span, wrap_otlp
 
+from reflect.context_artifacts import context_artifact_id
 from reflect.parsing import (
     _flatten_otlp_attributes,
     _iter_claude_log_spans,
     _iter_claude_session_spans,
+    _iter_codex_context_spans,
     _iter_codex_log_spans,
     _iter_codex_session_spans,
     _iter_copilot_session_spans,
@@ -541,6 +543,65 @@ class TestCodexSessionFiles:
         assert spans[2]["attributes"]["gen_ai.client.tool_use_id"] == "call-1"
         assert spans[3]["attributes"]["gen_ai.client.output"] == "Tests pass."
         assert spans[4]["attributes"]["gen_ai.request.model"] == "gpt-5.5"
+
+    def test_codex_session_emits_private_context_exposures(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        workspace = tmp_path / "repo"
+        home.mkdir()
+        workspace.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: home)
+        agent_path = workspace / "AGENTS.md"
+        p = tmp_path / "rollout-session.jsonl"
+        records = [
+            {
+                "timestamp": "2026-05-08T00:42:07.990Z",
+                "type": "session_meta",
+                "payload": {"id": "codex-session", "cwd": str(workspace)},
+            },
+            {
+                "timestamp": "2026-05-08T00:42:07.991Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "========= MEMORY_SUMMARY BEGINS =========\nprivate memory\n========= MEMORY_SUMMARY ENDS =========",
+                    }],
+                },
+            },
+            {
+                "timestamp": "2026-05-08T00:42:07.992Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{
+                        "type": "input_text",
+                        "text": f"# AGENTS.md instructions for {agent_path}\n\n<INSTRUCTIONS>\nprivate instructions\n</INSTRUCTIONS>",
+                    }],
+                },
+            },
+        ]
+        p.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+        spans = list(_iter_codex_context_spans(p))
+        exposures = [
+            span for span in spans
+            if span["attributes"].get("gen_ai.client.hook.event") == "ContextExposure"
+        ]
+
+        assert {span["attributes"]["gen_ai.memory.type"] for span in exposures} == {
+            "agent_instruction",
+            "codex_memory_summary",
+        }
+        assert {span["attributes"]["gen_ai.memory.id"] for span in exposures} == {
+            context_artifact_id(agent_path),
+            context_artifact_id(home / ".codex" / "memories" / "memory_summary.md"),
+        }
+        serialized = json.dumps([span["attributes"] for span in exposures])
+        assert "private memory" not in serialized
+        assert "private instructions" not in serialized
 
     def test_codex_session_skips_environment_context_prompts(self, tmp_path):
         p = tmp_path / "rollout-session.jsonl"
