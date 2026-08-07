@@ -1275,8 +1275,59 @@ def test_workflow_apply_blocks_another_active_candidate_for_the_same_target(tmp_
 
         assert preview["checks"]["apply_allowed"] is False
         assert preview["checks"]["active_conflicts"][0]["candidate_id"] == first.id
+        assert preview["suggested_unique_slug"] == f"{first.content['slug']}-2"
         with pytest.raises(RuntimeError, match="already owns"):
             service.workflows.apply(second.id, project_root=project_root)
+
+        renamed = service.workflows.edit(
+            second.id,
+            content={**second.content, "slug": preview["suggested_unique_slug"]},
+        )
+        renamed_preview = service.workflows.preview(renamed.id, project_root=project_root)
+        assert renamed_preview["checks"]["apply_allowed"] is True
+        assert renamed_preview["change_kind"] == "create"
+    finally:
+        conn.close()
+
+
+def test_tool_failure_workflows_use_tool_specific_names_and_retry_impact(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        for index, session_id in enumerate(("session-1", "session-2"), start=1):
+            step_id = f"read-failure-step-{index}"
+            conn.execute(
+                """
+                INSERT INTO steps(
+                  id, session_id, seq, type, started_at, status, raw_attrs_json,
+                  created_at, updated_at
+                ) VALUES (?, ?, ?, 'tool_call', ?, 'failed', '{}', ?, ?)
+                """,
+                (step_id, session_id, 90 + index, NOW, NOW, NOW),
+            )
+            conn.execute(
+                """
+                INSERT INTO tool_calls(
+                  id, step_id, session_id, tool_name, status, input_hash, error_type,
+                  raw_attrs_json, created_at, updated_at
+                ) VALUES (?, ?, ?, 'Read', 'failed', ?, 'missing_file', '{}', ?, ?)
+                """,
+                (f"read-failure-{index}", step_id, session_id, f"read-{index}", NOW, NOW),
+            )
+        conn.commit()
+
+        service.refresh()
+        candidates = [
+            item
+            for item in service.workflows.list()
+            if item.content.get("source", {}).get("rule_id") == "repeated_tool_failure_chain"
+        ]
+
+        assert len(candidates) == 2
+        assert {item.target_metric for item in candidates} == {"identical_retry_calls"}
+        slugs = {str(item.content["slug"]) for item in candidates}
+        assert len(slugs) == 2
+        assert all(slug.startswith("tool-failure-recovery-") for slug in slugs)
+        assert "tool-failure-recovery" not in slugs
     finally:
         conn.close()
 
@@ -1746,7 +1797,7 @@ def test_refresh_automatically_measures_new_comparable_sessions_once(tmp_path):
         candidate = next(
             item
             for item in service.workflows.list()
-            if item.target_metric == "tool_failure_rate"
+            if item.content.get("source", {}).get("rule_id") == "repeated_tool_failure_chain"
         )
         applied = service.workflows.apply(candidate.id, project_root=project_root)
         conn.execute(
@@ -1773,33 +1824,45 @@ def test_refresh_automatically_measures_new_comparable_sessions_once(tmp_path):
                 (session_id, started_at, started_at, int(not before), NOW, NOW),
             )
             step_id = f"measure-step-{index}"
-            conn.execute(
-                """
-                INSERT INTO steps(
-                  id, session_id, seq, type, started_at, status, raw_attrs_json,
-                  created_at, updated_at
-                ) VALUES (?, ?, 1, 'tool_call', ?, ?, '{}', ?, ?)
-                """,
-                (step_id, session_id, started_at, status, NOW, NOW),
-            )
-            conn.execute(
-                """
-                INSERT INTO tool_calls(
-                  id, step_id, session_id, tool_name, status, input_hash, error_type,
-                  raw_attrs_json, created_at, updated_at
-                ) VALUES (?, ?, ?, 'exec', ?, ?, ?, '{}', ?, ?)
-                """,
-                (
-                    f"measure-tool-{index}",
-                    step_id,
-                    session_id,
-                    status,
-                    f"measure-input-{index}",
-                    error_type,
-                    NOW,
-                    NOW,
-                ),
-            )
+            for repeat in range(1 if before else 3):
+                repeated_step_id = f"{step_id}-{repeat}"
+                conn.execute(
+                    """
+                    INSERT INTO steps(
+                      id, session_id, seq, type, started_at, status, raw_attrs_json,
+                      created_at, updated_at
+                    ) VALUES (?, ?, ?, 'tool_call', ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        repeated_step_id,
+                        session_id,
+                        repeat + 1,
+                        started_at,
+                        status,
+                        json.dumps({"skill": candidate.content["slug"]}) if not before else "{}",
+                        NOW,
+                        NOW,
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO tool_calls(
+                      id, step_id, session_id, tool_name, status, input_hash,
+                      input_preview_redacted, error_type, raw_attrs_json, created_at, updated_at
+                    ) VALUES (?, ?, ?, 'exec', ?, ?, ?, ?, '{}', ?, ?)
+                    """,
+                    (
+                        f"measure-tool-{index}-{repeat}",
+                        repeated_step_id,
+                        session_id,
+                        status,
+                        f"measure-input-{index}",
+                        "poetry run pytest -q" if not before else "safe command",
+                        error_type,
+                        NOW,
+                        NOW,
+                    ),
+                )
         conn.commit()
 
         result = service.refresh()
@@ -1814,6 +1877,8 @@ def test_refresh_automatically_measures_new_comparable_sessions_once(tmp_path):
         assert measurement["before_count"] >= 5
         assert measurement["after_count"] >= 5
         assert measurement["verdict"] == "regressed"
+        assert measurement["cohort"]["measurement_state"] == "measured"
+        assert measurement["cohort"]["quality"]["exposure_counts"]["followed"] >= 5
         cohorts = service.measurements.sessions(measurement["id"])
         assert cohorts["candidate_id"] == candidate.id
         assert cohorts["snapshot_exact"] is True
@@ -1830,13 +1895,91 @@ def test_refresh_automatically_measures_new_comparable_sessions_once(tmp_path):
             for item in [*cohorts["before_sessions"], *cohorts["after_sessions"]]
         }
         assert metric_values["measure-session-3"] == 0.0
-        assert metric_values["measure-session-6"] == 1.0
+        assert metric_values["measure-session-6"] == 3.0
         assert all(item["metric_value"] is not None for item in cohorts["after_sessions"])
         skill = service.skills.skill_for_candidate(candidate.id)
         assert skill.measurement_count == 1
         assert service.skills.show(skill.id).measurements[0].verdict == "regressed"
         assert second["measurements_created"] == 0
         assert conn.execute("SELECT COUNT(*) FROM measurements").fetchone()[0] == count_after_first_refresh
+    finally:
+        conn.close()
+
+
+def test_failure_rate_impact_is_not_measurable_with_unknown_status_baseline(tmp_path):
+    service, conn = _service(tmp_path)
+    project_root = tmp_path / "project"
+    (project_root / ".git").mkdir(parents=True)
+    try:
+        service.refresh()
+        candidate = next(
+            item
+            for item in service.workflows.list()
+            if item.content.get("source", {}).get("rule_id") == "repeated_tool_failure_chain"
+        )
+        conn.execute(
+            """
+            UPDATE workflow_candidates
+            SET target_metric = 'tool_failure_rate', task_archetype_id = NULL
+            WHERE id = ?
+            """,
+            (candidate.id,),
+        )
+        applied = service.workflows.apply(candidate.id, project_root=project_root)
+        conn.execute(
+            "UPDATE interventions SET exposure_started_at = '2026-07-10T00:00:00+00:00' WHERE id = ?",
+            (applied["intervention_id"],),
+        )
+        for index in range(5):
+            session_id = f"unknown-baseline-{index}"
+            started_at = f"2026-07-0{index + 3}T12:00:00+00:00"
+            conn.execute(
+                """
+                INSERT INTO sessions(
+                  id, agent_id, repo_id, started_at, ended_at, status,
+                  created_at, updated_at
+                ) VALUES (?, 'agent-1', 'repo-1', ?, ?, 'completed', ?, ?)
+                """,
+                (session_id, started_at, started_at, NOW, NOW),
+            )
+            conn.execute(
+                """
+                INSERT INTO steps(
+                  id, session_id, seq, type, started_at, status, raw_attrs_json,
+                  created_at, updated_at
+                ) VALUES (?, ?, 1, 'tool_call', ?, 'unknown', '{}', ?, ?)
+                """,
+                (f"unknown-step-{index}", session_id, started_at, NOW, NOW),
+            )
+            conn.execute(
+                """
+                INSERT INTO tool_calls(
+                  id, step_id, session_id, tool_name, status, input_hash,
+                  raw_attrs_json, created_at, updated_at
+                ) VALUES (?, ?, ?, 'Read', 'unknown', ?, '{}', ?, ?)
+                """,
+                (
+                    f"unknown-tool-{index}",
+                    f"unknown-step-{index}",
+                    session_id,
+                    f"unknown-input-{index}",
+                    NOW,
+                    NOW,
+                ),
+            )
+        conn.commit()
+
+        result = service.measurements.measure(candidate.id)
+        ledger = service.measurements.sessions(result["id"])
+
+        assert result["verdict"] == "insufficient_data"
+        assert result["before_value"] is None
+        assert result["after_value"] is None
+        assert result["cohort"]["measurement_state"] == "not_measurable"
+        assert result["cohort"]["quality"]["before_signal"]["coverage"] < 0.9
+        assert "baseline tool-call statuses" in result["cohort"]["measurement_reasons"][0]
+        assert ledger["measurement_state"] == "not_measurable"
+        assert ledger["measurement_reasons"] == result["cohort"]["measurement_reasons"]
     finally:
         conn.close()
 
@@ -1888,7 +2031,17 @@ def test_measurement_refreshes_when_fixed_size_cohort_rotates(tmp_path):
     try:
         service.refresh()
         candidate = next(
-            item for item in service.workflows.list() if item.target_metric == "tool_failure_rate"
+            item
+            for item in service.workflows.list()
+            if item.content.get("source", {}).get("rule_id") == "repeated_tool_failure_chain"
+        )
+        service.workflows.edit(
+            candidate.id,
+            content={**candidate.content, "behavior_type": "verification"},
+        )
+        conn.execute(
+            "UPDATE workflow_candidates SET target_metric = 'tool_failure_rate' WHERE id = ?",
+            (candidate.id,),
         )
         applied = service.workflows.apply(candidate.id, project_root=project_root)
         conn.execute(
@@ -1944,7 +2097,7 @@ def test_ask_returns_one_active_workflow_with_constraints_and_fallback(tmp_path)
         candidate = next(
             item
             for item in service.workflows.list()
-            if item.target_metric == "tool_failure_rate"
+            if item.content.get("source", {}).get("rule_id") == "repeated_tool_failure_chain"
         )
         service.workflows.apply(candidate.id, project_root=project_root)
 

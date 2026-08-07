@@ -85,6 +85,50 @@ class TestHelp:
         result = runner.invoke(main, ["refresh", "--help"])
         assert result.exit_code == 0
         assert "--native-sessions" in result.output
+        assert "--spans-dir" in result.output
+
+    def test_refresh_ingests_hook_span_directory(self, runner, tmp_path, monkeypatch):
+        db_path = tmp_path / "reflect.db"
+        spans_dir = tmp_path / "spans"
+        spans_dir.mkdir()
+        monkeypatch.setattr(core, "_default_otlp_traces", lambda: None)
+        (spans_dir / "codex.jsonl").write_text(
+            json.dumps(
+                {
+                    "name": "Stop",
+                    "traceId": "trace-refresh-spans",
+                    "spanId": "span-refresh-spans",
+                    "start_time_ns": 100,
+                    "end_time_ns": 200,
+                    "attributes": {
+                        "gen_ai.client.name": "codex",
+                        "gen_ai.client.session_id": "sess-refresh-spans",
+                        "gen_ai.client.hook.event": "Stop",
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            main,
+            [
+                "refresh",
+                "--no-native-sessions",
+                "--spans-dir",
+                str(spans_dir),
+                "--db-path",
+                str(db_path),
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        with sqlite3.connect(db_path) as conn:
+            assert conn.execute(
+                "SELECT COUNT(*) FROM sessions WHERE id = 'sess-refresh-spans'"
+            ).fetchone()[0] == 1
 
     def test_db_doctor_help(self, runner):
         result = runner.invoke(main, ["db", "doctor", "--help"])
@@ -1025,21 +1069,21 @@ class TestSkillsSubcommand:
         assert not (first_dest / "debug-loop" / "SKILL.md").exists()
         assert not (second_dest / "debug-loop" / "SKILL.md").exists()
 
-    def test_skills_gemini_uses_p_flag(self, runner, otlp_file, tmp_path):
-        """gemini agent uses -p flag, not --print."""
+    def test_skills_antigravity_uses_noninteractive_print_mode(self, runner, otlp_file, tmp_path):
+        """Antigravity receives the prompt through its string-valued --print flag."""
         fake_output = json.dumps([_FAKE_SKILLS[0]])
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]):
             runner.invoke(main, [
-                "skills", "discover", "--yes", "--agent", "gemini",
+                "skills", "discover", "--yes", "--agent", "agy",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
                 "--spans-dir", str(tmp_path / "sp"),
             ])
         cmd = mock_run.call_args[0][0]
-        assert cmd[0] == "gemini"
-        assert "-p" in cmd
-        assert "--print" not in cmd
+        assert cmd[0] == "agy"
+        assert cmd[-2] == "--print"
+        assert "--output-format" in cmd
 
     def test_skills_codex_uses_exec_subcommand(self, runner, otlp_file, tmp_path):
         """codex uses the exec subcommand, not the interactive CLI's unsupported --print flag."""
@@ -1151,7 +1195,7 @@ class TestSkillsSubcommand:
         fake_output = json.dumps([_FAKE_SKILLS[0]])
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]), \
-             patch("reflect.core.shutil.which", side_effect=lambda b: "/usr/bin/gemini" if b == "gemini" else None):
+             patch("reflect.core.shutil.which", side_effect=lambda b: "/usr/bin/agy" if b == "agy" else None):
             runner.invoke(main, [
                 "skills", "discover", "--yes",
                 "--otlp-traces", str(otlp_file),
@@ -1159,8 +1203,8 @@ class TestSkillsSubcommand:
                 "--spans-dir", str(tmp_path / "sp"),
             ])
         cmd = mock_run.call_args[0][0]
-        assert cmd[0] == "gemini"
-        assert "-p" in cmd
+        assert cmd[0] == "agy"
+        assert cmd[-2] == "--print"
 
     def test_skills_no_agent_available_exits(self, runner, otlp_file, tmp_path):
         with patch("reflect.core.shutil.which", return_value=None):

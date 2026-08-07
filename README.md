@@ -705,8 +705,8 @@ Register the installed stdio command with the agents you use:
 ```bash
 codex mcp add reflect -- reflect-mcp
 claude mcp add --scope user reflect -- reflect-mcp
-gemini mcp add --scope user reflect reflect-mcp
 copilot mcp add reflect -- reflect-mcp
+reflect setup --agent Antigravity
 ```
 
 MCP client support is separate from telemetry ingestion support. Reflect declares
@@ -716,7 +716,7 @@ the connection and local validation surface for every implemented agent:
 |---|---|---|
 | Claude Code | `~/.claude.json` | Headless CLI suite |
 | Cursor | `~/.cursor/mcp.json` | Headless CLI suite |
-| Gemini CLI | `~/.gemini/settings.json` | Headless CLI suite |
+| Antigravity CLI (`agy`) | `~/.gemini/config/mcp_config.json` or `.agents/mcp_config.json` | Headless CLI suite |
 | GitHub Copilot | `~/.copilot/mcp-config.json` | Headless CLI suite |
 | OpenAI Codex CLI | `~/.codex/config.toml` | Headless CLI suite |
 | OpenCode | `~/.config/opencode/opencode.json` | Headless CLI suite |
@@ -726,6 +726,10 @@ Windsurf can connect to the same stdio server through Cascade, but it is not
 included in the machine-only end-to-end suite because there is no supported
 headless Windsurf agent surface to exercise. Run `reflect doctor` to see the
 telemetry path and MCP client surface together.
+
+Gemini CLI telemetry remains readable for existing sessions, but the deprecated
+Gemini executable is no longer a current MCP validation target. Antigravity CLI
+uses the dedicated MCP files above rather than legacy `.gemini/settings.json`.
 
 At the start of a non-trivial repository task, the `$reflect` skill calls `reflect_context` once after identifying the task and repository path and before implementation. The response includes a privacy-safe `task_run_id`, any selected skill version from an approved or active workflow, and an explicit `reflect_complete` follow-up. Selected skills expose one machine-readable `execution_state`: `follow_allowed` means the bounded instructions are complete, while `retrieve_full_instructions` requires the agent to call the supplied `reflect_explain` action before following the skill. Registry lifecycle and installation state remain separate. When a selected version carries a workflow contract, the agent records its required checkpoints and privacy-safe evidence fingerprints with `reflect_record_milestone` before calling `reflect_complete`; Reflect evaluates the same contract against canonical execution evidence before and after installation. If the runtime session has not been ingested yet, normalization later reconciles the completed task, session outcome, and selected-skill usage idempotently. `reflect_task_status` reports that linkage without mutating it.
 

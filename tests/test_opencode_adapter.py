@@ -12,7 +12,7 @@ from reflect.store.normalize import normalize_pending_raw_events
 from reflect.store.sqlite import connect_sqlite
 
 
-def _write_opencode_store(path):
+def _write_opencode_store(path, *, directory="/work/repo", tool_name="bash"):
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     try:
@@ -46,7 +46,7 @@ def _write_opencode_store(path):
             (
                 "open-session-1",
                 "parent-session",
-                "/work/repo",
+                directory,
                 "Repair telemetry",
                 1_780_000_000_000,
                 1_780_000_003_000,
@@ -97,7 +97,7 @@ def _write_opencode_store(path):
                 1_780_000_001_200,
                 {
                     "type": "tool",
-                    "tool": "bash",
+                    "tool": tool_name,
                     "callID": "tool-call-1",
                     "state": {
                         "status": "completed",
@@ -172,6 +172,30 @@ def test_opencode_native_spans_preserve_usage_tools_and_lineage(tmp_path):
     assert response["attributes"]["gen_ai.client.parent_session_id"] == "parent-session"
     assert tool_end["attributes"]["gen_ai.tool.call.id"] == "tool-call-1"
     assert tool_end["end_time_ns"] - tool_end["start_time_ns"] == 1_000_000_000
+
+
+def test_opencode_mcp_identity_uses_configured_server_prefix(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "opencode.json").write_text(
+        json.dumps({"mcp": {"reflect": {"type": "local"}}}),
+        encoding="utf-8",
+    )
+    source = _write_opencode_store(
+        tmp_path / "opencode.db",
+        directory=str(workspace),
+        tool_name="reflect_reflect_context",
+    )
+
+    tool = next(
+        span
+        for span in _iter_opencode_session_spans(source)
+        if span["attributes"].get("gen_ai.client.hook.event") == "PreToolUse"
+    )
+
+    assert tool["attributes"]["gen_ai.client.mcp_server"] == "reflect"
+    assert tool["attributes"]["gen_ai.client.mcp_tool"] == "reflect_context"
+    assert tool["attributes"]["gen_ai.client.tool_use_id"] == "tool-call-1"
 
 
 def test_opencode_native_store_normalizes_to_canonical_usage(tmp_path):

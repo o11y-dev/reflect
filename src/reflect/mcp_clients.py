@@ -1,4 +1,4 @@
-"""Declared MCP client surfaces for Reflect's implemented agents."""
+"""Declared MCP client surfaces, independent of telemetry ingestion support."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class MCPClientSurface(StrEnum):
 
 @dataclass(frozen=True)
 class MCPClientCapability:
-    """One implemented agent's MCP client and local-test contract."""
+    """One current agent's MCP client and local-test contract."""
 
     agent_name: str
     config_surface: str
@@ -216,11 +216,11 @@ MCP_CLIENT_CAPABILITIES: tuple[MCPClientCapability, ...] = (
         executable="cursor-agent",
     ),
     MCPClientCapability(
-        agent_name="Gemini CLI",
-        config_surface=".gemini/settings.json",
+        agent_name="Antigravity",
+        config_surface="~/.gemini/config/mcp_config.json",
         surface=MCPClientSurface.HEADLESS_CLI,
-        local_agent_name="gemini",
-        executable="gemini",
+        local_agent_name="antigravity",
+        executable="agy",
     ),
     MCPClientCapability(
         agent_name="GitHub Copilot",
@@ -261,7 +261,11 @@ MCP_CLIENT_CONFIGURATORS: tuple[MCPClientConfigurator, ...] = (
         parent_of_home=True,
     ),
     JsonMCPClientConfigurator(agent_name="Cursor", filename="mcp.json"),
-    JsonMCPClientConfigurator(agent_name="Gemini CLI", filename="settings.json"),
+    JsonMCPClientConfigurator(
+        agent_name="Antigravity",
+        filename="config/mcp_config.json",
+        parent_of_home=True,
+    ),
     JsonMCPClientConfigurator(
         agent_name="GitHub Copilot",
         filename="mcp-config.json",

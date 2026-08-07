@@ -295,12 +295,13 @@ _AGENT_SPECS = [
     },
     {
         "name": "Antigravity",
+        "setup_aliases": ["agy", "antigravity-cli"],
         "env": "ANTIGRAVITY_HOME",
-        "default": lambda: Path.home() / ".gemini" / "antigravity",
+        "default": lambda: Path.home() / ".gemini" / "antigravity-cli",
         "path_kind": "home",
         "local_skill_path": ".agents/skills/",
-        "global_path": "~/.gemini/antigravity/skills/",
-        "recommendation": "Core target for reflect telemetry and skill distribution.",
+        "global_path": "~/.gemini/config/skills/",
+        "recommendation": "Use agy with workspace MCP today; native telemetry ingestion still needs verification.",
     },
     {
         "name": "Amp",
@@ -350,7 +351,7 @@ _AGENT_SPECS = [
     },
 ]
 
-_SKILL_AGENT_CLI_NAMES = ("claude", "codex", "copilot", "cursor-agent", "gemini", "opencode")
+_SKILL_AGENT_CLI_NAMES = ("claude", "codex", "copilot", "cursor-agent", "agy", "opencode")
 
 
 def _complete_setup_agent(
@@ -377,7 +378,7 @@ def _complete_skill_agent_cli(
     lowered = incomplete.lower()
     return [name for name in _SKILL_AGENT_CLI_NAMES if name.startswith(lowered)]
 
-_IMPLEMENTED_AGENT_SUPPORT: dict[str, tuple[str, str]] = {
+_IMPLEMENTED_TELEMETRY_SUPPORT: dict[str, tuple[str, str]] = {
     "Claude Code": ("Native OTel + hooks", "High"),
     "Cursor": ("Session/log adapters", "Medium"),
     "Gemini CLI": ("Native OTel + session adapters", "High"),
@@ -390,11 +391,11 @@ _DOCTOR_MATRIX_PLANNED = {"Antigravity", "OpenClaw"}
 
 
 def _agent_support_summary(name: str) -> dict[str, str]:
-    telemetry_path, confidence = _IMPLEMENTED_AGENT_SUPPORT.get(
+    telemetry_path, confidence = _IMPLEMENTED_TELEMETRY_SUPPORT.get(
         name,
         ("Not implemented yet (setup only snapshots skills/config)", "Planned"),
     )
-    status = "Implemented" if name in _IMPLEMENTED_AGENT_SUPPORT else "Planned"
+    status = "Implemented" if name in _IMPLEMENTED_TELEMETRY_SUPPORT else "Planned"
     mcp_client = get_mcp_client_capability(name)
     return {
         "support_status": status,
@@ -1006,6 +1007,7 @@ def _prepare_sql_snapshot_with_progress(
     *,
     otlp_traces: Path | None,
     include_native_sessions: bool,
+    spans_dir: Path | None = None,
 ) -> dict[str, object]:
     from reflect.terminal import TerminalPreparationProgress
 
@@ -1014,6 +1016,7 @@ def _prepare_sql_snapshot_with_progress(
             db_path,
             otlp_traces=otlp_traces,
             include_native_sessions=include_native_sessions,
+            spans_dir=spans_dir,
             progress=progress,
         )
     )
@@ -1025,6 +1028,7 @@ def _ensure_command_snapshot(
     refresh: bool | None,
     otlp_traces: Path | None = None,
     include_native_sessions: bool = True,
+    spans_dir: Path | None = None,
     prepare: Callable[[], dict[str, object]] | None = None,
     readiness_probes: tuple[SnapshotReadinessProbe, ...] = (),
 ) -> SnapshotPreparationResult:
@@ -1044,6 +1048,7 @@ def _ensure_command_snapshot(
                 else _default_otlp_traces()
             ),
             include_native_sessions=include_native_sessions,
+            spans_dir=spans_dir,
         )
     )
     lifecycle = SnapshotLifecycleService(
@@ -1358,6 +1363,12 @@ def _prepare_usage_db_with_progress(
     default=True,
     help="Include discoverable native agent session stores.",
 )
+@click.option(
+    "--spans-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Hook JSONL directory. Defaults to the configured local spans directory.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print the refresh result as JSON.")
 @click.option(
     "--db-path",
@@ -1368,15 +1379,19 @@ def _prepare_usage_db_with_progress(
 def refresh_snapshot(
     otlp_traces: Path | None,
     native_sessions: bool,
+    spans_dir: Path | None,
     as_json: bool,
     db_path: Path,
 ) -> None:
     """Explicitly ingest telemetry and rebuild the prepared local snapshot."""
+    if spans_dir is not None and not spans_dir.is_dir():
+        raise click.ClickException(f"Hook spans directory not found: {spans_dir}")
     result = _ensure_command_snapshot(
         db_path,
         refresh=True,
         otlp_traces=otlp_traces,
         include_native_sessions=native_sessions,
+        spans_dir=spans_dir or _default_spans_dir(),
     )
     payload = result.refresh_result or {}
     if as_json:
@@ -2500,7 +2515,16 @@ def _run_browser_report(
 # First entry in the list is the auto-detection priority order.
 _SKILL_AGENT_SPECS: list[tuple[str, list[str]]] = [
     ("claude", ["--print"]),
-    ("gemini", ["-p"]),
+    (
+        "agy",
+        [
+            "--output-format",
+            "text",
+            "--sandbox",
+            "--disable-slash-commands",
+            "--print",
+        ],
+    ),
     ("codex", ["exec"]),
     ("cursor-agent", ["--print", "--trust", "--mode", "ask"]),
     ("copilot", ["--prompt"]),
@@ -4867,6 +4891,7 @@ def _prepare_sql_report_db(
     *,
     otlp_traces: Path | None,
     include_native_sessions: bool = False,
+    spans_dir: Path | None = None,
     progress: PreparationProgressReporter | None = None,
     defer_otlp_replay: bool = False,
 ) -> dict[str, object]:
@@ -4880,6 +4905,7 @@ def _prepare_sql_report_db(
     from reflect.store.ingest import (
         AppendOnlyReplayPolicy,
         ingest_codex_context_file,
+        ingest_local_spans_file,
         ingest_native_session_file,
         ingest_otlp_logs_file,
         ingest_otlp_traces_file,
@@ -4949,6 +4975,33 @@ def _prepare_sql_report_db(
                 ingest_sources["otlp_logs"]["source_type"] = "otlp_logs_json"
                 ingest_result["inserted"] += logs_result["inserted"]
                 ingest_result["skipped"] += logs_result["skipped"]
+        if spans_dir is not None and spans_dir.is_dir():
+            report_preparation_progress(
+                progress,
+                PreparationStage.INGESTING_TRACES,
+                "Reading new hook spans...",
+            )
+            spans_result: dict[str, object] = {
+                "inserted": 0,
+                "skipped": 0,
+                "unchanged": 0,
+                "files": 0,
+                "source_type": "local_spans_jsonl",
+            }
+            for span_file in sorted(spans_dir.glob("*.jsonl")):
+                file_result = ingest_local_spans_file(
+                    conn,
+                    file_path=span_file,
+                    skip_unchanged=True,
+                )
+                spans_result["files"] = int(spans_result["files"]) + 1
+                for key in ("inserted", "skipped", "unchanged"):
+                    spans_result[key] = int(spans_result[key]) + int(
+                        file_result.get(key, 0)
+                    )
+            ingest_sources["local_spans"] = spans_result
+            ingest_result["inserted"] += int(spans_result["inserted"])
+            ingest_result["skipped"] += int(spans_result["skipped"])
         if include_native_sessions:
             report_preparation_progress(
                 progress,

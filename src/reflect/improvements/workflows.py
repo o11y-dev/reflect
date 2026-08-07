@@ -160,6 +160,12 @@ class WorkflowService:
             if item["is_directory"]
         }
         checks = self._target_checks(candidate, root=root, target=target)
+        suggested_unique_slug = (
+            self._suggest_unique_slug(candidate, root=root)
+            if checks["active_conflicts"]
+            else None
+        )
+        checks["suggested_unique_slug"] = suggested_unique_slug
         evidence_scope_match = (
             str(root) in evidence_project_paths if evidence_project_paths else None
         )
@@ -192,6 +198,7 @@ class WorkflowService:
             "diff": diff,
             "content": content,
             "checks": checks,
+            "suggested_unique_slug": suggested_unique_slug,
             "suggested_project_roots": suggested_roots,
             "evidence_project_paths": sorted(evidence_project_paths),
             "evidence_repository_paths": sorted(evidence_project_paths),
@@ -825,6 +832,37 @@ class WorkflowService:
             "active_conflicts": active_conflicts,
             "alternative_candidates": alternatives,
         }
+
+    def _suggest_unique_slug(
+        self,
+        candidate: WorkflowCandidateRecord,
+        *,
+        root: Path,
+    ) -> str:
+        """Return the first deterministic project-local slug not already in use."""
+
+        base = str(candidate.content.get("slug") or "workflow")
+        occupied = {
+            str(row[0])
+            for row in self.conn.execute(
+                """
+                SELECT DISTINCT json_extract(content_json, '$.slug')
+                FROM workflow_candidates
+                WHERE id <> ? AND status NOT IN ('rejected', 'rolled_back')
+                """,
+                (candidate.id,),
+            ).fetchall()
+            if row[0]
+        }
+        skills_root = root / ".agents" / "skills"
+        if skills_root.is_dir():
+            occupied.update(item.name for item in skills_root.iterdir() if item.is_dir())
+        for index in range(2, 1000):
+            suffix = f"-{index}"
+            suggestion = f"{base[: 63 - len(suffix)].rstrip('-')}{suffix}"
+            if suggestion not in occupied:
+                return suggestion
+        raise RuntimeError(f"Could not generate an available workflow name for {base!r}")
 
     def _mark_stale(self, candidate_id: str, intervention_id: str, *, now: str) -> None:
         self.conn.execute(

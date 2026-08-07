@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 from unittest.mock import patch
@@ -53,6 +54,38 @@ def test_context_service_combines_memory_with_guidance(tmp_path):
     assert "no matching approved workflow" in answer.answer
 
 
+def test_context_service_reads_current_validated_project_instruction(tmp_path):
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    content = (
+        "# Release gate\n\n"
+        + " ".join("Verify the packaged artifact." for _ in range(30))
+        + "\n\n## Revision\nUniqueRevisionContract"
+    )
+    source = workspace / "AGENTS.md"
+    source.write_text(content, encoding="utf-8")
+    db_path = tmp_path / "reflect.db"
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        memory = MemoryService(conn)
+        memory.sync_path(workspace, home_root=tmp_path / "empty-home")
+        memory_id = memory.list_memories(path=workspace)[0]["id"]
+        assert memory.validate(str(memory_id))["status"] == "validated"
+
+        answer = ReflectContextService(conn).ask("UniqueRevisionContract", path=workspace)
+
+        assert answer.memories[0].content == content
+        assert answer.memories[0].content_source == "validated_source_file"
+        assert answer.memories[0].content_truncated is False
+
+        source.write_text(content + "Changed after validation.\n", encoding="utf-8")
+        stale = ReflectContextService(conn).ask("release gate", path=workspace)
+        assert stale.memories == []
+    finally:
+        conn.close()
+
+
 def test_mcp_read_service_factory_does_not_run_migrations(tmp_path, monkeypatch):
     from reflect.mcp import _with_service
 
@@ -88,18 +121,30 @@ def test_context_service_records_and_completes_an_agent_task(tmp_path):
     conn = connect_sqlite(db_path)
     try:
         service = ReflectContextService(conn)
-        answer = service.begin_task("release gate with private detail", path=tmp_path)
+        answer = service.begin_task("release gate", path=tmp_path)
 
         assert answer.task_run_id
         assert answer.next_action
         assert answer.next_action.tool == "reflect_complete"
         assert answer.next_action.arguments == {"task_run_id": answer.task_run_id}
         row = conn.execute(
-            "SELECT question_hash, status FROM mcp_task_runs WHERE id = ?",
+            """
+            SELECT question_hash, status, selected_memories_json
+            FROM mcp_task_runs WHERE id = ?
+            """,
             (answer.task_run_id,),
         ).fetchone()
-        assert row[0] != "release gate with private detail"
+        assert row[0] != "release gate"
         assert row[1] == "started"
+        selected_memories = json.loads(row[2])
+        assert selected_memories == [
+            {
+                "content_hash": answer.memories[0].content_hash,
+                "memory_id": answer.memories[0].id,
+                "provider": "local_sqlite",
+                "validation_status": "validated",
+            }
+        ]
 
         completed = service.complete_task(
             answer.task_run_id,
@@ -120,6 +165,50 @@ def test_context_service_records_and_completes_an_agent_task(tmp_path):
         assert repeated.idempotent is True
         with pytest.raises(RuntimeError, match="already completed"):
             service.complete_task(answer.task_run_id, outcome="failure")
+    finally:
+        conn.close()
+
+
+def test_context_service_reconciles_selected_memory_exposure(tmp_path, monkeypatch):
+    db_path = tmp_path / "reflect.db"
+    memory_id = _seed_memory(db_path, tmp_path)
+    conn = connect_sqlite(db_path)
+    try:
+        now = "2026-08-06T10:00:00+00:00"
+        conn.execute(
+            "INSERT INTO agents(id, name, created_at, updated_at) VALUES ('a', 'codex', ?, ?)",
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO sessions(id, agent_id, started_at, status, created_at, updated_at)
+            VALUES ('memory-session', 'a', ?, 'completed', ?, ?)
+            """,
+            (now, now, now),
+        )
+        conn.commit()
+        monkeypatch.setenv("REFLECT_SESSION_ID", "memory-session")
+
+        service = ReflectContextService(conn)
+        answer = service.begin_task("Run the release gate", path=tmp_path)
+        completed = service.complete_task(
+            str(answer.task_run_id),
+            outcome="success",
+            verification_passed=True,
+        )
+        status = service.task_status(str(answer.task_run_id))
+
+        assert completed.linked_to_session is True
+        assert status.selected_memories[0].memory_id == memory_id
+        assert status.memory_exposure_recorded_count == 1
+        assert tuple(
+            conn.execute(
+                """
+                SELECT memory_id, session_id, source
+                FROM memory_exposures
+                """
+            ).fetchone()
+        ) == (memory_id, "memory-session", "reflect_context")
     finally:
         conn.close()
 

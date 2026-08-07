@@ -38,6 +38,7 @@ from reflect.inspection import (
 from reflect.memory import MemoryService
 from reflect.schema.base import ReflectModel
 from reflect.task_runs import (
+    MCPSelectedMemoryRef,
     MCPSelectedSkillRef,
     MCPTaskOutcome,
     MCPTaskRunResult,
@@ -63,6 +64,9 @@ class ContextMemory(ReflectModel):
     source_ref: str = ""
     path: str = ""
     workspace_root: str = ""
+    content_hash: str = ""
+    content_source: str = "redacted_preview"
+    content_truncated: bool = False
 
 
 class ContextNextAction(ReflectModel):
@@ -161,12 +165,13 @@ class ReflectContextService:
         memory_provider: str = "local_sqlite",
         memory_limit: int = 5,
     ) -> ReflectContextAnswer:
-        answer = self.improvements.ask(question, task_file=task_file, path=path)
+        resolved_path = (path or Path.cwd()).expanduser().resolve()
+        answer = self.improvements.ask(question, task_file=task_file, path=resolved_path)
         limitations = list(answer.limitations)
         try:
-            rows = self.memory.search(
+            rows = self.memory.select_context(
                 question,
-                path=path or Path.cwd(),
+                path=resolved_path,
                 provider=memory_provider,
                 limit=max(1, min(memory_limit, 20)),
             )
@@ -174,7 +179,10 @@ class ReflectContextService:
             rows = []
             limitations.append(f"Memory provider {memory_provider!r} was unavailable: {exc}")
 
-        memories = [self._context_memory(row, memory_provider) for row in rows]
+        memories = [
+            self._context_memory(row, memory_provider)
+            for row in rows
+        ]
         memories = [memory for memory in memories if memory.validation_status != "stale"]
         unvalidated = sum(
             1
@@ -239,12 +247,22 @@ class ReflectContextService:
             )
             for skill in selected_skills
         ]
+        memory_refs = [
+            MCPSelectedMemoryRef(
+                memory_id=memory.id,
+                provider=memory.provider,
+                validation_status=memory.validation_status,
+                content_hash=memory.content_hash,
+            )
+            for memory in answer.memories
+        ]
         task_run_id = self.task_runs.start(
             question=question,
             workspace_path=resolved_path,
             task_file_path=resolved_task,
             workflow_id=answer.workflow_id,
             selected_skills=skill_refs,
+            selected_memories=memory_refs,
         )
         return answer.model_copy(
             update={
@@ -748,12 +766,20 @@ class ReflectContextService:
         }
 
     @staticmethod
-    def _context_memory(row: dict[str, Any], requested_provider: str) -> ContextMemory:
+    def _context_memory(
+        row: dict[str, Any],
+        requested_provider: str,
+    ) -> ContextMemory:
         source = row.get("source_metadata") or {}
         provider = str(row.get("provider") or requested_provider)
         return ContextMemory(
             id=str(row.get("id") or row.get("memory_id") or ""),
-            content=str(row.get("content_preview_redacted") or row.get("content") or "")[:1000],
+            content=str(
+                row.get("context_content")
+                or row.get("content_preview_redacted")
+                or row.get("content")
+                or ""
+            )[:4_000],
             type=str(row.get("type") or ""),
             scope=str(row.get("scope") or ""),
             provider=provider,
@@ -765,4 +791,7 @@ class ReflectContextService:
             source_ref=str(source.get("source_ref") or ""),
             path=str(source.get("path") or ""),
             workspace_root=str(source.get("workspace_root") or ""),
+            content_hash=str(row.get("content_hash") or ""),
+            content_source=str(row.get("context_content_source") or "redacted_preview"),
+            content_truncated=bool(row.get("context_content_truncated")),
         )

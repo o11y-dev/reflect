@@ -515,6 +515,7 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .impact-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.impact-head-main{min-width:0}.impact-eyebrow{margin-bottom:6px;color:var(--text-3);font-size:10px;font-weight:750;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.impact-title{margin:0;color:var(--text);font-size:17px;line-height:1.35;letter-spacing:-.01em;text-wrap:balance}.impact-status-stack{display:flex;flex:0 0 auto;align-items:flex-end;flex-direction:column;gap:6px}.impact-status{border:1px solid rgba(242,138,26,.3);border-radius:999px;padding:5px 9px;background:rgba(242,138,26,.08);color:var(--blue);font-size:10px;font-weight:750}.impact-status.improved{border-color:rgba(50,215,75,.28);background:rgba(50,215,75,.07);color:var(--green)}.impact-status.regressed{border-color:rgba(255,69,58,.3);background:rgba(255,69,58,.07);color:#ff8b84}.impact-status.unchanged{border-color:var(--border2);background:var(--surface2);color:var(--text-2)}.impact-trend-status{color:var(--text-3);font-size:10px;font-weight:720}.impact-trend-status.improving{color:var(--green)}.impact-trend-status.worsening{color:#ff8b84}
 .impact-summary{max-width:820px;margin:11px 0 0;color:var(--text-2);font-size:13px;line-height:1.58;text-wrap:pretty}.impact-progress{display:grid;gap:8px;margin-top:15px}.impact-progress-copy{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--text-3);font-size:11px}.impact-progress-copy strong{color:var(--text-2);font-weight:750}.impact-progress progress{appearance:none;width:100%;height:6px;border:0;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.06)}.impact-progress progress::-webkit-progress-bar{background:rgba(255,255,255,.06)}.impact-progress progress::-webkit-progress-value{border-radius:999px;background:linear-gradient(90deg,#b85c12,var(--blue))}.impact-progress progress::-moz-progress-bar{border-radius:999px;background:linear-gradient(90deg,#b85c12,var(--blue))}
 .impact-comparison{display:grid;grid-template-columns:minmax(0,1fr) 24px minmax(0,1fr);gap:10px;align-items:stretch;margin-top:15px}.impact-period{min-width:0;padding:12px 13px;border:1px solid var(--border);border-radius:7px;background:rgba(255,255,255,.018)}.impact-period-label{color:var(--text-3);font-size:9px;font-weight:750;letter-spacing:.08em;text-transform:uppercase}.impact-period-value{margin-top:5px;color:var(--text);font-size:14px;font-weight:760;font-variant-numeric:tabular-nums}.impact-period-note{margin-top:3px;color:var(--text-3);font-size:10px}.impact-arrow{display:grid;place-items:center;color:var(--blue);font-size:15px}.impact-scope{margin-top:12px;color:var(--text-3);font-size:10px;line-height:1.45}.impact-history{margin-top:13px;border-top:1px solid var(--border);padding-top:11px}.impact-history>summary{cursor:pointer;color:var(--text-3);font-size:10px;font-weight:700}.impact-history>summary:hover{color:var(--blue)}.impact-history>summary:focus-visible{outline:2px solid var(--blue);outline-offset:3px}.impact-history-list{display:grid;gap:6px;margin:10px 0 0;padding:0;list-style:none}.impact-history-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 9px;border-radius:6px;background:rgba(255,255,255,.018);color:var(--text-3);font-size:10px;font-variant-numeric:tabular-nums}.impact-explainer{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;margin-bottom:14px;border:1px solid var(--border);border-radius:8px;background:var(--border);overflow:hidden}.impact-step{min-width:0;padding:13px 14px;background:var(--surface)}.impact-step strong{display:block;margin-bottom:4px;color:var(--text);font-size:11px}.impact-step span{color:var(--text-3);font-size:10px;line-height:1.45}
+.impact-chart{--impact-chart-color:var(--impact-color,var(--blue));margin-top:12px;padding:12px 13px 10px;border:1px solid var(--border);border-radius:7px;background:rgba(255,255,255,.018)}.impact-chart[data-trend="improving"]{--impact-chart-color:var(--green)}.impact-chart[data-trend="worsening"]{--impact-chart-color:#ff8b84}.impact-chart-head,.impact-chart-axis{display:flex;align-items:center;justify-content:space-between;gap:12px}.impact-chart-title{color:var(--text-2);font-size:10px;font-weight:780;letter-spacing:.06em;text-transform:uppercase}.impact-chart-direction,.impact-chart-axis{color:var(--text-3);font-size:9px}.impact-chart-svg{display:block;width:100%;height:132px;margin-top:7px;overflow:visible}.impact-chart-grid{stroke:rgba(255,255,255,.055);stroke-width:1}.impact-chart-baseline{stroke:rgba(242,138,26,.48);stroke-width:1.25;stroke-dasharray:5 5}.impact-chart-area{fill:color-mix(in srgb,var(--impact-chart-color) 10%,transparent)}.impact-chart-line{fill:none;stroke:var(--impact-chart-color);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.impact-chart-point{fill:var(--surface);stroke:var(--impact-chart-color);stroke-width:2.5}.impact-chart-point.baseline{stroke:var(--blue)}.impact-chart-empty{margin-top:9px;padding:18px 10px;border:1px dashed var(--border);border-radius:6px;color:var(--text-3);font-size:10px;text-align:center}
 .workflow-toolbar{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin:-6px 0 16px;padding:13px 15px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.workflow-filter-field{display:grid;gap:5px;min-width:170px}.workflow-filter-field label{color:var(--text-3);font-size:10px;font-weight:750;letter-spacing:.07em;text-transform:uppercase}.workflow-filter-field select,.workflow-filter-field input{border:1px solid var(--border2);border-radius:6px;background:#070604;color:var(--text);padding:9px 10px}.workflow-filter-field select{padding-right:34px}.workflow-filter-field input::placeholder{color:#77736b}.workflow-filter-field select:focus-visible,.workflow-filter-field input:focus-visible{outline:2px solid var(--blue);outline-offset:2px}.skill-search-field{flex:1 1 300px;max-width:620px}.workflow-filter-summary{margin-left:auto;padding-bottom:9px;color:var(--text-3);font-size:11px}
 .workflow-tile-grid,.skill-tile-grid{display:grid;gap:14px;align-items:stretch}.workflow-tile-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr))}.skill-tile-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr))}
 .workflow-tile,.skill-tile{position:relative;display:flex;min-width:0;height:100%;padding:0;overflow:hidden;flex-direction:column;border-color:rgba(242,138,26,.18);background:linear-gradient(150deg,rgba(242,138,26,.055),rgba(18,17,15,.96) 32%,rgba(10,10,9,.99))}.workflow-tile::before,.skill-tile::before{content:"";position:absolute;inset:0 auto 0 0;width:2px;background:var(--tile-accent,var(--blue))}.workflow-tile:hover,.skill-tile:hover{border-color:rgba(242,138,26,.38);background:linear-gradient(150deg,rgba(242,138,26,.085),rgba(18,17,15,.98) 34%,rgba(10,10,9,.99))}.workflow-tile:focus-within,.skill-tile:focus-within{border-color:rgba(242,138,26,.46);box-shadow:0 0 0 1px rgba(242,138,26,.12),0 16px 34px rgba(0,0,0,.26)}
@@ -4190,6 +4191,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
       : issues.join(' ') || 'Choose an existing writable project folder before applying.';
     const advisories = (preview.checks?.advisories || []).filter(item => !String(item).startsWith('This application folder differs from'));
     const targetOwner = preview.checks?.target_owner;
+    const suggestedUniqueSlug = String(preview.suggested_unique_slug || preview.checks?.suggested_unique_slug || '');
     const evidenceVariantNotice = Number(candidate.variant_count || 1) > 1
       ? `<div class="review-warning">${fmt(Number(candidate.variant_count || 1))} evidence-specific findings are aggregated into this one workflow proposal. Source sessions below combine those findings.</div>`
       : '';
@@ -4244,6 +4246,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     const proposedSize = sourceMarkdown ? 'SKILL.md draft' : `${fmt((content.steps || []).length)} steps`;
     ledgerDialog.dataset.projectRoot = preview.project_root || '';
     ledgerDialog.dataset.targetPath = preview.target_path || '';
+    ledgerDialog.dataset.workflowSlug = String(content.slug || '');
     openLedgerDialog({
       title:reviewTitle,
       subtitle:`${origin.label} · ${behaviorType} · ${humanizeLedgerLabel(candidate.status)} · Rule ${humanizeLedgerLabel(sourceRule)}`,
@@ -4264,6 +4267,9 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
               <div class="review-panel-head"><h3 class="review-panel-title">Apply to One Project</h3><span class="ledger-pill">${escHtml(changeLabel)}</span></div>
               <p class="review-panel-copy">Reflect writes one project-local skill file. No other project or global agent folder will be changed.</p>
               <div class="workflow-target">
+                <label for="workflow-name">Workflow Name</label>
+                <div class="workflow-target-row"><input class="workflow-target-input" id="workflow-name" name="workflow-name" value="${escHtml(content.slug || '')}" autocomplete="off" spellcheck="false" maxlength="63" pattern="[a-z0-9][a-z0-9-]{0,62}">${suggestedUniqueSlug ? `<button type="button" class="ledger-button" data-ledger-action="use-unique-name" data-suggested-slug="${escHtml(suggestedUniqueSlug)}">Use ${escHtml(suggestedUniqueSlug)}</button>` : ''}</div>
+                <p class="review-panel-copy">Use lowercase letters, numbers, and hyphens. Save the draft to review the updated target path before applying.</p>
                 <label for="workflow-project-root">Selected Project Folder</label>
                 <div class="workflow-target-row"><input class="workflow-target-input" id="workflow-project-root" name="workflow-project-root" value="${escHtml(preview.project_root || '')}" list="workflow-project-root-options" autocomplete="off" spellcheck="false"><button type="button" class="ledger-button" data-ledger-action="review-target" data-candidate-id="${escHtml(candidateId)}">Verify Folder</button></div>
                 <datalist id="workflow-project-root-options">${suggestions}</datalist>
@@ -4333,6 +4339,10 @@ async function showImpactSessions(measurementId){
     const cohortCopy = ledger.snapshot_exact
       ? `These are the stored ${unit} cohorts behind this impact snapshot.`
       : 'This older snapshot predates stored cohort IDs, so Reflect reconstructed the closest bounded session cohorts.';
+    const measurementReasons = ledger.measurement_reasons || [];
+    const qualityNotice = measurementReasons.length
+      ? `<div class="review-warning"><strong>${escHtml(humanizeLedgerLabel(ledger.measurement_state || 'not measurable'))}.</strong> ${escHtml(measurementReasons.join(' '))}</div>`
+      : '';
     const prepare = (items, relationship) => (items || []).map(item => ({
       ...item,
       relationship,
@@ -4351,7 +4361,7 @@ async function showImpactSessions(measurementId){
     openLedgerDialog({
       title:`${taskLevel ? 'Tasks' : 'Sessions'} Compared for ${metric.goal}`,
       subtitle:cohortCopy,
-      body:`<div class="review-lead"><div class="review-eyebrow">Impact Evidence</div><p>${escHtml(cohortCopy)} Open the containing session to inspect the underlying conversation, tools, and outcome.</p></div>
+      body:`<div class="review-lead"><div class="review-eyebrow">Impact Evidence</div><p>${escHtml(cohortCopy)} Open the containing session to inspect the underlying conversation, tools, and outcome.</p></div>${qualityNotice}
         <div class="review-grid">
           <section class="review-panel">
             <div class="review-panel-head"><h3 class="review-panel-title">Before Activation</h3><span class="ledger-pill">${fmt(Number(ledger.before_count || 0))} ${unitPlural}</span></div>
@@ -4382,6 +4392,14 @@ document.addEventListener('click', async event => {
   if (action === 'review-skill') return showSkillReview(trigger.dataset.skillId || '');
   if (action === 'review-workflow') return showWorkflowReview(candidateId);
   if (action === 'review-impact-sessions') return showImpactSessions(trigger.dataset.measurementId || '');
+  if (action === 'use-unique-name') {
+    const input = document.getElementById('workflow-name');
+    if (input) {
+      input.value = trigger.dataset.suggestedSlug || '';
+      input.focus();
+    }
+    return;
+  }
   if (action === 'review-target') {
     const root = document.getElementById('workflow-project-root')?.value || '';
     return showWorkflowReview(candidateId, root);
@@ -4397,9 +4415,14 @@ document.addEventListener('click', async event => {
   try {
     if (action === 'save-edit') {
       const content = JSON.parse(document.getElementById('workflow-content-editor')?.value || '{}');
+      content.slug = String(document.getElementById('workflow-name')?.value || '').trim();
       await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}`, {method:'PUT', body:{content}});
     } else if (action === 'apply') {
       const projectRoot = document.getElementById('workflow-project-root')?.value || ledgerDialog.dataset.projectRoot || '';
+      const workflowName = String(document.getElementById('workflow-name')?.value || '').trim();
+      if (workflowName !== String(ledgerDialog.dataset.workflowSlug || '')) {
+        throw new Error('Save the renamed draft and review its updated target path before applying.');
+      }
       trigger.disabled = true;
       trigger.textContent = 'Applying…';
       await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/apply`, {method:'POST', body:{project_root:projectRoot}});
@@ -7020,8 +7043,8 @@ if (modelCostEl) {
 }
 
 const IMPACT_METRIC_PRESENTATION = Object.freeze({
-  tool_failure_rate:{goal:'Reduce Failed Tool Calls',measure:'Failed tool call rate',format:'percent',direction:'lower_is_better'},
-  identical_retry_calls:{goal:'Reduce Identical Retries',measure:'Identical retry calls',format:'number',direction:'lower_is_better'},
+  tool_failure_rate:{goal:'Recover From Tool Failures Without Repeating Them',measure:'Failed tool call rate',format:'percent',direction:'lower_is_better'},
+  identical_retry_calls:{goal:'Avoid Repeating Unchanged Tool Calls',measure:'Identical retry calls',format:'number',direction:'lower_is_better'},
   unverified_change_sessions:{goal:'Finish Changes With Verification',measure:'Unverified change sessions',format:'percent',direction:'lower_is_better'},
   context_outlier_sessions:{goal:'Reduce Oversized Context',measure:'Average context size',format:'tokens',direction:'lower_is_better'},
   read_only_exploration_calls:{goal:'Shorten Unproductive Exploration',measure:'Read-only exploration calls',format:'number',direction:'lower_is_better'},
@@ -7079,7 +7102,15 @@ function formatImpactSessionValue(metricName, value, item = {}){
   return formatImpactValue(impactMetricPresentation(metricName), number);
 }
 
-function impactVerdictPresentation(verdict){
+function impactMeasurementState(item){
+  const explicit = String(item?.cohort?.measurement_state || item?.measurement_state || '');
+  if (explicit) return explicit;
+  return item?.verdict === 'insufficient_data' ? 'collecting' : 'measured';
+}
+
+function impactVerdictPresentation(verdict, measurementState = ''){
+  if (measurementState === 'not_measurable') return {label:'Not Measurable',className:'unchanged'};
+  if (measurementState === 'collecting') return {label:'Collecting Evidence',className:'collecting'};
   if (verdict === 'improved') return {label:'Improved',className:'improved'};
   if (verdict === 'regressed') return {label:'Needs Attention vs Baseline',className:'regressed'};
   if (verdict === 'unchanged') return {label:'No Clear Change',className:'unchanged'};
@@ -7087,7 +7118,7 @@ function impactVerdictPresentation(verdict){
 }
 
 function impactTrendPresentation(item, previous, metric){
-  if (!previous || item.verdict === 'insufficient_data') return null;
+  if (!previous || impactMeasurementState(item) !== 'measured' || impactMeasurementState(previous) !== 'measured') return null;
   if (item.after_value == null || previous.after_value == null) return null;
   const current = Number(item.after_value);
   const prior = Number(previous.after_value);
@@ -7103,8 +7134,74 @@ function impactTrendPresentation(item, previous, metric){
     : {kind:'worsening',label:`Worsening${amount} since last check`,shortLabel:`Worsened${amount} vs last check`,percent};
 }
 
+function impactProgressGraph(history, metric){
+  const snapshots = [...(history || [])].reverse();
+  const latestSnapshot = snapshots[snapshots.length - 1];
+  const latestState = impactMeasurementState(latestSnapshot);
+  if (latestState !== 'measured') {
+    const reasons = latestSnapshot?.cohort?.measurement_reasons || [];
+    const message = reasons[0] || (latestState === 'not_measurable' ? 'The current cohorts do not pass the evidence-quality gate.' : 'Waiting for enough comparable followed sessions.');
+    return `<section class="impact-chart" aria-label="Impact evidence status"><div class="impact-chart-head"><span class="impact-chart-title">Evidence status</span><span class="impact-chart-direction">${escHtml(humanizeLedgerLabel(latestState))}</span></div><div class="impact-chart-empty">${escHtml(message)}</div></section>`;
+  }
+  const baselineSnapshot = latestSnapshot?.before_value != null && Number.isFinite(Number(latestSnapshot.before_value))
+    ? latestSnapshot
+    : [...snapshots].reverse().find(item => item.before_value != null && Number.isFinite(Number(item.before_value)));
+  const checks = snapshots
+    .filter(item => item.after_value != null && Number.isFinite(Number(item.after_value)))
+    .map((item, index) => ({
+      kind:'check',
+      label:`Check ${index + 1}`,
+      measuredAt:item.measured_at,
+      value:Number(item.after_value),
+    }));
+  const series = baselineSnapshot
+    ? [{kind:'baseline',label:'Baseline',measuredAt:null,value:Number(baselineSnapshot.before_value)}, ...checks]
+    : checks;
+  const direction = String(latestSnapshot?.cohort?.metric_direction || metric?.direction || 'lower_is_better');
+  const directionLabel = direction === 'higher_is_better' ? 'Higher is better' : 'Lower is better';
+  if (series.length < 2) {
+    return `<section class="impact-chart" aria-label="Impact progress graph"><div class="impact-chart-head"><span class="impact-chart-title">Progress</span><span class="impact-chart-direction">${escHtml(directionLabel)}</span></div><div class="impact-chart-empty">Waiting for the first comparable post-activation result.</div></section>`;
+  }
+  const width = 720;
+  const height = 132;
+  const left = 12;
+  const right = width - 12;
+  const top = 12;
+  const bottom = height - 12;
+  const values = series.map(point => point.value);
+  let minimum = Math.min(...values);
+  let maximum = Math.max(...values);
+  const padding = maximum === minimum ? Math.max(Math.abs(maximum) * 0.1, 0.5) : (maximum - minimum) * 0.14;
+  minimum -= padding;
+  maximum += padding;
+  const x = index => left + index * (right - left) / (series.length - 1);
+  const y = value => bottom - (value - minimum) * (bottom - top) / (maximum - minimum);
+  const coordinates = series.map((point, index) => `${x(index).toFixed(1)},${y(point.value).toFixed(1)}`);
+  const latest = series[series.length - 1];
+  const baseline = series[0];
+  const delta = latest.value - baseline.value;
+  const improving = direction === 'higher_is_better' ? delta > 0 : delta < 0;
+  const trend = delta === 0 ? 'steady' : improving ? 'improving' : 'worsening';
+  const summary = `${metric.measure}: ${formatImpactValue(metric, baseline.value)} at baseline, ${formatImpactValue(metric, latest.value)} at the latest check. ${directionLabel}.`;
+  const latestLabel = latest.measuredAt ? `Latest · ${fmtWorkflowDate(latest.measuredAt)}` : latest.label;
+  const circles = series.map((point, index) => `<circle class="impact-chart-point ${point.kind}" cx="${x(index).toFixed(1)}" cy="${y(point.value).toFixed(1)}" r="4"><title>${escHtml(`${point.label}: ${formatImpactValue(metric, point.value)}`)}</title></circle>`).join('');
+  return `<section class="impact-chart" data-trend="${trend}" aria-label="${escHtml(summary)}">
+    <div class="impact-chart-head"><span class="impact-chart-title">Progress across ${fmt(checks.length)} impact ${checks.length === 1 ? 'check' : 'checks'}</span><span class="impact-chart-direction">${escHtml(directionLabel)}</span></div>
+    <svg class="impact-chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escHtml(summary)}" preserveAspectRatio="none">
+      <line class="impact-chart-grid" x1="${left}" y1="${top}" x2="${right}" y2="${top}"></line>
+      <line class="impact-chart-grid" x1="${left}" y1="${bottom}" x2="${right}" y2="${bottom}"></line>
+      <line class="impact-chart-baseline" x1="${left}" y1="${y(baseline.value).toFixed(1)}" x2="${right}" y2="${y(baseline.value).toFixed(1)}"></line>
+      <polygon class="impact-chart-area" points="${left},${bottom} ${coordinates.join(' ')} ${right},${bottom}"></polygon>
+      <polyline class="impact-chart-line" points="${coordinates.join(' ')}"></polyline>
+      ${circles}
+    </svg>
+    <div class="impact-chart-axis"><span>Baseline · ${escHtml(formatImpactValue(metric, baseline.value))}</span><span>${escHtml(latestLabel)} · ${escHtml(formatImpactValue(metric, latest.value))}</span></div>
+  </section>`;
+}
+
 function impactSummary(item, metric, trend = null){
   const verdict = String(item.verdict || 'insufficient_data');
+  const measurementState = impactMeasurementState(item);
   const before = Number(item.before_value);
   const after = Number(item.after_value);
   const afterCount = Number(item.after_count || 0);
@@ -7113,6 +7210,10 @@ function impactSummary(item, metric, trend = null){
   const units = taskLevel ? 'tasks' : 'sessions';
   const minimumAfter = Number(item.cohort?.minimum_after_execution_units || item.cohort?.minimum_after_sessions || 5);
   const minimumBefore = Number(item.cohort?.minimum_before_execution_units || item.cohort?.minimum_before_sessions || 5);
+  if (measurementState === 'not_measurable') {
+    const reasons = item.cohort?.measurement_reasons || [];
+    return reasons.join(' ') || 'The current cohorts do not pass the evidence-quality gate, so Reflect will not claim impact.';
+  }
   if (verdict === 'insufficient_data') {
     const afterNeeded = Math.max(0, minimumAfter - afterCount);
     const beforeNeeded = Math.max(0, minimumBefore - Number(item.before_count || 0));
@@ -7369,7 +7470,8 @@ function buildImprovementSurfaces(){
     measurementLedger.innerHTML = measurementGroups.length ? measurementGroups.map(history => {
       const item = history[0];
       const metric = impactMetricPresentation(item.metric_name);
-      const verdict = impactVerdictPresentation(item.verdict);
+      const measurementState = impactMeasurementState(item);
+      const verdict = impactVerdictPresentation(item.verdict, measurementState);
       const workflow = workflows.find(candidate => candidate.id === item.candidate_id);
       const workflowName = humanizeLedgerLabel(workflow?.content?.slug || 'Applied workflow');
       const taskLevel = item.cohort?.unit === 'execution_units';
@@ -7377,26 +7479,28 @@ function buildImprovementSurfaces(){
       const units = taskLevel ? 'tasks' : 'sessions';
       const minimumAfter = Number(item.cohort?.minimum_after_execution_units || item.cohort?.minimum_after_sessions || 5);
       const afterCount = Number(item.after_count || 0);
-      const ready = item.verdict !== 'insufficient_data';
+      const ready = measurementState === 'measured' && item.verdict !== 'insufficient_data';
       const previous = history[1] || null;
       const trend = impactTrendPresentation(item, previous, metric);
       const regressedButImproving = item.verdict === 'regressed' && trend?.kind === 'improving';
       const reviewLabel = item.verdict === 'regressed'
         ? (regressedButImproving ? 'Review Progress' : 'Review &amp; Roll Back')
         : 'Review Applied Workflow';
-      const historyRows = history.slice(1).map(previousItem => `<li class="impact-history-item"><span>${escHtml(fmtWorkflowDate(previousItem.measured_at))}</span><span>${escHtml(formatImpactValue(metric, previousItem.after_value))} · ${escHtml(impactVerdictPresentation(previousItem.verdict).label)}</span></li>`).join('');
+      const progressGraph = impactProgressGraph(history, metric);
+      const historyRows = history.slice(1).map(previousItem => `<li class="impact-history-item"><span>${escHtml(fmtWorkflowDate(previousItem.measured_at))}</span><span>${escHtml(formatImpactValue(metric, previousItem.after_value))} · ${escHtml(impactVerdictPresentation(previousItem.verdict, impactMeasurementState(previousItem)).label)}</span></li>`).join('');
       return `<article class="measurement-card impact-card" data-verdict="${escHtml(String(item.verdict || 'insufficient_data'))}" data-trend="${escHtml(trend?.kind || 'unknown')}">
         <div class="impact-head">
           <div class="impact-head-main"><div class="impact-eyebrow">Applied Workflow · ${escHtml(workflowName)}</div><h3 class="impact-title">${escHtml(metric.goal)}</h3></div>
           <div class="impact-status-stack"><span class="impact-status ${escHtml(verdict.className)}">${escHtml(verdict.label)}</span>${trend ? `<span class="impact-trend-status ${escHtml(trend.kind)}">${escHtml(trend.label)}</span>` : ''}</div>
         </div>
         <p class="impact-summary">${escHtml(impactSummary(item, metric, trend))}</p>
-        ${ready ? '' : `<div class="impact-progress"><div class="impact-progress-copy"><strong>${fmt(afterCount)} of ${fmt(minimumAfter)} ${units} collected</strong><span>${fmt(Math.max(0, minimumAfter - afterCount))} remaining</span></div><progress value="${Math.min(afterCount, minimumAfter)}" max="${minimumAfter}" aria-label="Post-application ${unit} collection progress"></progress></div>`}
+        ${measurementState === 'collecting' ? `<div class="impact-progress"><div class="impact-progress-copy"><strong>${fmt(afterCount)} of ${fmt(minimumAfter)} followed ${units} collected</strong><span>${fmt(Math.max(0, minimumAfter - afterCount))} remaining</span></div><progress value="${Math.min(afterCount, minimumAfter)}" max="${minimumAfter}" aria-label="Post-application ${unit} collection progress"></progress></div>` : ''}
         <div class="impact-comparison">
-          <div class="impact-period"><div class="impact-period-label">Before Activation</div><div class="impact-period-value">${ready ? escHtml(formatImpactValue(metric, item.before_value)) : `${fmt(Number(item.before_count || 0))} ${units}`}</div><div class="impact-period-note">${ready ? `${fmt(Number(item.before_count || 0))} baseline ${units}` : 'Baseline ready'}</div></div>
+          <div class="impact-period"><div class="impact-period-label">Before Activation</div><div class="impact-period-value">${ready ? escHtml(formatImpactValue(metric, item.before_value)) : `${fmt(Number(item.before_count || 0))} ${units}`}</div><div class="impact-period-note">${ready ? `${fmt(Number(item.before_count || 0))} baseline ${units}` : measurementState === 'not_measurable' ? 'Quality gate failed' : 'Baseline candidate cohort'}</div></div>
           <div class="impact-arrow" aria-hidden="true">→</div>
-          <div class="impact-period"><div class="impact-period-label">After Activation</div><div class="impact-period-value">${ready ? escHtml(formatImpactValue(metric, item.after_value)) : `${fmt(afterCount)} ${units}`}</div><div class="impact-period-note">${ready ? `${fmt(afterCount)} comparable ${units}${trend ? ` · ${escHtml(trend.shortLabel)}` : ''}` : `Collecting comparable ${units}`}</div></div>
+          <div class="impact-period"><div class="impact-period-label">After Activation</div><div class="impact-period-value">${ready ? escHtml(formatImpactValue(metric, item.after_value)) : `${fmt(afterCount)} ${units}`}</div><div class="impact-period-note">${ready ? `${fmt(afterCount)} comparable ${units}${trend ? ` · ${escHtml(trend.shortLabel)}` : ''}` : measurementState === 'not_measurable' ? 'Impact withheld' : `Collecting followed ${units}`}</div></div>
         </div>
+        ${progressGraph}
         <div class="impact-scope">${escHtml(impactScope(item))}${ready ? ` · ${Math.round(Number(item.confidence || 0) * 100)}% confidence` : ''}</div>
         <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-impact-sessions" data-measurement-id="${escHtml(String(item.id))}">View Compared ${taskLevel ? 'Tasks' : 'Sessions'}</button><button type="button" class="ledger-button${item.verdict === 'regressed' && !regressedButImproving ? ' danger' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.candidate_id))}">${reviewLabel}</button></div>
         ${historyRows ? `<details class="impact-history"><summary>${fmt(history.length - 1)} Previous Check${history.length === 2 ? '' : 's'}</summary><ol class="impact-history-list">${historyRows}</ol></details>` : ''}

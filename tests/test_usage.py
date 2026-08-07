@@ -483,6 +483,7 @@ def test_refresh_command_explicitly_prepares_a_missing_snapshot(
         timestamp="2026-07-30T10:00:00Z",
     )
     monkeypatch.setattr("reflect.core._default_otlp_traces", lambda: None)
+    monkeypatch.setattr("reflect.core._default_spans_dir", lambda: tmp_path / "spans")
     monkeypatch.setattr(
         "reflect.core._discover_rich_session_files",
         lambda: [("codex", native_session)],
@@ -651,7 +652,7 @@ def test_usage_requires_explicit_refresh_for_pending_rollup_rebuild(
         conn.close()
     conn = connect_sqlite(db_path)
     try:
-        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25, 26]
+        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25, 26, 27]
     finally:
         conn.close()
     monkeypatch.setattr("reflect.core._default_otlp_traces", lambda: None)

@@ -540,9 +540,58 @@ class TestCodexSessionFiles:
         assert spans[0]["attributes"]["gen_ai.client.session_id"] == "019e0506-efd5-7030-b2d2-6c41433270fb"
         assert spans[0]["attributes"]["gen_ai.client.prompt"] == "please inspect the tests"
         assert spans[1]["attributes"]["gen_ai.client.tool_name"] == "exec_command"
+        assert spans[1]["attributes"]["gen_ai.tool.call.id"] == "call-1"
         assert spans[2]["attributes"]["gen_ai.client.tool_use_id"] == "call-1"
         assert spans[3]["attributes"]["gen_ai.client.output"] == "Tests pass."
         assert spans[4]["attributes"]["gen_ai.request.model"] == "gpt-5.5"
+
+    def test_codex_custom_tool_envelope_is_preserved_without_inner_inference(self, tmp_path):
+        session = tmp_path / "rollout-custom.jsonl"
+        records = [
+            {
+                "timestamp": "2026-08-03T10:00:00Z",
+                "type": "session_meta",
+                "payload": {"id": "codex-custom"},
+            },
+            {
+                "timestamp": "2026-08-03T10:00:01Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "name": "exec",
+                    "call_id": "call-custom-1",
+                    "input": "await tools.mcp__reflect__reflect_context({})",
+                },
+            },
+            {
+                "timestamp": "2026-08-03T10:00:02Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "call-custom-1",
+                    "output": "ok",
+                },
+            },
+        ]
+        session.write_text(
+            "\n".join(json.dumps(record) for record in records) + "\n",
+            encoding="utf-8",
+        )
+
+        spans = list(_iter_codex_session_spans(session))
+        tools = [
+            span
+            for span in spans
+            if span["attributes"].get("gen_ai.client.tool_use_id") == "call-custom-1"
+        ]
+
+        assert [span["attributes"]["gen_ai.client.tool_name"] for span in tools] == [
+            "exec",
+            "exec",
+        ]
+        assert all(
+            "gen_ai.client.mcp_server" not in span["attributes"] for span in tools
+        )
 
     def test_codex_session_emits_private_context_exposures(self, tmp_path, monkeypatch):
         home = tmp_path / "home"

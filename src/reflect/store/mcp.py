@@ -178,6 +178,7 @@ class MCPCallClassifier:
         return _first_text(
             attrs,
             "gen_ai.client.tool_use_id",
+            "gen_ai.tool.call.id",
             "tool.call_id",
             "tool_call_id",
         )
@@ -500,6 +501,7 @@ class MCPCallResultReconciler:
                   ON mc.session_id = tc.session_id
                  AND mc.tool_call_id = COALESCE(
                    json_extract(tc.raw_attrs_json, '$."gen_ai.client.tool_use_id"'),
+                   json_extract(tc.raw_attrs_json, '$."gen_ai.tool.call.id"'),
                    json_extract(tc.raw_attrs_json, '$."tool.call_id"'),
                    json_extract(tc.raw_attrs_json, '$.tool_call_id')
                  )

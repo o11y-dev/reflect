@@ -714,6 +714,7 @@ def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
 
     edited_content = {
         **workflow["content"],
+        "slug": "verify-before-done-focused",
         "steps": ["Inspect exact evidence.", "Run focused verification."],
     }
     edited = client.put(
@@ -721,7 +722,12 @@ def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
         json={"content": edited_content},
     )
     assert edited.status_code == 200
+    assert edited.json()["content"]["slug"] == "verify-before-done-focused"
     assert edited.json()["content"]["steps"] == edited_content["steps"]
+    renamed_preview = client.get(f"/api/workflows/{candidate_id}/preview")
+    assert renamed_preview.json()["target_relative_path"] == (
+        ".agents/skills/verify-before-done-focused/SKILL.md"
+    )
 
     applied = client.post(f"/api/workflows/{candidate_id}/apply")
     applied_again = client.post(f"/api/workflows/{candidate_id}/apply")

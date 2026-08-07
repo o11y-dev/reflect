@@ -571,6 +571,7 @@ def _insert_call_record(
         )
     elif step_type == "mcp_call":
         identity = DEFAULT_MCP_CLASSIFIER.identify(attrs)
+        tool_call_id = DEFAULT_MCP_CLASSIFIER.call_id(attrs)
         conn.execute(
             """
             INSERT OR IGNORE INTO mcp_calls(
@@ -578,12 +579,33 @@ def _insert_call_record(
               transport, server_name, tool_name, status, duration_ms,
               raw_attrs_json, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id, tool_call_id)
+              WHERE tool_call_id IS NOT NULL AND tool_call_id <> ''
+            DO UPDATE SET
+              server_name = COALESCE(mcp_calls.server_name, excluded.server_name),
+              tool_name = COALESCE(mcp_calls.tool_name, excluded.tool_name),
+              mcp_session_id = COALESCE(mcp_calls.mcp_session_id, excluded.mcp_session_id),
+              mcp_protocol_version = COALESCE(
+                mcp_calls.mcp_protocol_version,
+                excluded.mcp_protocol_version
+              ),
+              transport = COALESCE(mcp_calls.transport, excluded.transport),
+              status = CASE
+                WHEN excluded.status = 'error' OR mcp_calls.status = 'error' THEN 'error'
+                WHEN excluded.status = 'ok' OR mcp_calls.status = 'ok' THEN 'ok'
+                ELSE excluded.status
+              END,
+              duration_ms = MAX(
+                COALESCE(mcp_calls.duration_ms, 0),
+                COALESCE(excluded.duration_ms, 0)
+              ),
+              updated_at = excluded.updated_at
             """,
             (
                 _stable_id("mcp", raw_event["id"]),
                 step_id,
                 session_id,
-                DEFAULT_MCP_CLASSIFIER.call_id(attrs),
+                tool_call_id,
                 DEFAULT_MCP_CLASSIFIER.session_id(attrs),
                 DEFAULT_MCP_CLASSIFIER.protocol_version(attrs),
                 DEFAULT_MCP_CLASSIFIER.transport(attrs),

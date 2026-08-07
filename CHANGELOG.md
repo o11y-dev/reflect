@@ -4,6 +4,9 @@
 
 ### Changed
 
+- Replaced deprecated Gemini CLI execution paths with Antigravity `agy` for skill extraction, MCP setup, and fresh-install agent validation, while retaining legacy Gemini telemetry ingestion as a separate compatibility surface.
+- Made explicit snapshot refresh ingest unchanged-aware hook JSONL files before native session adapters, so fresh and repaired stores reconcile current agent events without replaying unchanged files.
+- Made recovery impacts measure repeated unchanged calls rather than raw first failures, and withhold impact claims until signal coverage, agent/source comparability, and observed workflow adherence pass an explicit evidence-quality gate.
 - Renamed the Context & System Specs presentation to Task Contracts while preserving the existing SQLite and report API contracts.
 - Session retention now deletes only the selected sessions, refreshes their affected graph and usage-rollup keys, and relies on enforced SQLite constraints instead of rebuilding and globally validating the complete derived store.
 - Made improvement discovery and impact measurement execution-aware: long-lived sessions are segmented into canonical execution units, mixed or low-confidence archetypes are excluded from procedure cohorts, and workflow contracts are evaluated symmetrically against the first five comparable post-installation executions.
@@ -23,6 +26,9 @@
 
 ### Added
 
+- Added a decision-oriented product direction covering simplification, packaged proof, adoption, privacy, and evidence requirements for developer trust.
+- Added a fresh-wheel cross-agent blog handoff suite and a deterministic six-agent telemetry contract covering validated memory selection, task completion, logical MCP calls, token totals, and repeat-refresh idempotency.
+- Added a direction-aware progress graph to every Impact card, plotting the baseline and each stored comparable-cohort check without extra dashboard queries.
 - Added a native OpenCode SQLite adapter shared by canonical ingestion and session-detail rendering, including prompts, responses, exact model/token/cache usage, tool results, workspace context, and parent-session lineage.
 - Added privacy-safe Codex context discovery for user instructions and memory files, canonical per-session memory exposure evidence with dashboard counts, and automatic task-contract registration when `reflect_context` receives an explicit task file.
 - Added read-only `reflect_impact` MCP inspection for persisted before/after measurements and their exact compared execution-unit or session cohorts.
@@ -36,6 +42,9 @@
 
 ### Fixed
 
+- Made validated project instructions path-applicable context and let `reflect_context` return bounded current content only when the source remains in scope and its hash still matches, instead of losing reusable guidance beyond the 360-character privacy preview.
+- Preserved provider tool-call identities across native adapters, reconciled invocation/result MCP rows by logical call ID, and attributed `reflect_context` memory exposure after the task's runtime session is ingested.
+- Generated tool-specific names for failure-recovery workflows and added an editable workflow name with a deterministic unique-name suggestion when another active workflow owns the proposed target.
 - Prevented Cursor transcript estimates from attaching to sessions owned by another agent, repaired retained cross-agent estimate provenance, let explicit native sources correct earlier agent attribution, made model token breakdowns deduplicate the same exact usage records used by canonical session totals, and labeled token-bearing zero-cost sessions as unpriced rather than implicitly free.
 - Made `reflect doctor` distinguish hook registration from events actually delivered to Reflect, while exposing exporter health, pending batches, and hook-state writability.
 - Lazy-loaded filtered Tools data when entering Explore, preserving agent and cohort filters so command patterns no longer remain empty after filtering from another dashboard view.

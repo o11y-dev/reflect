@@ -14,13 +14,16 @@ from reflect.mcp_clients import (
 )
 
 
-def test_mcp_client_matrix_covers_every_implemented_agent() -> None:
+def test_mcp_client_matrix_is_independent_from_telemetry_support() -> None:
     declared_agents = {
         capability.agent_name for capability in MCP_CLIENT_CAPABILITIES
     }
 
     assert len(declared_agents) == len(MCP_CLIENT_CAPABILITIES)
-    assert declared_agents == set(core._IMPLEMENTED_AGENT_SUPPORT)
+    assert "Antigravity" in declared_agents
+    assert "Gemini CLI" not in declared_agents
+    assert "Gemini CLI" in core._IMPLEMENTED_TELEMETRY_SUPPORT
+    assert "Antigravity" not in core._IMPLEMENTED_TELEMETRY_SUPPORT
 
 
 def test_headless_clients_have_complete_local_test_identity() -> None:
@@ -129,9 +132,9 @@ def test_codex_configurator_preserves_reflect_server_options(tmp_path) -> None:
             {"command": "/usr/local/bin/reflect-mcp", "args": []},
         ),
         (
-            "Gemini CLI",
-            ".gemini",
-            "settings.json",
+            "Antigravity",
+            ".gemini/antigravity-cli",
+            "../config/mcp_config.json",
             "mcpServers",
             {"command": "/usr/local/bin/reflect-mcp", "args": []},
         ),

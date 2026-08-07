@@ -438,6 +438,10 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "const evidenceId = session.execution_unit_id || session.session_id" in text
     assert "linked ${taskLevel ? 'execution units' : 'sessions'}" in text
     assert "function impactTrendPresentation(item, previous, metric)" in text
+    assert "function impactMeasurementState(item)" in text
+    assert "measurementState === 'not_measurable'" in text
+    assert "item.cohort?.measurement_reasons" in text
+    assert "followed ${units} collected" in text
     assert "metric?.direction || 'lower_is_better'" in text
     assert "direction:'higher_is_better'" in text
     assert "Needs Attention vs Baseline" in text
@@ -445,6 +449,11 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "moving in the right direction, but not enough yet" in text
     assert "regressedButImproving ? 'Review Progress'" in text
     assert 'data-trend="${escHtml(trend?.kind || \'unknown\')}"' in text
+    assert "function impactProgressGraph(history, metric)" in text
+    assert "const baselineSnapshot = latestSnapshot?.before_value" in text
+    assert "Progress across ${fmt(checks.length)} impact" in text
+    assert "const progressGraph = impactProgressGraph(history, metric)" in text
+    assert "${progressGraph}" in text
     assert 'id="ledger-dialog"' in text
     assert 'data-ledger-action="evidence"' in text
     assert 'data-ledger-action="review-loop"' in text
@@ -453,6 +462,10 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "showLoopReview(trigger.dataset.loopId || '')" in text
     assert "showSkillReview(trigger.dataset.skillId || '')" in text
     assert "showWorkflowReview(candidateId)" in text
+    assert 'id="workflow-name"' in text
+    assert 'data-ledger-action="use-unique-name"' in text
+    assert "content.slug = String(document.getElementById('workflow-name')" in text
+    assert "Save the renamed draft and review its updated target path before applying." in text
     assert "Review Active Workflow" in text
     assert "Review Approved Workflow" in text
     assert "submitSessionFeedback(sessionId, outcome, button)" in text
@@ -472,6 +485,12 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert 'id="measurement-ledger"' in impact_panel
     assert 'id="cmp-a"' not in impact_panel
     assert 'id="cohort-comparison-panel"' not in impact_panel
+
+
+def test_dashboard_report_copy_matches_canonical_asset():
+    source, served = DASHBOARD_HTML_FILES
+
+    assert served.read_bytes() == source.read_bytes()
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 import sqlite3
 import statistics
 from collections import defaultdict
@@ -34,6 +35,15 @@ _scope = scope_for_repository
 _severity = severity_for_impact
 
 
+def _qualified_workflow_slug(base: str, qualifier: str) -> str:
+    """Keep rule-generated workflow names readable and collision-resistant."""
+
+    normalized = re.sub(r"[^a-z0-9]+", "-", qualifier.strip().lower()).strip("-") or "tool"
+    digest = _stable_fingerprint(qualifier)[:6]
+    available = max(1, 63 - len(base) - len(digest) - 2)
+    return f"{base}-{normalized[:available].rstrip('-')}-{digest}"
+
+
 class RepeatedToolFailureRule(BaseImprovementRule):
     definition = RuleDefinition(
         id="repeated_tool_failure_chain",
@@ -55,6 +65,26 @@ class RepeatedToolFailureRule(BaseImprovementRule):
             "Verify the intended postcondition, not only the tool exit status.",
         ],
     )
+
+    def propose(self, finding: ObservationDraft) -> WorkflowProposal | None:
+        """Name each tool-specific recovery separately and measure repeated retries."""
+
+        proposal = super().propose(finding)
+        if proposal is None:
+            return None
+        tool_name = str(finding.baseline_query.get("tool_name") or "tool")
+        slug = _qualified_workflow_slug(self.workflow.slug, tool_name)
+        return proposal.model_copy(
+            update={
+                "hypothesis": (
+                    f"A reviewed {slug} workflow will reduce identical retries after "
+                    f"{tool_name} failures. {finding.summary}"
+                ),
+                "content": {**proposal.content, "slug": slug},
+                "target_metric": "identical_retry_calls",
+                "target_value": None,
+            }
+        )
 
     def detect(self, conn: sqlite3.Connection) -> list[ObservationDraft]:
         rows = conn.execute(

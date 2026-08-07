@@ -129,6 +129,65 @@ def test_normalize_pending_raw_events_populates_canonical_tables(tmp_path):
         conn.close()
 
 
+def test_normalize_merges_mcp_invocation_and_result_by_logical_call_id(tmp_path):
+    spans_path = tmp_path / "mcp-spans.jsonl"
+    base_attrs = {
+        "gen_ai.client.name": "codex",
+        "gen_ai.client.session_id": "mcp-session",
+        "gen_ai.tool.call.id": "mcp-call-1",
+        "gen_ai.client.mcp_server": "reflect",
+        "gen_ai.client.mcp_tool": "reflect_context",
+    }
+    spans = [
+        {
+            "name": "BeforeMCPExecution",
+            "traceId": "trace-mcp",
+            "spanId": "span-mcp-start",
+            "start_time_ns": 100,
+            "end_time_ns": 100,
+            "attributes": {**base_attrs, "gen_ai.client.hook.event": "BeforeMCPExecution"},
+        },
+        {
+            "name": "AfterMCPExecution",
+            "traceId": "trace-mcp",
+            "spanId": "span-mcp-end",
+            "start_time_ns": 100,
+            "end_time_ns": 500,
+            "attributes": {
+                **base_attrs,
+                "gen_ai.client.hook.event": "AfterMCPExecution",
+                "gen_ai.client.status": "ok",
+            },
+        },
+    ]
+    spans_path.write_text(
+        "\n".join(json.dumps(span) for span in spans) + "\n",
+        encoding="utf-8",
+    )
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        ingest_local_spans_file(conn, file_path=spans_path)
+        normalize_pending_raw_events(conn)
+
+        row = conn.execute(
+            """
+            SELECT tool_call_id, server_name, tool_name, status, duration_ms
+            FROM mcp_calls
+            """
+        ).fetchone()
+        assert tuple(row) == (
+            "mcp-call-1",
+            "reflect",
+            "reflect_context",
+            "ok",
+            0,
+        )
+        assert conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
 def test_backfill_tool_call_hashes_repairs_existing_rows_idempotently(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:

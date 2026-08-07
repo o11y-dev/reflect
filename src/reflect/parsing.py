@@ -660,11 +660,19 @@ def _codex_record_timestamp_ns(record: dict) -> int:
     )
 
 
-def _agent_tool_attrs(tool_name: str, tool_input: object) -> dict:
+def _agent_tool_attrs(
+    tool_name: str,
+    tool_input: object,
+    call_id: object | None = None,
+) -> dict:
     attrs = {
         "gen_ai.client.tool_name": tool_name,
         "gen_ai.client.tool.input": tool_input if isinstance(tool_input, str) else _json_dumps(tool_input or {}),
     }
+    normalized_call_id = str(call_id or "").strip()
+    if normalized_call_id:
+        attrs["gen_ai.client.tool_use_id"] = normalized_call_id
+        attrs["gen_ai.tool.call.id"] = normalized_call_id
     identity = DEFAULT_MCP_CLASSIFIER.identify(attrs)
     if identity.server_name:
         attrs["gen_ai.client.mcp_server"] = identity.server_name
@@ -815,10 +823,14 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
                         trace_id,
                         f"{index}:assistant",
                     )
-            elif item_type == "function_call":
+            elif item_type in {"function_call", "custom_tool_call"}:
                 call_id = str(payload.get("call_id") or payload.get("id") or f"{index}")
                 tool_name = str(payload.get("name") or "")
-                arguments = payload.get("arguments")
+                arguments = (
+                    payload.get("arguments")
+                    if item_type == "function_call"
+                    else payload.get("input")
+                )
                 active_tools[call_id] = {
                     "start_ns": ts_ns,
                     "tool_name": tool_name,
@@ -830,13 +842,12 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
                     {
                         **base_attrs,
                         "gen_ai.client.hook.event": "PreToolUse",
-                        "gen_ai.client.tool_use_id": call_id,
-                        **_agent_tool_attrs(tool_name, arguments),
+                        **_agent_tool_attrs(tool_name, arguments, call_id),
                     },
                     trace_id,
                     f"{index}:function_call:{call_id}",
                 )
-            elif item_type == "function_call_output":
+            elif item_type in {"function_call_output", "custom_tool_call_output"}:
                 call_id = str(payload.get("call_id") or payload.get("id") or f"{index}")
                 start_info = active_tools.pop(call_id, {})
                 output = payload.get("output")
@@ -849,6 +860,7 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
                         "gen_ai.client.hook.event": "PostToolUse",
                         "gen_ai.client.tool_name": str(start_info.get("tool_name") or payload.get("name") or ""),
                         "gen_ai.client.tool_use_id": call_id,
+                        "gen_ai.tool.call.id": call_id,
                         "gen_ai.client.tool.output": output if isinstance(output, str) else _json_dumps(output or {}),
                     },
                     trace_id,
@@ -965,21 +977,27 @@ def _iter_copilot_session_spans(file_path: Path) -> Iterable[dict]:
                     "gen_ai.usage.cache_creation.input_tokens": total_cw,
                 }, trace_id, f"{index}:session.shutdown")
         elif event_type == "tool.execution_start":
-            tool_call_id = data.get("toolCallId") or f"{index}"
+            tool_call_id = str(data.get("toolCallId") or f"{index}")
             active_tools[tool_call_id] = {"start_ns": ts_ns, "tool_name": data.get("toolName", "")}
             yield _make_flat_span("gen_ai.client.hook.PreToolUse", ts_ns, ts_ns, {
                 **attrs,
                 "gen_ai.client.hook.event": "PreToolUse",
-                **_agent_tool_attrs(data.get("toolName", ""), data.get("arguments", {})),
+                **_agent_tool_attrs(
+                    data.get("toolName", ""),
+                    data.get("arguments", {}),
+                    tool_call_id,
+                ),
             }, trace_id, f"{index}:tool.execution_start")
         elif event_type == "tool.execution_complete":
-            tool_call_id = data.get("toolCallId") or f"{index}"
+            tool_call_id = str(data.get("toolCallId") or f"{index}")
             start_info = active_tools.get(tool_call_id, {})
             success = bool(data.get("success", False))
             span_attrs = {
                 **attrs,
                 "gen_ai.client.hook.event": "PostToolUse" if success else "PostToolUseFailure",
                 "gen_ai.client.tool_name": start_info.get("tool_name", ""),
+                "gen_ai.client.tool_use_id": tool_call_id,
+                "gen_ai.tool.call.id": tool_call_id,
             }
             if data.get("model"):
                 span_attrs["gen_ai.request.model"] = data["model"]
@@ -1065,7 +1083,11 @@ def _iter_claude_session_spans(file_path: Path) -> Iterable[dict]:
                 tool_attrs = {
                     **attrs,
                     "gen_ai.client.hook.event": "PreToolUse",
-                    **_agent_tool_attrs(tool_name, item.get("input", {})),
+                    **_agent_tool_attrs(
+                        tool_name,
+                        item.get("input", {}),
+                        item.get("id"),
+                    ),
                 }
                 yield _make_flat_span("gen_ai.client.hook.PreToolUse", ts_ns, ts_ns, tool_attrs, trace_id, f"{index}:tool_use:{tool_idx}")
         elif event_type == "summary":
@@ -1135,7 +1157,11 @@ def _iter_cursor_session_spans(file_path: Path) -> Iterable[dict]:
                 if not isinstance(item, dict) or item.get("type") != "tool_use":
                     continue
                 tool_name = str(item.get("name") or "")
-                tool_attrs = _agent_tool_attrs(tool_name, item.get("input"))
+                tool_attrs = _agent_tool_attrs(
+                    tool_name,
+                    item.get("input"),
+                    f"cursor-native:{index}:{tool_idx}",
+                )
                 yield _make_flat_span(
                     "gen_ai.client.hook.PreToolUse",
                     ts_ns,
@@ -1202,6 +1228,34 @@ def _opencode_base_attrs(session: OpenCodeSessionRecord) -> dict[str, object]:
         attrs["gen_ai.client.parent_session_id"] = session.parent_id
     if session.title:
         attrs["gen_ai.client.session_title"] = session.title
+    return attrs
+
+
+def _opencode_tool_attrs(
+    session: OpenCodeSessionRecord,
+    tool_name: str,
+    tool_input: object,
+    call_id: str,
+) -> dict[str, object]:
+    """Resolve OpenCode's ``server_tool`` encoding only from configured servers."""
+
+    attrs = _agent_tool_attrs(tool_name, tool_input, call_id)
+    if attrs.get("gen_ai.client.mcp_server") or not session.directory:
+        return attrs
+    config_path = Path(session.directory) / "opencode.json"
+    try:
+        config = _json_loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return attrs
+    servers = config.get("mcp") if isinstance(config, dict) else None
+    if not isinstance(servers, dict):
+        return attrs
+    for server_name in sorted(servers, key=len, reverse=True):
+        prefix = f"{server_name}_"
+        if tool_name.startswith(prefix) and tool_name != prefix:
+            attrs["gen_ai.client.mcp_server"] = server_name
+            attrs["gen_ai.client.mcp_tool"] = tool_name[len(prefix) :]
+            break
     return attrs
 
 
@@ -1301,8 +1355,12 @@ def _iter_opencode_session_spans(file_path: Path) -> Iterable[dict]:
                 tool_end_ns = _parse_timestamp_to_ns(timing.get("end")) or tool_start_ns
                 tool_attrs = {
                     **message_attrs,
-                    **_agent_tool_attrs(tool_name, state.get("input")),
-                    "gen_ai.tool.call.id": call_id,
+                    **_opencode_tool_attrs(
+                        session,
+                        tool_name,
+                        state.get("input"),
+                        call_id,
+                    ),
                 }
                 yield _make_flat_span(
                     "gen_ai.client.hook.PreToolUse",
@@ -1399,10 +1457,16 @@ def _iter_gemini_session_spans(file_path: Path) -> Iterable[dict]:
                     continue
                 tool_ts = _parse_timestamp_to_ns(call.get("timestamp")) or ts_ns
                 tool_name = call.get("displayName") or call.get("name", "")
+                call_id = str(
+                    call.get("id")
+                    or call.get("callId")
+                    or call.get("toolCallId")
+                    or f"gemini-native:{index}:{tool_idx}"
+                )
                 yield _make_flat_span("gen_ai.client.hook.PreToolUse", tool_ts, tool_ts, {
                     **attrs,
                     "gen_ai.client.hook.event": "PreToolUse",
-                    **_agent_tool_attrs(tool_name, call.get("args", {})),
+                    **_agent_tool_attrs(tool_name, call.get("args", {}), call_id),
                 }, trace_id, f"{index}:tool:{tool_idx}:start")
                 yield _make_flat_span(
                     f"gen_ai.client.hook.{'PostToolUse' if call.get('status') == 'success' else 'PostToolUseFailure'}",
@@ -1412,6 +1476,8 @@ def _iter_gemini_session_spans(file_path: Path) -> Iterable[dict]:
                         **attrs,
                         "gen_ai.client.hook.event": "PostToolUse" if call.get("status") == "success" else "PostToolUseFailure",
                         "gen_ai.client.tool_name": tool_name,
+                        "gen_ai.client.tool_use_id": call_id,
+                        "gen_ai.tool.call.id": call_id,
                     },
                     trace_id,
                     f"{index}:tool:{tool_idx}:end",
