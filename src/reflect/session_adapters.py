@@ -14,18 +14,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from reflect.agent_capabilities import normalize_agent_key
 from reflect.opencode_adapter import OpenCodeSessionStore, opencode_tool_success
 from reflect.utils import _flatten_text_content, _json_dumps, _json_loads, _load_json_lines
 
 MAX_CONTENT_CHARS = 20_000
-
-AGENT_ALIASES = {
-    "claude-code": "claude",
-    "gemini-cli": "gemini",
-    "github-copilot": "copilot",
-    "openai-codex": "codex",
-}
-
 
 def _bounded(value: object, limit: int = MAX_CONTENT_CHARS) -> str:
     return str(value or "").strip()[:limit]
@@ -601,8 +594,7 @@ class SessionConversationAdapterRegistry:
 
     @staticmethod
     def _agent_key(agent: str) -> str:
-        normalized = agent.strip().lower()
-        return AGENT_ALIASES.get(normalized, normalized)
+        return normalize_agent_key(agent)
 
 
 DEFAULT_SESSION_ADAPTERS = SessionConversationAdapterRegistry(
@@ -618,7 +610,6 @@ DEFAULT_SESSION_ADAPTERS = SessionConversationAdapterRegistry(
 
 
 __all__ = [
-    "AGENT_ALIASES",
     "ClaudeConversationAdapter",
     "CodexConversationAdapter",
     "ConversationEvent",

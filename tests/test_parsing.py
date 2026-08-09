@@ -8,6 +8,7 @@ from conftest import DAY1, HOUR, make_span, wrap_otlp
 from reflect.context_artifacts import context_artifact_id
 from reflect.parsing import (
     _flatten_otlp_attributes,
+    _infer_otlp_logs_file,
     _iter_claude_log_spans,
     _iter_claude_session_spans,
     _iter_codex_context_spans,
@@ -20,6 +21,22 @@ from reflect.parsing import (
     _load_otlp_logs,
     _load_otlp_traces,
 )
+
+
+def test_explicit_otlp_traces_do_not_fall_back_to_global_logs(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    reflect_home = tmp_path / ".reflect"
+    default_logs = reflect_home / "state" / "otlp" / "otel-logs.active.jsonl"
+    default_logs.parent.mkdir(parents=True)
+    default_logs.write_text("{}\n", encoding="utf-8")
+    explicit_traces = tmp_path / "fixture" / "otel-traces.json"
+    explicit_traces.parent.mkdir()
+    explicit_traces.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr("reflect.parsing.REFLECT_HOME", reflect_home)
+
+    assert _infer_otlp_logs_file(explicit_traces) is None
 
 
 class TestFlattenOtlpAttributes:

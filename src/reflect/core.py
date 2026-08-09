@@ -1,34 +1,34 @@
 #!/usr/bin/env python3
 """
-Generate a structured AI usage telemetry report.
+Reflect CLI composition root and local telemetry entry point.
 
-Reads telemetry from the canonical local OTLP traces cache first
-(`~/.reflect/state/otlp/otel-traces.json`).
+Reads the bounded local OTLP trace segments first
+(`~/.reflect/state/otlp/otel-traces.active.jsonl`).
 
 When the default local paths are in use, reflect can also normalize either:
   1. Local JSONL hook spans from `.state/local_spans/`
   2. Rich local session stores such as Copilot `events.jsonl`, Claude project
-     transcripts, and Gemini chat session JSON
+     transcripts, OpenCode SQLite, and historical Gemini sessions
 
-into that same local OTLP cache before analysis.
+into the same canonical SQLite preparation pipeline.
 
-When available, a sibling OTLP logs file (`otel-logs.json`) is also read as a
+When available, sibling OTLP log segments are also read as a
 secondary enrichment source to fill missing per-session model metadata.
 
 Usage:
     # From collector file exporter (recommended)
     python3 src/reflect/core.py \\
-        --otlp-traces ~/.reflect/state/otlp/otel-traces.json
+        --otlp-traces ~/.reflect/state/otlp/otel-traces.active.jsonl
 
     # Open the local browser report
     python3 src/reflect/core.py \\
-        --otlp-traces ~/.reflect/state/otlp/otel-traces.json
+        --otlp-traces ~/.reflect/state/otlp/otel-traces.active.jsonl
 
-    # Legacy markdown report
+    # Markdown report
     python3 src/reflect/core.py \\
-        --otlp-traces ~/.reflect/state/otlp/otel-traces.json --output reports/my-report.md
+        --otlp-traces ~/.reflect/state/otlp/otel-traces.active.jsonl --output reports/my-report.md
 
-    # From local hook state (legacy)
+    # From an explicit local hook source
     python3 src/reflect/core.py \\
         --sessions-dir ".cursor/hooks/opentelemetry-hook/.state/sessions" \\
         --spans-dir ".cursor/hooks/opentelemetry-hook/.state/local_spans"
@@ -65,21 +65,21 @@ if TYPE_CHECKING:
     from reflect.improvements.service import ImprovementService
     from reflect.memory import MemoryService
     from reflect.preparation import (
-        PreparationProgressReporter,
         SnapshotPreparationResult,
         SnapshotReadinessProbe,
         SnapshotStatus,
     )
 
-# ---------------------------------------------------------------------------
-# Reflect home directory
-# ---------------------------------------------------------------------------
-
-REFLECT_HOME = Path(os.environ.get("REFLECT_HOME", Path.home() / ".reflect"))
-HOOK_HOME = Path(os.environ.get("IDE_OTEL_HOOK_HOME",
-                                 Path.home() / ".local" / "share" / "opentelemetry-hooks"))
-
-from reflect.dashboard import _start_publish_server
+from reflect.agent_capabilities import (
+    AgentCapability,
+    AgentSupport,
+    normalize_agent_key,
+    setup_agent_capabilities,
+    skill_agent_capabilities,
+)
+from reflect.cli.database import db as database_commands
+from reflect.cli.database import ingest as ingest_command
+from reflect.dashboard_server import start_publish_server
 from reflect.hook_runtime import HookMigrationError, HookPipxMigrator, HookRuntime
 from reflect.instrumentation import (  # noqa: F401
     _HOOK_CFG_ENDPOINT_DEFAULT,
@@ -119,11 +119,15 @@ from reflect.parsing import (
     _canonical_otlp_traces_path,
     _default_sessions_dir,
     _default_spans_dir,
-    _discover_rich_session_files,
     _infer_otlp_logs_file,
-    _native_session_path_matches_id,
+)
+from reflect.preparation_pipeline import (
+    ensure_sql_costs,
+    prepare_sql_report_db,
+    prepare_usage_db,
 )
 from reflect.processing import analyze_telemetry
+from reflect.raw_segments import readable_segment_paths, segment_inventory
 from reflect.report import render_report
 from reflect.shell_completion import (
     SUPPORTED_SHELLS,
@@ -149,16 +153,25 @@ from reflect.skill_extraction import (
 from reflect.utils import _json_loads, logger
 
 # ---------------------------------------------------------------------------
+# Reflect home directory
+# ---------------------------------------------------------------------------
+
+REFLECT_HOME = Path(os.environ.get("REFLECT_HOME", Path.home() / ".reflect"))
+HOOK_HOME = Path(
+    os.environ.get(
+        "IDE_OTEL_HOOK_HOME",
+        Path.home() / ".local" / "share" / "opentelemetry-hooks",
+    )
+)
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
 def _default_otlp_traces() -> Path | None:
     """Return the canonical default OTLP traces path if it exists."""
     p_otlp = _canonical_otlp_traces_path()
-    if p_otlp.exists():
-        return p_otlp
-    p = REFLECT_HOME / "state" / "otel-traces.json"
-    return p if p.exists() else None
+    return p_otlp if readable_segment_paths(p_otlp) else None
 
 
 def _default_vscode_copilot_dir() -> Path:
@@ -171,187 +184,12 @@ def _default_vscode_copilot_dir() -> Path:
     return home / ".config" / "Code" / "User"
 
 
-_AGENT_SPECS = [
-    {
-        "name": "Claude Code",
-        "setup_aliases": ["claude"],
-        "env": "CLAUDE_HOME",
-        "default": lambda: Path.home() / ".claude",
-        "path_kind": "home",
-        "local_skill_path": ".claude/skills/",
-        "hook_agent": "claude",
-        "global_path": "~/.claude/skills/",
-        "recommendation": "Run reflect setup to wire Claude hooks and enable native Claude telemetry.",
-    },
-    {
-        "name": "Cursor",
-        "setup_aliases": ["cursor-agent"],
-        "env": "CURSOR_HOME",
-        "default": lambda: Path.home() / ".cursor",
-        "path_kind": "home",
-        "local_skill_path": ".agents/skills/",
-        "hook_agent": "cursor",
-        "global_path": "~/.cursor/skills/",
-        "recommendation": "Use session/log adapters for desktop; hooks help for headless or CLI launches. Treat state.vscdb as auth/context, not a guaranteed per-session token ledger.",
-    },
-    {
-        "name": "Gemini CLI",
-        "setup_aliases": ["gemini"],
-        "env": "GEMINI_HOME",
-        "env_aliases": ["GEMINI_DIR"],
-        "default": lambda: Path.home() / ".gemini",
-        "path_kind": "home",
-        "local_skill_path": ".agents/skills/",
-        "hook_agent": "gemini",
-        "global_path": "~/.gemini/skills/",
-        "recommendation": "Prefer native Gemini OTel; keep session/log adapters for troubleshooting.",
-    },
-    {
-        "name": "GitHub Copilot",
-        "setup_aliases": ["copilot"],
-        "env": "COPILOT_HOME",
-        "default": lambda: Path.home() / ".copilot",
-        "path_kind": "home",
-        "local_skill_path": ".agents/skills/",
-        "hook_agent": "copilot",
-        "global_path": "~/.copilot/skills/",
-        "recommendation": "Prefer native Copilot OTel on OTLP HTTP; add hooks for governance.",
-    },
-    {
-        "name": "OpenAI Codex CLI",
-        "setup_aliases": ["codex", "codex-cli", "openai-codex"],
-        "env": "CODEX_HOME",
-        "default": lambda: Path.home() / ".codex",
-        "path_kind": "home",
-        "local_skill_path": ".agents/skills/",
-        "hook_agent": "codex",
-        "global_path": "~/.agents/skills/",
-        "recommendation": "Use native Codex OTel for interactive runs; reflect does not yet ship a native session adapter for Codex logs.",
-    },
-    {
-        "name": "Windsurf",
-        "setup_aliases": ["windsurf"],
-        "env": "WINDSURF_HOME",
-        "default": lambda: Path.home() / ".codeium" / "windsurf",
-        "path_kind": "home",
-        "local_skill_path": ".windsurf/skills/",
-        "hook_agent": "windsurf",
-        "global_path": "~/.codeium/windsurf/skills/",
-        "recommendation": "Use opentelemetry-hooks for Windsurf telemetry; native OTel is not available.",
-    },
-    {
-        "name": "Trae",
-        "env": "TRAE_HOME",
-        "default": lambda: Path.home() / ".trae",
-        "path_kind": "home",
-        "local_skill_path": ".trae/skills/",
-        "global_path": "~/.trae/skills/",
-        "recommendation": "Native OTel and hooks still need verification for Trae.",
-    },
-    {
-        "name": "Cline",
-        "env": "CLINE_HOME",
-        "default": lambda: Path.home() / ".agents",
-        "path_kind": "home",
-        "local_skill_path": ".agents/skills/",
-        "global_path": "~/.agents/skills/",
-        "recommendation": "Compatible with standard .agents/skills distribution.",
-    },
-    {
-        "name": "Roo Code",
-        "env": "ROO_HOME",
-        "default": lambda: Path.home() / ".roo",
-        "path_kind": "home",
-        "local_skill_path": ".roo/skills/",
-        "global_path": "~/.roo/skills/",
-        "recommendation": "Native OTel and hooks still need verification for Roo Code.",
-    },
-    {
-        "name": "Continue",
-        "env": "CONTINUE_HOME",
-        "default": lambda: Path.home() / ".continue",
-        "path_kind": "home",
-        "local_skill_path": ".continue/skills/",
-        "global_path": "~/.continue/skills/",
-        "recommendation": "Add hooks to cover exec / mcp-server gaps in Continue.",
-    },
-    {
-        "name": "Goose",
-        "env": "GOOSE_HOME",
-        "default": lambda: Path.home() / ".config" / "goose",
-        "path_kind": "home",
-        "local_skill_path": ".goose/skills/",
-        "global_path": "~/.config/goose/skills/",
-        "recommendation": "Native OTel and hooks still need verification for Goose.",
-    },
-    {
-        "name": "OpenHands",
-        "env": "OPENHANDS_HOME",
-        "default": lambda: Path.home() / ".openhands",
-        "path_kind": "home",
-        "local_skill_path": ".openhands/skills/",
-        "global_path": "~/.openhands/skills/",
-        "recommendation": "Native OTel and hooks still need verification for OpenHands.",
-    },
-    {
-        "name": "Antigravity",
-        "setup_aliases": ["agy", "antigravity-cli"],
-        "env": "ANTIGRAVITY_HOME",
-        "default": lambda: Path.home() / ".gemini" / "antigravity-cli",
-        "path_kind": "home",
-        "local_skill_path": ".agents/skills/",
-        "global_path": "~/.gemini/config/skills/",
-        "recommendation": "Use agy with workspace MCP today; native telemetry ingestion still needs verification.",
-    },
-    {
-        "name": "Amp",
-        "env": "AMP_HOME",
-        "default": lambda: Path.home() / ".local" / "share" / "amp",
-        "path_kind": "home",
-        "local_skill_path": ".agents/skills/",
-        "global_path": "~/.config/agents/skills/",
-        "recommendation": "Start with session/log adapters before adding new default hook collection.",
-    },
-    {
-        "name": "iFlow",
-        "env": "IFLOW_HOME",
-        "default": lambda: Path.home() / ".iflow",
-        "path_kind": "home",
-        "local_skill_path": ".iflow/skills/",
-        "global_path": "~/.iflow/skills/",
-        "recommendation": "Start with session/log adapters; native OTel and hooks still need verification.",
-    },
-    {
-        "name": "Pi",
-        "env": "PI_HOME",
-        "default": lambda: Path.home() / ".pi",
-        "path_kind": "home",
-        "local_skill_path": ".pi/skills/",
-        "global_path": "~/.pi/agent/skills/",
-        "recommendation": "Start with session/log adapters; native OTel and hooks still need verification.",
-    },
-    {
-        "name": "OpenClaw",
-        "env": "OPENCLAW_HOME",
-        "default": lambda: Path.home() / ".openclaw",
-        "path_kind": "home",
-        "local_skill_path": "skills/",
-        "global_path": "~/.openclaw/skills/",
-        "recommendation": "Start with session/log adapters; native OTel and hooks still need verification.",
-    },
-    {
-        "name": "OpenCode",
-        "env": "OPENCODE_HOME",
-        "default": lambda: Path.home() / ".config" / "opencode",
-        "path_kind": "home",
-        "local_skill_path": ".opencode/skills/",
-        "hook_agent": "opencode",
-        "global_path": "~/.config/opencode/skills/",
-        "recommendation": "Use opencode run for skill extraction; Reflect reads the native OpenCode session store.",
-    },
-]
-
-_SKILL_AGENT_CLI_NAMES = ("claude", "codex", "copilot", "cursor-agent", "agy", "opencode")
+_AGENT_CAPABILITIES = setup_agent_capabilities()
+_SKILL_AGENT_CLI_NAMES = tuple(
+    capability.skill_cli
+    for capability in skill_agent_capabilities()
+    if capability.skill_cli is not None
+)
 
 
 def _complete_setup_agent(
@@ -359,14 +197,13 @@ def _complete_setup_agent(
     _param: click.Parameter,
     incomplete: str,
 ) -> list[str]:
-    """Complete supported setup display names and stable aliases."""
     candidates = {
-        value
-        for spec in _AGENT_SPECS
-        for value in (str(spec["name"]), *map(str, spec.get("setup_aliases", [])))
+        name
+        for capability in _AGENT_CAPABILITIES
+        for name in capability.setup_names
     }
     lowered = incomplete.lower()
-    return sorted(value for value in candidates if value.lower().startswith(lowered))
+    return sorted(name for name in candidates if name.lower().startswith(lowered))
 
 
 def _complete_skill_agent_cli(
@@ -374,47 +211,25 @@ def _complete_skill_agent_cli(
     _param: click.Parameter,
     incomplete: str,
 ) -> list[str]:
-    """Complete supported coding-agent executables used for skill authoring."""
     lowered = incomplete.lower()
     return [name for name in _SKILL_AGENT_CLI_NAMES if name.startswith(lowered)]
 
-_IMPLEMENTED_TELEMETRY_SUPPORT: dict[str, tuple[str, str]] = {
-    "Claude Code": ("Native OTel + hooks", "High"),
-    "Cursor": ("Session/log adapters", "Medium"),
-    "Gemini CLI": ("Native OTel + session adapters", "High"),
-    "GitHub Copilot": ("Native OTel + VS Code env", "High"),
-    "OpenAI Codex CLI": ("Native OTel config", "Medium"),
-    "Windsurf": ("Hook telemetry + config snapshots", "Medium"),
-    "OpenCode": ("Native SQLite session adapter + hooks", "Medium"),
-}
-_DOCTOR_MATRIX_PLANNED = {"Antigravity", "OpenClaw"}
 
-
-def _agent_support_summary(name: str) -> dict[str, str]:
-    telemetry_path, confidence = _IMPLEMENTED_TELEMETRY_SUPPORT.get(
-        name,
-        ("Not implemented yet (setup only snapshots skills/config)", "Planned"),
-    )
-    status = "Implemented" if name in _IMPLEMENTED_TELEMETRY_SUPPORT else "Planned"
-    mcp_client = get_mcp_client_capability(name)
+def _agent_support_summary(capability: AgentCapability) -> dict[str, str]:
     return {
-        "support_status": status,
-        "telemetry_path": telemetry_path,
-        "mcp_client": mcp_client.surface.value if mcp_client else "Not declared",
-        "confidence": confidence,
+        "support_status": capability.support.value,
+        "telemetry_path": capability.telemetry_path,
+        "mcp_client": (
+            capability.mcp.surface.value
+            if capability.mcp is not None
+            else "Not declared"
+        ),
+        "confidence": capability.confidence,
     }
 
 
-def _agent_path(spec: dict) -> Path:
-    override = os.environ.get(spec["env"])
-    if not override:
-        for alias in spec.get("env_aliases", []):
-            override = os.environ.get(alias)
-            if override:
-                break
-    if override:
-        return Path(override).expanduser()
-    return spec["default"]().expanduser()
+def _agent_path(capability: AgentCapability) -> Path:
+    return capability.home()
 
 
 def _count_path_entries(path: Path, *, max_entries: int = 5000) -> int:
@@ -433,12 +248,21 @@ def _count_path_entries(path: Path, *, max_entries: int = 5000) -> int:
 
 def _detect_agents() -> list[dict]:
     agents: list[dict] = []
-    for spec in _AGENT_SPECS:
-        path = _agent_path(spec)
+    for capability in _AGENT_CAPABILITIES:
+        path = _agent_path(capability)
         detected = path.exists()
         agents.append({
-            **spec,
-            **_agent_support_summary(spec["name"]),
+            "name": capability.display_name,
+            "key": capability.key,
+            "setup_aliases": capability.setup_names[1:],
+            "env": capability.env_names[0],
+            "env_aliases": capability.env_names[1:],
+            "path_kind": "home",
+            "local_skill_path": capability.local_skill_path,
+            "hook_agent": capability.hook_agent,
+            "global_path": capability.global_skill_path,
+            "recommendation": capability.recommendation,
+            **_agent_support_summary(capability),
             "path": path,
             "detected": detected,
             "entries": _count_path_entries(path) if detected else 0,
@@ -462,6 +286,19 @@ def _summarize_file(path: Path | None) -> str:
     if size < 1024 * 1024:
         return f"{size / 1024:.1f} KB"
     return f"{size / (1024 * 1024):.1f} MB"
+
+
+def _summarize_segment_inventory(path: Path) -> str:
+    inventory = segment_inventory(path)
+    size = inventory.total_bytes
+    if size < 1024:
+        size_text = f"{size} B"
+    elif size < 1024 * 1024:
+        size_text = f"{size / 1024:.1f} KB"
+    else:
+        size_text = f"{size / (1024 * 1024):.1f} MB"
+    active = "active" if inventory.active_exists else "no active segment"
+    return f"{active}, {inventory.closed_count} closed, {size_text} total"
 
 
 def _count_glob(path: Path, pattern: str) -> int:
@@ -602,7 +439,13 @@ def _detect_live_install_drift() -> dict | None:
         return None
 
     mismatches: list[str] = []
-    for rel_path in ("dashboard.py", "insights.py", "data/index.html"):
+    for rel_path in (
+        "dashboard_queries.py",
+        "dashboard_server.py",
+        "preparation.py",
+        "preparation_pipeline.py",
+        "data/index.html",
+    ):
         source_sig = _file_signature(repo_reflect / rel_path)
         live_sig = _file_signature(pipx_reflect / rel_path)
         if source_sig is None or live_sig is None:
@@ -939,6 +782,10 @@ def main(
     )
 
 
+main.add_command(database_commands)
+main.add_command(ingest_command)
+
+
 @main.command("completion")
 @click.option(
     "--shell",
@@ -1008,16 +855,18 @@ def _prepare_sql_snapshot_with_progress(
     otlp_traces: Path | None,
     include_native_sessions: bool,
     spans_dir: Path | None = None,
+    keep_processed_raw: bool = False,
 ) -> dict[str, object]:
     from reflect.terminal import TerminalPreparationProgress
 
     return TerminalPreparationProgress().run(
-        lambda progress: _prepare_sql_report_db(
+        lambda progress: prepare_sql_report_db(
             db_path,
             otlp_traces=otlp_traces,
             include_native_sessions=include_native_sessions,
             spans_dir=spans_dir,
             progress=progress,
+            keep_processed_raw=keep_processed_raw,
         )
     )
 
@@ -1029,6 +878,7 @@ def _ensure_command_snapshot(
     otlp_traces: Path | None = None,
     include_native_sessions: bool = True,
     spans_dir: Path | None = None,
+    keep_processed_raw: bool = False,
     prepare: Callable[[], dict[str, object]] | None = None,
     readiness_probes: tuple[SnapshotReadinessProbe, ...] = (),
 ) -> SnapshotPreparationResult:
@@ -1049,6 +899,7 @@ def _ensure_command_snapshot(
             ),
             include_native_sessions=include_native_sessions,
             spans_dir=spans_dir,
+            keep_processed_raw=keep_processed_raw,
         )
     )
     lifecycle = SnapshotLifecycleService(
@@ -1166,171 +1017,6 @@ def _render_usage_report(console: Console, report) -> None:
         console.print(f"[yellow]Note:[/yellow] {limitation}")
 
 
-def _prepare_usage_db(
-    db_path: Path,
-    *,
-    otlp_traces: Path | None,
-    include_native_sessions: bool,
-    native_session_ids: tuple[str, ...] = (),
-    progress: PreparationProgressReporter | None = None,
-) -> dict[str, object]:
-    """Refresh usage facts without rebuilding graph or improvement state."""
-    from reflect.preparation import PreparationStage, report_preparation_progress
-    from reflect.store.cursor_adapter import (
-        apply_cursor_transcript_usage_estimates,
-        repair_misattributed_cursor_transcript_usage,
-    )
-    from reflect.store.ingest import (
-        ingest_codex_context_file,
-        ingest_native_session_file,
-        ingest_otlp_logs_file,
-        ingest_otlp_traces_file,
-    )
-    from reflect.store.migrate import migrate
-    from reflect.store.normalize import backfill_mcp_calls, normalize_pending_raw_events
-    from reflect.store.rollups import rebuild_rollups, refresh_rollups, rollup_rebuild_pending
-    from reflect.store.sqlite import connect_sqlite
-    from reflect.store.workspaces import backfill_session_context
-
-    report_preparation_progress(
-        progress,
-        PreparationStage.OPENING_STORE,
-        "Opening the local telemetry store...",
-    )
-    conn = connect_sqlite(db_path)
-    try:
-        report_preparation_progress(
-            progress,
-            PreparationStage.MIGRATING_SCHEMA,
-            "Checking database migrations...",
-        )
-        applied = migrate(conn)
-        if otlp_traces is not None and otlp_traces.exists():
-            report_preparation_progress(
-                progress,
-                PreparationStage.INGESTING_TRACES,
-                "Reading new OTLP traces...",
-            )
-            ingest_otlp_traces_file(conn, file_path=otlp_traces, skip_unchanged=True)
-            otlp_logs = _infer_otlp_logs_file(otlp_traces)
-            if otlp_logs is not None and otlp_logs.exists():
-                report_preparation_progress(
-                    progress,
-                    PreparationStage.INGESTING_LOGS,
-                    "Reading new OTLP logs...",
-                )
-                ingest_otlp_logs_file(conn, file_path=otlp_logs, skip_unchanged=True)
-
-        changed_session_ids: set[str] = set()
-        if conn.execute(
-            "SELECT 1 FROM raw_events WHERE normalized_status = 'pending' LIMIT 1"
-        ).fetchone():
-            report_preparation_progress(
-                progress,
-                PreparationStage.NORMALIZING,
-                "Normalizing usage telemetry...",
-            )
-            normalize_pending_raw_events(conn, changed_session_ids=changed_session_ids)
-
-        cursor_native_files: list[Path] = []
-        if include_native_sessions:
-            report_preparation_progress(
-                progress,
-                PreparationStage.INGESTING_SESSIONS,
-                "Reading local agent sessions...",
-            )
-            for native_agent, session_file in _discover_rich_session_files():
-                if native_session_ids and native_agent != "opencode" and not any(
-                    _native_session_path_matches_id(session_file, candidate)
-                    for candidate in native_session_ids
-                ):
-                    continue
-                if native_agent == "codex":
-                    ingest_codex_context_file(conn, file_path=session_file)
-                result = ingest_native_session_file(
-                    conn,
-                    file_path=session_file,
-                    agent=native_agent,
-                    source_id=f"native_session:{native_agent}:{session_file}",
-                    skip_existing_sessions=native_agent != "opencode",
-                    skip_unchanged=True,
-                )
-                if native_agent == "cursor" and not result.get("unchanged"):
-                    cursor_native_files.append(session_file)
-            report_preparation_progress(
-                progress,
-                PreparationStage.NORMALIZING,
-                "Normalizing usage telemetry...",
-            )
-            normalize_pending_raw_events(conn, changed_session_ids=changed_session_ids)
-        report_preparation_progress(
-            progress,
-            PreparationStage.UPDATING_CANONICAL_STATE,
-            "Updating canonical usage state...",
-        )
-        backfill_mcp_calls(
-            conn,
-            session_ids=None if 14 in applied else changed_session_ids,
-            changed_session_ids=changed_session_ids,
-        )
-        cursor_provenance_result = repair_misattributed_cursor_transcript_usage(conn)
-        changed_session_ids.update(
-            str(session_id)
-            for session_id in cursor_provenance_result["session_ids"]
-            if session_id
-        )
-        cursor_result = apply_cursor_transcript_usage_estimates(conn, cursor_native_files)
-        context_result = backfill_session_context(
-            conn,
-            timestamp=datetime.now(UTC).isoformat(),
-            changed_session_ids=changed_session_ids,
-        )
-        session_count = int(conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0])
-        rollup_count = int(conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0])
-        from reflect.store.cost_refresh import CostRefreshState
-
-        cost_state = CostRefreshState(conn)
-        cost_inputs = cost_state.inspect(session_ids=changed_session_ids) if session_count else None
-        if (
-            rollup_rebuild_pending(conn)
-            or session_count != rollup_count
-            or cursor_result.get("updated")
-            or (cost_inputs is not None and cost_inputs.requires_full_refresh)
-        ):
-            report_preparation_progress(
-                progress,
-                PreparationStage.REFRESHING_ROLLUPS,
-                "Rebuilding usage rollups...",
-            )
-            _ensure_sql_costs(conn, refresh_inputs=cost_inputs)
-            rebuild_rollups(conn)
-            if cost_inputs is not None and cost_inputs.requires_full_refresh:
-                cost_state.mark_current(cost_inputs)
-        elif changed_session_ids or context_result["sessions_updated"]:
-            report_preparation_progress(
-                progress,
-                PreparationStage.REFRESHING_ROLLUPS,
-                f"Refreshing usage rollups for {len(changed_session_ids):,} session(s)...",
-            )
-            _ensure_sql_costs(
-                conn,
-                session_ids=changed_session_ids,
-                refresh_inputs=cost_inputs,
-            )
-            refresh_rollups(conn, changed_session_ids)
-        report_preparation_progress(
-            progress,
-            PreparationStage.COMPLETE,
-            "Usage refresh complete.",
-        )
-        return {
-            "refreshed": True,
-            "changed_sessions": len(changed_session_ids),
-        }
-    finally:
-        conn.close()
-
-
 def _prepare_usage_db_with_progress(
     db_path: Path,
     *,
@@ -1341,7 +1027,7 @@ def _prepare_usage_db_with_progress(
     from reflect.terminal import TerminalPreparationProgress
 
     return TerminalPreparationProgress().run(
-        lambda progress: _prepare_usage_db(
+        lambda progress: prepare_usage_db(
             db_path,
             otlp_traces=otlp_traces,
             include_native_sessions=include_native_sessions,
@@ -1369,6 +1055,11 @@ def _prepare_usage_db_with_progress(
     default=None,
     help="Hook JSONL directory. Defaults to the configured local spans directory.",
 )
+@click.option(
+    "--keep-processed-raw",
+    is_flag=True,
+    help="Retain closed OTLP segments after successful normalization.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print the refresh result as JSON.")
 @click.option(
     "--db-path",
@@ -1380,6 +1071,7 @@ def refresh_snapshot(
     otlp_traces: Path | None,
     native_sessions: bool,
     spans_dir: Path | None,
+    keep_processed_raw: bool,
     as_json: bool,
     db_path: Path,
 ) -> None:
@@ -1392,6 +1084,7 @@ def refresh_snapshot(
         otlp_traces=otlp_traces,
         include_native_sessions=native_sessions,
         spans_dir=spans_dir or _default_spans_dir(),
+        keep_processed_raw=keep_processed_raw,
     )
     payload = result.refresh_result or {}
     if as_json:
@@ -1569,14 +1262,14 @@ def improve(
                 scope = resolver.path(scope_path)
             result = service.improve(observation_id, refresh=False, scope=scope)
             ledger = (
-                service.finding_session_ledger(observation_id, scope=scope, limit=50)
+                service.finding_evidence_ledger(observation_id, scope=scope, limit=50)
                 if observation_id
                 else None
             )
             if as_json:
                 if ledger is not None:
                     payload = result.model_dump(mode="json")
-                    payload["session_ledger"] = ledger.model_dump(mode="json")
+                    payload["evidence_ledger"] = ledger.model_dump(mode="json")
                     _echo_json(payload)
                 else:
                     _echo_json(result.model_dump(mode="json"))
@@ -1630,8 +1323,8 @@ def improve(
             console.print(table)
             if not result.attribution_complete:
                 console.print(
-                    "[yellow]Some legacy findings still have capped source-session "
-                    "attribution. Run with --refresh to rebuild supported detectors.[/yellow]"
+                    "[yellow]Some reviewable workflows do not yet have eligible "
+                    "execution-unit evidence. Refresh after their source tasks are captured.[/yellow]"
                 )
             console.print(
                 f"[dim]{result.pending_workflows} pending workflow(s). "
@@ -1679,16 +1372,18 @@ def _render_improvement_detail(console: Console, observation, *, ledger=None) ->
         for item in observation.evidence[:20]:
             evidence.add_row(f"{item.entity_type}:{item.entity_id}", item.summary_redacted)
         console.print(evidence)
-    if ledger is not None and ledger.source_sessions:
-        sessions = Table(title="Source Sessions", border_style="dim")
-        sessions.add_column("Session", style="cyan")
-        sessions.add_column("Agent")
-        sessions.add_column("Workspace")
-        sessions.add_column("Started")
-        sessions.add_column("Evidence", justify="right")
-        sessions.add_column("Why")
-        for item in ledger.source_sessions:
-            sessions.add_row(
+    if ledger is not None and ledger.support_execution_units:
+        units = Table(title="Supporting Execution Units", border_style="dim")
+        units.add_column("Execution", style="cyan")
+        units.add_column("Session")
+        units.add_column("Agent")
+        units.add_column("Workspace")
+        units.add_column("Started")
+        units.add_column("Evidence", justify="right")
+        units.add_column("Why")
+        for item in ledger.support_execution_units:
+            units.add_row(
+                item.execution_unit_id,
                 item.session_id,
                 item.agent or "unknown",
                 item.workspace or "unknown",
@@ -1696,7 +1391,7 @@ def _render_improvement_detail(console: Console, observation, *, ledger=None) ->
                 str(item.evidence_count),
                 item.evidence_summaries[0] if item.evidence_summaries else "",
             )
-        console.print(sessions)
+        console.print(units)
         console.print(
             "[dim]Inspect one run with: reflect usage --session <SESSION_ID> --json[/dim]"
         )
@@ -1774,7 +1469,7 @@ def workflows() -> None:
 
 
 _WORKFLOW_BEHAVIOR_TYPES = ("loop", "recovery", "verification", "exploration", "proven_pattern")
-_WORKFLOW_STATUSES = ("pending", "approved", "active", "stale", "rejected", "rolled_back")
+_WORKFLOW_STATUSES = ("pending", "approved", "stale", "rejected")
 
 
 def _print_workflow_table(candidates, *, title: str = "Workflows") -> None:
@@ -1801,7 +1496,7 @@ def _print_workflow_table(candidates, *, title: str = "Workflows") -> None:
             str(content.get("behavior_type") or "proven_pattern").replace("_", " "),
             str(content.get("slug") or candidate.title),
             origin,
-            str(candidate.support_count),
+            str(candidate.support_execution_unit_count),
             f"{candidate.confidence:.0%}",
             candidate.status.value,
         )
@@ -1917,13 +1612,15 @@ def workflows_add(
         source_session_ids: list[str] = []
         if source_workflow_id:
             try:
-                source_ledger = service.repository.workflow_session_ledger(
+                source_ledger = service.repository.workflow_evidence_ledger(
                     source_workflow_id,
                     limit=200,
                 )
             except KeyError as exc:
                 raise click.ClickException(str(exc)) from exc
-            source_session_ids = [item.session_id for item in source_ledger.source_sessions]
+            source_session_ids = [
+                item.session_id for item in source_ledger.provenance_sessions
+            ]
         candidate_id = service.stage_extracted_skills(
             [skill],
             session_ids=source_session_ids,
@@ -1975,8 +1672,8 @@ def workflows_show(candidate_id: str, as_json: bool, db_path: Path) -> None:
         Panel(
             f"[bold]{candidate.title}[/bold]\n{candidate.hypothesis}\n\n"
             f"State: {candidate.status.value}  •  Risk: {candidate.risk}  •  "
-            f"Support: {candidate.support_count}\n\n{steps}\n\n"
-            f"Target: {candidate.target_metric} over {candidate.measurement_window} comparable sessions",
+            f"Support: {candidate.support_execution_unit_count} execution units\n\n{steps}\n\n"
+            f"Target: {candidate.target_metric} over {candidate.measurement_window} comparable execution units",
             title=candidate.id,
             border_style="orange3",
         )
@@ -2466,26 +2163,37 @@ def _run_browser_report(
         click.echo("Serving the current snapshot without refreshing telemetry.")
     elif requires_fresh_snapshot:
         with console.status("[bold orange3]reflecting...[/bold orange3]", spinner="dots"):
-            preparation = _prepare_sql_report_db(
+            preparation = prepare_sql_report_db(
                 db_path,
                 otlp_traces=otlp_traces,
                 include_native_sessions=include_native_sessions,
             )
         _render_preparation_summary(console, preparation)
     else:
-        from reflect.preparation import BackgroundPreparationWorker
+        from reflect.preparation import PreparationCoordinator, PreparationRequest
 
-        def prepare_in_background():
-            assert preparation_worker is not None
-            return _prepare_sql_report_db(
+        def prepare_in_background(progress):
+            return prepare_sql_report_db(
                 db_path,
                 otlp_traces=otlp_traces,
                 include_native_sessions=include_native_sessions,
-                progress=preparation_worker.report_progress,
+                progress=progress,
                 defer_otlp_replay=True,
             )
 
-        preparation_worker = BackgroundPreparationWorker(prepare_in_background)
+        preparation_worker = PreparationCoordinator(
+            prepare_in_background,
+            request=PreparationRequest(
+                sources=tuple(
+                    source
+                    for source, enabled in (
+                        ("otlp", otlp_traces is not None),
+                        ("native_sessions", include_native_sessions),
+                    )
+                    if enabled
+                ),
+            ),
+        )
         click.echo("Serving the current snapshot; refreshing telemetry in the background.")
 
     sessions_dir = sessions_dir or _default_sessions_dir()
@@ -2500,7 +2208,7 @@ def _run_browser_report(
         )
         render_report(stats, sessions_dir, spans_dir, output)
         print(f"Report saved to: {output}")
-    _start_publish_server(
+    start_publish_server(
         db_path=db_path,
         preparation_worker=preparation_worker,
         open_browser=open_browser,
@@ -2511,25 +2219,11 @@ def _run_browser_report(
 # Skills command
 # ---------------------------------------------------------------------------
 
-# Known agent CLIs with their non-interactive (print-mode) flags.
-# First entry in the list is the auto-detection priority order.
+# Agent CLI order and print-mode flags come from the canonical capability registry.
 _SKILL_AGENT_SPECS: list[tuple[str, list[str]]] = [
-    ("claude", ["--print"]),
-    (
-        "agy",
-        [
-            "--output-format",
-            "text",
-            "--sandbox",
-            "--disable-slash-commands",
-            "--print",
-        ],
-    ),
-    ("codex", ["exec"]),
-    ("cursor-agent", ["--print", "--trust", "--mode", "ask"]),
-    ("copilot", ["--prompt"]),
-    ("opencode", ["run"]),
-    ("qwen", ["--print"]),
+    (capability.skill_cli, list(capability.skill_cli_flags))
+    for capability in skill_agent_capabilities()
+    if capability.skill_cli is not None
 ]
 _SKILL_AGENT_NAMES = ", ".join(name for name, _ in _SKILL_AGENT_SPECS)
 _AGENT_ERROR_LIMIT = 1500
@@ -3667,17 +3361,8 @@ def doctor(ctx) -> None:
         _run_doctor()
 
 
-_DELIVERY_AGENT_ALIASES = {
-    "claude-code": "claude",
-    "gemini-cli": "gemini",
-    "github-copilot": "copilot",
-    "openai-codex": "codex",
-}
-
-
 def _delivery_agent_key(value: object) -> str:
-    normalized = str(value or "").strip().lower()
-    return _DELIVERY_AGENT_ALIASES.get(normalized, normalized)
+    return normalize_agent_key(value)
 
 
 def _load_agent_delivery(db_path: Path) -> dict[str, tuple[str, int]]:
@@ -3740,8 +3425,10 @@ def _run_doctor() -> None:
     hook_config = HOOK_HOME / "otel_config.json"
     spans_dir = _default_spans_dir()
     sessions_dir = _default_sessions_dir()
-    otlp_traces = _default_otlp_traces()
-    otlp_logs = _infer_default_otlp_logs()
+    traces_active_path = _canonical_otlp_traces_path()
+    logs_active_path = traces_active_path.with_name("otel-logs.active.jsonl")
+    traces_inventory = segment_inventory(traces_active_path)
+    logs_inventory = segment_inventory(logs_active_path)
     agents = _detect_agents()
     detected_agents = [agent for agent in agents if agent["detected"]]
     span_files = _count_glob(spans_dir, "*.jsonl")
@@ -3776,6 +3463,11 @@ def _run_doctor() -> None:
     summary.add_row("detected agents", f"[bold]{len(detected_agents)}[/] / {len(agents)}")
     summary.add_row("local spans", f"[bold]{span_files}[/] file(s)")
     summary.add_row("local sessions", f"[bold]{session_files}[/] file(s)")
+    summary.add_row(
+        "raw OTLP",
+        f"[bold]{traces_inventory.closed_count + logs_inventory.closed_count}[/] "
+        "closed segment(s)",
+    )
     if hook_report:
         exporter = hook_report.get("exporter")
         exporter = exporter if isinstance(exporter, dict) else {}
@@ -3866,16 +3558,16 @@ def _run_doctor() -> None:
     exports.add_column("Path", overflow="fold")
     exports.add_row(
         "OTLP traces",
-        _status_markup(bool(otlp_traces and otlp_traces.exists()), present="ready"),
-        _summarize_file(otlp_traces),
-        str(otlp_traces or _canonical_otlp_traces_path()),
+        _status_markup(bool(readable_segment_paths(traces_active_path)), present="ready"),
+        _summarize_segment_inventory(traces_active_path),
+        str(traces_active_path),
     )
-    if otlp_logs and otlp_logs.exists():
+    if readable_segment_paths(logs_active_path):
         exports.add_row(
             "OTLP logs",
             _status_markup(True, present="ready"),
-            _summarize_file(otlp_logs),
-            str(otlp_logs),
+            _summarize_segment_inventory(logs_active_path),
+            str(logs_active_path),
         )
     else:
         if otel_hook:
@@ -3883,14 +3575,14 @@ def _run_doctor() -> None:
                 "OTLP logs",
                 "[yellow]waiting[/]",
                 "otel-hook log export is enabled (IDE_OTEL_ENABLE_LOGS); no log file written yet",
-                str(REFLECT_HOME / "state" / "otel-logs.json"),
+                str(logs_active_path),
             )
         else:
             exports.add_row(
                 "OTLP logs",
                 "[red]missing[/]",
                 "Install otel-hook to enable log capture (IDE_OTEL_ENABLE_LOGS)",
-                str(REFLECT_HOME / "state" / "otel-logs.json"),
+                str(logs_active_path),
             )
     exports.add_row(
         "Hook spans",
@@ -3997,7 +3689,7 @@ def _run_doctor() -> None:
     matrix_agents = [
         agent
         for agent in agents
-        if agent["support_status"] == "Implemented" or agent["name"] in _DOCTOR_MATRIX_PLANNED
+        if agent["support_status"] != AgentSupport.PLANNED.value
     ]
     for agent in matrix_agents:
         integrations.add_row(
@@ -4070,7 +3762,7 @@ def doctor_cost(db_path: Path, alias_path: Path | None) -> None:
             migrate(conn)
             cost_state = CostRefreshState(conn)
             cost_inputs = cost_state.inspect(alias_path=alias_path)
-            alias_result = _ensure_sql_costs(
+            alias_result = ensure_sql_costs(
                 conn,
                 alias_path=alias_path,
                 refresh_inputs=cost_inputs,
@@ -4798,1040 +4490,6 @@ def memory_candidates(
             str(row.get("content") or "")[:120],
         )
     Console().print(table)
-
-
-@main.group()
-def db() -> None:
-    """SQLite store management commands."""
-
-
-def _ingest_into_db(
-    *,
-    db_path: Path,
-    otlp_traces: Path | None = None,
-    spans_file: Path | None = None,
-) -> dict[str, int]:
-    from reflect.store.cost_refresh import CostRefreshState
-    from reflect.store.ingest import ingest_local_spans_file, ingest_otlp_traces_file
-    from reflect.store.migrate import migrate
-    from reflect.store.normalize import backfill_mcp_calls, normalize_pending_raw_events
-    from reflect.store.rollups import rebuild_rollups
-    from reflect.store.sqlite import connect_sqlite
-
-    if (otlp_traces is None) == (spans_file is None):
-        raise click.ClickException("Pass exactly one of --otlp or --spans-file")
-
-    conn = connect_sqlite(db_path)
-    try:
-        applied = migrate(conn)
-        if otlp_traces is not None:
-            result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
-        else:
-            result = ingest_local_spans_file(conn, file_path=spans_file)
-        changed_session_ids: set[str] = set()
-        normalize_pending_raw_events(conn, changed_session_ids=changed_session_ids)
-        backfill_mcp_calls(
-            conn,
-            session_ids=None if 14 in applied else changed_session_ids,
-        )
-        cost_state = CostRefreshState(conn)
-        cost_inputs = cost_state.inspect(session_ids=changed_session_ids)
-        _ensure_sql_costs(conn, refresh_inputs=cost_inputs)
-        rebuild_rollups(conn)
-        if cost_inputs.requires_full_refresh:
-            cost_state.mark_current(cost_inputs)
-    finally:
-        conn.close()
-    return result
-
-
-def _ensure_sql_costs(
-    conn,
-    *,
-    alias_path: Path | None = None,
-    session_ids: set[str] | None = None,
-    refresh_inputs=None,
-):
-    from reflect.config import load_model_aliases
-    from reflect.cost_aliases import ensure_cost_aliases
-    from reflect.pricing import load_pricing_table
-
-    if refresh_inputs is None:
-        pricing_table = load_pricing_table()
-        alias_result = ensure_cost_aliases(
-            conn,
-            alias_path=alias_path,
-            pricing_table=pricing_table,
-            session_ids=session_ids,
-        )
-        aliases = load_model_aliases(alias_result.alias_path)
-    else:
-        pricing_table = refresh_inputs.pricing_table
-        alias_result = refresh_inputs.alias_result
-        aliases = refresh_inputs.aliases
-        if refresh_inputs.requires_full_refresh:
-            session_ids = None
-    _reprice_sql_store(
-        conn,
-        alias_path=alias_result.alias_path,
-        session_ids=session_ids,
-        pricing_table=pricing_table,
-        aliases=aliases,
-    )
-    return alias_result
-
-
-def _cursor_native_parent_session_id(source_ref: str) -> str:
-    match = re.search(r"/agent-transcripts/([^/]+)/", source_ref or "")
-    return match.group(1) if match else ""
-
-
-def _prepare_sql_report_db(
-    db_path: Path,
-    *,
-    otlp_traces: Path | None,
-    include_native_sessions: bool = False,
-    spans_dir: Path | None = None,
-    progress: PreparationProgressReporter | None = None,
-    defer_otlp_replay: bool = False,
-) -> dict[str, object]:
-    from reflect.preparation import PreparationStage, report_preparation_progress
-    from reflect.store.cost_refresh import CostRefreshState
-    from reflect.store.cursor_adapter import (
-        apply_cursor_transcript_usage_estimates,
-        repair_misattributed_cursor_transcript_usage,
-    )
-    from reflect.store.graph_normalize import rebuild_graph, refresh_graph
-    from reflect.store.ingest import (
-        AppendOnlyReplayPolicy,
-        ingest_codex_context_file,
-        ingest_local_spans_file,
-        ingest_native_session_file,
-        ingest_otlp_logs_file,
-        ingest_otlp_traces_file,
-    )
-    from reflect.store.migrate import migrate
-    from reflect.store.normalize import (
-        backfill_mcp_calls,
-        backfill_tool_call_hashes,
-        normalize_pending_raw_events,
-    )
-    from reflect.store.refresh_plan import RefreshMode, plan_derived_refresh
-    from reflect.store.rollups import rebuild_rollups, refresh_rollups, rollup_rebuild_pending
-    from reflect.store.sqlite import connect_sqlite
-    from reflect.store.workspaces import backfill_session_context
-
-    report_preparation_progress(
-        progress,
-        PreparationStage.OPENING_STORE,
-        "Opening the local telemetry store...",
-    )
-    conn = connect_sqlite(db_path)
-    try:
-        report_preparation_progress(
-            progress,
-            PreparationStage.MIGRATING_SCHEMA,
-            "Checking database migrations...",
-        )
-        applied = migrate(conn)
-        ingest_result = {"inserted": 0, "skipped": 0}
-        ingest_sources: dict[str, dict[str, object]] = {}
-        cursor_native_files: list[Path] = []
-        replay_policy = (
-            AppendOnlyReplayPolicy.DEFER
-            if defer_otlp_replay
-            else AppendOnlyReplayPolicy.REPLAY
-        )
-        if otlp_traces is not None and otlp_traces.exists():
-            report_preparation_progress(
-                progress,
-                PreparationStage.INGESTING_TRACES,
-                "Reading new OTLP traces...",
-            )
-            traces_result = ingest_otlp_traces_file(
-                conn,
-                file_path=otlp_traces,
-                skip_unchanged=True,
-                replay_policy=replay_policy,
-            )
-            ingest_sources["otlp_traces"] = traces_result
-            ingest_sources["otlp_traces"]["source_type"] = "otlp_traces_json"
-            ingest_result["inserted"] += traces_result["inserted"]
-            ingest_result["skipped"] += traces_result["skipped"]
-            otlp_logs = _infer_otlp_logs_file(otlp_traces)
-            if otlp_logs is not None and otlp_logs.exists():
-                report_preparation_progress(
-                    progress,
-                    PreparationStage.INGESTING_LOGS,
-                    "Reading new OTLP logs...",
-                )
-                logs_result = ingest_otlp_logs_file(
-                    conn,
-                    file_path=otlp_logs,
-                    skip_unchanged=True,
-                    replay_policy=replay_policy,
-                )
-                ingest_sources["otlp_logs"] = logs_result
-                ingest_sources["otlp_logs"]["source_type"] = "otlp_logs_json"
-                ingest_result["inserted"] += logs_result["inserted"]
-                ingest_result["skipped"] += logs_result["skipped"]
-        if spans_dir is not None and spans_dir.is_dir():
-            report_preparation_progress(
-                progress,
-                PreparationStage.INGESTING_TRACES,
-                "Reading new hook spans...",
-            )
-            spans_result: dict[str, object] = {
-                "inserted": 0,
-                "skipped": 0,
-                "unchanged": 0,
-                "files": 0,
-                "source_type": "local_spans_jsonl",
-            }
-            for span_file in sorted(spans_dir.glob("*.jsonl")):
-                file_result = ingest_local_spans_file(
-                    conn,
-                    file_path=span_file,
-                    skip_unchanged=True,
-                )
-                spans_result["files"] = int(spans_result["files"]) + 1
-                for key in ("inserted", "skipped", "unchanged"):
-                    spans_result[key] = int(spans_result[key]) + int(
-                        file_result.get(key, 0)
-                    )
-            ingest_sources["local_spans"] = spans_result
-            ingest_result["inserted"] += int(spans_result["inserted"])
-            ingest_result["skipped"] += int(spans_result["skipped"])
-        if include_native_sessions:
-            report_preparation_progress(
-                progress,
-                PreparationStage.INGESTING_SESSIONS,
-                "Reading local agent sessions...",
-            )
-            native_result = {"inserted": 0, "skipped": 0, "unchanged": 0}
-            context_result = {"inserted": 0, "skipped": 0, "unchanged": 0}
-            for agent, session_file in _discover_rich_session_files():
-                source_ref = f"native_session:{agent}:{session_file}"
-                if agent == "codex":
-                    context_file_result = ingest_codex_context_file(
-                        conn,
-                        file_path=session_file,
-                    )
-                    for key in context_result:
-                        context_result[key] += int(context_file_result.get(key, 0))
-                result = ingest_native_session_file(
-                    conn,
-                    file_path=session_file,
-                    agent=agent,
-                    source_id=source_ref,
-                    skip_existing_sessions=agent != "opencode",
-                    skip_unchanged=True,
-                )
-                native_result["inserted"] += result["inserted"]
-                native_result["skipped"] += result["skipped"]
-                native_result["unchanged"] += result.get("unchanged", 0)
-                if agent == "cursor" and not result.get("unchanged"):
-                    cursor_native_files.append(session_file)
-            if any(native_result.values()):
-                ingest_sources["native_sessions"] = native_result
-                ingest_sources["native_sessions"]["source_type"] = "native_session"
-                ingest_result["inserted"] += native_result["inserted"]
-                ingest_result["skipped"] += native_result["skipped"]
-            if any(context_result.values()):
-                ingest_sources["context_artifacts"] = context_result
-                ingest_sources["context_artifacts"]["source_type"] = "native_context"
-                ingest_result["inserted"] += context_result["inserted"]
-                ingest_result["skipped"] += context_result["skipped"]
-        needs_normalize = bool(
-            ingest_result["inserted"]
-            or conn.execute(
-                "SELECT 1 FROM raw_events WHERE normalized_status = 'pending' LIMIT 1"
-            ).fetchone()
-            or conn.execute(
-                "SELECT 1 FROM raw_events WHERE origin_kind IS NULL LIMIT 1"
-            ).fetchone()
-        )
-        changed_session_ids: set[str] = set()
-        report_preparation_progress(
-            progress,
-            PreparationStage.NORMALIZING,
-            "Normalizing new telemetry...",
-        )
-        normalize_result = (
-            normalize_pending_raw_events(
-                conn,
-                changed_session_ids=changed_session_ids,
-            )
-            if needs_normalize
-            else {"processed": 0, "failed": 0, "skipped": 0}
-        )
-        report_preparation_progress(
-            progress,
-            PreparationStage.UPDATING_CANONICAL_STATE,
-            "Updating canonical session state...",
-        )
-        fingerprint_result = backfill_tool_call_hashes(conn)
-        mcp_backfill_result = backfill_mcp_calls(
-            conn,
-            session_ids=None if 14 in applied else changed_session_ids,
-            changed_session_ids=changed_session_ids,
-        )
-        cursor_provenance_result = repair_misattributed_cursor_transcript_usage(conn)
-        changed_session_ids.update(
-            str(session_id)
-            for session_id in cursor_provenance_result["session_ids"]
-            if session_id
-        )
-        context_result = backfill_session_context(
-            conn,
-            timestamp=datetime.now(UTC).isoformat(),
-            changed_session_ids=changed_session_ids,
-        )
-        cursor_adapter_result = apply_cursor_transcript_usage_estimates(
-            conn,
-            cursor_native_files,
-        )
-        changed_session_ids.update(
-            str(session_id)
-            for session_id in cursor_adapter_result.get("session_ids", [])
-            if session_id
-        )
-        reconciled_legacy_data = rollup_rebuild_pending(conn)
-        all_session_ids = {str(row[0]) for row in conn.execute("SELECT id FROM sessions")}
-        rollup_session_ids = {
-            str(row[0]) for row in conn.execute("SELECT session_id FROM session_rollups")
-        }
-        graph_session_ids = {
-            str(row[0])
-            for row in conn.execute(
-                "SELECT DISTINCT session_id FROM graph_nodes "
-                "WHERE kind = 'Session' AND session_id IS NOT NULL"
-            )
-        }
-        cost_state = CostRefreshState(conn)
-        cost_inputs = (
-            cost_state.inspect(session_ids=changed_session_ids)
-            if all_session_ids
-            else None
-        )
-        refresh_plan = plan_derived_refresh(
-            changed_session_ids=changed_session_ids,
-            all_session_ids=all_session_ids,
-            graph_session_ids=graph_session_ids,
-            rollup_session_ids=rollup_session_ids,
-            graph_exists=bool(graph_session_ids),
-            force_full_cost_reason=(
-                cost_inputs.reason
-                if cost_inputs is not None and cost_inputs.requires_full_refresh
-                else ""
-            ),
-            force_full_rollup_reason=(
-                "Codex Desktop telemetry migration requires reconciliation"
-                if reconciled_legacy_data
-                else ""
-            ),
-        )
-
-        if refresh_plan.cost_mode is RefreshMode.FULL:
-            _ensure_sql_costs(conn, refresh_inputs=cost_inputs)
-        elif refresh_plan.cost_mode is RefreshMode.INCREMENTAL:
-            _ensure_sql_costs(
-                conn,
-                session_ids=set(refresh_plan.cost_session_ids),
-                refresh_inputs=cost_inputs,
-            )
-
-        if refresh_plan.graph_mode is RefreshMode.FULL:
-            report_preparation_progress(
-                progress,
-                PreparationStage.REFRESHING_GRAPH,
-                f"Rebuilding the evidence graph ({refresh_plan.graph_reason})...",
-            )
-            graph_result = rebuild_graph(conn)
-        elif refresh_plan.graph_mode is RefreshMode.INCREMENTAL:
-            graph_targets = set(refresh_plan.graph_session_ids)
-            report_preparation_progress(
-                progress,
-                PreparationStage.REFRESHING_GRAPH,
-                f"Refreshing the evidence graph for {len(graph_targets):,} session(s)...",
-            )
-            graph_result = refresh_graph(conn, graph_targets)
-        else:
-            graph_result = {
-                "nodes": 0,
-                "edges": 0,
-                "skipped": 1,
-                "reason": refresh_plan.graph_reason,
-            }
-
-        if refresh_plan.rollup_mode is RefreshMode.FULL:
-            report_preparation_progress(
-                progress,
-                PreparationStage.REFRESHING_ROLLUPS,
-                f"Rebuilding session rollups ({refresh_plan.rollup_reason})...",
-            )
-            rollup_result = rebuild_rollups(conn)
-        elif refresh_plan.rollup_mode is RefreshMode.INCREMENTAL:
-            rollup_targets = set(refresh_plan.rollup_session_ids)
-            report_preparation_progress(
-                progress,
-                PreparationStage.REFRESHING_ROLLUPS,
-                f"Refreshing rollups for {len(rollup_targets):,} session(s)...",
-            )
-            rollup_result = refresh_rollups(conn, rollup_targets)
-        else:
-            rollup_result = {
-                "session_rollups": len(rollup_session_ids),
-                "daily_rollups": int(conn.execute("SELECT COUNT(*) FROM daily_rollups").fetchone()[0]),
-                "tool_rollups": int(conn.execute("SELECT COUNT(*) FROM tool_rollups").fetchone()[0]),
-                "skipped": 1,
-                "reason": refresh_plan.rollup_reason,
-            }
-        if cost_inputs is not None and cost_inputs.requires_full_refresh:
-            cost_state.mark_current(cost_inputs)
-        from reflect.improvements.service import ImprovementService
-
-        report_preparation_progress(
-            progress,
-            PreparationStage.REFRESHING_IMPROVEMENTS,
-            "Refreshing evidence-backed improvements...",
-        )
-        improvement_result = ImprovementService(conn).refresh()
-        refresh_completed_at = datetime.now(UTC).isoformat()
-        conn.execute(
-            """
-            INSERT INTO store_metadata(key, value, updated_at)
-            VALUES ('last_successful_refresh', ?, ?)
-            ON CONFLICT(key) DO UPDATE SET
-              value = excluded.value,
-              updated_at = excluded.updated_at
-            """,
-            (refresh_completed_at, refresh_completed_at),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-    deferred_replays = [
-        name
-        for name, source_result in ingest_sources.items()
-        if source_result.get("mode") == "replay_deferred"
-    ]
-    result = {
-        "sessions": len(all_session_ids),
-        "applied_migrations": applied,
-        "ingest": ingest_result,
-        "ingest_sources": ingest_sources,
-        "normalize": normalize_result,
-        "mcp_calls": mcp_backfill_result,
-        "tool_call_fingerprints": fingerprint_result,
-        "session_context": context_result,
-        "cursor_provenance": cursor_provenance_result,
-        "cursor_adapter": cursor_adapter_result,
-        "refresh_plan": refresh_plan.as_dict(),
-        "graph": graph_result,
-        "rollups": rollup_result,
-        "improvements": improvement_result,
-        "deferred_replays": deferred_replays,
-    }
-    report_preparation_progress(
-        progress,
-        PreparationStage.COMPLETE,
-        "Preparation complete.",
-    )
-    return result
-
-
-def _reprice_sql_store(
-    conn,
-    *,
-    alias_path: Path | None = None,
-    session_ids: set[str] | None = None,
-    pricing_table=None,
-    aliases: dict[str, str] | None = None,
-) -> None:
-    from reflect.config import load_model_aliases
-    from reflect.pricing import calculate_cost, load_pricing_table
-
-    pricing_table = pricing_table or load_pricing_table()
-    if aliases is None:
-        aliases = load_model_aliases(alias_path)
-    import sqlite3
-
-    previous_row_factory = conn.row_factory
-    conn.row_factory = sqlite3.Row
-    try:
-        scoped_ids = sorted(session_ids) if session_ids is not None else None
-        if scoped_ids is not None and not scoped_ids:
-            return
-        placeholders = ", ".join("?" for _ in scoped_ids or [])
-        llm_scope = f"WHERE session_id IN ({placeholders})" if scoped_ids is not None else ""
-        selected_session_scope = f"WHERE id IN ({placeholders})" if scoped_ids is not None else ""
-        selected_session_rows = conn.execute(
-            f"SELECT id, source_ref FROM sessions {selected_session_scope}",
-            scoped_ids or [],
-        ).fetchall()
-        model_scope_ids = set(scoped_ids or [])
-        for selected_session in selected_session_rows:
-            parent_id = _cursor_native_parent_session_id(str(selected_session["source_ref"] or ""))
-            if parent_id:
-                model_scope_ids.add(parent_id)
-        model_scope_values = sorted(model_scope_ids)
-        model_placeholders = ", ".join("?" for _ in model_scope_values)
-        model_scope = (
-            f"AND session_id IN ({model_placeholders})"
-            if scoped_ids is not None
-            else ""
-        )
-        rows = conn.execute(
-            f"""
-            SELECT
-              id,
-              session_id,
-              COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) AS model,
-              input_tokens,
-              output_tokens,
-              cache_creation_input_tokens,
-              cache_read_input_tokens,
-              reasoning_output_tokens
-            FROM llm_calls
-            {llm_scope}
-            """,
-            scoped_ids or [],
-        ).fetchall()
-        model_rows = conn.execute(
-            f"""
-            SELECT
-              session_id,
-              COALESCE(
-                NULLIF(json_extract(raw_attrs_json, '$."gen_ai.response.model"'), ''),
-                NULLIF(json_extract(raw_attrs_json, '$."gen_ai.request.model"'), '')
-              ) AS model,
-              COUNT(*) AS count
-            FROM steps
-            WHERE COALESCE(
-              NULLIF(json_extract(raw_attrs_json, '$."gen_ai.response.model"'), ''),
-              NULLIF(json_extract(raw_attrs_json, '$."gen_ai.request.model"'), '')
-            ) IS NOT NULL
-              {model_scope}
-            GROUP BY session_id, model
-            ORDER BY session_id ASC, count DESC
-            """,
-            model_scope_values if scoped_ids is not None else [],
-        ).fetchall()
-        session_models: dict[str, str] = {}
-        for model_row in model_rows:
-            session_models.setdefault(model_row["session_id"], model_row["model"])
-        seen_usage: set[tuple] = set()
-        session_costs: dict[str, float] = {}
-        session_tokens: dict[str, dict[str, int]] = {}
-        session_model_hints: dict[str, str] = {}
-        for row in rows:
-            model = row["model"] or session_models.get(row["session_id"], "")
-            if model:
-                session_model_hints.setdefault(row["session_id"], model)
-            usage_key = (
-                row["session_id"],
-                model,
-                int(row["input_tokens"] or 0),
-                int(row["output_tokens"] or 0),
-                int(row["cache_creation_input_tokens"] or 0),
-                int(row["cache_read_input_tokens"] or 0),
-                int(row["reasoning_output_tokens"] or 0),
-            )
-            breakdown = calculate_cost(
-                {
-                    "input": row["input_tokens"],
-                    "output": row["output_tokens"],
-                    "cache_creation": row["cache_creation_input_tokens"],
-                    "cache_read": row["cache_read_input_tokens"],
-                },
-                model,
-                pricing_table,
-                aliases=aliases,
-            )
-            counted = usage_key not in seen_usage
-            if counted:
-                seen_usage.add(usage_key)
-                tokens = session_tokens.setdefault(
-                    row["session_id"],
-                    {"input": 0, "output": 0, "cache_creation": 0, "cache_read": 0, "reasoning": 0},
-                )
-                tokens["input"] += int(row["input_tokens"] or 0)
-                tokens["output"] += int(row["output_tokens"] or 0)
-                tokens["cache_creation"] += int(row["cache_creation_input_tokens"] or 0)
-                tokens["cache_read"] += int(row["cache_read_input_tokens"] or 0)
-                tokens["reasoning"] += int(row["reasoning_output_tokens"] or 0)
-                session_costs[row["session_id"]] = (
-                    session_costs.get(row["session_id"], 0.0) + breakdown.total_cost_usd
-                )
-            conn.execute(
-                """
-                UPDATE llm_calls
-                SET
-                  estimated_cost_usd = ?,
-                  request_model = CASE
-                    WHEN COALESCE(request_model, '') = '' THEN NULLIF(?, '')
-                    ELSE request_model
-                  END,
-                  response_model = CASE
-                    WHEN COALESCE(response_model, '') = '' THEN NULLIF(?, '')
-                    ELSE response_model
-                  END
-                WHERE id = ?
-                """,
-                (
-                    breakdown.total_cost_usd if counted else 0.0,
-                    model,
-                    model,
-                    row["id"],
-                ),
-            )
-        timestamp = datetime.now(tz=UTC).isoformat()
-        session_scope = f"AND id IN ({placeholders})" if scoped_ids is not None else ""
-        session_level_rows = conn.execute(
-            f"""
-            SELECT
-              id,
-              source_ref,
-              input_tokens,
-              output_tokens,
-              cache_creation_tokens,
-              cache_read_tokens,
-              reasoning_tokens
-            FROM sessions
-            WHERE COALESCE(input_tokens, 0)
-                + COALESCE(output_tokens, 0)
-                + COALESCE(cache_creation_tokens, 0)
-                + COALESCE(cache_read_tokens, 0)
-                + COALESCE(reasoning_tokens, 0) > 0
-              {session_scope}
-            """,
-            scoped_ids or [],
-        ).fetchall()
-        for session_row in session_level_rows:
-            session_id = session_row["id"]
-            exact_tokens = session_tokens.get(session_id, {})
-            exact_token_total = sum(int(value or 0) for value in exact_tokens.values())
-            if exact_token_total > 0:
-                continue
-            model = session_model_hints.get(session_id) or session_models.get(session_id, "")
-            if not model:
-                parent_session_id = _cursor_native_parent_session_id(str(session_row["source_ref"] or ""))
-                if parent_session_id and parent_session_id != session_id:
-                    model = session_model_hints.get(parent_session_id) or session_models.get(parent_session_id, "")
-            if not model:
-                continue
-            breakdown = calculate_cost(
-                {
-                    "input": session_row["input_tokens"],
-                    "output": session_row["output_tokens"],
-                    "cache_creation": session_row["cache_creation_tokens"],
-                    "cache_read": session_row["cache_read_tokens"],
-                },
-                model,
-                pricing_table,
-                aliases=aliases,
-            )
-            if not breakdown.resolution.matched_model_key:
-                continue
-            session_costs[session_id] = max(session_costs.get(session_id, 0.0), breakdown.total_cost_usd)
-        for session_id, total_cost in session_costs.items():
-            tokens = session_tokens.get(session_id, {})
-            token_total = (
-                tokens.get("input", 0)
-                + tokens.get("output", 0)
-                + tokens.get("cache_creation", 0)
-                + tokens.get("cache_read", 0)
-                + tokens.get("reasoning", 0)
-            )
-            if token_total <= 0 and total_cost <= 0:
-                continue
-            conn.execute(
-                """
-                UPDATE sessions
-                SET
-                  input_tokens = CASE WHEN ? > 0 THEN ? ELSE input_tokens END,
-                  output_tokens = CASE WHEN ? > 0 THEN ? ELSE output_tokens END,
-                  cache_creation_tokens = CASE WHEN ? > 0 THEN ? ELSE cache_creation_tokens END,
-                  cache_read_tokens = CASE WHEN ? > 0 THEN ? ELSE cache_read_tokens END,
-                  reasoning_tokens = CASE WHEN ? > 0 THEN ? ELSE reasoning_tokens END,
-                  estimated_cost_usd = ?,
-                  updated_at = ?
-                WHERE id = ?
-                """,
-                (
-                    token_total,
-                    tokens.get("input", 0),
-                    token_total,
-                    tokens.get("output", 0),
-                    token_total,
-                    tokens.get("cache_creation", 0),
-                    token_total,
-                    tokens.get("cache_read", 0),
-                    token_total,
-                    tokens.get("reasoning", 0),
-                    total_cost,
-                    timestamp,
-                    session_id,
-                ),
-            )
-        conn.commit()
-    finally:
-        conn.row_factory = previous_row_factory
-
-
-@main.command("ingest")
-@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
-@click.option("--otlp", "otlp_traces", type=click.Path(path_type=Path), default=None, help="Path to OTLP traces JSONL export file.")
-@click.option("--spans-file", type=click.Path(path_type=Path), default=None, help="Path to local hook spans JSONL file.")
-def ingest(db_path: Path, otlp_traces: Path | None, spans_file: Path | None) -> None:
-    """Ingest telemetry records into raw_events."""
-    source_path = otlp_traces or spans_file
-    result = _ingest_into_db(db_path=db_path, otlp_traces=otlp_traces, spans_file=spans_file)
-    click.echo(
-        f"Ingested {source_path} -> {db_path} (inserted={result['inserted']}, skipped={result['skipped']})"
-    )
-
-
-@db.command("ingest-spans")
-@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
-@click.option("--spans-file", type=click.Path(path_type=Path), required=True, help="Path to local hook spans JSONL file.")
-def db_ingest_spans(db_path: Path, spans_file: Path) -> None:
-    """Ingest local hook spans JSONL into raw_events with source/hash dedupe."""
-    result = _ingest_into_db(db_path=db_path, spans_file=spans_file)
-    click.echo(
-        f"Ingested {spans_file} -> {db_path} (inserted={result['inserted']}, skipped={result['skipped']})"
-    )
-
-
-@db.command("normalize")
-@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
-@click.option("--limit", type=int, default=None, help="Maximum pending raw_events to normalize.")
-def db_normalize(db_path: Path, limit: int | None) -> None:
-    """Normalize pending raw_events into canonical SQLite tables."""
-    from reflect.store.migrate import migrate
-    from reflect.store.normalize import backfill_mcp_calls, normalize_pending_raw_events
-    from reflect.store.sqlite import connect_sqlite
-
-    conn = connect_sqlite(db_path)
-    try:
-        applied = migrate(conn)
-        changed_session_ids: set[str] = set()
-        result = normalize_pending_raw_events(
-            conn,
-            limit=limit,
-            changed_session_ids=changed_session_ids,
-        )
-        backfill_mcp_calls(
-            conn,
-            session_ids=None if 14 in applied else changed_session_ids,
-        )
-    finally:
-        conn.close()
-    click.echo(
-        "Normalized raw_events "
-        f"(processed={result['processed']}, failed={result['failed']}, skipped={result['skipped']})"
-    )
-
-
-@db.command("rebuild-graph")
-@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
-def db_rebuild_graph(db_path: Path) -> None:
-    """Rebuild graph_nodes and graph_edges from canonical SQLite tables."""
-    from reflect.store.graph_normalize import rebuild_graph
-    from reflect.store.migrate import migrate
-    from reflect.store.sqlite import connect_sqlite
-
-    conn = connect_sqlite(db_path)
-    try:
-        migrate(conn)
-        result = rebuild_graph(conn)
-    finally:
-        conn.close()
-    click.echo(f"Rebuilt graph (nodes={result['nodes']}, edges={result['edges']})")
-
-
-@db.command("rebuild-rollups")
-@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
-def db_rebuild_rollups(db_path: Path) -> None:
-    """Rebuild aggregate rollup tables from canonical SQLite tables."""
-    from reflect.store.migrate import migrate
-    from reflect.store.rollups import rebuild_rollups
-    from reflect.store.sqlite import connect_sqlite
-
-    conn = connect_sqlite(db_path)
-    try:
-        migrate(conn)
-        result = rebuild_rollups(conn)
-    finally:
-        conn.close()
-    click.echo(
-        "Rebuilt rollups "
-        f"(sessions={result['session_rollups']}, days={result['daily_rollups']}, tools={result['tool_rollups']})"
-    )
-
-
-@db.command("migrate")
-@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
-def db_migrate(db_path: Path) -> None:
-    """Apply pending SQLite migrations."""
-    from reflect.store.migrate import migrate
-    from reflect.store.sqlite import connect_sqlite
-
-    conn = connect_sqlite(db_path)
-    try:
-        applied = migrate(conn)
-    finally:
-        conn.close()
-
-    if not applied:
-        click.echo(f"No pending migrations for {db_path}")
-        return
-    click.echo(f"Applied migrations to {db_path}: {', '.join(str(v) for v in applied)}")
-
-
-@db.command("doctor")
-@click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
-def db_doctor(db_path: Path) -> None:
-    """Inspect SQLite store migration, pragma, and foreign-key health."""
-    from reflect.store.doctor import inspect_database
-    from reflect.store.sqlite import connect_sqlite
-
-    conn = connect_sqlite(db_path)
-    try:
-        status = inspect_database(conn)
-    finally:
-        conn.close()
-
-    click.echo(f"SQLite DB: {db_path}")
-    applied = ", ".join(str(version) for version in status["applied_migrations"]) or "none"
-    expected = ", ".join(str(version) for version in status["expected_migrations"]) or "none"
-    click.echo(f"Migrations: applied={applied}; expected={expected}")
-    if status["pending_migrations"]:
-        pending = ", ".join(str(version) for version in status["pending_migrations"])
-        click.echo(f"Pending migrations: {pending}")
-    if status["unknown_migrations"]:
-        unknown = ", ".join(str(version) for version in status["unknown_migrations"])
-        click.echo(f"Unknown migrations: {unknown}")
-
-    foreign_key_issues = status["foreign_key_issues"]
-    if foreign_key_issues:
-        click.echo(f"Foreign keys: {len(foreign_key_issues)} issue(s)")
-    else:
-        click.echo("Foreign keys: ok")
-
-    pragmas = status["pragmas"]
-    click.echo(
-        "Pragmas: "
-        f"foreign_keys={pragmas['foreign_keys']}, "
-        f"journal_mode={pragmas['journal_mode']}, "
-        f"synchronous={pragmas['synchronous']}, "
-        f"wal_autocheckpoint={pragmas['wal_autocheckpoint']}, "
-        f"busy_timeout={pragmas['busy_timeout']}"
-    )
-    if status["ok"]:
-        click.echo("SQLite store health: ok")
-        return
-
-    click.echo("SQLite store health: needs attention")
-    raise click.ClickException("SQLite store health checks failed")
-
-
-@db.command("prune-sessions")
-@click.option(
-    "--older-than-days",
-    type=click.IntRange(min=1),
-    default=60,
-    show_default=True,
-    help="Prune only invalid-start sessions with no trusted activity for this many days.",
-)
-@click.option(
-    "--all-inactive-sessions",
-    is_flag=True,
-    help="Also prune inactive sessions with valid timestamps older than the cutoff.",
-)
-@click.option("--apply", "apply_changes", is_flag=True, help="Apply the previewed deletion.")
-@click.option(
-    "--backup/--no-backup",
-    default=True,
-    help="Create a timestamped database backup before applying.",
-)
-@click.option(
-    "--vacuum",
-    is_flag=True,
-    help="Reclaim disk space after applying. Never runs during a dry run.",
-)
-@click.option("--json", "as_json", is_flag=True, help="Print the result as JSON.")
-@click.option(
-    "--db-path",
-    type=click.Path(path_type=Path),
-    default=REFLECT_HOME / "state" / "reflect.db",
-)
-def db_prune_sessions(
-    older_than_days: int,
-    all_inactive_sessions: bool,
-    apply_changes: bool,
-    backup: bool,
-    vacuum: bool,
-    as_json: bool,
-    db_path: Path,
-) -> None:
-    """Preview or prune inactive sessions selected by the retention policy."""
-    from dataclasses import asdict
-
-    from reflect.preparation import PreparationStage, report_preparation_progress
-    from reflect.store.migrate import migrate
-    from reflect.store.retention import SessionPruner, SessionRetentionPolicy
-    from reflect.store.sqlite import (
-        SQLiteBackupProgress,
-        backup_sqlite,
-        connect_sqlite,
-        connect_sqlite_read_only,
-    )
-    from reflect.terminal import TerminalPreparationProgress
-
-    if vacuum and not apply_changes:
-        raise click.UsageError("--vacuum requires --apply")
-    if not db_path.exists():
-        raise click.ClickException(f"SQLite store not found: {db_path}")
-
-    backup_path: Path | None = None
-    if not apply_changes:
-        _require_snapshot_schema(
-            db_path,
-            refresh_hint=(
-                f"Run `reflect db migrate --db-path {db_path}` before previewing "
-                "session retention."
-            ),
-        )
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            result = SessionPruner(
-                conn,
-                SessionRetentionPolicy(
-                    older_than_days=older_than_days,
-                    include_valid_starts=all_inactive_sessions,
-                ),
-            ).run()
-        finally:
-            conn.close()
-    else:
-        def apply_pruning(progress):
-            report_preparation_progress(
-                progress,
-                PreparationStage.OPENING_STORE,
-                "Opening the local telemetry store...",
-            )
-            conn = connect_sqlite(db_path)
-            applied_backup_path: Path | None = None
-            try:
-                conn.execute("BEGIN IMMEDIATE")
-                if backup:
-                    stamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%S%fZ")
-                    applied_backup_path = db_path.with_name(
-                        f"{db_path.name}.backup-{stamp}"
-                    )
-                    report_preparation_progress(
-                        progress,
-                        PreparationStage.BACKING_UP_STORE,
-                        "Backing up the local telemetry store...",
-                    )
-                    last_backup_percent = -5
-
-                    def update_backup(snapshot: SQLiteBackupProgress) -> None:
-                        nonlocal last_backup_percent
-                        percent = snapshot.percent_complete
-                        if percent < 100 and percent < last_backup_percent + 5:
-                            return
-                        last_backup_percent = percent
-                        report_preparation_progress(
-                            progress,
-                            PreparationStage.BACKING_UP_STORE,
-                            f"Backing up the local telemetry store... {percent}% "
-                            f"({snapshot.completed_pages:,}/{snapshot.total_pages:,} pages)",
-                        )
-
-                    backup_sqlite(
-                        db_path,
-                        applied_backup_path,
-                        progress=update_backup,
-                    )
-                report_preparation_progress(
-                    progress,
-                    PreparationStage.MIGRATING_SCHEMA,
-                    "Checking database migrations...",
-                )
-                migrate(conn, commit=False)
-                report_preparation_progress(
-                    progress,
-                    PreparationStage.PRUNING_SESSIONS,
-                    "Pruning eligible sessions and updating affected derived data...",
-                )
-                applied_result = SessionPruner(
-                    conn,
-                    SessionRetentionPolicy(
-                        older_than_days=older_than_days,
-                        include_valid_starts=all_inactive_sessions,
-                    ),
-                ).run(apply=True)
-                conn.commit()
-                if vacuum and applied_result.pruned_session_ids:
-                    report_preparation_progress(
-                        progress,
-                        PreparationStage.VACUUMING_STORE,
-                        "Vacuuming the local telemetry store...",
-                    )
-                    conn.execute("VACUUM")
-                report_preparation_progress(
-                    progress,
-                    PreparationStage.COMPLETE,
-                    "Session pruning complete.",
-                )
-                return applied_result, applied_backup_path
-            except Exception:
-                if conn.in_transaction:
-                    conn.rollback()
-                raise
-            finally:
-                conn.close()
-
-        result, backup_path = TerminalPreparationProgress().run(
-            apply_pruning,
-            initial_message="Preparing session pruning...",
-        )
-
-    payload = {
-        "dry_run": result.dry_run,
-        "older_than_days": older_than_days,
-        "all_inactive_sessions": all_inactive_sessions,
-        "candidate_count": len(result.candidates),
-        "candidates": [asdict(candidate) for candidate in result.candidates],
-        "pruned_session_ids": list(result.pruned_session_ids),
-        "backup_path": str(backup_path) if backup_path else None,
-        "vacuumed": bool(vacuum and result.pruned_session_ids),
-        "foreign_key_violations": [list(row) for row in result.foreign_key_violations],
-        "graph": result.graph,
-        "rollups": result.rollups,
-    }
-    if as_json:
-        _echo_json(payload)
-        return
-    action = "Pruned" if apply_changes else "Would prune"
-    session_scope = "inactive" if all_inactive_sessions else "invalid-start"
-    click.echo(
-        f"{action} {len(result.candidates)} {session_scope} session(s) "
-        f"with no trusted activity for {older_than_days} days."
-    )
-    for candidate in result.candidates:
-        click.echo(
-            f"  {candidate.session_id} · {candidate.agent or 'unknown'} · "
-            f"{candidate.last_observed_at or 'no trusted activity'} · "
-            f"{sum(candidate.dependent_rows.values())} dependent row(s)"
-        )
-    if backup_path:
-        click.echo(f"Backup: {backup_path}")
-    if not apply_changes and result.candidates:
-        click.echo("Dry run only. Re-run with --apply to prune these exact policy matches.")
 
 
 @main.group()

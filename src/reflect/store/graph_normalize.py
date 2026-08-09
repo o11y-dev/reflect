@@ -1218,7 +1218,20 @@ def rebuild_graph(
                 )
                 edges += int(inserted)
 
-        for mcp in conn.execute("SELECT * FROM mcp_calls WHERE server_name IS NOT NULL ORDER BY created_at, id"):
+        for mcp in conn.execute(
+            """
+            SELECT
+              mc.*,
+              mc.tool_call_id AS id,
+              tc.session_id,
+              tc.status,
+              tc.duration_ms
+            FROM mcp_calls AS mc
+            JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+            WHERE mc.server_name IS NOT NULL
+            ORDER BY mc.created_at, mc.tool_call_id
+            """
+        ):
             session_node, _ = _insert_node(
                 conn,
                 kind="Session",
@@ -1541,7 +1554,6 @@ def refresh_graph(
         "sessions": "id",
         "steps": "session_id",
         "tool_calls": "session_id",
-        "mcp_calls": "session_id",
         "memories": "session_id",
         "evidence": "session_id",
     }
@@ -1556,6 +1568,21 @@ def refresh_graph(
                   ON changed.session_id = source.{session_column}
                 """
             )
+        conn.execute(
+            """
+            CREATE TEMP VIEW mcp_calls AS
+            SELECT
+              source.*,
+              source.tool_call_id AS id,
+              tc.session_id,
+              tc.status,
+              tc.duration_ms
+            FROM main.mcp_calls AS source
+            JOIN main.tool_calls AS tc ON tc.id = source.tool_call_id
+            JOIN reflect_changed_sessions AS changed
+              ON changed.session_id = tc.session_id
+            """
+        )
         result = rebuild_graph(conn, reset=False)
         return {
             **result,

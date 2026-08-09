@@ -343,9 +343,16 @@ class UsageService:
     def _scoped_count(self, table: str, where_sql: str, params: list[object]) -> int:
         if table not in {"llm_calls", "mcp_calls"}:
             raise ValueError(f"Unsupported usage table: {table}")
+        source = (
+            "llm_calls item JOIN scoped_sessions scoped ON scoped.id = item.session_id"
+            if table == "llm_calls"
+            else "mcp_calls item "
+            "JOIN tool_calls tc ON tc.id = item.tool_call_id "
+            "JOIN scoped_sessions scoped ON scoped.id = tc.session_id"
+        )
         row = self.conn.execute(
             self._scope_cte(where_sql)
-            + f"SELECT COUNT(*) FROM {table} item JOIN scoped_sessions scoped ON scoped.id = item.session_id",
+            + f"SELECT COUNT(*) FROM {source}",
             params,
         ).fetchone()
         return int(row[0])

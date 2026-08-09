@@ -420,6 +420,143 @@ def repair_telemetry_provenance(conn: sqlite3.Connection) -> dict[str, int]:
         conn.row_factory = previous_row_factory
 
 
+def _upsert_tool_call(
+    conn: sqlite3.Connection,
+    *,
+    raw_event: sqlite3.Row,
+    attrs: dict[str, Any],
+    session_id: str,
+    step_id: str,
+    timestamp: str,
+    status: str,
+    duration_ms: int | None,
+) -> str:
+    logical_call_id = _logical_tool_call_id(attrs, raw_event["id"])
+    tool_name = _canonical_tool_name(attrs, raw_event["event_type"])
+    identity = DEFAULT_MCP_CLASSIFIER.identify(attrs)
+    input_preview = _first_text(attrs, "gen_ai.client.tool.input", "tool.input")
+    output_preview = _first_text(attrs, "gen_ai.client.tool.output", "tool.output")
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO tool_calls(
+          id, step_id, session_id, logical_call_id, tool_name, tool_type, status, duration_ms,
+          input_hash, output_hash, input_preview_redacted, output_preview_redacted, error_type,
+          error_message_redacted, raw_attrs_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(session_id, logical_call_id)
+          WHERE logical_call_id IS NOT NULL AND logical_call_id <> ''
+        DO UPDATE SET
+          tool_name = excluded.tool_name,
+          tool_type = COALESCE(excluded.tool_type, tool_calls.tool_type),
+          status = CASE
+            WHEN excluded.status = 'error' OR tool_calls.status = 'error' THEN 'error'
+            WHEN excluded.status = 'ok' OR tool_calls.status = 'ok' THEN 'ok'
+            ELSE excluded.status
+          END,
+          duration_ms = MAX(
+            COALESCE(tool_calls.duration_ms, 0),
+            COALESCE(excluded.duration_ms, 0)
+          ),
+          input_hash = COALESCE(tool_calls.input_hash, excluded.input_hash),
+          output_hash = COALESCE(excluded.output_hash, tool_calls.output_hash),
+          input_preview_redacted = COALESCE(
+            tool_calls.input_preview_redacted,
+            excluded.input_preview_redacted
+          ),
+          output_preview_redacted = COALESCE(
+            excluded.output_preview_redacted,
+            tool_calls.output_preview_redacted
+          ),
+          error_type = COALESCE(excluded.error_type, tool_calls.error_type),
+          error_message_redacted = COALESCE(
+            excluded.error_message_redacted,
+            tool_calls.error_message_redacted
+          ),
+          updated_at = excluded.updated_at
+        """,
+        (
+            _stable_id("tool", raw_event["id"]),
+            step_id,
+            session_id,
+            logical_call_id,
+            tool_name,
+            "mcp" if identity.server_name else attrs.get("gen_ai.client.tool_type"),
+            status,
+            duration_ms,
+            _first_hash(
+                attrs,
+                input_preview,
+                "gen_ai.client.tool.input.sha256",
+                "gen_ai.client.tool.input_hash",
+                "tool.input.sha256",
+            ),
+            _first_hash(
+                attrs,
+                output_preview,
+                "gen_ai.client.tool.output.sha256",
+                "gen_ai.client.tool.output_hash",
+                "tool.output.sha256",
+            ),
+            input_preview,
+            output_preview,
+            attrs.get("error.type"),
+            _first_text(attrs, "gen_ai.client.error.text", "error.message"),
+            raw_event["attrs_json"],
+            timestamp,
+            timestamp,
+        ),
+    )
+    row = conn.execute(
+        """
+        SELECT id
+        FROM tool_calls
+        WHERE session_id = ? AND logical_call_id = ?
+        """,
+        (session_id, logical_call_id),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("canonical tool call was not persisted")
+    return str(row[0])
+
+
+def _upsert_mcp_call_details(
+    conn: sqlite3.Connection,
+    *,
+    tool_call_id: str,
+    attrs: dict[str, Any],
+    timestamp: str,
+) -> None:
+    identity = DEFAULT_MCP_CLASSIFIER.identify(attrs)
+    conn.execute(
+        """
+        INSERT INTO mcp_calls(
+          tool_call_id, mcp_session_id, mcp_protocol_version, transport,
+          server_name, tool_name, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(tool_call_id) DO UPDATE SET
+          server_name = COALESCE(mcp_calls.server_name, excluded.server_name),
+          tool_name = COALESCE(mcp_calls.tool_name, excluded.tool_name),
+          mcp_session_id = COALESCE(mcp_calls.mcp_session_id, excluded.mcp_session_id),
+          mcp_protocol_version = COALESCE(
+            mcp_calls.mcp_protocol_version,
+            excluded.mcp_protocol_version
+          ),
+          transport = COALESCE(mcp_calls.transport, excluded.transport),
+          updated_at = excluded.updated_at
+        """,
+        (
+            tool_call_id,
+            DEFAULT_MCP_CLASSIFIER.session_id(attrs),
+            DEFAULT_MCP_CLASSIFIER.protocol_version(attrs),
+            DEFAULT_MCP_CLASSIFIER.transport(attrs),
+            identity.server_name,
+            identity.tool_name or attrs.get("gen_ai.client.tool_name"),
+            timestamp,
+            timestamp,
+        ),
+    )
+
+
 def _insert_call_record(
     conn: sqlite3.Connection,
     *,
@@ -494,130 +631,25 @@ def _insert_call_record(
                 timestamp,
             ),
         )
-    elif step_type == "tool_call":
-        tool_name = _canonical_tool_name(attrs, raw_event["event_type"])
-        logical_call_id = _logical_tool_call_id(attrs, raw_event["id"])
-        input_preview = _first_text(attrs, "gen_ai.client.tool.input", "tool.input")
-        output_preview = _first_text(attrs, "gen_ai.client.tool.output", "tool.output")
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO tool_calls(
-              id, step_id, session_id, logical_call_id, tool_name, tool_type, status, duration_ms,
-              input_hash, output_hash, input_preview_redacted, output_preview_redacted, error_type,
-              error_message_redacted, raw_attrs_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(session_id, logical_call_id)
-              WHERE logical_call_id IS NOT NULL AND logical_call_id <> ''
-            DO UPDATE SET
-              tool_name = excluded.tool_name,
-              tool_type = COALESCE(excluded.tool_type, tool_calls.tool_type),
-              status = CASE
-                WHEN excluded.status = 'error' OR tool_calls.status = 'error' THEN 'error'
-                WHEN excluded.status = 'ok' OR tool_calls.status = 'ok' THEN 'ok'
-                ELSE excluded.status
-              END,
-              duration_ms = MAX(
-                COALESCE(tool_calls.duration_ms, 0),
-                COALESCE(excluded.duration_ms, 0)
-              ),
-              input_hash = COALESCE(tool_calls.input_hash, excluded.input_hash),
-              output_hash = COALESCE(excluded.output_hash, tool_calls.output_hash),
-              input_preview_redacted = COALESCE(
-                tool_calls.input_preview_redacted,
-                excluded.input_preview_redacted
-              ),
-              output_preview_redacted = COALESCE(
-                excluded.output_preview_redacted,
-                tool_calls.output_preview_redacted
-              ),
-              error_type = COALESCE(excluded.error_type, tool_calls.error_type),
-              error_message_redacted = COALESCE(
-                excluded.error_message_redacted,
-                tool_calls.error_message_redacted
-              ),
-              updated_at = excluded.updated_at
-            """,
-            (
-                _stable_id("tool", raw_event["id"]),
-                step_id,
-                session_id,
-                logical_call_id,
-                tool_name,
-                attrs.get("gen_ai.client.tool_type"),
-                status,
-                duration,
-                _first_hash(
-                    attrs,
-                    input_preview,
-                    "gen_ai.client.tool.input.sha256",
-                    "gen_ai.client.tool.input_hash",
-                    "tool.input.sha256",
-                ),
-                _first_hash(
-                    attrs,
-                    output_preview,
-                    "gen_ai.client.tool.output.sha256",
-                    "gen_ai.client.tool.output_hash",
-                    "tool.output.sha256",
-                ),
-                input_preview,
-                output_preview,
-                attrs.get("error.type"),
-                _first_text(attrs, "gen_ai.client.error.text", "error.message"),
-                raw_event["attrs_json"],
-                timestamp,
-                timestamp,
-            ),
+    elif step_type in {"tool_call", "mcp_call"}:
+        tool_call_id = _upsert_tool_call(
+            conn,
+            raw_event=raw_event,
+            attrs=attrs,
+            session_id=session_id,
+            step_id=step_id,
+            timestamp=timestamp,
+            status=status,
+            duration_ms=duration,
         )
-    elif step_type == "mcp_call":
         identity = DEFAULT_MCP_CLASSIFIER.identify(attrs)
-        tool_call_id = DEFAULT_MCP_CLASSIFIER.call_id(attrs)
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO mcp_calls(
-              id, step_id, session_id, tool_call_id, mcp_session_id, mcp_protocol_version,
-              transport, server_name, tool_name, status, duration_ms,
-              raw_attrs_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(session_id, tool_call_id)
-              WHERE tool_call_id IS NOT NULL AND tool_call_id <> ''
-            DO UPDATE SET
-              server_name = COALESCE(mcp_calls.server_name, excluded.server_name),
-              tool_name = COALESCE(mcp_calls.tool_name, excluded.tool_name),
-              mcp_session_id = COALESCE(mcp_calls.mcp_session_id, excluded.mcp_session_id),
-              mcp_protocol_version = COALESCE(
-                mcp_calls.mcp_protocol_version,
-                excluded.mcp_protocol_version
-              ),
-              transport = COALESCE(mcp_calls.transport, excluded.transport),
-              status = CASE
-                WHEN excluded.status = 'error' OR mcp_calls.status = 'error' THEN 'error'
-                WHEN excluded.status = 'ok' OR mcp_calls.status = 'ok' THEN 'ok'
-                ELSE excluded.status
-              END,
-              duration_ms = MAX(
-                COALESCE(mcp_calls.duration_ms, 0),
-                COALESCE(excluded.duration_ms, 0)
-              ),
-              updated_at = excluded.updated_at
-            """,
-            (
-                _stable_id("mcp", raw_event["id"]),
-                step_id,
-                session_id,
-                tool_call_id,
-                DEFAULT_MCP_CLASSIFIER.session_id(attrs),
-                DEFAULT_MCP_CLASSIFIER.protocol_version(attrs),
-                DEFAULT_MCP_CLASSIFIER.transport(attrs),
-                identity.server_name,
-                identity.tool_name or attrs.get("gen_ai.client.tool_name"),
-                status,
-                duration,
-                raw_event["attrs_json"],
-                timestamp,
-                timestamp,
-            ),
-        )
+        if step_type == "mcp_call" or identity.server_name:
+            _upsert_mcp_call_details(
+                conn,
+                tool_call_id=tool_call_id,
+                attrs=attrs,
+                timestamp=timestamp,
+            )
 
 
 def _insert_memory_record(

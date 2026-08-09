@@ -304,7 +304,7 @@ def test_context_service_returns_and_measures_the_selected_versioned_skill(
         assert len(answer.selected_skills) == 1
         selected = answer.selected_skills[0]
         assert selected.slug == "safe-release"
-        assert selected.workflow_status == "active"
+        assert selected.workflow_status == "approved"
         assert selected.registry_lifecycle_state == "active"
         assert selected.execution_state == "follow_allowed"
         assert selected.instructions_truncated is False
@@ -337,7 +337,7 @@ def test_context_service_returns_and_measures_the_selected_versioned_skill(
         conn.close()
 
 
-def test_context_service_makes_approved_pending_skill_execution_unambiguous(tmp_path):
+def test_context_service_does_not_execute_approved_but_uninstalled_skill(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
         service = ImprovementService(conn)
@@ -364,12 +364,9 @@ def test_context_service_makes_approved_pending_skill_execution_unambiguous(tmp_
             path=tmp_path,
         )
 
-        selected = answer.selected_skills[0]
-        assert selected.workflow_status == "approved"
-        assert selected.registry_lifecycle_state == "pending"
-        assert selected.execution_state == "follow_allowed"
-        assert selected.installation_state == "not_installed"
-        assert selected.installation_requires_operator_approval is True
+        assert answer.workflow_id is None
+        assert answer.selected_skills == []
+        assert any("not installed" in item for item in answer.limitations)
     finally:
         conn.close()
 
@@ -393,11 +390,8 @@ def test_context_service_requires_full_skill_retrieval_when_inline_content_is_tr
             session_ids=[],
             source_agent="codex",
         )[0]
-        conn.execute(
-            "UPDATE workflow_candidates SET status = 'approved' WHERE id = ?",
-            (candidate_id,),
-        )
-        conn.commit()
+        (tmp_path / ".git").mkdir()
+        service.workflows.apply(candidate_id, project_root=tmp_path)
 
         context = ReflectContextService(conn)
         answer = context.begin_task(

@@ -17,6 +17,8 @@ from click.testing import CliRunner
 from conftest import make_span, wrap_otlp
 
 import reflect.core as core
+from reflect import preparation_pipeline
+from reflect.agent_capabilities import get_agent_capability
 from reflect.core import main
 from reflect.hook_runtime import HookMigrationError, HookMigrationResult, HookRuntime
 
@@ -277,7 +279,7 @@ class TestHelp:
             )
             conn.commit()
 
-            core._reprice_sql_store(conn)
+            preparation_pipeline.reprice_sql_store(conn)
 
             tokens = conn.execute(
                 """
@@ -342,7 +344,7 @@ class TestHelp:
             )
             conn.commit()
 
-            core._reprice_sql_store(conn)
+            preparation_pipeline.reprice_sql_store(conn)
 
             child = conn.execute(
                 """
@@ -405,7 +407,7 @@ class TestHelp:
                 )
             conn.commit()
 
-            core._reprice_sql_store(conn, session_ids={"sess-changed"})
+            preparation_pipeline.reprice_sql_store(conn, session_ids={"sess-changed"})
 
             costs = dict(conn.execute(
                 "SELECT session_id, estimated_cost_usd FROM llm_calls ORDER BY session_id"
@@ -564,7 +566,7 @@ class TestHelp:
 
 class TestBrowserMode:
     def test_foreground_opens_browser_report(self, runner, otlp_file, tmp_path):
-        with patch("reflect.core._start_publish_server") as mock_server:
+        with patch("reflect.core.start_publish_server") as mock_server:
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "--foreground",
@@ -591,7 +593,7 @@ class TestBrowserReportCommandSurface:
         assert "No such command" in result.output
 
     def test_foreground_command_starts_server(self, runner, otlp_file, tmp_path):
-        with patch("reflect.core._start_publish_server") as mock_server:
+        with patch("reflect.core.start_publish_server") as mock_server:
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "--foreground",
@@ -611,13 +613,13 @@ class TestBrowserReportCommandSurface:
 
     def test_existing_snapshot_refreshes_in_background(self, runner, otlp_file, tmp_path):
         db_path = tmp_path / "reflect.db"
-        core._prepare_sql_report_db(
+        preparation_pipeline.prepare_sql_report_db(
             db_path,
             otlp_traces=otlp_file,
             include_native_sessions=False,
         )
-        with patch("reflect.core._start_publish_server") as mock_server, \
-             patch("reflect.core._prepare_sql_report_db", return_value={"refreshed": True}) as mock_prepare:
+        with patch("reflect.core.start_publish_server") as mock_server, \
+             patch("reflect.core.prepare_sql_report_db", return_value={"refreshed": True}) as mock_prepare:
             result = runner.invoke(main, [
                 "--foreground",
                 "--otlp-traces", str(otlp_file),
@@ -634,13 +636,13 @@ class TestBrowserReportCommandSurface:
 
     def test_existing_snapshot_can_be_served_without_refresh(self, otlp_file, tmp_path):
         db_path = tmp_path / "reflect.db"
-        core._prepare_sql_report_db(
+        preparation_pipeline.prepare_sql_report_db(
             db_path,
             otlp_traces=otlp_file,
             include_native_sessions=False,
         )
-        with patch("reflect.core._start_publish_server") as mock_server, \
-             patch("reflect.core._prepare_sql_report_db") as mock_prepare:
+        with patch("reflect.core.start_publish_server") as mock_server, \
+             patch("reflect.preparation_pipeline.prepare_sql_report_db") as mock_prepare:
             core._run_browser_report(
                 otlp_traces=None,
                 sessions_dir=None,
@@ -680,7 +682,7 @@ class TestBrowserReportCommandSurface:
             }],
         }) + "\n", encoding="utf-8")
 
-        with patch("reflect.core._start_publish_server"):
+        with patch("reflect.core.start_publish_server"):
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "--foreground",
@@ -734,9 +736,9 @@ class TestBrowserReportCommandSurface:
             encoding="utf-8",
         )
 
-        with patch("reflect.core._start_publish_server"), \
+        with patch("reflect.core.start_publish_server"), \
              patch("reflect.core._default_otlp_traces", return_value=otlp_file), \
-             patch("reflect.core._discover_rich_session_files", return_value=[("cursor", cursor_file)]):
+             patch("reflect.preparation_pipeline._discover_rich_session_files", return_value=[("cursor", cursor_file)]):
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "--foreground",
@@ -768,7 +770,7 @@ class TestBrowserReportCommandSurface:
         otlp_file = tmp_path / "copilot-traces.json"
         otlp_file.write_text(wrap_otlp([model_hint, token_row], agent="copilot") + "\n", encoding="utf-8")
 
-        with patch("reflect.core._start_publish_server"):
+        with patch("reflect.core.start_publish_server"):
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "--foreground",
@@ -798,7 +800,7 @@ class TestBrowserReportCommandSurface:
             conn.close()
 
     def test_report_with_output_saves_markdown(self, runner, otlp_file, tmp_path):
-        with patch("reflect.core._start_publish_server"), \
+        with patch("reflect.core.start_publish_server"), \
              patch("reflect.core.render_report") as mock_report:
             mock_report.return_value = "# report"
             db_path = tmp_path / "reflect.db"
@@ -1317,9 +1319,9 @@ def test_strip_json_fences_variants():
 
 class TestNoDataNoCrash:
     def test_empty_dirs_no_crash(self, runner, tmp_path):
-        with patch("reflect.core._start_publish_server"), \
+        with patch("reflect.core.start_publish_server"), \
              patch("reflect.core._default_otlp_traces", return_value=None), \
-             patch("reflect.core._discover_rich_session_files", return_value=[]):
+             patch("reflect.preparation_pipeline._discover_rich_session_files", return_value=[]):
             result = runner.invoke(main, [
                 "--foreground",
                 "--sessions-dir", str(tmp_path / "s"),
@@ -1331,7 +1333,7 @@ class TestNoDataNoCrash:
 
 class TestUpdateAdvisor:
     def test_foreground_run_surfaces_startup_notice(self, runner, otlp_file, tmp_path):
-        with patch("reflect.core._start_publish_server"), \
+        with patch("reflect.core.start_publish_server"), \
              patch("reflect.core._build_startup_update_notice", return_value="v9.9.9 is available. Run reflect doctor for details."):
             result = runner.invoke(main, [
                 "--foreground",
@@ -1491,11 +1493,11 @@ class TestUpdateAdvisor:
             encoding="utf-8",
         )
 
-        monkeypatch.setattr(core, "_discover_rich_session_files", lambda: [("cursor", session_file)])
+        monkeypatch.setattr(preparation_pipeline, "_discover_rich_session_files", lambda: [("cursor", session_file)])
         monkeypatch.setattr("reflect.store.graph_normalize.rebuild_graph", lambda *_args, **_kwargs: {"sessions": 0})
-        monkeypatch.setattr(core, "_ensure_sql_costs", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(preparation_pipeline, "ensure_sql_costs", lambda *_args, **_kwargs: None)
 
-        result = core._prepare_sql_report_db(db_path, otlp_traces=None, include_native_sessions=True)
+        result = preparation_pipeline.prepare_sql_report_db(db_path, otlp_traces=None, include_native_sessions=True)
 
         assert result["cursor_adapter"] == {
             "updated": 1,
@@ -1533,40 +1535,23 @@ class TestUpdateAdvisor:
         monkeypatch,
         otlp_file,
     ):
-        from reflect.store.migrate import migrate
-        from reflect.store.sqlite import connect_sqlite
-
         db_path = tmp_path / "reflect.db"
         otlp_traces = otlp_file
-        conn = connect_sqlite(db_path)
-        try:
-            migrate(conn)
-            conn.execute(
-                """
-                INSERT INTO source_ingestion_state(
-                  source_id, source_type, size_bytes, modified_ns, updated_at
-                ) VALUES (?, 'otlp_traces_json', ?, ?, '2026-01-01T00:00:00+00:00')
-                """,
-                (
-                    str(otlp_traces),
-                    otlp_traces.stat().st_size,
-                    otlp_traces.stat().st_mtime_ns,
-                ),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-        monkeypatch.setattr(core, "_infer_otlp_logs_file", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(preparation_pipeline, "_infer_otlp_logs_file", lambda *_args, **_kwargs: None)
+        preparation_pipeline.prepare_sql_report_db(
+            db_path,
+            otlp_traces=otlp_traces,
+            include_native_sessions=False,
+        )
 
         def fail_if_rebuilt(*_args, **_kwargs):
             raise AssertionError("unchanged preparation should reuse derived state")
 
-        monkeypatch.setattr(core, "_ensure_sql_costs", fail_if_rebuilt)
+        monkeypatch.setattr(preparation_pipeline, "ensure_sql_costs", fail_if_rebuilt)
         monkeypatch.setattr("reflect.store.graph_normalize.rebuild_graph", fail_if_rebuilt)
         monkeypatch.setattr("reflect.store.rollups.rebuild_rollups", fail_if_rebuilt)
 
-        result = core._prepare_sql_report_db(
+        result = preparation_pipeline.prepare_sql_report_db(
             db_path,
             otlp_traces=otlp_traces,
             include_native_sessions=False,
@@ -1584,15 +1569,15 @@ class TestUpdateAdvisor:
         otlp_file,
     ):
         db_path = tmp_path / "reflect.db"
-        monkeypatch.setattr(core, "_infer_otlp_logs_file", lambda *_args, **_kwargs: None)
-        core._prepare_sql_report_db(
+        monkeypatch.setattr(preparation_pipeline, "_infer_otlp_logs_file", lambda *_args, **_kwargs: None)
+        preparation_pipeline.prepare_sql_report_db(
             db_path,
             otlp_traces=otlp_file,
             include_native_sessions=False,
         )
         otlp_file.write_text('{"resourceSpans": []}\n', encoding="utf-8")
 
-        result = core._prepare_sql_report_db(
+        result = preparation_pipeline.prepare_sql_report_db(
             db_path,
             otlp_traces=otlp_file,
             include_native_sessions=False,
@@ -1603,7 +1588,7 @@ class TestUpdateAdvisor:
         assert traces["mode"] == "replay_deferred"
         assert traces["bytes_read"] == 0
         assert traces["replay_required"] == 1
-        assert result["deferred_replays"] == ["otlp_traces"]
+        assert result["deferred_replays"] == [str(otlp_file)]
 
     def test_prepare_sql_report_db_reprices_when_pricing_inputs_change(
         self,
@@ -1643,13 +1628,13 @@ class TestUpdateAdvisor:
                 fetched_at_unix=1,
             )
         }
-        monkeypatch.setattr(core, "_infer_otlp_logs_file", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(preparation_pipeline, "_infer_otlp_logs_file", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(
             "reflect.store.cost_refresh.load_pricing_table",
             lambda: current_table["value"],
         )
 
-        first = core._prepare_sql_report_db(
+        first = preparation_pipeline.prepare_sql_report_db(
             db_path,
             otlp_traces=otlp_traces,
             include_native_sessions=False,
@@ -1680,12 +1665,12 @@ class TestUpdateAdvisor:
             source="test",
             fetched_at_unix=2,
         )
-        second = core._prepare_sql_report_db(
+        second = preparation_pipeline.prepare_sql_report_db(
             db_path,
             otlp_traces=otlp_traces,
             include_native_sessions=False,
         )
-        third = core._prepare_sql_report_db(
+        third = preparation_pipeline.prepare_sql_report_db(
             db_path,
             otlp_traces=otlp_traces,
             include_native_sessions=False,
@@ -1729,9 +1714,9 @@ class TestUpdateAdvisor:
             output_tokens=50,
         )
         otlp_traces.write_text(wrap_otlp([initial_span]) + "\n", encoding="utf-8")
-        monkeypatch.setattr(core, "_infer_otlp_logs_file", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(preparation_pipeline, "_infer_otlp_logs_file", lambda *_args, **_kwargs: None)
 
-        core._prepare_sql_report_db(
+        preparation_pipeline.prepare_sql_report_db(
             db_path,
             otlp_traces=otlp_traces,
             include_native_sessions=False,
@@ -1745,7 +1730,7 @@ class TestUpdateAdvisor:
         with otlp_traces.open("a", encoding="utf-8") as handle:
             handle.write(wrap_otlp([changed_span]) + "\n")
 
-        result = core._prepare_sql_report_db(
+        result = preparation_pipeline.prepare_sql_report_db(
             db_path,
             otlp_traces=otlp_traces,
             include_native_sessions=False,
@@ -1780,9 +1765,9 @@ class TestUpdateAdvisor:
             + "\n",
             encoding="utf-8",
         )
-        monkeypatch.setattr(core, "_infer_otlp_logs_file", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(preparation_pipeline, "_infer_otlp_logs_file", lambda *_args, **_kwargs: None)
 
-        core._prepare_sql_report_db(
+        preparation_pipeline.prepare_sql_report_db(
             db_path,
             otlp_traces=otlp_traces,
             include_native_sessions=False,
@@ -1800,7 +1785,7 @@ class TestUpdateAdvisor:
         monkeypatch.setattr("reflect.store.graph_normalize.rebuild_graph", fail_if_rebuilt)
         monkeypatch.setattr("reflect.store.rollups.rebuild_rollups", fail_if_rebuilt)
 
-        result = core._prepare_sql_report_db(
+        result = preparation_pipeline.prepare_sql_report_db(
             db_path,
             otlp_traces=otlp_traces,
             include_native_sessions=False,
@@ -2186,17 +2171,19 @@ class TestDoctor:
 
         assert result.exit_code == 0
         assert "Antigravity" in result.output
-        assert "OpenClaw" in result.output
+        assert "OpenClaw" not in result.output
         assert "Windsurf" in result.output
         assert "MCP client matrix" in result.output
         assert "Editor config" in result.output
-        assert core._agent_support_summary("Windsurf") == {
-            "support_status": "Implemented",
-            "telemetry_path": "Hook telemetry + config snapshots",
+        windsurf = get_agent_capability("windsurf")
+        assert windsurf is not None
+        assert core._agent_support_summary(windsurf) == {
+            "support_status": "Supported",
+            "telemetry_path": "Hooks + configuration snapshots",
             "mcp_client": "Editor config",
             "confidence": "Medium",
         }
-        assert "Planned" in result.output
+        assert "Planned" not in result.output
 
     def test_doctor_otlp_logs_waiting_when_otel_hook_installed(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
@@ -2517,7 +2504,7 @@ class TestSetup:
             stderr=subprocess.DEVNULL,
         )
         assert "Windsurf global hook setup complete" in result.output
-        assert "Windsurf: Not implemented" not in result.output
+        assert "Telemetry gaps still not implemented" not in result.output
 
     def test_setup_local_agent_is_explicit_opt_in(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
@@ -2738,10 +2725,11 @@ class TestSetup:
         assert not (codex_skill_dir / "reflect-loops").exists()
 
     def test_codex_uses_the_current_shared_agent_skill_roots(self):
-        codex = next(agent for agent in core._AGENT_SPECS if agent["name"] == "OpenAI Codex CLI")
+        codex = get_agent_capability("codex")
 
-        assert codex["global_path"] == "~/.agents/skills/"
-        assert codex["local_skill_path"] == ".agents/skills/"
+        assert codex is not None
+        assert codex.global_skill_path == "~/.agents/skills/"
+        assert codex.local_skill_path == ".agents/skills/"
 
 
     def test_setup_seeds_config_from_example_on_fresh_install(self, runner, tmp_path):

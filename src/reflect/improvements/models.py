@@ -25,10 +25,30 @@ class ObservationStatus(StrEnum):
 class WorkflowStatus(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
-    ACTIVE = "active"
     STALE = "stale"
     REJECTED = "rejected"
+
+
+class WorkflowDeploymentState(StrEnum):
+    NOT_DEPLOYED = "not_deployed"
+    ACTIVE = "active"
+    STALE = "stale"
     ROLLED_BACK = "rolled_back"
+
+
+class WorkflowInstallationState(StrEnum):
+    NOT_INSTALLED = "not_installed"
+    INSTALLED = "installed"
+    STALE = "stale"
+    REMOVED = "removed"
+
+
+class WorkflowMeasurementState(StrEnum):
+    NOT_STARTED = "not_started"
+    COLLECTING = "collecting"
+    IMPROVED = "improved"
+    NO_EFFECT = "no_effect"
+    REGRESSED = "regressed"
 
 
 class WorkflowBehaviorType(StrEnum):
@@ -237,13 +257,21 @@ class ObservationRecord(ObservationDraft):
     resolved_scope: ImprovementScope | None = None
 
 
-class InboxFindingRecord(ObservationRecord):
+class FindingRecord(ObservationRecord):
     """Presentation-safe group of equivalent open observations."""
 
     observation_count: int = Field(default=1, ge=1)
     variant_count: int = Field(default=1, ge=1)
     source_scope_count: int = Field(default=1, ge=1)
     source_scopes: list[str] = Field(default_factory=list)
+
+
+class WorkflowLifecycleProjection(ReflectModel):
+    review: WorkflowStatus
+    deployment: WorkflowDeploymentState = WorkflowDeploymentState.NOT_DEPLOYED
+    installation: WorkflowInstallationState = WorkflowInstallationState.NOT_INSTALLED
+    measurement: WorkflowMeasurementState = WorkflowMeasurementState.NOT_STARTED
+    display: str
 
 
 class WorkflowCandidateRecord(ReflectModel):
@@ -255,7 +283,9 @@ class WorkflowCandidateRecord(ReflectModel):
     scope: str
     risk: str
     content: dict[str, Any]
-    support_count: int = Field(ge=0)
+    contract_signature: str
+    revision_hash: str
+    support_execution_unit_count: int = Field(default=0, ge=0)
     confidence: float = Field(ge=0, le=1)
     target_metric: str
     target_value: float | None = None
@@ -268,12 +298,13 @@ class WorkflowCandidateRecord(ReflectModel):
     task_archetype_id: str | None = None
     exposure_counts: dict[str, int] = Field(default_factory=dict)
     active_intervention_id: str | None = None
+    lifecycle: WorkflowLifecycleProjection
     variant_count: int = Field(default=1, ge=1)
     supporting_observation_count: int = Field(default=1, ge=1)
     source_scopes: list[str] = Field(default_factory=list)
 
 
-class WorkflowSessionRecord(ReflectModel):
+class WorkflowProvenanceSession(ReflectModel):
     session_id: str
     relationship: str
     title: str | None = None
@@ -287,26 +318,46 @@ class WorkflowSessionRecord(ReflectModel):
     exposure_state: str | None = None
 
 
-class WorkflowSessionLedger(ReflectModel):
+class WorkflowExecutionUnitRecord(ReflectModel):
+    execution_unit_id: str
+    session_id: str
+    relationship: str
+    title: str | None = None
+    agent: str | None = None
+    started_at: str
+    ended_at: str | None = None
+    status: str
+    outcome: str | None = None
+    verification_passed: bool | None = None
+    workspace: str | None = None
+    source: str = "unknown"
+    evidence_count: int = Field(default=0, ge=0)
+    evidence_summaries: list[str] = Field(default_factory=list)
+    exposure_state: str | None = None
+
+
+class WorkflowEvidenceLedger(ReflectModel):
     candidate_id: str
+    contract_signature: str
     observation_id: str
     observation_ids: list[str] = Field(default_factory=list)
     skill_slug: str = ""
-    source_session_count: int = Field(default=0, ge=0)
-    source_sessions: list[WorkflowSessionRecord] = Field(default_factory=list)
-    exposure_session_count: int = Field(default=0, ge=0)
-    exposure_sessions: list[WorkflowSessionRecord] = Field(default_factory=list)
+    support_execution_unit_count: int = Field(default=0, ge=0)
+    support_execution_units: list[WorkflowExecutionUnitRecord] = Field(default_factory=list)
+    provenance_session_count: int = Field(default=0, ge=0)
+    provenance_sessions: list[WorkflowProvenanceSession] = Field(default_factory=list)
+    exposed_execution_unit_count: int = Field(default=0, ge=0)
+    exposed_execution_units: list[WorkflowExecutionUnitRecord] = Field(default_factory=list)
 
 
-class FindingSessionLedger(ReflectModel):
+class FindingEvidenceLedger(ReflectModel):
     observation_id: str
     observation_ids: list[str] = Field(default_factory=list)
     candidate_id: str | None = None
-    skill_slug: str = ""
-    source_session_count: int = Field(default=0, ge=0)
-    source_sessions: list[WorkflowSessionRecord] = Field(default_factory=list)
-    exposure_session_count: int = Field(default=0, ge=0)
-    exposure_sessions: list[WorkflowSessionRecord] = Field(default_factory=list)
+    support_execution_unit_count: int = Field(default=0, ge=0)
+    support_execution_units: list[WorkflowExecutionUnitRecord] = Field(default_factory=list)
+    provenance_session_count: int = Field(default=0, ge=0)
+    provenance_sessions: list[WorkflowProvenanceSession] = Field(default_factory=list)
     resolved_scope: ImprovementScope | None = None
 
 

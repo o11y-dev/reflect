@@ -539,12 +539,13 @@ class CopilotAdapter(AgentAdapter):
             context.prompt,
             "--silent",
             "--output-format",
-            "text",
+            "json",
             "--stream",
             "off",
             "--effort",
             "low",
             "--disable-builtin-mcps",
+            "--allow-all-mcp-server-instructions",
             "--no-custom-instructions",
             "--no-ask-user",
             "--no-remote",
@@ -568,9 +569,8 @@ class CopilotAdapter(AgentAdapter):
         return AgentCommand(
             argv=(
                 *self._base_argv(context),
-                "--additional-mcp-config",
-                f"@{config_path}",
-                "--available-tools=reflect(reflect_context),reflect(reflect_complete)",
+                f"--additional-mcp-config=@{config_path}",
+                "--available-tools=reflect",
             ),
             cwd=context.workspace,
         )
@@ -585,9 +585,9 @@ class CopilotAdapter(AgentAdapter):
         )
 
     def extract_final_message(self, stdout: str) -> str:
-        """Copilot's silent text mode emits only the final agent response."""
+        """Extract Copilot's final assistant message without progress text."""
 
-        return stdout.strip()
+        return extract_final_message(stdout)
 
 
 class OpenCodeAdapter(AgentAdapter):
@@ -720,6 +720,14 @@ def extract_final_message(stdout: str) -> str:
                 if isinstance(payload.get(key), str):
                     messages.append(str(payload[key]))
                     break
+        data = payload.get("data")
+        if (
+            payload.get("type") == "assistant.message"
+            and isinstance(data, dict)
+            and data.get("phase") == "final_answer"
+            and isinstance(data.get("content"), str)
+        ):
+            messages.append(str(data["content"]))
         part = payload.get("part")
         if (
             payload.get("type") == "text"
@@ -831,9 +839,9 @@ def blog_revision_prompt(
 
 def validate_blog_draft(text: str) -> tuple[str, ...]:
     errors: list[str] = []
-    if not text.strip().startswith(BLOG_DRAFT_TITLE):
+    if not _matches_rendered_title(text, BLOG_DRAFT_TITLE):
         errors.append("missing exact draft title")
-    if BLOG_DRAFT_CLAIM not in text:
+    if BLOG_DRAFT_CLAIM not in _normalized_rendered_text(text):
         errors.append("missing draft claim")
     if not text.strip().endswith(BLOG_DRAFT_PROOF):
         errors.append("missing draft proof marker")
@@ -847,9 +855,9 @@ def validate_blog_draft(text: str) -> tuple[str, ...]:
 
 def validate_blog_revision(text: str) -> tuple[str, ...]:
     errors: list[str] = []
-    if not text.strip().startswith(BLOG_REVISION_TITLE):
+    if not _matches_rendered_title(text, BLOG_REVISION_TITLE):
         errors.append("missing exact revision title")
-    if BLOG_REVISION_CLAIM not in text:
+    if BLOG_REVISION_CLAIM not in _normalized_rendered_text(text):
         errors.append("missing revision claim")
     if not text.strip().endswith(BLOG_REVISION_PROOF):
         errors.append("missing revision proof marker")
@@ -862,12 +870,29 @@ def validate_blog_revision(text: str) -> tuple[str, ...]:
 
 
 def _blog_word_count(text: str) -> int:
+    rendered_titles = {
+        BLOG_DRAFT_TITLE.removeprefix("# "),
+        BLOG_REVISION_TITLE.removeprefix("# "),
+    }
     body = "\n".join(
         line
         for line in text.splitlines()
-        if not line.startswith("#") and not line.startswith(("DRAFT-PROOF:", "REVISION-PROOF:"))
+        if not line.startswith("#")
+        and line.strip() not in rendered_titles
+        and not line.startswith(("DRAFT-PROOF:", "REVISION-PROOF:"))
     )
     return len(re.findall(r"\b[\w'-]+\b", body))
+
+
+def _normalized_rendered_text(text: str) -> str:
+    """Collapse terminal soft wraps without weakening the hidden content contract."""
+
+    return " ".join(text.split())
+
+
+def _matches_rendered_title(text: str, expected_markdown: str) -> bool:
+    first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
+    return first_line.removeprefix("# ") == expected_markdown.removeprefix("# ")
 
 
 def seed_effectiveness_workflow(db_path: Path, workspace: Path) -> str:
@@ -896,11 +921,7 @@ def seed_effectiveness_workflow(db_path: Path, workspace: Path) -> str:
             session_ids=[],
             source_agent="local-effectiveness-test",
         )[0]
-        conn.execute(
-            "UPDATE workflow_candidates SET status = 'approved' WHERE id = ?",
-            (candidate_id,),
-        )
-        conn.commit()
+        service.workflows.apply(candidate_id, project_root=workspace)
         service.skills.sync_workflow_candidates([candidate_id])
         conn.commit()
         answer = ReflectContextService(conn).ask(

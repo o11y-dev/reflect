@@ -16,8 +16,6 @@ _MINIMUM_SIGNAL_COVERAGE = 0.9
 
 def _public_cohort(raw: str) -> dict[str, Any]:
     cohort = json.loads(raw)
-    cohort.pop("before_session_ids", None)
-    cohort.pop("after_session_ids", None)
     cohort.pop("before_execution_unit_ids", None)
     cohort.pop("after_execution_unit_ids", None)
     cohort.pop("fingerprint", None)
@@ -31,8 +29,8 @@ def _cohort_fingerprint(
     after_values: list[float],
 ) -> str:
     payload = {
-        "before_ids": cohort.get("before_execution_unit_ids", cohort.get("before_session_ids", [])),
-        "after_ids": cohort.get("after_execution_unit_ids", cohort.get("after_session_ids", [])),
+        "before_ids": cohort.get("before_execution_unit_ids", []),
+        "after_ids": cohort.get("after_execution_unit_ids", []),
         "before_values": before_values,
         "after_values": after_values,
         "measurement_state": cohort.get("measurement_state"),
@@ -94,32 +92,37 @@ class MeasurementService:
         ).fetchone()
         latest_cohort = json.loads(latest[5]) if latest else {}
         quality: dict[str, Any] | None = None
-        if contract_mode and contract is not None:
-            minimum_before = contract.validation.baseline_minimum
-            baseline_limit = contract.validation.baseline_maximum
-            minimum_after = max(1, min(int(measurement_window), 100))
-            frozen_before_ids = [
-                str(item) for item in latest_cohort.get("before_execution_unit_ids") or []
-            ]
-            before_units = (
-                self._execution_units_by_ids(frozen_before_ids)
-                if frozen_before_ids
-                else self._cohort_execution_units(
-                    repo_id,
-                    workspace_id=contract.applicability.workspace_id,
-                    task_archetype_id=archetype_id,
-                    before=exposed_at,
-                    limit=baseline_limit,
-                    newest_first=True,
-                )
-            )
-            after_units = self._cohort_execution_units(
+        workspace_id = contract.applicability.workspace_id if contract is not None else None
+        minimum_before = (
+            contract.validation.baseline_minimum if contract is not None else 5
+        )
+        baseline_limit = (
+            contract.validation.baseline_maximum if contract is not None else 20
+        )
+        minimum_after = max(1, min(int(measurement_window), 100))
+        frozen_before_ids = [
+            str(item) for item in latest_cohort.get("before_execution_unit_ids") or []
+        ]
+        before_units = (
+            self._execution_units_by_ids(frozen_before_ids)
+            if frozen_before_ids
+            else self._cohort_execution_units(
                 repo_id,
-                workspace_id=contract.applicability.workspace_id,
+                workspace_id=workspace_id,
                 task_archetype_id=archetype_id,
-                after=exposed_at,
-                limit=minimum_after,
+                before=exposed_at,
+                limit=baseline_limit,
+                newest_first=True,
             )
+        )
+        after_units = self._cohort_execution_units(
+            repo_id,
+            workspace_id=workspace_id,
+            task_archetype_id=archetype_id,
+            after=exposed_at,
+            limit=minimum_after,
+        )
+        if contract_mode and contract is not None:
             evaluated = self.contracts.evaluate_units(
                 contract,
                 [*before_units, *after_units],
@@ -137,48 +140,44 @@ class MeasurementService:
                 for item in after_units
             ]
         else:
-            minimum_before = 5
-            minimum_after = 5
-            before_sessions = self._cohort_sessions(
+            before_values = self._execution_unit_metric_values(
                 str(metric_name),
-                repo_id,
-                task_archetype_id=archetype_id,
-                before=exposed_at,
+                [str(item["execution_unit_id"]) for item in before_units],
             )
-            after_sessions = self._cohort_sessions(
+            after_values = self._execution_unit_metric_values(
                 str(metric_name),
-                repo_id,
-                task_archetype_id=archetype_id,
-                after=exposed_at,
-            )
-            if recovery_mode:
-                before_sessions, after_sessions, quality = self._recovery_session_cohorts(
-                    str(intervention_id),
-                    str(metric_name),
-                    before_sessions=before_sessions,
-                    after_sessions=after_sessions,
-                    latest_cohort=latest_cohort,
-                    minimum_before=minimum_before,
-                    minimum_after=minimum_after,
-                )
-            before_values = self._session_metric_values(
-                str(metric_name),
-                [str(item["session_id"]) for item in before_sessions],
-            )
-            after_values = self._session_metric_values(
-                str(metric_name),
-                [str(item["session_id"]) for item in after_sessions],
+                [str(item["execution_unit_id"]) for item in after_units],
             )
             before = [
-                before_values[str(item["session_id"])]
-                for item in before_sessions
-                if str(item["session_id"]) in before_values
+                before_values[str(item["execution_unit_id"])]
+                for item in before_units
+                if str(item["execution_unit_id"]) in before_values
             ]
             after = [
-                after_values[str(item["session_id"])]
-                for item in after_sessions
-                if str(item["session_id"]) in after_values
+                after_values[str(item["execution_unit_id"])]
+                for item in after_units
+                if str(item["execution_unit_id"]) in after_values
             ]
+            if recovery_mode:
+                before_coverage = len(before) / len(before_units) if before_units else 0.0
+                after_coverage = len(after) / len(after_units) if after_units else 0.0
+                reasons = []
+                if before_coverage < _MINIMUM_SIGNAL_COVERAGE:
+                    reasons.append("Baseline execution-unit signal coverage is incomplete.")
+                if after_coverage < _MINIMUM_SIGNAL_COVERAGE:
+                    reasons.append("Post-installation execution-unit signal coverage is incomplete.")
+                quality = {
+                    "state": (
+                        "not_measurable"
+                        if before_coverage < _MINIMUM_SIGNAL_COVERAGE
+                        else "collecting"
+                        if reasons
+                        else "measured"
+                    ),
+                    "reasons": reasons,
+                    "before_signal_coverage": before_coverage,
+                    "after_signal_coverage": after_coverage,
+                }
         raw_before_value = statistics.mean(before) if before else None
         raw_after_value = statistics.mean(after) if after else None
         sample_ready = (
@@ -224,41 +223,27 @@ class MeasurementService:
                 else:
                     verdict = "unchanged"
         now = utc_now()
-        if contract_mode and contract is not None:
-            cohort = {
-                "unit": "execution_units",
-                "repo_id": repo_id,
-                "workspace_id": contract.applicability.workspace_id,
-                "task_archetype_id": archetype_id,
-                "metric": metric_name,
-                "before": f"comparable tasks before {exposed_at}",
-                "after": f"first {minimum_after} comparable tasks on or after {exposed_at}",
-                "minimum_after_execution_units": minimum_after,
-                "minimum_before_execution_units": minimum_before,
-                "metric_direction": metric_direction,
-                "before_execution_unit_ids": [item["execution_unit_id"] for item in before_units],
-                "after_execution_unit_ids": [item["execution_unit_id"] for item in after_units],
-                "signature_hash": contract.signature_hash,
-                "measurement_state": measurement_state,
-            }
-        else:
-            cohort = {
-                "unit": "sessions",
-                "repo_id": repo_id,
-                "task_archetype_id": archetype_id,
-                "metric": metric_name,
-                "before": f"sessions before {exposed_at}",
-                "after": f"sessions on or after {exposed_at}",
-                "minimum_after_sessions": minimum_after,
-                "minimum_before_sessions": minimum_before,
-                "metric_direction": metric_direction,
-                "before_session_ids": [item["session_id"] for item in before_sessions],
-                "after_session_ids": [item["session_id"] for item in after_sessions],
-                "measurement_state": measurement_state,
-            }
-            if quality is not None:
-                cohort["measurement_reasons"] = quality["reasons"]
-                cohort["quality"] = quality
+        cohort = {
+            "unit": "execution_units",
+            "repo_id": repo_id,
+            "workspace_id": workspace_id,
+            "task_archetype_id": archetype_id,
+            "metric": metric_name,
+            "before": f"comparable tasks before {exposed_at}",
+            "after": f"first {minimum_after} comparable tasks on or after {exposed_at}",
+            "minimum_after_execution_units": minimum_after,
+            "minimum_before_execution_units": minimum_before,
+            "metric_direction": metric_direction,
+            "before_execution_unit_ids": [item["execution_unit_id"] for item in before_units],
+            "after_execution_unit_ids": [item["execution_unit_id"] for item in after_units],
+            "contract_signature": (
+                contract.signature_hash if contract is not None else None
+            ),
+            "measurement_state": measurement_state,
+        }
+        if quality is not None:
+            cohort["measurement_reasons"] = quality["reasons"]
+            cohort["quality"] = quality
         cohort["fingerprint"] = _cohort_fingerprint(
             cohort,
             before_values=before,
@@ -389,7 +374,7 @@ class MeasurementService:
         ]
 
     def sessions(self, measurement_id: str) -> dict[str, Any]:
-        """Return the bounded execution or session cohorts in a measurement snapshot."""
+        """Return the bounded execution-unit cohorts in a measurement snapshot."""
         row = self.conn.execute(
             """
             SELECT m.id, wv.candidate_id, m.metric_name, m.cohort_json,
@@ -425,89 +410,58 @@ class MeasurementService:
         after_execution_ids = [
             str(item) for item in cohort.get("after_execution_unit_ids") or []
         ]
-        if (
-            before_execution_ids
-            or after_execution_ids
-            or cohort.get("unit") == "execution_units"
-        ):
-            before_execution_units = self._execution_units_by_ids(before_execution_ids)
-            after_execution_units = self._execution_units_by_ids(after_execution_ids)
-            workflow_content = json.loads(str(workflow_content_json or "{}"))
-            contract = WorkflowContract.from_raw(workflow_content.get("workflow_contract"))
-            if contract is not None:
-                enriched = self._execution_units_with_contract_evidence(
-                    contract,
-                    [*before_execution_units, *after_execution_units],
-                )
-                by_id = {
-                    str(item["execution_unit_id"]): item
-                    for item in enriched
+        if cohort.get("unit") != "execution_units":
+            raise ValueError(f"Measurement {measurement_id} does not use execution units")
+        before_execution_units = self._execution_units_by_ids(before_execution_ids)
+        after_execution_units = self._execution_units_by_ids(after_execution_ids)
+        workflow_content = json.loads(str(workflow_content_json or "{}"))
+        contract = WorkflowContract.from_raw(workflow_content.get("workflow_contract"))
+        if contract is not None and str(metric_name) == "workflow_adherence":
+            enriched = self._execution_units_with_contract_evidence(
+                contract,
+                [*before_execution_units, *after_execution_units],
+            )
+        else:
+            units = [*before_execution_units, *after_execution_units]
+            values = self._execution_unit_metric_values(
+                str(metric_name),
+                [str(item["execution_unit_id"]) for item in units],
+            )
+            enriched = [
+                {
+                    **item,
+                    "metric_value": values.get(str(item["execution_unit_id"])),
+                    "evidence_count": int(
+                        str(item["execution_unit_id"]) in values
+                    ),
+                    "evidence_summaries": (
+                        [f"{metric_name}: {values[str(item['execution_unit_id'])]:.3g}"]
+                        if str(item["execution_unit_id"]) in values
+                        else ["Required execution-unit telemetry is unavailable"]
+                    ),
                 }
-                before_execution_units = [
-                    by_id[str(item["execution_unit_id"])]
-                    for item in before_execution_units
-                ]
-                after_execution_units = [
-                    by_id[str(item["execution_unit_id"])]
-                    for item in after_execution_units
-                ]
-            return {
-                "id": stored_id,
-                "candidate_id": candidate_id,
-                "metric_name": metric_name,
-                "unit": "execution_units",
-                "measurement_state": cohort.get("measurement_state", "collecting"),
-                "measurement_reasons": cohort.get("measurement_reasons", []),
-                "quality": cohort.get("quality", {}),
-                "before_count": int(before_count),
-                "after_count": int(after_count),
-                "snapshot_exact": True,
-                "before_execution_units": before_execution_units,
-                "after_execution_units": after_execution_units,
-                "before_sessions": before_execution_units,
-                "after_sessions": after_execution_units,
-            }
-        before_ids = [str(item) for item in cohort.get("before_session_ids") or []]
-        after_ids = [str(item) for item in cohort.get("after_session_ids") or []]
-        snapshot_exact = "before_session_ids" in cohort and "after_session_ids" in cohort
-        before_sessions = (
-            self._sessions_by_ids(before_ids)
-            if snapshot_exact
-            else self._cohort_sessions(
-                str(metric_name),
-                repo_id,
-                task_archetype_id=archetype_id,
-                before=exposed_at,
-            )[: int(before_count)]
-        )
-        after_sessions = (
-            self._sessions_by_ids(after_ids)
-            if snapshot_exact
-            else self._cohort_sessions(
-                str(metric_name),
-                repo_id,
-                task_archetype_id=archetype_id,
-                after=exposed_at,
-            )[: int(after_count)]
-        )
-        before_sessions = self._sessions_with_metric_values(
-            str(metric_name), before_sessions
-        )
-        after_sessions = self._sessions_with_metric_values(
-            str(metric_name), after_sessions
-        )
+                for item in units
+            ]
+        by_id = {str(item["execution_unit_id"]): item for item in enriched}
+        before_execution_units = [
+            by_id[str(item["execution_unit_id"])] for item in before_execution_units
+        ]
+        after_execution_units = [
+            by_id[str(item["execution_unit_id"])] for item in after_execution_units
+        ]
         return {
             "id": stored_id,
             "candidate_id": candidate_id,
             "metric_name": metric_name,
+            "unit": "execution_units",
             "measurement_state": cohort.get("measurement_state", "collecting"),
             "measurement_reasons": cohort.get("measurement_reasons", []),
             "quality": cohort.get("quality", {}),
             "before_count": int(before_count),
             "after_count": int(after_count),
-            "snapshot_exact": snapshot_exact,
-            "before_sessions": before_sessions,
-            "after_sessions": after_sessions,
+            "snapshot_exact": True,
+            "before_execution_units": before_execution_units,
+            "after_execution_units": after_execution_units,
         }
 
     def _execution_units_by_ids(self, execution_unit_ids: list[str]) -> list[dict[str, Any]]:
@@ -576,6 +530,133 @@ class MeasurementService:
             )
         return enriched
 
+    def _execution_unit_metric_values(
+        self,
+        metric_name: str,
+        execution_unit_ids: list[str],
+    ) -> dict[str, float]:
+        """Calculate a metric only from signals bounded to each execution unit."""
+
+        if not execution_unit_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in execution_unit_ids)
+        rows = self.conn.execute(
+            f"""
+            WITH tool_summary AS (
+              SELECT eus.execution_unit_id,
+                     SUM(
+                       CASE
+                         WHEN lower(COALESCE(tc.status, ''))
+                                IN ('ok','success','completed','error','failed','failure')
+                           OR NULLIF(tc.error_type, '') IS NOT NULL
+                         THEN 1 ELSE 0
+                       END
+                     ) AS tool_calls,
+                     SUM(CASE WHEN lower(COALESCE(tc.status, ''))
+                                      IN ('error','failed','failure')
+                                   OR NULLIF(tc.error_type, '') IS NOT NULL
+                              THEN 1 ELSE 0 END) AS failed_calls,
+                     SUM(CASE WHEN lower(tc.tool_name) GLOB '*read*'
+                                   OR lower(tc.tool_name) GLOB '*find*'
+                                   OR lower(tc.tool_name) GLOB '*search*'
+                                   OR lower(tc.tool_name) GLOB '*grep*'
+                                   OR lower(tc.tool_name) GLOB '*glob*'
+                              THEN 1 ELSE 0 END) AS read_calls,
+                     SUM(CASE WHEN lower(tc.tool_name) GLOB '*write*'
+                                   OR lower(tc.tool_name) GLOB '*edit*'
+                                   OR lower(tc.tool_name) GLOB '*patch*'
+                              THEN 1 ELSE 0 END) AS mutation_calls,
+                     SUM(CASE WHEN lower(tc.tool_name) GLOB '*test*'
+                                   OR lower(COALESCE(tc.input_preview_redacted, '')) GLOB '*pytest*'
+                                   OR lower(COALESCE(tc.input_preview_redacted, '')) GLOB '*ruff*'
+                                   OR lower(COALESCE(tc.input_preview_redacted, '')) GLOB '*build*'
+                                   OR lower(COALESCE(tc.input_preview_redacted, '')) GLOB '*compile*'
+                              THEN 1 ELSE 0 END) AS verification_calls,
+                     SUM(CASE WHEN lower(COALESCE(tc.error_type, '')) GLOB '*permission*'
+                                   OR lower(COALESCE(tc.error_type, '')) GLOB '*sandbox*'
+                                   OR lower(COALESCE(tc.error_type, '')) GLOB '*policy*'
+                                   OR lower(COALESCE(tc.error_type, '')) GLOB '*approval*'
+                                   OR lower(COALESCE(tc.error_message_redacted, '')) GLOB '*permission denied*'
+                                   OR lower(COALESCE(tc.error_message_redacted, '')) GLOB '*not allowed*'
+                              THEN 1 ELSE 0 END) AS constraint_violations
+              FROM execution_unit_steps eus
+              JOIN tool_calls tc ON tc.step_id = eus.step_id
+              WHERE eus.execution_unit_id IN ({placeholders})
+              GROUP BY eus.execution_unit_id
+            ), retry_summary AS (
+              SELECT execution_unit_id, SUM(call_count) AS identical_retry_calls
+              FROM (
+                SELECT eus.execution_unit_id, COUNT(*) AS call_count
+                FROM execution_unit_steps eus
+                JOIN tool_calls tc ON tc.step_id = eus.step_id
+                WHERE eus.execution_unit_id IN ({placeholders})
+                  AND NULLIF(tc.input_hash, '') IS NOT NULL
+                GROUP BY eus.execution_unit_id, tc.tool_name, tc.input_hash
+                HAVING COUNT(*) >= 3
+              )
+              GROUP BY execution_unit_id
+            ), token_summary AS (
+              SELECT eus.execution_unit_id,
+                     SUM(COALESCE(llm.input_tokens, 0) + COALESCE(llm.output_tokens, 0))
+                       AS tokens
+              FROM execution_unit_steps eus
+              JOIN llm_calls llm ON llm.step_id = eus.step_id
+              WHERE eus.execution_unit_id IN ({placeholders})
+              GROUP BY eus.execution_unit_id
+            )
+            SELECT eu.id, lower(COALESCE(eu.status, '')), eu.outcome,
+                   COALESCE(ts.tool_calls, 0), COALESCE(ts.failed_calls, 0),
+                   COALESCE(ts.read_calls, 0), COALESCE(ts.mutation_calls, 0),
+                   COALESCE(ts.verification_calls, 0),
+                   COALESCE(ts.constraint_violations, 0),
+                   COALESCE(rs.identical_retry_calls, 0), toks.tokens
+            FROM execution_units eu
+            LEFT JOIN tool_summary ts ON ts.execution_unit_id = eu.id
+            LEFT JOIN retry_summary rs ON rs.execution_unit_id = eu.id
+            LEFT JOIN token_summary toks ON toks.execution_unit_id = eu.id
+            WHERE eu.id IN ({placeholders})
+            """,
+            [
+                *execution_unit_ids,
+                *execution_unit_ids,
+                *execution_unit_ids,
+                *execution_unit_ids,
+            ],
+        ).fetchall()
+        values: dict[str, float] = {}
+        for row in rows:
+            execution_unit_id = str(row[0])
+            tool_calls = int(row[3])
+            outcome = str(row[2] or "").lower()
+            if metric_name == "tool_failure_rate":
+                if not tool_calls:
+                    continue
+                value = float(row[4]) / tool_calls
+            elif metric_name == "context_outlier_sessions":
+                if row[10] is None:
+                    continue
+                value = float(row[10])
+            elif metric_name == "identical_retry_calls":
+                value = float(row[9])
+            elif metric_name == "unverified_change_sessions":
+                value = float(bool(row[6]) and not bool(row[7]))
+            elif metric_name == "read_only_exploration_calls":
+                value = float(row[5]) if int(row[5]) >= 8 and not row[6] else 0.0
+            elif metric_name == "operator_correction_rate":
+                value = float(outcome == "corrected")
+            elif metric_name == "correct_no_change_sessions":
+                value = float(outcome == "no-change-correct")
+            elif metric_name == "constraint_violation_rate":
+                value = float(row[8])
+            elif metric_name == "recovered_failure_sessions":
+                value = float(int(row[4]) > 0 and row[1] in {"completed", "ok", "success"})
+            elif metric_name == "successful_workflow_sessions":
+                value = float(int(row[4]) == 0 and row[1] in {"completed", "ok", "success"})
+            else:
+                value = float(row[4])
+            values[execution_unit_id] = value
+        return values
+
     def _cohort_execution_units(
         self,
         repo_id: str | None,
@@ -617,359 +698,3 @@ class MeasurementService:
         if newest_first:
             execution_unit_ids.reverse()
         return self._execution_units_by_ids(execution_unit_ids)
-
-    def _sessions_by_ids(self, session_ids: list[str]) -> list[dict[str, Any]]:
-        if not session_ids:
-            return []
-        placeholders = ", ".join("?" for _ in session_ids)
-        rows = self.conn.execute(
-            f"""
-            SELECT s.id, s.title, a.name, s.started_at, s.status
-            FROM sessions s
-            LEFT JOIN agents a ON a.id = s.agent_id
-            WHERE s.id IN ({placeholders})
-            """,
-            session_ids,
-        ).fetchall()
-        by_id = {
-            str(item[0]): {
-                "session_id": item[0],
-                "title": item[1],
-                "agent": item[2],
-                "started_at": item[3],
-                "status": item[4],
-            }
-            for item in rows
-        }
-        return [by_id[session_id] for session_id in session_ids if session_id in by_id]
-
-    def _recovery_session_cohorts(
-        self,
-        intervention_id: str,
-        metric_name: str,
-        *,
-        before_sessions: list[dict[str, Any]],
-        after_sessions: list[dict[str, Any]],
-        latest_cohort: dict[str, Any],
-        minimum_before: int,
-        minimum_after: int,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-        """Qualify recovery impact using observed adherence and compatible telemetry."""
-
-        exposure_rows = self.conn.execute(
-            """
-            SELECT state, COUNT(DISTINCT session_id)
-            FROM workflow_exposures
-            WHERE intervention_id = ?
-            GROUP BY state
-            """,
-            (intervention_id,),
-        ).fetchall()
-        exposure_counts = {str(row[0]): int(row[1]) for row in exposure_rows}
-        followed_ids = {
-            str(row[0])
-            for row in self.conn.execute(
-                """
-                SELECT DISTINCT session_id
-                FROM workflow_exposures
-                WHERE intervention_id = ? AND state = 'followed'
-                """,
-                (intervention_id,),
-            ).fetchall()
-        }
-        after_sessions = [
-            item for item in after_sessions if str(item["session_id"]) in followed_ids
-        ]
-        after_agents = {
-            str(item.get("agent") or "unknown") for item in after_sessions
-        }
-        baseline_frozen = bool((latest_cohort.get("quality") or {}).get("baseline_frozen"))
-        frozen_ids = [str(item) for item in latest_cohort.get("before_session_ids") or []]
-        if baseline_frozen:
-            before_sessions = self._sessions_by_ids(frozen_ids)
-        elif after_agents:
-            before_sessions = [
-                item
-                for item in before_sessions
-                if str(item.get("agent") or "unknown") in after_agents
-            ]
-            baseline_frozen = True
-
-        before_agents = self._agent_counts(before_sessions)
-        after_agent_counts = self._agent_counts(after_sessions)
-        before_signal = self._tool_signal_coverage(metric_name, before_sessions)
-        after_signal = self._tool_signal_coverage(metric_name, after_sessions)
-        hard_reasons: list[str] = []
-        collecting_reasons: list[str] = []
-        signal_label = (
-            "tool-call statuses" if metric_name == "tool_failure_rate" else "tool input fingerprints"
-        )
-        for label, signal in (("baseline", before_signal), ("post-activation", after_signal)):
-            coverage = signal["coverage"]
-            if signal["total_calls"] and coverage < _MINIMUM_SIGNAL_COVERAGE:
-                missing = 1.0 - coverage
-                hard_reasons.append(
-                    f"{missing:.1%} of {label} {signal_label} are unknown or missing."
-                )
-        if after_agent_counts and set(before_agents) != set(after_agent_counts):
-            hard_reasons.append(
-                "Baseline and post-activation sessions do not share the same agent/source cohort."
-            )
-        if not after_sessions:
-            collecting_reasons.append(
-                "No comparable post-activation sessions followed this workflow yet."
-            )
-        if len(before_sessions) < minimum_before:
-            collecting_reasons.append(
-                f"Reflect needs {minimum_before - len(before_sessions)} more comparable baseline sessions."
-            )
-        if len(after_sessions) < minimum_after:
-            collecting_reasons.append(
-                f"Reflect needs {minimum_after - len(after_sessions)} more followed post-activation sessions."
-            )
-        state = "not_measurable" if hard_reasons else "collecting" if collecting_reasons else "measured"
-        return before_sessions, after_sessions, {
-            "state": state,
-            "reasons": [*hard_reasons, *collecting_reasons],
-            "signal_requirement": (
-                "known_tool_status" if metric_name == "tool_failure_rate" else "input_hash"
-            ),
-            "minimum_signal_coverage": _MINIMUM_SIGNAL_COVERAGE,
-            "before_signal": before_signal,
-            "after_signal": after_signal,
-            "before_agents": before_agents,
-            "after_agents": after_agent_counts,
-            "exposure_counts": exposure_counts,
-            "baseline_frozen": baseline_frozen,
-        }
-
-    @staticmethod
-    def _agent_counts(sessions: list[dict[str, Any]]) -> dict[str, int]:
-        counts: dict[str, int] = {}
-        for item in sessions:
-            agent = str(item.get("agent") or "unknown")
-            counts[agent] = counts.get(agent, 0) + 1
-        return counts
-
-    def _tool_signal_coverage(
-        self,
-        metric_name: str,
-        sessions: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        session_ids = [str(item["session_id"]) for item in sessions]
-        if not session_ids:
-            return {"covered_calls": 0, "total_calls": 0, "coverage": 0.0}
-        placeholders = ", ".join("?" for _ in session_ids)
-        if metric_name == "tool_failure_rate":
-            covered_sql = """
-                lower(COALESCE(status, '')) NOT IN ('', 'unknown')
-                OR NULLIF(error_type, '') IS NOT NULL
-            """
-        else:
-            covered_sql = "NULLIF(input_hash, '') IS NOT NULL"
-        row = self.conn.execute(
-            f"""
-            SELECT COUNT(*), SUM(CASE WHEN {covered_sql} THEN 1 ELSE 0 END)
-            FROM tool_calls
-            WHERE session_id IN ({placeholders})
-            """,
-            session_ids,
-        ).fetchone()
-        total_calls = int(row[0] or 0)
-        covered_calls = int(row[1] or 0)
-        return {
-            "covered_calls": covered_calls,
-            "total_calls": total_calls,
-            "coverage": covered_calls / total_calls if total_calls else 0.0,
-        }
-
-    def _cohort_sessions(
-        self,
-        metric_name: str,
-        repo_id: str | None,
-        *,
-        task_archetype_id: str | None,
-        before: str | None = None,
-        after: str | None = None,
-        through: str | None = None,
-    ) -> list[dict[str, Any]]:
-        clauses: list[str] = []
-        params: list[Any] = [repo_id]
-        if before:
-            clauses.append("s.started_at < ?")
-            params.append(before)
-        if after:
-            clauses.append("s.started_at >= ?")
-            params.append(after)
-        if through:
-            clauses.append("s.started_at <= ?")
-            params.append(through)
-        clauses.append(
-            "(? IS NULL OR EXISTS (SELECT 1 FROM session_task_archetypes sta "
-            "WHERE sta.session_id = s.id AND sta.task_archetype_id = ?))"
-        )
-        params.extend((task_archetype_id, task_archetype_id))
-        if metric_name in _RECOVERY_METRICS:
-            clauses.append("EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.session_id = s.id)")
-        rows = self.conn.execute(
-            f"""
-            SELECT s.id, s.title, a.name, s.started_at, s.status
-            FROM sessions s
-            LEFT JOIN agents a ON a.id = s.agent_id
-            WHERE COALESCE(s.repo_id, '') = COALESCE(?, '')
-              AND {' AND '.join(clauses)}
-            ORDER BY s.started_at DESC LIMIT 50
-            """,
-            params,
-        ).fetchall()
-        return [
-            {
-                "session_id": item[0],
-                "title": item[1],
-                "agent": item[2],
-                "started_at": item[3],
-                "status": item[4],
-            }
-            for item in rows
-        ]
-
-    def _session_values(
-        self,
-        metric_name: str,
-        repo_id: str | None,
-        *,
-        task_archetype_id: str | None,
-        before: str | None = None,
-        after: str | None = None,
-    ) -> list[float]:
-        sessions = self._cohort_sessions(
-            metric_name,
-            repo_id,
-            task_archetype_id=task_archetype_id,
-            before=before,
-            after=after,
-        )
-        session_ids = [str(item["session_id"]) for item in sessions]
-        values = self._session_metric_values(metric_name, session_ids)
-        return [values[session_id] for session_id in session_ids if session_id in values]
-
-    def _sessions_with_metric_values(
-        self,
-        metric_name: str,
-        sessions: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        values = self._session_metric_values(
-            metric_name,
-            [str(item["session_id"]) for item in sessions],
-        )
-        return [
-            {**item, "metric_value": values.get(str(item["session_id"]))}
-            for item in sessions
-        ]
-
-    def _session_metric_values(
-        self,
-        metric_name: str,
-        session_ids: list[str],
-    ) -> dict[str, float]:
-        if not session_ids:
-            return {}
-        placeholders = ", ".join("?" for _ in session_ids)
-        rows = self.conn.execute(
-            f"""
-            WITH tool_summary AS (
-              SELECT tc.session_id,
-                     COUNT(*) AS tool_calls,
-                     SUM(CASE WHEN lower(COALESCE(tc.status, '')) IN ('error','failed','failure')
-                                   OR NULLIF(tc.error_type, '') IS NOT NULL THEN 1 ELSE 0 END)
-                       AS failed_calls,
-                     SUM(CASE WHEN lower(tc.tool_name) GLOB '*read*'
-                                   OR lower(tc.tool_name) GLOB '*find*'
-                                   OR lower(tc.tool_name) GLOB '*search*'
-                                   OR lower(tc.tool_name) GLOB '*grep*'
-                                   OR lower(tc.tool_name) GLOB '*glob*' THEN 1 ELSE 0 END)
-                       AS read_calls,
-                     SUM(CASE WHEN lower(tc.tool_name) GLOB '*write*'
-                                   OR lower(tc.tool_name) GLOB '*edit*'
-                                   OR lower(tc.tool_name) GLOB '*patch*' THEN 1 ELSE 0 END)
-                       AS mutation_calls,
-                     SUM(CASE WHEN lower(tc.tool_name) GLOB '*test*'
-                                   OR lower(COALESCE(tc.input_preview_redacted, '')) GLOB '*pytest*'
-                                   OR lower(COALESCE(tc.input_preview_redacted, '')) GLOB '*ruff*'
-                                   OR lower(COALESCE(tc.input_preview_redacted, '')) GLOB '*build*'
-                                   OR lower(COALESCE(tc.input_preview_redacted, '')) GLOB '*compile*'
-                              THEN 1 ELSE 0 END) AS verification_calls,
-                     SUM(CASE WHEN lower(COALESCE(tc.error_type, '')) GLOB '*permission*'
-                                   OR lower(COALESCE(tc.error_type, '')) GLOB '*sandbox*'
-                                   OR lower(COALESCE(tc.error_type, '')) GLOB '*policy*'
-                                   OR lower(COALESCE(tc.error_type, '')) GLOB '*approval*'
-                                   OR lower(COALESCE(tc.error_message_redacted, '')) GLOB '*permission denied*'
-                                   OR lower(COALESCE(tc.error_message_redacted, '')) GLOB '*not allowed*'
-                              THEN 1 ELSE 0 END) AS constraint_violations
-              FROM tool_calls tc
-              WHERE tc.session_id IN ({placeholders})
-              GROUP BY tc.session_id
-            ), retry_summary AS (
-              SELECT session_id, SUM(call_count) AS identical_retry_calls
-              FROM (
-                SELECT tc.session_id, COUNT(*) AS call_count
-                FROM tool_calls tc
-                WHERE tc.session_id IN ({placeholders})
-                  AND NULLIF(tc.input_hash, '') IS NOT NULL
-                GROUP BY tc.session_id, tc.tool_name, tc.input_hash
-                HAVING COUNT(*) >= 3
-              )
-              GROUP BY session_id
-            ), outcome_summary AS (
-              SELECT so.session_id,
-                     MAX(CASE WHEN so.outcome = 'corrected' THEN 1 ELSE 0 END) AS corrected,
-                     MAX(CASE WHEN so.outcome = 'no-change-correct' THEN 1 ELSE 0 END)
-                       AS no_change_correct
-              FROM session_outcomes so
-              WHERE so.session_id IN ({placeholders})
-              GROUP BY so.session_id
-            )
-            SELECT s.id, s.input_tokens + s.output_tokens, s.failure_count,
-                   s.recovered_failure_count, lower(COALESCE(s.status, '')),
-                   COALESCE(ts.tool_calls, 0), COALESCE(ts.failed_calls, 0),
-                   COALESCE(ts.read_calls, 0), COALESCE(ts.mutation_calls, 0),
-                   COALESCE(ts.verification_calls, 0),
-                   COALESCE(ts.constraint_violations, 0),
-                   COALESCE(rs.identical_retry_calls, 0),
-                   COALESCE(os.corrected, 0), COALESCE(os.no_change_correct, 0)
-            FROM sessions s
-            LEFT JOIN tool_summary ts ON ts.session_id = s.id
-            LEFT JOIN retry_summary rs ON rs.session_id = s.id
-            LEFT JOIN outcome_summary os ON os.session_id = s.id
-            WHERE s.id IN ({placeholders})
-            """,
-            [*session_ids, *session_ids, *session_ids, *session_ids],
-        ).fetchall()
-        values: dict[str, float] = {}
-        for row in rows:
-            session_id = str(row[0])
-            tool_calls = int(row[5])
-            if metric_name == "tool_failure_rate":
-                value = float(row[6]) / tool_calls if tool_calls else 0.0
-            elif metric_name == "context_outlier_sessions":
-                value = float(row[1])
-            elif metric_name == "identical_retry_calls":
-                value = float(row[11])
-            elif metric_name == "unverified_change_sessions":
-                value = float(bool(row[8]) and not bool(row[9]))
-            elif metric_name == "read_only_exploration_calls":
-                value = float(row[7]) if int(row[7]) >= 8 and not row[8] else 0.0
-            elif metric_name == "operator_correction_rate":
-                value = float(row[12])
-            elif metric_name == "correct_no_change_sessions":
-                value = float(row[13])
-            elif metric_name == "constraint_violation_rate":
-                value = float(row[10])
-            elif metric_name == "recovered_failure_sessions":
-                value = float(int(row[3]) > 0)
-            elif metric_name == "successful_workflow_sessions":
-                value = float(int(row[2]) == 0 and row[4] in {"completed", "ok", "success"})
-            else:
-                value = float(row[2])
-            values[session_id] = value
-        return values

@@ -150,7 +150,7 @@ def test_antigravity_adapter_uses_workspace_mcp_config(
     assert baseline == {"mcpServers": {}}
 
 
-def test_copilot_adapter_uses_session_scoped_mcp_and_final_text(
+def test_copilot_adapter_uses_session_scoped_mcp_and_final_message(
     context: AgentTestContext,
 ) -> None:
     adapter = CopilotAdapter()
@@ -158,10 +158,9 @@ def test_copilot_adapter_uses_session_scoped_mcp_and_final_text(
 
     assert "--disable-builtin-mcps" in command.argv
     assert "--no-custom-instructions" in command.argv
-    assert "--additional-mcp-config" in command.argv
-    assert "--available-tools=reflect(reflect_context),reflect(reflect_complete)" in (
-        command.argv
-    )
+    assert any(item.startswith("--additional-mcp-config=@") for item in command.argv)
+    assert "--available-tools=reflect" in command.argv
+    assert "--allow-all-mcp-server-instructions" in command.argv
     config = json.loads((context.workspace / "copilot-mcp.json").read_text())
     assert config["mcpServers"]["reflect"]["type"] == "local"
     assert config["mcpServers"]["reflect"]["tools"] == [
@@ -171,9 +170,11 @@ def test_copilot_adapter_uses_session_scoped_mcp_and_final_text(
     assert config["mcpServers"]["reflect"]["env"]["REFLECT_DB_PATH"] == str(
         context.db_path.resolve()
     )
-    assert adapter.extract_final_message("  FINAL\n") == "FINAL"
+    assert adapter.extract_final_message(
+        json.dumps({"type": "assistant_message", "content": "FINAL"})
+    ) == "FINAL"
     baseline = adapter.build_baseline(context)
-    assert "--additional-mcp-config" not in baseline.argv
+    assert not any(item.startswith("--additional-mcp-config") for item in baseline.argv)
     assert "--available-tools=reflect-disabled(noop)" in baseline.argv
 
 
@@ -235,6 +236,11 @@ def test_blog_prompts_hide_stage_contract_and_validators_score_outputs(tmp_path:
         + f"\n\n{BLOG_DRAFT_PROOF}"
     )
     assert validate_blog_draft(draft) == ()
+    rendered_draft = draft.removeprefix("# ").replace(
+        "local evidence becomes measurable improvement",
+        "local evidence becomes measurable\nimprovement",
+    )
+    assert validate_blog_draft(rendered_draft) == ()
 
     revision_prompt = blog_revision_prompt(tmp_path, draft, "revision-summary")
     assert BLOG_REVISION_PROOF not in revision_prompt
@@ -256,6 +262,15 @@ def test_blog_prompts_hide_stage_contract_and_validators_score_outputs(tmp_path:
         ),
         (
             json.dumps({"response": "FINAL", "stats": {}}, indent=2),
+            "FINAL",
+        ),
+        (
+            json.dumps(
+                {
+                    "type": "assistant.message",
+                    "data": {"phase": "final_answer", "content": "FINAL"},
+                }
+            ),
             "FINAL",
         ),
         (

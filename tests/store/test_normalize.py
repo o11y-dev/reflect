@@ -172,8 +172,10 @@ def test_normalize_merges_mcp_invocation_and_result_by_logical_call_id(tmp_path)
 
         row = conn.execute(
             """
-            SELECT tool_call_id, server_name, tool_name, status, duration_ms
-            FROM mcp_calls
+            SELECT tc.logical_call_id, mc.server_name, mc.tool_name,
+                   tc.status, tc.duration_ms
+            FROM mcp_calls AS mc
+            JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
             """
         ).fetchone()
         assert tuple(row) == (
@@ -320,7 +322,12 @@ def test_normalize_mcp_call_falls_back_to_tool_input_payload(tmp_path):
         ingest_local_spans_file(conn, file_path=spans)
         normalize_pending_raw_events(conn)
         mcp_row = conn.execute(
-            "SELECT server_name, tool_name FROM mcp_calls WHERE session_id = 'sess-mcp-fallback'"
+            """
+            SELECT mc.server_name, mc.tool_name
+            FROM mcp_calls AS mc
+            JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+            WHERE tc.session_id = 'sess-mcp-fallback'
+            """
         ).fetchone()
         assert tuple(mcp_row) == ("mcp-github", "search_code")
     finally:
@@ -364,7 +371,7 @@ def test_normalize_native_codex_mcp_span_attributes(tmp_path):
         conn.close()
 
 
-def test_backfill_mcp_calls_prefers_hook_over_native_transcript(tmp_path):
+def test_backfill_mcp_calls_attaches_metadata_to_canonical_tool_call(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
         migrate(conn)
@@ -381,67 +388,36 @@ def test_backfill_mcp_calls_prefers_hook_over_native_transcript(tmp_path):
                     'ok', '2026-07-19', '2026-07-19')
             """
         )
-        fixtures = [
-            (
-                "step-native",
-                0,
-                "2026-07-19T15:01:41.917000+00:00",
-                "native_session",
-                {"gen_ai.client.hook.event": "PreToolUse"},
-            ),
-            (
-                "step-hook-pre",
-                1,
-                "2026-07-19T15:01:42.051817+00:00",
-                "hook_otlp_trace",
-                {
-                    "gen_ai.client.hook.event": "PreToolUse",
-                    "gen_ai.client.tool_use_id": "tool-call-1",
-                },
-            ),
-            (
-                "step-hook-post",
-                2,
-                "2026-07-19T15:01:42.211941+00:00",
-                "hook_otlp_trace",
-                {
-                    "gen_ai.client.hook.event": "PostToolUse",
-                    "gen_ai.client.tool_use_id": "tool-call-1",
-                },
-            ),
-        ]
-        for step_id, seq, started_at, origin_kind, attrs in fixtures:
-            attrs["gen_ai.client.tool_name"] = "mcp__reflect__reflect_context"
-            attrs_json = json.dumps(attrs, sort_keys=True)
-            status = "ok" if attrs["gen_ai.client.hook.event"] == "PostToolUse" else "unknown"
-            conn.execute(
-                """
-                INSERT INTO steps(
-                  id, session_id, seq, type, started_at, status, summary,
-                  origin_kind, raw_attrs_json, created_at, updated_at
-                ) VALUES (?, 'sess-encoded-mcp', ?, 'tool_call', ?, ?,
-                          ?, ?, ?, '2026-07-19', '2026-07-19')
-                """,
-                (
-                    step_id,
-                    seq,
-                    started_at,
-                    status,
-                    attrs["gen_ai.client.hook.event"],
-                    origin_kind,
-                    attrs_json,
-                ),
-            )
-            conn.execute(
-                """
-                INSERT INTO tool_calls(
-                  id, step_id, session_id, tool_name, status, raw_attrs_json,
-                  created_at, updated_at
-                ) VALUES (?, ?, 'sess-encoded-mcp', 'mcp__reflect__reflect_context',
-                          ?, ?, '2026-07-19', '2026-07-19')
-                """,
-                (f"tool-{step_id}", step_id, status, attrs_json),
-            )
+        attrs_json = json.dumps(
+            {
+                "gen_ai.client.hook.event": "PostToolUse",
+                "gen_ai.client.tool_name": "mcp__reflect__reflect_context",
+                "gen_ai.client.tool_use_id": "tool-call-1",
+            },
+            sort_keys=True,
+        )
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status, summary,
+              origin_kind, raw_attrs_json, created_at, updated_at
+            ) VALUES ('step-hook', 'sess-encoded-mcp', 1, 'tool_call',
+                      '2026-07-19T15:01:42.051817+00:00', 'ok', 'PostToolUse',
+                      'hook_otlp_trace', ?, '2026-07-19', '2026-07-19')
+            """,
+            (attrs_json,),
+        )
+        conn.execute(
+            """
+            INSERT INTO tool_calls(
+              id, step_id, session_id, logical_call_id, tool_name, tool_type,
+              status, raw_attrs_json, created_at, updated_at
+            ) VALUES ('tool-call-row', 'step-hook', 'sess-encoded-mcp', 'tool-call-1',
+                      'mcp__reflect__reflect_context', 'mcp', 'ok', ?,
+                      '2026-07-19', '2026-07-19')
+            """,
+            (attrs_json,),
+        )
 
         changed: set[str] = set()
         assert backfill_mcp_calls(conn, session_ids=set()) == {
@@ -452,17 +428,21 @@ def test_backfill_mcp_calls_prefers_hook_over_native_transcript(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0] == 0
         assert backfill_mcp_calls(conn, changed_session_ids=changed) == {
             "inserted": 1,
-            "skipped_duplicates": 1,
-            "updated_status": 1,
+            "skipped_duplicates": 0,
+            "updated_status": 0,
         }
         row = conn.execute(
-            "SELECT step_id, server_name, tool_name, status FROM mcp_calls"
+            """
+            SELECT mc.tool_call_id, mc.server_name, mc.tool_name, tc.status
+            FROM mcp_calls AS mc
+            JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+            """
         ).fetchone()
-        assert tuple(row) == ("step-hook-pre", "reflect", "reflect_context", "ok")
+        assert tuple(row) == ("tool-call-row", "reflect", "reflect_context", "ok")
         assert changed == {"sess-encoded-mcp"}
         assert backfill_mcp_calls(conn) == {
             "inserted": 0,
-            "skipped_duplicates": 1,
+            "skipped_duplicates": 0,
             "updated_status": 0,
         }
     finally:

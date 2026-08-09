@@ -1,11 +1,10 @@
 """Lightweight local OTLP gateway for Reflect.
 
 Accepts traces and logs over gRPC (port 4317) and HTTP (port 4318),
-then appends them as JSON lines to the local files that Reflect already
-reads:
+then appends them as bounded JSONL segments that Reflect reads oldest first:
 
-    ~/.reflect/state/otlp/otel-traces.json
-    ~/.reflect/state/otlp/otel-logs.json
+    ~/.reflect/state/otlp/otel-traces.active.jsonl
+    ~/.reflect/state/otlp/otel-logs.active.jsonl
 
 Usage (foreground):
     reflect gateway --foreground
@@ -18,7 +17,6 @@ Daemon management:
 from __future__ import annotations
 
 import base64
-import fcntl
 import logging
 import os
 import signal
@@ -41,13 +39,18 @@ from opentelemetry.proto.collector.trace.v1 import (
     trace_service_pb2_grpc,
 )
 
+from reflect.raw_segments import DEFAULT_SEGMENT_BYTES, RawSegmentWriter
+
 logger = logging.getLogger("reflect.gateway")
 
 _REFLECT_HOME = Path(os.environ.get("REFLECT_HOME", Path.home() / ".reflect"))
-_DEFAULT_TRACES_PATH = _REFLECT_HOME / "state" / "otlp" / "otel-traces.json"
-_DEFAULT_LOGS_PATH = _REFLECT_HOME / "state" / "otlp" / "otel-logs.json"
+_DEFAULT_TRACES_PATH = _REFLECT_HOME / "state" / "otlp" / "otel-traces.active.jsonl"
+_DEFAULT_LOGS_PATH = _REFLECT_HOME / "state" / "otlp" / "otel-logs.active.jsonl"
 _PID_FILE = _REFLECT_HOME / "state" / "gateway.pid"
 _LOG_FILE = _REFLECT_HOME / "state" / "gateway.log"
+_SEGMENT_BYTES = int(os.environ.get("REFLECT_OTLP_SEGMENT_BYTES", DEFAULT_SEGMENT_BYTES))
+_WRITERS: dict[Path, RawSegmentWriter] = {}
+_WRITERS_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -55,17 +58,17 @@ _LOG_FILE = _REFLECT_HOME / "state" / "gateway.log"
 # ---------------------------------------------------------------------------
 
 
+def _writer_for(path: Path) -> RawSegmentWriter:
+    resolved = path.expanduser().resolve()
+    with _WRITERS_LOCK:
+        return _WRITERS.setdefault(
+            resolved,
+            RawSegmentWriter(resolved, max_bytes=_SEGMENT_BYTES),
+        )
+
+
 def _append_jsonl(path: Path, payload: dict) -> None:
-    """Append a single JSON object as one line, using file locking."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    raw = orjson.dumps(payload) + b"\n"
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        os.write(fd, raw)
-    finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
+    _writer_for(path).append(payload)
 
 
 def append_traces(payload: dict, traces_path: Path | None = None) -> None:

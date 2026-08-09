@@ -50,6 +50,16 @@ def test_agent_skill_search_filters_existing_registry_without_refreshing(tmp_pat
             """,
             (now, now, now),
         )
+        conn.execute(
+            """
+            INSERT INTO execution_units(
+              id, session_id, source, source_confidence, agent_id, started_at,
+              status, eligible, boundary_json, created_at, updated_at
+            ) VALUES ('source-unit', 'source-session', 'session_fallback', 0.5,
+                      'agent-1', ?, 'completed', 1, '{}', ?, ?)
+            """,
+            (now, now, now),
+        )
         release_id = _stage_skill(
             conn,
             name="safe-release",
@@ -94,7 +104,9 @@ def test_agent_skill_search_filters_existing_registry_without_refreshing(tmp_pat
         assert answer.skills[0].evidence_count >= 1
         explanation = service.explain(release_version_id)
         assert explanation["kind"] == "skill_version"
-        assert explanation["entity"]["source_sessions"][0]["session_id"] == "source-session"
+        source = explanation["entity"]["source_execution_units"][0]
+        assert source["execution_unit_id"] == "source-unit"
+        assert source["session_id"] == "source-session"
         assert explanation["entity"]["measurements"][0]["id"] == "measurement-1"
     finally:
         conn.close()
@@ -120,6 +132,19 @@ def test_context_impact_lists_and_explains_persisted_measurements(tmp_path):
             [
                 ("before-session", now, "Before", now, now),
                 ("after-session", now, "After", now, now),
+            ],
+        )
+        conn.executemany(
+            """
+            INSERT INTO execution_units(
+              id, session_id, source, source_confidence, agent_id, started_at,
+              status, eligible, boundary_json, created_at, updated_at
+            ) VALUES (?, ?, 'prompt_boundary', 1.0, 'agent-1', ?,
+                      'completed', 1, '{}', ?, ?)
+            """,
+            [
+                ("before-unit", "before-session", now, now, now),
+                ("after-unit", "after-session", now, now, now),
             ],
         )
         workflow_id = _stage_skill(
@@ -154,9 +179,10 @@ def test_context_impact_lists_and_explains_persisted_measurements(tmp_path):
                 intervention_id,
                 json.dumps(
                     {
-                        "before_session_ids": ["before-session"],
-                        "after_session_ids": ["after-session"],
-                        "unit": "sessions",
+                        "before_execution_unit_ids": ["before-unit"],
+                        "after_execution_unit_ids": ["after-unit"],
+                        "unit": "execution_units",
+                        "measurement_state": "measured",
                     }
                 ),
                 now,
@@ -177,10 +203,10 @@ def test_context_impact_lists_and_explains_persisted_measurements(tmp_path):
         assert explained["found"] is True
         assert explained["impact_check"]["verdict"] == "improved"
         assert explained["comparison"]["snapshot_exact"] is True
-        assert explained["comparison"]["before_sessions"][0]["session_id"] == (
+        assert explained["comparison"]["before_execution_units"][0]["session_id"] == (
             "before-session"
         )
-        assert explained["comparison"]["after_sessions"][0]["session_id"] == (
+        assert explained["comparison"]["after_execution_units"][0]["session_id"] == (
             "after-session"
         )
         assert missing == {
@@ -249,11 +275,7 @@ def test_completed_task_is_reconciled_when_runtime_session_is_ingested(
             name="safe-release",
             description="Publish a release with validation.",
         )
-        conn.execute(
-            "UPDATE workflow_candidates SET status = 'approved' WHERE id = ?",
-            (candidate_id,),
-        )
-        conn.commit()
+        ImprovementService(conn).workflows.apply(candidate_id, project_root=tmp_path)
         monkeypatch.setenv("REFLECT_SESSION_ID", "late-session")
 
         service = ReflectContextService(conn)

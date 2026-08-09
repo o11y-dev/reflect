@@ -86,7 +86,7 @@ def _classify_text(text: str) -> _ArchetypeMatch:
 
 
 class TaskArchetypeService:
-    """Classify sessions and execution units into comparable work archetypes."""
+    """Classify execution units into comparable work archetypes."""
 
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
@@ -99,7 +99,6 @@ class TaskArchetypeService:
         )
         if scoped_ids == []:
             return {
-                "classified": 0,
                 "classified_execution_units": 0,
                 "excluded_execution_units": 0,
                 "archetypes": len(_ARCHETYPES),
@@ -128,88 +127,12 @@ class TaskArchetypeService:
                 ),
             )
         self._prepare_scope(scoped_ids)
-        scope_join = (
-            "JOIN reflect_archetype_session_scope scope ON scope.session_id = s.id"
-            if scoped_ids is not None
-            else ""
-        )
-        freshness_predicate = (
-            "1 = 1"
-            if scoped_ids is not None
-            else "sta.session_id IS NULL OR sta.updated_at < s.updated_at"
-        )
-        rows = self.conn.execute(
-            f"""
-            SELECT s.id,
-                   lower(
-                     COALESCE(s.title, '') || ' ' ||
-                     COALESCE(
-                       (
-                         SELECT GROUP_CONCAT(step_excerpt, ' ')
-                         FROM (
-                           SELECT substr(COALESCE(st.summary, ''), 1, 1000) AS step_excerpt
-                           FROM steps st
-                           WHERE st.session_id = s.id
-                           ORDER BY st.seq
-                           LIMIT 24
-                         )
-                       ),
-                       ''
-                     ) || ' ' ||
-                     COALESCE(
-                       (
-                         SELECT GROUP_CONCAT(tool_name, ' ')
-                         FROM (
-                           SELECT tc.tool_name
-                           FROM tool_calls tc
-                           WHERE tc.session_id = s.id
-                           ORDER BY tc.created_at
-                           LIMIT 24
-                         )
-                       ),
-                       ''
-                     )
-                   )
-            FROM sessions s
-            {scope_join}
-            LEFT JOIN session_task_archetypes sta ON sta.session_id = s.id
-            WHERE {freshness_predicate}
-            """
-        ).fetchall()
-        classified = 0
-        for session_id, text in rows:
-            match = _classify_text(str(text))
-            self.conn.execute(
-                """
-                INSERT INTO session_task_archetypes(
-                  session_id, task_archetype_id, confidence, features_json,
-                  classified_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(session_id) DO UPDATE SET
-                  task_archetype_id = excluded.task_archetype_id,
-                  confidence = excluded.confidence,
-                  features_json = excluded.features_json,
-                  classified_at = excluded.classified_at,
-                  updated_at = excluded.updated_at
-                """,
-                (
-                    session_id,
-                    match.archetype_id,
-                    match.confidence,
-                    json.dumps({"matched_terms": sorted(set(match.matched_terms))}),
-                    now,
-                    now,
-                ),
-            )
-            classified += 1
-        self.conn.commit()
         execution_result = self._refresh_execution_units(
             now=now,
             scoped=scoped_ids is not None,
         )
         self._drop_scope(scoped_ids)
         return {
-            "classified": classified,
             "classified_execution_units": execution_result["classified"],
             "excluded_execution_units": execution_result["excluded"],
             "archetypes": len(_ARCHETYPES),
@@ -339,15 +262,37 @@ class TaskArchetypeService:
     def dominant_for_observation(self, observation_id: str) -> str | None:
         row = self.conn.execute(
             """
-            SELECT sta.task_archetype_id, COUNT(*) AS support
-            FROM observation_evidence oe
-            JOIN session_task_archetypes sta ON sta.session_id = oe.session_id
-            WHERE oe.observation_id = ?
-            GROUP BY sta.task_archetype_id
-            ORDER BY support DESC, sta.task_archetype_id
+            WITH evidence_units AS (
+              SELECT explicit_unit.id AS execution_unit_id
+              FROM observation_evidence oe
+              JOIN execution_units explicit_unit
+                ON oe.entity_type = 'execution_unit'
+               AND explicit_unit.id = oe.entity_id
+              WHERE oe.observation_id = ?
+              UNION
+              SELECT eus.execution_unit_id
+              FROM observation_evidence oe
+              JOIN execution_unit_steps eus ON eus.step_id = oe.step_id
+              WHERE oe.observation_id = ? AND oe.entity_type <> 'execution_unit'
+              UNION
+              SELECT fallback.id
+              FROM observation_evidence oe
+              JOIN execution_units fallback
+                ON fallback.session_id = oe.session_id
+               AND fallback.source = 'session_fallback'
+              WHERE oe.observation_id = ?
+                AND oe.entity_type <> 'execution_unit'
+                AND oe.step_id IS NULL
+            )
+            SELECT eua.task_archetype_id, COUNT(*) AS support
+            FROM evidence_units evidence
+            JOIN execution_unit_archetypes eua
+              ON eua.execution_unit_id = evidence.execution_unit_id
+            GROUP BY eua.task_archetype_id
+            ORDER BY support DESC, eua.task_archetype_id
             LIMIT 1
             """,
-            (observation_id,),
+            (observation_id, observation_id, observation_id),
         ).fetchone()
         return str(row[0]) if row else None
 

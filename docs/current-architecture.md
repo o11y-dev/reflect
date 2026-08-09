@@ -1,384 +1,317 @@
 # Reflect current architecture
 
 Status: current implementation.
-Last reviewed: 2026-08-05.
+Last reviewed: 2026-08-08
 
-This document is a map, not an aspiration. It records what owns each concept today,
-which decisions are intentional, and where old and new models overlap. When this
-document disagrees with the code or SQLite migrations, the implementation wins and
-this document should be corrected.
+This document describes the architecture that exists on this branch. It is a
+navigation aid and decision record, not a roadmap. When it disagrees with code
+or a SQLite migration, the implementation is authoritative and this document
+must be corrected.
 
-Quick navigation:
+## Product boundary
 
-- [System at a glance](#system-at-a-glance)
-- [Domain model](#domain-model)
-- [Architecture decision register](#architecture-decision-register)
-- [Transitional boundaries and known contradictions](#transitional-boundaries-and-known-contradictions)
-- [Complexity hotspots](#complexity-hotspots)
-- [Open architecture decisions](#open-architecture-decisions)
+Reflect is a local-first evidence and improvement loop for AI coding agents:
 
-## How to use this document
+> capture evidence -> discover a repeated procedure -> review a bounded
+> workflow -> install with approval -> measure comparable future tasks
 
-- **Canonical** means new behavior should use this source of truth.
-- **Compatibility** means the path is retained for old data or public behavior but
-  should not gain new product responsibility.
-- **Transitional** means two representations still exist and need an explicit
-  convergence decision.
-- **Open** means the current behavior is known but the durable boundary is not yet
-  enforced.
-
-Before adding a table, status, identifier, adapter, or service, find the relevant
-decision and domain object below. Extend the current owner unless a boundary change
-is deliberate and documented.
+Reflect does not rank developers, infer success from configuration, or treat a
+long-lived chat session as one comparable task. It distinguishes observed
+outcome movement from impact attributable to an installed workflow.
 
 ## System at a glance
-
-Reflect is a local-first telemetry and improvement system. It captures or reads agent
-activity, normalizes it into a canonical SQLite model, derives analysis state, and
-serves several views over the same evidence.
 
 ```mermaid
 flowchart LR
     subgraph Sources
-        OTLP[Native OTLP traces and logs]
-        Hooks[OpenTelemetry hooks]
-        Native[Agent-native session stores]
+        OTLP[Native OTLP and hooks]
+        Native[Agent-native stores]
+        Context[Task contracts and memory]
     end
 
-    OTLP --> Ingest
-    Hooks --> Ingest
+    OTLP --> Segments[Bounded raw segments]
+    Segments --> Ingest[Checkpointed ingestion]
     Native --> Ingest
-    Ingest[Source ingestion and checkpoints] --> Raw[(raw_events)]
+    Context --> Ingest
+    Ingest --> Raw[(raw_events)]
     Raw --> Normalize[Canonical normalization]
-    Normalize --> Canonical[(sessions, steps, calls, files)]
-    Canonical --> Derived[Costs, rollups, graph, execution units]
-    Derived --> Improve[Observations, loops, workflows, skills, impact]
-    Canonical --> Render
-    Derived --> Render
-    Improve --> Render[CLI, MCP, browser, reports]
+    Normalize --> Store[(sessions, steps, calls, files)]
+    Store --> Derived[Costs, rollups, graph, execution units]
+    Derived --> Improve[Findings, loops, workflows, skills, impact]
+    Store --> Surfaces
+    Improve --> Surfaces[CLI, MCP, browser, reports]
 ```
 
-The intended dependency direction is:
+The dependency direction is:
 
 ```text
-source adapters -> ingestion -> normalization -> canonical store
-    -> derived state -> application services -> presentation surfaces
+source adapters -> ingestion -> normalization -> canonical SQLite
+    -> derived state -> application services -> presentation
 ```
 
-Presentation code must not become a second analytics source of truth. In particular,
-dashboard cards and top-N summaries are output models, not aggregation inputs.
+Presentation objects are never aggregation inputs. Dashboard cards, truncated
+session rows, and chart series are views over canonical evidence.
 
-## Runtime surfaces
+## Runtime ownership
 
-| Surface | Current owner | Responsibility |
+| Area | Owner | Responsibility |
 |---|---|---|
-| CLI | `src/reflect/core.py` | Operator commands, setup, maintenance, and orchestration |
-| MCP | `src/reflect/mcp.py`, `context.py`, `changes.py` | Agent guidance, task completion, inspection, and approval-gated changes |
-| Browser API | `src/reflect/dashboard.py` | SQLite-only report payloads, drill-down APIs, and review endpoints |
-| Browser client | `src/reflect/data/index.html` | Single-file local dashboard |
-| Hosted/local report copy | `docs/report.html` | Byte-for-byte copy of the packaged dashboard client |
-| Report daemon | `src/reflect/report_server.py` | PID, port, and detached server lifecycle |
-| OTLP gateway | `src/reflect/gateway.py` | Local OTLP receive and file-export lifecycle |
-| Terminal/Markdown | `terminal.py`, `report.py` | Render canonical `TelemetryStats` views |
+| CLI composition | `src/reflect/core.py` | Click entry point, command wiring, setup, and top-level operator flows |
+| Database commands | `src/reflect/cli/database.py` | Ingest, retention, vacuum, and database inspection commands |
+| Preparation policy | `src/reflect/preparation.py` | Snapshot states, profiles, progress, background lifecycle, and coordinator |
+| Preparation pipeline | `src/reflect/preparation_pipeline.py` | Migrate, ingest, normalize, reconcile, derive, and publish a refreshed snapshot |
+| MCP | `src/reflect/mcp.py`, `context.py`, `changes.py` | Task guidance, completion, evidence inspection, and approval-gated changes |
+| Browser queries | `src/reflect/dashboard_queries.py` | Bounded SQLite read models and session drill-down |
+| Browser server | `src/reflect/dashboard_server.py` | FastAPI routes, cache ownership, and local server construction |
+| Browser source | `src/reflect/frontend/` | Authored HTML template plus domain-oriented CSS and JavaScript modules |
+| Browser artifacts | `src/reflect/data/index.html`, `docs/report.html` | Generated, byte-identical single-file clients |
+| OTLP gateway | `src/reflect/gateway.py`, `raw_segments.py` | Receive OTLP, append active files, and rotate immutable segments |
+| Agent capabilities | `src/reflect/agent_capabilities.py` | Support level, aliases, paths, hooks, skills, MCP, and headless-test surfaces |
+| Terminal and Markdown | `terminal.py`, `report.py` | Render canonical `TelemetryStats` |
 
-The MCP interface is the primary runtime interface for coding agents. The CLI and
-browser remain operator, audit, debugging, and automation surfaces. None of these
-surfaces owns a separate workflow or skill registry.
+`reflect.core:main` remains the installed CLI entry point. Domain logic belongs
+in the focused owner above, not in command handlers.
 
-## Canonical data flow
+## Capture and raw-data lifecycle
 
-### 1. Discover and ingest
+The gateway writes only to:
 
-`parsing.py` discovers OTLP files and supported agent-native stores. Provider-specific
-details are normalized at the source boundary rather than spread through shared
-analysis code. `store/ingest.py` records source fingerprints and append checkpoints,
-then inserts durable raw events.
+- `otel-traces.active.jsonl`
+- `otel-logs.active.jsonl`
 
-Native store readers with shared state or query behavior live behind one adapter.
-For example, `opencode_adapter.py` owns OpenCode SQLite access and supplies both
-canonical span ingestion and high-fidelity session-detail rendering; neither the
-dashboard nor normalization layer knows the provider schema.
+`RawSegmentWriter` atomically rotates an active file before it exceeds the
+configured bound. Closed segments are immutable, timestamp-named JSONL files.
+Refresh reads closed segments oldest-first and then the active segment.
 
-Raw input files are capture inputs and replay sources. SQLite is the analytical store.
-Deleting a processed raw file must not redefine the canonical domain model, although
-it can remove the ability to replay that source.
+`source_ingestion_state` records the source fingerprint, append checkpoint,
+decoder version, normalization time, and raw deletion time. A closed segment is
+eligible for deletion only after every inserted raw event completed canonical
+normalization. The active segment is never deleted by refresh. Operators can
+retain processed closed segments with `--keep-processed-raw`.
 
-### 2. Normalize canonical evidence
+SQLite is the durable analytical store. Closed raw segments are replay buffers,
+not a second database.
 
-`store/normalize.py` and its focused helpers promote raw events into canonical records:
+## Canonical normalization
+
+`store/normalize.py` and focused helpers promote source evidence into:
 
 - sessions and parent/child relationships
-- steps and conversation facts
-- LLM calls and tool calls
-- files, repositories, workspaces, agents, and provenance
-- task-run reconciliation when late telemetry becomes available
+- ordered steps and conversation facts
+- LLM calls and token/cost provenance
+- one logical tool invocation per `tool_calls` row
+- files, repositories, workspaces, agents, and source provenance
+- late task-run, memory-exposure, and outcome linkage
 
-`tool_calls.logical_call_id` is the canonical invocation identity. Provider invocation
-and result events sharing that identity are merged during normalization; migration 25
-also reconciles retained duplicates. `mcp_calls` enriches an invocation with MCP
-protocol identity and is not an additional tool-call count.
+### Logical calls and MCP
 
-Canonical records retain native attributes for explanation while promoting shared
-fields for queries and comparisons. The mapping contract is documented separately in
-[`ai-observability-schema.md`](ai-observability-schema.md).
+`tool_calls.logical_call_id` identifies one invocation across provider start,
+result, hook, native, and transcript representations. Normalization reconciles
+those representations before rollups.
 
-### Context artifacts
+`mcp_calls` is a one-to-one protocol extension keyed by
+`mcp_calls.tool_call_id -> tool_calls.id`. It stores server, MCP tool, transport,
+protocol, and MCP-session metadata. It does not add another countable call.
+Migration 29 converts existing databases to this shape; runtime readers use
+only the canonical model.
 
-| Object | Meaning | Current source of truth |
-|---|---|---|
-| Memory artifact | One durable instruction or memory identity, independent of how many sessions received it | `memories` |
-| Memory exposure | Privacy-safe fingerprint proving that a session received a memory artifact | `memory_exposures` |
-| Task contract | An explicit task file supplied at task start; retained as `specs` for API compatibility | `specs`, `mcp_task_runs.task_contract_id` |
+### Agent capabilities
 
-Provider adapters identify explicit source envelopes at ingestion. They do not infer
-memory from arbitrary conversation text or treat transient planning calls as task
-contracts. Task contracts describe one bounded task; workflow contracts describe a
-reusable procedure and remain separate objects.
+Setup, doctor, skill distribution, MCP configuration, aliases, and local-agent
+tests read the same `AgentCapability` registry. Provider-specific formats stay
+inside adapters and strategies.
 
-### 3. Refresh derived state
+Current capability labels are deliberately per product surface:
 
-`core._prepare_sql_report_db()` currently orchestrates the complete preparation path:
+- Supported: Claude Code, Cursor, GitHub Copilot, Codex, OpenCode, Windsurf
+- Partial: Antigravity, because MCP is testable but native tool telemetry and
+  hooks are not verified
+- Historical: Gemini CLI telemetry remains readable but is not a current live
+  client target
+- Planned: inventoried only and never reported as capturing
 
-1. migrate the schema
-2. ingest changed sources
-3. normalize pending events
-4. reconcile fingerprints, MCP calls, workspace identity, and native estimates
-5. refresh costs
-6. refresh the evidence graph and usage rollups
-7. refresh execution units, archetypes, improvements, workflows, skills, and impact
+A verified MCP task run does not imply verified native tokens, cost, hooks, or
+conversation capture.
 
-`preparation.py` owns the reusable snapshot policy, progress stages, and background
-worker. Read commands inspect an existing snapshot through query-only connections.
-Mutation requires an explicit refresh path.
+## Snapshot preparation
 
-### 4. Render and inspect
+`PreparationCoordinator` owns stateful preparation lifecycle and delegates the
+actual work to `prepare_usage_db()` or `prepare_sql_report_db()`.
 
-There are two established rendering paths:
+The complete pipeline is:
 
-- `TelemetryStats` fans out to terminal and Markdown reports.
-- SQLite-only browser APIs query the canonical and derived tables directly for
-  bounded interactive payloads.
+1. open and migrate the database
+2. ingest selected changed sources
+3. normalize pending raw events
+4. reconcile logical calls, MCP metadata, workspace identity, native estimates,
+   task runs, and memory exposures
+5. refresh pricing for affected sessions
+6. refresh bounded graph and rollup keys, or rebuild only when the refresh plan
+   proves that incremental repair is insufficient
+7. refresh execution units, archetypes, findings, loops, workflows, skills, and
+   impact
+8. delete successfully processed closed raw segments unless retention was
+   requested
+9. publish `last_successful_refresh`
 
-Both paths represent the same domain. New browser-only calculations must not silently
-create a competing metric definition.
+Read commands inspect query-only snapshots. Mutation is explicit through a
+refresh, setup, apply, rollback, retention, or database command.
 
-## Domain model
+## Evidence units
 
-### Telemetry and execution
-
-| Object | Meaning | Current source of truth |
+| Object | Meaning | Canonical owner |
 |---|---|---|
 | Session | Provider conversation or long-lived agent container | `sessions` |
-| Step | Ordered activity within a session | `steps` |
+| Step | Ordered activity inside a session | `steps` |
 | LLM call | One normalized model request/response | `llm_calls` |
-| Tool call | One logical normalized tool invocation | `tool_calls.logical_call_id` |
-| Execution unit | One bounded piece of work used for comparable evidence | `execution_units` |
-| Task run | One explicit MCP guidance/completion lifecycle | `mcp_task_runs` |
-| Task archetype | Classification used to form comparable cohorts | `execution_unit_archetypes` for new cohort logic |
+| Tool call | One normalized logical invocation | `tool_calls` |
+| Execution unit | One bounded task used for procedure evidence and comparison | `execution_units` |
+| MCP task run | Explicit `reflect_context` to `reflect_complete` lifecycle | `mcp_task_runs` |
+| Task archetype | Comparable-task classification | `execution_unit_archetypes` |
+| Task contract | Explicit bounded work and completion conditions | `TaskContract`; stored in the existing `specs` table |
 
-A session remains the aggregate unit for activity, duration, tokens, cost, and
-navigation. It is not necessarily one task. Execution units are used only where a
-bounded procedure must be compared for workflow adherence or impact. An explicit MCP
-task run is the strongest execution boundary; whole-session boundaries are a
-conservative workflow-evidence fallback.
+Sessions remain useful for navigation and whole-conversation usage totals. They
+are not workflow support or impact samples. Procedure discovery, evidence
+ledgers, adherence, and measurements use distinct eligible execution units.
+Session IDs remain provenance links so a developer can inspect the source.
 
-### Improvement loop
+An explicit completed MCP task run is the strongest execution boundary. Other
+sources may produce bounded units only when their evidence supports a task
+boundary. Ambiguous or mixed units are excluded from comparable cohorts.
 
-| Object | Meaning | Current source of truth |
-|---|---|---|
-| Observation | Versioned rule finding for one scope and fingerprint | `observations` |
-| Observation evidence | Bounded supporting or contradicting provenance | `observation_evidence` |
-| Finding | Presentation-time grouping of equivalent observations | `ImprovementService`; not a separate table |
-| Loop | Repeated stalled or productive behavior | `loop_patterns`, `loop_occurrences` |
-| Workflow contract | Typed reusable procedure, applicability, milestones, and validation | `WorkflowContract` embedded in workflow content |
-| Workflow candidate | Reviewable proposal produced from evidence | `workflow_candidates` |
-| Workflow version | Approved immutable candidate content | `workflow_versions` |
-| Intervention | Applied workflow version at a target | `interventions` |
-| Exposure | Evaluation of an intervention against an execution unit | `workflow_exposures` |
-| Measurement | Before/after intervention result | `measurements` |
+## Workflow identity and lifecycle
 
-### Durable skills
+A workflow is a reviewed procedure attached to comparable task evidence.
 
-| Object | Meaning | Current source of truth |
-|---|---|---|
-| Skill | Searchable durable procedure identity | `skills` |
-| Skill version | Immutable rendered instruction content | `skill_versions` |
-| Installation | A version installed at a concrete target path | `skill_installations` |
-| Usage | Selection or observed use in one execution unit | `skill_usage` |
-| Skill measurement | Skill-oriented projection of measured impact | `skill_measurements` |
+| Concept | Identity or state |
+|---|---|
+| Procedure identity | `contract_signature` derived from normalized workflow contract semantics |
+| Candidate revision | `revision_hash` derived from exact reviewable content |
+| Review | `pending`, `approved`, `stale`, or `rejected` |
+| Deployment | `not_deployed`, `active`, `stale`, or `rolled_back` |
+| Installation | `not_installed`, `installed`, `stale`, or `removed` |
+| Measurement | `not_started`, `collecting`, `improved`, `no_effect`, or `regressed` |
 
-Exposure and usage are intentionally distinct. Exposure asks whether an installed
-workflow was available, invoked, and followed. Usage asks whether the skill was
-selected, reported, or observed. They may refer to the same execution unit without
-being duplicate records.
-
-## Improvement lifecycle
+These dimensions are projected into one `WorkflowLifecycleProjection`; they are
+not aliases for one overloaded status. Approving a candidate creates review
+state. Applying an exact reviewed version to a target creates the intervention
+and installation state. An approved but uninstalled workflow is never selected
+as executable guidance.
 
 ```mermaid
 flowchart LR
-    Evidence[Canonical evidence] --> Observation
-    Evidence --> Loop
-    Observation --> Candidate[Workflow candidate]
-    Loop --> Candidate
-    Candidate -->|explicit review| Version[Workflow and skill version]
-    Version -->|explicit apply| Intervention
-    Intervention --> Exposure[Comparable execution exposures]
-    Exposure --> Measurement
-    Measurement --> Decision[Keep, revise, or roll back]
+    Evidence[Eligible execution units] --> Finding[Finding or loop]
+    Finding --> Candidate[Workflow candidate]
+    Candidate -->|review and approve| Version[Immutable version]
+    Version -->|explicit target apply| Install[Intervention and installation]
+    Install --> Exposure[Comparable future executions]
+    Exposure --> Measure[Five-task validation]
+    Measure --> Decision[Keep, revise, or roll back]
 ```
 
-Promotion and application are never automatic. Review, approval, apply, and rollback
-are separate actions. MCP change reviews bind approval to the exact target, content,
-and prior state.
+All repository or external writes use exact preview, explicit approval, and
+hash-bound apply/rollback records.
 
-## Architecture decision register
+## Impact contract
 
-| ID | Status | Decision | Consequence |
-|---|---|---|---|
-| A-001 | Accepted | SQLite is the local analytical source of truth. | CLI, MCP, and browser reads should share canonical persisted evidence. |
-| A-002 | Accepted | Preserve raw/native provenance while promoting canonical fields. | Cross-agent comparisons remain possible without losing forensic detail. |
-| A-003 | Accepted | Snapshot reads are query-only; refresh is explicit. | Inspection cannot silently ingest, migrate, reconcile, or rebuild. |
-| A-004 | Accepted | Execution units, not whole sessions, are the comparison unit for procedures. | Long-lived sessions can contribute several comparable tasks without merging them. |
-| A-005 | Accepted | Workflow contracts define reusable procedures and symmetric adherence. | The same milestones and validation rules apply before and after installation. |
-| A-006 | Accepted | Workflows are review artifacts; Skills v2 is the durable package registry. | MCP, CLI, and browser must reuse one preview/apply/version path. |
-| A-007 | Accepted | External or repository writes require exact preview and explicit approval. | Stored reviews are immutable, expiring, and bound to rollback information. |
-| A-008 | Accepted | Stateful and swappable behavior uses small services/classes; transformations stay pure. | New abstractions need a real lifecycle, strategy, or ownership boundary. |
-| A-009 | Accepted | Retention removes old session data while preserving bounded historical provenance and tombstones. | Current support and historical audit must be distinguishable. |
-| A-010 | Accepted | Dashboard source and `docs/report.html` remain byte-identical. | Every dashboard client change must update both files together. |
-| A-011 | Accepted | Browser reads are SQLite-only and query-only. | Dashboard refresh owns writes; ordinary API requests do not migrate or alter journal state. |
-| A-012 | Accepted | `tool_calls` represents logical invocations, not telemetry phases. | Invocation/result duplicates are reconciled before rollups and procedure detection. |
-| A-013 | Accepted | Context & System is project/store context, not session-owned telemetry. | Selecting a session must not hide specs, durable memory, privacy findings, or store inventory. |
-| A-014 | Accepted | Full tool and graph views are calculated on demand. | Startup caches the lightweight usage summary and binds before command parsing or graph drill-down work. |
-| A-015 | Accepted | Context artifact identity is separate from per-session exposure. | Memory is stored once, exposure fingerprints prove use, and explicit task files become task contracts without treating transient plans as specs. |
+Impact uses a frozen baseline cohort and the first bounded comparable
+post-install execution units. A measurement records:
 
-## Transitional boundaries and known contradictions
+- workflow contract and archetype
+- exact before and after unit IDs
+- sample counts and evidence cutoff
+- signal availability and missing telemetry
+- outcome direction
+- observed workflow exposure/adherence
+- evidence-quality reason when a claim is withheld
 
-These are current architecture facts, not recommendations to add more layers.
+Missing evidence is `unavailable`, never numeric zero. Reflect may report an
+observed outcome shift without claiming attribution. Attribution requires a
+comparable cohort plus corroborated installed-workflow exposure.
 
-| Area | Current overlap | Durable direction |
+## Context artifacts
+
+| Object | Meaning | Canonical owner |
 |---|---|---|
-| Workflow identity | `WorkflowContract.signature_hash` identifies a procedure, while `workflow_proposal_signature()` hashes mutable title/content and is also used for grouping. | Contract identity owns the procedure; proposal hash owns only a revision. |
-| Evidence unit | Procedure discovery and some ledgers still count sessions; adherence and impact use execution units. | Use retained eligible execution units for procedure support and measurement; keep session IDs as provenance. |
-| Archetypes | `session_task_archetypes` and `execution_unit_archetypes` are both written and queried. | Execution-unit archetypes are canonical for new behavior; session classification is compatibility until remaining readers migrate. |
-| Lifecycle | Observation, candidate, version, intervention, skill, and installation each persist statuses such as `active`. | Each status describes only its own object; product state should be a derived projection rather than synchronized copies. |
-| Applied checks | Applying a candidate updates candidate/intervention state, while older `checks_json.applied` values can remain false. | Remove the duplicate flag or derive it from the active intervention/install record. |
-| Workflow collection | The workflows API can return historical lifecycle states while the browser filters reviewable items client-side. | The server should expose one explicit reviewable collection and opt-in history. |
-| Finding identity | Findings are grouped at read time while observations remain scoped persisted records. | Keep the grouping virtual unless a durable finding object gains independent lifecycle. |
-| Refresh publication | Preparation phases and improvement subservices commit at several boundaries. | Publish one completed snapshot generation so readers do not interpret intermediate reconciliation state as final. |
-| Refresh orchestration | `core.py` composes complete and usage-focused preparation, while `preparation.py` owns snapshot policy, progress, and background execution. | Keep command composition in `core.py`; reusable lifecycle behavior belongs in `preparation.py`. |
-| Browser payload shape | `dashboard.py` still adapts SQL view models into the single-file client's established tab shape. | Change the API and client together; do not add a second in-memory analytics path. |
+| Memory | Durable scoped instruction or fact identity | `memories` |
+| Memory exposure | Fingerprint proving one execution received that memory | `memory_exposures` |
+| Task contract | Explicit task-start artifact | `TaskContract` and `mcp_task_runs.task_contract_id` |
+| Workflow contract | Reusable procedure semantics and checkpoints | versioned workflow content |
 
-## Complexity hotspots
+Provider adapters recognize explicit source envelopes. They do not infer memory
+from arbitrary conversation text or reinterpret transient planning calls as
+task contracts.
 
-### `core.py`
+## Browser architecture
 
-`core.py` is currently about 5,700 lines and registers more than 50 command/group
-handlers. It owns or coordinates:
+The browser exposes four product surfaces:
 
-- CLI declaration and rendering
-- setup, update, doctor, autostart, gateway, and report-server commands
-- usage, improvement, loop, workflow, skill, memory, and database commands
-- source preparation and refresh orchestration
+1. Sessions — source conversations, usage, cost, tools, and comparisons
+2. Workflows — findings, loops, reviewable workflows, and durable skill versions
+3. Impact — measured comparable-task progress and evidence quality
+4. Explore — usage, tools, graph, and context/task-contract diagnostics
 
-The problem is responsibility density, not a lack of classes. The lean direction is a
-thin CLI composition root with command groups delegating to existing services. Move a
-command family only when it is being changed; do not perform a flag-day rewrite.
+`dashboard_queries.py` builds bounded read models from SQLite.
+`dashboard_server.py` wires those functions to FastAPI and owns server/cache
+lifecycle. The authored client lives in `src/reflect/frontend/`; running
+`scripts/build_dashboard.py` produces both shipped HTML files. Generated files
+must never be edited independently.
 
-### `dashboard.py`
+Interactive graph queries filter to the selected session IDs and displayed
+tools before joins. Timeline payloads remain capped. Large evidence is fetched
+through explicit drill-down APIs instead of embedding complete ledgers in the
+initial report.
 
-`dashboard.py` is currently about 3,400 lines. It combines canonical payload shaping,
-SQLite query code, compatibility transforms, FastAPI route construction, and server
-lifecycle integration. Its SQL-backed lazy tabs are important for performance, but the
-module boundary is difficult to navigate.
+## One-way migration policy
 
-The next extraction should follow existing responsibilities—query/read models, API
-routes, and server construction—not create a generic dashboard framework.
+Existing databases move forward through numbered SQLite migrations. A migration
+may rewrite or drop an obsolete table or column after moving its durable data.
+The runtime does not keep parallel readers, dual writes, old API routes, or
+presentation aliases for the retired shape. Rollback is restoring a pre-migrate
+database backup and the matching older binary, not switching a runtime flag.
 
-### Improvement persistence and presentation
+Historical migration files remain immutable. New schema changes get a new
+numbered migration and idempotency coverage.
 
-The improvement domain has useful focused services, typed models, and repositories.
-Its main debt is duplicated interpretation at boundaries: candidate identity, session
-versus execution-unit support, lifecycle projection, and API filtering. Fix those
-invariants before splitting the services further.
+## Architecture decisions
 
-### Compatibility data
-
-The migration history intentionally preserves old data and public behavior. A
-compatibility table or helper is acceptable only when it has:
-
-1. a canonical replacement
-2. identified remaining readers/writers
-3. a test that prevents new ownership from moving into the old path
-4. an explicit removal or permanent-compatibility decision
-
-Do not squash historical migrations to make the schema look simpler.
-
-## Module ownership map
-
-| Area | Primary modules | Notes |
+| ID | Decision | Consequence |
 |---|---|---|
-| Source discovery and adapters | `parsing.py`, `opencode_adapter.py`, `session_adapters.py`, `store/ingest.py`, provider adapters under `store/` | Normalize provider variation once at the boundary and reuse native-store readers. |
-| Canonical normalization | `store/normalize.py`, `store/hook_facts.py`, `store/mcp.py`, `store/workspaces.py` | Canonical tables and provenance. |
-| Snapshot orchestration | `preparation.py`, currently `core._prepare_sql_report_db()` | Policy is separated; complete orchestration still lives in `core.py`. |
-| Canonical analysis | `processing.py`, `models.py`, `graph.py`, `insights/` | `TelemetryStats` is the renderer source of truth. |
-| Execution/cohorts | `execution_units.py`, `improvements/archetypes.py` | Task boundaries and comparable cohort eligibility. |
-| Improvement application layer | `improvements/service.py` | Detection, retrieval, and refresh orchestration. |
-| Improvement persistence | `improvements/repository.py`, migrations | Observations, candidates, evidence, events, and ledgers. |
-| Workflow review/apply | `improvements/workflows.py`, `changes.py` | Exact preview, approval, apply, and rollback. |
-| Skills registry | `improvements/skills.py` | Versions, installations, use, and skill measurements. |
-| MCP task lifecycle | `context.py`, `task_runs.py`, `milestones.py`, `mcp.py` | Guidance, completion, late linkage, and reported milestones. |
-| Browser data/API | `dashboard.py` | SQL payloads, base startup cache, lazy graph/context tabs, session detail, and improvement APIs. |
-| Browser client | `data/index.html`, `docs/report.html` | Must remain byte-identical. |
+| A-001 | SQLite is the local analytical source of truth. | Every product surface reads the same durable evidence. |
+| A-002 | Preserve source provenance while promoting shared canonical fields. | Cross-agent analysis remains explainable. |
+| A-003 | Reads are query-only; refresh and mutation are explicit. | Dashboard traffic cannot silently rewrite the store. |
+| A-004 | Execution units are the procedure and impact sample. | Long-lived sessions do not contaminate task cohorts. |
+| A-005 | Workflow contract identity is separate from revision identity. | Wording edits do not create a new procedure; semantic changes do. |
+| A-006 | Review, deployment, installation, and measurement are separate lifecycle dimensions. | Cards cannot imply that approval means installation or impact. |
+| A-007 | `tool_calls` is the only logical-call ledger; `mcp_calls` is metadata. | MCP and total tool counts cannot double-count one invocation. |
+| A-008 | Agent support is declared once and per surface. | Configuration never masquerades as captured telemetry. |
+| A-009 | Closed raw segments are disposable after successful normalization. | Raw disk growth is bounded without deleting canonical evidence. |
+| A-010 | Browser queries, server wiring, and authored client sources are separate owners. | UI changes do not grow a monolithic server module. |
+| A-011 | OOP is for state, lifecycle, strategy, and ownership; pure transforms stay functions. | Abstractions must remove duplication or isolate a demonstrated variant. |
+| A-012 | Database evolution is one-way. | New code has one runtime model instead of compatibility branches. |
 
-## Guardrails for future changes
+## Change guardrails
 
-Before introducing or changing a product concept, answer these questions in the code
-review or architecture update:
+Before adding a product concept, answer:
 
-1. What is the product noun?
+1. What is the user-facing noun?
 2. What is its stable identity?
-3. Which module/table owns writes?
-4. Which representation is canonical and which is presentation or compatibility?
-5. What is the lifecycle, and is any state duplicated elsewhere?
-6. What evidence unit is counted: event, call, step, execution unit, or session?
-7. What proves refresh is idempotent?
-8. What proves retention cannot reactivate history as current evidence?
+3. Which table and module own writes?
+4. What is the evidence unit?
+5. Which lifecycle dimension changes?
+6. What makes refresh idempotent?
+7. What exact evidence lets the UI make the claim?
 
-Prefer these implementation rules:
+Implementation defaults:
 
-- Reuse execution units for bounded tasks; do not add another task-unit model.
-- Reuse workflow contracts for procedure semantics; do not make generated wording an identity.
-- Reuse Skills v2 for durable packages; do not add another registry.
-- Derive presentation status from canonical records instead of synchronizing booleans.
-- Put provider differences behind adapters and keep shared services agent-agnostic.
-- Add OOP only for state, lifecycle, swappable strategy, or explicit ownership.
-- Keep compatibility shims thin, tested, and prevented from gaining new responsibility.
-- Keep interactive SQL bounded before joins and paginate large evidence collections.
+- extend execution units instead of adding another task model
+- extend workflow contracts instead of identifying procedures by titles
+- extend `tool_calls` rather than adding another invocation ledger
+- derive presentation state from canonical records
+- keep provider differences behind capability adapters and classifiers
+- keep SQL bounded before joins and paginate evidence drill-downs
+- split a module only along an existing ownership boundary
+- delete retired runtime paths when a one-way migration replaces them
 
-## Open architecture decisions
-
-These decisions are intentionally recorded here so the next change resolves a known
-boundary instead of adding another representation.
-
-| ID | Question | Recommended direction | Acceptance signal |
-|---|---|---|---|
-| O-001 | What is the canonical workflow identity? | Contract signature for the procedure; exact proposal hash for a revision; slug fallback for legacy records. | Repeated refresh and pruning do not increase reviewable contract count without new evidence or a changed revision. |
-| O-002 | What is the canonical procedure evidence unit? | Distinct retained eligible execution units. | Discovery, source ledger, baseline, and impact show the same unit and cohort. |
-| O-003 | How is user-facing lifecycle derived? | Project candidate review, intervention deployment, skill installation, and measurement into one read model. | No card can simultaneously claim active and unapplied. |
-| O-004 | How should refresh become reader-consistent? | Record and expose a completed snapshot generation rather than relying on every phase sharing one long transaction. | Readers either see the prior complete generation or the new complete generation, never a mixed one. |
-| O-005 | How should `core.py` shrink? | Extract touched command families into focused CLI modules while preserving `reflect.core:main` and compatibility imports. | New CLI features do not add domain or renderer logic to `core.py`. |
-| O-006 | How should `dashboard.py` shrink? | Separate bounded SQL/read models and route construction when those areas are modified. | API tests import focused query functions without constructing the server. |
-
-## Updating this document
-
-Update this document when a change:
-
-- introduces or removes a domain object
-- changes canonical identity or evidence granularity
-- moves write ownership between modules
-- changes a lifecycle or approval boundary
-- makes a compatibility path canonical or retires it
-- changes the end-to-end preparation or improvement flow
-
-Small implementation details do not need a new architecture decision. Prefer amending
-the existing decision row over creating overlapping documentation.
+Update this document when canonical identity, evidence granularity, module write
+ownership, lifecycle, or the end-to-end preparation path changes.

@@ -29,11 +29,13 @@ def test_readme_has_current_quick_start_contract():
 def test_readme_explains_current_product_surfaces():
     readme = _readme()
 
-    for surface in ("Inbox", "Sessions", "Workflows", "Skills", "Impact", "Explore"):
+    for surface in ("Sessions", "Workflows", "Impact", "Explore"):
         assert f"**{surface}**" in readme
 
-    assert "A repeated loop can motivate a workflow" in readme
-    assert "neither conversion happens automatically" in readme
+    assert "The browser has four surfaces" in readme
+    assert "Approval and" in readme
+    assert "installation are separate" in readme
+    assert "missing baseline evidence is shown as unavailable rather than zero" in readme
 
 
 def test_readme_does_not_restore_superseded_opening():

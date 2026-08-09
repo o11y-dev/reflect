@@ -216,7 +216,6 @@ def test_workflow_evidence_refresh_is_scoped_to_selected_sessions(tmp_path):
         result = service.prepare_workflow_evidence(session_ids={"session"})
 
         assert result["assigned_steps"] == 2
-        assert result["classified_sessions"] == 1
         assert result["classified_execution_units"] == 1
         assert conn.execute(
             """

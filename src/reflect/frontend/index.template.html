@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<meta name="theme-color" content="#000000"/>
+<title>reflect — Behavioral Memory for Developer-Agent Workflow</title>
+<meta name="description" content="reflect is the behavioral memory layer for developer-agent workflow. Turn local session data and OpenTelemetry GenAI spans into patterns about prompts, tools, context, budget burn, and enterprise handoff."/>
+<link rel="canonical" href="https://reflect.o11y.dev/"/>
+<link rel="icon" type="image/svg+xml" href="favicon.svg"/>
+<meta property="og:type" content="website"/>
+<meta property="og:site_name" content="reflect.o11y.dev"/>
+<meta property="og:title" content="reflect — Behavioral Memory for Developer-Agent Workflow"/>
+<meta property="og:description" content="Behavioral memory for developer-agent workflow. Patterns about prompts, tools, context, budget burn, and enterprise handoff."/>
+<meta property="og:url" content="https://reflect.o11y.dev/"/>
+<meta property="og:image" content="https://reflect.o11y.dev/og-image-v2.png"/>
+<meta property="og:image:secure_url" content="https://reflect.o11y.dev/og-image-v2.png"/>
+<meta property="og:image:type" content="image/png"/>
+<meta property="og:image:width" content="1200"/>
+<meta property="og:image:height" content="630"/>
+<meta property="og:image:alt" content="reflect — See How Agents Work. Improve What Happens Next."/>
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:title" content="reflect — Behavioral Memory for Developer-Agent Workflow"/>
+<meta name="twitter:description" content="Behavioral memory for developer-agent workflow. Built on OpenTelemetry GenAI semantic conventions."/>
+<meta name="twitter:image" content="https://reflect.o11y.dev/og-image-v2.png"/>
+<meta name="twitter:image:alt" content="reflect — See How Agents Work. Improve What Happens Next."/>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "reflect",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "macOS, Linux, Windows",
+      "description": "Behavioral memory for developer-agent workflow. Turns local session data and OpenTelemetry GenAI spans into patterns about prompts, tools, context, budget burn, and enterprise handoff.",
+      "url": "https://reflect.o11y.dev/",
+      "downloadUrl": "https://pypi.org/project/o11y-reflect/",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "license": "https://www.apache.org/licenses/LICENSE-2.0"
+    },
+    {
+      "@type": "Organization",
+      "name": "o11y.dev",
+      "url": "https://reflect.o11y.dev/",
+      "sameAs": ["https://github.com/o11y-dev"]
+    }
+  ]
+}
+</script>
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-WBE682BQVP"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-WBE682BQVP');
+</script>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin/>
+<link rel="preconnect" href="https://www.googletagmanager.com" crossorigin/>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+<style>
+{{ dashboard_css }}
+</style>
+</head>
+<body>
+<!-- Google Tag Manager (noscript) -->
+<!-- End Google Tag Manager (noscript) -->
+
+<div id="report-loader" class="report-loader" role="status" aria-live="polite" aria-label="Loading report">
+  <div class="report-loader-inner">
+    <div class="loader-mark" aria-hidden="true"></div>
+    <div class="loader-title">reflect.<em>o11y</em>.dev</div>
+    <div class="loader-subtitle" id="report-loader-copy">Preparing report...</div>
+    <div class="loader-bar" aria-hidden="true"><span></span></div>
+  </div>
+</div>
+
+<a class="skip-link" href="#main-content">Skip to main content</a>
+
+<!-- ── Header ── -->
+<header>
+  <div class="brand-wrap">
+    <a class="brand" href="https://reflect.o11y.dev/" aria-label="Open reflect.o11y.dev">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <h1>reflect.<em>o11y</em>.dev</h1>
+    </a>
+    <span class="brand-badge" id="demo-badge">DEMO</span>
+  </div>
+  <div class="header-meta">
+    <div id="hdr-range"></div>
+    <div id="hdr-ts"></div>
+  </div>
+</header>
+<div id="preparation-status" class="preparation-status" role="status" aria-live="polite" hidden>
+  <span class="preparation-status-dot" aria-hidden="true"></span>
+  <span id="preparation-status-copy">Refreshing local telemetry...</span>
+</div>
+
+<!-- ── Nav tabs ── -->
+<nav id="tabs" role="tablist" aria-label="Dashboard sections">
+  <button class="tab active" id="tab-button-sessions" type="button" role="tab" aria-selected="true" aria-controls="tab-sessions" tabindex="0" data-tab="sessions">Sessions</button>
+  <button class="tab" id="tab-button-workflows" type="button" role="tab" aria-selected="false" aria-controls="tab-workflows" tabindex="-1" data-tab="workflows">Workflows</button>
+  <button class="tab" id="tab-button-impact" type="button" role="tab" aria-selected="false" aria-controls="tab-impact" tabindex="-1" data-tab="impact">Impact</button>
+  <button class="tab" id="tab-button-explore" type="button" role="tab" aria-selected="false" aria-controls="tab-explore-usage" tabindex="-1" data-tab="explore">Explore</button>
+</nav>
+
+<main id="main-content">
+
+<div class="report-shell" id="report-shell">
+  <aside class="session-rail" id="session-rail" aria-label="Sessions">
+    <div class="rail-head">
+      <div class="rail-title">Sessions</div>
+      <button type="button" class="rail-toggle" id="session-rail-toggle" aria-label="Toggle sessions" aria-expanded="true">
+        <span class="rail-toggle-lines" aria-hidden="true"></span>
+      </button>
+    </div>
+    <div class="sb-left">
+      <div class="sb-list-head" id="sb-list-head"></div>
+      <div class="sb-list" id="sb-list"></div>
+    </div>
+  </aside>
+
+  <div class="report-content">
+    <div class="shell-toolbar" aria-label="Report panels">
+      <button type="button" class="rail-toggle shell-left-toggle" id="session-rail-open" aria-label="Open sessions" aria-expanded="true">
+        <span class="rail-toggle-lines" aria-hidden="true"></span>
+      </button>
+      <button type="button" class="rail-toggle shell-filter-toggle" id="filter-sheet-open" aria-label="Toggle filters" aria-expanded="false">
+        <span class="rail-toggle-lines" aria-hidden="true"></span>
+      </button>
+    </div>
+
+<!-- ════════════════════ SESSIONS BROWSER ════════════════════ -->
+<div class="tab-panel active" id="tab-sessions" role="tabpanel" aria-labelledby="tab-button-sessions">
+  <div class="session-browser">
+    <div class="sb-right">
+      <div id="sb-detail">
+        <div class="sb-empty">
+          <div class="sb-empty-icon" aria-hidden="true">&#9776;</div>
+          <div>Select a session to view its conversation timeline</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="panel panel-no-hover">
+    <div class="panel-title">Compare Sessions <span style="color:var(--text-3);font-weight:400;font-size:11px">— select A then B</span></div>
+      <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:flex-end">
+        <div style="flex:1;min-width:200px">
+        <label for="cmp-a" style="display:block;font-size:12px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Session A</label>
+        <select id="cmp-a" class="compare-select" name="compare-session-a" autocomplete="off">
+          <option value="">— select —</option>
+        </select>
+      </div>
+      <div style="flex:1;min-width:200px">
+        <label for="cmp-b" style="display:block;font-size:12px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Session B</label>
+        <select id="cmp-b" class="compare-select" name="compare-session-b" autocomplete="off">
+          <option value="">— select —</option>
+        </select>
+      </div>
+      <button id="cmp-clear" class="compare-clear" type="button" title="Clear selection">Clear</button>
+    </div>
+    <div id="cmp-result"></div>
+  </div>
+</div>
+
+<!-- ════════════════════ EXPLORE: USAGE ════════════════════ -->
+<div class="tab-panel" id="tab-explore-usage" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
+  <div class="explore-subnav" aria-label="Explore telemetry views">
+    <button class="explore-link active" type="button" data-explore-view="usage">Usage</button>
+    <button class="explore-link" type="button" data-explore-view="tools">Tools</button>
+    <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
+    <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
+  </div>
+  <div class="panel" id="cohort-comparison-panel">
+    <div class="panel-title">Comparable cohorts</div>
+    <div id="cohort-comparison-summary"></div>
+  </div>
+
+  <div class="cols-2">
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Cohort Details</div>
+      <div id="cohort-comparison-details"></div>
+    </div>
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Baseline Agent Mix</div>
+      <div id="cohort-baseline-agents"></div>
+    </div>
+  </div>
+  <!-- Row 1: 4 headline stats -->
+  <div class="stat-row" id="stat-row"></div>
+
+  <div class="panel">
+    <div class="panel-title">Outcomes &amp; Achievements</div>
+    <div class="badge-grid" id="obs-badges"></div>
+  </div>
+
+  <!-- Row 4: 8 metric tiles -->
+  <div class="metric-row" id="metric-row"></div>
+
+  <!-- Row 5: charts side by side -->
+  <div class="cols-2">
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Model Usage</div>
+      <div class="chart-box" style="height:200px"><canvas id="modelChart"></canvas></div>
+    </div>
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Event Types</div>
+      <div class="chart-box" style="height:200px"><canvas id="eventChart"></canvas></div>
+      <div id="source-provenance" style="padding:8px 0 0"></div>
+    </div>
+  </div>
+
+  <!-- Row 6: Token Usage -->
+  <div class="cols-2">
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Token Usage</div>
+      <div class="chart-box" style="height:200px"><canvas id="tokenChart"></canvas></div>
+    </div>
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Token Stats</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px 0">
+        <div style="background:var(--surface2);border-radius:8px;padding:14px 16px">
+          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Input Tokens</div>
+          <div style="font-size:22px;font-weight:700;margin-top:4px" id="stat-input-tok"></div>
+        </div>
+        <div style="background:var(--surface2);border-radius:8px;padding:14px 16px">
+          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Output Tokens</div>
+          <div style="font-size:22px;font-weight:700;margin-top:4px" id="stat-output-tok"></div>
+        </div>
+        <div style="background:var(--surface2);border-radius:8px;padding:14px 16px">
+          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Cache Read Tokens</div>
+          <div style="font-size:22px;font-weight:700;margin-top:4px" id="stat-cache-tok"></div>
+        </div>
+        <div style="background:var(--surface2);border-radius:8px;padding:14px 16px">
+          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Out / In Ratio</div>
+          <div style="font-size:22px;font-weight:700;margin-top:4px" id="stat-tok-ratio"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 6: Cost Usage -->
+  <div class="cols-2">
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Estimated Cost</div>
+      <div id="cost-stats" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px 0"></div>
+    </div>
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Cost Trends</div>
+      <div class="chart-box" style="height:200px"><canvas id="agentCostChart"></canvas></div>
+      <div id="model-cost-share" style="padding:12px 0 0"></div>
+    </div>
+  </div>
+
+  <div class="cols-2">
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Activity — Last Year</div>
+      <div class="heatmap-wrap">
+        <div class="heatmap-outer">
+          <div class="hm-wd" id="hm-weekdays"></div>
+          <div class="hm-right">
+            <div class="hm-months" id="hm-months"></div>
+            <div class="hm-grid" id="hm-grid"></div>
+          </div>
+        </div>
+      </div>
+      <div class="hm-legend">
+        Less
+        <div class="hm-legend-sw">
+          <div style="background:var(--surface3);border:1px solid rgba(255,255,255,.06)"></div>
+          <div style="background:rgba(242,138,26,.2)"></div>
+          <div style="background:rgba(242,138,26,.4)"></div>
+          <div style="background:rgba(242,138,26,.65)"></div>
+          <div style="background:var(--blue)"></div>
+        </div>
+        More
+      </div>
+    </div>
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Subagent Effectiveness</div>
+      <div id="subagent-effectiveness"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Activity by Hour <span style="color:var(--text-3);font-weight:400;font-size:11px">(UTC)</span></div>
+    <div class="hour-wrap">
+      <div class="hour-bars" id="hour-bars"></div>
+      <div class="hour-labels" id="hour-labels"></div>
+    </div>
+  </div>
+
+  <div class="panel" id="weekly-trends-panel">
+    <div class="panel-title">Week-over-Week Activity</div>
+    <div id="weekly-trends-table"></div>
+  </div>
+
+</div>
+
+<!-- ════════════════════ IMPACT ════════════════════ -->
+<div class="tab-panel" id="tab-impact" role="tabpanel" aria-labelledby="tab-button-impact" hidden>
+  <div class="product-hero">
+    <div><h2>Impact</h2><p>See whether installed workflows improve later, comparable task executions. Reflect withholds a claim when the cohort or telemetry is incomplete.</p></div>
+    <div class="product-count" id="measurement-count">0<small>impact checks</small></div>
+  </div>
+  <div class="impact-explainer" aria-label="How impact checks work">
+    <div class="impact-step"><strong>1. Install</strong><span>Review the exact workflow, then explicitly install its versioned skill.</span></div>
+    <div class="impact-step"><strong>2. Collect</strong><span>Capture the required comparable task executions after activation.</span></div>
+    <div class="impact-step"><strong>3. Compare</strong><span>Review improvement, regression, or no clear change.</span></div>
+  </div>
+  <div class="measurement-list" id="measurement-ledger"></div>
+</div>
+
+<!-- ════════════════════ WORKFLOWS ════════════════════ -->
+<div class="tab-panel" id="tab-workflows" role="tabpanel" aria-labelledby="tab-button-workflows" hidden>
+  <div class="product-hero">
+    <div><h2>Workflows</h2><p>Move from task-level evidence to a reviewed procedure, an explicit installation, and a measurable validation window.</p></div>
+    <div class="product-count" id="workflow-signal-count">0<small>open signals</small></div>
+  </div>
+  <div class="inbox-view-switch" role="tablist" aria-label="Workflow evidence views">
+    <button class="inbox-view-button active" id="workflow-view-findings" type="button" role="tab" aria-selected="true" aria-controls="workflow-findings-panel" data-workflow-view="findings"><span class="inbox-view-label">Findings</span><span class="inbox-view-detail">Failures, gaps, and corrections</span><strong class="inbox-view-count" id="workflow-findings-count">0</strong></button>
+    <button class="inbox-view-button loops" id="workflow-view-loops" type="button" role="tab" aria-selected="false" aria-controls="workflow-loops-panel" data-workflow-view="loops"><span class="inbox-view-label">Loops</span><span class="inbox-view-detail" id="workflow-loops-detail">Goals, schedules, and repeated behavior</span><strong class="inbox-view-count" id="workflow-loops-count">0</strong></button>
+  </div>
+
+  <section class="panel product-section inbox-view-panel" id="workflow-findings-panel" role="tabpanel" aria-labelledby="workflow-view-findings" style="margin-top:0">
+    <div class="product-section-head">
+      <div><h3 class="product-section-title">Findings</h3><p class="product-section-copy">Evidence-backed problems and opportunities detected by Reflect rules.</p></div>
+      <div class="product-section-count" id="finding-count">0<small>open findings</small></div>
+    </div>
+    <div class="inbox-list" id="finding-ledger"></div>
+  </section>
+
+  <section class="panel product-section inbox-view-panel" id="workflow-loops-panel" role="tabpanel" aria-labelledby="workflow-view-loops" hidden>
+    <div class="product-section-head">
+      <div><h3 class="product-section-title" id="observed-loops-title">Observed Loops</h3><p class="product-section-copy">Agent-native goals and schedules plus repeated behavior found in source sessions. New actionable loops appear first; review one to turn it into a monitored workflow.</p></div>
+      <div class="product-section-count" id="loop-count">0<small>detected loops</small></div>
+    </div>
+    <div class="workflow-list" id="loop-ledger" aria-live="polite"></div>
+  </section>
+
+  <section class="panel product-section" id="workflow-candidates-section">
+  <div class="product-section-head">
+    <div><h3 class="product-section-title">Reviewable Workflows</h3><p class="product-section-copy">Review the contract, exact steps, stop conditions, verification, source task evidence, installation target, and diff before anything changes.</p></div>
+    <div class="product-section-count" id="workflow-count">0<small>reviewable workflows</small></div>
+  </div>
+  <div class="workflow-toolbar" aria-label="Workflow filters">
+    <div class="workflow-filter-field"><label for="workflow-type-filter">Behavior</label><select id="workflow-type-filter"><option value="all">All behavior types</option><option value="recovery">Recovery</option><option value="verification">Verification</option><option value="exploration">Exploration</option><option value="proven_pattern">Proven Pattern</option></select></div>
+    <div class="workflow-filter-field"><label for="workflow-status-filter">State</label><select id="workflow-status-filter"><option value="reviewable">Reviewable</option><option value="all">All states</option><option value="pending">Pending Review</option><option value="approved">Approved</option><option value="active">Active Deployment</option><option value="rolled_back">Rolled Back</option><option value="stale">Stale</option><option value="rejected">Rejected</option></select></div>
+    <div class="workflow-filter-summary" id="workflow-filter-summary" aria-live="polite"></div>
+  </div>
+  <div class="workflow-list workflow-tile-grid" id="workflow-ledger" aria-live="polite"></div>
+  </section>
+
+<!-- ════════════════════ SKILL REGISTRY ════════════════════ -->
+  <section class="panel product-section" id="skill-registry-section">
+    <div class="product-section-head">
+      <div><h3 class="product-section-title">Installed Procedure Registry</h3><p class="product-section-copy">Versioned workflow packages and their actual installation state. Review approval and installation remain separate so an approved draft is never presented as executable guidance.</p></div>
+      <div class="product-section-count" id="skill-count">0<small>current skills</small></div>
+    </div>
+    <div class="workflow-toolbar" aria-label="Skill filters">
+      <div class="workflow-filter-field skill-search-field"><label for="skill-search">Search skills</label><input id="skill-search" type="search" placeholder="Name, purpose, agent, state, or installation…" autocomplete="off" spellcheck="false" aria-controls="skill-registry"/></div>
+      <div class="workflow-filter-summary" id="skill-filter-summary" aria-live="polite"></div>
+    </div>
+    <div class="workflow-list skill-tile-grid" id="skill-registry" aria-live="polite"></div>
+  </section>
+</div>
+
+<!-- ════════════════════ TOOLS (merged with Latency) ════════════════════ -->
+<div class="tab-panel" id="tab-explore-tools" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
+  <div class="explore-subnav" aria-label="Explore telemetry views">
+    <button class="explore-link" type="button" data-explore-view="usage">Usage</button>
+    <button class="explore-link active" type="button" data-explore-view="tools">Tools</button>
+    <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
+    <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
+  </div>
+
+  <div class="tools-summary-grid">
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Top Tools by Call Count</div>
+      <div class="bar-list" id="tools-list"></div>
+    </div>
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Skills &amp; Subagents</div>
+      <div class="bar-list" id="skills-list"></div>
+    </div>
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">MCP Servers</div>
+      <div class="bar-list" id="mcp-list"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Event Distribution</div>
+    <div class="chart-box" id="event-bar-box" style="height:280px"><canvas id="eventBarChart"></canvas></div>
+  </div>
+
+  <!-- Latency percentiles (merged from old Latency tab) -->
+  <div class="panel">
+    <div class="panel-title">Tool Latency Percentiles <span class="panel-title-count">(ms)</span></div>
+    <table class="tbl">
+      <thead><tr>
+        <th>Tool</th>
+        <th style="text-align:right;width:70px">Calls</th>
+        <th style="text-align:right;width:80px">p50</th>
+        <th style="text-align:right;width:80px">p90</th>
+        <th style="text-align:right;width:80px">p95</th>
+        <th style="text-align:right;width:80px">p99</th>
+      </tr></thead>
+      <tbody id="pctl-tbody"></tbody>
+    </table>
+  </div>
+
+  <!-- Command patterns (merged from old Latency tab) -->
+  <div class="panel">
+    <div class="panel-title">Command Patterns <span class="panel-title-count" id="cmd-unique"></span></div>
+    <table class="tbl">
+      <thead><tr>
+        <th style="width:36px">#</th>
+        <th>Pattern</th>
+        <th style="text-align:right;width:80px">Runs</th>
+      </tr></thead>
+      <tbody id="cmd-tbody"></tbody>
+    </table>
+  </div>
+
+</div>
+
+<!-- ════════════════════ GRAPHS ════════════════════ -->
+<div class="tab-panel" id="tab-explore-graph" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
+  <div class="explore-subnav" aria-label="Explore telemetry views">
+    <button class="explore-link" type="button" data-explore-view="usage">Usage</button>
+    <button class="explore-link" type="button" data-explore-view="tools">Tools</button>
+    <button class="explore-link active" type="button" data-explore-view="graph">Graph</button>
+    <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
+  </div>
+
+  <!-- 1. Behavioral Memory Graph -->
+  <div class="panel">
+    <div class="semantic-graph-toolbar">
+      <div class="panel-title" style="margin-bottom:0">Behavioral Memory Graph <span class="panel-title-count">(sessions, workspaces, folders, tools, skills, memories, outcomes)</span></div>
+      <div class="semantic-graph-controls">
+        <select id="semantic-graph-mode" aria-label="Choose behavioral memory graph relationship scope">
+          <option value="workspace">Same workspace</option>
+          <option value="session">Selected session only</option>
+        </select>
+        <select id="semantic-session-filter" aria-label="Filter behavioral memory graph by session"></select>
+      </div>
+    </div>
+    <p class="semantic-graph-context" id="semantic-graph-context">All bounded graph relationships. Select a session to inspect its workspace peers.</p>
+    <div class="semantic-graph-shell" id="semantic-graph-shell">
+      <svg class="semantic-graph-svg" id="semantic-graph-svg" role="img" aria-label="Behavioral memory graph"></svg>
+      <div class="semantic-graph-tip" id="semantic-graph-tip"></div>
+    </div>
+    <div class="graph-legend" id="semantic-graph-legend"></div>
+  </div>
+
+  <!-- 1. Tool Flow (Sankey) -->
+  <div class="panel">
+    <div class="panel-title">Tool Sequence Flow</div>
+    <svg id="sankey-svg" class="graph-svg" style="height:380px"></svg>
+    <div class="graph-legend" id="sankey-legend"></div>
+  </div>
+
+  <!-- 2. Dependency Graph -->
+  <div class="panel">
+    <div class="panel-title">Agent Tool Network <span class="panel-title-count">(top live tool relationships)</span></div>
+    <svg id="dep-svg" class="graph-svg" style="height:440px"></svg>
+    <div id="dep-note" style="margin-top:12px;font-size:13px;color:var(--text-3)"></div>
+    <div class="graph-legend">
+      <div class="graph-legend-item"><div class="graph-legend-dot" style="background:var(--purple)"></div>Agent</div>
+      <div class="graph-legend-item"><div class="graph-legend-dot" style="background:var(--blue)"></div>Tool</div>
+      <div class="graph-legend-item"><div class="graph-legend-dot" style="background:var(--teal)"></div>MCP Tool</div>
+    </div>
+  </div>
+
+  <!-- 3. Session Timeline -->
+  <div class="panel">
+    <div class="panel-title">Session Timelines <span class="panel-title-count">(top 6 sessions by event count)</span></div>
+    <div class="timeline-wrap" id="timeline-wrap"></div>
+    <div class="graph-legend" id="timeline-legend"></div>
+  </div>
+
+  <!-- 4. Co-occurrence Matrix -->
+  <div class="panel">
+    <div class="panel-title">Tool Co-occurrence Matrix <span class="panel-title-count">(sessions where both tools appeared)</span></div>
+    <div class="matrix-wrap"><table class="matrix-table" id="matrix-table"></table></div>
+  </div>
+
+  <!-- 5. Latency Distributions -->
+  <div class="panel">
+    <div class="panel-title">Latency Distributions <span class="panel-title-count">(call count per bucket)</span></div>
+    <div class="hist-grid" id="hist-grid"></div>
+  </div>
+
+</div>
+
+<!-- ════════════════════ CONTEXT ════════════════════ -->
+<div class="tab-panel" id="tab-explore-context" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
+  <div class="explore-subnav" aria-label="Explore telemetry views">
+    <button class="explore-link" type="button" data-explore-view="usage">Usage</button>
+    <button class="explore-link" type="button" data-explore-view="tools">Tools</button>
+    <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
+    <button class="explore-link active" type="button" data-explore-view="context">Context &amp; system</button>
+  </div>
+  <div class="stat-row" id="data-stat-row"></div>
+
+  <details class="rule-registry" id="rule-registry">
+    <summary><span>Improvement Rules</span><span class="rule-registry-copy" id="rule-count">Loading rules…</span></summary>
+    <p class="rule-registry-note">Improvement Rules create durable findings and may propose workflows. Session Rules score one session for review and comparison; they do not create recommendations.</p>
+    <div class="rule-grid" id="rule-grid" aria-live="polite"></div>
+  </details>
+
+  <div class="cols-2">
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Task Contracts</div>
+      <div id="sql-specs-panel"></div>
+    </div>
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Memory</div>
+      <div id="sql-memory-panel"></div>
+    </div>
+  </div>
+
+  <div class="cols-2">
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Privacy</div>
+      <div id="sql-privacy-panel"></div>
+    </div>
+    <div class="panel" style="margin-bottom:0">
+      <div class="panel-title">Exports</div>
+      <div id="sql-exports-panel"></div>
+    </div>
+  </div>
+</div>
+
+  </div>
+
+  <aside class="filter-rail" id="filter-rail" aria-label="Filters">
+    <div class="rail-head">
+      <div class="rail-title">Filters</div>
+      <button type="button" class="rail-toggle filter-sheet-close" id="filter-sheet-close" aria-label="Close filters">
+        <span class="rail-toggle-lines" aria-hidden="true"></span>
+      </button>
+    </div>
+    <section class="global-filter-shell" id="global-filter-shell" aria-label="Session filters">
+      <div class="global-filter-top">
+        <div>
+          <div class="global-filter-title">Session filters</div>
+          <div class="global-filter-meta" id="global-filter-meta">Showing all sessions</div>
+        </div>
+        <div class="global-filter-actions">
+          <button type="button" class="filter-compact-toggle" id="filter-compact-toggle" aria-expanded="false" aria-controls="global-filter-grid">More filters</button>
+          <button type="button" class="filter-clear" id="filter-clear">Clear filters</button>
+        </div>
+      </div>
+      <div class="global-filter-grid" id="global-filter-grid">
+        <div class="filter-field">
+          <label class="filter-label" for="sb-search">Search</label>
+          <input type="text" class="sb-search" id="sb-search" name="session-search" autocomplete="off" spellcheck="false" placeholder="Search by prompt, session ID, model, or agent…"/>
+        </div>
+        <div class="filter-field">
+          <label class="filter-label" for="filter-model">Model</label>
+          <select class="filter-select" id="filter-model">
+            <option value="all">All models</option>
+          </select>
+        </div>
+        <div class="filter-field">
+          <label class="filter-label" for="filter-status">Status</label>
+          <select class="filter-select" id="filter-status">
+            <option value="all">All sessions</option>
+            <option value="completed">Completed</option>
+            <option value="active">Not completed</option>
+            <option value="recovered">Recovered failures</option>
+            <option value="failing">Has failures</option>
+          </select>
+        </div>
+        <div class="filter-field filter-field-secondary">
+          <label class="filter-label" for="filter-range">Range</label>
+          <select class="filter-select" id="filter-range">
+            <option value="all">All time</option>
+            <option value="24h">Last 24 hours</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+          </select>
+        </div>
+        <div class="filter-field filter-field-secondary">
+          <label class="filter-label" for="filter-sort">Sort</label>
+          <select class="filter-select" id="filter-sort">
+            <option value="recent">Most recent</option>
+            <option value="quality">Highest quality</option>
+            <option value="tokens">Most tokens</option>
+            <option value="cost">Most cost</option>
+            <option value="duration">Longest sessions</option>
+            <option value="events">Most events</option>
+          </select>
+        </div>
+      </div>
+      <div class="sb-agent-pills" id="sb-agent-pills">
+        <button class="sb-pill active" type="button" data-agent="all" aria-pressed="true">All agents</button>
+      </div>
+      <div class="filter-chip-row">
+        <div class="filter-chips" id="filter-chips"></div>
+      </div>
+    </section>
+  </aside>
+</div>
+<div class="global-filter-backdrop" id="filter-sheet-backdrop" hidden></div>
+
+</main>
+
+<dialog class="ledger-dialog" id="ledger-dialog" aria-labelledby="ledger-dialog-title" aria-describedby="ledger-dialog-subtitle">
+  <div class="ledger-dialog-head">
+    <div><h2 class="ledger-dialog-title" id="ledger-dialog-title">Improvement detail</h2><div class="inbox-copy" id="ledger-dialog-subtitle"></div></div>
+    <button class="ledger-dialog-close" id="ledger-dialog-close" type="button" aria-label="Close">&times;</button>
+  </div>
+  <div class="ledger-dialog-body" id="ledger-dialog-body"></div>
+  <div class="ledger-dialog-actions" id="ledger-dialog-actions"></div>
+</dialog>
+
+<footer>Powered by <a href="https://github.com/o11y-dev/reflect" style="color:var(--text-2);text-decoration:none"><code>reflect</code></a> — report data stays local and private</footer>
+
+<script>
+{{ dashboard_js }}
+</script>
+</body>
+</html>

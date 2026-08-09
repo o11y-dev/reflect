@@ -4,9 +4,9 @@ import threading
 import pytest
 
 from reflect.preparation import (
-    BackgroundPreparationWorker,
     CallableSnapshotRefresher,
     CommandPreparationPolicy,
+    PreparationCoordinator,
     PreparationProgress,
     PreparationStage,
     PreparationState,
@@ -21,9 +21,9 @@ from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only
 
 
-def test_background_preparation_worker_completes_and_runs_callbacks():
+def test_preparation_coordinator_completes_and_runs_callbacks():
     callback_results = []
-    worker = BackgroundPreparationWorker(lambda: {"sessions": 3})
+    worker = PreparationCoordinator(lambda _progress: {"sessions": 3})
     worker.add_completion_callback(callback_results.append)
 
     assert worker.start() is True
@@ -32,13 +32,16 @@ def test_background_preparation_worker_completes_and_runs_callbacks():
     snapshot = worker.snapshot()
     assert snapshot.state is PreparationState.COMPLETE
     assert snapshot.generation == 1
-    assert snapshot.result == {"sessions": 3}
-    assert callback_results == [{"sessions": 3}]
+    assert snapshot.result is not None
+    assert snapshot.result.details == {"sessions": 3}
+    assert [result.details for result in callback_results] == [{"sessions": 3}]
 
 
-def test_background_preparation_worker_rejects_duplicate_running_start():
+def test_preparation_coordinator_rejects_duplicate_running_start():
     release = threading.Event()
-    worker = BackgroundPreparationWorker(lambda: release.wait(timeout=2) or {})
+    worker = PreparationCoordinator(
+        lambda _progress: release.wait(timeout=2) or {}
+    )
 
     assert worker.start() is True
     assert worker.start() is False
@@ -46,11 +49,11 @@ def test_background_preparation_worker_rejects_duplicate_running_start():
     assert worker.wait(timeout=2) is True
 
 
-def test_background_preparation_worker_exposes_failures():
-    def fail():
+def test_preparation_coordinator_exposes_failures():
+    def fail(_progress):
         raise RuntimeError("preparation failed")
 
-    worker = BackgroundPreparationWorker(fail)
+    worker = PreparationCoordinator(fail)
     assert worker.start() is True
     assert worker.wait(timeout=2) is True
 
@@ -59,12 +62,12 @@ def test_background_preparation_worker_exposes_failures():
     assert snapshot.error == "preparation failed"
 
 
-def test_background_preparation_worker_exposes_current_progress():
+def test_preparation_coordinator_exposes_current_progress():
     started = threading.Event()
     release = threading.Event()
 
-    def prepare():
-        worker.report_progress(
+    def prepare(report_progress):
+        report_progress(
             PreparationProgress(
                 stage=PreparationStage.REFRESHING_ROLLUPS,
                 message="Refreshing usage rollups...",
@@ -74,7 +77,7 @@ def test_background_preparation_worker_exposes_current_progress():
         release.wait(timeout=2)
         return {"sessions": 3}
 
-    worker = BackgroundPreparationWorker(prepare)
+    worker = PreparationCoordinator(prepare)
     assert worker.start() is True
     assert started.wait(timeout=1) is True
 

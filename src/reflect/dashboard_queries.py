@@ -2,34 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
-import sqlite3
-import threading
-import time
 from collections import Counter, defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
 from reflect.graph import _compute_weekly_trends
-from reflect.preparation import BackgroundPreparationWorker, PreparationSnapshot, PreparationState
 from reflect.session_rules import DEFAULT_SESSION_RULE_SCORER, context_from_summary
 from reflect.store.hook_facts import HookFactRepository
 from reflect.utils import _safe_ratio, logger
-
-
-def _perf_start() -> float:
-    return time.perf_counter() if os.environ.get("REFLECT_DEBUG_PERF") else 0.0
-
-
-def _perf_finish(name: str, start: float, **fields: object) -> None:
-    if not start:
-        return
-    duration_ms = (time.perf_counter() - start) * 1000
-    field_text = " ".join(f"{key}={value}" for key, value in fields.items() if value not in (None, ""))
-    suffix = f" {field_text}" if field_text else ""
-    logger.info("reflect.dashboard.perf %s duration_ms=%.1f%s", name, duration_ms, suffix)
 
 
 def _telemetry_severity(
@@ -71,31 +53,6 @@ def _sanitize_telemetry_attrs(attrs: dict) -> dict:
         elif text := str(value).strip():
             safe[key] = text[:280] + ("…" if len(text) > 280 else "")
     return safe
-
-
-class DashboardDataCache:
-    """Thread-safe dashboard snapshot cache refreshed after background preparation."""
-
-    def __init__(
-        self,
-        loader: Callable[[], dict[str, object]],
-        *,
-        refresh_loader: Callable[[], dict[str, object]] | None = None,
-    ) -> None:
-        self._loader = loader
-        self._refresh_loader = refresh_loader or loader
-        self._lock = threading.Lock()
-        self._payload = loader()
-
-    def get(self) -> dict[str, object]:
-        with self._lock:
-            return self._payload
-
-    def refresh(self) -> dict[str, object]:
-        payload = self._refresh_loader()
-        with self._lock:
-            self._payload = payload
-        return payload
 
 
 def _rough_token_count(text: str) -> int:
@@ -446,17 +403,6 @@ def _comparison_delta(primary: float | int, baseline: float | int) -> dict:
     }
 
 
-def _dashboard_docs_dir() -> Path:
-    # Prefer repo-level docs/ (development), fall back to packaged data/ (pip install)
-    repo_docs = Path(__file__).resolve().parents[2] / "docs"
-    if (repo_docs / "index.html").exists():
-        return repo_docs
-    pkg_data = Path(__file__).resolve().parent / "data"
-    if (pkg_data / "index.html").exists():
-        return pkg_data
-    return repo_docs  # caller handles missing file
-
-
 def _sql_report_payload(
     db_path: Path,
     *,
@@ -503,15 +449,17 @@ def _sql_report_payload(
                 "top_models": [],
                 "top_tools": [],
             }
+        tabs = (
+            build_report_tabs(conn).model_dump()
+            if include_tabs
+            else _empty_sql_lazy_tabs()
+        )
+        tabs["usage"] = {}
         return {
             "db_path": str(db_path),
             "overview": overview,
             "sessions": list_sessions(conn, limit=limit, offset=offset).model_dump(),
-            "tabs": _add_canonical_dashboard_tab_aliases(
-                build_report_tabs(conn).model_dump()
-                if include_tabs
-                else _empty_sql_lazy_tabs()
-            ),
+            "tabs": tabs,
         }
     finally:
         conn.close()
@@ -829,7 +777,7 @@ def _sql_response_preview(attrs: dict[str, object], call: dict[str, object]) -> 
     return f"Assistant turn completed{status_text}; captured {token_text}."
 
 
-def _sql_dashboard_compat_payload(
+def _sql_dashboard_metrics(
     db_path: Path,
     *,
     session_ids: set[str] | None = None,
@@ -890,7 +838,7 @@ def _sql_dashboard_compat_payload(
     tools_view = tab_views["tools"]
     mcp_view = tab_views["mcp"]
     agents_view = tab_views["agents"]
-    graphs_view = tab_views["graphs"]
+    graph_view = tab_views["graph"]
     specs_view = tab_views["specs"]
     memory_view = tab_views["memory"]
     privacy_view = tab_views["privacy"]
@@ -929,11 +877,11 @@ def _sql_dashboard_compat_payload(
         "shell_executions": tools_view["shell_executions"],
         "file_edits": tools_view["file_edits"],
         "file_reads": tools_view["file_reads"],
-        "graph_tool_transitions": graphs_view["graph_tool_transitions"],
-        "graph_cooccurrence": graphs_view["graph_cooccurrence"],
-        "graph_dep": graphs_view["graph_dep"],
-        "graph_session_timeline": graphs_view["graph_session_timeline"],
-        "graph_semantic": graphs_view["graph_semantic"],
+        "graph_tool_transitions": graph_view["graph_tool_transitions"],
+        "graph_cooccurrence": graph_view["graph_cooccurrence"],
+        "graph_dep": graph_view["graph_dep"],
+        "graph_session_timeline": graph_view["graph_session_timeline"],
+        "graph_semantic": graph_view["graph_semantic"],
         "source_provenance": source_provenance,
         "agents": agents_view["agents"],
         "specs": specs_view,
@@ -946,22 +894,22 @@ def _sql_dashboard_compat_payload(
 def _sql_insight_payload(
     overview: dict[str, object],
     sessions: list[dict[str, object]],
-    compat: dict[str, object],
+    metrics: dict[str, object],
 ) -> dict[str, object]:
     input_tokens = int(overview["input_tokens"] or 0)
     output_tokens = int(overview["output_tokens"] or 0)
-    cache_creation_tokens = int(compat["total_cache_creation_tokens"] or 0)
-    cache_read_tokens = int(compat["total_cache_read_tokens"] or 0)
+    cache_creation_tokens = int(metrics["total_cache_creation_tokens"] or 0)
+    cache_read_tokens = int(metrics["total_cache_read_tokens"] or 0)
     total_tokens = input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens
     prompt_count = sum(int(session["prompt_count"] or 0) for session in sessions)
     session_tokens = [int(session["total_tokens"] or 0) for session in sessions]
     top_session_share = (max(session_tokens) / total_tokens * 100) if total_tokens else 0.0
     high_context_sessions = sum(1 for tokens in session_tokens if tokens >= 100_000)
-    mcp_calls = int(compat["mcp_calls"] or 0)
+    mcp_calls = int(metrics["mcp_calls"] or 0)
     tool_calls = int(overview["tool_call_count"] or 0)
     failures = int(overview["failure_count"] or 0)
-    subagents = int(compat["subagent_total_starts"] or 0)
-    file_reads = int(compat.get("file_reads") or 0)
+    subagents = int(metrics["subagent_total_starts"] or 0)
+    file_reads = int(metrics.get("file_reads") or 0)
     estimated_cost = float(overview["estimated_cost_usd"] or 0)
     tool_to_prompt_ratio = (tool_calls / prompt_count) if prompt_count else 0.0
     reads_per_prompt = (file_reads / prompt_count) if prompt_count else 0.0
@@ -988,7 +936,7 @@ def _sql_insight_payload(
         f"**Token concentration** - The largest session accounts for {top_session_share:.1f}% of observed token volume.",
     ]
     if mcp_calls:
-        observations.append(f"**MCP activity** - This scope contains {mcp_calls:,} MCP calls across {len(compat['mcp_servers_by_count']):,} server(s).")
+        observations.append(f"**MCP activity** - This scope contains {mcp_calls:,} MCP calls across {len(metrics['mcp_servers_by_count']):,} server(s).")
     recommendations: list[str] = []
     if prompt_count == 0 and (tool_calls or total_tokens):
         recommendations.append(
@@ -1041,10 +989,10 @@ def _sql_insight_payload(
         achievements.append({"icon": "&#129534;", "name": "Token Ledger", "sub": f"{total_tokens:,} tokens"})
     if cache_read_tokens:
         achievements.append({"icon": "&#129534;", "name": "Cache Saver", "sub": f"{economy['cache_reuse_ratio']:.1f}x cached reuse"})
-    if compat["unique_models"]:
-        achievements.append({"icon": "&#9878;", "name": "Model Mixer", "sub": f"{compat['unique_models']:,} models"})
-    if compat["unique_commands"]:
-        achievements.append({"icon": "&#128187;", "name": "Command Runner", "sub": f"{compat['unique_commands']:,} patterns"})
+    if metrics["unique_models"]:
+        achievements.append({"icon": "&#9878;", "name": "Model Mixer", "sub": f"{metrics['unique_models']:,} models"})
+    if metrics["unique_commands"]:
+        achievements.append({"icon": "&#128187;", "name": "Command Runner", "sub": f"{metrics['unique_commands']:,} patterns"})
     if tool_calls and failures == 0:
         achievements.append({"icon": "&#9989;", "name": "Zero Failures", "sub": "clean tool execution"})
     elif tool_calls:
@@ -1067,7 +1015,7 @@ def _sql_insight_payload(
 
 def _sql_cohort_summary(
     sessions: list[dict[str, object]],
-    compat: dict[str, object],
+    metrics: dict[str, object],
     *,
     label: str,
     agent_names: list[str] | None = None,
@@ -1078,8 +1026,8 @@ def _sql_cohort_summary(
     tool_calls = sum(int(session.get("tool_calls") or session.get("tool_call_count") or 0) for session in sessions)
     failures = sum(int(session.get("failure_count") or session.get("failures") or 0) for session in sessions)
     quality_values = [float(session.get("quality_score") or 0) for session in sessions if float(session.get("quality_score") or 0) > 0]
-    tools = compat.get("tools_by_count") or {}
-    commands = compat.get("top_commands") or []
+    tools = metrics.get("tools_by_count") or {}
+    commands = metrics.get("top_commands") or []
     return {
         "label": label,
         "agents": list(agent_names or sorted({str(session.get("agent") or "unknown") for session in sessions})),
@@ -1089,9 +1037,9 @@ def _sql_cohort_summary(
         "avg_quality": (sum(quality_values) / len(quality_values)) if quality_values else 0.0,
         "failure_rate_pct": round(100 * failures / tool_calls, 1) if tool_calls else 0.0,
         "tokens": input_tokens + output_tokens,
-        "shell_runs": int(compat.get("shell_executions") or 0),
-        "mcp_calls": int(compat.get("mcp_calls") or 0),
-        "subagent_launches": int(compat.get("subagent_launches") or compat.get("subagent_total_starts") or 0),
+        "shell_runs": int(metrics.get("shell_executions") or 0),
+        "mcp_calls": int(metrics.get("mcp_calls") or 0),
+        "subagent_launches": int(metrics.get("subagent_launches") or metrics.get("subagent_total_starts") or 0),
         "top_tools": [{"tool": str(tool), "count": int(count)} for tool, count in list(tools.items())[:5]],
         "top_commands": [
             {"command": str(entry.get("command") or ""), "count": int(entry.get("count") or 0)}
@@ -1130,17 +1078,17 @@ def _sql_comparison_payload(
         return None
     primary_ids = {str(session["id"]) for session in primary_sessions}
     baseline_ids = {str(session["id"]) for session in baseline_sessions}
-    primary_compat = _sql_cohort_compat_payload(db_path, primary_ids)
-    baseline_compat = _sql_cohort_compat_payload(db_path, baseline_ids)
+    primary_metrics = _sql_cohort_metrics(db_path, primary_ids)
+    baseline_metrics = _sql_cohort_metrics(db_path, baseline_ids)
     primary_summary = _sql_cohort_summary(
         primary_sessions,
-        primary_compat,
+        primary_metrics,
         label=" + ".join(primary_agent_names),
         agent_names=primary_agent_names,
     )
     baseline_summary = _sql_cohort_summary(
         baseline_sessions,
-        baseline_compat,
+        baseline_metrics,
         label="All other agents in scope",
     )
     baseline_agents = sorted(
@@ -1173,7 +1121,7 @@ def _sql_comparison_payload(
     }
 
 
-def _sql_cohort_compat_payload(
+def _sql_cohort_metrics(
     db_path: Path,
     session_ids: set[str],
 ) -> dict[str, object]:
@@ -1213,7 +1161,12 @@ def _sql_cohort_compat_payload(
             ordered_ids,
         ).fetchone()[0]
         mcp_calls = conn.execute(
-            f"SELECT COUNT(*) FROM mcp_calls WHERE session_id IN ({placeholders})",
+            f"""
+            SELECT COUNT(*)
+            FROM mcp_calls AS mc
+            JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+            WHERE tc.session_id IN ({placeholders})
+            """,
             ordered_ids,
         ).fetchone()[0]
         subagent_launches = conn.execute(
@@ -1274,7 +1227,7 @@ def _cohort_agent_comparison(
 
 def _empty_sql_lazy_tabs() -> dict[str, object]:
     return {
-        "overview": {
+        "usage": {
             **dict.fromkeys(
                 (
                     "avg_quality_score", "unique_sessions", "prompt_submits", "tool_calls",
@@ -1289,13 +1242,14 @@ def _empty_sql_lazy_tabs() -> dict[str, object]:
             ),
             "first_event_ts": "", "tool_to_prompt_ratio": "0.0", "signature_command": "",
             "peak_hour": -1, "pricing_source": "local", "mcp_servers_by_count": {},
+            "pricing_unit": "usd",
             "subagent_types_by_count": {}, "models_by_count": {}, "events_by_type": {},
             "model_costs": {}, "source_provenance": [], "agent_cost_over_time": [],
         },
         "activity": {
             "events_by_type": {}, "activity_by_day": {},
             "activity_by_hour": {str(hour): 0 for hour in range(24)},
-            "peak_hour": -1, "peak_hour_count": 0,
+            "peak_hour": -1, "peak_hour_count": 0, "weekly_trends": [],
         },
         "models": {"models_by_count": {}, "unique_models": 0},
         "costs": {
@@ -1319,10 +1273,11 @@ def _empty_sql_lazy_tabs() -> dict[str, object]:
             "mcp_server_before": {}, "mcp_server_after": {},
         },
         "agents": {"agent_comparison": [], "agents": {}},
-        "graphs": {
+        "graph": {
             "graph_tool_transitions": [], "graph_cooccurrence": {"tools": [], "matrix": []},
             "graph_dep": {"nodes": [], "edges": [], "top_mcp_servers": []},
             "graph_session_timeline": [], "graph_semantic": {"nodes": [], "edges": [], "sessions": [], "legend": []},
+            "graph_latency_histograms": {},
         },
         "specs": {
             "total_specs": 0, "specs_by_status": {}, "requirements_by_status": {},
@@ -1344,23 +1299,7 @@ def _empty_sql_lazy_tabs() -> dict[str, object]:
             "scoped": True,
         },
     }
-
-
-def _add_canonical_dashboard_tab_aliases(tabs: dict[str, object]) -> dict[str, object]:
-    """Expose product-language keys while retaining legacy payload compatibility."""
-    aliases = {
-        "usage": "overview",
-        "graph": "graphs",
-        "cohort_comparison": "compare",
-        "inbox": "observations",
-    }
-    for canonical, legacy in aliases.items():
-        if legacy in tabs:
-            tabs[canonical] = tabs[legacy]
-    return tabs
-
-
-def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
+def build_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
     from reflect.store.sqlite import connect_sqlite_read_only
     from reflect.views.overview import list_source_provenance
     from reflect.views.report_tabs import _display_mcp_server_name, build_report_tab
@@ -1411,8 +1350,9 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
             return {
                 "sql_backed": True,
                 "focused_session_id": session_id,
-                "unique_sessions": 0,
                 "sessions": [],
+                "first_event_ts": "",
+                "last_event_ts": "",
                 "sqlite": {
                     "db_path": str(db_path),
                     "overview": {"session_count": 0},
@@ -1470,11 +1410,14 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
         ))
         mcp_rows = _dict_rows(conn.execute(
             """
-            SELECT server_name, COUNT(*) AS count
-            FROM mcp_calls
-            WHERE session_id = ? AND server_name IS NOT NULL AND server_name <> ''
-            GROUP BY server_name
-            ORDER BY count DESC, server_name ASC
+            SELECT mc.server_name, COUNT(*) AS count
+            FROM mcp_calls AS mc
+            JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+            WHERE tc.session_id = ?
+              AND mc.server_name IS NOT NULL
+              AND mc.server_name <> ''
+            GROUP BY mc.server_name
+            ORDER BY count DESC, mc.server_name ASC
             LIMIT 10
             """,
             (session_id,),
@@ -1621,7 +1564,7 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
         "source_provenance": [],
     }
     tabs = _empty_sql_lazy_tabs()
-    tabs["overview"].update({
+    tabs["usage"].update({
         "avg_quality_score": quality_score,
         "unique_sessions": 1,
         "first_event_ts": session_row["started_at"] or "",
@@ -1657,6 +1600,7 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
         "output_cost_usd": 0.0,
         "cache_creation_cost_usd": 0.0,
         "cache_read_cost_usd": 0.0,
+        "pricing_unit": "usd",
         "pricing_source": "local",
         "model_costs": {primary_model: cost} if primary_model else {},
     })
@@ -1715,14 +1659,14 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
     activity_view = tabs["activity"]
     models_view = tabs["models"]
     costs_view = tabs["costs"]
-    agents_view = tabs["agents"]
     failure_rate_pct = round(
         100 * scoped_overview["failure_count"] / scoped_overview["tool_call_count"],
         1,
     ) if scoped_overview["tool_call_count"] else 0.0
     weekly_trends = _compute_weekly_trends(Counter(activity_view["activity_by_day"]))
+    tabs["activity"]["weekly_trends"] = weekly_trends
     session_card["skills"] = tools_view["skills_by_count"]
-    tabs["overview"].update({
+    tabs["usage"].update({
         "failure_rate_pct": failure_rate_pct,
         "mcp_calls": mcp_view["mcp_calls"],
         "mcp_servers_by_count": mcp_view["mcp_servers_by_count"],
@@ -1766,8 +1710,10 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
         "achievements": insight_payload["achievements"],
         "token_economy": insight_payload["token_economy"],
     }
-    tabs["compare"] = {"comparison": None, "agent_comparison": [agent_payload]}
-    _add_canonical_dashboard_tab_aliases(tabs)
+    tabs["cohort_comparison"] = {
+        "comparison": None,
+        "agent_comparison": [agent_payload],
+    }
     return {
         "sql_backed": True,
         "sqlite": {
@@ -1776,82 +1722,12 @@ def _sql_dashboard_session_payload(db_path: Path, session_id: str) -> dict[str, 
             "sessions": navigation_page,
             "tabs": tabs,
         },
-        "comparison": None,
         "sessions": navigation_cards,
         "quality_rules": _quality_rules_payload(),
         "session_list_total": navigation_page["total"],
         "focused_session_id": session_id,
-        "unique_sessions": 1,
         "first_event_ts": session_row["started_at"] or "",
         "last_event_ts": session_row["started_at"] or "",
-        "avg_quality_score": quality_score,
-        "prompt_submits": scoped_overview["prompt_count"],
-        "tool_calls": scoped_overview["tool_call_count"],
-        "tool_to_prompt_ratio": tabs["overview"]["tool_to_prompt_ratio"],
-        "events_by_type": activity_view["events_by_type"],
-        "source_provenance": source_provenance,
-        "failure_rate_pct": failure_rate_pct,
-        "file_edits": tools_view["file_edits"],
-        "file_reads": tools_view["file_reads"],
-        "total_input_tokens": scoped_overview["input_tokens"],
-        "total_output_tokens": scoped_overview["output_tokens"],
-        "total_cache_creation_tokens": int(session_row["cache_creation_tokens"] or 0),
-        "total_cache_read_tokens": int(session_row["cache_read_tokens"] or 0),
-        "total_tokens": total_tokens,
-        "total_cost": cost,
-        "total_cost_usd": cost,
-        "input_cost": costs_view["cost_breakdown"]["input_cost_usd"],
-        "input_cost_usd": costs_view["cost_breakdown"]["input_cost_usd"],
-        "output_cost": costs_view["cost_breakdown"]["output_cost_usd"],
-        "output_cost_usd": costs_view["cost_breakdown"]["output_cost_usd"],
-        "cache_creation_cost": costs_view["cost_breakdown"]["cache_creation_cost_usd"],
-        "cache_creation_cost_usd": costs_view["cost_breakdown"]["cache_creation_cost_usd"],
-        "cache_read_cost": costs_view["cost_breakdown"]["cache_read_cost_usd"],
-        "cache_read_cost_usd": costs_view["cost_breakdown"]["cache_read_cost_usd"],
-        "pricing_unit": "usd",
-        "pricing_source": "local",
-        "tools_by_count": tools_view["tools_by_count"],
-        "models_by_count": models_view["models_by_count"],
-        "unique_models": models_view["unique_models"],
-        "skills_by_count": tools_view["skills_by_count"],
-        "activity_by_day": activity_view["activity_by_day"],
-        "activity_by_hour": activity_view["activity_by_hour"],
-        "peak_hour": activity_view["peak_hour"],
-        "peak_hour_count": activity_view["peak_hour_count"],
-        "weekly_trends": weekly_trends,
-        "agent_cost_over_time": costs_view["agent_cost_over_time"],
-        "graph_tool_transitions": [],
-        "graph_cooccurrence": {"tools": [], "matrix": []},
-        "graph_latency_histograms": {},
-        "graph_dep": {"nodes": [], "edges": [], "top_mcp_servers": []},
-        "graph_session_timeline": [],
-        "graph_semantic": {"nodes": [], "edges": [], "sessions": [], "legend": []},
-        "agents": agents_view["agents"],
-        "agent_comparison": agents_view["agent_comparison"],
-        "mcp_calls": mcp_view["mcp_calls"],
-        "mcp_servers_by_count": mcp_view["mcp_servers_by_count"],
-        "mcp_server_before": mcp_view["mcp_server_before"],
-        "mcp_server_after": mcp_view["mcp_server_after"],
-        "subagent_types_by_count": tools_view["subagent_types_by_count"],
-        "subagent_stops_by_type": tools_view["subagent_stops_by_type"],
-        "subagent_launches": tools_view["subagent_launches"],
-        "subagent_total_starts": tools_view["subagent_total_starts"],
-        "subagent_total_stops": tools_view["subagent_total_stops"],
-        "top_commands": tools_view["top_commands"],
-        "unique_commands": tools_view["unique_commands"],
-        "signature_command": tools_view["signature_command"],
-        "signature_command_count": tools_view["signature_command_count"],
-        "tool_percentiles": tools_view["tool_percentiles"],
-        "model_costs": costs_view["model_costs"],
-        "model_costs_usd": costs_view["model_costs_usd"],
-        "strengths": insight_payload["strengths"],
-        "observations": insight_payload["observations"],
-        "recommendations": insight_payload["recommendations"],
-        "practical_examples": insight_payload["practical_examples"],
-        "achievements": insight_payload["achievements"],
-        "token_economy": insight_payload["token_economy"],
-        "tool_failures": scoped_overview["failure_count"],
-        "shell_executions": tools_view["shell_executions"],
     }
 
 
@@ -1879,18 +1755,18 @@ def _sql_dashboard_tab_payload(
     }
 
 
-_EXPLORE_VIEW_TABS: dict[str, tuple[str, ...]] = {
+EXPLORE_VIEW_TABS: dict[str, tuple[str, ...]] = {
     "usage": ("activity", "models", "costs", "usage_tools", "mcp"),
     "tools": ("tools", "mcp"),
-    "graph": ("graphs",),
+    "graph": ("graph",),
     "context": ("specs", "memory", "privacy", "exports"),
 }
 
-def _canonical_explore_view(view_name: str) -> str:
+def canonical_explore_view(view_name: str) -> str:
     return view_name.strip().lower().replace("-", "_")
 
 
-def _sql_dashboard_explore_payload(
+def build_explore_payload(
     db_path: Path,
     view_name: str,
     *,
@@ -1901,8 +1777,8 @@ def _sql_dashboard_explore_payload(
     status: str = "all",
     range_name: str = "all",
 ) -> dict[str, object]:
-    canonical_view = _canonical_explore_view(view_name)
-    tab_names = _EXPLORE_VIEW_TABS.get(canonical_view)
+    canonical_view = canonical_explore_view(view_name)
+    tab_names = EXPLORE_VIEW_TABS.get(canonical_view)
     if tab_names is None:
         raise ValueError(f"Unknown Explore view: {view_name}")
 
@@ -1915,7 +1791,7 @@ def _sql_dashboard_explore_payload(
     }
     filtered_tabs = None
     if has_scope:
-        filtered_tabs = _sql_dashboard_payload(
+        filtered_tabs = build_dashboard_payload(
             db_path,
             q=q,
             session_id=session_id,
@@ -1944,11 +1820,8 @@ def _sql_dashboard_explore_payload(
     return payload
 
 
-def _dashboard_scope(query: Mapping[str, str]) -> tuple[str, str, set[str], str, str, str]:
+def parse_dashboard_scope(query: Mapping[str, str]) -> tuple[str, str, set[str], str, str, str]:
     agents = {agent for agent in (query.get("agents") or "").split(",") if agent}
-    legacy_agent = (query.get("agent") or "").strip()
-    if not agents and legacy_agent and legacy_agent != "all":
-        agents.add(legacy_agent)
     return (
         (query.get("q") or "").strip(),
         (query.get("session") or "").strip(),
@@ -1959,7 +1832,7 @@ def _dashboard_scope(query: Mapping[str, str]) -> tuple[str, str, set[str], str,
     )
 
 
-def _sql_dashboard_payload(
+def build_dashboard_payload(
     db_path: Path,
     *,
     limit: int = 50,
@@ -2135,24 +2008,24 @@ def _sql_dashboard_payload(
         first_event_ts = min(row["started_at"] for row in scoped_session_rows if row.get("started_at"))
     prompt_count = sum(row["prompt_count"] for row in scoped_session_rows)
     scoped_session_ids = {str(row["session_id"]) for row in scoped_session_rows}
-    compat = _sql_dashboard_compat_payload(
+    metrics = _sql_dashboard_metrics(
         db_path,
         session_ids=scoped_session_ids if has_scope_filter else None,
         include_heavy=not (lazy_heavy_tabs or lazy_all_tabs),
         include_base=not lazy_all_tabs,
         base_tab_names=base_tab_names,
     )
-    scoped_overview["source_provenance"] = compat["source_provenance"]
-    cost_breakdown = compat["cost_breakdown"]
+    scoped_overview["source_provenance"] = metrics["source_provenance"]
+    cost_breakdown = metrics["cost_breakdown"]
     total_cost_usd = float(scoped_overview["estimated_cost_usd"] or cost_breakdown["total_cost_usd"] or 0)
     failure_rate_pct = round(
         100 * scoped_overview["failure_count"] / scoped_overview["tool_call_count"],
         1,
     ) if scoped_overview["tool_call_count"] else 0.0
-    weekly_trends = _compute_weekly_trends(Counter(compat["activity_by_day"]))
+    weekly_trends = _compute_weekly_trends(Counter(metrics["activity_by_day"]))
     sqlite_payload["tabs"] = {
         **dict(sqlite_payload.get("tabs") or {}),
-        "overview": {
+        "usage": {
             "avg_quality_score": (
                 sum(float(row.get("quality_score") or 0) for row in scoped_session_rows) / len(scoped_session_rows)
                 if scoped_session_rows else 0
@@ -2167,93 +2040,96 @@ def _sql_dashboard_payload(
             ),
             "failure_rate_pct": failure_rate_pct,
             "tool_failures": int(scoped_overview["failure_count"]),
-            "mcp_calls": compat["mcp_calls"],
-            "mcp_servers_by_count": compat["mcp_servers_by_count"],
-            "subagent_launches": compat["subagent_launches"],
-            "subagent_types_by_count": compat["subagent_types_by_count"],
-            "file_edits": compat["file_edits"],
-            "shell_executions": compat["shell_executions"],
-            "unique_commands": compat["unique_commands"],
-            "signature_command": compat["signature_command"],
-            "signature_command_count": compat["signature_command_count"],
-            "peak_hour": compat["peak_hour"],
-            "peak_hour_count": compat["peak_hour_count"],
-            "unique_models": compat["unique_models"],
-            "models_by_count": compat["models_by_count"],
-            "events_by_type": compat["events_by_type"],
-            "source_provenance": compat["source_provenance"],
+            "mcp_calls": metrics["mcp_calls"],
+            "mcp_servers_by_count": metrics["mcp_servers_by_count"],
+            "subagent_launches": metrics["subagent_launches"],
+            "subagent_types_by_count": metrics["subagent_types_by_count"],
+            "file_edits": metrics["file_edits"],
+            "shell_executions": metrics["shell_executions"],
+            "unique_commands": metrics["unique_commands"],
+            "signature_command": metrics["signature_command"],
+            "signature_command_count": metrics["signature_command_count"],
+            "peak_hour": metrics["peak_hour"],
+            "peak_hour_count": metrics["peak_hour_count"],
+            "unique_models": metrics["unique_models"],
+            "models_by_count": metrics["models_by_count"],
+            "events_by_type": metrics["events_by_type"],
+            "source_provenance": metrics["source_provenance"],
             "total_input_tokens": scoped_overview["input_tokens"],
             "total_output_tokens": scoped_overview["output_tokens"],
-            "total_cache_creation_tokens": compat["total_cache_creation_tokens"],
-            "total_cache_read_tokens": compat["total_cache_read_tokens"],
+            "total_cache_creation_tokens": metrics["total_cache_creation_tokens"],
+            "total_cache_read_tokens": metrics["total_cache_read_tokens"],
             "total_cost_usd": total_cost_usd,
             "input_cost_usd": cost_breakdown["input_cost_usd"],
             "output_cost_usd": cost_breakdown["output_cost_usd"],
             "cache_creation_cost_usd": cost_breakdown["cache_creation_cost_usd"],
             "cache_read_cost_usd": cost_breakdown["cache_read_cost_usd"],
+            "pricing_unit": "usd",
             "pricing_source": "local",
-            "model_costs": compat["model_costs"],
-            "agent_cost_over_time": compat["agent_cost_over_time"],
+            "model_costs": metrics["model_costs"],
+            "agent_cost_over_time": metrics["agent_cost_over_time"],
         },
         "activity": {
-            "events_by_type": compat["events_by_type"],
-            "activity_by_day": compat["activity_by_day"],
-            "activity_by_hour": compat["activity_by_hour"],
-            "peak_hour": compat["peak_hour"],
-            "peak_hour_count": compat["peak_hour_count"],
+            "events_by_type": metrics["events_by_type"],
+            "activity_by_day": metrics["activity_by_day"],
+            "activity_by_hour": metrics["activity_by_hour"],
+            "peak_hour": metrics["peak_hour"],
+            "peak_hour_count": metrics["peak_hour_count"],
+            "weekly_trends": weekly_trends,
         },
         "models": {
-            "models_by_count": compat["models_by_count"],
-            "unique_models": compat["unique_models"],
+            "models_by_count": metrics["models_by_count"],
+            "unique_models": metrics["unique_models"],
         },
         "costs": {
-            "model_costs": compat["model_costs"],
-            "model_costs_usd": compat["model_costs_usd"],
-            "cost_breakdown": compat["cost_breakdown"],
-            "total_cache_creation_tokens": compat["total_cache_creation_tokens"],
-            "total_cache_read_tokens": compat["total_cache_read_tokens"],
-            "agent_cost_over_time": compat["agent_cost_over_time"],
+            "model_costs": metrics["model_costs"],
+            "model_costs_usd": metrics["model_costs_usd"],
+            "cost_breakdown": metrics["cost_breakdown"],
+            "total_cache_creation_tokens": metrics["total_cache_creation_tokens"],
+            "total_cache_read_tokens": metrics["total_cache_read_tokens"],
+            "agent_cost_over_time": metrics["agent_cost_over_time"],
         },
         "tools": {
-            "tools_by_count": compat["tools_by_count"],
-            "tool_percentiles": compat["tool_percentiles"],
-            "skills_by_count": compat["skills_by_count"],
-            "subagent_types_by_count": compat["subagent_types_by_count"],
-            "subagent_stops_by_type": compat["subagent_stops_by_type"],
-            "subagent_launches": compat["subagent_launches"],
-            "subagent_total_starts": compat["subagent_total_starts"],
-            "subagent_total_stops": compat["subagent_total_stops"],
-            "top_commands": compat["top_commands"],
-            "unique_commands": compat["unique_commands"],
-            "signature_command": compat["signature_command"],
-            "signature_command_count": compat["signature_command_count"],
-            "shell_executions": compat["shell_executions"],
-            "file_edits": compat["file_edits"],
-            "file_reads": compat["file_reads"],
+            "tools_by_count": metrics["tools_by_count"],
+            "tool_percentiles": metrics["tool_percentiles"],
+            "skills_by_count": metrics["skills_by_count"],
+            "subagent_types_by_count": metrics["subagent_types_by_count"],
+            "subagent_stops_by_type": metrics["subagent_stops_by_type"],
+            "subagent_launches": metrics["subagent_launches"],
+            "subagent_total_starts": metrics["subagent_total_starts"],
+            "subagent_total_stops": metrics["subagent_total_stops"],
+            "top_commands": metrics["top_commands"],
+            "unique_commands": metrics["unique_commands"],
+            "signature_command": metrics["signature_command"],
+            "signature_command_count": metrics["signature_command_count"],
+            "shell_executions": metrics["shell_executions"],
+            "file_edits": metrics["file_edits"],
+            "file_reads": metrics["file_reads"],
         },
         "mcp": {
-            "mcp_calls": compat["mcp_calls"],
-            "mcp_servers_by_count": compat["mcp_servers_by_count"],
-            "mcp_server_before": compat["mcp_server_before"],
-            "mcp_server_after": compat["mcp_server_after"],
+            "mcp_calls": metrics["mcp_calls"],
+            "mcp_servers_by_count": metrics["mcp_servers_by_count"],
+            "mcp_server_before": metrics["mcp_server_before"],
+            "mcp_server_after": metrics["mcp_server_after"],
         },
         "agents": {
-            "agent_comparison": compat["agent_comparison"],
-            "agents": compat["agents"],
+            "agent_comparison": metrics["agent_comparison"],
+            "agents": metrics["agents"],
         },
-        "graphs": {
-            "graph_tool_transitions": compat["graph_tool_transitions"],
-            "graph_cooccurrence": compat["graph_cooccurrence"],
-            "graph_dep": compat["graph_dep"],
-            "graph_session_timeline": compat["graph_session_timeline"],
-            "graph_semantic": compat["graph_semantic"],
+        "graph": {
+            "graph_tool_transitions": metrics["graph_tool_transitions"],
+            "graph_cooccurrence": metrics["graph_cooccurrence"],
+            "graph_dep": metrics["graph_dep"],
+            "graph_session_timeline": metrics["graph_session_timeline"],
+            "graph_semantic": metrics["graph_semantic"],
+            "graph_latency_histograms": {},
         },
-        "specs": compat["specs"],
-        "memory": compat["memory"],
-        "privacy": compat["privacy"],
-        "exports": compat["exports"],
+        "specs": metrics["specs"],
+        "memory": metrics["memory"],
+        "privacy": metrics["privacy"],
+        "exports": metrics["exports"],
     }
-    insight_payload = _sql_insight_payload(scoped_overview, scoped_sessions, compat)
+    insight_payload = _sql_insight_payload(scoped_overview, scoped_sessions, metrics)
     sqlite_payload["tabs"]["observations"] = {
         "strengths": insight_payload["strengths"],
         "observations": insight_payload["observations"],
@@ -2274,103 +2150,24 @@ def _sql_dashboard_payload(
             status=status,
             range_name=range_name,
         )
-    sqlite_payload["tabs"]["compare"] = {
+    sqlite_payload["tabs"]["cohort_comparison"] = {
         "comparison": comparison_payload,
-        "agent_comparison": compat["agent_comparison"],
+        "agent_comparison": metrics["agent_comparison"],
     }
-    _add_canonical_dashboard_tab_aliases(sqlite_payload["tabs"])
     payload = {
         "sql_backed": True,
         "sqlite": sqlite_payload,
-        "comparison": comparison_payload,
         "sessions": sessions,
         "quality_rules": _quality_rules_payload(),
         "session_list_total": len(nav_sessions),
         "focused_session_id": session_id,
-        "unique_sessions": scoped_overview["session_count"],
         "first_event_ts": first_event_ts,
         "last_event_ts": max((row["started_at"] for row in scoped_session_rows if row.get("started_at")), default=""),
-        "avg_quality_score": (
-            sum(float(row.get("quality_score") or 0) for row in scoped_session_rows) / len(scoped_session_rows)
-            if scoped_session_rows else 0
-        ),
-        "prompt_submits": prompt_count,
-        "tool_calls": scoped_overview["tool_call_count"],
-        "tool_to_prompt_ratio": f"{scoped_overview['tool_call_count'] / prompt_count:.1f}" if prompt_count else "0.0",
-        "events_by_type": compat["events_by_type"],
-        "source_provenance": compat["source_provenance"],
-        "failure_rate_pct": failure_rate_pct,
-        "file_edits": compat["file_edits"],
-        "file_reads": compat["file_reads"],
-        "total_input_tokens": scoped_overview["input_tokens"],
-        "total_output_tokens": scoped_overview["output_tokens"],
-        "total_cache_creation_tokens": compat["total_cache_creation_tokens"],
-        "total_cache_read_tokens": compat["total_cache_read_tokens"],
-        "total_tokens": (
-            scoped_overview["input_tokens"]
-            + scoped_overview["output_tokens"]
-            + compat["total_cache_creation_tokens"]
-            + compat["total_cache_read_tokens"]
-        ),
-        "total_cost": total_cost_usd,
-        "total_cost_usd": total_cost_usd,
-        "input_cost": cost_breakdown["input_cost_usd"],
-        "input_cost_usd": cost_breakdown["input_cost_usd"],
-        "output_cost": cost_breakdown["output_cost_usd"],
-        "output_cost_usd": cost_breakdown["output_cost_usd"],
-        "cache_creation_cost": cost_breakdown["cache_creation_cost_usd"],
-        "cache_creation_cost_usd": cost_breakdown["cache_creation_cost_usd"],
-        "cache_read_cost": cost_breakdown["cache_read_cost_usd"],
-        "cache_read_cost_usd": cost_breakdown["cache_read_cost_usd"],
-        "pricing_unit": "usd",
-        "pricing_source": "local",
-        "tools_by_count": compat["tools_by_count"],
-        "models_by_count": compat["models_by_count"],
-        "unique_models": compat["unique_models"],
-        "skills_by_count": compat["skills_by_count"],
-        "activity_by_day": compat["activity_by_day"],
-        "activity_by_hour": compat["activity_by_hour"],
-        "peak_hour": compat["peak_hour"],
-        "peak_hour_count": compat["peak_hour_count"],
-        "weekly_trends": weekly_trends,
-        "agent_cost_over_time": compat["agent_cost_over_time"],
-        "graph_tool_transitions": compat["graph_tool_transitions"],
-        "graph_cooccurrence": compat["graph_cooccurrence"],
-        "graph_latency_histograms": {},
-        "graph_dep": compat["graph_dep"],
-        "graph_session_timeline": compat["graph_session_timeline"],
-        "graph_semantic": compat["graph_semantic"],
-        "agents": compat["agents"],
-        "agent_comparison": compat["agent_comparison"],
-        "mcp_calls": compat["mcp_calls"],
-        "mcp_servers_by_count": compat["mcp_servers_by_count"],
-        "mcp_server_before": compat["mcp_server_before"],
-        "mcp_server_after": compat["mcp_server_after"],
-        "subagent_types_by_count": compat["subagent_types_by_count"],
-        "subagent_stops_by_type": compat["subagent_stops_by_type"],
-        "subagent_launches": compat["subagent_launches"],
-        "subagent_total_starts": compat["subagent_total_starts"],
-        "subagent_total_stops": compat["subagent_total_stops"],
-        "top_commands": compat["top_commands"],
-        "unique_commands": compat["unique_commands"],
-        "signature_command": compat["signature_command"],
-        "signature_command_count": compat["signature_command_count"],
-        "tool_percentiles": compat["tool_percentiles"],
-        "model_costs": compat["model_costs"],
-        "model_costs_usd": compat["model_costs_usd"],
-        "strengths": insight_payload["strengths"],
-        "observations": insight_payload["observations"],
-        "recommendations": insight_payload["recommendations"],
-        "practical_examples": insight_payload["practical_examples"],
-        "achievements": insight_payload["achievements"],
-        "token_economy": insight_payload["token_economy"],
     }
-    payload["tool_failures"] = int(scoped_overview["failure_count"])
-    payload["shell_executions"] = compat["shell_executions"]
     return payload
 
 
-def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object] | None:
+def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | None:
     from reflect.store.sqlite import connect_sqlite_read_only
 
     conn = connect_sqlite_read_only(db_path)
@@ -2412,7 +2209,21 @@ def _load_sql_session_detail(db_path: Path, session_id: str) -> dict[str, object
         hook_facts = HookFactRepository(conn).load_session(session_id)
         tool_rows = _dict_rows(conn.execute("SELECT * FROM tool_calls WHERE session_id = ?", (session_id,)))
         tools_by_step = {row["step_id"]: row for row in tool_rows}
-        mcp_rows = _dict_rows(conn.execute("SELECT * FROM mcp_calls WHERE session_id = ?", (session_id,)))
+        mcp_rows = _dict_rows(conn.execute(
+            """
+            SELECT
+              mc.*,
+              tc.step_id,
+              tc.session_id,
+              tc.status,
+              tc.duration_ms,
+              tc.raw_attrs_json
+            FROM mcp_calls AS mc
+            JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+            WHERE tc.session_id = ?
+            """,
+            (session_id,),
+        ))
         mcp_by_step = {row["step_id"]: row for row in mcp_rows}
         raw_span_rows = _dict_rows(conn.execute(
             """
@@ -2829,653 +2640,3 @@ def _native_session_path(session_row: dict[str, object]) -> Path | None:
         return None
     path = Path(path_text).expanduser()
     return path if path.is_file() else None
-
-
-def _start_publish_server(
-    *,
-    db_path: Path,
-    preparation_worker: BackgroundPreparationWorker | None = None,
-    open_browser: bool = True,
-) -> None:
-    """Start a local FastAPI server and open the dashboard in a browser.
-
-    Blocks until Ctrl-C. Uses ``?report=api/data`` so the dashboard
-    fetches JSON from the API — no URL encoding at all.
-    """
-    port = int(os.environ.get("REFLECT_PORT", "8765"))
-    docs_dir = _dashboard_docs_dir()
-    _start_publish_server_inline(
-        port,
-        docs_dir,
-        db_path=db_path,
-        preparation_worker=preparation_worker,
-        open_browser=open_browser,
-    )
-
-
-def _build_dashboard_app(
-    *,
-    docs_dir: Path,
-    db_path: Path,
-    preparation_worker: BackgroundPreparationWorker | None = None,
-    project_root: Path | None = None,
-):
-    from fastapi import FastAPI, Request
-    from fastapi.responses import FileResponse, JSONResponse
-    from fastapi.staticfiles import StaticFiles
-
-    globals()["Request"] = Request
-
-    app = FastAPI(title="reflect dashboard", docs_url=None, redoc_url=None)
-    workflow_project_root = (project_root or Path.cwd()).expanduser().resolve()
-
-    def resolve_workflow_project_root(value: object = None) -> Path:
-        requested = str(value or "").strip()
-        return Path(requested).expanduser().resolve() if requested else workflow_project_root
-
-    if preparation_worker is not None:
-        dashboard_cache = DashboardDataCache(
-            lambda: _sql_dashboard_payload(
-                db_path,
-                limit=50,
-                offset=0,
-                lazy_all_tabs=True,
-            ),
-            refresh_loader=lambda: _sql_dashboard_payload(
-                db_path,
-                lazy_heavy_tabs=True,
-                base_tab_names=set(_EXPLORE_VIEW_TABS["usage"]),
-            ),
-        )
-    else:
-        dashboard_cache = DashboardDataCache(
-            lambda: _sql_dashboard_payload(db_path, lazy_heavy_tabs=True, base_tab_names=set(_EXPLORE_VIEW_TABS["usage"]))
-        )
-    if preparation_worker is not None:
-        preparation_worker.add_completion_callback(lambda _result: dashboard_cache.refresh())
-
-    @app.get("/api/data")
-    def api_data(request: Request):
-        perf_start = _perf_start()
-        perf_kind = "unknown"
-        params = request.query_params
-        q, session_id, agents, model, status, range_name = _dashboard_scope(params)
-        active_tab = (params.get("tab") or "sessions").strip().lower()
-        explore_view = _canonical_explore_view(params.get("view") or "usage")
-        filtered_base_tabs = {
-            ("explore", "usage"): {"activity", "models", "costs", "usage_tools", "mcp"},
-            ("explore", "tools"): {"tools", "mcp"},
-            ("inbox", "usage"): {"activity", "models", "costs", "tools", "mcp", "agents"},
-        }.get((active_tab, explore_view), set())
-        if session_id:
-            filtered_base_tabs = {"activity", "models", "costs", "tools", "mcp", "agents"}
-        has_filter = any([q, session_id, agents, model != "all", status != "all", range_name != "all"])
-        try:
-            if not has_filter:
-                perf_kind = "cached"
-                return JSONResponse(dashboard_cache.get())
-            if session_id and not any([q, agents, model != "all", status != "all", range_name != "all"]):
-                perf_kind = "session"
-                return JSONResponse(_sql_dashboard_session_payload(db_path, session_id))
-            perf_kind = "filtered"
-            return JSONResponse(_sql_dashboard_payload(
-                db_path,
-                limit=50,
-                offset=0,
-                q=q,
-                session_id=session_id,
-                agents=agents,
-                model=model,
-                status=status,
-                range_name=range_name,
-                lazy_heavy_tabs=True,
-                include_comparison=active_tab == "explore" and explore_view == "usage",
-                base_tab_names=filtered_base_tabs,
-            ))
-        finally:
-            _perf_finish(
-                "api.data",
-                perf_start,
-                kind=perf_kind,
-                session=bool(session_id),
-                agents=",".join(sorted(agents)),
-            )
-
-    @app.get("/api/explore/{view_name}")
-    def api_explore(view_name: str, request: Request):
-        perf_start = _perf_start()
-        q, session_id, agents, model, status, range_name = _dashboard_scope(request.query_params)
-        try:
-            return JSONResponse(
-                _sql_dashboard_explore_payload(
-                    db_path,
-                    view_name,
-                    session_id=session_id,
-                    q=q,
-                    agents=agents,
-                    model=model,
-                    status=status,
-                    range_name=range_name,
-                )
-            )
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc), "view": view_name}, status_code=404)
-        except Exception as exc:
-            return JSONResponse({"error": str(exc), "db_path": str(db_path)}, status_code=500)
-        finally:
-            _perf_finish("api.explore", perf_start, view=view_name, session=bool(session_id))
-
-    @app.get("/api/session/{session_id:path}")
-    def api_session(session_id: str):
-        detail = _load_sql_session_detail(db_path, session_id)
-        if detail is None:
-            return JSONResponse({"error": f"Session {session_id} not found"}, status_code=404)
-        return JSONResponse(detail, headers={"Access-Control-Allow-Origin": "*"})
-
-    @app.get("/api/status")
-    def api_status():
-        snapshot = (
-            preparation_worker.snapshot()
-            if preparation_worker is not None
-            else PreparationSnapshot(state=PreparationState.IDLE, generation=0)
-        )
-        return JSONResponse({
-            "preparation": snapshot.as_dict(),
-            "refresh_available": preparation_worker is not None,
-        })
-
-    @app.post("/api/refresh")
-    def api_refresh():
-        if preparation_worker is None:
-            return JSONResponse(
-                {
-                    "error": "This report server is snapshot-only. Start Reflect normally or use `reflect server --refresh start`.",
-                    "refresh_available": False,
-                },
-                status_code=409,
-            )
-        started = preparation_worker.start()
-        return JSONResponse(
-            {
-                "started": started,
-                "refresh_available": True,
-                "preparation": preparation_worker.snapshot().as_dict(),
-            },
-            status_code=202 if started else 200,
-        )
-
-    @app.get("/api/inbox")
-    def api_inbox(request: Request):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        params = request.query_params
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            service = ImprovementService(conn, initialize_schema=False)
-            status = (params.get("status") or "").strip() or None
-            include_resolved = (params.get("include_resolved") or "").lower() in {
-                "1",
-                "true",
-                "yes",
-            }
-            limit = min(500, max(1, int(params.get("limit") or 100)))
-            findings = service.list_inbox_findings(
-                limit=500,
-                status=status,
-                include_resolved=include_resolved,
-            )
-            summary = service.repository.summary(limit=0)
-            if status:
-                raw_observation_count = summary.counts_by_status.get(status, 0)
-            elif include_resolved:
-                raw_observation_count = sum(summary.counts_by_status.values())
-            else:
-                raw_observation_count = sum(
-                    summary.counts_by_status.get(item, 0)
-                    for item in (
-                        "new",
-                        "acknowledged",
-                        "proposal_ready",
-                        "approved",
-                        "active",
-                        "regressed",
-                    )
-                )
-            return JSONResponse(
-                {
-                    "generated_at": summary.generated_at,
-                    "findings": [
-                        item.model_dump(mode="json") for item in findings[:limit]
-                    ],
-                    "inbox_total_count": len(findings),
-                    "raw_observation_count": raw_observation_count,
-                    "counts_by_status": summary.counts_by_status,
-                    "pending_workflows": summary.pending_workflows,
-                    "active_interventions": summary.active_interventions,
-                    "verified_improvement_rate": summary.verified_improvement_rate,
-                }
-            )
-        except (ValueError, sqlite3.Error) as exc:
-            return JSONResponse({"error": str(exc), "db_path": str(db_path)}, status_code=500)
-        finally:
-            conn.close()
-
-    @app.get("/api/rules")
-    def api_improvement_rules():
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            rules = ImprovementService(conn, initialize_schema=False).repository.list_rule_summaries()
-            return JSONResponse(
-                {
-                    "rules": [rule.model_dump(mode="json") for rule in rules],
-                    "extension": {
-                        "kind": "code_backed",
-                        "module": "reflect.improvements",
-                        "base_class": "BaseImprovementRule",
-                        "registry": "DEFAULT_RULE_REGISTRY",
-                        "registration": "RuleRegistry.register",
-                    },
-                }
-            )
-        finally:
-            conn.close()
-
-    @app.get("/api/inbox/{finding_id}")
-    def api_inbox_detail(finding_id: str):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            observation = ImprovementService(conn, initialize_schema=False).repository.get_observation(finding_id)
-            if observation is None:
-                return JSONResponse({"error": f"Finding {finding_id} not found"}, status_code=404)
-            return JSONResponse(observation.model_dump(mode="json"))
-        finally:
-            conn.close()
-
-    @app.get("/api/inbox/{observation_id}/sessions")
-    def api_inbox_sessions(observation_id: str, request: Request):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            ledger = ImprovementService(conn, initialize_schema=False).finding_session_ledger(
-                observation_id,
-                limit=min(200, max(1, int(request.query_params.get("limit") or 50))),
-            )
-            return JSONResponse(ledger.model_dump(mode="json"))
-        except KeyError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=404)
-        finally:
-            conn.close()
-
-    @app.get("/api/workflows")
-    def api_workflows(request: Request):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            behavior_type = request.query_params.get("type")
-            status = request.query_params.get("status")
-            service = ImprovementService(conn, initialize_schema=False)
-            candidates = service.workflows.list(
-                behavior_types={behavior_type} if behavior_type else None,
-                statuses={status} if status else None,
-            )
-            serialized = []
-            for candidate in candidates:
-                item = candidate.model_dump(mode="json")
-                try:
-                    item["skill_id"] = service.skills.skill_for_candidate(candidate.id).id
-                except KeyError:
-                    item["skill_id"] = None
-                serialized.append(item)
-            return JSONResponse(
-                {"workflows": serialized}
-            )
-        finally:
-            conn.close()
-
-    @app.get("/api/loops")
-    def api_loops(request: Request):
-        from reflect.improvements.models import LoopKind, LoopStatus
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            service = ImprovementService(conn, initialize_schema=False)
-            kind = request.query_params.get("kind")
-            status = request.query_params.get("status")
-            records = service.loops.list(
-                kind=LoopKind(kind) if kind else None,
-                status=LoopStatus(status) if status else None,
-                limit=min(500, max(1, int(request.query_params.get("limit") or 100))),
-            )
-            return JSONResponse(
-                {
-                    "loops": [record.model_dump(mode="json") for record in records],
-                }
-            )
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=422)
-        finally:
-            conn.close()
-
-    @app.get("/api/loops/{loop_id}")
-    def api_loop_detail(loop_id: str):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            service = ImprovementService(conn, initialize_schema=False)
-            return JSONResponse(service.loops.show(loop_id).model_dump(mode="json"))
-        except KeyError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=404)
-        finally:
-            conn.close()
-
-    @app.get("/api/skills")
-    def api_skills(request: Request):
-        from reflect.improvements.models import SkillLifecycleState
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            service = ImprovementService(conn, initialize_schema=False)
-            status = request.query_params.get("status")
-            include_stale = (
-                request.query_params.get("include_stale") or ""
-            ).lower() in {"1", "true", "yes"}
-            lifecycle = SkillLifecycleState(status) if status else None
-            counts_by_lifecycle = service.skills.counts_by_lifecycle()
-            records = service.skills.list(
-                lifecycle=lifecycle,
-                include_stale=include_stale,
-                limit=min(500, max(1, int(request.query_params.get("limit") or 100))),
-            )
-            if lifecycle:
-                total_count = counts_by_lifecycle.get(lifecycle.value, 0)
-            elif include_stale:
-                total_count = sum(counts_by_lifecycle.values())
-            else:
-                total_count = sum(
-                    counts_by_lifecycle.get(item.value, 0)
-                    for item in (SkillLifecycleState.ACTIVE, SkillLifecycleState.PENDING)
-                )
-            return JSONResponse(
-                {
-                    "skills": [record.model_dump(mode="json") for record in records],
-                    "total_count": total_count,
-                    "archived_count": counts_by_lifecycle.get(SkillLifecycleState.STALE.value, 0),
-                    "counts_by_lifecycle": counts_by_lifecycle,
-                }
-            )
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=422)
-        finally:
-            conn.close()
-
-    @app.get("/api/skills/{skill_id}")
-    def api_skill_detail(skill_id: str):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            service = ImprovementService(conn, initialize_schema=False)
-            return JSONResponse(service.skills.show(skill_id).model_dump(mode="json"))
-        except KeyError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=404)
-        finally:
-            conn.close()
-
-    @app.get("/api/workflows/{candidate_id}/sessions")
-    def api_workflow_sessions(candidate_id: str, request: Request):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            ledger = ImprovementService(conn, initialize_schema=False).repository.workflow_session_ledger(
-                candidate_id,
-                limit=min(200, max(1, int(request.query_params.get("limit") or 50))),
-            )
-            return JSONResponse(ledger.model_dump(mode="json"))
-        except KeyError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=404)
-        finally:
-            conn.close()
-
-    @app.get("/api/observations/{observation_id}/sessions")
-    def api_observation_sessions(observation_id: str, request: Request):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            service = ImprovementService(conn, initialize_schema=False)
-            observation_ids = service.resolve_finding_observation_ids(observation_id)
-            ledger = service.repository.observation_session_ledger(
-                observation_id,
-                limit=min(200, max(1, int(request.query_params.get("limit") or 50))),
-                observation_ids=observation_ids,
-            )
-            return JSONResponse(ledger.model_dump(mode="json"))
-        except KeyError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=404)
-        finally:
-            conn.close()
-
-    @app.get("/api/workflows/{candidate_id}/preview")
-    def api_workflow_preview(candidate_id: str, request: Request):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            return JSONResponse(
-                ImprovementService(conn, initialize_schema=False).workflows.preview(
-                    candidate_id,
-                    project_root=resolve_workflow_project_root(
-                        request.query_params.get("project_root")
-                    ),
-                )
-            )
-        except KeyError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=404)
-        except (OSError, RuntimeError, ValueError) as exc:
-            return JSONResponse({"error": str(exc)}, status_code=409)
-        finally:
-            conn.close()
-
-    @app.put("/api/workflows/{candidate_id}")
-    def api_workflow_edit(candidate_id: str, body: dict):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite
-
-        content = body.get("content")
-        if not isinstance(content, dict):
-            return JSONResponse({"error": "A structured workflow content object is required"}, status_code=422)
-        conn = connect_sqlite(db_path)
-        try:
-            candidate = ImprovementService(conn, initialize_schema=False).workflows.edit(
-                candidate_id, content=content
-            )
-            return JSONResponse(candidate.model_dump(mode="json"))
-        except KeyError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=404)
-        except (RuntimeError, ValueError) as exc:
-            return JSONResponse({"error": str(exc)}, status_code=409)
-        finally:
-            conn.close()
-
-    @app.post("/api/workflows/{candidate_id}/apply")
-    def api_workflow_apply(candidate_id: str, body: dict | None = None):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite
-
-        conn = connect_sqlite(db_path)
-        try:
-            return JSONResponse(
-                ImprovementService(conn, initialize_schema=False).workflows.apply(
-                    candidate_id,
-                    project_root=resolve_workflow_project_root((body or {}).get("project_root")),
-                )
-            )
-        except KeyError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=404)
-        except (OSError, RuntimeError, ValueError) as exc:
-            return JSONResponse({"error": str(exc)}, status_code=409)
-        finally:
-            conn.close()
-
-    @app.post("/api/workflows/{candidate_id}/rollback")
-    def api_workflow_rollback(candidate_id: str):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite
-
-        conn = connect_sqlite(db_path)
-        try:
-            return JSONResponse(
-                ImprovementService(conn, initialize_schema=False).workflows.rollback(candidate_id)
-            )
-        except KeyError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=404)
-        except (RuntimeError, ValueError) as exc:
-            return JSONResponse({"error": str(exc)}, status_code=409)
-        finally:
-            conn.close()
-
-    @app.post("/api/workflows/{candidate_id}/reject")
-    def api_workflow_reject(candidate_id: str, body: dict | None = None):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite
-
-        conn = connect_sqlite(db_path)
-        try:
-            candidate = ImprovementService(conn, initialize_schema=False).workflows.reject(
-                candidate_id,
-                reason=str((body or {}).get("reason") or "operator_rejected")[:200],
-            )
-            return JSONResponse(candidate.model_dump(mode="json"))
-        except KeyError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=404)
-        except (RuntimeError, ValueError) as exc:
-            return JSONResponse({"error": str(exc)}, status_code=409)
-        finally:
-            conn.close()
-
-    @app.post("/api/feedback/{session_id:path}")
-    def api_session_feedback(session_id: str, body: dict):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite
-
-        outcome = str(body.get("outcome") or "")
-        reason = body.get("reason")
-        conn = connect_sqlite(db_path)
-        try:
-            feedback_id = ImprovementService(conn, initialize_schema=False).repository.record_feedback(
-                session_id,
-                outcome,
-                reason_redacted=str(reason) if reason is not None else None,
-            )
-            return JSONResponse(
-                {"id": feedback_id, "session_id": session_id, "outcome": outcome},
-                status_code=201,
-            )
-        except KeyError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=404)
-        except ValueError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=422)
-        finally:
-            conn.close()
-
-    @app.get("/api/impact")
-    def api_impact():
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            service = ImprovementService(conn, initialize_schema=False)
-            return JSONResponse({"impact_checks": service.measurements.list()})
-        finally:
-            conn.close()
-
-    @app.get("/api/impact/{impact_id}/sessions")
-    def api_impact_sessions(impact_id: str):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            service = ImprovementService(conn, initialize_schema=False)
-            return JSONResponse(service.measurements.sessions(impact_id))
-        except KeyError as exc:
-            return JSONResponse({"error": str(exc)}, status_code=404)
-        finally:
-            conn.close()
-
-    @app.get("/")
-    def index():
-        html_file = docs_dir / "report.html"
-        if not html_file.exists():
-            html_file = docs_dir / "index.html"
-        return FileResponse(html_file, media_type="text/html")
-
-    if docs_dir.exists():
-        app.mount("/", StaticFiles(directory=str(docs_dir)), name="static")
-
-    return app
-
-
-def _start_publish_server_inline(
-    port: int,
-    docs_dir: Path,
-    *,
-    db_path: Path,
-    preparation_worker: BackgroundPreparationWorker | None = None,
-    open_browser: bool = True,
-) -> None:
-    """Inline FastAPI server for the local `reflect` browser report."""
-    import threading
-    import webbrowser
-
-    try:
-        import uvicorn
-        __import__("fastapi")
-    except ImportError:
-        logger.warning("FastAPI/uvicorn not installed. Install with: pip install fastapi uvicorn")
-        logger.warning("Falling back to writing artifact file...")
-        artifact = docs_dir / "_reflect_data.json"
-        artifact.write_text(json.dumps(_sql_dashboard_payload(db_path)), encoding="utf-8")
-        print(f"Wrote: {artifact}")
-        return
-
-    app = _build_dashboard_app(
-        docs_dir=docs_dir,
-        db_path=db_path,
-        preparation_worker=preparation_worker,
-    )
-    url = f"http://127.0.0.1:{port}/?report=api/data"
-    if open_browser:
-        threading.Timer(0.5, webbrowser.open, args=[url]).start()
-    print(f"\n  Serving at: {url}")
-    print("  Press Ctrl-C to stop\n")
-    if preparation_worker is not None:
-        preparation_worker.start()
-    try:
-        uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
-    finally:
-        if preparation_worker is not None:
-            preparation_worker.close()

@@ -2,6 +2,7 @@
 
 import json
 import re
+import runpy
 from pathlib import Path
 
 import pytest
@@ -169,14 +170,14 @@ def test_dashboard_session_filters_use_server_scoped_sql_payloads(path: Path):
     assert "event.detail?.hasFilters || dashboardSelectedSessionId" in text
     assert "(params.get('session') || '').trim()" in text
     assert "const cohortTab = sqlTab('cohort_comparison');" in text
-    assert "const comparison = cohortTab.comparison || D.comparison;" in text
+    assert "const comparison = cohortTab.comparison;" in text
     assert "cohortTab.agent_comparison || currentAgentComparison()" in text
     assert "const usageTab = sqlTab('usage');" in text
-    assert "usageTab.models_by_count || sqlTab('models').models_by_count || D.models_by_count || {}" in text
-    assert "usageTab.events_by_type || sqlTab('activity').events_by_type || D.events_by_type || {}" in text
-    assert "usageTab.total_input_tokens ?? D.total_input_tokens ?? 0" in text
-    assert "sqlTab('graph').graph_tool_transitions || D.graph_tool_transitions || []" in text
-    assert "sqlTab('graph').graph_dep || D.graph_dep" in text
+    assert "usageTab.models_by_count || sqlTab('models').models_by_count || {}" in text
+    assert "usageTab.events_by_type || sqlTab('activity').events_by_type || {}" in text
+    assert "usageTab.total_input_tokens || 0" in text
+    assert "sqlTab('graph').graph_tool_transitions || []" in text
+    assert "sqlTab('graph').graph_dep" in text
     assert "Cost Basis" in text
     assert "Pricing Source" not in text
 
@@ -191,9 +192,9 @@ def test_dashboard_html_builds_agent_filters_from_data_without_allowlist(path: P
     assert "function colorForAgent(agent)" in text
     assert "function formatAgentLabel(agent)" in text
     assert "function agentIconSvg(agent)" in text
-    assert "D.agent_comparison || []" in text
-    assert "Object.keys(D.models_by_count || {})" in text
-    assert "D.session_list_total || sessions.length || D.unique_sessions" in text
+    assert "agentTab.agent_comparison || []" in text
+    assert "Object.keys(sqlTab('models').models_by_count || {})" in text
+    assert "D.session_list_total || sessions.length || 0" in text
     assert "fetch(reportUrlWithCurrentFilters()" in text
     assert "['q','agents','agent','model','status','range','session','tab','view']" in text
     assert "scheduleDashboardReload();" in text
@@ -306,8 +307,8 @@ def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(p
     assert "RuleRegistry" in text
     assert "DEFAULT_RULE_REGISTRY" in text
     assert "Session Rules score one session" in text
-    assert "View Source Sessions" in text
-    assert "/api/inbox/${encodeURIComponent(observationId)}/sessions" in text
+    assert "View Task Evidence" in text
+    assert "/api/findings/${encodeURIComponent(observationId)}/evidence" in text
     assert "This observation has no workflow session ledger." not in text
     assert "Source Evidence" in text
     assert "Related Sessions" in text
@@ -329,7 +330,7 @@ def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(p
     assert 'id="workflow-status-filter"' in text
     assert '<option value="reviewable">Reviewable</option>' in text
     assert "workflowParams.get('workflow_status') || 'reviewable'" in text
-    assert "reviewableWorkflowStates.has(status)" in text
+    assert "reviewableWorkflowStates.has(String(item.status || 'pending'))" in text
     assert "String(reviewableWorkflows.length)" in text
     assert "not a Git or filesystem lock" in text
     assert "Why Reflect Suggested This" in text
@@ -344,15 +345,15 @@ def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(p
     assert 'class="review-kpi-strip"' in text
     assert 'class="review-grid"' in text
     assert 'class="ledger-action-spacer"' in text
-    assert "Show ${fmt(items.length - initial)} More Sessions" in text
-    assert "/sessions`" in text
+    assert "Show ${fmt(items.length - initial)} More ${taskLevel ? 'Tasks' : 'Sessions'}" in text
+    assert "/api/workflows/${encodeURIComponent(candidateId)}/evidence" in text
     assert "function sessionInspectionUrl(session)" in text
     assert "data-related-session-link" in text
     assert "url.searchParams.set('tab', 'sessions')" in text
     assert "url.searchParams.set('session', session.session_id || '')" in text
     assert "supporting_observation_count" in text
     assert "Evidence Patterns" in text
-    assert "inbox_total_count" in text
+    assert "finding_total_count" in text
     assert "skill_total_count" in text
     assert "current skills" in text
     assert "linked session(s)" in text
@@ -369,20 +370,20 @@ def test_dashboard_activity_widgets_live_on_explore_usage_view(path: Path):
     assert 'id="hm-grid"' in text
     assert 'id="hour-bars"' in text
     assert 'id="weekly-trends-table"' in text
-    assert "activity: {tab:'explore', view:'usage'}" in text
-    assert "context: {tab:'explore', view:'context'}" in text
+    assert "const PRODUCT_TABS = new Set(['sessions','workflows','impact','explore'])" in text
+    assert "LEGACY_TAB_LOCATIONS" not in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path: Path):
     text = path.read_text(encoding="utf-8")
 
-    assert 'data-tab="inbox">Inbox</button>' in text
     assert 'data-tab="sessions">Sessions</button>' in text
     assert 'data-tab="workflows">Workflows</button>' in text
-    assert 'data-tab="skills">Skills</button>' in text
     assert 'data-tab="impact">Impact</button>' in text
     assert 'data-tab="explore">Explore</button>' in text
+    assert 'data-tab="inbox"' not in text
+    assert 'data-tab="skills"' not in text
     assert 'data-tab="observations"' not in text
     assert 'data-tab="compare"' not in text
     assert 'data-tab="overview"' not in text
@@ -391,27 +392,27 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert 'id="tab-explore-tools"' in text
     assert 'id="tab-explore-graph"' in text
     assert 'id="tab-explore-context"' in text
-    assert 'id="improvement-inbox"' in text
+    assert 'id="finding-ledger"' in text
     assert 'id="workflow-ledger"' in text
     assert 'id="loop-ledger"' in text
     assert 'id="skill-registry"' in text
-    assert 'id="tab-skills"' in text
+    assert 'id="skill-registry-section"' in text
     assert 'id="measurement-ledger"' in text
     assert "Supporting telemetry analysis" not in text
     assert 'id="obs-hero-grid"' not in text
     assert 'id="obs-signals"' not in text
     assert 'id="obs-next-moves"' not in text
-    assert "fetch('/api/inbox'" in text
+    assert "fetch('/api/findings'" in text
     assert "fetch('/api/workflows'" in text
     assert "fetch('/api/loops'" in text
     assert "function sortObservedLoops(items)" in text
     assert "const kindRank = {agent_native:0, stalled:1, productive:2}" in text
-    assert 'data-inbox-view="findings"' in text
-    assert 'data-inbox-view="loops"' in text
+    assert 'data-workflow-view="findings"' in text
+    assert 'data-workflow-view="loops"' in text
     assert "ready to review and build" in text
-    assert "params.set('inbox_view', view)" in text
+    assert "params.set('workflow_view', view)" in text
     assert "Review & Build Instructions" in text
-    assert "Reflect monitors comparable future sessions in Impact" in text
+    assert "Reflect monitors comparable future task executions in Impact" in text
     assert "fetch('/api/skills?limit=500'" in text
     assert "fetch('/api/impact'" in text
     assert "new URL(`/api/explore/${encodeURIComponent(viewName)}`" in text
@@ -419,14 +420,12 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "/api/improvements" not in text
     assert "/api/measurements" not in text
     assert "/api/tabs/" not in text
-    assert "observations: {tab:'inbox'}" in text
-    assert "compare: {tab:'impact'}" in text
-    assert "overview: {tab:'explore', view:'usage'}" in text
+    assert "LEGACY_TAB_LOCATIONS" not in text
     assert "params.set('view', activeExploreView)" in text
     assert "params.delete('view')" in text
     assert "groupImpactMeasurements(measurements)" in text
     assert 'data-ledger-action="review-impact-sessions"' in text
-    assert "View Compared ${taskLevel ? 'Tasks' : 'Sessions'}" in text
+    assert "View Compared Tasks" in text
     assert "function formatImpactSessionValue(metricName, value, item = {})" in text
     assert "evidence_label:formatImpactSessionValue(ledger.metric_name, item.metric_value, item)" in text
     assert "evidence_count:0" not in text
@@ -475,11 +474,11 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "create:'New file'" in text
     assert "Exact File Diff" in text
     assert "Review &amp; Roll Back" in text
-    assert "const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length ? 'inbox' : 'sessions';" in text
+    assert "const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length ? 'workflows' : 'sessions';" in text
 
     sessions_panel = text[text.index('id="tab-sessions"'):text.index('id="tab-explore-usage"')]
     usage_panel = text[text.index('id="tab-explore-usage"'):text.index('id="tab-impact"')]
-    impact_panel = text[text.index('id="tab-impact"'):text.index('id="tab-inbox"')]
+    impact_panel = text[text.index('id="tab-impact"'):text.index('id="tab-workflows"')]
     assert 'id="cmp-a"' in sessions_panel
     assert 'id="cohort-comparison-panel"' in usage_panel
     assert 'id="measurement-ledger"' in impact_panel
@@ -488,9 +487,14 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
 
 
 def test_dashboard_report_copy_matches_canonical_asset():
+    render_dashboard = runpy.run_path(REPO_ROOT / "scripts/build_dashboard.py")[
+        "render_dashboard"
+    ]
+
     source, served = DASHBOARD_HTML_FILES
 
     assert served.read_bytes() == source.read_bytes()
+    assert source.read_text(encoding="utf-8") == render_dashboard()
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
@@ -542,12 +546,12 @@ def test_dashboard_usage_separates_source_provenance_from_event_semantics(path: 
 
     assert 'id="source-provenance"' in text
     assert 'id="agentCostChart"' in text
-    assert "const sourceProvenance = usageTab.source_provenance || D.source_provenance || [];" in text
+    assert "const sourceProvenance = usageTab.source_provenance || [];" in text
     assert "function validCostTrendDay(value)" in text
     assert "Number(day.slice(0, 4)) < 2000" in text
     assert "function normalizeAgentCostRows(rows)" in text
     assert "function deriveAgentCostRowsFromSessions(sessions)" in text
-    assert "const rawUsageAgentCostRows = usageTab.agent_cost_over_time || D.agent_cost_over_time || [];" in text
+    assert "const rawUsageAgentCostRows = usageTab.agent_cost_over_time || [];" in text
     assert "const normalizedUsageAgentCostRows = normalizeAgentCostRows(rawUsageAgentCostRows);" in text
     assert "deriveAgentCostRowsFromSessions(D.sessions || [])" in text
     assert "Cost totals are available, but priced sessions do not have valid dates for a trend chart." in text
@@ -563,7 +567,7 @@ def test_dashboard_usage_separates_source_provenance_from_event_semantics(path: 
     assert "if (usageModelOther > 0) usageModelSeries.push(['Other models', usageModelOther]);" in text
     assert "const types = allTypes.slice(0, 12);" in text
     assert "Showing the 12 most-launched types" in text
-    assert "const wt = (D.weekly_trends || []).slice(-12);" in text
+    assert "const wt = (sqlTab('activity').weekly_trends || []).slice(-12);" in text
     assert 'title="${escHtml(String(m.value))}"' in text
     assert "params.delete('workflow_type');" in text
 
@@ -574,12 +578,12 @@ def test_dashboard_html_prefers_sql_tab_payloads_for_existing_tabs(path: Path):
 
     assert "function sqlTab(name)" in text
     assert "const activityTab = sqlTab('activity');" in text
-    assert "activityTab.activity_by_day || D.activity_by_day || {}" in text
+    assert "activityTab.activity_by_day || {}" in text
     assert "sqlTab('activity').tool_percentiles" not in text
-    assert "toolsTab.tools_by_count || D.tools_by_count || {}" in text
-    assert "mcpTab.mcp_server_before || D.mcp_server_before || {}" in text
-    assert "sqlTab('graph').graph_tool_transitions || D.graph_tool_transitions || []" in text
-    assert "sqlTab('graph').graph_dep || D.graph_dep" in text
+    assert "toolsTab.tools_by_count || {}" in text
+    assert "mcpTab.mcp_server_before || {}" in text
+    assert "sqlTab('graph').graph_tool_transitions || []" in text
+    assert "sqlTab('graph').graph_dep" in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)

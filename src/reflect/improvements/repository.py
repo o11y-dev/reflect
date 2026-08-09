@@ -11,7 +11,7 @@ from typing import Any
 
 from reflect.improvements.models import (
     EvidenceRef,
-    FindingSessionLedger,
+    FindingEvidenceLedger,
     ImprovementScope,
     ImprovementSummary,
     ObservationDraft,
@@ -21,13 +21,18 @@ from reflect.improvements.models import (
     RuleDefinition,
     RuleSummary,
     WorkflowCandidateRecord,
+    WorkflowDeploymentState,
+    WorkflowEvidenceLedger,
+    WorkflowExecutionUnitRecord,
+    WorkflowInstallationState,
+    WorkflowLifecycleProjection,
+    WorkflowMeasurementState,
     WorkflowProposal,
-    WorkflowSessionLedger,
-    WorkflowSessionRecord,
+    WorkflowProvenanceSession,
     WorkflowStatus,
 )
 from reflect.improvements.scope import session_scope_predicate
-from reflect.improvements.workflow_identity import workflow_proposal_signature
+from reflect.improvements.workflow_identity import WorkflowIdentity
 
 _ACTIVE_OBSERVATION_STATUSES = {
     ObservationStatus.NEW.value,
@@ -40,10 +45,10 @@ _ACTIVE_OBSERVATION_STATUSES = {
 
 _CANDIDATE_SELECT_SQL = """
     SELECT wc.id, wc.observation_id, wc.action_type, wc.title, wc.hypothesis,
-           wc.scope, wc.risk, wc.content_json, wc.support_count, wc.confidence,
-           wc.target_metric, wc.target_value, wc.measurement_window, wc.status,
-           wc.checks_json, wc.provenance_json, wc.created_at, wc.updated_at,
-           wc.task_archetype_id,
+           wc.scope, wc.risk, wc.content_json, wc.contract_signature,
+           wc.revision_hash, wc.confidence, wc.target_metric, wc.target_value,
+           wc.measurement_window, wc.status, wc.checks_json, wc.provenance_json,
+           wc.created_at, wc.updated_at, wc.task_archetype_id,
            (SELECT i.id FROM interventions i
             JOIN workflow_versions wv ON wv.id = i.workflow_version_id
             WHERE wv.candidate_id = wc.id AND i.status = 'active'
@@ -350,6 +355,7 @@ class ImprovementRepository:
             (observation_id, proposal.action_type),
         ).fetchone()
         source_kind = str((proposal.content.get("source") or {}).get("kind") or "rule_blueprint")
+        identity = WorkflowIdentity.from_content(proposal.title, proposal.content)
         provenance = {
             "observation_id": observation_id,
             "rule_id": rule_id,
@@ -380,9 +386,9 @@ class ImprovementRepository:
                     """
                     UPDATE workflow_candidates
                     SET title = ?, hypothesis = ?, risk = ?, content_json = ?,
-                        support_count = ?, confidence = ?, target_metric = ?,
-                        target_value = ?, measurement_window = ?, provenance_json = ?,
-                        updated_at = ?
+                        contract_signature = ?, revision_hash = ?, confidence = ?,
+                        target_metric = ?, target_value = ?, measurement_window = ?,
+                        provenance_json = ?, updated_at = ?
                     WHERE id = ?
                     """,
                     (
@@ -390,7 +396,8 @@ class ImprovementRepository:
                         proposal.hypothesis,
                         proposal.risk,
                         _json(proposal.content),
-                        int(affected_session_count or occurrence_count or 0),
+                        identity.contract_signature,
+                        identity.revision_hash,
                         float(confidence or 0),
                         proposal.target_metric,
                         proposal.target_value,
@@ -406,9 +413,10 @@ class ImprovementRepository:
             """
             INSERT INTO workflow_candidates(
               id, observation_id, action_type, title, hypothesis, scope, risk,
-              content_json, support_count, confidence, target_metric, target_value,
-              measurement_window, status, checks_json, provenance_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+              content_json, contract_signature, revision_hash, confidence,
+              target_metric, target_value, measurement_window, status, checks_json,
+              provenance_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
             """,
             (
                 candidate_id,
@@ -419,12 +427,13 @@ class ImprovementRepository:
                 f"{scope_type}:{scope_id}",
                 proposal.risk,
                 _json(proposal.content),
-                int(affected_session_count or occurrence_count or 0),
+                identity.contract_signature,
+                identity.revision_hash,
                 float(confidence or 0),
                 proposal.target_metric,
                 proposal.target_value,
                 proposal.measurement_window,
-                _json({"schema": "valid", "review_required": True, "applied": False}),
+                _json({"schema": "valid", "review_required": True}),
                 _json(provenance),
                 now,
                 now,
@@ -455,25 +464,26 @@ class ImprovementRepository:
         title: str,
         hypothesis: str,
         content: dict[str, Any],
-        support_count: int,
         confidence: float,
         target_metric: str,
         scope: str = "user:local",
         now: str,
     ) -> str:
         candidate_id = f"wf_{hashlib.sha256((observation_id + ':workflow').encode('utf-8')).hexdigest()[:24]}"
+        identity = WorkflowIdentity.from_content(title, content)
         self.conn.execute(
             """
             INSERT INTO workflow_candidates(
               id, observation_id, action_type, title, hypothesis, scope, risk,
-              content_json, support_count, confidence, target_metric,
+              content_json, contract_signature, revision_hash, confidence, target_metric,
               measurement_window, status, checks_json, provenance_json, created_at, updated_at
-            ) VALUES (?, ?, 'workflow', ?, ?, ?, 'low', ?, ?, ?, ?, 10, 'pending', ?, ?, ?, ?)
+            ) VALUES (?, ?, 'workflow', ?, ?, ?, 'low', ?, ?, ?, ?, ?, 10, 'pending', ?, ?, ?, ?)
             ON CONFLICT(observation_id, action_type) DO UPDATE SET
               title = CASE WHEN workflow_candidates.status = 'pending' THEN excluded.title ELSE workflow_candidates.title END,
               hypothesis = CASE WHEN workflow_candidates.status = 'pending' THEN excluded.hypothesis ELSE workflow_candidates.hypothesis END,
               content_json = CASE WHEN workflow_candidates.status = 'pending' THEN excluded.content_json ELSE workflow_candidates.content_json END,
-              support_count = MAX(workflow_candidates.support_count, excluded.support_count),
+              contract_signature = CASE WHEN workflow_candidates.status = 'pending' THEN excluded.contract_signature ELSE workflow_candidates.contract_signature END,
+              revision_hash = CASE WHEN workflow_candidates.status = 'pending' THEN excluded.revision_hash ELSE workflow_candidates.revision_hash END,
               confidence = MAX(workflow_candidates.confidence, excluded.confidence),
               updated_at = excluded.updated_at
             """,
@@ -484,10 +494,11 @@ class ImprovementRepository:
                 hypothesis,
                 scope,
                 _json(content),
-                support_count,
+                identity.contract_signature,
+                identity.revision_hash,
                 confidence,
                 target_metric,
-                _json({"schema": "valid", "review_required": True, "applied": False}),
+                _json({"schema": "valid", "review_required": True}),
                 _json(
                     {
                         "observation_id": observation_id,
@@ -635,7 +646,7 @@ class ImprovementRepository:
         ).fetchall()
         return self._observation_from_row(rows[0]) if rows else None
 
-    def observation_session_count(self, observation_ids: Iterable[str]) -> int:
+    def observation_provenance_session_count(self, observation_ids: Iterable[str]) -> int:
         ids = sorted({str(item) for item in observation_ids if str(item)})
         if not ids:
             return 0
@@ -647,34 +658,7 @@ class ImprovementRepository:
             ).fetchone()[0]
         )
 
-    def observation_session_ledger_complete(self) -> bool:
-        row = self.conn.execute(
-            """
-            SELECT value FROM store_metadata
-            WHERE key = 'observation_session_ledger_v1'
-            """
-        ).fetchone()
-        return row is None or str(row[0]) == "complete"
-
-    def observation_session_ledger(
-        self,
-        observation_id: str,
-        *,
-        limit: int = 50,
-        observation_ids: Iterable[str] | None = None,
-    ) -> FindingSessionLedger:
-        observation = self.get_observation(observation_id)
-        if observation is None:
-            raise KeyError(f"Observation not found: {observation_id}")
-        return self._build_observation_session_ledger(
-            observation_id,
-            observation_ids or (observation_id,),
-            candidate_id=observation.candidate_id or "",
-            scope=None,
-            limit=limit,
-        )
-
-    def finding_session_ledger(
+    def finding_evidence_ledger(
         self,
         observation_id: str,
         observation_ids: Iterable[str],
@@ -682,10 +666,10 @@ class ImprovementRepository:
         candidate_id: str | None = None,
         scope: ImprovementScope | None = None,
         limit: int = 50,
-    ) -> FindingSessionLedger:
+    ) -> FindingEvidenceLedger:
         if self.get_observation(observation_id) is None:
             raise KeyError(f"Observation not found: {observation_id}")
-        return self._build_observation_session_ledger(
+        return self._build_finding_evidence_ledger(
             observation_id,
             observation_ids,
             candidate_id=candidate_id,
@@ -693,7 +677,7 @@ class ImprovementRepository:
             limit=limit,
         )
 
-    def _build_observation_session_ledger(
+    def _build_finding_evidence_ledger(
         self,
         observation_id: str,
         observation_ids: Iterable[str],
@@ -701,7 +685,7 @@ class ImprovementRepository:
         candidate_id: str | None,
         scope: ImprovementScope | None,
         limit: int,
-    ) -> FindingSessionLedger:
+    ) -> FindingEvidenceLedger:
         ids = sorted(
             {
                 str(item)
@@ -719,6 +703,11 @@ class ImprovementRepository:
             clauses.append(f"({predicate})")
             params.extend(scope_params)
         bounded_limit = max(1, min(limit, 200))
+        support_count, support_units = self._support_execution_units(
+            ids,
+            scope=scope,
+            limit=bounded_limit,
+        )
         rows = self.conn.execute(
             f"""
             SELECT s.id, s.title, a.name, s.started_at, s.status,
@@ -750,13 +739,15 @@ class ImprovementRepository:
                 params,
             ).fetchone()[0]
         )
-        return FindingSessionLedger(
+        return FindingEvidenceLedger(
             observation_id=observation_id,
             observation_ids=ids,
             candidate_id=candidate_id,
-            source_session_count=count,
-            source_sessions=[
-                WorkflowSessionRecord(
+            support_execution_unit_count=support_count,
+            support_execution_units=support_units,
+            provenance_session_count=count,
+            provenance_sessions=[
+                WorkflowProvenanceSession(
                     session_id=str(row[0]),
                     relationship="source",
                     title=row[1],
@@ -776,6 +767,98 @@ class ImprovementRepository:
             ],
             resolved_scope=scope,
         )
+
+    def _support_execution_units(
+        self,
+        observation_ids: list[str],
+        *,
+        scope: ImprovementScope | None,
+        limit: int,
+    ) -> tuple[int, list[WorkflowExecutionUnitRecord]]:
+        placeholders = ",".join("?" for _ in observation_ids)
+        scope_sql = ""
+        params: list[object] = list(observation_ids)
+        if scope is not None:
+            predicate, scope_params = session_scope_predicate(scope, alias="s")
+            scope_sql = f"AND ({predicate})"
+            params.extend(scope_params)
+        rows = self.conn.execute(
+            f"""
+            WITH selected_evidence AS (
+              SELECT * FROM observation_evidence
+              WHERE observation_id IN ({placeholders}) AND polarity = 'supporting'
+            ), evidence_links AS (
+              SELECT oe.id AS evidence_id, oe.summary_redacted, eu.id AS execution_unit_id
+              FROM selected_evidence oe
+              JOIN execution_units eu
+                ON oe.entity_type = 'execution_unit' AND eu.id = oe.entity_id
+              UNION
+              SELECT oe.id, oe.summary_redacted, eus.execution_unit_id
+              FROM selected_evidence oe
+              JOIN execution_unit_steps eus ON eus.step_id = oe.step_id
+              WHERE oe.entity_type <> 'execution_unit'
+              UNION
+              SELECT oe.id, oe.summary_redacted, eus.execution_unit_id
+              FROM selected_evidence oe
+              JOIN tool_calls tc ON tc.id = oe.tool_call_id
+              JOIN execution_unit_steps eus ON eus.step_id = tc.step_id
+              WHERE oe.entity_type <> 'execution_unit' AND oe.step_id IS NULL
+              UNION
+              SELECT oe.id, oe.summary_redacted, eu.id
+              FROM selected_evidence oe
+              JOIN execution_units eu
+                ON eu.session_id = oe.session_id AND eu.source = 'session_fallback'
+              WHERE oe.entity_type <> 'execution_unit'
+                AND oe.step_id IS NULL
+                AND oe.tool_call_id IS NULL
+            ), unit_summary AS (
+              SELECT eu.id, eu.session_id, s.title, a.name, eu.started_at,
+                     eu.ended_at, eu.status, eu.outcome, eu.verification_passed,
+                     COALESCE(w.root_path, r.full_name, '') AS workspace,
+                     eu.source, COUNT(DISTINCT el.evidence_id) AS evidence_count,
+                     GROUP_CONCAT(DISTINCT NULLIF(el.summary_redacted, '')) AS summaries
+              FROM evidence_links el
+              JOIN execution_units eu ON eu.id = el.execution_unit_id
+              JOIN sessions s ON s.id = eu.session_id
+              LEFT JOIN agents a ON a.id = eu.agent_id
+              LEFT JOIN workspaces w ON w.id = eu.workspace_id
+              LEFT JOIN repos r ON r.id = eu.repo_id
+              WHERE eu.eligible = 1 {scope_sql}
+              GROUP BY eu.id, eu.session_id, s.title, a.name, eu.started_at,
+                       eu.ended_at, eu.status, eu.outcome, eu.verification_passed,
+                       w.root_path, r.full_name, eu.source
+            )
+            SELECT unit_summary.*, COUNT(*) OVER() AS total_count
+            FROM unit_summary
+            ORDER BY evidence_count DESC, started_at DESC, id
+            LIMIT ?
+            """,
+            (*params, max(1, min(limit, 200))),
+        ).fetchall()
+        total = int(rows[0][13]) if rows else 0
+        return total, [
+            WorkflowExecutionUnitRecord(
+                execution_unit_id=str(row[0]),
+                session_id=str(row[1]),
+                relationship="support",
+                title=row[2],
+                agent=row[3],
+                started_at=str(row[4]),
+                ended_at=str(row[5]) if row[5] else None,
+                status=str(row[6]),
+                outcome=str(row[7]) if row[7] else None,
+                verification_passed=None if row[8] is None else bool(row[8]),
+                workspace=str(row[9] or ""),
+                source=str(row[10]),
+                evidence_count=int(row[11] or 0),
+                evidence_summaries=[
+                    item.strip()
+                    for item in str(row[12] or "").split(",")
+                    if item.strip()
+                ][:4],
+            )
+            for row in rows
+        ]
 
     def list_candidates(
         self,
@@ -800,14 +883,17 @@ class ImprovementRepository:
                 return
             offset += len(page)
 
-    def list_candidates_by_slug(self, slug: str) -> list[WorkflowCandidateRecord]:
+    def list_candidates_by_contract(
+        self,
+        contract_signature: str,
+    ) -> list[WorkflowCandidateRecord]:
         rows = self.conn.execute(
             f"""
             {_CANDIDATE_SELECT_SQL}
-            WHERE COALESCE(json_extract(wc.content_json, '$.slug'), wc.id) = ?
+            WHERE wc.contract_signature = ?
             {_CANDIDATE_ORDER_SQL}
             """,
-            (slug,),
+            (contract_signature,),
         ).fetchall()
         return [self._candidate_from_row(row) for row in rows]
 
@@ -818,12 +904,12 @@ class ImprovementRepository:
         ).fetchone()
         return self._candidate_from_row(row) if row else None
 
-    def _source_session_records(
+    def _provenance_session_records(
         self,
         observation_ids: list[str],
         *,
         limit: int,
-    ) -> list[WorkflowSessionRecord]:
+    ) -> list[WorkflowProvenanceSession]:
         observation_placeholders = ", ".join("?" for _ in observation_ids)
         source_rows = self.conn.execute(
             f"""
@@ -841,7 +927,7 @@ class ImprovementRepository:
             (*observation_ids, limit),
         ).fetchall()
         return [
-            WorkflowSessionRecord(
+            WorkflowProvenanceSession(
                 session_id=str(row[0]),
                 relationship="source",
                 title=row[1],
@@ -862,22 +948,20 @@ class ImprovementRepository:
             for row in source_rows
         ]
 
-    def workflow_session_ledger(
+    def workflow_evidence_ledger(
         self,
         candidate_id: str,
         *,
         limit: int = 50,
-    ) -> WorkflowSessionLedger:
+    ) -> WorkflowEvidenceLedger:
         candidate = self.get_candidate(candidate_id)
         if candidate is None:
             raise KeyError(f"Workflow candidate not found: {candidate_id}")
         slug = str(candidate.content.get("slug") or candidate.id)
-        signature = workflow_proposal_signature(candidate.title, candidate.content)
         grouped_candidates = [
             item
-            for item in self.list_candidates_by_slug(slug)
-            if item.status.value not in {"rejected", "rolled_back"}
-            and workflow_proposal_signature(item.title, item.content) == signature
+            for item in self.list_candidates_by_contract(candidate.contract_signature)
+            if item.status.value != "rejected"
         ]
         current_candidates = [
             item for item in grouped_candidates if item.status.value != "stale"
@@ -888,38 +972,56 @@ class ImprovementRepository:
         observation_placeholders = ", ".join("?" for _ in observation_ids)
         candidate_placeholders = ", ".join("?" for _ in candidate_ids)
         bounded_limit = max(1, min(limit, 200))
-        source_sessions = self._source_session_records(observation_ids, limit=bounded_limit)
+        provenance_sessions = self._provenance_session_records(
+            observation_ids,
+            limit=bounded_limit,
+        )
+        support_count, support_units = self._support_execution_units(
+            observation_ids,
+            scope=None,
+            limit=bounded_limit,
+        )
         exposure_rows = self.conn.execute(
             f"""
-            SELECT s.id, s.title, a.name, s.started_at, s.status,
+            SELECT eu.id, eu.session_id, s.title, a.name, eu.started_at,
+                   eu.ended_at, eu.status, eu.outcome, eu.verification_passed,
+                   COALESCE(w.root_path, r.full_name, ''), eu.source,
                    we.state, we.evidence_json
             FROM workflow_exposures we
             JOIN interventions i ON i.id = we.intervention_id
             JOIN workflow_versions wv ON wv.id = i.workflow_version_id
-            JOIN sessions s ON s.id = we.session_id
-            LEFT JOIN agents a ON a.id = s.agent_id
+            JOIN execution_units eu ON eu.id = we.execution_unit_id
+            JOIN sessions s ON s.id = eu.session_id
+            LEFT JOIN agents a ON a.id = eu.agent_id
+            LEFT JOIN workspaces w ON w.id = eu.workspace_id
+            LEFT JOIN repos r ON r.id = eu.repo_id
             WHERE wv.candidate_id IN ({candidate_placeholders})
-            ORDER BY s.started_at DESC
+            ORDER BY eu.started_at DESC
             LIMIT ?
             """,
             (*candidate_ids, bounded_limit),
         ).fetchall()
-        exposure_sessions = [
-            WorkflowSessionRecord(
-                session_id=str(row[0]),
+        exposed_units = [
+            WorkflowExecutionUnitRecord(
+                execution_unit_id=str(row[0]),
+                session_id=str(row[1]),
                 relationship="exposure",
-                title=row[1],
-                agent=row[2],
-                started_at=row[3],
-                status=row[4],
-                workspace=self._session_workspace(str(row[0])),
+                title=row[2],
+                agent=row[3],
+                started_at=str(row[4]),
+                ended_at=str(row[5]) if row[5] else None,
+                status=str(row[6]),
+                outcome=str(row[7]) if row[7] else None,
+                verification_passed=None if row[8] is None else bool(row[8]),
+                workspace=str(row[9] or ""),
+                source=str(row[10]),
                 evidence_count=1,
-                evidence_summaries=self._exposure_summaries(row[5], row[6]),
-                exposure_state=row[5],
+                evidence_summaries=self._exposure_summaries(row[11], row[12]),
+                exposure_state=str(row[11]),
             )
             for row in exposure_rows
         ]
-        source_count = int(
+        provenance_count = int(
             self.conn.execute(
                 f"SELECT COUNT(DISTINCT session_id) FROM observation_evidence WHERE observation_id IN ({observation_placeholders})",
                 observation_ids,
@@ -928,7 +1030,7 @@ class ImprovementRepository:
         exposure_count = int(
             self.conn.execute(
                 f"""
-                SELECT COUNT(DISTINCT we.session_id)
+                SELECT COUNT(DISTINCT we.execution_unit_id)
                 FROM workflow_exposures we
                 JOIN interventions i ON i.id = we.intervention_id
                 JOIN workflow_versions wv ON wv.id = i.workflow_version_id
@@ -937,15 +1039,18 @@ class ImprovementRepository:
                 candidate_ids,
             ).fetchone()[0]
         )
-        return WorkflowSessionLedger(
+        return WorkflowEvidenceLedger(
             candidate_id=candidate_id,
+            contract_signature=candidate.contract_signature,
             observation_id=candidate.observation_id,
             observation_ids=observation_ids,
             skill_slug=slug,
-            source_session_count=source_count,
-            source_sessions=source_sessions,
-            exposure_session_count=exposure_count,
-            exposure_sessions=exposure_sessions,
+            support_execution_unit_count=support_count,
+            support_execution_units=support_units,
+            provenance_session_count=provenance_count,
+            provenance_sessions=provenance_sessions,
+            exposed_execution_unit_count=exposure_count,
+            exposed_execution_units=exposed_units,
         )
 
     def record_feedback(
@@ -1017,14 +1122,16 @@ class ImprovementRepository:
         )
         pending = int(self.conn.execute(
             """
-            SELECT COUNT(DISTINCT json_extract(pending.content_json, '$.slug'))
+            SELECT COUNT(DISTINCT pending.contract_signature)
             FROM workflow_candidates pending
             WHERE pending.status = 'pending'
               AND NOT EXISTS (
                 SELECT 1
-                FROM workflow_candidates active
-                WHERE active.status = 'active'
-                  AND json_extract(active.content_json, '$.slug') = json_extract(pending.content_json, '$.slug')
+                FROM workflow_candidates deployed
+                JOIN workflow_versions wv ON wv.candidate_id = deployed.id
+                JOIN interventions i ON i.workflow_version_id = wv.id
+                WHERE deployed.contract_signature = pending.contract_signature
+                  AND i.status = 'active'
               )
             """
         ).fetchone()[0])
@@ -1047,8 +1154,40 @@ class ImprovementRepository:
             verified_improvement_rate=rate,
             resolved_scope=scope,
             eligible_session_count=scope.eligible_session_count if scope else 0,
-            attribution_complete=self.observation_session_ledger_complete(),
+            attribution_complete=self.finding_evidence_complete(),
         )
+
+    def finding_evidence_complete(self) -> bool:
+        """Return whether every reviewable workflow has eligible execution evidence."""
+
+        row = self.conn.execute(
+            """
+            SELECT 1
+            FROM workflow_candidates wc
+            WHERE wc.status IN ('pending', 'approved')
+              AND NOT EXISTS (
+                SELECT 1
+                FROM observation_evidence oe
+                LEFT JOIN execution_unit_steps eus ON eus.step_id = oe.step_id
+                LEFT JOIN execution_units explicit_unit
+                  ON oe.entity_type = 'execution_unit'
+                 AND explicit_unit.id = oe.entity_id
+                 AND explicit_unit.eligible = 1
+                LEFT JOIN execution_units step_unit
+                  ON step_unit.id = eus.execution_unit_id
+                 AND step_unit.eligible = 1
+                LEFT JOIN execution_units fallback_unit
+                  ON fallback_unit.session_id = oe.session_id
+                 AND fallback_unit.source = 'session_fallback'
+                 AND fallback_unit.eligible = 1
+                WHERE oe.observation_id = wc.observation_id
+                  AND oe.polarity = 'supporting'
+                  AND COALESCE(explicit_unit.id, step_unit.id, fallback_unit.id) IS NOT NULL
+              )
+            LIMIT 1
+            """
+        ).fetchone()
+        return row is None
 
     def record_event(
         self,
@@ -1395,6 +1534,7 @@ class ImprovementRepository:
                 (row[0],),
             ).fetchall()
         }
+        lifecycle = self._workflow_lifecycle(str(row[0]), WorkflowStatus(row[14]))
         return WorkflowCandidateRecord(
             id=row[0],
             observation_id=row[1],
@@ -1404,17 +1544,106 @@ class ImprovementRepository:
             scope=row[5],
             risk=row[6],
             content=_loads(row[7], {}),
-            support_count=int(row[8]),
-            confidence=float(row[9]),
-            target_metric=row[10],
-            target_value=None if row[11] is None else float(row[11]),
-            measurement_window=int(row[12]),
-            status=row[13],
-            checks=_loads(row[14], {}),
-            provenance=_loads(row[15], {}),
-            created_at=row[16],
-            updated_at=row[17],
-            task_archetype_id=row[18],
+            contract_signature=str(row[8]),
+            revision_hash=str(row[9]),
+            confidence=float(row[10]),
+            target_metric=row[11],
+            target_value=None if row[12] is None else float(row[12]),
+            measurement_window=int(row[13]),
+            status=row[14],
+            checks=_loads(row[15], {}),
+            provenance=_loads(row[16], {}),
+            created_at=row[17],
+            updated_at=row[18],
+            task_archetype_id=row[19],
             exposure_counts=exposure_counts,
-            active_intervention_id=row[19],
+            active_intervention_id=row[20],
+            lifecycle=lifecycle,
+        )
+
+    def _workflow_lifecycle(
+        self,
+        candidate_id: str,
+        review: WorkflowStatus,
+    ) -> WorkflowLifecycleProjection:
+        intervention = self.conn.execute(
+            """
+            SELECT i.status
+            FROM interventions i
+            JOIN workflow_versions wv ON wv.id = i.workflow_version_id
+            WHERE wv.candidate_id = ?
+            ORDER BY i.created_at DESC LIMIT 1
+            """,
+            (candidate_id,),
+        ).fetchone()
+        deployment = WorkflowDeploymentState.NOT_DEPLOYED
+        if intervention and str(intervention[0]) in {
+            state.value for state in WorkflowDeploymentState
+        }:
+            deployment = WorkflowDeploymentState(str(intervention[0]))
+
+        installation = self.conn.execute(
+            """
+            SELECT si.status
+            FROM skill_installations si
+            JOIN skill_versions sv ON sv.skill_id = si.skill_id
+            WHERE sv.workflow_candidate_id = ?
+            ORDER BY si.updated_at DESC LIMIT 1
+            """,
+            (candidate_id,),
+        ).fetchone()
+        installation_state = WorkflowInstallationState.NOT_INSTALLED
+        if installation:
+            raw_installation = str(installation[0])
+            installation_state = (
+                WorkflowInstallationState.INSTALLED
+                if raw_installation == "active"
+                else WorkflowInstallationState.STALE
+                if raw_installation == "stale"
+                else WorkflowInstallationState.REMOVED
+            )
+
+        measurement = self.conn.execute(
+            """
+            SELECT m.verdict
+            FROM measurements m
+            JOIN interventions i ON i.id = m.intervention_id
+            JOIN workflow_versions wv ON wv.id = i.workflow_version_id
+            WHERE wv.candidate_id = ?
+            ORDER BY m.measured_at DESC LIMIT 1
+            """,
+            (candidate_id,),
+        ).fetchone()
+        measurement_state = WorkflowMeasurementState.NOT_STARTED
+        if deployment is WorkflowDeploymentState.ACTIVE:
+            measurement_state = WorkflowMeasurementState.COLLECTING
+        if measurement:
+            measurement_state = {
+                "improved": WorkflowMeasurementState.IMPROVED,
+                "unchanged": WorkflowMeasurementState.NO_EFFECT,
+                "regressed": WorkflowMeasurementState.REGRESSED,
+            }.get(str(measurement[0]), WorkflowMeasurementState.COLLECTING)
+
+        display = (
+            review.value
+            if review in {WorkflowStatus.PENDING, WorkflowStatus.STALE, WorkflowStatus.REJECTED}
+            else measurement_state.value
+            if measurement_state
+            in {
+                WorkflowMeasurementState.IMPROVED,
+                WorkflowMeasurementState.NO_EFFECT,
+                WorkflowMeasurementState.REGRESSED,
+            }
+            else deployment.value
+            if deployment is not WorkflowDeploymentState.NOT_DEPLOYED
+            else installation_state.value
+            if installation_state is not WorkflowInstallationState.NOT_INSTALLED
+            else review.value
+        )
+        return WorkflowLifecycleProjection(
+            review=review,
+            deployment=deployment,
+            installation=installation_state,
+            measurement=measurement_state,
+            display=display,
         )

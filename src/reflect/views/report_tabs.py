@@ -82,7 +82,7 @@ class UsageToolSummaryViewModel(ReflectModel):
     agents: dict[str, dict[str, Any]]
 
 
-class GraphsViewModel(ReflectModel):
+class GraphViewModel(ReflectModel):
     graph_tool_transitions: list[dict[str, Any]]
     graph_cooccurrence: dict[str, Any]
     graph_dep: dict[str, Any]
@@ -129,7 +129,7 @@ class ReportTabsViewModel(ReflectModel):
     tools: ToolsViewModel
     mcp: McpViewModel
     agents: AgentsViewModel
-    graphs: GraphsViewModel
+    graph: GraphViewModel
     specs: SpecsViewModel
     memory: MemoryViewModel
     privacy: PrivacyViewModel
@@ -146,7 +146,7 @@ def build_report_tabs(conn: sqlite3.Connection, *, session_ids: set[str] | None 
     tools = _build_tools(conn, scoped, skill_subagent)
     mcp = _build_mcp(conn, scoped)
     agents = _build_agents(conn, scoped, skill_subagent)
-    graphs = _build_graphs(conn, scoped, tools.tools_by_count, mcp.mcp_servers_by_count)
+    graph = _build_graph(conn, scoped, tools.tools_by_count, mcp.mcp_servers_by_count)
     specs = _build_specs(conn, scoped)
     memory = _build_memory(conn, scoped)
     privacy = _build_privacy(conn, scoped)
@@ -158,7 +158,7 @@ def build_report_tabs(conn: sqlite3.Connection, *, session_ids: set[str] | None 
         tools=tools,
         mcp=mcp,
         agents=agents,
-        graphs=graphs,
+        graph=graph,
         specs=specs,
         memory=memory,
         privacy=privacy,
@@ -191,8 +191,8 @@ def build_report_tab(
         return _build_agents(conn, scoped, skill_subagent).model_dump()
     if normalized == "usage_tools":
         return _build_usage_tool_summary(conn, scoped).model_dump()
-    if normalized == "graphs":
-        return _build_graphs(
+    if normalized == "graph":
+        return _build_graph(
             conn,
             scoped,
             _top_tool_counts(conn, scoped),
@@ -543,15 +543,16 @@ def _graph_mcp_server_counts(
     conn: sqlite3.Connection,
     scoped_ids: list[str] | None,
 ) -> dict[str, int]:
-    scope, params = _scope_clause("session_id", scoped_ids, prefix="AND")
+    scope, params = _scope_clause("tc.session_id", scoped_ids, prefix="AND")
     rows = _dict_rows(conn.execute(
         f"""
-        SELECT server_name, COUNT(*) AS call_count
-        FROM mcp_calls
-        WHERE server_name IS NOT NULL AND server_name <> ''
+        SELECT mc.server_name, COUNT(*) AS call_count
+        FROM mcp_calls AS mc
+        JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+        WHERE mc.server_name IS NOT NULL AND mc.server_name <> ''
         {scope}
-        GROUP BY server_name
-        ORDER BY call_count DESC, server_name ASC
+        GROUP BY mc.server_name
+        ORDER BY call_count DESC, mc.server_name ASC
         LIMIT 25
         """,
         params,
@@ -1054,15 +1055,16 @@ def _usage_file_counts(conn: sqlite3.Connection, scoped_ids: list[str] | None) -
 
 
 def _build_mcp(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> McpViewModel:
-    mcp_scope, mcp_params = _scope_clause("session_id", scoped_ids, prefix="AND")
+    mcp_scope, mcp_params = _scope_clause("tc.session_id", scoped_ids, prefix="AND")
     rows = _dict_rows(conn.execute(
         f"""
-        SELECT server_name, COUNT(*) AS call_count
-        FROM mcp_calls
-        WHERE server_name IS NOT NULL AND server_name <> ''
+        SELECT mc.server_name, COUNT(*) AS call_count
+        FROM mcp_calls AS mc
+        JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+        WHERE mc.server_name IS NOT NULL AND mc.server_name <> ''
         {mcp_scope}
-        GROUP BY server_name
-        ORDER BY call_count DESC, server_name ASC
+        GROUP BY mc.server_name
+        ORDER BY call_count DESC, mc.server_name ASC
         """,
         mcp_params,
     ))
@@ -1211,9 +1213,10 @@ def _build_agents(
     mcp_rows = _dict_rows(conn.execute(
         f"""
         SELECT COALESCE(NULLIF(sr.agent, ''), 'unknown') AS agent, COUNT(*) AS count
-        FROM mcp_calls mc
-        LEFT JOIN session_rollups sr ON sr.session_id = mc.session_id
-        {_scope_clause('mc.session_id', scoped_ids)[0]}
+        FROM mcp_calls AS mc
+        JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+        LEFT JOIN session_rollups sr ON sr.session_id = tc.session_id
+        {_scope_clause('tc.session_id', scoped_ids)[0]}
         GROUP BY COALESCE(NULLIF(sr.agent, ''), 'unknown')
         """,
         scoped_ids or [],
@@ -1288,12 +1291,12 @@ def _build_agents(
     return AgentsViewModel(agent_comparison=comparison, agents=agents)
 
 
-def _build_graphs(
+def _build_graph(
     conn: sqlite3.Connection,
     scoped_ids: list[str] | None,
     tools_by_count: dict[str, int],
     mcp_servers_by_count: dict[str, int],
-) -> GraphsViewModel:
+) -> GraphViewModel:
     tool_scope, tool_params = _scope_clause("tc.session_id", scoped_ids)
     transitions = _dict_rows(conn.execute(
         f"""
@@ -1320,7 +1323,7 @@ def _build_graphs(
     timeline = _timeline(conn, scoped_ids)
     graph_dep = _dependency_graph(conn, scoped_ids, tools_by_count, mcp_servers_by_count)
     graph_semantic = _semantic_graph(conn, scoped_ids)
-    return GraphsViewModel(
+    return GraphViewModel(
         graph_tool_transitions=[
             {"from": row["source"], "to": row["target"], "count": int(row["count"] or 0)}
             for row in transitions
@@ -1883,7 +1886,7 @@ def _dependency_graph(
     mcp_params: list[str] = []
     if scoped_ids is not None:
         if scoped_ids:
-            mcp_filters.append(f"mc.session_id IN ({', '.join('?' for _ in scoped_ids)})")
+            mcp_filters.append(f"tc.session_id IN ({', '.join('?' for _ in scoped_ids)})")
             mcp_params.extend(scoped_ids)
         else:
             mcp_filters.append("1 = 0")
@@ -1893,8 +1896,9 @@ def _dependency_graph(
           COALESCE(NULLIF(sr.agent, ''), 'unknown') AS agent,
           mc.server_name,
           COUNT(*) AS count
-        FROM mcp_calls mc
-        LEFT JOIN session_rollups sr ON sr.session_id = mc.session_id
+        FROM mcp_calls AS mc
+        JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+        LEFT JOIN session_rollups sr ON sr.session_id = tc.session_id
         WHERE {' AND '.join(mcp_filters)}
         GROUP BY COALESCE(NULLIF(sr.agent, ''), 'unknown'), mc.server_name
         ORDER BY count DESC
@@ -2233,7 +2237,7 @@ def _build_exports(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Ex
         "steps": _count_rows(conn, "steps", "session_id", scoped_ids),
         "llm_calls": _count_rows(conn, "llm_calls", "session_id", scoped_ids),
         "tool_calls": _count_rows(conn, "tool_calls", "session_id", scoped_ids),
-        "mcp_calls": _count_rows(conn, "mcp_calls", "session_id", scoped_ids),
+        "mcp_calls": _count_mcp_calls(conn, scoped_ids),
         "memories": _count_memories(conn, scoped_ids),
         "privacy_findings": _count_rows(conn, "privacy_findings", "session_id", scoped_ids),
         "evidence": _count_evidence(conn, scoped_ids),
@@ -2250,6 +2254,19 @@ def _build_exports(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Ex
 def _count_rows(conn: sqlite3.Connection, table: str, scope_column: str, scoped_ids: list[str] | None) -> int:
     scope, params = _scope_clause(scope_column, scoped_ids)
     return int(conn.execute(f"SELECT COUNT(*) FROM {table} {scope}", params).fetchone()[0] or 0)
+
+
+def _count_mcp_calls(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> int:
+    scope, params = _scope_clause("tc.session_id", scoped_ids)
+    return int(conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM mcp_calls AS mc
+        JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+        {scope}
+        """,
+        params,
+    ).fetchone()[0] or 0)
 
 
 def _count_by(

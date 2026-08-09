@@ -332,24 +332,26 @@ class ReflectContextService:
             scope = resolver.session(session_id)
         else:
             scope = resolver.path(path)
-        all_findings = self.improvements.list_inbox_findings(limit=500, scope=scope)
+        all_findings = self.improvements.list_findings(limit=500, scope=scope)
         findings = all_findings[page_offset : page_offset + page_limit]
-        attribution_complete = self.improvements.repository.observation_session_ledger_complete()
+        attribution_complete = self.improvements.repository.finding_evidence_complete()
         serialized: list[dict[str, Any]] = []
         for finding in findings:
             evidence_count = len(finding.evidence)
-            source_session_count = len(finding.source_sessions)
+            provenance_session_count = len(finding.source_sessions)
             if detail == "full":
                 item = finding.model_dump(mode="json")
                 item["evidence"] = item["evidence"][:bounded_evidence]
-                item["source_sessions"] = item["source_sessions"][:bounded_evidence]
+                item["provenance_sessions"] = item.pop("source_sessions")[
+                    :bounded_evidence
+                ]
             else:
                 item = finding.model_dump(
                     mode="json",
                     exclude={"evidence", "source_sessions", "baseline_query"},
                 )
             item["evidence_count"] = evidence_count
-            item["source_session_count"] = source_session_count
+            item["provenance_session_count"] = provenance_session_count
             serialized.append(item)
         evidence_cutoff = max(
             (finding.latest_source_at or finding.last_seen_at for finding in all_findings),
@@ -543,20 +545,20 @@ class ReflectContextService:
     def explain(self, entity_id: str) -> dict[str, Any]:
         observation = self.improvements.repository.get_observation(entity_id)
         if observation is not None:
-            ledger = self.improvements.finding_session_ledger(entity_id, limit=50)
+            ledger = self.improvements.finding_evidence_ledger(entity_id, limit=50)
             return {
                 "found": True,
                 "kind": "observation",
                 "provenance": "local_telemetry",
                 "entity": {
                     **observation.model_dump(mode="json"),
-                    "session_ledger": ledger.model_dump(mode="json"),
+                    "evidence_ledger": ledger.model_dump(mode="json"),
                 },
             }
         workflow = self.improvements.repository.get_candidate(entity_id)
         if workflow is not None:
             entity = workflow.model_dump(mode="json")
-            entity["session_ledger"] = self.improvements.repository.workflow_session_ledger(
+            entity["evidence_ledger"] = self.improvements.repository.workflow_evidence_ledger(
                 entity_id,
                 limit=50,
             ).model_dump(mode="json")
@@ -733,7 +735,9 @@ class ReflectContextService:
         )
         if version is None:
             return None
-        source_sessions = self.agent_inspection.skill_source_sessions(version.id)
+        source_execution_units = self.agent_inspection.skill_source_execution_units(
+            version.id
+        )
         usage_sessions = [
             item
             for item in detail.usage_sessions
@@ -753,8 +757,8 @@ class ReflectContextService:
                 "version": version.model_dump(mode="json"),
                 "instructions_truncated": False,
                 "evidence": detail.evidence[:50],
-                "source_sessions": [
-                    item.model_dump(mode="json") for item in source_sessions
+                "source_execution_units": [
+                    item.model_dump(mode="json") for item in source_execution_units
                 ],
                 "usage_sessions": [
                     item.model_dump(mode="json") for item in usage_sessions[:50]

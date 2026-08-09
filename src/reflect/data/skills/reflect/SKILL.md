@@ -62,7 +62,7 @@ Always follow this order:
    - Prefer `reflect_improvements` for the highest-impact durable observations.
    - Use `reflect_skills` to search the durable registry by lifecycle, installation availability, source agent, or evidence count.
    - Use `reflect_patterns` to inspect existing stalled or productive loops and workflow candidates without running detectors.
-   - Use `reflect_impact` to inspect persisted before/after measurements and their exact compared-session or execution-unit ledger.
+   - Use `reflect_impact` to inspect persisted before/after measurements and their exact compared-execution-unit ledger.
    - Use `reflect_explain` for bounded provenance on an observation, workflow, loop, skill version, task run, or local memory.
    - Use `reflect_task_status` when task completion or late-ingestion linkage is unclear. Treat it as inspection only; ingestion performs reconciliation.
    - When the user wants to approve, install, or roll back a workflow, call `reflect_review_change` first. Present its exact target, diff, evidence, risks, rollback plan, and expiration without displaying the approval token.
@@ -108,7 +108,7 @@ current registry.
 
 4. **Baseline from local telemetry**
    - For current-session, selected-session, or global token/cost/tool/model statistics, use `$reflect-usage` and run `reflect usage --json` with the matching scope. Keep provider limit and billing reconciliation in this skill.
-   - Prefer OTLP JSON traces such as `~/.reflect/state/otlp/otel-traces.json`.
+   - Prefer the managed OTLP segments at `~/.reflect/state/otlp/otel-traces.active.jsonl`.
    - Use the existing `reflect` CLI or `python3 src/reflect/core.py`.
     - Remember the current CLI behavior:
       - `reflect`: open the local browser report from the SQLite store
@@ -116,7 +116,7 @@ current registry.
       - `reflect memory sync .`: sync local folder instruction memories into SQLite
       - `reflect memory list .`: inspect local folder memories
       - `reflect memory providers`: report local SQLite plus optional OMEGA, LiteLLM, Memory Palace, Agent Memory, Mem0, Graphiti, and TencentDB-Agent-Memory adapters
-   - If local traces are unavailable, fall back to legacy local state such as Cursor hook directories when present.
+   - If OTLP is unavailable, use a supported native session or hook source when present.
 
 ### `reflect.db` direct queries — known schema and pitfalls
 
@@ -136,7 +136,7 @@ llm_count = db.execute("SELECT COUNT(*) FROM llm_calls WHERE session_id = ?", (s
 tools = db.execute("SELECT tool_name, COUNT(*) FROM tool_calls WHERE session_id = ? GROUP BY tool_name", (sid,)).fetchall()
 ```
 
-Use `reflect improve --session SESSION_ID` for parent/child traversal and the finding's Source Sessions ledger for task correlation. Treat direct SQL as an advanced compatibility/debugging fallback only.
+Use `reflect improve --session SESSION_ID` for parent/child traversal and the finding's task evidence ledger for correlation. Treat direct SQL as an advanced debugging fallback only.
 
 5. **Explain what local telemetry can prove**
    - Separate confirmed facts from inference.

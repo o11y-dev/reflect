@@ -172,13 +172,13 @@ def test_cross_agent_blog_contract_has_exact_idempotent_telemetry(
     finally:
         conn.close()
 
-    first = core._prepare_sql_report_db(
+    first = core.prepare_sql_report_db(
         db_path,
         otlp_traces=None,
         include_native_sessions=False,
         spans_dir=spans_dir,
     )
-    second = core._prepare_sql_report_db(
+    second = core.prepare_sql_report_db(
         db_path,
         otlp_traces=None,
         include_native_sessions=False,
@@ -198,10 +198,19 @@ def test_cross_agent_blog_contract_has_exact_idempotent_telemetry(
         assert conn.execute("SELECT COUNT(*) FROM memory_exposures").fetchone()[0] == 12
         assert conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0] == 24
         assert conn.execute(
-            "SELECT COUNT(*) FROM mcp_calls WHERE status = 'ok'"
+            """
+            SELECT COUNT(*)
+            FROM mcp_calls AS mc
+            JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+            WHERE tc.status = 'ok'
+            """
         ).fetchone()[0] == 24
         assert conn.execute(
-            "SELECT COUNT(DISTINCT session_id || ':' || tool_call_id) FROM mcp_calls"
+            """
+            SELECT COUNT(DISTINCT tc.session_id || ':' || mc.tool_call_id)
+            FROM mcp_calls AS mc
+            JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+            """
         ).fetchone()[0] == 24
         assert conn.execute("SELECT SUM(input_tokens + output_tokens) FROM sessions").fetchone()[0] == 1_440
         assert {

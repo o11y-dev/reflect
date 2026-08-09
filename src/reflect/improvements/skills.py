@@ -19,6 +19,7 @@ from reflect.improvements.models import (
     SkillUsageSessionRecord,
     SkillVersionRecord,
     SkillVersionStatus,
+    WorkflowCandidateRecord,
 )
 from reflect.improvements.repository import ImprovementRepository, utc_now
 from reflect.improvements.workflows import WorkflowService
@@ -107,7 +108,7 @@ class SkillRegistryService:
             )
             origin = self._origin_for(source_kind)
             rendered = self.workflows._render_skill(candidate)
-            version_status, lifecycle = self._candidate_status(candidate.status.value)
+            version_status, lifecycle = self._candidate_status(candidate)
             skill_id, version_id, created = self._track_version(
                 slug=str(candidate.content.get("slug") or candidate.id),
                 name=str(candidate.content.get("slug") or candidate.title),
@@ -126,15 +127,19 @@ class SkillRegistryService:
             )
             tracked += 1
             versions += int(created)
-            ledger = self.repository.workflow_session_ledger(candidate.id, limit=200)
+            ledger = self.repository.workflow_evidence_ledger(candidate.id, limit=200)
             for observation_id in ledger.observation_ids or [candidate.observation_id]:
                 self._link_evidence(version_id, "observation", observation_id)
             if source.get("loop_id"):
                 self._link_evidence(version_id, "loop", str(source["loop_id"]))
             if source.get("workflow_id"):
                 self._link_evidence(version_id, "workflow", str(source["workflow_id"]))
-            for source_session in ledger.source_sessions:
-                self._link_evidence(version_id, "session", source_session.session_id)
+            for execution_unit in ledger.support_execution_units:
+                self._link_evidence(
+                    version_id,
+                    "execution_unit",
+                    execution_unit.execution_unit_id,
+                )
             installation_rows = self.conn.execute(
                 """
                 SELECT i.target_path, i.applied_hash, i.status, i.created_at, i.updated_at
@@ -961,14 +966,19 @@ class SkillRegistryService:
         return SkillOrigin.RULE_BLUEPRINT
 
     @staticmethod
-    def _candidate_status(status: str) -> tuple[SkillVersionStatus, SkillLifecycleState]:
+    def _candidate_status(
+        candidate: WorkflowCandidateRecord,
+    ) -> tuple[SkillVersionStatus, SkillLifecycleState]:
+        if candidate.lifecycle.deployment.value == "active":
+            return SkillVersionStatus.ACTIVE, SkillLifecycleState.ACTIVE
+        if candidate.lifecycle.deployment.value == "rolled_back":
+            return SkillVersionStatus.ROLLED_BACK, SkillLifecycleState.RETIRED
+        status = candidate.status.value
         mapping = {
-            "active": (SkillVersionStatus.ACTIVE, SkillLifecycleState.ACTIVE),
             "pending": (SkillVersionStatus.PENDING, SkillLifecycleState.PENDING),
             "approved": (SkillVersionStatus.PENDING, SkillLifecycleState.PENDING),
             "stale": (SkillVersionStatus.STALE, SkillLifecycleState.STALE),
             "rejected": (SkillVersionStatus.REJECTED, SkillLifecycleState.REJECTED),
-            "rolled_back": (SkillVersionStatus.ROLLED_BACK, SkillLifecycleState.RETIRED),
         }
         return mapping.get(status, (SkillVersionStatus.PENDING, SkillLifecycleState.PENDING))
 

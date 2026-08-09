@@ -501,7 +501,6 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .badge-icon{font-size:22px;line-height:1}
 .badge-name{font-size:14px;font-weight:600;color:var(--text)}
 .badge-sub{font-size:12px;color:var(--text-3);margin-top:2px}
-
 /* ── Improvement product surfaces ────────────────────────── */
 .product-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:20px;padding:22px;border:1px solid rgba(242,138,26,.2);border-radius:8px;background:linear-gradient(135deg,rgba(242,138,26,.11),rgba(18,17,15,.78))}
 .product-hero h2{margin:0 0 7px;font-size:25px;letter-spacing:-.03em}.product-hero p{margin:0;color:var(--text-2);max-width:720px;line-height:1.55}
@@ -553,7 +552,6 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 @media(max-width:720px){
   .badge-grid{grid-template-columns:1fr}
 }
-
 /* ── Chart wrappers ──────────────────────────────────────── */
 .chart-box{position:relative}
 
@@ -637,7 +635,6 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
   font-weight:600;
   color:var(--yellow);
 }
-
 /* ── Persistent report shell ─────────────────────────────── */
 .report-shell{
   display:grid;
@@ -1292,7 +1289,6 @@ body.rail-overlay-open{overflow:hidden}
   font-size:12px;
   color:var(--text-3);
 }
-
 /* ── Chat-style conversation thread ── */
 .chat-thread{display:flex;flex-direction:column;gap:6px;padding:4px 0 2px}
 .chat-turn{
@@ -2660,7 +2656,6 @@ body.rail-overlay-open{overflow:hidden}
   margin-bottom:10px;
   font-weight:900;
 }
-
 /* ── Graph panels ────────────────────────────────────────── */
 .graph-svg{width:100%;overflow:visible}
 .graph-svg text{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif}
@@ -2800,10 +2795,8 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 <!-- ── Nav tabs ── -->
 <nav id="tabs" role="tablist" aria-label="Dashboard sections">
-  <button class="tab active" id="tab-button-inbox" type="button" role="tab" aria-selected="true" aria-controls="tab-inbox" tabindex="0" data-tab="inbox">Inbox</button>
-  <button class="tab" id="tab-button-sessions" type="button" role="tab" aria-selected="false" aria-controls="tab-sessions" tabindex="-1" data-tab="sessions">Sessions</button>
+  <button class="tab active" id="tab-button-sessions" type="button" role="tab" aria-selected="true" aria-controls="tab-sessions" tabindex="0" data-tab="sessions">Sessions</button>
   <button class="tab" id="tab-button-workflows" type="button" role="tab" aria-selected="false" aria-controls="tab-workflows" tabindex="-1" data-tab="workflows">Workflows</button>
-  <button class="tab" id="tab-button-skills" type="button" role="tab" aria-selected="false" aria-controls="tab-skills" tabindex="-1" data-tab="skills">Skills</button>
   <button class="tab" id="tab-button-impact" type="button" role="tab" aria-selected="false" aria-controls="tab-impact" tabindex="-1" data-tab="impact">Impact</button>
   <button class="tab" id="tab-button-explore" type="button" role="tab" aria-selected="false" aria-controls="tab-explore-usage" tabindex="-1" data-tab="explore">Explore</button>
 </nav>
@@ -2835,7 +2828,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
     </div>
 
 <!-- ════════════════════ SESSIONS BROWSER ════════════════════ -->
-<div class="tab-panel" id="tab-sessions" role="tabpanel" aria-labelledby="tab-button-sessions" hidden>
+<div class="tab-panel active" id="tab-sessions" role="tabpanel" aria-labelledby="tab-button-sessions">
   <div class="session-browser">
     <div class="sb-right">
       <div id="sb-detail">
@@ -3004,75 +2997,69 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <!-- ════════════════════ IMPACT ════════════════════ -->
 <div class="tab-panel" id="tab-impact" role="tabpanel" aria-labelledby="tab-button-impact" hidden>
   <div class="product-hero">
-    <div><h2>Impact</h2><p>See whether applied workflows improve later, comparable sessions. Reflect waits for enough evidence before making a claim.</p></div>
+    <div><h2>Impact</h2><p>See whether installed workflows improve later, comparable task executions. Reflect withholds a claim when the cohort or telemetry is incomplete.</p></div>
     <div class="product-count" id="measurement-count">0<small>impact checks</small></div>
   </div>
   <div class="impact-explainer" aria-label="How impact checks work">
-    <div class="impact-step"><strong>1. Apply</strong><span>Approve a workflow and package it as a skill.</span></div>
-    <div class="impact-step"><strong>2. Collect</strong><span>Capture at least 5 comparable sessions after activation.</span></div>
+    <div class="impact-step"><strong>1. Install</strong><span>Review the exact workflow, then explicitly install its versioned skill.</span></div>
+    <div class="impact-step"><strong>2. Collect</strong><span>Capture the required comparable task executions after activation.</span></div>
     <div class="impact-step"><strong>3. Compare</strong><span>Review improvement, regression, or no clear change.</span></div>
   </div>
   <div class="measurement-list" id="measurement-ledger"></div>
 </div>
 
-<!-- ════════════════════ IMPROVEMENT INBOX ════════════════════ -->
-<div class="tab-panel active" id="tab-inbox" role="tabpanel" aria-labelledby="tab-button-inbox">
+<!-- ════════════════════ WORKFLOWS ════════════════════ -->
+<div class="tab-panel" id="tab-workflows" role="tabpanel" aria-labelledby="tab-button-workflows" hidden>
   <div class="product-hero">
-    <div><h2>Improvement Inbox</h2><p>Start with evidence: recurring failures, verification gaps, and repeated behavior that may deserve a better procedure.</p></div>
-    <div class="product-count" id="inbox-count">0<small>needs attention</small></div>
+    <div><h2>Workflows</h2><p>Move from task-level evidence to a reviewed procedure, an explicit installation, and a measurable validation window.</p></div>
+    <div class="product-count" id="workflow-signal-count">0<small>open signals</small></div>
   </div>
-  <div class="inbox-view-switch" role="tablist" aria-label="Improvement Inbox views">
-    <button class="inbox-view-button active" id="inbox-view-findings" type="button" role="tab" aria-selected="true" aria-controls="inbox-findings-panel" data-inbox-view="findings"><span class="inbox-view-label">Findings</span><span class="inbox-view-detail">Failures, gaps, and corrections</span><strong class="inbox-view-count" id="inbox-findings-count">0</strong></button>
-    <button class="inbox-view-button loops" id="inbox-view-loops" type="button" role="tab" aria-selected="false" aria-controls="inbox-loops-panel" data-inbox-view="loops"><span class="inbox-view-label">Loops</span><span class="inbox-view-detail" id="inbox-loops-detail">Goals, schedules, and repeated behavior</span><strong class="inbox-view-count" id="inbox-loops-count">0</strong></button>
+  <div class="inbox-view-switch" role="tablist" aria-label="Workflow evidence views">
+    <button class="inbox-view-button active" id="workflow-view-findings" type="button" role="tab" aria-selected="true" aria-controls="workflow-findings-panel" data-workflow-view="findings"><span class="inbox-view-label">Findings</span><span class="inbox-view-detail">Failures, gaps, and corrections</span><strong class="inbox-view-count" id="workflow-findings-count">0</strong></button>
+    <button class="inbox-view-button loops" id="workflow-view-loops" type="button" role="tab" aria-selected="false" aria-controls="workflow-loops-panel" data-workflow-view="loops"><span class="inbox-view-label">Loops</span><span class="inbox-view-detail" id="workflow-loops-detail">Goals, schedules, and repeated behavior</span><strong class="inbox-view-count" id="workflow-loops-count">0</strong></button>
   </div>
 
-  <section class="panel product-section inbox-view-panel" id="inbox-findings-panel" role="tabpanel" aria-labelledby="inbox-view-findings" style="margin-top:0">
+  <section class="panel product-section inbox-view-panel" id="workflow-findings-panel" role="tabpanel" aria-labelledby="workflow-view-findings" style="margin-top:0">
     <div class="product-section-head">
       <div><h3 class="product-section-title">Findings</h3><p class="product-section-copy">Evidence-backed problems and opportunities detected by Reflect rules.</p></div>
       <div class="product-section-count" id="finding-count">0<small>open findings</small></div>
     </div>
-    <div class="inbox-list" id="improvement-inbox"></div>
+    <div class="inbox-list" id="finding-ledger"></div>
   </section>
 
-  <section class="panel product-section inbox-view-panel" id="inbox-loops-panel" role="tabpanel" aria-labelledby="inbox-view-loops" hidden>
+  <section class="panel product-section inbox-view-panel" id="workflow-loops-panel" role="tabpanel" aria-labelledby="workflow-view-loops" hidden>
     <div class="product-section-head">
       <div><h3 class="product-section-title" id="observed-loops-title">Observed Loops</h3><p class="product-section-copy">Agent-native goals and schedules plus repeated behavior found in source sessions. New actionable loops appear first; review one to turn it into a monitored workflow.</p></div>
       <div class="product-section-count" id="loop-count">0<small>detected loops</small></div>
     </div>
     <div class="workflow-list" id="loop-ledger" aria-live="polite"></div>
   </section>
-</div>
 
-<!-- ════════════════════ WORKFLOWS ════════════════════ -->
-<div class="tab-panel" id="tab-workflows" role="tabpanel" aria-labelledby="tab-button-workflows" hidden>
-  <div class="product-hero">
-    <div><h2>Workflows</h2><p>Review reusable procedures before they change a repository. See the exact steps, stop conditions, verification, source sessions, target, and diff in one place.</p></div>
-    <div class="product-count" id="workflow-count">0<small>reviewable workflows</small></div>
+  <section class="panel product-section" id="workflow-candidates-section">
+  <div class="product-section-head">
+    <div><h3 class="product-section-title">Reviewable Workflows</h3><p class="product-section-copy">Review the contract, exact steps, stop conditions, verification, source task evidence, installation target, and diff before anything changes.</p></div>
+    <div class="product-section-count" id="workflow-count">0<small>reviewable workflows</small></div>
   </div>
   <div class="workflow-toolbar" aria-label="Workflow filters">
     <div class="workflow-filter-field"><label for="workflow-type-filter">Behavior</label><select id="workflow-type-filter"><option value="all">All behavior types</option><option value="recovery">Recovery</option><option value="verification">Verification</option><option value="exploration">Exploration</option><option value="proven_pattern">Proven Pattern</option></select></div>
-    <div class="workflow-filter-field"><label for="workflow-status-filter">State</label><select id="workflow-status-filter"><option value="reviewable">Reviewable</option><option value="all">All states</option><option value="pending">Pending</option><option value="active">Active</option><option value="stale">Stale</option><option value="rejected">Rejected</option><option value="rolled_back">Rolled Back</option></select></div>
+    <div class="workflow-filter-field"><label for="workflow-status-filter">State</label><select id="workflow-status-filter"><option value="reviewable">Reviewable</option><option value="all">All states</option><option value="pending">Pending Review</option><option value="approved">Approved</option><option value="active">Active Deployment</option><option value="rolled_back">Rolled Back</option><option value="stale">Stale</option><option value="rejected">Rejected</option></select></div>
     <div class="workflow-filter-summary" id="workflow-filter-summary" aria-live="polite"></div>
   </div>
   <div class="workflow-list workflow-tile-grid" id="workflow-ledger" aria-live="polite"></div>
-</div>
+  </section>
 
-<!-- ════════════════════ SKILLS ════════════════════ -->
-<div class="tab-panel" id="tab-skills" role="tabpanel" aria-labelledby="tab-button-skills" hidden>
-  <div class="product-hero">
-    <div><h2>Skills</h2><p>Durable, versioned packages that can be installed and observed across future sessions. Skills retain their source evidence without mixing evidence, procedures, and installations together.</p></div>
-    <div class="product-count" id="skill-count">0<small>current skills</small></div>
-  </div>
-  <div class="panel product-section" style="margin-top:0">
+<!-- ════════════════════ SKILL REGISTRY ════════════════════ -->
+  <section class="panel product-section" id="skill-registry-section">
     <div class="product-section-head">
-      <div><h3 class="product-section-title">Skill Registry</h3><p class="product-section-copy">The registry is broader than any one agent. Availability badges distinguish skills Codex can load, repository-scoped packages, pending drafts, other-agent installs, and telemetry-only history.</p></div>
+      <div><h3 class="product-section-title">Installed Procedure Registry</h3><p class="product-section-copy">Versioned workflow packages and their actual installation state. Review approval and installation remain separate so an approved draft is never presented as executable guidance.</p></div>
+      <div class="product-section-count" id="skill-count">0<small>current skills</small></div>
     </div>
     <div class="workflow-toolbar" aria-label="Skill filters">
       <div class="workflow-filter-field skill-search-field"><label for="skill-search">Search skills</label><input id="skill-search" type="search" placeholder="Name, purpose, agent, state, or installation…" autocomplete="off" spellcheck="false" aria-controls="skill-registry"/></div>
       <div class="workflow-filter-summary" id="skill-filter-summary" aria-live="polite"></div>
     </div>
     <div class="workflow-list skill-tile-grid" id="skill-registry" aria-live="polite"></div>
-  </div>
+  </section>
 </div>
 
 <!-- ════════════════════ TOOLS (merged with Latency) ════════════════════ -->
@@ -3332,7 +3319,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <script>
 // ════════════════════ DATA LOADING ════════════════════
 let D;
-let IMPROVEMENT_DATA = {observations:[], loops:[], skills:[], workflows:[], measurements:[], rules:[], counts_by_status:{}, inbox_total_count:0, raw_observation_count:0, skill_total_count:0, skill_archived_count:0};
+let IMPROVEMENT_DATA = {observations:[], loops:[], skills:[], workflows:[], measurements:[], rules:[], counts_by_status:{}, finding_total_count:0, observation_record_count:0, skill_total_count:0, skill_archived_count:0};
 function renderDashboardError(kind, message){
   if (kind === 'no-data') {
     document.body.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;gap:24px;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:rgba(255,255,255,.9)">'
@@ -3361,7 +3348,7 @@ reflect</pre>
 
 function hasReportScopeFilters(){
   const params = new URLSearchParams(window.location.search);
-  return Boolean(params.get('q') || params.get('agents') || params.get('agent') || params.get('model') || params.get('status') || params.get('range') || params.get('session'));
+  return Boolean(params.get('q') || params.get('agents') || params.get('model') || params.get('status') || params.get('range') || params.get('session'));
 }
 
 function reportLoaderCopy(){
@@ -3514,26 +3501,26 @@ async function loadImprovementData(){
   const timeout = window.setTimeout(() => controller.abort(), 3000);
   const requestOptions = {headers: {Accept: 'application/json'}, signal: controller.signal};
   try {
-    const [inboxResponse, workflowResponse, measurementResponse, ruleResponse] = await Promise.all([
-      fetch('/api/inbox', requestOptions),
+    const [findingResponse, workflowResponse, measurementResponse, ruleResponse] = await Promise.all([
+      fetch('/api/findings', requestOptions),
       fetch('/api/workflows', requestOptions),
       fetch('/api/impact', requestOptions),
       fetch('/api/rules', requestOptions),
     ]);
-    if (!inboxResponse.ok || !workflowResponse.ok || !measurementResponse.ok || !ruleResponse.ok) return IMPROVEMENT_DATA;
+    if (!findingResponse.ok || !workflowResponse.ok || !measurementResponse.ok || !ruleResponse.ok) return IMPROVEMENT_DATA;
     const [loopResponse, skillResponse] = await Promise.all([
       fetch('/api/loops', requestOptions),
       fetch('/api/skills?limit=500', requestOptions),
     ]);
-    const inbox = await inboxResponse.json();
+    const findingPayload = await findingResponse.json();
     const workflows = await workflowResponse.json();
     const measurements = await measurementResponse.json();
     const rules = await ruleResponse.json();
     const loops = loopResponse.ok ? await loopResponse.json() : {loops:[]};
     const skills = skillResponse.ok ? await skillResponse.json() : {skills:[]};
     return {
-      ...inbox,
-      observations: inbox.findings || [],
+      ...findingPayload,
+      observations: findingPayload.findings || [],
       loops: loops.loops || [],
       skills: skills.skills || [],
       skill_total_count: Number(skills.total_count ?? (skills.skills || []).length),
@@ -3591,7 +3578,6 @@ async function initApp(){
   const isLocalApiReport = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
     && reportParam.replace(/^\//, '') === 'api/data';
   if (demoBadge && isLocalApiReport) demoBadge.hidden = true;
-
 /* ── Palette — reflect showcase colors ── */
 const P = {
   blue:    '#f28a1a',
@@ -3922,7 +3908,7 @@ function renderWorkflowSessionLedger(sessions, {empty, total, initial = 5} = {})
   const remainingRows = items.slice(initial).map(renderRow).join('');
   const count = Number(total || items.length);
   const more = remainingRows
-    ? `<details class="session-more"><summary>Show ${fmt(items.length - initial)} More Sessions</summary><div class="session-ledger">${remainingRows}</div></details>`
+    ? `<details class="session-more"><summary>Show ${fmt(items.length - initial)} More ${taskLevel ? 'Tasks' : 'Sessions'}</summary><div class="session-ledger">${remainingRows}</div></details>`
     : '';
   const countNote = count > items.length
     ? `<div class="ledger-status">Showing ${fmt(items.length)} bounded examples from ${fmt(count)} linked ${taskLevel ? 'execution units' : 'sessions'}.</div>`
@@ -3933,15 +3919,20 @@ function renderWorkflowSessionLedger(sessions, {empty, total, initial = 5} = {})
 async function showObservationEvidence(observationId){
   openLedgerDialog({title:'Loading evidence…'});
   try {
-    const item = await ledgerRequest(`/api/inbox/${encodeURIComponent(observationId)}`);
-    const ledger = await ledgerRequest(`/api/inbox/${encodeURIComponent(observationId)}/sessions`);
+    const item = await ledgerRequest(`/api/findings/${encodeURIComponent(observationId)}`);
+    const ledger = await ledgerRequest(`/api/findings/${encodeURIComponent(observationId)}/evidence`);
     const rawEvidence = (item.evidence || []).map(entry => `<div class="evidence-item">
       <div class="ledger-meta" style="margin-top:0"><span class="ledger-pill" translate="no">${escHtml(entry.entity_type)}:${escHtml(entry.entity_id)}</span><span class="ledger-pill">${Math.round(Number(entry.confidence || 0)*100)}% confidence</span></div>
       <div class="inbox-copy" style="margin-top:8px">${escHtml(entry.summary_redacted || '')}</div>
     </div>`).join('');
-    const sourceSessions = renderWorkflowSessionLedger(ledger.source_sessions, {
-      empty:'No source sessions are linked to this finding.',
-      total:ledger.source_session_count,
+    const supportingTasks = renderWorkflowSessionLedger(ledger.support_execution_units, {
+      empty:'No comparable execution units support this finding.',
+      total:ledger.support_execution_unit_count,
+      initial:6,
+    });
+    const provenanceSessions = renderWorkflowSessionLedger(ledger.provenance_sessions, {
+      empty:'No provenance sessions are linked to this finding.',
+      total:ledger.provenance_session_count,
       initial:6,
     });
     const confidence = Math.round(Number(item.confidence || 0) * 100);
@@ -3957,15 +3948,16 @@ async function showObservationEvidence(observationId){
         </div>
         <div class="review-kpi-strip">
           <div class="review-kpi"><div class="review-kpi-label">Affected Sessions</div><div class="review-kpi-value signal">${fmt(Number(item.affected_session_count || 0))}</div></div>
-          <div class="review-kpi"><div class="review-kpi-label">Evidence Examples</div><div class="review-kpi-value">${fmt(Number(ledger?.source_session_count || 0))}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">Supporting Tasks</div><div class="review-kpi-value">${fmt(Number(ledger?.support_execution_unit_count || 0))}</div></div>
           <div class="review-kpi"><div class="review-kpi-label">${escHtml(humanizeLedgerLabel(item.metric_name || 'Metric'))}</div><div class="review-kpi-value">${escHtml(metricDisplay)} ${escHtml(item.metric_unit || '')}</div></div>
           <div class="review-kpi"><div class="review-kpi-label">Impact Score</div><div class="review-kpi-value">${fmt(Number(item.impact_score || 0))} / 100</div></div>
         </div>
         <div class="review-grid">
           <section class="review-panel">
-            <div class="review-panel-head"><h3 class="review-panel-title">Source Sessions</h3><span class="ledger-pill signal">${fmt(Number(ledger?.source_session_count || 0))} linked</span></div>
-            <p class="review-panel-copy">Bounded examples that directly support this finding. Inspect a session to see the highlighted evidence in context.</p>
-            ${sourceSessions}
+            <div class="review-panel-head"><h3 class="review-panel-title">Supporting Tasks</h3><span class="ledger-pill signal">${fmt(Number(ledger?.support_execution_unit_count || 0))} comparable</span></div>
+            <p class="review-panel-copy">Task-bounded evidence used by the finding. Open the containing session to inspect the highlighted signals in context.</p>
+            ${supportingTasks}
+            <details class="advanced-review"><summary>Provenance Sessions · ${fmt(Number(ledger?.provenance_session_count || 0))}</summary>${provenanceSessions}</details>
           </section>
           <aside class="review-stack">
             <section class="review-panel">
@@ -4049,7 +4041,7 @@ async function showLoopReview(loopId){
             </section>
             <section class="review-panel">
               <div class="review-panel-head"><h3 class="review-panel-title">Next Step</h3></div>
-              <p class="review-panel-copy">A loop is evidence, not yet a workflow. Build stages one bounded workflow for review. After you apply that workflow, Reflect monitors comparable future sessions in Impact.</p>
+              <p class="review-panel-copy">A loop is evidence, not yet a workflow. Build stages one bounded workflow for review. After explicit installation, Reflect monitors comparable future task executions in Impact.</p>
               <div class="ledger-command">reflect loops build ${escHtml(loopId)} --agent codex</div>
               <div class="ledger-command">reflect workflows apply WORKFLOW_ID</div>
             </section>
@@ -4094,11 +4086,10 @@ async function showSkillReview(skillId){
       const verdict = impactVerdictPresentation(item.verdict);
       const ready = item.verdict !== 'insufficient_data';
       const afterCount = Number(item.details?.after_count || 0);
-      const taskLevel = item.details?.cohort?.unit === 'execution_units';
-      const minimumAfter = Number(item.details?.cohort?.minimum_after_execution_units || item.details?.cohort?.minimum_after_sessions || 5);
+      const minimumAfter = Number(item.details?.cohort?.minimum_after_execution_units || 5);
       return `<article class="skill-detail-tile">
         <div class="inbox-card-head"><div class="inbox-title">${escHtml(metric.goal)}</div><span class="ledger-pill ${item.verdict === 'improved' ? 'signal' : ''}">${escHtml(verdict.label)}</span></div>
-        <div class="inbox-copy">${ready ? `${escHtml(formatImpactValue(metric, item.before_value))} before → ${escHtml(formatImpactValue(metric, item.after_value))} after · ${Math.round(Number(item.confidence || 0) * 100)}% confidence` : `${fmt(afterCount)} of ${fmt(minimumAfter)} post-application ${taskLevel ? 'tasks' : 'sessions'} collected`}</div>
+        <div class="inbox-copy">${ready ? `${escHtml(formatImpactValue(metric, item.before_value))} before → ${escHtml(formatImpactValue(metric, item.after_value))} after · ${Math.round(Number(item.confidence || 0) * 100)}% confidence` : `${fmt(afterCount)} of ${fmt(minimumAfter)} post-application tasks collected`}</div>
       </article>`;
     }).join('');
     const sessionEvidence = evidence.filter(item => item.entity_type === 'session');
@@ -4165,7 +4156,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     if (requestedRoot) previewUrl.searchParams.set('project_root', requestedRoot);
     const [preview, ledger] = await Promise.all([
       ledgerRequest(previewUrl.pathname + previewUrl.search),
-      ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/sessions`),
+      ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/evidence`),
     ]);
     updateUrlParams(params => {
       params.delete('loop');
@@ -4173,8 +4164,8 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
       params.set('workflow', candidateId);
       if (preview.project_root) params.set('workflow_root', preview.project_root);
     });
-    const active = candidate.status === 'active';
-    const reviewable = !['rejected','stale','rolled_back'].includes(candidate.status);
+    const active = candidate.lifecycle?.deployment === 'active';
+    const reviewable = !['rejected','stale'].includes(candidate.status);
     const applyAllowed = Boolean(preview.checks?.apply_allowed);
     const reviewActions = active
       ? `<button type="button" class="ledger-button danger" data-ledger-action="rollback" data-candidate-id="${escHtml(candidateId)}">Roll Back</button>`
@@ -4182,8 +4173,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
         ? ''
         : `<button type="button" class="ledger-button" data-ledger-action="save-edit" data-candidate-id="${escHtml(candidateId)}">Save Draft</button><button type="button" class="ledger-button danger" data-ledger-action="reject" data-candidate-id="${escHtml(candidateId)}">Reject</button><button type="button" class="ledger-button primary" data-ledger-action="apply" data-candidate-id="${escHtml(candidateId)}" ${applyAllowed ? '' : 'disabled'}>${applyAllowed ? 'Approve &amp; Apply to This Project' : 'Choose a Project Folder'}</button>`;
     const content = candidate.content || {};
-    const contractWorkflow = Boolean(content.workflow_contract);
-    const suggestions = (preview.suggested_project_roots || []).map(item => `<option value="${escHtml(item.path)}">${fmt(Number(item.source_sessions || 0))} source sessions${item.is_repository ? ' · Git repository' : item.is_directory ? ' · project folder' : ' · unavailable'}</option>`).join('');
+    const suggestions = (preview.suggested_project_roots || []).map(item => `<option value="${escHtml(item.path)}">${fmt(Number(item.provenance_sessions || 0))} provenance sessions${item.is_repository ? ' · Git repository' : item.is_directory ? ' · project folder' : ' · unavailable'}</option>`).join('');
     const issues = preview.checks?.issues || [];
     const checkClass = applyAllowed ? 'review-check' : 'review-check blocked';
     const checkCopy = applyAllowed
@@ -4199,14 +4189,19 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
       ? `<div class="review-warning">Active target owner: ${escHtml(targetOwner.title || targetOwner.candidate_id)}. This is ownership recorded by Reflect for safe rollback, not a Git or filesystem lock.</div>`
       : '';
     const advisoryNotice = advisories.map(item => `<div class="review-warning">${escHtml(item)}</div>`).join('');
-    const sourceSessions = renderWorkflowSessionLedger(ledger.source_sessions, {
-      empty:'No source sessions are linked to this workflow.',
-      total:ledger.source_session_count,
+    const supportTasks = renderWorkflowSessionLedger(ledger.support_execution_units, {
+      empty:'No comparable execution units support this workflow.',
+      total:ledger.support_execution_unit_count,
       initial:3,
     });
-    const exposureSessions = renderWorkflowSessionLedger(ledger.exposure_sessions, {
-      empty:'No sessions have been exposed to this workflow yet. Exposure begins after approval and application.',
-      total:ledger.exposure_session_count,
+    const provenanceSessions = renderWorkflowSessionLedger(ledger.provenance_sessions, {
+      empty:'No provenance sessions are linked to this workflow.',
+      total:ledger.provenance_session_count,
+      initial:3,
+    });
+    const exposedTasks = renderWorkflowSessionLedger(ledger.exposed_execution_units, {
+      empty:'No tasks have been exposed to this workflow yet. Exposure begins after approval and application.',
+      total:ledger.exposed_execution_unit_count,
       initial:3,
     });
     const projectRoot = String(preview.project_root || '').replace(/\/$/, '');
@@ -4230,7 +4225,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
         : 'Project relation unavailable';
     const evidenceProjectNames = [...new Set(evidenceProjectPaths.map(ledgerWorkspaceName).filter(Boolean))];
     const relationCopy = relationState === 'related'
-      ? `${fmt(Number(selectedEvidence.source_sessions || 0))} of ${fmt(Number(ledger.source_session_count || 0))} source sessions came from this project.`
+      ? `${fmt(Number(selectedEvidence.provenance_sessions || 0))} of ${fmt(Number(ledger.provenance_session_count || 0))} provenance sessions came from this project.`
       : relationState === 'unrelated'
         ? `Source evidence points to ${evidenceProjectNames.join(', ') || 'another project folder'}; applying here is a deliberate scope change.`
         : 'The source sessions do not contain a reliable project folder.';
@@ -4249,14 +4244,14 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     ledgerDialog.dataset.workflowSlug = String(content.slug || '');
     openLedgerDialog({
       title:reviewTitle,
-      subtitle:`${origin.label} · ${behaviorType} · ${humanizeLedgerLabel(candidate.status)} · Rule ${humanizeLedgerLabel(sourceRule)}`,
+      subtitle:`${origin.label} · ${behaviorType} · ${humanizeLedgerLabel(candidate.lifecycle?.display || candidate.status)} · Rule ${humanizeLedgerLabel(sourceRule)}`,
       body:`<div class="review-lead">
           <div class="review-eyebrow">Why Reflect Suggested This</div>
           <p>${escHtml(humanizeLedgerText(candidate.hypothesis || 'Review the linked evidence and proposed workflow before applying it.'))}</p>
           <p class="review-panel-copy">${escHtml(origin.detail)}</p>
         </div>
         <div class="workflow-approval-summary" aria-label="Workflow approval summary">
-          <div class="workflow-approval-item"><div class="workflow-approval-label">Evidence</div><div class="workflow-approval-value signal">${fmt(Number(candidate.support_count || 0))} supporting ${contractWorkflow ? 'executions' : 'sessions'}</div><div class="workflow-approval-copy">${escHtml(origin.label)} · ${escHtml(behaviorType)} behavior</div></div>
+          <div class="workflow-approval-item"><div class="workflow-approval-label">Evidence</div><div class="workflow-approval-value signal">${fmt(Number(candidate.support_execution_unit_count || 0))} supporting tasks</div><div class="workflow-approval-copy">${escHtml(origin.label)} · ${escHtml(behaviorType)} behavior</div></div>
           <div class="workflow-approval-item"><div class="workflow-approval-label">Selected Project</div><div class="workflow-approval-value">${escHtml(projectName)}</div><div class="workflow-approval-copy">${escHtml(relationLabel)}</div></div>
           <div class="workflow-approval-item"><div class="workflow-approval-label">File Change</div><div class="workflow-approval-value">${escHtml(changeLabel)}</div><div class="workflow-approval-copy" translate="no">${escHtml(targetFile || 'Target file unavailable')}</div></div>
         </div>
@@ -4290,14 +4285,15 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
           </main>
           <aside class="review-stack">
             <section class="review-panel">
-              <div class="review-panel-head"><h3 class="review-panel-title">Source Evidence</h3><span class="ledger-pill signal">${fmt(Number(ledger.source_session_count || 0))} examples</span></div>
-              <p class="review-panel-copy">Representative sessions behind this proposal. ${fmt(Number(candidate.support_count || 0))} ${contractWorkflow ? 'execution units' : 'sessions'} support the aggregate finding.</p>
-              ${sourceSessions}
+              <div class="review-panel-head"><h3 class="review-panel-title">Supporting Tasks</h3><span class="ledger-pill signal">${fmt(Number(ledger.support_execution_unit_count || 0))} comparable</span></div>
+              <p class="review-panel-copy">Task-bounded evidence behind this contract. Provenance sessions are retained separately and never counted as comparable executions.</p>
+              ${supportTasks}
+              <details class="advanced-review"><summary>Provenance Sessions · ${fmt(Number(ledger.provenance_session_count || 0))}</summary>${provenanceSessions}</details>
             </section>
             <section class="review-panel">
-              <div class="review-panel-head"><h3 class="review-panel-title">After Activation</h3><span class="ledger-pill">${fmt(Number(ledger.exposure_session_count || 0))} ${contractWorkflow ? 'executions' : 'sessions'}</span></div>
-              <p class="review-panel-copy">${contractWorkflow ? 'Comparable executions' : 'Sessions'} where Reflect observed this workflow after it was applied.</p>
-              ${exposureSessions}
+              <div class="review-panel-head"><h3 class="review-panel-title">After Activation</h3><span class="ledger-pill">${fmt(Number(ledger.exposed_execution_unit_count || 0))} tasks</span></div>
+              <p class="review-panel-copy">Comparable execution units where Reflect observed this workflow after it was applied.</p>
+              ${exposedTasks}
             </section>
           </aside>
         </div>`,
@@ -4331,14 +4327,11 @@ async function submitSessionFeedback(sessionId, outcome, button){
 async function showImpactSessions(measurementId){
   openLedgerDialog({title:'Loading comparison evidence…'});
   try {
-    const ledger = await ledgerRequest(`/api/impact/${encodeURIComponent(measurementId)}/sessions`);
+    const ledger = await ledgerRequest(`/api/impact/${encodeURIComponent(measurementId)}/evidence`);
     const metric = impactMetricPresentation(ledger.metric_name);
-    const taskLevel = ledger.unit === 'execution_units';
-    const unit = taskLevel ? 'task' : 'session';
-    const unitPlural = taskLevel ? 'tasks' : 'sessions';
-    const cohortCopy = ledger.snapshot_exact
-      ? `These are the stored ${unit} cohorts behind this impact snapshot.`
-      : 'This older snapshot predates stored cohort IDs, so Reflect reconstructed the closest bounded session cohorts.';
+    const unit = 'task';
+    const unitPlural = 'tasks';
+    const cohortCopy = 'These are the stored execution-unit cohorts behind this impact snapshot.';
     const measurementReasons = ledger.measurement_reasons || [];
     const qualityNotice = measurementReasons.length
       ? `<div class="review-warning"><strong>${escHtml(humanizeLedgerLabel(ledger.measurement_state || 'not measurable'))}.</strong> ${escHtml(measurementReasons.join(' '))}</div>`
@@ -4348,18 +4341,18 @@ async function showImpactSessions(measurementId){
       relationship,
       evidence_label:formatImpactSessionValue(ledger.metric_name, item.metric_value, item),
     }));
-    const beforeSessions = renderWorkflowSessionLedger(prepare(ledger.before_sessions, 'baseline'), {
+    const beforeSessions = renderWorkflowSessionLedger(prepare(ledger.before_execution_units, 'baseline'), {
       empty:`No baseline ${unitPlural} remain available for this snapshot.`,
       total:ledger.before_count,
       initial:5,
     });
-    const afterSessions = renderWorkflowSessionLedger(prepare(ledger.after_sessions, 'after activation'), {
+    const afterSessions = renderWorkflowSessionLedger(prepare(ledger.after_execution_units, 'after activation'), {
       empty:`No post-application ${unitPlural} have been collected yet.`,
       total:ledger.after_count,
       initial:5,
     });
     openLedgerDialog({
-      title:`${taskLevel ? 'Tasks' : 'Sessions'} Compared for ${metric.goal}`,
+      title:`Tasks Compared for ${metric.goal}`,
       subtitle:cohortCopy,
       body:`<div class="review-lead"><div class="review-eyebrow">Impact Evidence</div><p>${escHtml(cohortCopy)} Open the containing session to inspect the underlying conversation, tools, and outcome.</p></div>${qualityNotice}
         <div class="review-grid">
@@ -4540,30 +4533,17 @@ async function hydrateExploreView(viewName){
     }
   }
 }
-
 /* ── Tabs ── */
 let _graphsInited = false;
 const tabButtons = Array.from(document.querySelectorAll('.tab'));
 const tabsEl = document.getElementById('tabs');
-const PRODUCT_TABS = new Set(['inbox','sessions','workflows','skills','impact','explore']);
+const PRODUCT_TABS = new Set(['sessions','workflows','impact','explore']);
 const EXPLORE_VIEWS = new Set(['usage','tools','graph','context']);
-const LEGACY_TAB_LOCATIONS = {
-  observations: {tab:'inbox'},
-  compare: {tab:'impact'},
-  overview: {tab:'explore', view:'usage'},
-  activity: {tab:'explore', view:'usage'},
-  tools: {tab:'explore', view:'tools'},
-  graphs: {tab:'explore', view:'graph'},
-  data: {tab:'explore', view:'context'},
-  context: {tab:'explore', view:'context'},
-};
 let activeExploreView = 'usage';
 
 function canonicalDashboardLocation(tabName, viewName = ''){
   const requestedTab = String(tabName || '').trim().toLowerCase();
-  const legacy = LEGACY_TAB_LOCATIONS[requestedTab];
-  if (legacy) return legacy;
-  const tab = PRODUCT_TABS.has(requestedTab) ? requestedTab : 'inbox';
+  const tab = PRODUCT_TABS.has(requestedTab) ? requestedTab : 'sessions';
   if (tab !== 'explore') return {tab};
   const normalizedView = String(viewName || '').trim().toLowerCase();
   return {tab, view: EXPLORE_VIEWS.has(normalizedView) ? normalizedView : 'usage'};
@@ -4630,7 +4610,7 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
         params.delete('workflow_type');
         params.delete('workflow_status');
       }
-      if (activeTab !== 'skills') params.delete('skill_q');
+      if (activeTab !== 'workflows') params.delete('skill_q');
     });
   }
 }
@@ -4657,7 +4637,7 @@ window.addEventListener('resize', () => updateTabIndicator(document.querySelecto
 
 const requestedInitialTab = currentParams().get('tab');
 const requestedInitialView = currentParams().get('view');
-const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length ? 'inbox' : 'sessions';
+const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length ? 'workflows' : 'sessions';
 activateTab(requestedInitialTab || defaultProductTab, {
   view: requestedInitialView || '',
   updateUrl: Boolean(requestedInitialTab || requestedInitialView),
@@ -4671,7 +4651,6 @@ window.setTimeout(requestDashboardRefresh, 250);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) requestDashboardRefresh();
 });
-
 /* ════════════════════ SESSION BROWSER ════════════════════ */
 class SessionConversationPlayhead {
   constructor(panel, options = {}) {
@@ -4969,7 +4948,6 @@ class SessionConversationPlayhead {
       ${hasFailures ? '<button type="button" class="conversation-nav-button" data-conversation-failure>Next failure</button>' : ''}
     </div>`;
   }
-  const legacyAgent = params.get('agent');
   const filterState = {
     q: (params.get('q') || '').trim(),
     agents: new Set((params.get('agents') || '').split(',').filter(Boolean)),
@@ -4978,7 +4956,6 @@ class SessionConversationPlayhead {
     range: params.get('range') || 'all',
     sort: params.get('sort') || 'recent',
   };
-  if (!filterState.agents.size && legacyAgent && legacyAgent !== 'all') filterState.agents.add(legacyAgent);
 
   document.addEventListener('keydown', event => {
     const session = selectedIdx === null ? null : sessions[selectedIdx];
@@ -4995,10 +4972,11 @@ class SessionConversationPlayhead {
   });
 
   // Detect which agents exist
+  const agentTab = sqlTab('agents');
   const agentSet = new Set([
     ...sessions.map(s => s.agent).filter(Boolean),
-    ...(D.agent_comparison || []).map(a => a.name).filter(Boolean),
-    ...Object.keys(D.agents || {}),
+    ...(agentTab.agent_comparison || []).map(a => a.name).filter(Boolean),
+    ...Object.keys(agentTab.agents || {}),
   ]);
   const pillContainer = document.getElementById('sb-agent-pills');
   const listHead = document.getElementById('sb-list-head');
@@ -5023,7 +5001,7 @@ class SessionConversationPlayhead {
   const agentNames = [...agentSet].sort((a,b) => a.localeCompare(b));
   const modelNames = [...new Set([
     ...sessions.map(s => s.primary_model).filter(Boolean),
-    ...Object.keys(D.models_by_count || {}),
+    ...Object.keys(sqlTab('models').models_by_count || {}),
   ])].sort((a,b) => a.localeCompare(b));
   modelNames.forEach(model => {
     const opt = document.createElement('option');
@@ -5052,7 +5030,6 @@ class SessionConversationPlayhead {
       else urlParams.delete('q');
       if (filterState.agents.size) urlParams.set('agents', [...filterState.agents].join(','));
       else urlParams.delete('agents');
-      urlParams.delete('agent');
       if (filterState.model !== 'all') urlParams.set('model', filterState.model);
       else urlParams.delete('model');
       if (filterState.status !== 'all') urlParams.set('status', filterState.status);
@@ -5296,7 +5273,7 @@ class SessionConversationPlayhead {
     updateAgentPills();
     renderFilterChips();
     const hasFilters = Boolean(filterState.q || filterState.agents.size || filterState.model !== 'all' || filterState.status !== 'all' || filterState.range !== 'all' || filterState.sort !== 'recent');
-    const totalSessions = Number(D.session_list_total || sessions.length || D.unique_sessions || 0);
+    const totalSessions = Number(D.session_list_total || sessions.length || 0);
     metaEl.textContent = hasFilters
       ? `Showing ${fmt(filtered.length)} of ${fmt(totalSessions)} sessions`
       : `Showing ${fmt(filtered.length)} of ${fmt(totalSessions)} sessions`;
@@ -5326,7 +5303,7 @@ class SessionConversationPlayhead {
       const estimatedTokens = getEstimatedSessionTokens(s);
       const tokens = (estimatedTokens?.input ?? s.input_tokens ?? 0) + (estimatedTokens?.output ?? s.output_tokens ?? 0);
       const cost = Number(s.total_cost_usd || s.total_cost || 0);
-      const unit = String(s.pricing_unit || D.pricing_unit || 'usd').toUpperCase();
+      const unit = String(s.pricing_unit || sqlTab('usage').pricing_unit || 'usd').toUpperCase();
       const costUnavailableReason = tokens > 0
         ? 'Model pricing is unavailable for the captured token usage.'
         : 'Token usage was not exported by this telemetry source.';
@@ -5375,7 +5352,7 @@ class SessionConversationPlayhead {
     const outTok = estimatedTokens?.output ?? session.output_tokens ?? 0;
     const cacheTok = session.cache_read_tokens || 0;
     const sessionCost = Number(session.total_cost_usd || session.total_cost || 0);
-    const sessionUnit = String(session.pricing_unit || D.pricing_unit || 'usd').toUpperCase();
+    const sessionUnit = String(session.pricing_unit || sqlTab('usage').pricing_unit || 'usd').toUpperCase();
     const sessionCostUnavailableReason = (Number(session.input_tokens || 0) + Number(session.output_tokens || 0) + Number(session.cache_creation_tokens || 0) + Number(session.cache_read_tokens || 0)) > 0
       ? 'Model pricing is unavailable for the captured token usage.'
       : 'Token usage was not exported by this telemetry source.';
@@ -5408,7 +5385,7 @@ class SessionConversationPlayhead {
         <span title="${tokenMeta}">Out: <strong>${estimatedTokens ? '~' : ''}${fmtTokenShort(outTok)}</strong></span>
         ${cacheTok > 0 ? `<span>Cache: <strong>${fmtTokenShort(cacheTok)}</strong></span>` : ''}
         ${sessionCost > 0
-          ? `<span title="Cost basis: ${escHtml(session.pricing_source || D.pricing_source || 'unknown')}">Cost: <strong>${fmtCost(sessionCost)} ${escHtml(sessionUnit)}</strong></span>`
+          ? `<span title="Cost basis: ${escHtml(session.pricing_source || sqlTab('usage').pricing_source || 'unknown')}">Cost: <strong>${fmtCost(sessionCost)} ${escHtml(sessionUnit)}</strong></span>`
           : `<span title="${escHtml(sessionCostUnavailableReason)}">Cost: <strong>Unavailable</strong></span>`}
         ${session.failure_count > 0 ? `<span style="color:var(--red)">Failures: <strong>${session.failure_count}</strong></span>` : ''}
       </div>
@@ -6658,19 +6635,18 @@ class SessionConversationPlayhead {
     renderSessionDetail(sessions[selectedIdx]);
   }
 })();
-
 /* ════════════════════ EXPLORE: USAGE ════════════════════ */
 
 /* Stat row */
 const usageTab = sqlTab('usage');
-const usageModels = usageTab.models_by_count || sqlTab('models').models_by_count || D.models_by_count || {};
-const usageEvents = usageTab.events_by_type || sqlTab('activity').events_by_type || D.events_by_type || {};
-const usageModelCosts = usageTab.model_costs || sqlTab('costs').model_costs || D.model_costs || {};
+const usageModels = usageTab.models_by_count || sqlTab('models').models_by_count || {};
+const usageEvents = usageTab.events_by_type || sqlTab('activity').events_by_type || {};
+const usageModelCosts = usageTab.model_costs || sqlTab('costs').model_costs || {};
 const statDefs = [
-  { label:'Avg Quality',   value:(usageTab.avg_quality_score ?? D.avg_quality_score ?? 0).toFixed(1)+'%', sub:'current selection',              c:(usageTab.avg_quality_score ?? D.avg_quality_score ?? 0) > 70 ? 'var(--green)' : 'var(--yellow)' },
-  { label:'Sessions',      value:fmt(usageTab.unique_sessions ?? D.unique_sessions),  sub:String(usageTab.first_event_ts || D.first_event_ts || '').slice(0,10)+' - now',   c:'var(--purple)' },
-  { label:'Prompts',       value:fmt(usageTab.prompt_submits ?? D.prompt_submits),   sub:'user prompt submits',                   c:'var(--teal)' },
-  { label:'Tool Calls',    value:fmt(usageTab.tool_calls ?? D.tool_calls),       sub:(usageTab.tool_to_prompt_ratio ?? D.tool_to_prompt_ratio)+':1 per prompt',  c:'var(--blue)' },
+  { label:'Avg Quality',   value:Number(usageTab.avg_quality_score || 0).toFixed(1)+'%', sub:'current selection',              c:Number(usageTab.avg_quality_score || 0) > 70 ? 'var(--green)' : 'var(--yellow)' },
+  { label:'Sessions',      value:fmt(usageTab.unique_sessions || 0),  sub:String(usageTab.first_event_ts || '').slice(0,10)+' - now',   c:'var(--purple)' },
+  { label:'Prompts',       value:fmt(usageTab.prompt_submits || 0),   sub:'user prompt submits',                   c:'var(--teal)' },
+  { label:'Tool Calls',    value:fmt(usageTab.tool_calls || 0),       sub:String(usageTab.tool_to_prompt_ratio || '0.0')+':1 per prompt',  c:'var(--blue)' },
 ];
 document.getElementById('stat-row').innerHTML = statDefs.map(s=>`
   <div class="stat" style="--c:${s.c}">
@@ -6754,7 +6730,7 @@ function renderSqlTabPayloads(){
 }
 renderSqlTabPayloads();
 
-const costUnit = String(D.pricing_unit || 'usd').toUpperCase();
+const costUnit = String(usageTab.pricing_unit || 'usd').toUpperCase();
 
 function formatSignedDelta(delta, suffix = ''){
   const value = Number(delta || 0);
@@ -6769,7 +6745,7 @@ function buildCohortComparison(){
   if (!summaryEl || !detailsEl || !baselineEl) return;
 
   const cohortTab = sqlTab('cohort_comparison');
-  const comparison = cohortTab.comparison || D.comparison;
+  const comparison = cohortTab.comparison;
   if (comparison && comparison.primary && comparison.baseline) {
     const primary = comparison.primary;
     const baseline = comparison.baseline;
@@ -6867,18 +6843,18 @@ document.addEventListener('dashboard-filters-changed', event => {
 });
 
 /* Metric tiles */
-const ph   = (usageTab.peak_hour ?? D.peak_hour) >= 0 ? h12(usageTab.peak_hour ?? D.peak_hour) : '--';
-const signatureCommand = usageTab.signature_command || D.signature_command || '';
+const ph   = Number(usageTab.peak_hour ?? -1) >= 0 ? h12(usageTab.peak_hour) : '--';
+const signatureCommand = usageTab.signature_command || '';
 const sig  = signatureCommand ? signatureCommand.slice(0,28)+(signatureCommand.length>28?'…':'') : '—';
 const metricDefs = [
-  { label:'MCP Calls',          value:fmt(usageTab.mcp_calls ?? D.mcp_calls),           sub:Object.keys(usageTab.mcp_servers_by_count || D.mcp_servers_by_count || {}).length+' servers' },
-  { label:'Subagents Launched', value:fmt(usageTab.subagent_launches ?? D.subagent_launches),   sub:Object.keys(usageTab.subagent_types_by_count || D.subagent_types_by_count || {}).length+' agent types' },
-  { label:'File Edits',         value:fmt(usageTab.file_edits ?? D.file_edits),          sub:'modified files' },
-  { label:'Shell Runs',         value:fmt(usageTab.shell_executions ?? D.shell_executions),    sub:(usageTab.unique_commands ?? D.unique_commands)+' unique patterns' },
-  { label:'Tool Failures',      value:fmt(usageTab.tool_failures ?? D.tool_failures),       sub:(usageTab.failure_rate_pct ?? D.failure_rate_pct)+'% failure rate' },
-  { label:'Peak Hour',          value:ph,                         sub:fmt(usageTab.peak_hour_count ?? D.peak_hour_count)+' events at peak' },
-  { label:'AI Models',          value:fmt(usageTab.unique_models ?? D.unique_models),       sub:'distinct models used' },
-  { label:'Signature Command',  value:sig,                        sub:(usageTab.signature_command_count ?? D.signature_command_count)+'x run' },
+  { label:'MCP Calls',          value:fmt(usageTab.mcp_calls || 0),           sub:Object.keys(usageTab.mcp_servers_by_count || {}).length+' servers' },
+  { label:'Subagents Launched', value:fmt(usageTab.subagent_launches || 0),   sub:Object.keys(usageTab.subagent_types_by_count || {}).length+' agent types' },
+  { label:'File Edits',         value:fmt(usageTab.file_edits || 0),          sub:'modified files' },
+  { label:'Shell Runs',         value:fmt(usageTab.shell_executions || 0),    sub:fmt(usageTab.unique_commands || 0)+' unique patterns' },
+  { label:'Tool Failures',      value:fmt(usageTab.tool_failures || 0),       sub:Number(usageTab.failure_rate_pct || 0)+'% failure rate' },
+  { label:'Peak Hour',          value:ph,                         sub:fmt(usageTab.peak_hour_count || 0)+' events at peak' },
+  { label:'AI Models',          value:fmt(usageTab.unique_models || 0),       sub:'distinct models used' },
+  { label:'Signature Command',  value:sig,                        sub:fmt(usageTab.signature_command_count || 0)+'x run' },
 ];
 document.getElementById('metric-row').innerHTML = metricDefs.map(m=>`
   <div class="metric">
@@ -6912,7 +6888,7 @@ if (Object.keys(usageEvents).length) {
 } else {
   renderChartEmpty('eventChart', 'No events match the current selection.');
 }
-const sourceProvenance = usageTab.source_provenance || D.source_provenance || [];
+const sourceProvenance = usageTab.source_provenance || [];
 const sourceProvenanceEl = document.getElementById('source-provenance');
 if (sourceProvenanceEl) {
   sourceProvenanceEl.innerHTML = sourceProvenance.length
@@ -6961,7 +6937,7 @@ function deriveAgentCostRowsFromSessions(sessions){
   });
   return Array.from(rows.values()).sort((a, b) => String(a.day).localeCompare(String(b.day)) || Number(b.total_cost || 0) - Number(a.total_cost || 0) || String(a.agent).localeCompare(String(b.agent)));
 }
-const rawUsageAgentCostRows = usageTab.agent_cost_over_time || D.agent_cost_over_time || [];
+const rawUsageAgentCostRows = usageTab.agent_cost_over_time || [];
 const normalizedUsageAgentCostRows = normalizeAgentCostRows(rawUsageAgentCostRows);
 const usageAgentCostRows = normalizedUsageAgentCostRows.length ? normalizedUsageAgentCostRows : deriveAgentCostRowsFromSessions(D.sessions || []);
 const agentCostChartEl = document.getElementById('agentCostChart');
@@ -6995,10 +6971,10 @@ if (agentCostChartEl) {
     agentCostChartEl.parentElement.innerHTML = `<div style="font-size:12px;color:var(--text-3);padding:24px 0">${message}</div>`;
   }
 }
-const usageInputTokens = usageTab.total_input_tokens ?? D.total_input_tokens ?? 0;
-const usageOutputTokens = usageTab.total_output_tokens ?? D.total_output_tokens ?? 0;
-const usageCacheCreationTokens = usageTab.total_cache_creation_tokens ?? D.total_cache_creation_tokens ?? 0;
-const usageCacheReadTokens = usageTab.total_cache_read_tokens ?? D.total_cache_read_tokens ?? 0;
+const usageInputTokens = usageTab.total_input_tokens || 0;
+const usageOutputTokens = usageTab.total_output_tokens || 0;
+const usageCacheCreationTokens = usageTab.total_cache_creation_tokens || 0;
+const usageCacheReadTokens = usageTab.total_cache_read_tokens || 0;
 if (usageInputTokens > 0 || usageOutputTokens > 0) {
   makeDoughnut('tokenChart',
     ['Input','Output','Cache Creation','Cache Read'],
@@ -7012,11 +6988,11 @@ document.getElementById('stat-cache-tok').textContent = fmt(usageCacheReadTokens
 document.getElementById('stat-tok-ratio').textContent = usageInputTokens ? (usageOutputTokens / usageInputTokens).toFixed(2) : '--';
 
 const costStats = [
-  ['Total Cost', fmtCost(usageTab.total_cost_usd ?? D.total_cost_usd ?? D.total_cost ?? 0), costUnit],
-  ['Input Cost', fmtCost(usageTab.input_cost_usd ?? D.input_cost_usd ?? D.input_cost ?? 0), costUnit],
-  ['Output Cost', fmtCost(usageTab.output_cost_usd ?? D.output_cost_usd ?? D.output_cost ?? 0), costUnit],
-  ['Cache Cost', fmtCost((usageTab.cache_creation_cost_usd ?? D.cache_creation_cost_usd ?? D.cache_creation_cost ?? 0) + (usageTab.cache_read_cost_usd ?? D.cache_read_cost_usd ?? D.cache_read_cost ?? 0)), costUnit],
-  ['Cost Basis', escHtml(usageTab.pricing_source || D.pricing_source || 'unknown'), `${Object.keys(usageModelCosts).length} priced model(s)`],
+  ['Total Cost', fmtCost(usageTab.total_cost_usd || 0), costUnit],
+  ['Input Cost', fmtCost(usageTab.input_cost_usd || 0), costUnit],
+  ['Output Cost', fmtCost(usageTab.output_cost_usd || 0), costUnit],
+  ['Cache Cost', fmtCost(Number(usageTab.cache_creation_cost_usd || 0) + Number(usageTab.cache_read_cost_usd || 0)), costUnit],
+  ['Cost Basis', escHtml(usageTab.pricing_source || 'unknown'), `${Object.keys(usageModelCosts).length} priced model(s)`],
 ];
 const costStatsEl = document.getElementById('cost-stats');
 if (costStatsEl) {
@@ -7205,11 +7181,10 @@ function impactSummary(item, metric, trend = null){
   const before = Number(item.before_value);
   const after = Number(item.after_value);
   const afterCount = Number(item.after_count || 0);
-  const taskLevel = item.cohort?.unit === 'execution_units';
-  const unit = taskLevel ? 'task' : 'session';
-  const units = taskLevel ? 'tasks' : 'sessions';
-  const minimumAfter = Number(item.cohort?.minimum_after_execution_units || item.cohort?.minimum_after_sessions || 5);
-  const minimumBefore = Number(item.cohort?.minimum_before_execution_units || item.cohort?.minimum_before_sessions || 5);
+  const unit = 'task';
+  const units = 'tasks';
+  const minimumAfter = Number(item.cohort?.minimum_after_execution_units || 5);
+  const minimumBefore = Number(item.cohort?.minimum_before_execution_units || 5);
   if (measurementState === 'not_measurable') {
     const reasons = item.cohort?.measurement_reasons || [];
     return reasons.join(' ') || 'The current cohorts do not pass the evidence-quality gate, so Reflect will not claim impact.';
@@ -7239,7 +7214,7 @@ function impactSummary(item, metric, trend = null){
 function impactScope(item){
   const cohort = item.cohort || {};
   const task = cohort.task_archetype_id ? `${humanizeLedgerLabel(cohort.task_archetype_id)} tasks` : 'All task types';
-  const repository = cohort.repo_id ? 'Same attributed repository' : 'Sessions without repository attribution';
+  const repository = cohort.repo_id ? 'Same attributed repository' : 'Tasks without repository attribution';
   return `${task} · ${repository}`;
 }
 
@@ -7252,65 +7227,73 @@ function buildImprovementSurfaces(){
   const measurements = IMPROVEMENT_DATA.measurements || [];
   const measurementGroups = groupImpactMeasurements(measurements);
   const rules = IMPROVEMENT_DATA.rules || [];
-  const inboxCount = document.getElementById('inbox-count');
+  const workflowSignalCount = document.getElementById('workflow-signal-count');
   const loopCount = document.getElementById('loop-count');
   const workflowCount = document.getElementById('workflow-count');
   const skillCount = document.getElementById('skill-count');
   const measurementCount = document.getElementById('measurement-count');
-  const findingTotal = Number(IMPROVEMENT_DATA.inbox_total_count ?? observations.length);
+  const findingTotal = Number(IMPROVEMENT_DATA.finding_total_count ?? observations.length);
   const actionableLoopCount = loops.filter(item => item.status === 'detected' || item.status === 'acknowledged').length;
   const skillTotal = Number(IMPROVEMENT_DATA.skill_total_count ?? skills.length);
-  if (inboxCount) inboxCount.firstChild.textContent = String(findingTotal + actionableLoopCount);
+  if (workflowSignalCount) workflowSignalCount.firstChild.textContent = String(findingTotal + actionableLoopCount);
   const findingCount = document.getElementById('finding-count');
-  const inboxFindingsCount = document.getElementById('inbox-findings-count');
-  const inboxLoopsCount = document.getElementById('inbox-loops-count');
-  const inboxLoopsDetail = document.getElementById('inbox-loops-detail');
+  const workflowFindingsCount = document.getElementById('workflow-findings-count');
+  const workflowLoopsCount = document.getElementById('workflow-loops-count');
+  const workflowLoopsDetail = document.getElementById('workflow-loops-detail');
   if (findingCount) findingCount.firstChild.textContent = String(findingTotal);
-  if (inboxFindingsCount) inboxFindingsCount.textContent = String(findingTotal);
-  if (inboxLoopsCount) inboxLoopsCount.textContent = String(loops.length);
-  if (inboxLoopsDetail && actionableLoopCount) inboxLoopsDetail.textContent = `${fmt(actionableLoopCount)} ready to review and build`;
+  if (workflowFindingsCount) workflowFindingsCount.textContent = String(findingTotal);
+  if (workflowLoopsCount) workflowLoopsCount.textContent = String(loops.length);
+  if (workflowLoopsDetail && actionableLoopCount) workflowLoopsDetail.textContent = `${fmt(actionableLoopCount)} ready to review and build`;
   if (loopCount) loopCount.firstChild.textContent = String(loops.length);
-  const reviewableWorkflowStates = new Set(['pending','approved','active']);
-  const reviewableWorkflows = workflows.filter(item => reviewableWorkflowStates.has(String(item.status || 'pending')));
+  const reviewableWorkflowStates = new Set(['pending','approved']);
+  const workflowDeployment = item => String(item.lifecycle?.deployment || 'not_deployed');
+  const workflowDisplay = item => String(item.lifecycle?.display || item.status || 'pending');
+  const workflowMatchesState = (item, state) => {
+    if (state === 'all') return true;
+    if (state === 'reviewable') return reviewableWorkflowStates.has(String(item.status || 'pending'));
+    if (state === 'active' || state === 'rolled_back') return workflowDeployment(item) === state;
+    return String(item.status || 'pending') === state;
+  };
+  const reviewableWorkflows = workflows.filter(item => workflowMatchesState(item, 'reviewable'));
   if (workflowCount) workflowCount.firstChild.textContent = String(reviewableWorkflows.length);
   if (skillCount) skillCount.firstChild.textContent = String(skillTotal);
   if (measurementCount) measurementCount.firstChild.textContent = String(measurementGroups.length);
 
-  const inboxViewButtons = [...document.querySelectorAll('[data-inbox-view]')];
-  const inboxViewPanels = {
-    findings:document.getElementById('inbox-findings-panel'),
-    loops:document.getElementById('inbox-loops-panel'),
+  const workflowViewButtons = [...document.querySelectorAll('[data-workflow-view]')];
+  const workflowViewPanels = {
+    findings:document.getElementById('workflow-findings-panel'),
+    loops:document.getElementById('workflow-loops-panel'),
   };
-  const setInboxView = (requestedView, {persist=true}={}) => {
+  const setWorkflowView = (requestedView, {persist=true}={}) => {
     const view = requestedView === 'loops' ? 'loops' : 'findings';
-    inboxViewButtons.forEach(button => {
-      const active = button.dataset.inboxView === view;
+    workflowViewButtons.forEach(button => {
+      const active = button.dataset.workflowView === view;
       button.classList.toggle('active', active);
       button.setAttribute('aria-selected', String(active));
       button.tabIndex = active ? 0 : -1;
     });
-    Object.entries(inboxViewPanels).forEach(([name,panel]) => {
+    Object.entries(workflowViewPanels).forEach(([name,panel]) => {
       if (panel) panel.hidden = name !== view;
     });
     if (persist) updateUrlParams(params => {
-      view === 'findings' ? params.delete('inbox_view') : params.set('inbox_view', view);
+      view === 'findings' ? params.delete('workflow_view') : params.set('workflow_view', view);
     });
   };
-  inboxViewButtons.forEach(button => {
-    button.onclick = () => setInboxView(button.dataset.inboxView);
+  workflowViewButtons.forEach(button => {
+    button.onclick = () => setWorkflowView(button.dataset.workflowView);
     button.onkeydown = event => {
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
       event.preventDefault();
-      const nextView = button.dataset.inboxView === 'findings' ? 'loops' : 'findings';
-      setInboxView(nextView);
-      inboxViewButtons.find(item => item.dataset.inboxView === nextView)?.focus();
+      const nextView = button.dataset.workflowView === 'findings' ? 'loops' : 'findings';
+      setWorkflowView(nextView);
+      workflowViewButtons.find(item => item.dataset.workflowView === nextView)?.focus();
     };
   });
-  const requestedInboxView = currentParams().get('inbox_view');
-  const initialInboxView = requestedInboxView === 'loops' || currentParams().get('loop')
+  const requestedWorkflowView = currentParams().get('workflow_view');
+  const initialWorkflowView = requestedWorkflowView === 'loops' || currentParams().get('loop')
     ? 'loops'
     : (findingTotal === 0 && loops.length ? 'loops' : 'findings');
-  setInboxView(initialInboxView, {persist:false});
+  setWorkflowView(initialWorkflowView, {persist:false});
 
   const ruleCount = document.getElementById('rule-count');
   const ruleGrid = document.getElementById('rule-grid');
@@ -7327,11 +7310,11 @@ function buildImprovementSurfaces(){
     }).join('') + `<div class="rule-card"><div class="inbox-title">Adding Rules</div><div class="inbox-copy">Rules are deterministic, versioned objects—not free-form prompts. Extend <code translate="no">BaseImprovementRule</code>, build findings with its typed helpers, and add the instance through <code translate="no">RuleRegistry</code>. Built-ins are collected in <code translate="no">DEFAULT_RULE_REGISTRY</code>.</div></div>` : '<div class="session-ledger-empty">No rule definitions are available yet. Wait for preparation to finish, then refresh this page.</div>';
   }
 
-  const inbox = document.getElementById('improvement-inbox');
-  if (inbox) {
-    inbox.innerHTML = observations.length ? observations.map(item => {
+  const findingLedger = document.getElementById('finding-ledger');
+  if (findingLedger) {
+    findingLedger.innerHTML = observations.length ? observations.map(item => {
       const proposedWorkflow = workflows.find(workflow => workflow.id === item.candidate_id);
-      const workflowReviewLabel = proposedWorkflow?.status === 'active'
+      const workflowReviewLabel = proposedWorkflow?.lifecycle?.deployment === 'active'
         ? 'Review Active Workflow'
         : proposedWorkflow?.status === 'approved'
           ? 'Review Approved Workflow'
@@ -7352,9 +7335,9 @@ function buildImprovementSurfaces(){
           <span class="ledger-pill">${fmt(Number(item.observation_count || 1))} evidence pattern(s)</span>
           <span class="ledger-pill">${fmt(Number(item.source_scope_count || 1))} scope(s)</span>
         </div>${candidate}
-        <div class="ledger-actions"><button type="button" class="ledger-button" data-ledger-action="evidence" data-observation-id="${escHtml(String(item.id))}">View Source Sessions</button>${proposedWorkflow ? `<button type="button" class="ledger-button primary" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(proposedWorkflow.id))}">${workflowReviewLabel}</button>` : ''}</div>
+        <div class="ledger-actions"><button type="button" class="ledger-button" data-ledger-action="evidence" data-observation-id="${escHtml(String(item.id))}">View Task Evidence</button>${proposedWorkflow ? `<button type="button" class="ledger-button primary" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(proposedWorkflow.id))}">${workflowReviewLabel}</button>` : ''}</div>
       </article>`;
-    }).join('') : `<div class="panel"><div class="panel-title">Inbox clear</div><div class="inbox-copy">No actionable recurring finding is currently open. Review recent sessions or capture health in Explore while Reflect gathers more comparable evidence.</div></div>`;
+    }).join('') : `<div class="panel"><div class="panel-title">No open workflow opportunities</div><div class="inbox-copy">Review recent sessions or capture health in Explore while Reflect gathers more comparable task evidence.</div></div>`;
   }
 
   const loopLedger = document.getElementById('loop-ledger');
@@ -7420,13 +7403,8 @@ function buildImprovementSurfaces(){
       const selectedStatus = statusFilter?.value || 'all';
       const visible = workflows.filter(item => {
         const behavior = String((item.content || {}).behavior_type || 'proven_pattern');
-        const status = String(item.status || 'pending');
         return (selectedType === 'all' || behavior === selectedType)
-          && (
-            selectedStatus === 'all'
-            || (selectedStatus === 'reviewable' && reviewableWorkflowStates.has(status))
-            || status === selectedStatus
-          );
+          && workflowMatchesState(item, selectedStatus);
       });
       updateUrlParams(params => {
         selectedType === 'all' ? params.delete('workflow_type') : params.set('workflow_type', selectedType);
@@ -7442,21 +7420,20 @@ function buildImprovementSurfaces(){
         const origin = workflowSourcePresentation(content, item.provenance || {});
         const artifact = humanizeLedgerLabel(content.suggested_artifact || 'skill');
         const command = `reflect workflows show ${String(item.id)}`;
-        const status = humanizeLedgerLabel(item.status || 'pending');
-        const evidenceUnit = content.workflow_contract ? 'Execution Units' : 'Sessions';
-        return `<article class="workflow-card workflow-tile" data-state="${escHtml(String(item.status || 'pending'))}">
+        const status = humanizeLedgerLabel(workflowDisplay(item));
+        return `<article class="workflow-card workflow-tile" data-state="${escHtml(workflowDisplay(item))}">
           <div class="tile-card-main">
             <div class="tile-card-kicker"><span>${escHtml(origin.label)}</span><span>${escHtml(humanizeLedgerLabel(behaviorType))}</span></div>
             <div class="tile-card-head"><div class="tile-card-heading"><h3 class="tile-card-title">${escHtml(humanizeLedgerLabel(slug))}</h3><p class="tile-card-description">${escHtml(String(content.description || item.hypothesis || 'No description is available yet.'))}</p></div><span class="ledger-pill signal tile-card-status">${escHtml(status)}</span></div>
             <dl class="tile-metric-grid">
-              <div class="tile-metric"><dt>${evidenceUnit}</dt><dd>${fmt(Number(item.support_count || 0))}</dd></div>
+              <div class="tile-metric"><dt>Execution Units</dt><dd>${fmt(Number(item.support_execution_unit_count || 0))}</dd></div>
               <div class="tile-metric"><dt>Evidence Patterns</dt><dd>${fmt(Number(item.supporting_observation_count || 1))}</dd></div>
               <div class="tile-metric signal"><dt>Confidence</dt><dd>${Math.round(Number(item.confidence || 0) * 100)}%</dd></div>
             </dl>
             <section class="workflow-step-preview" aria-label="Workflow Step Preview"><div class="workflow-step-preview-head"><span>Workflow Steps</span><span>${fmt(steps.length)} total</span></div>${renderWorkflowSteps(steps, {limit:4, compact:true})}</section>
             <div class="tile-card-meta"><span class="ledger-pill">Suggested ${escHtml(artifact)}</span><span class="ledger-pill">Rule ${escHtml(humanizeLedgerLabel(sourceRule))}</span><span class="ledger-pill">${fmt((item.source_scopes || []).length)} scopes</span></div>
           </div>
-          <footer class="tile-card-footer"><code class="tile-card-command" title="${escHtml(command)}" translate="no">${escHtml(command)}</code><button type="button" class="ledger-button${item.status === 'pending' ? ' primary' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.id))}">${item.status === 'active' ? 'Review Application' : escHtml(origin.reviewLabel)}</button></footer>
+          <footer class="tile-card-footer"><code class="tile-card-command" title="${escHtml(command)}" translate="no">${escHtml(command)}</code><button type="button" class="ledger-button${item.status === 'pending' ? ' primary' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.id))}">${workflowDeployment(item) === 'active' ? 'Review Application' : escHtml(origin.reviewLabel)}</button></footer>
         </article>`;
       }).join('') : `<div class="panel"><div class="panel-title">No workflows match these filters</div><div class="workflow-copy">Clear the behavior or state filter, run <code>reflect improve</code> for deterministic proposals, build one reviewed loop with <code>reflect loops build LOOP_ID</code>, or import an existing procedure with <code>reflect workflows add SKILL.md</code>.</div></div>`;
     };
@@ -7474,10 +7451,9 @@ function buildImprovementSurfaces(){
       const verdict = impactVerdictPresentation(item.verdict, measurementState);
       const workflow = workflows.find(candidate => candidate.id === item.candidate_id);
       const workflowName = humanizeLedgerLabel(workflow?.content?.slug || 'Applied workflow');
-      const taskLevel = item.cohort?.unit === 'execution_units';
-      const unit = taskLevel ? 'task' : 'session';
-      const units = taskLevel ? 'tasks' : 'sessions';
-      const minimumAfter = Number(item.cohort?.minimum_after_execution_units || item.cohort?.minimum_after_sessions || 5);
+      const unit = 'task';
+      const units = 'tasks';
+      const minimumAfter = Number(item.cohort?.minimum_after_execution_units || 5);
       const afterCount = Number(item.after_count || 0);
       const ready = measurementState === 'measured' && item.verdict !== 'insufficient_data';
       const previous = history[1] || null;
@@ -7502,10 +7478,10 @@ function buildImprovementSurfaces(){
         </div>
         ${progressGraph}
         <div class="impact-scope">${escHtml(impactScope(item))}${ready ? ` · ${Math.round(Number(item.confidence || 0) * 100)}% confidence` : ''}</div>
-        <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-impact-sessions" data-measurement-id="${escHtml(String(item.id))}">View Compared ${taskLevel ? 'Tasks' : 'Sessions'}</button><button type="button" class="ledger-button${item.verdict === 'regressed' && !regressedButImproving ? ' danger' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.candidate_id))}">${reviewLabel}</button></div>
+        <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-impact-sessions" data-measurement-id="${escHtml(String(item.id))}">View Compared Tasks</button><button type="button" class="ledger-button${item.verdict === 'regressed' && !regressedButImproving ? ' danger' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.candidate_id))}">${reviewLabel}</button></div>
         ${historyRows ? `<details class="impact-history"><summary>${fmt(history.length - 1)} Previous Check${history.length === 2 ? '' : 's'}</summary><ol class="impact-history-list">${historyRows}</ol></details>` : ''}
       </article>`;
-    }).join('') : `<div class="panel"><div class="panel-title">No Impact Checks Yet</div><div class="measurement-copy">Apply a reviewed workflow to start collecting comparable sessions. Reflect waits for at least 5 baseline and 5 post-application sessions before reporting a result.</div></div>`;
+    }).join('') : `<div class="panel"><div class="panel-title">No Impact Checks Yet</div><div class="measurement-copy">Install a reviewed workflow to start a bounded validation window. Reflect reports a result only when both task cohorts and their required signals are complete.</div></div>`;
   }
 
   const linkedWorkflow = currentParams().get('workflow') || '';
@@ -7529,7 +7505,7 @@ buildImprovementSurfaces();
 /* Explore achievements */
 (function buildAchievements(){
   const obsTab = sqlTab('observations');
-  const achievements = obsTab.achievements || D.achievements || [];
+  const achievements = obsTab.achievements || [];
   const badgeGrid = document.getElementById('obs-badges');
   if (!badgeGrid) return;
   badgeGrid.innerHTML = achievements.map(b => `
@@ -7543,7 +7519,6 @@ buildImprovementSurfaces();
   `).join('') || '<div class="empty-note">No outcomes are available for the current selection.</div>';
 
 })();
-
 /* ════════════════════ ACTIVITY ════════════════════ */
 
 /* Heatmap */
@@ -7551,7 +7526,7 @@ buildImprovementSurfaces();
   const WD = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const SHOW = [true,false,true,false,true,false,true];
   const activityTab = sqlTab('activity');
-  const entries = Object.entries(activityTab.activity_by_day || D.activity_by_day || {});
+  const entries = Object.entries(activityTab.activity_by_day || {});
 
   const activeCounts = entries.map(e=>e[1]).filter(v=>v>0).sort((a,b)=>a-b);
   function quartile(arr, q){ return arr[Math.floor(arr.length*q)]||1; }
@@ -7626,7 +7601,7 @@ buildImprovementSurfaces();
 /* Hour bars */
 (function buildHourBars(){
   const activityTab = sqlTab('activity');
-  const hours=activityTab.activity_by_hour || D.activity_by_hour || {};
+  const hours=activityTab.activity_by_hour || {};
   const total = Object.values(hours).reduce((sum, value) => sum + Number(value || 0), 0);
   const max=Math.max(...Object.values(hours),1);
   const bEl=document.getElementById('hour-bars');
@@ -7641,7 +7616,7 @@ buildImprovementSurfaces();
     const bar=document.createElement('div');
     bar.className='hour-bar';
     bar.style.height=Math.max((c/max)*100,2)+'%';
-    bar.style.background=(h===(activityTab.peak_hour ?? D.peak_hour))?'var(--blue)':'rgba(255,255,255,.08)';
+    bar.style.background=(h===Number(activityTab.peak_hour ?? -1))?'var(--blue)':'rgba(255,255,255,.08)';
     bar.title=`${h12(h)}: ${c.toLocaleString()} events`;
     bEl.appendChild(bar);
 
@@ -7656,8 +7631,8 @@ buildImprovementSurfaces();
 (function buildSubagentEffectiveness(){
   const el = document.getElementById('subagent-effectiveness');
   const toolsTab = sqlTab('tools');
-  const launches = toolsTab.subagent_types_by_count || D.subagent_types_by_count || {};
-  const stops = toolsTab.subagent_stops_by_type || D.subagent_stops_by_type || {};
+  const launches = toolsTab.subagent_types_by_count || {};
+  const stops = toolsTab.subagent_stops_by_type || {};
   const allTypes = Object.keys(launches)
     .sort((a, b) => Number(launches[b] || 0) - Number(launches[a] || 0) || a.localeCompare(b));
   const types = allTypes.slice(0, 12);
@@ -7665,8 +7640,8 @@ buildImprovementSurfaces();
     el.innerHTML = '<p style="color:var(--text-3);font-size:14px;text-align:center;padding:40px 0">No subagent data yet</p>';
     return;
   }
-  const totalLaunches = toolsTab.subagent_total_starts || D.subagent_total_starts || Object.values(launches).reduce((a,b)=>a+b,0);
-  const totalStops = toolsTab.subagent_total_stops || D.subagent_total_stops || Object.values(stops).reduce((a,b)=>a+b,0);
+  const totalLaunches = toolsTab.subagent_total_starts || Object.values(launches).reduce((a,b)=>a+b,0);
+  const totalStops = toolsTab.subagent_total_stops || Object.values(stops).reduce((a,b)=>a+b,0);
   const rows = types.map(t => {
     const launched = launches[t] || 0;
     const done = Math.min(stops[t] || 0, launched);
@@ -7716,23 +7691,22 @@ function buildBarList(elId, obj, color){
 }
 function buildToolsLists(){
   const toolsTab = sqlTab('tools');
-  buildBarList('tools-list', toolsTab.tools_by_count || D.tools_by_count || {}, P.blue);
+  buildBarList('tools-list', toolsTab.tools_by_count || {}, P.blue);
   const sqlSkills = toolsTab.skills_by_count || {};
-  const flatSkills = D.skills_by_count || {};
   const skillsOrSubagents = Object.keys(sqlSkills).length
     ? sqlSkills
-    : (Object.keys(flatSkills).length ? flatSkills : (toolsTab.subagent_types_by_count || D.subagent_types_by_count || {}));
+    : (toolsTab.subagent_types_by_count || {});
   buildBarList('skills-list', skillsOrSubagents, P.purple);
 }
 
 /* MCP availability table */
 function buildMcpPanel(){
   const mcpTab = sqlTab('mcp');
-  const before = mcpTab.mcp_server_before || D.mcp_server_before || {};
-  const after  = mcpTab.mcp_server_after  || D.mcp_server_after  || {};
+  const before = mcpTab.mcp_server_before || {};
+  const after  = mcpTab.mcp_server_after  || {};
   const servers = Object.keys(before);
   if (!servers.length) {
-    buildBarList('mcp-list', mcpTab.mcp_servers_by_count || D.mcp_servers_by_count || {}, P.teal);
+    buildBarList('mcp-list', mcpTab.mcp_servers_by_count || {}, P.teal);
     return;
   }
   servers.sort((a,b) => (before[b]||0) - (before[a]||0));
@@ -7761,7 +7735,7 @@ function buildMcpPanel(){
 
 /* Weekly trends table */
 (function buildWeeklyTrends(){
-  const wt = (D.weekly_trends || []).slice(-12);
+  const wt = (sqlTab('activity').weekly_trends || []).slice(-12);
   const el = document.getElementById('weekly-trends-table');
   if (!wt.length) {
     el.innerHTML = '<div class="empty-note">At least one dated activity week is needed for a trend.</div>';
@@ -7800,7 +7774,7 @@ function buildMcpPanel(){
 /* Event distribution */
 (function buildEventBar(){
   const activityTab = sqlTab('activity');
-  const entries=Object.entries(activityTab.events_by_type || D.events_by_type || {});
+  const entries=Object.entries(activityTab.events_by_type || {});
   const n=entries.length;
   const barH=28, pad=40;
   document.getElementById('event-bar-box').style.height=(n*barH+pad)+'px';
@@ -7841,7 +7815,7 @@ function buildMcpPanel(){
 
 /* Percentiles table */
 function buildPercentiles(){
-  const pctl = sqlTab('tools').tool_percentiles || D.tool_percentiles || [];
+  const pctl = sqlTab('tools').tool_percentiles || [];
   const tbody = document.getElementById('pctl-tbody');
   if (!pctl.length) {
     tbody.innerHTML = '<tr><td colspan="6" style="color:var(--text-3);text-align:center">No duration data available</td></tr>';
@@ -7870,8 +7844,8 @@ function buildPercentiles(){
 
 function buildCommandPatterns(){
   const toolsTab = sqlTab('tools');
-  const commands = toolsTab.top_commands || D.top_commands || [];
-  document.getElementById('cmd-unique').textContent='-- '+(toolsTab.unique_commands ?? D.unique_commands ?? 0)+' unique patterns';
+  const commands = toolsTab.top_commands || [];
+  document.getElementById('cmd-unique').textContent='-- '+Number(toolsTab.unique_commands || 0)+' unique patterns';
   document.getElementById('cmd-tbody').innerHTML=commands.length ? commands.map((c,i)=>`
     <tr>
       <td style="color:var(--text-3);font-weight:600">${i+1}</td>
@@ -8082,15 +8056,14 @@ renderToolsView();
   syncDropdowns();
   updateComparison();
 })();
-
 /* ════════════════════ GRAPHS ════════════════════ */
 
 /* Tool color map */
 const TOOL_COLORS = {};
 (function assignToolColors(){
   const graphTab = sqlTab('graph');
-  const co = graphTab.graph_cooccurrence || D.graph_cooccurrence || {};
-  const dep = graphTab.graph_dep || D.graph_dep || {};
+  const co = graphTab.graph_cooccurrence || {};
+  const dep = graphTab.graph_dep || {};
   const toolList = (co.tools || []).concat(
     (dep.nodes || []).map(n => n.id)
   );
@@ -8108,7 +8081,7 @@ function initGraphs() {
 /* ── 1. Tool Flow — manual arc diagram ── */
 (function buildSankey(){
   const el = document.getElementById('sankey-svg');
-  const trans = sqlTab('graph').graph_tool_transitions || D.graph_tool_transitions || [];
+  const trans = sqlTab('graph').graph_tool_transitions || [];
   if (!el || !trans.length) {
     if (el) d3.select(el).selectAll('*').remove();
     return;
@@ -8198,7 +8171,7 @@ function initGraphs() {
 
 /* ── 2. Dependency Graph (force-directed) ── */
 (function buildDepGraph(){
-  const dep = sqlTab('graph').graph_dep || D.graph_dep;
+  const dep = sqlTab('graph').graph_dep;
   const noteEl = document.getElementById('dep-note');
   if (!dep) return;
 
@@ -8379,7 +8352,7 @@ function initGraphs() {
 
 /* ── 3. Behavioral Memory Graph ── */
 (function buildSemanticGraph(){
-  const initialGraph = sqlTab('graph').graph_semantic || D.graph_semantic || { nodes: [], edges: [], sessions: [], legend: [] };
+  const initialGraph = sqlTab('graph').graph_semantic || { nodes: [], edges: [], sessions: [], legend: [] };
   const shell = document.getElementById('semantic-graph-shell');
   const svgEl = document.getElementById('semantic-graph-svg');
   const filter = document.getElementById('semantic-session-filter');
@@ -8720,7 +8693,7 @@ function initGraphs() {
 })();
 /* ── 3. Session Timeline ── */
 (function buildTimeline(){
-  const sessions = sqlTab('graph').graph_session_timeline || D.graph_session_timeline || [];
+  const sessions = sqlTab('graph').graph_session_timeline || [];
   if (!sessions.length) {
     document.getElementById('timeline-wrap').innerHTML =
       '<p style="color:var(--text-3);font-size:13px">No timeline data</p>';
@@ -8777,7 +8750,7 @@ function initGraphs() {
 
 /* ── 4. Co-occurrence Matrix ── */
 (function buildMatrix(){
-  const co = sqlTab('graph').graph_cooccurrence || D.graph_cooccurrence;
+  const co = sqlTab('graph').graph_cooccurrence;
   if (!co || !co.tools.length) return;
 
   const tools = co.tools;
@@ -8814,7 +8787,7 @@ function initGraphs() {
 
 /* ── 5. Latency Histograms ── */
 (function buildHistograms(){
-  const hist = D.graph_latency_histograms;
+  const hist = sqlTab('graph').graph_latency_histograms;
   if (!hist || !Object.keys(hist.tools).length) return;
 
   const labels = hist.labels;
@@ -8862,7 +8835,7 @@ function initGraphs() {
 } // end initGraphs
 
 function currentAgentComparison(){
-  return (D.agent_comparison || []).slice();
+  return (sqlTab('agents').agent_comparison || []).slice();
 }
 
 /* ════════════════════ CHART HELPERS ════════════════════ */
@@ -8961,7 +8934,6 @@ function urlHasDashboardFilters(){
     (params.get('q') || '').trim()
     || (params.get('session') || '').trim()
     || (params.get('agents') || '').trim()
-    || ((params.get('agent') || 'all') !== 'all')
     || ((params.get('model') || 'all') !== 'all')
     || ((params.get('status') || 'all') !== 'all')
     || ((params.get('range') || 'all') !== 'all')

@@ -87,7 +87,9 @@ def test_change_review_uses_existing_apply_and_keeps_raw_token_out_of_sqlite(tmp
         assert applied.idempotent is False
         assert repeated.idempotent is True
         assert target.is_file()
-        assert improvements.workflows.show(candidate_id).status == WorkflowStatus.ACTIVE
+        candidate = improvements.workflows.show(candidate_id)
+        assert candidate.status == WorkflowStatus.APPROVED
+        assert candidate.lifecycle.deployment.value == "active"
         detail = improvements.skills.show("safe-release")
         assert detail.skill.lifecycle_state.value == "active"
         assert detail.skill.installation_count == 1
@@ -261,7 +263,9 @@ def test_approve_apply_and_rollback_are_separate_exact_reviews(tmp_path):
         assert rollback.change_kind == "delete"
         assert rolled_back.result["status"] == "rolled_back"
         assert target.exists() is False
-        assert improvements.workflows.show(candidate_id).status == WorkflowStatus.ROLLED_BACK
+        candidate = improvements.workflows.show(candidate_id)
+        assert candidate.status == WorkflowStatus.APPROVED
+        assert candidate.lifecycle.deployment.value == "rolled_back"
         detail = improvements.skills.show("safe-release")
         assert detail.skill.lifecycle_state.value == "retired"
         assert detail.installations[0].status == "rolled_back"

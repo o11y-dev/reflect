@@ -139,7 +139,7 @@ class TestCliInvocable:
         p = tmp_path / "traces.json"
         p.write_text(wrap_otlp(spans) + "\n")
         runner = CliRunner()
-        with patch("reflect.core._start_publish_server"):
+        with patch("reflect.core.start_publish_server"):
             result = runner.invoke(main, [
                 "--foreground",
                 "--otlp-traces", str(p),

@@ -948,7 +948,7 @@ def test_ingest_native_cursor_session_file_extracts_tool_and_mcp_calls(tmp_path)
             "missing": 0,
             "session_ids": ["cursor-native-sess-1"],
         }
-        assert rebuild_rollups(conn) == {"session_rollups": 1, "daily_rollups": 1, "tool_rollups": 1}
+        assert rebuild_rollups(conn) == {"session_rollups": 1, "daily_rollups": 1, "tool_rollups": 2}
         rollup = conn.execute(
             """
             SELECT agent, input_tokens, output_tokens, total_cost

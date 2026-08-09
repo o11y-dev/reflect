@@ -4,17 +4,16 @@ import json
 
 import pytest
 
-from reflect import core
+from reflect.agent_capabilities import AgentSupport, MCPClientSurface, get_agent_capability
 from reflect.mcp_clients import (
     MCP_CLIENT_CAPABILITIES,
     MCP_CLIENT_CONFIGURATORS,
-    MCPClientSurface,
     configure_reflect_mcp,
     get_mcp_client_capability,
 )
 
 
-def test_mcp_client_matrix_is_independent_from_telemetry_support() -> None:
+def test_mcp_client_matrix_uses_canonical_agent_capabilities() -> None:
     declared_agents = {
         capability.agent_name for capability in MCP_CLIENT_CAPABILITIES
     }
@@ -22,8 +21,8 @@ def test_mcp_client_matrix_is_independent_from_telemetry_support() -> None:
     assert len(declared_agents) == len(MCP_CLIENT_CAPABILITIES)
     assert "Antigravity" in declared_agents
     assert "Gemini CLI" not in declared_agents
-    assert "Gemini CLI" in core._IMPLEMENTED_TELEMETRY_SUPPORT
-    assert "Antigravity" not in core._IMPLEMENTED_TELEMETRY_SUPPORT
+    assert get_agent_capability("Gemini CLI").support is AgentSupport.HISTORICAL
+    assert get_agent_capability("Antigravity").support is AgentSupport.PARTIAL
 
 
 def test_headless_clients_have_complete_local_test_identity() -> None:
@@ -84,6 +83,29 @@ def test_cursor_configurator_preserves_existing_servers_and_is_idempotent(
     assert config["mcpServers"]["reflect"] == {
         "command": "/usr/local/bin/reflect-mcp",
         "args": [],
+    }
+
+
+def test_antigravity_configurator_initializes_an_empty_config(tmp_path) -> None:
+    antigravity_home = tmp_path / ".gemini" / "antigravity-cli"
+    config_path = antigravity_home.parent / "config" / "mcp_config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text("", encoding="utf-8")
+
+    result = configure_reflect_mcp(
+        "Antigravity",
+        antigravity_home,
+        command="/usr/local/bin/reflect-mcp",
+    )
+
+    assert result is not None and result.changed
+    assert json.loads(config_path.read_text()) == {
+        "mcpServers": {
+            "reflect": {
+                "command": "/usr/local/bin/reflect-mcp",
+                "args": [],
+            }
+        }
     }
 
 

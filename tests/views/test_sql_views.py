@@ -244,10 +244,23 @@ def _seed_view_db(conn):
     )
     conn.executemany(
         """
-        INSERT INTO mcp_calls(
-          id, step_id, session_id, server_name, tool_name, status, duration_ms, raw_attrs_json, created_at, updated_at
+        INSERT INTO tool_calls(
+          id, step_id, session_id, tool_name, tool_type, status,
+          duration_ms, raw_attrs_json, created_at, updated_at
         )
-        VALUES (?, 'step-2', 'sess-2', ?, ?, 'ok', 50, '{}', ?, ?)
+        VALUES (?, 'step-2', 'sess-2', ?, 'mcp', 'ok', 50, '{}', ?, ?)
+        """,
+        [
+            ("mcp-1", "mcp__mcp-issue-tracker__jira_search", now, now),
+            ("mcp-2", "mcp__metrics__cx_dashboards", now, now),
+        ],
+    )
+    conn.executemany(
+        """
+        INSERT INTO mcp_calls(
+          tool_call_id, server_name, tool_name, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?)
         """,
         [
             (
@@ -614,26 +627,31 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         ]
         assert tabs.tools.tools_by_count == {"Edit": 2, "Read": 1}
         assert tabs.agents.agent_comparison[0]["name"] == "codex"
-        assert tabs.graphs.graph_session_timeline
-        assert tabs.graphs.graph_semantic["nodes"]
+        assert tabs.graph.graph_session_timeline
+        assert tabs.graph.graph_semantic["nodes"]
         assert any(
             node["kind"] == "Session" and node["label"] == "sess-2"
-            for node in tabs.graphs.graph_semantic["nodes"]
+            for node in tabs.graph.graph_semantic["nodes"]
         )
         assert {"addressed_spec", "described_by_path"} <= {
-            edge["kind"] for edge in tabs.graphs.graph_semantic["edges"]
+            edge["kind"] for edge in tabs.graph.graph_semantic["edges"]
         }
-        assert any(node["kind"] == "Spec" and node["label"] == "SQL view test spec" for node in tabs.graphs.graph_semantic["nodes"])
-        assert any(item["kind"] == "Spec" for item in tabs.graphs.graph_semantic["legend"])
-        unscoped_node_ids = {node["id"] for node in tabs.graphs.graph_semantic["nodes"]}
+        assert any(node["kind"] == "Spec" and node["label"] == "SQL view test spec" for node in tabs.graph.graph_semantic["nodes"])
+        assert any(item["kind"] == "Spec" for item in tabs.graph.graph_semantic["legend"])
+        unscoped_node_ids = {node["id"] for node in tabs.graph.graph_semantic["nodes"]}
         unscoped_edge_node_ids = {
             node_id
-            for edge in tabs.graphs.graph_semantic["edges"]
+            for edge in tabs.graph.graph_semantic["edges"]
             for node_id in (edge["source"], edge["target"])
         }
         assert unscoped_node_ids <= unscoped_edge_node_ids
 
-        assert scoped.tools.tools_by_count == {"Bash": 2, "Edit": 1}
+        assert scoped.tools.tools_by_count == {
+            "Bash": 2,
+            "Edit": 1,
+            "mcp__mcp-issue-tracker__jira_search": 1,
+            "mcp__metrics__cx_dashboards": 1,
+        }
         assert scoped.tools.skills_by_count == {"review-skill": 1}
         assert scoped.tools.subagent_types_by_count == {
             "legacy-helper": 1,
@@ -661,14 +679,14 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         assert scoped.agents.agents["codex"]["subagents"] == 1
         assert scoped.agents.agents["copilot"]["subagents"] == 1
         assert scoped.agents.agents["cursor"]["subagents"] == 1
-        assert any(node["label"] == "AGENTS.md" for node in scoped.graphs.graph_semantic["nodes"])
-        assert any(node["kind"] == "Spec" and node["label"] == "SQL view test spec" for node in scoped.graphs.graph_semantic["nodes"])
-        assert all(node["label"] != "global-memory" for node in scoped.graphs.graph_semantic["nodes"])
-        assert all(node["label"] != "global.md" for node in scoped.graphs.graph_semantic["nodes"])
-        scoped_node_ids = {node["id"] for node in scoped.graphs.graph_semantic["nodes"]}
+        assert any(node["label"] == "AGENTS.md" for node in scoped.graph.graph_semantic["nodes"])
+        assert any(node["kind"] == "Spec" and node["label"] == "SQL view test spec" for node in scoped.graph.graph_semantic["nodes"])
+        assert all(node["label"] != "global-memory" for node in scoped.graph.graph_semantic["nodes"])
+        assert all(node["label"] != "global.md" for node in scoped.graph.graph_semantic["nodes"])
+        scoped_node_ids = {node["id"] for node in scoped.graph.graph_semantic["nodes"]}
         scoped_edge_node_ids = {
             node_id
-            for edge in scoped.graphs.graph_semantic["edges"]
+            for edge in scoped.graph.graph_semantic["edges"]
             for node_id in (edge["source"], edge["target"])
         }
         assert scoped_node_ids <= scoped_edge_node_ids
@@ -681,10 +699,10 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         assert scoped.privacy.findings_by_severity == {"medium": 1}
         assert scoped.exports.row_counts["memories"] == 2
         assert scoped.exports.row_counts["privacy_findings"] == 1
-        assert {node["type"] for node in scoped.graphs.graph_dep["nodes"]} >= {"agent", "tool", "mcp_tool", "mcp_server"}
+        assert {node["type"] for node in scoped.graph.graph_dep["nodes"]} >= {"agent", "tool", "mcp_tool", "mcp_server"}
         assert {
             (link["source"], link["target"])
-            for link in scoped.graphs.graph_dep["links"]
+            for link in scoped.graph.graph_dep["links"]
         } >= {
             ("agent:codex", "mcp_tool:mcp-issue-tracker"),
             ("agent:codex", "mcp_tool:metrics.example.test"),

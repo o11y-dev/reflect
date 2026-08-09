@@ -4,10 +4,16 @@
 
 ### Changed
 
-- Replaced deprecated Gemini CLI execution paths with Antigravity `agy` for skill extraction, MCP setup, and fresh-install agent validation, while retaining legacy Gemini telemetry ingestion as a separate compatibility surface.
+- Replaced deprecated Gemini CLI execution paths with Antigravity `agy` for skill extraction, MCP setup, and fresh-install agent validation; historical Gemini telemetry remains readable through its historical adapter without participating in current client setup.
+- Canonicalized workflow identity around the normalized contract signature and exact revision hash, and projected review, deployment, installation, and measurement as separate lifecycle dimensions. Approved but uninstalled workflows are no longer executable guidance.
+- Made database evolution one-way for the new workflow, execution-unit, MCP-call, and source-lifecycle models: migrations move durable data forward, while runtime dual reads, dual writes, retired routes, presentation aliases, and legacy fallback branches are removed.
+- Split snapshot preparation, database command wiring, dashboard queries, dashboard server construction, and authored frontend modules into explicit owners. The generated packaged and documentation dashboards now come from one build and remain byte-identical.
+- Consolidated the browser into Sessions, Workflows, Impact, and Explore. Findings, loops, workflow reviews, and durable skill versions now share one procedure-oriented surface.
+- Centralized agent support, aliases, native stores, hooks, skill targets, MCP configuration, and headless-test capability in one typed registry used by setup, doctor, adapters, and validation.
+- Replaced unbounded gateway cache files with bounded active OTLP JSONL segments and immutable closed segments; successfully normalized closed segments are deleted by default and can be retained explicitly with `--keep-processed-raw`.
 - Made explicit snapshot refresh ingest unchanged-aware hook JSONL files before native session adapters, so fresh and repaired stores reconcile current agent events without replaying unchanged files.
 - Made recovery impacts measure repeated unchanged calls rather than raw first failures, and withhold impact claims until signal coverage, agent/source comparability, and observed workflow adherence pass an explicit evidence-quality gate.
-- Renamed the Context & System Specs presentation to Task Contracts while preserving the existing SQLite and report API contracts.
+- Renamed the Context & System Specs presentation to Task Contracts and made that noun consistent across the current browser and documentation surfaces.
 - Session retention now deletes only the selected sessions, refreshes their affected graph and usage-rollup keys, and relies on enforced SQLite constraints instead of rebuilding and globally validating the complete derived store.
 - Made improvement discovery and impact measurement execution-aware: long-lived sessions are segmented into canonical execution units, mixed or low-confidence archetypes are excluded from procedure cohorts, and workflow contracts are evaluated symmetrically against the first five comparable post-installation executions.
 - Reused the existing observation, workflow, skill, intervention, and measurement lifecycle for successful repeated procedures, suppressing duplicate proposals when an active installed skill already covers the same procedure signature.
@@ -19,7 +25,7 @@
 - Added `reflect refresh` as the explicit complete snapshot rebuild and `reflect skills sync` as the explicit skill-file, workflow, usage, and measurement reconciliation point; plain skill listing and inspection no longer create revisions.
 - Standardized usage, improvement, skill-discovery, and foreground-report filtering on `--period day|week|month|all`, removing the deprecated individual period aliases.
 - Moved identical-input retry analysis exclusively to the stricter `reflect loops` ledger and retired historical duplicate retry observations without deleting their evidence.
-- Kept direct SQLite guidance as an advanced skill fallback while making scoped commands and Source Sessions the primary analysis path.
+- Kept direct SQLite guidance as an advanced debugging fallback while making scoped commands and bounded task-evidence ledgers the primary analysis path.
 - Made the browser report SQLite-only, removed the legacy artifact, SQL-tab, and duplicate improvement/measurement APIs, and switched dashboard reads to query-only connections that never migrate during a request.
 - Made `tool_calls` the canonical logical-invocation ledger: invocation/result phases sharing a provider call ID are merged, MCP aliases resolve to one name, and migration 25 reconciles retained duplicates before rollups and command-pattern analysis.
 - Bounded `reflect_improvements` with summary-first responses, pagination, opt-in capped evidence, and explicit evidence cutoff, refresh, excluded-session, attribution, and before/after safety metadata.
@@ -31,17 +37,19 @@
 - Added a direction-aware progress graph to every Impact card, plotting the baseline and each stored comparable-cohort check without extra dashboard queries.
 - Added a native OpenCode SQLite adapter shared by canonical ingestion and session-detail rendering, including prompts, responses, exact model/token/cache usage, tool results, workspace context, and parent-session lineage.
 - Added privacy-safe Codex context discovery for user instructions and memory files, canonical per-session memory exposure evidence with dashboard counts, and automatic task-contract registration when `reflect_context` receives an explicit task file.
-- Added read-only `reflect_impact` MCP inspection for persisted before/after measurements and their exact compared execution-unit or session cohorts.
-- Added a current architecture map and decision register covering canonical data flow, domain ownership, transitional duplication, complexity hotspots, and guardrails for keeping future changes lean.
+- Added read-only `reflect_impact` MCP inspection for persisted before/after measurements and their exact compared execution-unit cohorts.
+- Added a current architecture map covering canonical data flow, domain ownership, one-way migration, workflow lifecycle, raw-segment retention, browser generation, and guardrails for keeping future changes lean.
 - Added typed workflow contracts and the idempotent `reflect_record_milestone` MCP tool, with task-run, skill-version, execution-unit, target, provider, approval, write, and read-back fingerprint evidence; self-reports remain separate from corroborated adherence.
 - Added contract-level procedure evidence and five-execution validation progress to workflow and Impact dashboard views.
 - Added `reflect autostart enable|status|disable` and a swappable user-service manager, with macOS LaunchAgent support for restart-safe local services.
-- Added complete observation-to-session attribution, scoped finding statistics, actionable CLI drilldown, and `/api/inbox/{observation_id}/sessions`.
+- Added complete finding-to-task attribution, scoped finding statistics, actionable CLI drilldown, and `/api/findings/{observation_id}/evidence`.
 - Added exact, transcript-estimated, and unavailable token provenance to `reflect usage`.
 - Added trusted session activity timestamps, pruned-session tombstones, and a dry-run-first `reflect db prune-sessions` command with a default pre-apply backup plus opt-in apply and vacuum behavior.
 
 ### Fixed
 
+- Kept explicit OTLP trace inputs isolated from the global log segment, preventing live local traffic from contaminating fixture, import, or alternate-store analysis.
+- Initialized empty JSON MCP configuration files during setup and limited the unsupported-agent warning to agents whose canonical capability is actually planned, so fresh Antigravity wiring no longer fails or mislabels supported clients.
 - Made validated project instructions path-applicable context and let `reflect_context` return bounded current content only when the source remains in scope and its hash still matches, instead of losing reusable guidance beyond the 360-character privacy preview.
 - Preserved provider tool-call identities across native adapters, reconciled invocation/result MCP rows by logical call ID, and attributed `reflect_context` memory exposure after the task's runtime session is ingested.
 - Generated tool-specific names for failure-recovery workflows and added an editable workflow name with a deterministic unique-name suggestion when another active workflow owns the proposed target.
@@ -56,10 +64,10 @@
 - Allowed richer native session telemetry to supply missing token usage when an existing OTLP-owned session has no tokens, while preserving source ownership when OTLP already contains usage; session cards now label unavailable cost instead of silently omitting it.
 - Replaced misleading `0 signals` badges in Impact comparison details with each session's actual metric contribution, while contract-based task cohorts now expose observed signal counts, workflow roles, and adherence state.
 - Retired pending workflow candidates when their detector is retired, and made the dashboard default/count represent reviewable workflows while preserving stale history behind the State filter.
-- Omitted inbox findings whose source sessions were pruned, preventing the Improvements API from failing validation on evidence-less historical findings.
+- Omitted findings whose source evidence was pruned, preventing the findings API from validating evidence-less historical records.
 - Added the missing SQLite child-key indexes used by session-retention cascades, and made execution-unit and task-archetype preparation session-scoped so recent workflow cohorts can refresh without rebuilding unrelated history.
 - Repriced persisted sessions and rebuilt dependent usage rollups when pricing rates or model aliases change, so recent session costs no longer remain at zero after the pricing cache learns a model.
-- Kept workflow inbox findings, review targets, and source-session ledgers bound to the exact proposed artifact instead of merging different procedures that share a skill slug.
+- Kept workflow findings, review targets, and source-execution ledgers bound to the exact proposed artifact instead of merging different procedures that share a skill slug.
 - Added an explicit `--all-inactive-sessions` retention mode so operators can enforce a true age cutoff while the conservative invalid-timestamp policy remains the default.
 - Derived dashboard session event counts from canonical steps so missing usage rollups cannot silently make active sessions appear to have zero events.
 - Preserved gateway and report-server PID ownership when launchd starts them directly, and suppressed automatic browser windows during login startup.

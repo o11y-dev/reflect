@@ -17,6 +17,11 @@ class PreparationState(StrEnum):
     FAILED = "failed"
 
 
+class PreparationProfile(StrEnum):
+    SNAPSHOT = "snapshot"
+    USAGE = "usage"
+
+
 class PreparationStage(StrEnum):
     OPENING_STORE = "opening_store"
     BACKING_UP_STORE = "backing_up_store"
@@ -281,8 +286,38 @@ class PreparationProgress:
     message: str
 
 
+@dataclass(frozen=True)
+class PreparationRequest:
+    profile: PreparationProfile = PreparationProfile.SNAPSHOT
+    sources: tuple[str, ...] = ()
+    keep_processed_raw: bool = False
+
+
+@dataclass(frozen=True)
+class PreparationResult:
+    request: PreparationRequest
+    details: dict[str, Any]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "request": {
+                "profile": self.request.profile.value,
+                "sources": list(self.request.sources),
+                "keep_processed_raw": self.request.keep_processed_raw,
+            },
+            "details": self.details,
+        }
+
+
 class PreparationProgressReporter(Protocol):
     def __call__(self, progress: PreparationProgress) -> None: ...
+
+
+class PreparationOperation(Protocol):
+    def __call__(
+        self,
+        progress: PreparationProgressReporter,
+    ) -> dict[str, Any]: ...
 
 
 def report_preparation_progress(
@@ -303,32 +338,35 @@ class PreparationSnapshot:
     stage: PreparationStage | None = None
     message: str = ""
     error: str = ""
-    result: dict[str, Any] | None = None
+    result: PreparationResult | None = None
 
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["state"] = self.state.value
         payload["stage"] = self.stage.value if self.stage is not None else None
+        payload["result"] = self.result.as_dict() if self.result is not None else None
         return payload
 
 
-class BackgroundPreparationWorker:
-    """Own one background preparation lifecycle and its observable state."""
+class PreparationCoordinator:
+    """Publish one completed generation for a stateful preparation lifecycle."""
 
     def __init__(
         self,
-        prepare: Callable[[], dict[str, Any]],
+        operation: PreparationOperation,
         *,
+        request: PreparationRequest | None = None,
         name: str = "reflect-report-preparation",
     ) -> None:
-        self._prepare = prepare
+        self._operation = operation
+        self.request = request or PreparationRequest()
         self._name = name
         self._lock = threading.Lock()
-        self._callbacks: list[Callable[[dict[str, Any]], None]] = []
+        self._callbacks: list[Callable[[PreparationResult], None]] = []
         self._thread: threading.Thread | None = None
         self._snapshot = PreparationSnapshot(state=PreparationState.IDLE, generation=0)
 
-    def add_completion_callback(self, callback: Callable[[dict[str, Any]], None]) -> None:
+    def add_completion_callback(self, callback: Callable[[PreparationResult], None]) -> None:
         with self._lock:
             if self._snapshot.state is not PreparationState.IDLE:
                 raise RuntimeError(
@@ -377,7 +415,10 @@ class BackgroundPreparationWorker:
 
     def _run(self) -> None:
         try:
-            result = self._prepare()
+            result = PreparationResult(
+                request=self.request,
+                details=self._operation(self.report_progress),
+            )
             with self._lock:
                 callbacks = tuple(self._callbacks)
             for callback in callbacks:

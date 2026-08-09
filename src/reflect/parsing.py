@@ -19,6 +19,7 @@ from reflect.opencode_adapter import (
     OpenCodeSessionStore,
     opencode_tool_success,
 )
+from reflect.raw_segments import readable_segment_paths
 from reflect.store.mcp import DEFAULT_MCP_CLASSIFIER
 from reflect.store.provenance import is_codex_otel_service
 from reflect.utils import (
@@ -1555,7 +1556,7 @@ def _encode_otlp_span(span: dict) -> dict:
 
 
 def _canonical_otlp_traces_path() -> Path:
-    return REFLECT_HOME / "state" / "otlp" / "otel-traces.json"
+    return REFLECT_HOME / "state" / "otlp" / "otel-traces.active.jsonl"
 
 
 def _materialize_local_otlp_traces(
@@ -1686,11 +1687,15 @@ def _extract_model_name(attrs: dict) -> str:
 
 def _infer_otlp_logs_file(otlp_traces_file: Path | None) -> Path | None:
     if otlp_traces_file:
-        sibling = otlp_traces_file.with_name("otel-logs.json")
-        if sibling.exists():
+        sibling = otlp_traces_file.with_name(
+            otlp_traces_file.name.replace("otel-traces", "otel-logs", 1)
+        )
+        if readable_segment_paths(sibling):
             return sibling
-    default_logs = REFLECT_HOME / "state" / "otel-logs.json"
-    return default_logs if default_logs.exists() else None
+        if otlp_traces_file != _canonical_otlp_traces_path():
+            return None
+    default_logs = REFLECT_HOME / "state" / "otlp" / "otel-logs.active.jsonl"
+    return default_logs if readable_segment_paths(default_logs) else None
 
 
 def _load_session_model_hints(session_files: list[Path]) -> dict[str, str]:

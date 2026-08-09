@@ -1,0 +1,83 @@
+/* ── Chart wrappers ──────────────────────────────────────── */
+.chart-box{position:relative}
+
+/* ── Heatmap ─────────────────────────────────────────────── */
+.heatmap-wrap{overflow-x:auto;padding-bottom:4px}
+.heatmap-outer{display:flex;gap:8px;width:100%}
+.hm-wd{display:flex;flex-direction:column;gap:3px;padding-top:18px;flex-shrink:0}
+.hm-wd-label{font-size:11px;color:var(--text-3);text-align:right;display:flex;align-items:center;justify-content:flex-end}
+.hm-right{flex:1;min-width:0}
+.hm-months{display:flex;margin-bottom:4px}
+.hm-month{font-size:12px;color:var(--text-3);flex-shrink:0;overflow:hidden}
+.hm-grid{display:flex}
+.hm-week{display:flex;flex-direction:column;flex-shrink:0}
+.hm-cell{border-radius:3px;cursor:default;transition:opacity .15s ease, transform .15s ease, outline-color .15s ease}
+.hm-cell:hover{opacity:.75;outline:1px solid rgba(255,255,255,.15);transform:scale(1.1)}
+.hm-legend{display:flex;align-items:center;gap:6px;margin-top:12px;font-size:12px;color:var(--text-3)}
+.hm-legend-sw{display:flex;gap:3px}
+.hm-legend-sw div{width:12px;height:12px;border-radius:3px}
+
+/* ── Hour bars ───────────────────────────────────────────── */
+.hour-wrap{display:flex;flex-direction:column;gap:6px}
+.hour-bars{display:flex;gap:3px;align-items:flex-end;height:140px}
+.hour-bar{flex:1;border-radius:3px 3px 0 0;min-height:2px;cursor:default;transition:opacity .15s ease, transform .15s ease}
+.hour-bar:hover{opacity:.75;transform:scaleY(1.05);transform-origin:bottom}
+.hour-labels{display:flex;gap:3px}
+.hour-label-tick{flex:1;text-align:center;font-size:9px;color:var(--text-3)}
+
+/* ── Bar list ────────────────────────────────────────────── */
+.bar-list{display:flex;flex-direction:column;gap:10px}
+.tools-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;margin-bottom:18px}
+.bar-item{display:flex;align-items:center;gap:12px}
+.bar-lbl{flex:0 1 240px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:'SF Mono',ui-monospace,monospace;font-size:13px;color:var(--text-2)}
+.bar-track{flex:1;background:var(--surface3);border-radius:4px;height:6px;overflow:hidden}
+.bar-fill{height:100%;border-radius:4px;transition:width .3s ease}
+.bar-cnt{flex:0 0 44px;text-align:right;font-size:13px;color:var(--text-3);font-weight:600}
+
+/* ── Tables ──────────────────────────────────────────────── */
+.tbl,.data-table{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th,.data-table th{
+  text-align:left;
+  padding:10px 14px;
+  font-size:12px;
+  font-weight:600;
+  color:var(--text-3);
+  border-bottom:1px solid rgba(255,255,255,.06);
+  background:transparent;
+}
+.tbl td,.data-table td{
+  padding:10px 14px;
+  border-bottom:1px solid rgba(255,255,255,.04);
+  color:var(--text);
+  vertical-align:middle;
+}
+.tbl tr:last-child td,.data-table tbody tr:last-child td{border-bottom:none}
+.tbl tbody tr,.data-table tbody tr{transition:background .1s ease;cursor:default}
+.tbl tbody tr:hover td,.data-table tbody tr:hover td{background:rgba(255,255,255,.03)}
+#subagent-effectiveness{min-width:0;overflow-x:auto;overscroll-behavior-inline:contain}
+#subagent-effectiveness .data-table{min-width:340px;table-layout:fixed}
+#subagent-effectiveness .data-table th,#subagent-effectiveness .data-table td{padding-inline:8px;font-variant-numeric:tabular-nums}
+#subagent-effectiveness .data-table th:first-child,#subagent-effectiveness .data-table td:first-child{width:35%;overflow-wrap:anywhere}
+.tbl th.sortable{cursor:pointer;user-select:none;position:relative}
+.tbl th.sortable:hover{color:var(--text)}
+.tbl th.sortable::after{content:'';margin-left:4px;opacity:.3}
+#sessions-tbl tbody tr{cursor:pointer}
+.mono{font-family:'SF Mono',ui-monospace,monospace;font-size:12px}
+.chip{
+  display:inline-block;
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:var(--radius-xs);
+  padding:2px 8px;
+  font-size:12px;
+  font-family:'SF Mono',ui-monospace,monospace;
+}
+.run-badge{
+  display:inline-block;
+  background:rgba(255,214,10,.1);
+  border:1px solid rgba(255,214,10,.2);
+  border-radius:var(--radius-xs);
+  padding:3px 10px;
+  font-size:12px;
+  font-weight:600;
+  color:var(--yellow);
+}

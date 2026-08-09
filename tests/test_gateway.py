@@ -197,8 +197,8 @@ class TestHttpEndpoints:
         payload = resp.json()
         assert payload["status"] == "ok"
         assert payload["pid"] > 0
-        assert payload["traces_path"].endswith("otel-traces.json")
-        assert payload["logs_path"].endswith("otel-logs.json")
+        assert payload["traces_path"].endswith("otel-traces.active.jsonl")
+        assert payload["logs_path"].endswith("otel-logs.active.jsonl")
 
     def test_post_traces(self, traces_path):
         from fastapi.testclient import TestClient

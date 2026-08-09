@@ -9,6 +9,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
+from reflect.agent_capabilities import AgentSupport
 from reflect.hook_runtime import HookRuntime
 from reflect.mcp_clients import configure_reflect_mcp, get_mcp_client_configurator
 from reflect.parsing import _canonical_otlp_traces_path
@@ -855,9 +856,9 @@ def _run_setup(
             reflect_sessions_dir.symlink_to(hook_sessions_dir)
             console.print(f"  [green]✓[/] Linked sessions → {hook_sessions_dir}")
 
-    ws_traces_otlp = Path.cwd() / "reflect" / "state" / "otlp" / "otel-traces.json"
-    ws_traces_root = Path.cwd() / "reflect" / "state" / "otel-traces.json"
-    ws_traces = ws_traces_otlp if ws_traces_otlp.exists() else ws_traces_root
+    ws_traces = (
+        Path.cwd() / "reflect" / "state" / "otlp" / "otel-traces.active.jsonl"
+    )
 
     home_traces = _canonical_otlp_traces_path()
     home_traces.parent.mkdir(parents=True, exist_ok=True)
@@ -865,11 +866,11 @@ def _run_setup(
         home_traces.symlink_to(ws_traces)
         console.print(f"  [green]✓[/] Linked workspace traces → {ws_traces}")
 
-    ws_logs_otlp = Path.cwd() / "reflect" / "state" / "otlp" / "otel-logs.json"
-    ws_logs_root = Path.cwd() / "reflect" / "state" / "otel-logs.json"
-    ws_logs = ws_logs_otlp if ws_logs_otlp.exists() else ws_logs_root
+    ws_logs = (
+        Path.cwd() / "reflect" / "state" / "otlp" / "otel-logs.active.jsonl"
+    )
 
-    home_logs = reflect_home / "state" / "otel-logs.json"
+    home_logs = reflect_home / "state" / "otlp" / "otel-logs.active.jsonl"
     if ws_logs.exists() and not home_logs.exists():
         home_logs.symlink_to(ws_logs)
         console.print(f"  [green]✓[/] Linked workspace logs → {ws_logs}")
@@ -945,7 +946,11 @@ def _run_setup(
             console.print(f"  [red]✗[/] Failed to start gateway: {exc}")
             console.print("    Start manually: [bold]reflect gateway start[/]")
 
-    planned_agents = [agent for agent in detected_agents if agent.get("support_status") != "Implemented"]
+    planned_agents = [
+        agent
+        for agent in detected_agents
+        if agent.get("support_status") == AgentSupport.PLANNED.value
+    ]
     if planned_agents:
         console.print("\n[bold yellow]Telemetry gaps still not implemented[/]")
         for agent in planned_agents:

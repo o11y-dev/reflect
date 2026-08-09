@@ -16,10 +16,10 @@ from reflect.improvements.models import (
     AskAnswer,
     AskEvidence,
     EvidenceRef,
-    FindingSessionLedger,
+    FindingEvidenceLedger,
+    FindingRecord,
     ImprovementScope,
     ImprovementSummary,
-    InboxFindingRecord,
     ObservationDraft,
     ObservationRecord,
     RuleDefinition,
@@ -31,7 +31,6 @@ from reflect.improvements.repository import ImprovementRepository, utc_now
 from reflect.improvements.rules import DEFAULT_RULE_REGISTRY
 from reflect.improvements.scope import ImprovementScopeResolver
 from reflect.improvements.skills import SkillRegistryService
-from reflect.improvements.workflow_identity import workflow_proposal_signature
 from reflect.improvements.workflows import WorkflowService
 from reflect.store.migrate import migrate
 
@@ -114,33 +113,6 @@ class ImprovementService:
             measurement_result = self.measurements.measure_active()
             loop_result = self.loops.refresh(commit=False)
             skill_result = self.skills.refresh(commit=False)
-            incomplete_attribution = bool(
-                self.conn.execute(
-                    """
-                    SELECT 1
-                    FROM observations o
-                    WHERE o.status NOT IN (
-                      'resolved', 'dismissed', 'rejected', 'rolled_back'
-                    )
-                      AND o.affected_session_count > (
-                      SELECT COUNT(*)
-                      FROM observation_sessions os
-                      WHERE os.observation_id = o.id
-                    )
-                    LIMIT 1
-                    """
-                ).fetchone()
-            )
-            self.conn.execute(
-                """
-                INSERT INTO store_metadata(key, value, updated_at)
-                VALUES ('observation_session_ledger_v1', ?, ?)
-                ON CONFLICT(key) DO UPDATE SET
-                  value = excluded.value,
-                  updated_at = excluded.updated_at
-                """,
-                ("incomplete_after_rebuild" if incomplete_attribution else "complete", now),
-            )
             self.conn.commit()
         except Exception:
             self.conn.rollback()
@@ -150,7 +122,6 @@ class ImprovementService:
             "detected": detected,
             "resolved": resolved,
             "candidates": candidates,
-            "classified_sessions": workflow_evidence["classified_sessions"],
             "execution_units": workflow_evidence["execution_units"],
             "classified_execution_units": workflow_evidence["classified_execution_units"],
             "excluded_execution_units": workflow_evidence["excluded_execution_units"],
@@ -179,24 +150,9 @@ class ImprovementService:
         return {
             "execution_units": execution_units["execution_units"],
             "assigned_steps": execution_units["assigned_steps"],
-            "classified_sessions": archetypes["classified"],
             "classified_execution_units": archetypes["classified_execution_units"],
             "excluded_execution_units": archetypes["excluded_execution_units"],
         }
-
-    def ensure_observation_session_ledger(self) -> bool:
-        """Rebuild legacy capped attribution once from the canonical snapshot."""
-
-        row = self.conn.execute(
-            """
-            SELECT value FROM store_metadata
-            WHERE key = 'observation_session_ledger_v1'
-            """
-        ).fetchone()
-        if row is None or str(row[0]) != "pending_rebuild":
-            return False
-        self.refresh()
-        return True
 
     def _backfill_workflow_metadata(self) -> None:
         """Add rule-owned behavior and authorship metadata to candidates from older builds."""
@@ -281,10 +237,9 @@ class ImprovementService:
         dict[tuple[str, ...], list[ObservationRecord]],
         dict[str, WorkflowCandidateRecord],
     ]:
-        """Group scope-specific observations by the durable-finding key used across the inbox.
+        """Group scope-specific observations by the durable finding key.
 
-        Candidate-backed observations group by the exact proposed artifact, allowing equivalent
-        scope variants to share evidence without merging different procedures that reuse a slug.
+        Candidate-backed observations group by their canonical procedure contract.
         Everything else groups by (rule_id, title).
         """
         candidate_by_id = {
@@ -294,10 +249,7 @@ class ImprovementService:
         for observation in observations:
             candidate = candidate_by_id.get(observation.candidate_id or "")
             if candidate is not None:
-                key = (
-                    "workflow",
-                    workflow_proposal_signature(candidate.title, candidate.content),
-                )
+                key = ("workflow", candidate.contract_signature)
             else:
                 key = ("observation", observation.rule_id, observation.title)
             grouped.setdefault(key, []).append(observation)
@@ -312,9 +264,9 @@ class ImprovementService:
     ) -> list[str]:
         """Resolve every observation ID grouped into the same finding as observation_id.
 
-        Mirrors the grouping list_inbox_findings uses, so a session ledger fetched by a single
+        Mirrors the grouping list_findings uses, so an evidence ledger fetched by a single
         member observation still reflects the full finding rather than just that one scope.
-        Falls back to the observation alone when the current filters exclude it from the inbox.
+        Falls back to the observation alone when the current filters exclude it from the finding list.
         """
         if self.repository.get_observation(observation_id) is None:
             raise KeyError(f"Observation not found: {observation_id}")
@@ -330,14 +282,14 @@ class ImprovementService:
                 return [item.id for item in members]
         return [observation_id]
 
-    def list_inbox_findings(
+    def list_findings(
         self,
         *,
         limit: int = 100,
         status: str | None = None,
         include_resolved: bool = False,
         scope: ImprovementScope | None = None,
-    ) -> list[InboxFindingRecord]:
+    ) -> list[FindingRecord]:
         """Group scope-specific observations into durable reviewable findings."""
         observations = self.repository.list_observations(
             limit=500,
@@ -355,7 +307,7 @@ class ImprovementService:
 
         grouped, candidate_by_id = self._group_observations_by_finding(observations)
 
-        findings: list[InboxFindingRecord] = []
+        findings: list[FindingRecord] = []
         status_priority = {
             "regressed": 0,
             "active": 1,
@@ -404,15 +356,16 @@ class ImprovementService:
             rule = rule_by_id.get(representative.rule_id)
             distinct_titles = {item.title for item in members}
             member_ids = [item.id for item in members]
-            linked_sessions = (
-                self.repository.finding_session_ledger(
-                    representative.id,
-                    member_ids,
-                    candidate_id=workflow.id if workflow is not None else representative.candidate_id,
-                    scope=scope,
-                    limit=1,
-                ).source_session_count
+            evidence_ledger = self.repository.finding_evidence_ledger(
+                representative.id,
+                member_ids,
+                candidate_id=(
+                    workflow.id if workflow is not None else representative.candidate_id
+                ),
+                scope=scope,
+                limit=1,
             )
+            linked_sessions = evidence_ledger.provenance_session_count
             if linked_sessions == 0:
                 continue
             latest_source_at = max(
@@ -470,7 +423,7 @@ class ImprovementService:
                     "source_scopes": source_scopes,
                 }
             )
-            findings.append(InboxFindingRecord.model_validate(data))
+            findings.append(FindingRecord.model_validate(data))
 
         findings.sort(
             key=lambda item: (
@@ -497,39 +450,43 @@ class ImprovementService:
         if target.candidate_id:
             candidate = self.repository.get_candidate(target.candidate_id)
             if candidate is not None:
-                slug = str(candidate.content.get("slug") or "")
-                if slug:
-                    signature = workflow_proposal_signature(candidate.title, candidate.content)
-                    allowed = (
-                        {item.id for item in self.repository.list_observations(limit=500, scope=scope)}
-                        if scope
-                        else None
+                allowed = (
+                    {
+                        item.id
+                        for item in self.repository.list_observations(
+                            limit=500,
+                            scope=scope,
+                        )
+                    }
+                    if scope
+                    else None
+                )
+                return [
+                    item.observation_id
+                    for item in self.repository.list_candidates_by_contract(
+                        candidate.contract_signature
                     )
-                    return [
-                        item.observation_id
-                        for item in self.repository.list_candidates_by_slug(slug)
-                        if item.status.value not in {"rejected", "rolled_back"}
-                        and workflow_proposal_signature(item.title, item.content) == signature
-                        and (allowed is None or item.observation_id in allowed)
-                    ]
+                    if item.status.value != "rejected"
+                    and (allowed is None or item.observation_id in allowed)
+                ]
         return [
             item.id
             for item in self.repository.list_observations(limit=500, scope=scope)
             if item.rule_id == target.rule_id and item.title == target.title
         ] or [observation_id]
 
-    def finding_session_ledger(
+    def finding_evidence_ledger(
         self,
         observation_id: str,
         *,
         scope: ImprovementScope | None = None,
         limit: int = 50,
-    ) -> FindingSessionLedger:
+    ) -> FindingEvidenceLedger:
         target = self.repository.get_observation(observation_id)
         if target is None:
             raise KeyError(f"Observation not found: {observation_id}")
         ids = self.finding_observation_ids(observation_id, scope=scope)
-        return self.repository.finding_session_ledger(
+        return self.repository.finding_evidence_ledger(
             observation_id,
             ids,
             candidate_id=target.candidate_id,
@@ -584,8 +541,23 @@ class ImprovementService:
         )
         selected_candidates = [
             item for item in ranked_candidates
-            if item.status.value in {"approved", "active"}
+            if item.status.value == "approved"
+            and item.lifecycle.deployment.value == "active"
             and self._match_score(context, terms, item.title, item.hypothesis, str(item.content)) > 0
+        ][:1]
+        approved_not_deployed = [
+            item
+            for item in ranked_candidates
+            if item.status.value == "approved"
+            and item.lifecycle.deployment.value != "active"
+            and self._match_score(
+                context,
+                terms,
+                item.title,
+                item.hypothesis,
+                str(item.content),
+            )
+            > 0
         ][:1]
         selected_observations = [
             item for item in ranked_observations
@@ -604,7 +576,7 @@ class ImprovementService:
                 AskEvidence(
                     kind="workflow",
                     id=candidate.id,
-                    summary=f"{candidate.title} ({candidate.status.value})",
+                    summary=f"{candidate.title} ({candidate.lifecycle.display})",
                     confidence=candidate.confidence,
                 )
             )
@@ -622,7 +594,15 @@ class ImprovementService:
                 candidate = self.repository.get_candidate(observation.candidate_id or "")
                 if candidate:
                     guidance.extend(str(step) for step in candidate.content.get("steps", [])[:4])
-            limitations.append("Matching workflow candidates are pending review; guidance is not yet approved.")
+            limitations.append(
+                "A matching reviewed workflow is not installed; Reflect did not provide it as executable guidance."
+                if approved_not_deployed
+                else "Matching workflow candidates are pending review; guidance is not yet approved."
+            )
+        elif not selected_candidates and approved_not_deployed:
+            limitations.append(
+                "A matching reviewed workflow is not installed; Reflect did not provide it as executable guidance."
+            )
         if not evidence:
             limitations.append("No sufficiently matching local observation or workflow was found.")
             answer = "Reflect does not yet have enough local evidence to answer this confidently."
@@ -745,9 +725,9 @@ class ImprovementService:
                 category="workflow",
                 title=f"Reusable workflow candidate: {slug}",
                 summary=f"Session evidence produced a reusable {slug} workflow for operator review.",
-                metric_name="workflow_support_sessions",
+                metric_name="workflow_support_execution_units",
                 metric_value=float(support),
-                metric_unit="sessions",
+                metric_unit="execution_units",
                 metric_direction="higher_is_better",
                 impact_score=min(75.0, 25.0 + support * 5.0),
                 severity=Severity.MEDIUM if support >= 3 else Severity.LOW,
@@ -789,7 +769,6 @@ class ImprovementService:
                     title=f"Workflow: {slug}",
                     hypothesis=f"Reviewing and applying {slug} will make the observed behavior reusable.",
                     content=content,
-                    support_count=support,
                     confidence=confidence,
                     target_metric="workflow_adherence",
                     now=now,

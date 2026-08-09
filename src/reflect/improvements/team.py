@@ -5,9 +5,10 @@ import hmac
 import json
 import sqlite3
 import uuid
+from collections import defaultdict
 from typing import Any
 
-from reflect.improvements.repository import utc_now
+from reflect.improvements.repository import ImprovementRepository, utc_now
 
 
 def _canonical(value: Any) -> bytes:
@@ -45,21 +46,27 @@ class TeamBundleService:
                 """
             ).fetchall()
         ]
-        workflows = [
-            {
-                "action_type": row[0],
-                "status": row[1],
-                "candidate_count": row[2],
-                "support_count": row[3],
-                "mean_confidence": row[4],
-            }
-            for row in self.conn.execute(
-                """
-                SELECT action_type, status, COUNT(*), SUM(support_count), AVG(confidence)
-                FROM workflow_candidates GROUP BY action_type, status
-                """
-            ).fetchall()
-        ]
+        repository = ImprovementRepository(self.conn)
+        workflow_groups: dict[tuple[str, str], list[Any]] = defaultdict(list)
+        for candidate in repository.iter_candidates():
+            workflow_groups[(candidate.action_type, candidate.status.value)].append(candidate)
+        workflows = []
+        for (action_type, status), candidates in sorted(workflow_groups.items()):
+            supports = [
+                repository.workflow_evidence_ledger(candidate.id, limit=1)
+                .support_execution_unit_count
+                for candidate in candidates
+            ]
+            workflows.append(
+                {
+                    "action_type": action_type,
+                    "status": status,
+                    "candidate_count": len(candidates),
+                    "support_execution_unit_count": sum(supports),
+                    "mean_confidence": sum(item.confidence for item in candidates)
+                    / len(candidates),
+                }
+            )
         measurements = [
             {
                 "metric_name": row[0],

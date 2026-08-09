@@ -5,7 +5,8 @@ from datetime import UTC, datetime, timedelta
 
 from click.testing import CliRunner
 
-from reflect.core import _prepare_usage_db, main
+from reflect.core import main
+from reflect.preparation_pipeline import prepare_usage_db
 from reflect.store.migrate import load_migrations, migrate
 from reflect.store.sqlite import connect_sqlite
 from reflect.usage import UsageService
@@ -130,13 +131,42 @@ def _seed_session(conn, session_id: str = "session-current", *, started_at: date
     )
     conn.execute(
         """
-        INSERT INTO mcp_calls(
-          id, step_id, session_id, server_name, tool_name, status,
+        INSERT INTO tool_calls(
+          id, step_id, session_id, tool_name, tool_type, status,
           raw_attrs_json, created_at, updated_at
-        ) VALUES (?, ?, ?, 'browser', 'open', 'ok', '{}', ?, ?)
+        ) VALUES (?, ?, ?, 'mcp__browser__open', 'mcp', 'ok', '{}', ?, ?)
         """,
         (f"{session_id}-mcp", f"{session_id}-step", session_id, NOW.isoformat(), NOW.isoformat()),
     )
+    mcp_columns = {
+        str(row[1]) for row in conn.execute("PRAGMA table_info('mcp_calls')")
+    }
+    if "step_id" in mcp_columns:
+        conn.execute(
+            """
+            INSERT INTO mcp_calls(
+              id, step_id, session_id, tool_call_id, server_name, tool_name,
+              status, raw_attrs_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 'browser', 'open', 'ok', '{}', ?, ?)
+            """,
+            (
+                f"{session_id}-mcp-extension",
+                f"{session_id}-step",
+                session_id,
+                f"{session_id}-mcp",
+                NOW.isoformat(),
+                NOW.isoformat(),
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO mcp_calls(
+              tool_call_id, server_name, tool_name, created_at, updated_at
+            ) VALUES (?, 'browser', 'open', ?, ?)
+            """,
+            (f"{session_id}-mcp", NOW.isoformat(), NOW.isoformat()),
+        )
     conn.commit()
 
 
@@ -457,7 +487,7 @@ def test_usage_cli_emits_json(tmp_path, monkeypatch):
         _seed_session(conn)
     finally:
         conn.close()
-    monkeypatch.setattr("reflect.core._prepare_usage_db", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("reflect.core.prepare_usage_db", lambda *_args, **_kwargs: None)
 
     result = CliRunner().invoke(
         main,
@@ -485,7 +515,7 @@ def test_refresh_command_explicitly_prepares_a_missing_snapshot(
     monkeypatch.setattr("reflect.core._default_otlp_traces", lambda: None)
     monkeypatch.setattr("reflect.core._default_spans_dir", lambda: tmp_path / "spans")
     monkeypatch.setattr(
-        "reflect.core._discover_rich_session_files",
+        "reflect.preparation_pipeline._discover_rich_session_files",
         lambda: [("codex", native_session)],
     )
 
@@ -513,11 +543,11 @@ def test_usage_refresh_skips_native_discovery_when_store_has_sessions(tmp_path, 
     finally:
         conn.close()
     monkeypatch.setattr(
-        "reflect.core._discover_rich_session_files",
+        "reflect.preparation_pipeline._discover_rich_session_files",
         lambda: (_ for _ in ()).throw(AssertionError("native discovery should be skipped")),
     )
 
-    _prepare_usage_db(db_path, otlp_traces=None, include_native_sessions=False)
+    prepare_usage_db(db_path, otlp_traces=None, include_native_sessions=False)
 
 
 def test_usage_refresh_ingests_only_the_runtime_native_session(tmp_path, monkeypatch):
@@ -541,7 +571,7 @@ def test_usage_refresh_ingests_only_the_runtime_native_session(tmp_path, monkeyp
         timestamp="2026-07-19T09:00:00Z",
     )
     monkeypatch.setattr(
-        "reflect.core._discover_rich_session_files",
+        "reflect.preparation_pipeline._discover_rich_session_files",
         lambda: [
             ("codex", old_session),
             ("codex", runtime_session),
@@ -652,11 +682,11 @@ def test_usage_requires_explicit_refresh_for_pending_rollup_rebuild(
         conn.close()
     conn = connect_sqlite(db_path)
     try:
-        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25, 26, 27]
+        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
     finally:
         conn.close()
     monkeypatch.setattr("reflect.core._default_otlp_traces", lambda: None)
-    monkeypatch.setattr("reflect.core._discover_rich_session_files", lambda: [])
+    monkeypatch.setattr("reflect.preparation_pipeline._discover_rich_session_files", lambda: [])
 
     read_result = CliRunner().invoke(
         main,

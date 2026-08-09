@@ -163,15 +163,15 @@ def test_path_scope_filters_before_ranking_and_keeps_complete_session_attributio
             now=datetime(2026, 7, 29, 12, tzinfo=UTC),
         ).path()
         summary = service.improve(refresh=False, scope=scope)
-        ledger = service.finding_session_ledger(observation_a, scope=scope, limit=50)
+        ledger = service.finding_evidence_ledger(observation_a, scope=scope, limit=50)
 
         assert [item.id for item in summary.observations] == [observation_a]
         assert observation_b not in {item.id for item in summary.observations}
         assert summary.observations[0].scope_affected_session_count == 25
         assert summary.observations[0].affected_session_ratio == 1
         assert summary.observations[0].last_seen_at == "2026-07-25T10:10:00+00:00"
-        assert ledger.source_session_count == 25
-        assert len(ledger.source_sessions) == 25
+        assert ledger.provenance_session_count == 25
+        assert len(ledger.provenance_sessions) == 25
         assert conn.execute(
             "SELECT COUNT(*) FROM observation_evidence WHERE observation_id = ?",
             (observation_a,),
@@ -197,10 +197,10 @@ def test_session_scope_includes_descendants_and_global_scope_is_bounded(tmp_path
         all_scope = resolver.global_period("all")
 
         assert session_scope.eligible_session_count == 2
-        assert service.finding_session_ledger(
+        assert service.finding_evidence_ledger(
             observation_a,
             scope=session_scope,
-        ).source_session_count == 2
+        ).provenance_session_count == 2
         assert week_scope.eligible_session_count == 3
         assert all_scope.eligible_session_count == 26
         assert resolver.path(tmp_path / "missing").matched is False
