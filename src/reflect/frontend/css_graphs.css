@@ -1,15 +1,6 @@
 /* ── Graph panels ────────────────────────────────────────── */
 .graph-svg{width:100%;overflow:visible}
 .graph-svg text{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif}
-/* Sankey */
-.sankey-link{fill:none;opacity:.35;transition:opacity .2s}
-.sankey-link:hover{opacity:.7}
-.sankey-node rect{rx:4;transition:opacity .2s}
-.sankey-node rect:hover{opacity:.85}
-/* Force graph */
-.dep-node circle{transition:r .2s,opacity .2s}
-.dep-node:hover circle{opacity:.85}
-.dep-node text{pointer-events:none;font-size:12px;fill:rgba(255,255,255,.7)}
 .semantic-graph-shell{position:relative;height:620px;border:1px solid var(--glass-border);border-radius:8px;overflow:hidden;background:radial-gradient(circle at 50% 45%,rgba(255,255,255,.045),rgba(255,255,255,.012) 42%,rgba(0,0,0,.22))}
 .semantic-graph-toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap}
 .semantic-graph-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -70,12 +61,8 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   .sb-load-btn,
   .report-loader,
   .loader-mark,
-  .loader-orbit,
   .loader-bar span,
   .tab,
-  .sankey-link,
-  .sankey-node rect,
-  .dep-node circle,
   .matrix-cell,
   .timeline-span,
   .hist-bar,
@@ -94,7 +81,6 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
     transform:none;
   }
   .loader-mark,
-  .loader-orbit,
   .loader-bar span{
     animation:none;
   }

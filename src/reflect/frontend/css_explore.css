@@ -58,9 +58,6 @@
 #subagent-effectiveness .data-table{min-width:340px;table-layout:fixed}
 #subagent-effectiveness .data-table th,#subagent-effectiveness .data-table td{padding-inline:8px;font-variant-numeric:tabular-nums}
 #subagent-effectiveness .data-table th:first-child,#subagent-effectiveness .data-table td:first-child{width:35%;overflow-wrap:anywhere}
-.tbl th.sortable{cursor:pointer;user-select:none;position:relative}
-.tbl th.sortable:hover{color:var(--text)}
-.tbl th.sortable::after{content:'';margin-left:4px;opacity:.3}
 #sessions-tbl tbody tr{cursor:pointer}
 .mono{font-family:'SF Mono',ui-monospace,monospace;font-size:12px}
 .chip{

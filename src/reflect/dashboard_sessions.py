@@ -12,9 +12,9 @@ from reflect.dashboard_query_common import (
     empty_sql_lazy_tabs,
     load_json_dict,
     quality_rules_payload,
+    session_card_from_row,
     sql_attr,
     sql_insight_payload,
-    sql_quality_breakdown,
     sql_session_first_prompts,
 )
 from reflect.graph import _compute_weekly_trends
@@ -660,14 +660,6 @@ def build_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
         {str(row["session_id"]) for row in navigation_page["rows"]},
     )
 
-    quality_breakdown = sql_quality_breakdown(session_row)
-    quality_score = sum(float(item["earned"]) for item in quality_breakdown)
-    total_tokens = (
-        int(session_row["input_tokens"] or 0)
-        + int(session_row["output_tokens"] or 0)
-        + int(session_row["cache_creation_tokens"] or 0)
-        + int(session_row["cache_read_tokens"] or 0)
-    )
     tools_by_count = {str(row["tool_name"]): int(row["count"] or 0) for row in tool_rows}
     mcp_servers: Counter[str] = Counter()
     for row in mcp_rows:
@@ -677,96 +669,23 @@ def build_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
     mcp_servers_by_count = dict(mcp_servers)
     events_by_type = {str(row["type"]): int(row["count"] or 0) for row in event_rows}
     cost = float(session_row["estimated_cost_usd"] or 0.0)
-    session_card = {
-        "id": session_id,
-        "full_id": session_id,
-        "agent": session_row.get("agent") or "unknown",
-        "status": session_row["status"],
-        "title": session_row.get("title"),
-        "first_prompt": first_prompt or session_row.get("title") or "",
-        "started_at": session_row["started_at"],
-        "ended_at": session_row.get("ended_at"),
-        "created_at": session_row["started_at"],
-        "duration_ms": session_row.get("duration_ms") or 0,
-        "event_count": int(session_row["event_count"] or 0),
-        "prompt_count": session_row["prompt_count"],
-        "tool_calls": session_row["tool_call_count"],
-        "failures": session_row["failure_count"],
-        "failure_count": session_row["failure_count"],
-        "quality_score": quality_score,
-        "quality_available": True,
-        "quality_missing_reason": "",
-        "quality_breakdown": quality_breakdown,
-        "is_completed": session_row["status"] in {"ok", "completed", "success"},
-        "recovered_failures": 0,
-        "input_tokens": session_row["input_tokens"],
-        "output_tokens": session_row["output_tokens"],
-        "cache_creation_tokens": session_row["cache_creation_tokens"],
-        "cache_read_tokens": session_row["cache_read_tokens"],
-        "total_tokens": total_tokens,
-        "total_cost": cost,
-        "total_cost_usd": cost,
-        "pricing_unit": "usd",
-        "primary_model": primary_model,
-        "models": {primary_model: 1} if primary_model else {},
-        "tools": tools_by_count,
-        "skills": {},
-        "conversation": [],
-        "telemetry": [],
-    }
-    navigation_cards: list[dict[str, object]] = []
-    for navigation_row in navigation_page["rows"]:
-        navigation_id = str(navigation_row["session_id"])
-        if navigation_id == session_id:
-            navigation_cards.append(session_card)
-            continue
-        navigation_quality = sql_quality_breakdown(dict(navigation_row))
-        navigation_cards.append(
-            {
-                "id": navigation_id,
-                "full_id": navigation_id,
-                "agent": navigation_row.get("agent") or "unknown",
-                "status": navigation_row["status"],
-                "title": navigation_row.get("title"),
-                "first_prompt": navigation_first_prompts.get(navigation_id, "")
-                or navigation_row.get("title")
-                or "",
-                "started_at": navigation_row["started_at"],
-                "ended_at": navigation_row.get("ended_at"),
-                "created_at": navigation_row["started_at"],
-                "duration_ms": navigation_row.get("duration_ms") or 0,
-                "event_count": int(navigation_row["event_count"] or 0),
-                "prompt_count": navigation_row["prompt_count"],
-                "tool_calls": navigation_row["tool_call_count"],
-                "failures": navigation_row["failure_count"],
-                "failure_count": navigation_row["failure_count"],
-                "quality_score": sum(float(item["earned"]) for item in navigation_quality),
-                "quality_available": True,
-                "quality_missing_reason": "",
-                "quality_breakdown": navigation_quality,
-                "is_completed": navigation_row["status"] in {"ok", "completed", "success"},
-                "recovered_failures": 0,
-                "input_tokens": navigation_row["input_tokens"],
-                "output_tokens": navigation_row["output_tokens"],
-                "cache_creation_tokens": navigation_row["cache_creation_tokens"],
-                "cache_read_tokens": navigation_row["cache_read_tokens"],
-                "total_tokens": (
-                    int(navigation_row["input_tokens"] or 0)
-                    + int(navigation_row["output_tokens"] or 0)
-                    + int(navigation_row["cache_creation_tokens"] or 0)
-                    + int(navigation_row["cache_read_tokens"] or 0)
-                ),
-                "total_cost": navigation_row["estimated_cost_usd"],
-                "total_cost_usd": navigation_row["estimated_cost_usd"],
-                "pricing_unit": "usd",
-                "primary_model": "",
-                "models": {},
-                "tools": {},
-                "skills": {},
-                "conversation": [],
-                "telemetry": [],
-            }
+    session_card = session_card_from_row(
+        session_row,
+        first_prompt=first_prompt,
+        primary_model=primary_model,
+        tools=tools_by_count,
+    )
+    quality_score = float(session_card["quality_score"])
+    total_tokens = int(session_card["total_tokens"])
+    navigation_cards = [
+        session_card
+        if str(navigation_row["session_id"]) == session_id
+        else session_card_from_row(
+            dict(navigation_row),
+            first_prompt=navigation_first_prompts.get(str(navigation_row["session_id"]), ""),
         )
+        for navigation_row in navigation_page["rows"]
+    ]
     if not any(str(card["id"]) == session_id for card in navigation_cards):
         navigation_cards.insert(0, session_card)
     scoped_overview = {

@@ -77,7 +77,6 @@ def test_dashboard_html_shows_branded_loader_during_report_fetch(path: Path):
 
     assert 'id="report-loader"' in text
     assert 'class="loader-mark"' in text
-    assert "loader-orbit" in text
     assert "function showReportLoader(message)" in text
     assert "function hideReportLoader()" in text
     assert "showReportLoader();" in text

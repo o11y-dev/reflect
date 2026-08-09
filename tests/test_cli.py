@@ -17,6 +17,7 @@ from click.testing import CliRunner
 from conftest import make_span, wrap_otlp
 
 import reflect.core as core
+import reflect.instrumentation as instrumentation
 from reflect import preparation_pipeline
 from reflect.agent_capabilities import get_agent_capability
 from reflect.core import main
@@ -2882,7 +2883,7 @@ class TestNativeOtelConfig:
         settings_file.write_text('{"hooks":{}}\n')
 
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            core._configure_claude_native_otel(self._console(), self.HOOK_CFG)
+            instrumentation._configure_claude_native_otel(self._console(), self.HOOK_CFG)
 
         result = json.loads(settings_file.read_text())
         assert result["env"]["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
@@ -2907,13 +2908,13 @@ class TestNativeOtelConfig:
         content_before = settings_file.read_text()
 
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            core._configure_claude_native_otel(self._console(), self.HOOK_CFG)
+            instrumentation._configure_claude_native_otel(self._console(), self.HOOK_CFG)
 
         assert settings_file.read_text() == content_before
 
     def test_claude_native_otel_creates_file_if_missing(self, tmp_path):
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            core._configure_claude_native_otel(self._console(), self.HOOK_CFG)
+            instrumentation._configure_claude_native_otel(self._console(), self.HOOK_CFG)
 
         settings_file = tmp_path / ".claude" / "settings.json"
         assert settings_file.exists()
@@ -2927,7 +2928,7 @@ class TestNativeOtelConfig:
 
         with patch("reflect.core.Path.home", return_value=tmp_path):
             # Should not raise
-            core._configure_claude_native_otel(self._console(), self.HOOK_CFG)
+            instrumentation._configure_claude_native_otel(self._console(), self.HOOK_CFG)
 
     # ------------------------------------------------------------------
     # Copilot CLI
@@ -2939,7 +2940,7 @@ class TestNativeOtelConfig:
         (vscode / "settings.json").write_text('{"github.copilot.chat.otel.enabled": true}\n')
 
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            core._configure_copilot_cli_native_otel(self._console(), self.HOOK_CFG)
+            instrumentation._configure_copilot_cli_native_otel(self._console(), self.HOOK_CFG)
 
         result = json.loads((vscode / "settings.json").read_text())
         assert result["env"]["COPILOT_OTEL_ENABLED"] == "true"
@@ -2951,7 +2952,7 @@ class TestNativeOtelConfig:
         stream = io.StringIO()
         console = Console(file=stream)
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            core._configure_copilot_cli_native_otel(console, self.HOOK_CFG)
+            instrumentation._configure_copilot_cli_native_otel(console, self.HOOK_CFG)
 
         output = stream.getvalue()
         assert "Skipped Copilot CLI OTel env vars" in output
@@ -2963,7 +2964,7 @@ class TestNativeOtelConfig:
         stream = io.StringIO()
         console = Console(file=stream)
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            core._configure_copilot_native_otel(console, self.HOOK_CFG)
+            instrumentation._configure_copilot_native_otel(console, self.HOOK_CFG)
 
         output = stream.getvalue()
         assert "Skipped native Copilot OTel" in output
@@ -2982,7 +2983,7 @@ class TestNativeOtelConfig:
         content_before = (vscode / "settings.json").read_text()
 
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            core._configure_copilot_cli_native_otel(self._console(), self.HOOK_CFG)
+            instrumentation._configure_copilot_cli_native_otel(self._console(), self.HOOK_CFG)
 
         assert (vscode / "settings.json").read_text() == content_before
 
@@ -2992,7 +2993,7 @@ class TestNativeOtelConfig:
 
     def test_codex_native_otel_creates_config(self, tmp_path):
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
+            instrumentation._configure_codex_native_otel(self._console(), self.HOOK_CFG)
 
         config_path = tmp_path / ".codex" / "config.toml"
         config = config_path.read_text()
@@ -3004,7 +3005,7 @@ class TestNativeOtelConfig:
 
     def test_codex_native_otel_enables_prompt_logging_when_text_capture_is_enabled(self, tmp_path):
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            core._configure_codex_native_otel(self._console(), self.HOOK_CFG_CAPTURE_TEXT)
+            instrumentation._configure_codex_native_otel(self._console(), self.HOOK_CFG_CAPTURE_TEXT)
 
         parsed = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text())
         assert parsed["otel"]["log_user_prompt"] is True
@@ -3015,7 +3016,7 @@ class TestNativeOtelConfig:
         (codex_dir / "config.toml").write_text("[model]\nname = \"o3\"\n")
 
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
+            instrumentation._configure_codex_native_otel(self._console(), self.HOOK_CFG)
 
         config = (codex_dir / "config.toml").read_text()
         assert "[model]" in config  # existing section preserved
@@ -3035,7 +3036,7 @@ class TestNativeOtelConfig:
         content_before = (codex_dir / "config.toml").read_text()
 
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
+            instrumentation._configure_codex_native_otel(self._console(), self.HOOK_CFG)
 
         assert (codex_dir / "config.toml").read_text() == content_before
 
@@ -3047,7 +3048,7 @@ class TestNativeOtelConfig:
         )
 
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
+            instrumentation._configure_codex_native_otel(self._console(), self.HOOK_CFG)
 
         parsed = tomllib.loads((codex_dir / "config.toml").read_text())
         assert parsed["model"]["name"] == "o3"
@@ -3065,7 +3066,7 @@ class TestNativeOtelConfig:
         )
 
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
+            instrumentation._configure_codex_native_otel(self._console(), self.HOOK_CFG)
 
         updated = (codex_dir / "config.toml").read_text()
         parsed = tomllib.loads(updated)
@@ -3088,7 +3089,7 @@ class TestNativeOtelConfig:
         )
 
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
+            instrumentation._configure_codex_native_otel(self._console(), self.HOOK_CFG)
 
         parsed = tomllib.loads((codex_dir / "config.toml").read_text())
         assert parsed["otel"]["environment"] == "local-dev"
@@ -3103,7 +3104,7 @@ class TestNativeOtelConfig:
 
         with patch("reflect.core.Path.home", return_value=tmp_path):
             # Should not raise
-            core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
+            instrumentation._configure_codex_native_otel(self._console(), self.HOOK_CFG)
 
     def test_native_otel_status_reports_incomplete_claude_config(self, tmp_path):
         settings_file = tmp_path / ".claude" / "settings.json"
@@ -3118,7 +3119,7 @@ class TestNativeOtelConfig:
         }))
 
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            statuses = core._collect_native_otel_statuses(self.HOOK_CFG)
+            statuses = instrumentation._collect_native_otel_statuses(self.HOOK_CFG)
 
         claude = next(status for status in statuses if status["agent"] == "Claude Code")
         assert claude["status"] == "incomplete"
@@ -3126,8 +3127,8 @@ class TestNativeOtelConfig:
 
     def test_native_otel_status_reports_ready_codex_config(self, tmp_path):
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            core._configure_codex_native_otel(self._console(), self.HOOK_CFG)
-            statuses = core._collect_native_otel_statuses(self.HOOK_CFG)
+            instrumentation._configure_codex_native_otel(self._console(), self.HOOK_CFG)
+            statuses = instrumentation._collect_native_otel_statuses(self.HOOK_CFG)
 
         codex = next(status for status in statuses if status["agent"] == "OpenAI Codex CLI")
         assert codex["status"] == "ready"
@@ -3136,8 +3137,8 @@ class TestNativeOtelConfig:
 
     def test_native_otel_status_reports_enabled_codex_prompt_capture(self, tmp_path):
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            core._configure_codex_native_otel(self._console(), self.HOOK_CFG_CAPTURE_TEXT)
-            statuses = core._collect_native_otel_statuses(self.HOOK_CFG_CAPTURE_TEXT)
+            instrumentation._configure_codex_native_otel(self._console(), self.HOOK_CFG_CAPTURE_TEXT)
+            statuses = instrumentation._collect_native_otel_statuses(self.HOOK_CFG_CAPTURE_TEXT)
 
         codex = next(status for status in statuses if status["agent"] == "OpenAI Codex CLI")
         assert codex["status"] == "ready"
@@ -3149,7 +3150,7 @@ class TestNativeOtelConfig:
         (codex_dir / "config.toml").write_text("[[[[invalid toml")
 
         with patch("reflect.core.Path.home", return_value=tmp_path):
-            statuses = core._collect_native_otel_statuses(self.HOOK_CFG)
+            statuses = instrumentation._collect_native_otel_statuses(self.HOOK_CFG)
 
         codex = next(status for status in statuses if status["agent"] == "OpenAI Codex CLI")
         assert codex["status"] == "unreadable"

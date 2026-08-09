@@ -15,6 +15,66 @@ def sql_quality_breakdown(row: dict[str, object], recovered: int = 0) -> list[di
     return DEFAULT_SESSION_RULE_SCORER.breakdown(context_from_summary(row, recovered=recovered))
 
 
+def session_card_from_row(
+    row: dict[str, object],
+    *,
+    first_prompt: str = "",
+    primary_model: str = "",
+    tools: dict[str, int] | None = None,
+) -> dict[str, object]:
+    """Shape one canonical session summary for dashboard navigation."""
+    session_id = str(row.get("session_id") or row.get("id") or "")
+    status = str(row.get("status") or "")
+    quality_breakdown = sql_quality_breakdown(row)
+    input_tokens = int(row.get("input_tokens") or 0)
+    output_tokens = int(row.get("output_tokens") or 0)
+    cache_creation_tokens = int(row.get("cache_creation_tokens") or 0)
+    cache_read_tokens = int(row.get("cache_read_tokens") or 0)
+    failure_count = int(row.get("failure_count") or row.get("failures") or 0)
+    model = primary_model or str(row.get("primary_model") or "")
+    cost = float(row.get("estimated_cost_usd") or row.get("total_cost_usd") or 0)
+    return {
+        "id": session_id,
+        "full_id": session_id,
+        "agent": row.get("agent") or "unknown",
+        "status": status,
+        "title": row.get("title"),
+        "first_prompt": first_prompt or row.get("first_prompt") or row.get("title") or "",
+        "started_at": row.get("started_at"),
+        "ended_at": row.get("ended_at"),
+        "created_at": row.get("started_at"),
+        "duration_ms": int(row.get("duration_ms") or 0),
+        "event_count": int(row.get("event_count") or 0),
+        "prompt_count": int(row.get("prompt_count") or 0),
+        "tool_calls": int(row.get("tool_call_count") or row.get("tool_calls") or 0),
+        "failures": failure_count,
+        "failure_count": failure_count,
+        "quality_score": sum(float(item["earned"]) for item in quality_breakdown),
+        "quality_available": True,
+        "quality_missing_reason": "",
+        "quality_breakdown": quality_breakdown,
+        "is_completed": status in {"ok", "completed", "success"},
+        "recovered_failures": 0,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_creation_tokens": cache_creation_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "total_tokens": input_tokens
+        + output_tokens
+        + cache_creation_tokens
+        + cache_read_tokens,
+        "total_cost": cost,
+        "total_cost_usd": cost,
+        "pricing_unit": "usd",
+        "primary_model": model,
+        "models": {model: 1} if model else {},
+        "tools": tools or {},
+        "skills": {},
+        "conversation": [],
+        "telemetry": [],
+    }
+
+
 def sql_session_first_prompts(db_path: Path, session_ids: set[str]) -> dict[str, str]:
     if not session_ids:
         return {}

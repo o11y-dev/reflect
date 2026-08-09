@@ -6,6 +6,7 @@
 
 - Restored the Skills Registry as a first-class browser surface between Workflows and Impact, preserving the existing version, installation, exposure, and usage evidence while making durable procedures directly discoverable again.
 - Made the remaining dashboard and CLI ownership boundaries concrete: session and Explore queries now have focused modules, improvement route data uses one adapter, memory/schema commands live under `cli/`, and shared snapshot/JSON helpers no longer have duplicate implementations.
+- Deleted obsolete core re-exports, duplicate session-card shapers, dead helpers, and unused dashboard styles while preserving the existing dashboard and CLI behavior.
 - Replaced deprecated Gemini CLI execution paths with Antigravity `agy` for skill extraction, MCP setup, and fresh-install agent validation; historical Gemini telemetry remains readable through its historical adapter without participating in current client setup.
 - Canonicalized workflow identity around the normalized contract signature and exact revision hash, and projected review, deployment, installation, and measurement as separate lifecycle dimensions. Approved but uninstalled workflows are no longer executable guidance.
 - Made database evolution one-way for the new workflow, execution-unit, MCP-call, and source-lifecycle models: migrations move durable data forward, while runtime dual reads, dual writes, retired routes, presentation aliases, and legacy fallback branches are removed.

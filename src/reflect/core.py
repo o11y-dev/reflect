@@ -39,7 +39,6 @@ from __future__ import annotations
 import io
 import json as _json_stdlib
 import os
-import platform
 import re
 import shutil
 import sqlite3
@@ -83,34 +82,10 @@ from reflect.cli.memory import memory as memory_commands
 from reflect.cli.schema import schema as schema_commands
 from reflect.dashboard_server import start_publish_server
 from reflect.hook_runtime import HookMigrationError, HookPipxMigrator, HookRuntime
-from reflect.instrumentation import (  # noqa: F401
-    _HOOK_CFG_ENDPOINT_DEFAULT,
+from reflect.instrumentation import (
     _HOOK_CFG_ENDPOINT_KEY,
-    _HOOK_CFG_PROTOCOL_DEFAULT,
     _HOOK_CFG_PROTOCOL_KEY,
-    _HOOK_PACKAGE_SPEC,
-    _agent_config_candidates,
-    _agent_config_paths,
-    _agent_slug,
-    _claude_native_otel_env,
-    _codex_native_otel_matches_desired,
-    _codex_native_otel_settings,
-    _collect_native_otel_statuses,
-    _configure_claude_native_otel,
-    _configure_codex_native_otel,
-    _configure_copilot_cli_native_otel,
-    _configure_copilot_native_otel,
-    _configure_gemini_native_otel,
-    _copilot_cli_native_otel_env,
-    _copilot_native_otel_settings,
-    _gemini_native_otel_settings,
-    _hook_otlp_endpoint,
-    _hook_otlp_protocol,
-    _missing_desired_keys,
-    _native_otel_target,
-    _render_codex_native_otel_block,
     _render_native_otel_panel,
-    _upsert_toml_section,
 )
 from reflect.instrumentation import (
     _run_setup as _instrumentation_run_setup,
@@ -121,7 +96,6 @@ from reflect.parsing import (
     _canonical_otlp_traces_path,
     _default_sessions_dir,
     _default_spans_dir,
-    _infer_otlp_logs_file,
 )
 from reflect.preparation_pipeline import (
     ensure_sql_costs,
@@ -167,16 +141,6 @@ def _default_otlp_traces() -> Path | None:
     """Return the canonical default OTLP traces path if it exists."""
     p_otlp = _canonical_otlp_traces_path()
     return p_otlp if readable_segment_paths(p_otlp) else None
-
-
-def _default_vscode_copilot_dir() -> Path:
-    system = platform.system()
-    home = Path.home()
-    if system == "Darwin":
-        return home / "Library" / "Application Support" / "Code" / "User"
-    if system == "Windows":
-        return home / "AppData" / "Roaming" / "Code" / "User"
-    return home / ".config" / "Code" / "User"
 
 
 _AGENT_CAPABILITIES = setup_agent_capabilities()
@@ -263,10 +227,6 @@ def _detect_agents() -> list[dict]:
             "entries": _count_path_entries(path) if detected else 0,
         })
     return agents
-
-
-def _infer_default_otlp_logs() -> Path | None:
-    return _infer_otlp_logs_file(_default_otlp_traces())
 
 
 def _summarize_file(path: Path | None) -> str:

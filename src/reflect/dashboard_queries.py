@@ -8,28 +8,12 @@ from reflect.dashboard_query_common import (
     dict_rows,
     empty_sql_lazy_tabs,
     quality_rules_payload,
+    session_card_from_row,
     sql_insight_payload,
-    sql_quality_breakdown,
     sql_session_first_prompts,
 )
 from reflect.graph import _compute_weekly_trends
 from reflect.utils import _safe_ratio
-
-
-def _session_row_id(session: dict) -> str:
-    return str(session.get("full_id") or session.get("id") or "")
-
-
-def _parse_session_created_at(session: dict) -> float:
-    created = session.get("created_at")
-    if not isinstance(created, str) or not created:
-        return 0.0
-    try:
-        return (
-            datetime.strptime(created, "%Y-%m-%d %H:%M UTC").replace(tzinfo=UTC).timestamp() * 1000
-        )
-    except ValueError:
-        return 0.0
 
 
 def _comparison_delta(primary: float | int, baseline: float | int) -> dict:
@@ -630,60 +614,14 @@ def build_dashboard_payload(
             {str(row["session_id"]) for row in session_rows},
         )
     )
-    sessions = []
-    for row in session_rows:
-        quality_breakdown = sql_quality_breakdown(dict(row))
-        quality_score = sum(float(item["earned"]) for item in quality_breakdown)
-        sessions.append(
-            {
-                "id": row["session_id"],
-                "full_id": row["session_id"],
-                "agent": row.get("agent") or "unknown",
-                "status": row["status"],
-                "title": row.get("title"),
-                "first_prompt": first_prompts.get(str(row["session_id"]), "")
-                or row.get("title")
-                or "",
-                "started_at": row["started_at"],
-                "ended_at": row.get("ended_at"),
-                "created_at": row["started_at"],
-                "duration_ms": row.get("duration_ms") or 0,
-                "event_count": row["event_count"],
-                "prompt_count": row["prompt_count"],
-                "tool_calls": row["tool_call_count"],
-                "failures": row["failure_count"],
-                "failure_count": row["failure_count"],
-                "quality_score": quality_score,
-                "quality_available": True,
-                "quality_missing_reason": "",
-                "quality_breakdown": quality_breakdown,
-                "is_completed": row["status"] in {"ok", "completed", "success"},
-                "recovered_failures": 0,
-                "input_tokens": row["input_tokens"],
-                "output_tokens": row["output_tokens"],
-                "cache_creation_tokens": row["cache_creation_tokens"],
-                "cache_read_tokens": row["cache_read_tokens"],
-                "total_tokens": (
-                    row["input_tokens"]
-                    + row["output_tokens"]
-                    + row["cache_creation_tokens"]
-                    + row["cache_read_tokens"]
-                ),
-                "total_cost": row["estimated_cost_usd"],
-                "total_cost_usd": row["estimated_cost_usd"],
-                "pricing_unit": "usd",
-                "primary_model": primary_models.get(str(row["session_id"]), ""),
-                "models": (
-                    {primary_models[str(row["session_id"])]: 1}
-                    if primary_models.get(str(row["session_id"]))
-                    else {}
-                ),
-                "tools": {},
-                "skills": {},
-                "conversation": [],
-                "telemetry": [],
-            }
+    sessions = [
+        session_card_from_row(
+            dict(row),
+            first_prompt=first_prompts.get(str(row["session_id"]), ""),
+            primary_model=primary_models.get(str(row["session_id"]), ""),
         )
+        for row in session_rows
+    ]
     all_sessions = sessions[:]
     nav_sessions = _filter_sql_session_rows(
         sessions,
@@ -698,29 +636,6 @@ def build_dashboard_payload(
         if session_id
         else nav_sessions
     )
-    scoped_session_rows = [
-        {
-            "session_id": session["id"],
-            "agent": session["agent"],
-            "status": session["status"],
-            "title": session["title"],
-            "first_prompt": session["first_prompt"],
-            "started_at": session["started_at"],
-            "ended_at": session["ended_at"],
-            "duration_ms": session["duration_ms"],
-            "prompt_count": session["prompt_count"],
-            "tool_call_count": session["tool_calls"],
-            "failure_count": session["failure_count"],
-            "input_tokens": session["input_tokens"],
-            "output_tokens": session["output_tokens"],
-            "cache_creation_tokens": session["cache_creation_tokens"],
-            "cache_read_tokens": session["cache_read_tokens"],
-            "estimated_cost_usd": session["total_cost_usd"],
-            "total_tokens": session["total_tokens"],
-            "quality_score": session["quality_score"],
-        }
-        for session in scoped_sessions
-    ]
     nav_session_rows = [
         {
             "session_id": session["id"],
@@ -754,25 +669,23 @@ def build_dashboard_payload(
     sessions = nav_sessions[offset : offset + limit]
     scoped_overview = {
         **overview,
-        "session_count": len(scoped_session_rows),
-        "prompt_count": sum(int(row["prompt_count"] or 0) for row in scoped_session_rows),
-        "tool_call_count": sum(int(row["tool_call_count"] or 0) for row in scoped_session_rows),
-        "failure_count": sum(int(row["failure_count"] or 0) for row in scoped_session_rows),
-        "input_tokens": sum(int(row["input_tokens"] or 0) for row in scoped_session_rows),
-        "output_tokens": sum(int(row["output_tokens"] or 0) for row in scoped_session_rows),
+        "session_count": len(scoped_sessions),
+        "prompt_count": sum(int(row["prompt_count"] or 0) for row in scoped_sessions),
+        "tool_call_count": sum(int(row["tool_calls"] or 0) for row in scoped_sessions),
+        "failure_count": sum(int(row["failure_count"] or 0) for row in scoped_sessions),
+        "input_tokens": sum(int(row["input_tokens"] or 0) for row in scoped_sessions),
+        "output_tokens": sum(int(row["output_tokens"] or 0) for row in scoped_sessions),
         "estimated_cost_usd": sum(
-            float(row["estimated_cost_usd"] or 0) for row in scoped_session_rows
+            float(row["total_cost_usd"] or 0) for row in scoped_sessions
         ),
     }
     sqlite_payload["overview"] = scoped_overview
     sqlite_payload["sessions"] = sessions_page
     first_event_ts = ""
-    if scoped_session_rows:
-        first_event_ts = min(
-            row["started_at"] for row in scoped_session_rows if row.get("started_at")
-        )
-    prompt_count = sum(row["prompt_count"] for row in scoped_session_rows)
-    scoped_session_ids = {str(row["session_id"]) for row in scoped_session_rows}
+    if scoped_sessions:
+        first_event_ts = min(row["started_at"] for row in scoped_sessions if row.get("started_at"))
+    prompt_count = sum(row["prompt_count"] for row in scoped_sessions)
+    scoped_session_ids = {str(row["id"]) for row in scoped_sessions}
     metrics = _sql_dashboard_metrics(
         db_path,
         session_ids=scoped_session_ids if has_scope_filter else None,
@@ -798,9 +711,9 @@ def build_dashboard_payload(
         **dict(sqlite_payload.get("tabs") or {}),
         "usage": {
             "avg_quality_score": (
-                sum(float(row.get("quality_score") or 0) for row in scoped_session_rows)
-                / len(scoped_session_rows)
-                if scoped_session_rows
+                sum(float(row.get("quality_score") or 0) for row in scoped_sessions)
+                / len(scoped_sessions)
+                if scoped_sessions
                 else 0
             ),
             "unique_sessions": scoped_overview["session_count"],
@@ -937,7 +850,7 @@ def build_dashboard_payload(
         "focused_session_id": session_id,
         "first_event_ts": first_event_ts,
         "last_event_ts": max(
-            (row["started_at"] for row in scoped_session_rows if row.get("started_at")), default=""
+            (row["started_at"] for row in scoped_sessions if row.get("started_at")), default=""
         ),
     }
     return payload
