@@ -57,12 +57,15 @@ session rows, and chart series are views over canonical evidence.
 | Area | Owner | Responsibility |
 |---|---|---|
 | CLI composition | `src/reflect/core.py` | Click entry point, command wiring, setup, and top-level operator flows |
+| CLI shared contracts | `src/reflect/cli/common.py` | Reflect home, JSON output, and query-only snapshot readiness |
 | Database commands | `src/reflect/cli/database.py` | Ingest, retention, vacuum, and database inspection commands |
+| Memory and schema commands | `src/reflect/cli/memory.py`, `schema.py` | Scoped memory lifecycle and schema export |
 | Preparation policy | `src/reflect/preparation.py` | Snapshot states, profiles, progress, background lifecycle, and coordinator |
 | Preparation pipeline | `src/reflect/preparation_pipeline.py` | Migrate, ingest, normalize, reconcile, derive, and publish a refreshed snapshot |
 | MCP | `src/reflect/mcp.py`, `context.py`, `changes.py` | Task guidance, completion, evidence inspection, and approval-gated changes |
-| Browser queries | `src/reflect/dashboard_queries.py` | Bounded SQLite read models and session drill-down |
-| Browser server | `src/reflect/dashboard_server.py` | FastAPI routes, cache ownership, and local server construction |
+| Browser queries | `src/reflect/dashboard_query_common.py`, `dashboard_queries.py`, `dashboard_sessions.py`, `dashboard_explore.py` | Shared contracts, overview, session drill-down, and Explore read models |
+| Improvement browser adapter | `src/reflect/dashboard_improvements.py` | Connection lifecycle and dashboard-ready findings, workflows, skills, and impact models |
+| Browser server | `src/reflect/dashboard_server.py` | HTTP routes, cache ownership, error mapping, and local server construction |
 | Browser source | `src/reflect/frontend/` | Authored HTML template plus domain-oriented CSS and JavaScript modules |
 | Browser artifacts | `src/reflect/data/index.html`, `docs/report.html` | Generated, byte-identical single-file clients |
 | OTLP gateway | `src/reflect/gateway.py`, `raw_segments.py` | Receive OTLP, append active files, and rotate immutable segments |
@@ -244,12 +247,13 @@ task contracts.
 
 ## Browser architecture
 
-The browser exposes four product surfaces:
+The browser exposes five product surfaces:
 
 1. Sessions — source conversations, usage, cost, tools, and comparisons
-2. Workflows — findings, loops, reviewable workflows, and durable skill versions
-3. Impact — measured comparable-task progress and evidence quality
-4. Explore — usage, tools, graph, and context/task-contract diagnostics
+2. Workflows — findings, loops, and reviewable workflows
+3. Skills — durable versions, installation targets, exposure, and usage evidence
+4. Impact — measured comparable-task progress and evidence quality
+5. Explore — usage, tools, graph, and context/task-contract diagnostics
 
 `dashboard_queries.py` builds bounded read models from SQLite.
 `dashboard_server.py` wires those functions to FastAPI and owns server/cache

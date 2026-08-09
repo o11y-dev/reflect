@@ -32,7 +32,8 @@ def test_readme_explains_current_product_surfaces():
     for surface in ("Sessions", "Workflows", "Impact", "Explore"):
         assert f"**{surface}**" in readme
 
-    assert "The browser has four surfaces" in readme
+    assert "The browser has five surfaces" in readme
+    assert "### Skills Registry" in readme
     assert "Approval and" in readme
     assert "installation are separate" in readme
     assert "missing baseline evidence is shown as unavailable rather than zero" in readme

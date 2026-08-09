@@ -370,7 +370,7 @@ def test_dashboard_activity_widgets_live_on_explore_usage_view(path: Path):
     assert 'id="hm-grid"' in text
     assert 'id="hour-bars"' in text
     assert 'id="weekly-trends-table"' in text
-    assert "const PRODUCT_TABS = new Set(['sessions','workflows','impact','explore'])" in text
+    assert "const PRODUCT_TABS = new Set(['sessions','workflows','skills','impact','explore'])" in text
     assert "LEGACY_TAB_LOCATIONS" not in text
 
 
@@ -380,14 +380,15 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
 
     assert 'data-tab="sessions">Sessions</button>' in text
     assert 'data-tab="workflows">Workflows</button>' in text
+    assert 'data-tab="skills">Skills</button>' in text
     assert 'data-tab="impact">Impact</button>' in text
     assert 'data-tab="explore">Explore</button>' in text
     assert 'data-tab="inbox"' not in text
-    assert 'data-tab="skills"' not in text
     assert 'data-tab="observations"' not in text
     assert 'data-tab="compare"' not in text
     assert 'data-tab="overview"' not in text
     assert 'id="tab-impact"' in text
+    assert 'id="tab-skills"' in text
     assert 'id="tab-explore-usage"' in text
     assert 'id="tab-explore-tools"' in text
     assert 'id="tab-explore-graph"' in text
@@ -474,7 +475,9 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "create:'New file'" in text
     assert "Exact File Diff" in text
     assert "Review &amp; Roll Back" in text
-    assert "const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length ? 'workflows' : 'sessions';" in text
+    assert "const defaultProductTab =" in text
+    assert "(IMPROVEMENT_DATA.skills || []).length" in text
+    assert "? 'skills'" in text
 
     sessions_panel = text[text.index('id="tab-sessions"'):text.index('id="tab-explore-usage"')]
     usage_panel = text[text.index('id="tab-explore-usage"'):text.index('id="tab-impact"')]

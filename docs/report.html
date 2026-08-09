@@ -2797,6 +2797,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <nav id="tabs" role="tablist" aria-label="Dashboard sections">
   <button class="tab active" id="tab-button-sessions" type="button" role="tab" aria-selected="true" aria-controls="tab-sessions" tabindex="0" data-tab="sessions">Sessions</button>
   <button class="tab" id="tab-button-workflows" type="button" role="tab" aria-selected="false" aria-controls="tab-workflows" tabindex="-1" data-tab="workflows">Workflows</button>
+  <button class="tab" id="tab-button-skills" type="button" role="tab" aria-selected="false" aria-controls="tab-skills" tabindex="-1" data-tab="skills">Skills</button>
   <button class="tab" id="tab-button-impact" type="button" role="tab" aria-selected="false" aria-controls="tab-impact" tabindex="-1" data-tab="impact">Impact</button>
   <button class="tab" id="tab-button-explore" type="button" role="tab" aria-selected="false" aria-controls="tab-explore-usage" tabindex="-1" data-tab="explore">Explore</button>
 </nav>
@@ -3047,12 +3048,17 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   </div>
   <div class="workflow-list workflow-tile-grid" id="workflow-ledger" aria-live="polite"></div>
   </section>
+</div>
 
 <!-- ════════════════════ SKILL REGISTRY ════════════════════ -->
+<div class="tab-panel" id="tab-skills" role="tabpanel" aria-labelledby="tab-button-skills" hidden>
+  <div class="product-hero">
+    <div><h2>Skills Registry</h2><p>Inspect the versioned procedures available to agents, where each version is installed, and whether later task evidence shows it was actually used.</p></div>
+    <div class="product-count" id="skill-count">0<small>current skills</small></div>
+  </div>
   <section class="panel product-section" id="skill-registry-section">
     <div class="product-section-head">
-      <div><h3 class="product-section-title">Installed Procedure Registry</h3><p class="product-section-copy">Versioned workflow packages and their actual installation state. Review approval and installation remain separate so an approved draft is never presented as executable guidance.</p></div>
-      <div class="product-section-count" id="skill-count">0<small>current skills</small></div>
+      <div><h3 class="product-section-title">Available Procedures</h3><p class="product-section-copy">Registry presence, review approval, installation, exposure, and measured impact remain separate so Reflect never presents telemetry history as executable guidance.</p></div>
     </div>
     <div class="workflow-toolbar" aria-label="Skill filters">
       <div class="workflow-filter-field skill-search-field"><label for="skill-search">Search skills</label><input id="skill-search" type="search" placeholder="Name, purpose, agent, state, or installation…" autocomplete="off" spellcheck="false" aria-controls="skill-registry"/></div>
@@ -4537,7 +4543,7 @@ async function hydrateExploreView(viewName){
 let _graphsInited = false;
 const tabButtons = Array.from(document.querySelectorAll('.tab'));
 const tabsEl = document.getElementById('tabs');
-const PRODUCT_TABS = new Set(['sessions','workflows','impact','explore']);
+const PRODUCT_TABS = new Set(['sessions','workflows','skills','impact','explore']);
 const EXPLORE_VIEWS = new Set(['usage','tools','graph','context']);
 let activeExploreView = 'usage';
 
@@ -4610,7 +4616,7 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
         params.delete('workflow_type');
         params.delete('workflow_status');
       }
-      if (activeTab !== 'workflows') params.delete('skill_q');
+      if (activeTab !== 'skills') params.delete('skill_q');
     });
   }
 }
@@ -4637,7 +4643,11 @@ window.addEventListener('resize', () => updateTabIndicator(document.querySelecto
 
 const requestedInitialTab = currentParams().get('tab');
 const requestedInitialView = currentParams().get('view');
-const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length ? 'workflows' : 'sessions';
+const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length
+  ? 'workflows'
+  : (IMPROVEMENT_DATA.skills || []).length
+    ? 'skills'
+    : 'sessions';
 activateTab(requestedInitialTab || defaultProductTab, {
   view: requestedInitialView || '',
   updateUrl: Boolean(requestedInitialTab || requestedInitialView),

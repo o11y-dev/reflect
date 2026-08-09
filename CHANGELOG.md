@@ -4,11 +4,13 @@
 
 ### Changed
 
+- Restored the Skills Registry as a first-class browser surface between Workflows and Impact, preserving the existing version, installation, exposure, and usage evidence while making durable procedures directly discoverable again.
+- Made the remaining dashboard and CLI ownership boundaries concrete: session and Explore queries now have focused modules, improvement route data uses one adapter, memory/schema commands live under `cli/`, and shared snapshot/JSON helpers no longer have duplicate implementations.
 - Replaced deprecated Gemini CLI execution paths with Antigravity `agy` for skill extraction, MCP setup, and fresh-install agent validation; historical Gemini telemetry remains readable through its historical adapter without participating in current client setup.
 - Canonicalized workflow identity around the normalized contract signature and exact revision hash, and projected review, deployment, installation, and measurement as separate lifecycle dimensions. Approved but uninstalled workflows are no longer executable guidance.
 - Made database evolution one-way for the new workflow, execution-unit, MCP-call, and source-lifecycle models: migrations move durable data forward, while runtime dual reads, dual writes, retired routes, presentation aliases, and legacy fallback branches are removed.
 - Split snapshot preparation, database command wiring, dashboard queries, dashboard server construction, and authored frontend modules into explicit owners. The generated packaged and documentation dashboards now come from one build and remain byte-identical.
-- Consolidated the browser into Sessions, Workflows, Impact, and Explore. Findings, loops, workflow reviews, and durable skill versions now share one procedure-oriented surface.
+- Consolidated the browser around Sessions, Workflows, Skills, Impact, and Explore. Findings and loops lead into workflow review, while durable skill versions remain a distinct registry surface.
 - Centralized agent support, aliases, native stores, hooks, skill targets, MCP configuration, and headless-test capability in one typed registry used by setup, doctor, adapters, and validation.
 - Replaced unbounded gateway cache files with bounded active OTLP JSONL segments and immutable closed segments; successfully normalized closed segments are deleted by default and can be retained explicitly with `--keep-processed-raw`.
 - Made explicit snapshot refresh ingest unchanged-aware hook JSONL files before native session adapters, so fresh and repaired stores reconcile current agent events without replaying unchanged files.

@@ -100,18 +100,27 @@ The product loop is:
 > task contract -> execution evidence -> human review -> installed workflow ->
 > comparable future tasks -> measured impact
 
-The browser has four surfaces:
+The browser has five surfaces:
 
 | Surface | What it answers |
 |---|---|
 | **Sessions** | What happened, what did it cost, and which source evidence is available? |
-| **Workflows** | Which findings, loops, procedures, and skill versions need review? |
+| **Workflows** | Which findings, loops, and proposed procedures need review? |
+| **Skills** | Which versioned procedures exist, where are they installed, and have agents used them? |
 | **Impact** | Did comparable task outcomes move after installation, and is attribution supported? |
 | **Explore** | What do usage, tools, MCP, graph, context, and task contracts show? |
 
 A finding or loop is evidence, not an installed improvement. Approval and
 installation are separate. Impact begins only after a workflow is installed,
 and missing baseline evidence is shown as unavailable rather than zero.
+
+### Skills Registry
+
+Skills are durable, versioned procedures—not another label for findings or
+workflow drafts. The Skills surface shows registry state, installation targets,
+source evidence, observed exposure, and measured outcomes without implying that
+a registered skill is installed or effective. Use `reflect skills` or
+`reflect_skills` for the same local registry through the CLI or MCP.
 
 ## What Reflect Can Prove
 

@@ -56,8 +56,9 @@ control plane and does not rank developers or agents.
 - Stateful snapshot preparation has one coordinator. CLI database commands,
   dashboard queries, route construction, and authored frontend modules have
   explicit owners.
-- The browser has four product surfaces: Sessions, Workflows, Impact, and
-  Explore. Findings, loops, and skill versions share the Workflows journey.
+- The browser has five product surfaces: Sessions, Workflows, Skills, Impact,
+  and Explore. The durable Skills Registry remains visible between a reviewed
+  workflow and its measured impact.
 - Database evolution is one-way. New code does not maintain dual writes, old
   routes, aliases, or fallback readers for retired models.
 

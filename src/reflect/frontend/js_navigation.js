@@ -2,7 +2,7 @@
 let _graphsInited = false;
 const tabButtons = Array.from(document.querySelectorAll('.tab'));
 const tabsEl = document.getElementById('tabs');
-const PRODUCT_TABS = new Set(['sessions','workflows','impact','explore']);
+const PRODUCT_TABS = new Set(['sessions','workflows','skills','impact','explore']);
 const EXPLORE_VIEWS = new Set(['usage','tools','graph','context']);
 let activeExploreView = 'usage';
 
@@ -75,7 +75,7 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
         params.delete('workflow_type');
         params.delete('workflow_status');
       }
-      if (activeTab !== 'workflows') params.delete('skill_q');
+      if (activeTab !== 'skills') params.delete('skill_q');
     });
   }
 }
@@ -102,7 +102,11 @@ window.addEventListener('resize', () => updateTabIndicator(document.querySelecto
 
 const requestedInitialTab = currentParams().get('tab');
 const requestedInitialView = currentParams().get('view');
-const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length ? 'workflows' : 'sessions';
+const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length
+  ? 'workflows'
+  : (IMPROVEMENT_DATA.skills || []).length
+    ? 'skills'
+    : 'sessions';
 activateTab(requestedInitialTab || defaultProductTab, {
   view: requestedInitialView || '',
   updateUrl: Boolean(requestedInitialTab || requestedInitialView),

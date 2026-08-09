@@ -40,8 +40,12 @@ poetry run reflect doctor
 | `src/reflect/gateway.py` | Local OTLP gateway (gRPC + HTTP servers, file writer, daemon lifecycle) |
 | `src/reflect/preparation.py` | Snapshot lifecycle, policies, progress, and coordinator |
 | `src/reflect/preparation_pipeline.py` | Explicit ingest/normalize/derive preparation pipeline |
-| `src/reflect/dashboard_queries.py` | Bounded dashboard read models and session details |
-| `src/reflect/dashboard_server.py` | Browser routes, cache, and publish server |
+| `src/reflect/dashboard_query_common.py` | Shared typed query helpers and session quality read models |
+| `src/reflect/dashboard_queries.py` | Shared bounded overview read models |
+| `src/reflect/dashboard_sessions.py` | Session payload and drill-down queries |
+| `src/reflect/dashboard_explore.py` | Explore view routing and bounded tab queries |
+| `src/reflect/dashboard_improvements.py` | Findings, workflows, skills, and impact dashboard adapter |
+| `src/reflect/dashboard_server.py` | Thin browser routes, cache, and publish server |
 | `src/reflect/frontend/` | Canonical authored browser template, CSS, and JavaScript |
 | `src/reflect/data/index.html` | Generated packaged browser artifact; do not edit directly |
 | `src/reflect/graph.py` | Tool transition, co-occurrence, latency, and timeline graph derivation |
@@ -109,7 +113,7 @@ poetry run pytest tests/test_dashboard_json.py -q
 poetry run pytest -q
 
 # Cheap syntax check for dashboard server code
-poetry run python -m py_compile src/reflect/dashboard_queries.py src/reflect/dashboard_server.py
+poetry run python -m py_compile src/reflect/dashboard_*.py
 ```
 
 ## Data flow for new metrics
@@ -122,7 +126,7 @@ To add a new tracked metric:
 4. Export it in the renderer that needs it:
    - `terminal.py`
    - `report.py`
-   - `dashboard_queries.py` or `dashboard_server.py`
+   - the owning `dashboard_*.py` query or adapter module
 5. Add or update regression coverage in `tests/`
 
 ## High-value pitfalls

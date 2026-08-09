@@ -1,38 +1,15 @@
 from __future__ import annotations
 
-import json
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 
 import click
 
+from reflect.cli.common import REFLECT_HOME, echo_json, require_snapshot_schema
 from reflect.preparation_pipeline import ensure_sql_costs
 
-DEFAULT_DB_PATH = Path(os.environ.get("REFLECT_HOME", Path.home() / ".reflect")) / "state" / "reflect.db"
+DEFAULT_DB_PATH = REFLECT_HOME / "state" / "reflect.db"
 
-
-def _echo_json(payload: object) -> None:
-    click.echo(json.dumps(payload, indent=2, sort_keys=True))
-
-
-def _require_snapshot_schema(db_path: Path, *, refresh_hint: str) -> None:
-    from reflect.preparation import (
-        CommandPreparationPolicy,
-        SnapshotLifecycleService,
-        SnapshotUnavailableError,
-        SQLiteSnapshotInspector,
-    )
-
-    lifecycle = SnapshotLifecycleService(
-        SQLiteSnapshotInspector(db_path),
-        policy=CommandPreparationPolicy(require_sessions=False),
-        refresh_hint=refresh_hint,
-    )
-    try:
-        lifecycle.prepare(requested_refresh=None)
-    except SnapshotUnavailableError as exc:
-        raise click.ClickException(str(exc)) from exc
 
 @click.group()
 def db() -> None:
@@ -296,7 +273,7 @@ def db_prune_sessions(
 
     backup_path: Path | None = None
     if not apply_changes:
-        _require_snapshot_schema(
+        require_snapshot_schema(
             db_path,
             refresh_hint=(
                 f"Run `reflect db migrate --db-path {db_path}` before previewing "
@@ -413,7 +390,7 @@ def db_prune_sessions(
         "rollups": result.rollups,
     }
     if as_json:
-        _echo_json(payload)
+        echo_json(payload)
         return
     action = "Pruned" if apply_changes else "Would prune"
     session_scope = "inactive" if all_inactive_sessions else "invalid-start"

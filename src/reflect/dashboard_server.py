@@ -8,15 +8,15 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from reflect.dashboard_queries import (
+from reflect.dashboard_explore import (
     EXPLORE_VIEW_TABS,
-    build_dashboard_payload,
     build_explore_payload,
-    build_session_payload,
     canonical_explore_view,
-    load_session_detail,
     parse_dashboard_scope,
 )
+from reflect.dashboard_improvements import DashboardImprovementAdapter
+from reflect.dashboard_queries import build_dashboard_payload
+from reflect.dashboard_sessions import build_session_payload, load_session_detail
 from reflect.preparation import (
     PreparationCoordinator,
     PreparationSnapshot,
@@ -78,6 +78,10 @@ def _dashboard_docs_dir() -> Path:
     return repo_docs
 
 
+def _bounded_query_limit(value: object, *, default: int, maximum: int) -> int:
+    return min(maximum, max(1, int(value or default)))
+
+
 def start_publish_server(
     *,
     db_path: Path,
@@ -115,6 +119,7 @@ def build_dashboard_app(
 
     app = FastAPI(title="reflect dashboard", docs_url=None, redoc_url=None)
     workflow_project_root = (project_root or Path.cwd()).expanduser().resolve()
+    improvement_adapter = DashboardImprovementAdapter(db_path)
 
     def resolve_workflow_project_root(value: object = None) -> Path:
         requested = str(value or "").strip()
@@ -136,7 +141,9 @@ def build_dashboard_app(
         )
     else:
         dashboard_cache = DashboardDataCache(
-            lambda: build_dashboard_payload(db_path, lazy_heavy_tabs=True, base_tab_names=set(EXPLORE_VIEW_TABS["usage"]))
+            lambda: build_dashboard_payload(
+                db_path, lazy_heavy_tabs=True, base_tab_names=set(EXPLORE_VIEW_TABS["usage"])
+            )
         )
     if preparation_worker is not None:
         preparation_worker.add_completion_callback(lambda _result: dashboard_cache.refresh())
@@ -155,29 +162,35 @@ def build_dashboard_app(
         }.get((active_tab, explore_view), set())
         if session_id:
             filtered_base_tabs = {"activity", "models", "costs", "tools", "mcp", "agents"}
-        has_filter = any([q, session_id, agents, model != "all", status != "all", range_name != "all"])
+        has_filter = any(
+            [q, session_id, agents, model != "all", status != "all", range_name != "all"]
+        )
         try:
             if not has_filter:
                 perf_kind = "cached"
                 return JSONResponse(dashboard_cache.get())
-            if session_id and not any([q, agents, model != "all", status != "all", range_name != "all"]):
+            if session_id and not any(
+                [q, agents, model != "all", status != "all", range_name != "all"]
+            ):
                 perf_kind = "session"
                 return JSONResponse(build_session_payload(db_path, session_id))
             perf_kind = "filtered"
-            return JSONResponse(build_dashboard_payload(
-                db_path,
-                limit=50,
-                offset=0,
-                q=q,
-                session_id=session_id,
-                agents=agents,
-                model=model,
-                status=status,
-                range_name=range_name,
-                lazy_heavy_tabs=True,
-                include_comparison=active_tab == "explore" and explore_view == "usage",
-                base_tab_names=filtered_base_tabs,
-            ))
+            return JSONResponse(
+                build_dashboard_payload(
+                    db_path,
+                    limit=50,
+                    offset=0,
+                    q=q,
+                    session_id=session_id,
+                    agents=agents,
+                    model=model,
+                    status=status,
+                    range_name=range_name,
+                    lazy_heavy_tabs=True,
+                    include_comparison=active_tab == "explore" and explore_view == "usage",
+                    base_tab_names=filtered_base_tabs,
+                )
+            )
         finally:
             _perf_finish(
                 "api.data",
@@ -190,7 +203,9 @@ def build_dashboard_app(
     @app.get("/api/explore/{view_name}")
     def api_explore(view_name: str, request: Request):
         perf_start = _perf_start()
-        q, session_id, agents, model, status, range_name = parse_dashboard_scope(request.query_params)
+        q, session_id, agents, model, status, range_name = parse_dashboard_scope(
+            request.query_params
+        )
         try:
             return JSONResponse(
                 build_explore_payload(
@@ -225,10 +240,12 @@ def build_dashboard_app(
             if preparation_worker is not None
             else PreparationSnapshot(state=PreparationState.IDLE, generation=0)
         )
-        return JSONResponse({
-            "preparation": snapshot.as_dict(),
-            "refresh_available": preparation_worker is not None,
-        })
+        return JSONResponse(
+            {
+                "preparation": snapshot.as_dict(),
+                "refresh_available": preparation_worker is not None,
+            }
+        )
 
     @app.post("/api/refresh")
     def api_refresh():
@@ -252,265 +269,117 @@ def build_dashboard_app(
 
     @app.get("/api/findings")
     def api_findings(request: Request):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
         params = request.query_params
-        conn = connect_sqlite_read_only(db_path)
         try:
-            service = ImprovementService(conn, initialize_schema=False)
-            status = (params.get("status") or "").strip() or None
-            include_resolved = (params.get("include_resolved") or "").lower() in {
-                "1",
-                "true",
-                "yes",
-            }
-            limit = min(500, max(1, int(params.get("limit") or 100)))
-            findings = service.list_findings(
-                limit=500,
-                status=status,
-                include_resolved=include_resolved,
-            )
-            summary = service.repository.summary(limit=0)
-            if status:
-                observation_record_count = summary.counts_by_status.get(status, 0)
-            elif include_resolved:
-                observation_record_count = sum(summary.counts_by_status.values())
-            else:
-                observation_record_count = sum(
-                    summary.counts_by_status.get(item, 0)
-                    for item in (
-                        "new",
-                        "acknowledged",
-                        "proposal_ready",
-                        "approved",
-                        "active",
-                        "regressed",
-                    )
-                )
             return JSONResponse(
-                {
-                    "generated_at": summary.generated_at,
-                    "findings": [
-                        item.model_dump(mode="json") for item in findings[:limit]
-                    ],
-                    "finding_total_count": len(findings),
-                    "observation_record_count": observation_record_count,
-                    "counts_by_status": summary.counts_by_status,
-                    "pending_workflows": summary.pending_workflows,
-                    "active_interventions": summary.active_interventions,
-                    "verified_improvement_rate": summary.verified_improvement_rate,
-                }
+                improvement_adapter.findings(
+                    status=(params.get("status") or "").strip() or None,
+                    include_resolved=(params.get("include_resolved") or "").lower()
+                    in {"1", "true", "yes"},
+                    limit=_bounded_query_limit(params.get("limit"), default=100, maximum=500),
+                )
             )
         except (ValueError, sqlite3.Error) as exc:
             return JSONResponse({"error": str(exc), "db_path": str(db_path)}, status_code=500)
-        finally:
-            conn.close()
 
     @app.get("/api/rules")
     def api_improvement_rules():
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            rules = ImprovementService(conn, initialize_schema=False).repository.list_rule_summaries()
-            return JSONResponse(
-                {
-                    "rules": [rule.model_dump(mode="json") for rule in rules],
-                    "extension": {
-                        "kind": "code_backed",
-                        "module": "reflect.improvements",
-                        "base_class": "BaseImprovementRule",
-                        "registry": "DEFAULT_RULE_REGISTRY",
-                        "registration": "RuleRegistry.register",
-                    },
-                }
-            )
-        finally:
-            conn.close()
+        return JSONResponse(improvement_adapter.rules())
 
     @app.get("/api/findings/{finding_id}")
     def api_finding_detail(finding_id: str):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            observation = ImprovementService(conn, initialize_schema=False).repository.get_observation(finding_id)
-            if observation is None:
-                return JSONResponse({"error": f"Finding {finding_id} not found"}, status_code=404)
-            return JSONResponse(observation.model_dump(mode="json"))
-        finally:
-            conn.close()
+        observation = improvement_adapter.finding(finding_id)
+        if observation is None:
+            return JSONResponse({"error": f"Finding {finding_id} not found"}, status_code=404)
+        return JSONResponse(observation)
 
     @app.get("/api/findings/{observation_id}/evidence")
     def api_finding_evidence(observation_id: str, request: Request):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
         try:
-            ledger = ImprovementService(conn, initialize_schema=False).finding_evidence_ledger(
-                observation_id,
-                limit=min(200, max(1, int(request.query_params.get("limit") or 50))),
+            return JSONResponse(
+                improvement_adapter.finding_evidence(
+                    observation_id,
+                    limit=_bounded_query_limit(
+                        request.query_params.get("limit"), default=50, maximum=200
+                    ),
+                )
             )
-            return JSONResponse(ledger.model_dump(mode="json"))
         except KeyError as exc:
             return JSONResponse({"error": str(exc)}, status_code=404)
-        finally:
-            conn.close()
 
     @app.get("/api/workflows")
     def api_workflows(request: Request):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            behavior_type = request.query_params.get("type")
-            status = request.query_params.get("status")
-            service = ImprovementService(conn, initialize_schema=False)
-            candidates = service.workflows.list(
-                behavior_types={behavior_type} if behavior_type else None,
-                statuses={status} if status else None,
+        return JSONResponse(
+            improvement_adapter.workflows(
+                behavior_type=request.query_params.get("type"),
+                status=request.query_params.get("status"),
             )
-            serialized = []
-            for candidate in candidates:
-                item = candidate.model_dump(mode="json")
-                try:
-                    item["skill_id"] = service.skills.skill_for_candidate(candidate.id).id
-                except KeyError:
-                    item["skill_id"] = None
-                serialized.append(item)
-            return JSONResponse(
-                {"workflows": serialized}
-            )
-        finally:
-            conn.close()
+        )
 
     @app.get("/api/loops")
     def api_loops(request: Request):
-        from reflect.improvements.models import LoopKind, LoopStatus
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
         try:
-            service = ImprovementService(conn, initialize_schema=False)
-            kind = request.query_params.get("kind")
-            status = request.query_params.get("status")
-            records = service.loops.list(
-                kind=LoopKind(kind) if kind else None,
-                status=LoopStatus(status) if status else None,
-                limit=min(500, max(1, int(request.query_params.get("limit") or 100))),
-            )
             return JSONResponse(
-                {
-                    "loops": [record.model_dump(mode="json") for record in records],
-                }
+                improvement_adapter.loops(
+                    kind=request.query_params.get("kind"),
+                    status=request.query_params.get("status"),
+                    limit=_bounded_query_limit(
+                        request.query_params.get("limit"), default=100, maximum=500
+                    ),
+                )
             )
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=422)
-        finally:
-            conn.close()
 
     @app.get("/api/loops/{loop_id}")
     def api_loop_detail(loop_id: str):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
         try:
-            service = ImprovementService(conn, initialize_schema=False)
-            return JSONResponse(service.loops.show(loop_id).model_dump(mode="json"))
+            return JSONResponse(improvement_adapter.loop(loop_id))
         except KeyError as exc:
             return JSONResponse({"error": str(exc)}, status_code=404)
-        finally:
-            conn.close()
 
     @app.get("/api/skills")
     def api_skills(request: Request):
-        from reflect.improvements.models import SkillLifecycleState
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
         try:
-            service = ImprovementService(conn, initialize_schema=False)
-            status = request.query_params.get("status")
-            include_stale = (
-                request.query_params.get("include_stale") or ""
-            ).lower() in {"1", "true", "yes"}
-            lifecycle = SkillLifecycleState(status) if status else None
-            counts_by_lifecycle = service.skills.counts_by_lifecycle()
-            records = service.skills.list(
-                lifecycle=lifecycle,
-                include_stale=include_stale,
-                limit=min(500, max(1, int(request.query_params.get("limit") or 100))),
-            )
-            if lifecycle:
-                total_count = counts_by_lifecycle.get(lifecycle.value, 0)
-            elif include_stale:
-                total_count = sum(counts_by_lifecycle.values())
-            else:
-                total_count = sum(
-                    counts_by_lifecycle.get(item.value, 0)
-                    for item in (SkillLifecycleState.ACTIVE, SkillLifecycleState.PENDING)
-                )
             return JSONResponse(
-                {
-                    "skills": [record.model_dump(mode="json") for record in records],
-                    "total_count": total_count,
-                    "archived_count": counts_by_lifecycle.get(SkillLifecycleState.STALE.value, 0),
-                    "counts_by_lifecycle": counts_by_lifecycle,
-                }
+                improvement_adapter.skills(
+                    status=request.query_params.get("status"),
+                    include_stale=(request.query_params.get("include_stale") or "").lower()
+                    in {"1", "true", "yes"},
+                    limit=_bounded_query_limit(
+                        request.query_params.get("limit"), default=100, maximum=500
+                    ),
+                )
             )
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=422)
-        finally:
-            conn.close()
 
     @app.get("/api/skills/{skill_id}")
     def api_skill_detail(skill_id: str):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
         try:
-            service = ImprovementService(conn, initialize_schema=False)
-            return JSONResponse(service.skills.show(skill_id).model_dump(mode="json"))
+            return JSONResponse(improvement_adapter.skill(skill_id))
         except KeyError as exc:
             return JSONResponse({"error": str(exc)}, status_code=404)
-        finally:
-            conn.close()
 
     @app.get("/api/workflows/{candidate_id}/evidence")
     def api_workflow_evidence(candidate_id: str, request: Request):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
         try:
-            ledger = ImprovementService(conn, initialize_schema=False).repository.workflow_evidence_ledger(
-                candidate_id,
-                limit=min(200, max(1, int(request.query_params.get("limit") or 50))),
+            return JSONResponse(
+                improvement_adapter.workflow_evidence(
+                    candidate_id,
+                    limit=_bounded_query_limit(
+                        request.query_params.get("limit"), default=50, maximum=200
+                    ),
+                )
             )
-            return JSONResponse(ledger.model_dump(mode="json"))
         except KeyError as exc:
             return JSONResponse({"error": str(exc)}, status_code=404)
-        finally:
-            conn.close()
 
     @app.get("/api/workflows/{candidate_id}/preview")
     def api_workflow_preview(candidate_id: str, request: Request):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
         try:
             return JSONResponse(
-                ImprovementService(conn, initialize_schema=False).workflows.preview(
+                improvement_adapter.workflow_preview(
                     candidate_id,
                     project_root=resolve_workflow_project_root(
                         request.query_params.get("project_root")
@@ -521,39 +390,27 @@ def build_dashboard_app(
             return JSONResponse({"error": str(exc)}, status_code=404)
         except (OSError, RuntimeError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=409)
-        finally:
-            conn.close()
 
     @app.put("/api/workflows/{candidate_id}")
     def api_workflow_edit(candidate_id: str, body: dict):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite
-
         content = body.get("content")
         if not isinstance(content, dict):
-            return JSONResponse({"error": "A structured workflow content object is required"}, status_code=422)
-        conn = connect_sqlite(db_path)
-        try:
-            candidate = ImprovementService(conn, initialize_schema=False).workflows.edit(
-                candidate_id, content=content
+            return JSONResponse(
+                {"error": "A structured workflow content object is required"},
+                status_code=422,
             )
-            return JSONResponse(candidate.model_dump(mode="json"))
+        try:
+            return JSONResponse(improvement_adapter.edit_workflow(candidate_id, content=content))
         except KeyError as exc:
             return JSONResponse({"error": str(exc)}, status_code=404)
         except (RuntimeError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=409)
-        finally:
-            conn.close()
 
     @app.post("/api/workflows/{candidate_id}/apply")
     def api_workflow_apply(candidate_id: str, body: dict | None = None):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite
-
-        conn = connect_sqlite(db_path)
         try:
             return JSONResponse(
-                ImprovementService(conn, initialize_schema=False).workflows.apply(
+                improvement_adapter.apply_workflow(
                     candidate_id,
                     project_root=resolve_workflow_project_root((body or {}).get("project_root")),
                 )
@@ -562,95 +419,56 @@ def build_dashboard_app(
             return JSONResponse({"error": str(exc)}, status_code=404)
         except (OSError, RuntimeError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=409)
-        finally:
-            conn.close()
 
     @app.post("/api/workflows/{candidate_id}/rollback")
     def api_workflow_rollback(candidate_id: str):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite
-
-        conn = connect_sqlite(db_path)
         try:
-            return JSONResponse(
-                ImprovementService(conn, initialize_schema=False).workflows.rollback(candidate_id)
-            )
+            return JSONResponse(improvement_adapter.rollback_workflow(candidate_id))
         except KeyError as exc:
             return JSONResponse({"error": str(exc)}, status_code=404)
         except (RuntimeError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=409)
-        finally:
-            conn.close()
 
     @app.post("/api/workflows/{candidate_id}/reject")
     def api_workflow_reject(candidate_id: str, body: dict | None = None):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite
-
-        conn = connect_sqlite(db_path)
         try:
-            candidate = ImprovementService(conn, initialize_schema=False).workflows.reject(
-                candidate_id,
-                reason=str((body or {}).get("reason") or "operator_rejected")[:200],
+            return JSONResponse(
+                improvement_adapter.reject_workflow(
+                    candidate_id,
+                    reason=str((body or {}).get("reason") or "operator_rejected"),
+                )
             )
-            return JSONResponse(candidate.model_dump(mode="json"))
         except KeyError as exc:
             return JSONResponse({"error": str(exc)}, status_code=404)
         except (RuntimeError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=409)
-        finally:
-            conn.close()
 
     @app.post("/api/feedback/{session_id:path}")
     def api_session_feedback(session_id: str, body: dict):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite
-
-        outcome = str(body.get("outcome") or "")
-        reason = body.get("reason")
-        conn = connect_sqlite(db_path)
         try:
-            feedback_id = ImprovementService(conn, initialize_schema=False).repository.record_feedback(
-                session_id,
-                outcome,
-                reason_redacted=str(reason) if reason is not None else None,
-            )
             return JSONResponse(
-                {"id": feedback_id, "session_id": session_id, "outcome": outcome},
+                improvement_adapter.record_feedback(
+                    session_id,
+                    outcome=str(body.get("outcome") or ""),
+                    reason=body.get("reason"),
+                ),
                 status_code=201,
             )
         except KeyError as exc:
             return JSONResponse({"error": str(exc)}, status_code=404)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=422)
-        finally:
-            conn.close()
 
     @app.get("/api/impact")
     def api_impact():
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            service = ImprovementService(conn, initialize_schema=False)
-            return JSONResponse({"impact_checks": service.measurements.list()})
-        finally:
-            conn.close()
+        return JSONResponse(improvement_adapter.impact())
 
     @app.get("/api/impact/{impact_id}/evidence")
     def api_impact_evidence(impact_id: str):
-        from reflect.improvements.service import ImprovementService
-        from reflect.store.sqlite import connect_sqlite_read_only
-
-        conn = connect_sqlite_read_only(db_path)
         try:
-            service = ImprovementService(conn, initialize_schema=False)
-            return JSONResponse(service.measurements.sessions(impact_id))
+            return JSONResponse(improvement_adapter.impact_evidence(impact_id))
         except KeyError as exc:
             return JSONResponse({"error": str(exc)}, status_code=404)
-        finally:
-            conn.close()
 
     @app.get("/")
     def index():
@@ -679,6 +497,7 @@ def _serve_dashboard(
 
     try:
         import uvicorn
+
         __import__("fastapi")
     except ImportError:
         logger.warning("FastAPI/uvicorn not installed. Install with: pip install fastapi uvicorn")
