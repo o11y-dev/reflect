@@ -359,9 +359,11 @@ def _insert_raw_span(
     origin_kind = classify_origin_kind(source_type, attrs)
     attrs = apply_origin_kind(attrs, origin_kind)
     runtime_internal = attrs.get("reflect.telemetry.classification") == "runtime_internal"
+    if runtime_internal:
+        return False
     observed_at = _iso8601_from_ns(int(span.get("start_time_ns", 0) or 0))
     received_at = _iso8601_from_ns(int(span.get("end_time_ns", 0) or 0))
-    session_id = None if runtime_internal else _session_id(attrs)
+    session_id = _session_id(attrs)
     if session_id:
         tombstone = db_conn.execute(
             """
@@ -412,7 +414,7 @@ def _insert_raw_span(
             origin_kind,
             json.dumps(attrs, sort_keys=True),
             json.dumps(span.get("body", {}) or {}, sort_keys=True),
-            "ignored" if runtime_internal else "pending",
+            "pending",
             None,
             content_hash,
             created_at,

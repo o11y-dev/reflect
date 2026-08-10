@@ -35,21 +35,37 @@ evidence, workflow reviews, and SQLite state remain on your machine.
 
 ## Quick Start
 
-Reflect requires Python 3.12+ and
-[pipx](https://pipx.pypa.io/stable/installation/).
-The supported operating systems are macOS and Linux.
+Reflect requires Python 3.12+. The supported operating systems are macOS and
+Linux. Review the public [install script](https://reflect.o11y.dev/install.sh),
+then install and configure Reflect with one command:
 
 ```bash
-pipx install o11y-reflect
-reflect setup
+curl -fsSL https://reflect.o11y.dev/install.sh | sh
 reflect doctor
 reflect
 ```
 
-`reflect setup` detects local agents, lets you choose which integrations to
-configure, starts the local OTLP gateway, registers `reflect-mcp`, and installs
-the packaged Reflect skills. On macOS it can register the gateway and report
-server for login startup; pass `--no-autostart` to opt out.
+For a fresh installation, the script uses an available package manager in this
+order: pipx, uv, then Python's pip in an isolated environment. It never uses
+`sudo` or changes the system Python. It runs `reflect setup` after installation;
+in a terminal you choose the integrations and text-capture mode, while
+non-interactive use defaults to all detected agents with metadata-only capture.
+
+Re-run the same command to update Reflect. The script detects whether the active
+installation belongs to pipx, uv, or pip, upgrades it with that owner, and
+preserves the existing setup.
+
+Prefer manual installation?
+
+```bash
+pipx install o11y-reflect
+# or: uv tool install o11y-reflect
+reflect setup
+```
+
+`reflect setup` starts the local OTLP gateway, registers `reflect-mcp`, and
+installs the packaged Reflect skills. On macOS it can register the gateway and
+report server for login startup; pass `--no-autostart` to opt out.
 
 `reflect doctor` is the source of truth for capture readiness. It distinguishes
 configuration from an observed event, an ingested session, and reconciled

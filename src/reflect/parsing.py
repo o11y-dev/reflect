@@ -168,8 +168,9 @@ def _is_codex_runtime_internal_span(span: dict) -> bool:
 
     Codex emits useful session/model/tool records as OTLP logs today. Its trace
     stream is dominated by Rust HTTP/runtime internals (`h2`, `hyper`, etc.)
-    under `codex_cli_rs` / `codex-app-server` / `Codex Desktop`. Preserve these
-    spans as raw evidence while excluding them from normalized analytics.
+    under `codex_cli_rs` / `codex-app-server` / `Codex Desktop`. Classify these
+    spans at the source boundary so bounded raw segments can be checkpointed and
+    rotated without materializing runtime noise in canonical SQLite evidence.
     """
     attrs = span.get("attributes") or {}
     service = str(attrs.get("service.name") or "").lower()

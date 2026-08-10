@@ -326,7 +326,7 @@ def test_ingest_otlp_traces_dedupes(tmp_path):
         conn.close()
 
 
-def test_ingest_retains_codex_runtime_trace_without_creating_session(tmp_path):
+def test_ingest_skips_codex_runtime_trace(tmp_path):
     db = tmp_path / "reflect.db"
     otlp = tmp_path / "traces.json"
     _write_codex_trace_file(otlp, attributes={"code.module.name": "h2::codec"})
@@ -336,8 +336,8 @@ def test_ingest_retains_codex_runtime_trace_without_creating_session(tmp_path):
         migrate(conn)
 
         assert ingest_otlp_traces_file(conn, file_path=otlp) == {
-            "inserted": 1,
-            "skipped": 0,
+            "inserted": 0,
+            "skipped": 1,
         }
         assert normalize_pending_raw_events(conn) == {
             "processed": 0,
@@ -345,15 +345,7 @@ def test_ingest_retains_codex_runtime_trace_without_creating_session(tmp_path):
             "skipped": 0,
         }
 
-        row = conn.execute(
-            """
-            SELECT normalized_status, session_id, attrs_json
-            FROM raw_events
-            """
-        ).fetchone()
-        attrs = json.loads(row[2])
-        assert row[:2] == ("ignored", None)
-        assert attrs["reflect.telemetry.classification"] == "runtime_internal"
+        assert conn.execute("SELECT COUNT(*) FROM raw_events").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM steps").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0] == 0

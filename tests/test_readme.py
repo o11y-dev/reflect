@@ -12,6 +12,10 @@ def test_readme_has_current_quick_start_contract():
 
     assert "Evidence, Not Vibes." in readme
     assert readme.count("## Quick Start") == 1
+    assert "curl -fsSL https://reflect.o11y.dev/install.sh | sh" in readme
+    assert "https://reflect.o11y.dev/install.sh" in readme
+    assert "pipx, uv, then Python's pip in an isolated environment" in readme
+    assert "preserves the existing setup" in readme
     assert "pipx install o11y-reflect" in readme
     assert "reflect setup" in readme
     assert "reflect doctor" in readme

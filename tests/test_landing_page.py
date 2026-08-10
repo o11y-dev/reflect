@@ -50,6 +50,10 @@ def test_landing_page_has_clear_product_and_conversion_path():
     assert "Use Reflect Where You Already Work." in text
     assert "Reflect on One Session. Improve How AI Work Scales." in text
     assert "Ask Through Your Agent. See the Evidence in Reflect." in text
+    assert "curl -fsSL https://reflect.o11y.dev/install.sh | sh" in text
+    assert 'href="./install.sh">Review the Install Script</a>' in text
+    assert '"downloadUrl": "https://reflect.o11y.dev/install.sh"' in text
+    assert "prefers pipx, then uv, then an isolated pip environment" in text
 
 
 def test_landing_page_has_task_oriented_scenario_tiles():

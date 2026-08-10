@@ -41,6 +41,7 @@
 
 ### Added
 
+- Added a public, reviewable curl installer that preserves the package owner on updates, prefers pipx, uv, then an isolated pip environment for fresh installs, and runs private local setup only after first installation.
 - Added a decision-oriented product direction covering simplification, packaged proof, adoption, privacy, and evidence requirements for developer trust.
 - Added a fresh-wheel cross-agent blog handoff suite and a deterministic six-agent telemetry contract covering validated memory selection, task completion, logical MCP calls, token totals, and repeat-refresh idempotency.
 - Added a direction-aware progress graph to every Impact card, plotting the baseline and each stored comparable-cohort check without extra dashboard queries.
@@ -57,6 +58,7 @@
 
 ### Fixed
 
+- Stopped materializing Codex runtime-internal OTLP spans in SQLite after classification; bounded raw segments still checkpoint and rotate without growing canonical evidence.
 - Added a combined 4 GiB raw trace/log admission guard that preserves existing evidence and rejects new telemetry at capacity, with HTTP/gRPC backpressure plus doctor, server, health API, and dashboard status.
 - Source checkouts now use the `pyproject.toml` version as runtime truth and explain stale installed environment metadata instead of reporting the checkout as an older release.
 - Moved shared skill and subagent evidence extraction out of dashboard presentation code, removing duplicate implementations and restoring the normalization-to-presentation dependency direction.
