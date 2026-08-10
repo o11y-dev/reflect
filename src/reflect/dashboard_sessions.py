@@ -1071,6 +1071,18 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
         span_id = str(row.get("span_id") or "")
         if span_id:
             step_id_by_span_id[span_id] = step_id
+    anchor_ns = min(
+        (
+            value
+            for value in [
+                *(_iso_to_epoch_ns(step["started_at"]) for step in steps),
+                *(_iso_to_epoch_ns(row["observed_at"]) for row in raw_span_rows),
+                *(_iso_to_epoch_ns(row["observed_at"]) for row in raw_log_rows),
+            ]
+            if value > 0
+        ),
+        default=0,
+    )
     for step in steps:
         attrs = load_json_dict(step["raw_attrs_json"])
         event_type = str(
@@ -1252,6 +1264,15 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
         parent_id = str(step.get("parent_step_id") or "")
         if not parent_id and parent_span_id:
             parent_id = step_id_by_span_id.get(parent_span_id, "")
+        started_at = str(step.get("started_at") or raw_span.get("observed_at") or "")
+        ended_at = str(step.get("ended_at") or "")
+        start_time_ns = _iso_to_epoch_ns(started_at)
+        end_time_ns = _iso_to_epoch_ns(ended_at)
+        duration_ms = step["duration_ms"] or 0
+        if not end_time_ns and start_time_ns and duration_ms:
+            end_time_ns = start_time_ns + round(float(duration_ms) * 1e6)
+        elif not duration_ms and start_time_ns and end_time_ns >= start_time_ns:
+            duration_ms = round((end_time_ns - start_time_ns) / 1e6, 1)
         telemetry_spans.append(
             {
                 "id": step["id"],
@@ -1274,22 +1295,17 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
                 "native_span_id": step.get("native_span_id") or "",
                 "agent_id": step.get("agent_invocation_id") or "",
                 "parent_agent_id": step.get("parent_agent_id") or "",
-                "rel_ms": 0,
-                "duration_ms": step["duration_ms"] or 0,
+                "started_at": started_at,
+                "ended_at": ended_at,
+                "start_time_ns": start_time_ns,
+                "end_time_ns": end_time_ns,
+                "rel_ms": round((start_time_ns - anchor_ns) / 1e6, 1)
+                if anchor_ns and start_time_ns
+                else 0,
+                "duration_ms": duration_ms,
                 "attrs": attrs,
             }
         )
-    anchor_ns = min(
-        (
-            value
-            for value in [
-                *(_iso_to_epoch_ns(step["started_at"]) for step in steps),
-                *(_iso_to_epoch_ns(row["observed_at"]) for row in raw_log_rows),
-            ]
-            if value > 0
-        ),
-        default=0,
-    )
     telemetry_logs: list[dict[str, object]] = []
     for row in raw_log_rows:
         attrs = load_json_dict(row["attrs_json"])
@@ -1315,6 +1331,18 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
                 "attrs": _sanitize_telemetry_attrs(attrs),
             }
         )
+    timeline_end_ns = max(
+        [
+            *(int(span.get("end_time_ns") or span.get("start_time_ns") or 0) for span in telemetry_spans),
+            *(int(log.get("time_ns") or 0) for log in telemetry_logs),
+        ],
+        default=anchor_ns,
+    )
+    timeline_duration_ms = (
+        round((timeline_end_ns - anchor_ns) / 1e6, 1)
+        if anchor_ns and timeline_end_ns >= anchor_ns
+        else 0
+    )
     services = {
         service
         for service in [
@@ -1390,7 +1418,8 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
                 "errors": errors,
                 "warnings": sum(1 for log in telemetry_logs if log.get("severity") == "WARN"),
                 "services": len(services),
-                "duration_ms": 0,
+                "anchor_ns": anchor_ns,
+                "duration_ms": timeline_duration_ms,
                 "truncated_spans": 0,
                 "truncated_logs": max(0, int(raw_log_count or 0) - len(telemetry_logs)),
                 **hook_summary,

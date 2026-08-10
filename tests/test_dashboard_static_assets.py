@@ -369,7 +369,7 @@ def test_dashboard_activity_widgets_live_on_explore_usage_view(path: Path):
     assert 'id="hm-grid"' in text
     assert 'id="hour-bars"' in text
     assert 'id="weekly-trends-table"' in text
-    assert "const PRODUCT_TABS = new Set(['sessions','workflows','skills','impact','explore'])" in text
+    assert "const PRODUCT_TABS = new Set(['sessions','inbox','workflows','skills','impact','explore'])" in text
     assert "LEGACY_TAB_LOCATIONS" not in text
 
 
@@ -378,15 +378,16 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     text = path.read_text(encoding="utf-8")
 
     assert 'data-tab="sessions">Sessions</button>' in text
+    assert 'data-tab="inbox">Inbox</button>' in text
     assert 'data-tab="workflows">Workflows</button>' in text
     assert 'data-tab="skills">Skills</button>' in text
     assert 'data-tab="impact">Impact</button>' in text
     assert 'data-tab="explore">Explore</button>' in text
-    assert 'data-tab="inbox"' not in text
     assert 'data-tab="observations"' not in text
     assert 'data-tab="compare"' not in text
     assert 'data-tab="overview"' not in text
     assert 'id="tab-impact"' in text
+    assert 'id="tab-inbox"' in text
     assert 'id="tab-skills"' in text
     assert 'id="tab-explore-usage"' in text
     assert 'id="tab-explore-tools"' in text
@@ -407,10 +408,13 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "fetch('/api/loops'" in text
     assert "function sortObservedLoops(items)" in text
     assert "const kindRank = {agent_native:0, stalled:1, productive:2}" in text
-    assert 'data-workflow-view="findings"' in text
-    assert 'data-workflow-view="loops"' in text
+    assert 'data-inbox-view="findings"' in text
+    assert 'data-inbox-view="loops"' in text
     assert "ready to review and build" in text
-    assert "params.set('workflow_view', view)" in text
+    assert "params.set('inbox_view', view)" in text
+    assert "workflow_view" not in text
+    assert 'data-ledger-action="open-workflow"' in text
+    assert "Open Linked Workflow" in text
     assert "Review & Build Instructions" in text
     assert "Reflect monitors comparable future task executions in Impact" in text
     assert "fetch('/api/skills?limit=500'" in text
@@ -473,8 +477,6 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert 'data-ledger-action="use-unique-name"' in text
     assert "content.slug = String(document.getElementById('workflow-name')" in text
     assert "Save the renamed draft and review its updated target path before applying." in text
-    assert "Review Active Workflow" in text
-    assert "Review Approved Workflow" in text
     assert "submitSessionFeedback(sessionId, outcome, button)" in text
     assert 'data-session-feedback="no-change-correct"' in text
     assert "trigger.textContent = 'Applying…'" in text
@@ -497,6 +499,7 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "Exact File Diff" in text
     assert "Review &amp; Roll Back" in text
     assert "const defaultProductTab =" in text
+    assert "(IMPROVEMENT_DATA.workflows || []).length" in text
     assert "(IMPROVEMENT_DATA.skills || []).length" in text
     assert "? 'skills'" in text
 
@@ -640,6 +643,18 @@ def test_dashboard_conversation_rail_aligns_prompt_response_markers(path: Path):
     assert "width:9px" in text
     assert ".chat-msg .ev-ts{font-size:11px;line-height:1}" in text
 
+    inbox_start = text.index('<div class="tab-panel" id="tab-inbox"')
+    workflows_start = text.index('<div class="tab-panel" id="tab-workflows"')
+    skills_start = text.index('<div class="tab-panel" id="tab-skills"')
+    inbox_markup = text[inbox_start:workflows_start]
+    workflows_markup = text[workflows_start:skills_start]
+    assert 'id="finding-ledger"' in inbox_markup
+    assert 'id="loop-ledger"' in inbox_markup
+    assert 'id="workflow-ledger"' not in inbox_markup
+    assert 'id="workflow-ledger"' in workflows_markup
+    assert 'id="finding-ledger"' not in workflows_markup
+    assert 'id="loop-ledger"' not in workflows_markup
+
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_session_detail_uses_shared_timeline_above_tabs(path: Path):
@@ -665,6 +680,7 @@ def test_dashboard_session_detail_uses_shared_timeline_above_tabs(path: Path):
     assert "title=\"${safeTip}\"" not in text
     assert "Trace waterfall" in text
     assert "<span>Trace timeline</span>" not in text
+    assert "span.started_at ? fmtWorkflowDate(span.started_at) : ''" in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)

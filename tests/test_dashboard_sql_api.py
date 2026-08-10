@@ -627,16 +627,22 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path):
     assert [event["type"] for event in conversation[:2]] == ["prompt", "response"]
     assert conversation[0]["preview"].startswith("Fix the failing SQL dashboard tests")
     assert "Assistant turn completed" in conversation[1]["preview"]
-    assert detail.json()["telemetry"]["summary"]["spans"] == 4
-    spans = detail.json()["telemetry"]["spans"]
+    telemetry = detail.json()["telemetry"]
+    assert telemetry["summary"]["spans"] == 4
+    assert telemetry["summary"]["anchor_ns"] > 0
+    assert telemetry["summary"]["duration_ms"] == 90_200
+    spans = telemetry["spans"]
+    assert [span["rel_ms"] for span in spans] == [0, 30_000, 60_000, 90_000]
+    assert all(span["start_time_ns"] > 0 for span in spans)
+    assert all(span["started_at"] for span in spans)
     prompt_span = next(span for span in spans if span["id"] == "step-sql")
     tool_span = next(span for span in spans if span["id"] == "tool-step-sql")
     assert prompt_span["trace_id"] == "trace-sql"
     assert tool_span["parent_span_id"] == "span-prompt"
     assert tool_span["parent_id"] == "step-sql"
-    assert detail.json()["telemetry"]["summary"]["logs"] == 1
-    assert detail.json()["telemetry"]["logs"][0]["event"] == "UserPromptSubmit"
-    assert "User prompt submitted" in detail.json()["telemetry"]["logs"][0]["body"]
+    assert telemetry["summary"]["logs"] == 1
+    assert telemetry["logs"][0]["event"] == "UserPromptSubmit"
+    assert "User prompt submitted" in telemetry["logs"][0]["body"]
     tool_inventory = detail.json()["tool_inventory"]
     assert tool_inventory["tools"][0]["name"] == "exec_command"
     assert tool_inventory["tools"][0]["count"] == 1

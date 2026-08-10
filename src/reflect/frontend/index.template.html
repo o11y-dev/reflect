@@ -102,6 +102,7 @@
 <!-- ── Nav tabs ── -->
 <nav id="tabs" role="tablist" aria-label="Dashboard sections">
   <button class="tab active" id="tab-button-sessions" type="button" role="tab" aria-selected="true" aria-controls="tab-sessions" tabindex="0" data-tab="sessions">Sessions</button>
+  <button class="tab" id="tab-button-inbox" type="button" role="tab" aria-selected="false" aria-controls="tab-inbox" tabindex="-1" data-tab="inbox">Inbox</button>
   <button class="tab" id="tab-button-workflows" type="button" role="tab" aria-selected="false" aria-controls="tab-workflows" tabindex="-1" data-tab="workflows">Workflows</button>
   <button class="tab" id="tab-button-skills" type="button" role="tab" aria-selected="false" aria-controls="tab-skills" tabindex="-1" data-tab="skills">Skills</button>
   <button class="tab" id="tab-button-impact" type="button" role="tab" aria-selected="false" aria-controls="tab-impact" tabindex="-1" data-tab="impact">Impact</button>
@@ -315,18 +316,18 @@
   <div class="measurement-list" id="measurement-ledger"></div>
 </div>
 
-<!-- ════════════════════ WORKFLOWS ════════════════════ -->
-<div class="tab-panel" id="tab-workflows" role="tabpanel" aria-labelledby="tab-button-workflows" hidden>
+<!-- ════════════════════ INBOX ════════════════════ -->
+<div class="tab-panel" id="tab-inbox" role="tabpanel" aria-labelledby="tab-button-inbox" hidden>
   <div class="product-hero">
-    <div><h2>Workflows</h2><p>Move from task-level evidence to a reviewed procedure, an explicit installation, and a measurable validation window.</p></div>
-    <div class="product-count" id="workflow-signal-count">0<small>open signals</small></div>
+    <div><h2>Inbox</h2><p>Investigate evidence-backed findings and repeated behavior before deciding whether they deserve a workflow.</p></div>
+    <div class="product-count" id="inbox-signal-count">0<small>needs attention</small></div>
   </div>
-  <div class="inbox-view-switch" role="tablist" aria-label="Workflow evidence views">
-    <button class="inbox-view-button active" id="workflow-view-findings" type="button" role="tab" aria-selected="true" aria-controls="workflow-findings-panel" data-workflow-view="findings"><span class="inbox-view-label">Findings</span><span class="inbox-view-detail">Failures, gaps, and corrections</span><strong class="inbox-view-count" id="workflow-findings-count">0</strong></button>
-    <button class="inbox-view-button loops" id="workflow-view-loops" type="button" role="tab" aria-selected="false" aria-controls="workflow-loops-panel" data-workflow-view="loops"><span class="inbox-view-label">Loops</span><span class="inbox-view-detail" id="workflow-loops-detail">Goals, schedules, and repeated behavior</span><strong class="inbox-view-count" id="workflow-loops-count">0</strong></button>
+  <div class="inbox-view-switch" role="tablist" aria-label="Inbox evidence views">
+    <button class="inbox-view-button active" id="inbox-view-findings" type="button" role="tab" aria-selected="true" aria-controls="inbox-findings-panel" data-inbox-view="findings"><span class="inbox-view-label">Findings</span><span class="inbox-view-detail">Failures, gaps, and corrections</span><strong class="inbox-view-count" id="inbox-findings-count">0</strong></button>
+    <button class="inbox-view-button loops" id="inbox-view-loops" type="button" role="tab" aria-selected="false" aria-controls="inbox-loops-panel" data-inbox-view="loops"><span class="inbox-view-label">Loops</span><span class="inbox-view-detail" id="inbox-loops-detail">Goals, schedules, and repeated behavior</span><strong class="inbox-view-count" id="inbox-loops-count">0</strong></button>
   </div>
 
-  <section class="panel product-section inbox-view-panel" id="workflow-findings-panel" role="tabpanel" aria-labelledby="workflow-view-findings" style="margin-top:0">
+  <section class="panel product-section inbox-view-panel" id="inbox-findings-panel" role="tabpanel" aria-labelledby="inbox-view-findings" style="margin-top:0">
     <div class="product-section-head">
       <div><h3 class="product-section-title">Findings</h3><p class="product-section-copy">Evidence-backed problems and opportunities detected by Reflect rules.</p></div>
       <div class="product-section-count" id="finding-count">0<small>open findings</small></div>
@@ -334,14 +335,21 @@
     <div class="inbox-list" id="finding-ledger"></div>
   </section>
 
-  <section class="panel product-section inbox-view-panel" id="workflow-loops-panel" role="tabpanel" aria-labelledby="workflow-view-loops" hidden>
+  <section class="panel product-section inbox-view-panel" id="inbox-loops-panel" role="tabpanel" aria-labelledby="inbox-view-loops" hidden>
     <div class="product-section-head">
       <div><h3 class="product-section-title" id="observed-loops-title">Observed Loops</h3><p class="product-section-copy">Agent-native goals and schedules plus repeated behavior found in source sessions. New actionable loops appear first; review one to turn it into a monitored workflow.</p></div>
       <div class="product-section-count" id="loop-count">0<small>detected loops</small></div>
     </div>
-    <div class="workflow-list" id="loop-ledger" aria-live="polite"></div>
+    <div class="inbox-list" id="loop-ledger" aria-live="polite"></div>
   </section>
+</div>
 
+<!-- ════════════════════ WORKFLOWS ════════════════════ -->
+<div class="tab-panel" id="tab-workflows" role="tabpanel" aria-labelledby="tab-button-workflows" hidden>
+  <div class="product-hero">
+    <div><h2>Workflows</h2><p>Review explicit intervention contracts, apply approved procedures, and monitor their bounded validation windows.</p></div>
+    <div class="product-count" id="workflow-total-count">0<small>workflow contracts</small></div>
+  </div>
   <section class="panel product-section" id="workflow-candidates-section">
   <div class="product-section-head">
     <div><h3 class="product-section-title">Reviewable Workflows</h3><p class="product-section-copy">Review the contract, exact steps, stop conditions, verification, source task evidence, installation target, and diff before anything changes.</p></div>

@@ -11,7 +11,7 @@
 - Canonicalized workflow identity around the normalized contract signature and exact revision hash, and projected review, deployment, installation, and measurement as separate lifecycle dimensions. Approved but uninstalled workflows are no longer executable guidance.
 - Made database evolution one-way for the new workflow, execution-unit, MCP-call, and source-lifecycle models: migrations move durable data forward, while runtime dual reads, dual writes, retired routes, presentation aliases, and legacy fallback branches are removed.
 - Split snapshot preparation, database command wiring, dashboard queries, dashboard server construction, and authored frontend modules into explicit owners. The generated packaged and documentation dashboards now come from one build and remain byte-identical.
-- Consolidated the browser around Sessions, Workflows, Skills, Impact, and Explore. Findings and loops lead into workflow review, while durable skill versions remain a distinct registry surface.
+- Consolidated the browser around Sessions, Inbox, Workflows, Skills, Impact, and Explore. Inbox owns findings and actionable loops, Workflows owns explicit intervention contracts, and durable skill versions remain a distinct registry surface.
 - Centralized agent support, aliases, native stores, hooks, skill targets, MCP configuration, and headless-test capability in one typed registry used by setup, doctor, adapters, and validation.
 - Replaced unbounded gateway cache files with bounded active OTLP JSONL segments and immutable closed segments; successfully normalized closed segments are deleted by default and can be retained explicitly with `--keep-processed-raw`.
 - Made explicit snapshot refresh ingest unchanged-aware hook JSONL files before native session adapters, so fresh and repaired stores reconcile current agent events without replaying unchanged files.
@@ -51,6 +51,7 @@
 
 ### Fixed
 
+- Restored Inbox as the evidence-attention surface without projecting workflow titles onto findings, and aligned session trace waterfalls from canonical span timestamps instead of placing every child span at zero.
 - Made dashboard evidence trustworthy at first render: MCP calls now use one canonical logical-call ledger with merged server aliases and explicit outcome coverage, command patterns exclude orchestration wrappers, session and cohort token/tool totals share canonical semantics, context-only memory exposures stay out of work-session navigation, cost gaps identify missing tokens, models, or pricing, lazy Explore views distinguish loading from empty data, and workflow reviews separate linked provenance sessions from comparable task evidence before any unvalidated apply.
 - Kept explicit OTLP trace inputs isolated from the global log segment, preventing live local traffic from contaminating fixture, import, or alternate-store analysis.
 - Initialized empty JSON MCP configuration files during setup and limited the unsupported-agent warning to agents whose canonical capability is actually planned, so fresh Antigravity wiring no longer fails or mislabels supported clients.

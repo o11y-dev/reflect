@@ -590,24 +590,26 @@ function buildImprovementSurfaces(){
   const measurements = IMPROVEMENT_DATA.measurements || [];
   const measurementGroups = groupImpactMeasurements(measurements);
   const rules = IMPROVEMENT_DATA.rules || [];
-  const workflowSignalCount = document.getElementById('workflow-signal-count');
+  const inboxSignalCount = document.getElementById('inbox-signal-count');
   const loopCount = document.getElementById('loop-count');
+  const workflowTotalCount = document.getElementById('workflow-total-count');
   const workflowCount = document.getElementById('workflow-count');
   const skillCount = document.getElementById('skill-count');
   const measurementCount = document.getElementById('measurement-count');
   const findingTotal = Number(IMPROVEMENT_DATA.finding_total_count ?? observations.length);
   const actionableLoopCount = loops.filter(item => item.status === 'detected' || item.status === 'acknowledged').length;
   const skillTotal = Number(IMPROVEMENT_DATA.skill_total_count ?? skills.length);
-  if (workflowSignalCount) workflowSignalCount.firstChild.textContent = String(findingTotal + actionableLoopCount);
+  if (inboxSignalCount) inboxSignalCount.firstChild.textContent = String(findingTotal + actionableLoopCount);
   const findingCount = document.getElementById('finding-count');
-  const workflowFindingsCount = document.getElementById('workflow-findings-count');
-  const workflowLoopsCount = document.getElementById('workflow-loops-count');
-  const workflowLoopsDetail = document.getElementById('workflow-loops-detail');
+  const inboxFindingsCount = document.getElementById('inbox-findings-count');
+  const inboxLoopsCount = document.getElementById('inbox-loops-count');
+  const inboxLoopsDetail = document.getElementById('inbox-loops-detail');
   if (findingCount) findingCount.firstChild.textContent = String(findingTotal);
-  if (workflowFindingsCount) workflowFindingsCount.textContent = String(findingTotal);
-  if (workflowLoopsCount) workflowLoopsCount.textContent = String(loops.length);
-  if (workflowLoopsDetail && actionableLoopCount) workflowLoopsDetail.textContent = `${fmt(actionableLoopCount)} ready to review and build`;
+  if (inboxFindingsCount) inboxFindingsCount.textContent = String(findingTotal);
+  if (inboxLoopsCount) inboxLoopsCount.textContent = String(loops.length);
+  if (inboxLoopsDetail && actionableLoopCount) inboxLoopsDetail.textContent = `${fmt(actionableLoopCount)} ready to review and build`;
   if (loopCount) loopCount.firstChild.textContent = String(loops.length);
+  if (workflowTotalCount) workflowTotalCount.firstChild.textContent = String(workflows.length);
   const reviewableWorkflowStates = new Set(['pending','approved']);
   const workflowDeployment = item => String(item.lifecycle?.deployment || 'not_deployed');
   const workflowDisplay = item => String(item.lifecycle?.display || item.status || 'pending');
@@ -622,41 +624,41 @@ function buildImprovementSurfaces(){
   if (skillCount) skillCount.firstChild.textContent = String(skillTotal);
   if (measurementCount) measurementCount.firstChild.textContent = String(measurementGroups.length);
 
-  const workflowViewButtons = [...document.querySelectorAll('[data-workflow-view]')];
-  const workflowViewPanels = {
-    findings:document.getElementById('workflow-findings-panel'),
-    loops:document.getElementById('workflow-loops-panel'),
+  const inboxViewButtons = [...document.querySelectorAll('[data-inbox-view]')];
+  const inboxViewPanels = {
+    findings:document.getElementById('inbox-findings-panel'),
+    loops:document.getElementById('inbox-loops-panel'),
   };
-  const setWorkflowView = (requestedView, {persist=true}={}) => {
+  const setInboxView = (requestedView, {persist=true}={}) => {
     const view = requestedView === 'loops' ? 'loops' : 'findings';
-    workflowViewButtons.forEach(button => {
-      const active = button.dataset.workflowView === view;
+    inboxViewButtons.forEach(button => {
+      const active = button.dataset.inboxView === view;
       button.classList.toggle('active', active);
       button.setAttribute('aria-selected', String(active));
       button.tabIndex = active ? 0 : -1;
     });
-    Object.entries(workflowViewPanels).forEach(([name,panel]) => {
+    Object.entries(inboxViewPanels).forEach(([name,panel]) => {
       if (panel) panel.hidden = name !== view;
     });
     if (persist) updateUrlParams(params => {
-      view === 'findings' ? params.delete('workflow_view') : params.set('workflow_view', view);
+      view === 'findings' ? params.delete('inbox_view') : params.set('inbox_view', view);
     });
   };
-  workflowViewButtons.forEach(button => {
-    button.onclick = () => setWorkflowView(button.dataset.workflowView);
+  inboxViewButtons.forEach(button => {
+    button.onclick = () => setInboxView(button.dataset.inboxView);
     button.onkeydown = event => {
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
       event.preventDefault();
-      const nextView = button.dataset.workflowView === 'findings' ? 'loops' : 'findings';
-      setWorkflowView(nextView);
-      workflowViewButtons.find(item => item.dataset.workflowView === nextView)?.focus();
+      const nextView = button.dataset.inboxView === 'findings' ? 'loops' : 'findings';
+      setInboxView(nextView);
+      inboxViewButtons.find(item => item.dataset.inboxView === nextView)?.focus();
     };
   });
-  const requestedWorkflowView = currentParams().get('workflow_view');
-  const initialWorkflowView = requestedWorkflowView === 'loops' || currentParams().get('loop')
+  const requestedInboxView = currentParams().get('inbox_view');
+  const initialInboxView = requestedInboxView === 'loops' || currentParams().get('loop')
     ? 'loops'
     : (findingTotal === 0 && loops.length ? 'loops' : 'findings');
-  setWorkflowView(initialWorkflowView, {persist:false});
+  setInboxView(initialInboxView, {persist:false});
 
   const ruleCount = document.getElementById('rule-count');
   const ruleGrid = document.getElementById('rule-grid');
@@ -677,13 +679,8 @@ function buildImprovementSurfaces(){
   if (findingLedger) {
     findingLedger.innerHTML = observations.length ? observations.map(item => {
       const proposedWorkflow = workflows.find(workflow => workflow.id === item.candidate_id);
-      const workflowReviewLabel = proposedWorkflow?.lifecycle?.deployment === 'active'
-        ? 'Review Active Workflow'
-        : proposedWorkflow?.status === 'approved'
-          ? 'Review Approved Workflow'
-          : 'Review Proposed Workflow';
-      const candidate = proposedWorkflow
-        ? `<div class="ledger-command">reflect workflows show ${escHtml(String(proposedWorkflow.id))}</div>`
+      const workflowState = proposedWorkflow
+        ? humanizeLedgerLabel(proposedWorkflow.lifecycle?.display || proposedWorkflow.status || 'pending')
         : '';
       return `<article class="inbox-card">
         <div class="inbox-card-head">
@@ -697,16 +694,17 @@ function buildImprovementSurfaces(){
           <span class="ledger-pill">${fmt(Number(item.affected_session_count || 0))} linked session(s)</span>
           <span class="ledger-pill">${fmt(Number(item.observation_count || 1))} evidence pattern(s)</span>
           <span class="ledger-pill">${fmt(Number(item.source_scope_count || 1))} scope(s)</span>
-        </div>${candidate}
-        <div class="ledger-actions"><button type="button" class="ledger-button" data-ledger-action="evidence" data-observation-id="${escHtml(String(item.id))}">View Task Evidence</button>${proposedWorkflow ? `<button type="button" class="ledger-button primary" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(proposedWorkflow.id))}">${workflowReviewLabel}</button>` : ''}</div>
+          ${proposedWorkflow ? `<span class="ledger-pill">Linked workflow · ${escHtml(workflowState)}</span>` : ''}
+        </div>
+        <div class="ledger-actions"><button type="button" class="ledger-button" data-ledger-action="evidence" data-observation-id="${escHtml(String(item.id))}">View Task Evidence</button>${proposedWorkflow ? `<button type="button" class="ledger-button primary" data-ledger-action="open-workflow" data-candidate-id="${escHtml(String(proposedWorkflow.id))}">Open Linked Workflow</button>` : ''}</div>
       </article>`;
-    }).join('') : `<div class="panel"><div class="panel-title">No open workflow opportunities</div><div class="inbox-copy">Review recent sessions or capture health in Explore while Reflect gathers more comparable task evidence.</div></div>`;
+    }).join('') : `<div class="panel"><div class="panel-title">Inbox is clear</div><div class="inbox-copy">Reflect has no open finding with retained task evidence in this scope.</div></div>`;
   }
 
   const loopLedger = document.getElementById('loop-ledger');
   if (loopLedger) {
-    loopLedger.innerHTML = loops.length ? loops.map(item => `<article class="workflow-card">
-      <div class="workflow-card-head"><div><div class="workflow-title">${escHtml(String(item.title || 'Observed loop'))}</div><div class="workflow-copy">${escHtml(String(item.summary || ''))}</div></div><span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(item.kind || 'stalled'))}</span></div>
+    loopLedger.innerHTML = loops.length ? loops.map(item => `<article class="inbox-card">
+      <div class="inbox-card-head"><div><div class="inbox-title">${escHtml(String(item.title || 'Observed loop'))}</div><div class="inbox-copy">${escHtml(String(item.summary || ''))}</div></div><span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(item.kind || 'stalled'))}</span></div>
       <div class="ledger-meta">${item.status === 'detected' ? '<span class="ledger-pill signal">Ready to review</span>' : ''}<span class="ledger-pill">${fmt(Number(item.affected_session_count || 0))} sessions</span><span class="ledger-pill">${fmt(Number(item.occurrence_count || 0))} occurrences</span>${item.kind === 'agent_native' ? `<span class="ledger-pill">${escHtml(item.tool_name || 'native command')}</span>` : `<span class="ledger-pill">${fmt(Number(item.state_change_count || 0))} state changes</span>`}<span class="ledger-pill">${Math.round(Number(item.confidence || 0)*100)}% confidence</span><span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.status || 'detected'))}</span></div>
       <div class="ledger-command">reflect loops show ${escHtml(String(item.id))}</div>
       <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-loop" data-loop-id="${escHtml(String(item.id))}">${item.status === 'detected' ? 'Review & Build Instructions' : 'Review Loop Evidence'}</button></div>

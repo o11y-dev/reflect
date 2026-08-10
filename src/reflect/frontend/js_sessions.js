@@ -1843,7 +1843,8 @@ class SessionConversationPlayhead {
                 const active = row.active;
                 const title = span.tool_name || span.mcp_tool || span.event || span.name || 'Span';
                 const serviceLabel = telemetrySpanServiceLabel(span);
-                const sub = [serviceLabel, span.trace_id ? `trace ${String(span.trace_id).slice(0, 8)}` : '', fmtRelTime(relMs)].filter(Boolean).join(' · ');
+                const startedAt = span.started_at ? fmtWorkflowDate(span.started_at) : '';
+                const sub = [serviceLabel, span.trace_id ? `trace ${String(span.trace_id).slice(0, 8)}` : '', startedAt, fmtRelTime(relMs)].filter(Boolean).join(' · ');
                 return `
                   <div class="telemetry-span-row${active ? ' active' : ''}">
                     <div class="telemetry-span-main">

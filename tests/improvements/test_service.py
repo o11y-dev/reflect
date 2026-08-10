@@ -828,6 +828,11 @@ def test_inbox_groups_scope_specific_observations_by_workflow(tmp_path):
         )
         candidate = service.repository.get_candidate(source.candidate_id)
         assert candidate is not None
+        rule = next(
+            item
+            for item in service.repository.list_rule_summaries()
+            if item.id == source.rule_id
+        )
         clone_data = {
             name: getattr(source, name)
             for name in ObservationDraft.model_fields
@@ -911,13 +916,17 @@ def test_inbox_groups_scope_specific_observations_by_workflow(tmp_path):
         assert target_finding.source_scope_count == len(
             {f"{item.scope_type}:{item.scope_id}" for item in target_observations}
         )
-        assert target_finding.title == candidate.title
-        assert target_finding.summary == candidate.content["description"]
+        assert target_finding.title == rule.title
+        assert target_finding.summary.startswith(rule.description)
+        assert target_finding.title != candidate.title
+        assert target_finding.summary != candidate.content["description"]
         variant_finding = next(
             item for item in findings if item.candidate_id == variant_candidate_id
         )
         assert variant_finding.observation_count == 1
         assert variant_finding.candidate_id == variant_candidate_id
+        assert variant_finding.title == source.title
+        assert variant_finding.summary == source.summary
         assert variant_observation_id not in service.finding_observation_ids(source.id)
         assert variant_observation_id not in service.repository.workflow_evidence_ledger(
             candidate.id

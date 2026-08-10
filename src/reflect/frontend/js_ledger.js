@@ -855,6 +855,10 @@ document.addEventListener('click', async event => {
   if (action === 'evidence') return showObservationEvidence(trigger.dataset.observationId || '');
   if (action === 'review-loop') return showLoopReview(trigger.dataset.loopId || '');
   if (action === 'review-skill') return showSkillReview(trigger.dataset.skillId || '');
+  if (action === 'open-workflow') {
+    activateTab('workflows');
+    return showWorkflowReview(candidateId);
+  }
   if (action === 'review-workflow') return showWorkflowReview(candidateId);
   if (action === 'review-impact-sessions') return showImpactSessions(trigger.dataset.measurementId || '');
   if (action === 'use-unique-name') {

@@ -2760,6 +2760,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <!-- ── Nav tabs ── -->
 <nav id="tabs" role="tablist" aria-label="Dashboard sections">
   <button class="tab active" id="tab-button-sessions" type="button" role="tab" aria-selected="true" aria-controls="tab-sessions" tabindex="0" data-tab="sessions">Sessions</button>
+  <button class="tab" id="tab-button-inbox" type="button" role="tab" aria-selected="false" aria-controls="tab-inbox" tabindex="-1" data-tab="inbox">Inbox</button>
   <button class="tab" id="tab-button-workflows" type="button" role="tab" aria-selected="false" aria-controls="tab-workflows" tabindex="-1" data-tab="workflows">Workflows</button>
   <button class="tab" id="tab-button-skills" type="button" role="tab" aria-selected="false" aria-controls="tab-skills" tabindex="-1" data-tab="skills">Skills</button>
   <button class="tab" id="tab-button-impact" type="button" role="tab" aria-selected="false" aria-controls="tab-impact" tabindex="-1" data-tab="impact">Impact</button>
@@ -2973,18 +2974,18 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   <div class="measurement-list" id="measurement-ledger"></div>
 </div>
 
-<!-- ════════════════════ WORKFLOWS ════════════════════ -->
-<div class="tab-panel" id="tab-workflows" role="tabpanel" aria-labelledby="tab-button-workflows" hidden>
+<!-- ════════════════════ INBOX ════════════════════ -->
+<div class="tab-panel" id="tab-inbox" role="tabpanel" aria-labelledby="tab-button-inbox" hidden>
   <div class="product-hero">
-    <div><h2>Workflows</h2><p>Move from task-level evidence to a reviewed procedure, an explicit installation, and a measurable validation window.</p></div>
-    <div class="product-count" id="workflow-signal-count">0<small>open signals</small></div>
+    <div><h2>Inbox</h2><p>Investigate evidence-backed findings and repeated behavior before deciding whether they deserve a workflow.</p></div>
+    <div class="product-count" id="inbox-signal-count">0<small>needs attention</small></div>
   </div>
-  <div class="inbox-view-switch" role="tablist" aria-label="Workflow evidence views">
-    <button class="inbox-view-button active" id="workflow-view-findings" type="button" role="tab" aria-selected="true" aria-controls="workflow-findings-panel" data-workflow-view="findings"><span class="inbox-view-label">Findings</span><span class="inbox-view-detail">Failures, gaps, and corrections</span><strong class="inbox-view-count" id="workflow-findings-count">0</strong></button>
-    <button class="inbox-view-button loops" id="workflow-view-loops" type="button" role="tab" aria-selected="false" aria-controls="workflow-loops-panel" data-workflow-view="loops"><span class="inbox-view-label">Loops</span><span class="inbox-view-detail" id="workflow-loops-detail">Goals, schedules, and repeated behavior</span><strong class="inbox-view-count" id="workflow-loops-count">0</strong></button>
+  <div class="inbox-view-switch" role="tablist" aria-label="Inbox evidence views">
+    <button class="inbox-view-button active" id="inbox-view-findings" type="button" role="tab" aria-selected="true" aria-controls="inbox-findings-panel" data-inbox-view="findings"><span class="inbox-view-label">Findings</span><span class="inbox-view-detail">Failures, gaps, and corrections</span><strong class="inbox-view-count" id="inbox-findings-count">0</strong></button>
+    <button class="inbox-view-button loops" id="inbox-view-loops" type="button" role="tab" aria-selected="false" aria-controls="inbox-loops-panel" data-inbox-view="loops"><span class="inbox-view-label">Loops</span><span class="inbox-view-detail" id="inbox-loops-detail">Goals, schedules, and repeated behavior</span><strong class="inbox-view-count" id="inbox-loops-count">0</strong></button>
   </div>
 
-  <section class="panel product-section inbox-view-panel" id="workflow-findings-panel" role="tabpanel" aria-labelledby="workflow-view-findings" style="margin-top:0">
+  <section class="panel product-section inbox-view-panel" id="inbox-findings-panel" role="tabpanel" aria-labelledby="inbox-view-findings" style="margin-top:0">
     <div class="product-section-head">
       <div><h3 class="product-section-title">Findings</h3><p class="product-section-copy">Evidence-backed problems and opportunities detected by Reflect rules.</p></div>
       <div class="product-section-count" id="finding-count">0<small>open findings</small></div>
@@ -2992,14 +2993,21 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
     <div class="inbox-list" id="finding-ledger"></div>
   </section>
 
-  <section class="panel product-section inbox-view-panel" id="workflow-loops-panel" role="tabpanel" aria-labelledby="workflow-view-loops" hidden>
+  <section class="panel product-section inbox-view-panel" id="inbox-loops-panel" role="tabpanel" aria-labelledby="inbox-view-loops" hidden>
     <div class="product-section-head">
       <div><h3 class="product-section-title" id="observed-loops-title">Observed Loops</h3><p class="product-section-copy">Agent-native goals and schedules plus repeated behavior found in source sessions. New actionable loops appear first; review one to turn it into a monitored workflow.</p></div>
       <div class="product-section-count" id="loop-count">0<small>detected loops</small></div>
     </div>
-    <div class="workflow-list" id="loop-ledger" aria-live="polite"></div>
+    <div class="inbox-list" id="loop-ledger" aria-live="polite"></div>
   </section>
+</div>
 
+<!-- ════════════════════ WORKFLOWS ════════════════════ -->
+<div class="tab-panel" id="tab-workflows" role="tabpanel" aria-labelledby="tab-button-workflows" hidden>
+  <div class="product-hero">
+    <div><h2>Workflows</h2><p>Review explicit intervention contracts, apply approved procedures, and monitor their bounded validation windows.</p></div>
+    <div class="product-count" id="workflow-total-count">0<small>workflow contracts</small></div>
+  </div>
   <section class="panel product-section" id="workflow-candidates-section">
   <div class="product-section-head">
     <div><h3 class="product-section-title">Reviewable Workflows</h3><p class="product-section-copy">Review the contract, exact steps, stop conditions, verification, source task evidence, installation target, and diff before anything changes.</p></div>
@@ -4408,6 +4416,10 @@ document.addEventListener('click', async event => {
   if (action === 'evidence') return showObservationEvidence(trigger.dataset.observationId || '');
   if (action === 'review-loop') return showLoopReview(trigger.dataset.loopId || '');
   if (action === 'review-skill') return showSkillReview(trigger.dataset.skillId || '');
+  if (action === 'open-workflow') {
+    activateTab('workflows');
+    return showWorkflowReview(candidateId);
+  }
   if (action === 'review-workflow') return showWorkflowReview(candidateId);
   if (action === 'review-impact-sessions') return showImpactSessions(trigger.dataset.measurementId || '');
   if (action === 'use-unique-name') {
@@ -4572,7 +4584,7 @@ async function hydrateExploreView(viewName){
 let _graphsInited = false;
 const tabButtons = Array.from(document.querySelectorAll('.tab'));
 const tabsEl = document.getElementById('tabs');
-const PRODUCT_TABS = new Set(['sessions','workflows','skills','impact','explore']);
+const PRODUCT_TABS = new Set(['sessions','inbox','workflows','skills','impact','explore']);
 const EXPLORE_VIEWS = new Set(['usage','tools','graph','context']);
 let activeExploreView = 'usage';
 
@@ -4645,6 +4657,10 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
         params.delete('workflow_type');
         params.delete('workflow_status');
       }
+      if (activeTab !== 'inbox') {
+        params.delete('inbox_view');
+        params.delete('loop');
+      }
       if (activeTab !== 'skills') params.delete('skill_q');
     });
   }
@@ -4673,10 +4689,12 @@ window.addEventListener('resize', () => updateTabIndicator(document.querySelecto
 const requestedInitialTab = currentParams().get('tab');
 const requestedInitialView = currentParams().get('view');
 const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length
-  ? 'workflows'
-  : (IMPROVEMENT_DATA.skills || []).length
-    ? 'skills'
-    : 'sessions';
+  ? 'inbox'
+  : (IMPROVEMENT_DATA.workflows || []).length
+    ? 'workflows'
+    : (IMPROVEMENT_DATA.skills || []).length
+      ? 'skills'
+      : 'sessions';
 activateTab(requestedInitialTab || defaultProductTab, {
   view: requestedInitialView || '',
   updateUrl: Boolean(requestedInitialTab || requestedInitialView),
@@ -6535,7 +6553,8 @@ class SessionConversationPlayhead {
                 const active = row.active;
                 const title = span.tool_name || span.mcp_tool || span.event || span.name || 'Span';
                 const serviceLabel = telemetrySpanServiceLabel(span);
-                const sub = [serviceLabel, span.trace_id ? `trace ${String(span.trace_id).slice(0, 8)}` : '', fmtRelTime(relMs)].filter(Boolean).join(' · ');
+                const startedAt = span.started_at ? fmtWorkflowDate(span.started_at) : '';
+                const sub = [serviceLabel, span.trace_id ? `trace ${String(span.trace_id).slice(0, 8)}` : '', startedAt, fmtRelTime(relMs)].filter(Boolean).join(' · ');
                 return `
                   <div class="telemetry-span-row${active ? ' active' : ''}">
                     <div class="telemetry-span-main">
@@ -7262,24 +7281,26 @@ function buildImprovementSurfaces(){
   const measurements = IMPROVEMENT_DATA.measurements || [];
   const measurementGroups = groupImpactMeasurements(measurements);
   const rules = IMPROVEMENT_DATA.rules || [];
-  const workflowSignalCount = document.getElementById('workflow-signal-count');
+  const inboxSignalCount = document.getElementById('inbox-signal-count');
   const loopCount = document.getElementById('loop-count');
+  const workflowTotalCount = document.getElementById('workflow-total-count');
   const workflowCount = document.getElementById('workflow-count');
   const skillCount = document.getElementById('skill-count');
   const measurementCount = document.getElementById('measurement-count');
   const findingTotal = Number(IMPROVEMENT_DATA.finding_total_count ?? observations.length);
   const actionableLoopCount = loops.filter(item => item.status === 'detected' || item.status === 'acknowledged').length;
   const skillTotal = Number(IMPROVEMENT_DATA.skill_total_count ?? skills.length);
-  if (workflowSignalCount) workflowSignalCount.firstChild.textContent = String(findingTotal + actionableLoopCount);
+  if (inboxSignalCount) inboxSignalCount.firstChild.textContent = String(findingTotal + actionableLoopCount);
   const findingCount = document.getElementById('finding-count');
-  const workflowFindingsCount = document.getElementById('workflow-findings-count');
-  const workflowLoopsCount = document.getElementById('workflow-loops-count');
-  const workflowLoopsDetail = document.getElementById('workflow-loops-detail');
+  const inboxFindingsCount = document.getElementById('inbox-findings-count');
+  const inboxLoopsCount = document.getElementById('inbox-loops-count');
+  const inboxLoopsDetail = document.getElementById('inbox-loops-detail');
   if (findingCount) findingCount.firstChild.textContent = String(findingTotal);
-  if (workflowFindingsCount) workflowFindingsCount.textContent = String(findingTotal);
-  if (workflowLoopsCount) workflowLoopsCount.textContent = String(loops.length);
-  if (workflowLoopsDetail && actionableLoopCount) workflowLoopsDetail.textContent = `${fmt(actionableLoopCount)} ready to review and build`;
+  if (inboxFindingsCount) inboxFindingsCount.textContent = String(findingTotal);
+  if (inboxLoopsCount) inboxLoopsCount.textContent = String(loops.length);
+  if (inboxLoopsDetail && actionableLoopCount) inboxLoopsDetail.textContent = `${fmt(actionableLoopCount)} ready to review and build`;
   if (loopCount) loopCount.firstChild.textContent = String(loops.length);
+  if (workflowTotalCount) workflowTotalCount.firstChild.textContent = String(workflows.length);
   const reviewableWorkflowStates = new Set(['pending','approved']);
   const workflowDeployment = item => String(item.lifecycle?.deployment || 'not_deployed');
   const workflowDisplay = item => String(item.lifecycle?.display || item.status || 'pending');
@@ -7294,41 +7315,41 @@ function buildImprovementSurfaces(){
   if (skillCount) skillCount.firstChild.textContent = String(skillTotal);
   if (measurementCount) measurementCount.firstChild.textContent = String(measurementGroups.length);
 
-  const workflowViewButtons = [...document.querySelectorAll('[data-workflow-view]')];
-  const workflowViewPanels = {
-    findings:document.getElementById('workflow-findings-panel'),
-    loops:document.getElementById('workflow-loops-panel'),
+  const inboxViewButtons = [...document.querySelectorAll('[data-inbox-view]')];
+  const inboxViewPanels = {
+    findings:document.getElementById('inbox-findings-panel'),
+    loops:document.getElementById('inbox-loops-panel'),
   };
-  const setWorkflowView = (requestedView, {persist=true}={}) => {
+  const setInboxView = (requestedView, {persist=true}={}) => {
     const view = requestedView === 'loops' ? 'loops' : 'findings';
-    workflowViewButtons.forEach(button => {
-      const active = button.dataset.workflowView === view;
+    inboxViewButtons.forEach(button => {
+      const active = button.dataset.inboxView === view;
       button.classList.toggle('active', active);
       button.setAttribute('aria-selected', String(active));
       button.tabIndex = active ? 0 : -1;
     });
-    Object.entries(workflowViewPanels).forEach(([name,panel]) => {
+    Object.entries(inboxViewPanels).forEach(([name,panel]) => {
       if (panel) panel.hidden = name !== view;
     });
     if (persist) updateUrlParams(params => {
-      view === 'findings' ? params.delete('workflow_view') : params.set('workflow_view', view);
+      view === 'findings' ? params.delete('inbox_view') : params.set('inbox_view', view);
     });
   };
-  workflowViewButtons.forEach(button => {
-    button.onclick = () => setWorkflowView(button.dataset.workflowView);
+  inboxViewButtons.forEach(button => {
+    button.onclick = () => setInboxView(button.dataset.inboxView);
     button.onkeydown = event => {
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
       event.preventDefault();
-      const nextView = button.dataset.workflowView === 'findings' ? 'loops' : 'findings';
-      setWorkflowView(nextView);
-      workflowViewButtons.find(item => item.dataset.workflowView === nextView)?.focus();
+      const nextView = button.dataset.inboxView === 'findings' ? 'loops' : 'findings';
+      setInboxView(nextView);
+      inboxViewButtons.find(item => item.dataset.inboxView === nextView)?.focus();
     };
   });
-  const requestedWorkflowView = currentParams().get('workflow_view');
-  const initialWorkflowView = requestedWorkflowView === 'loops' || currentParams().get('loop')
+  const requestedInboxView = currentParams().get('inbox_view');
+  const initialInboxView = requestedInboxView === 'loops' || currentParams().get('loop')
     ? 'loops'
     : (findingTotal === 0 && loops.length ? 'loops' : 'findings');
-  setWorkflowView(initialWorkflowView, {persist:false});
+  setInboxView(initialInboxView, {persist:false});
 
   const ruleCount = document.getElementById('rule-count');
   const ruleGrid = document.getElementById('rule-grid');
@@ -7349,13 +7370,8 @@ function buildImprovementSurfaces(){
   if (findingLedger) {
     findingLedger.innerHTML = observations.length ? observations.map(item => {
       const proposedWorkflow = workflows.find(workflow => workflow.id === item.candidate_id);
-      const workflowReviewLabel = proposedWorkflow?.lifecycle?.deployment === 'active'
-        ? 'Review Active Workflow'
-        : proposedWorkflow?.status === 'approved'
-          ? 'Review Approved Workflow'
-          : 'Review Proposed Workflow';
-      const candidate = proposedWorkflow
-        ? `<div class="ledger-command">reflect workflows show ${escHtml(String(proposedWorkflow.id))}</div>`
+      const workflowState = proposedWorkflow
+        ? humanizeLedgerLabel(proposedWorkflow.lifecycle?.display || proposedWorkflow.status || 'pending')
         : '';
       return `<article class="inbox-card">
         <div class="inbox-card-head">
@@ -7369,16 +7385,17 @@ function buildImprovementSurfaces(){
           <span class="ledger-pill">${fmt(Number(item.affected_session_count || 0))} linked session(s)</span>
           <span class="ledger-pill">${fmt(Number(item.observation_count || 1))} evidence pattern(s)</span>
           <span class="ledger-pill">${fmt(Number(item.source_scope_count || 1))} scope(s)</span>
-        </div>${candidate}
-        <div class="ledger-actions"><button type="button" class="ledger-button" data-ledger-action="evidence" data-observation-id="${escHtml(String(item.id))}">View Task Evidence</button>${proposedWorkflow ? `<button type="button" class="ledger-button primary" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(proposedWorkflow.id))}">${workflowReviewLabel}</button>` : ''}</div>
+          ${proposedWorkflow ? `<span class="ledger-pill">Linked workflow · ${escHtml(workflowState)}</span>` : ''}
+        </div>
+        <div class="ledger-actions"><button type="button" class="ledger-button" data-ledger-action="evidence" data-observation-id="${escHtml(String(item.id))}">View Task Evidence</button>${proposedWorkflow ? `<button type="button" class="ledger-button primary" data-ledger-action="open-workflow" data-candidate-id="${escHtml(String(proposedWorkflow.id))}">Open Linked Workflow</button>` : ''}</div>
       </article>`;
-    }).join('') : `<div class="panel"><div class="panel-title">No open workflow opportunities</div><div class="inbox-copy">Review recent sessions or capture health in Explore while Reflect gathers more comparable task evidence.</div></div>`;
+    }).join('') : `<div class="panel"><div class="panel-title">Inbox is clear</div><div class="inbox-copy">Reflect has no open finding with retained task evidence in this scope.</div></div>`;
   }
 
   const loopLedger = document.getElementById('loop-ledger');
   if (loopLedger) {
-    loopLedger.innerHTML = loops.length ? loops.map(item => `<article class="workflow-card">
-      <div class="workflow-card-head"><div><div class="workflow-title">${escHtml(String(item.title || 'Observed loop'))}</div><div class="workflow-copy">${escHtml(String(item.summary || ''))}</div></div><span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(item.kind || 'stalled'))}</span></div>
+    loopLedger.innerHTML = loops.length ? loops.map(item => `<article class="inbox-card">
+      <div class="inbox-card-head"><div><div class="inbox-title">${escHtml(String(item.title || 'Observed loop'))}</div><div class="inbox-copy">${escHtml(String(item.summary || ''))}</div></div><span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(item.kind || 'stalled'))}</span></div>
       <div class="ledger-meta">${item.status === 'detected' ? '<span class="ledger-pill signal">Ready to review</span>' : ''}<span class="ledger-pill">${fmt(Number(item.affected_session_count || 0))} sessions</span><span class="ledger-pill">${fmt(Number(item.occurrence_count || 0))} occurrences</span>${item.kind === 'agent_native' ? `<span class="ledger-pill">${escHtml(item.tool_name || 'native command')}</span>` : `<span class="ledger-pill">${fmt(Number(item.state_change_count || 0))} state changes</span>`}<span class="ledger-pill">${Math.round(Number(item.confidence || 0)*100)}% confidence</span><span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.status || 'detected'))}</span></div>
       <div class="ledger-command">reflect loops show ${escHtml(String(item.id))}</div>
       <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-loop" data-loop-id="${escHtml(String(item.id))}">${item.status === 'detected' ? 'Review & Build Instructions' : 'Review Loop Evidence'}</button></div>

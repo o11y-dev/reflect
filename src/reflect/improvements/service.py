@@ -381,16 +381,12 @@ class ImprovementService:
             data.update(
                 {
                     "title": (
-                        workflow.title
-                        if workflow is not None
-                        else rule.title
+                        rule.title
                         if rule is not None and (len(members) > 1 or len(distinct_titles) > 1)
                         else representative.title
                     ),
                     "summary": (
-                        str(workflow.content.get("description") or workflow.hypothesis)
-                        if workflow is not None
-                        else f"{rule.description} {len(members)} current evidence pattern(s) "
+                        f"{rule.description} {len(members)} current evidence pattern(s) "
                         f"across {len(source_scopes)} scope(s) are grouped here."
                         if rule is not None and len(members) > 1
                         else representative.summary
