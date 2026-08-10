@@ -156,49 +156,6 @@ def _filter_sql_session_rows(
     return filtered
 
 
-def _sql_session_primary_models(db_path: Path, session_ids: set[str]) -> dict[str, str]:
-    if not session_ids:
-        return {}
-    from reflect.store.sqlite import connect_sqlite_read_only
-
-    ids = sorted(session_ids)
-    placeholders = ", ".join("?" for _ in ids)
-    conn = connect_sqlite_read_only(db_path)
-    try:
-        rows = dict_rows(
-            conn.execute(
-                f"""
-            SELECT
-              session_id,
-              COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) AS model,
-              COUNT(*) AS count
-            FROM llm_calls
-            WHERE session_id IN ({placeholders})
-              AND COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) IS NOT NULL
-            GROUP BY session_id, model
-            ORDER BY session_id, count DESC, model ASC
-            """,
-                ids,
-            )
-        )
-    finally:
-        conn.close()
-    models: dict[str, str] = {}
-    for row in rows:
-        session_id = str(row["session_id"])
-        if session_id not in models:
-            models[session_id] = str(row["model"] or "")
-    return models
-
-
-
-
-
-
-
-
-
-
 def _sql_dashboard_metrics(
     db_path: Path,
     *,
@@ -287,6 +244,7 @@ def _sql_dashboard_metrics(
         "mcp_servers_by_count": mcp_view["mcp_servers_by_count"],
         "mcp_server_before": mcp_view["mcp_server_before"],
         "mcp_server_after": mcp_view["mcp_server_after"],
+        "mcp_server_status_known": mcp_view["mcp_server_status_known"],
         "skills_by_count": tools_view["skills_by_count"],
         "subagent_types_by_count": tools_view["subagent_types_by_count"],
         "subagent_stops_by_type": tools_view["subagent_stops_by_type"],
@@ -316,6 +274,19 @@ def _sql_dashboard_metrics(
 
 
 
+def _session_token_total(session: dict[str, object]) -> int:
+    component_total = sum(
+        int(session.get(field) or 0)
+        for field in (
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_tokens",
+            "cache_read_tokens",
+        )
+    )
+    return component_total or int(session.get("total_tokens") or 0)
+
+
 def _sql_cohort_summary(
     sessions: list[dict[str, object]],
     metrics: dict[str, object],
@@ -323,8 +294,6 @@ def _sql_cohort_summary(
     label: str,
     agent_names: list[str] | None = None,
 ) -> dict[str, object]:
-    input_tokens = sum(int(session.get("input_tokens") or 0) for session in sessions)
-    output_tokens = sum(int(session.get("output_tokens") or 0) for session in sessions)
     prompt_count = sum(int(session.get("prompt_count") or 0) for session in sessions)
     tool_calls = sum(
         int(session.get("tool_calls") or session.get("tool_call_count") or 0)
@@ -350,7 +319,7 @@ def _sql_cohort_summary(
         "tool_calls": tool_calls,
         "avg_quality": (sum(quality_values) / len(quality_values)) if quality_values else 0.0,
         "failure_rate_pct": round(100 * failures / tool_calls, 1) if tool_calls else 0.0,
-        "tokens": input_tokens + output_tokens,
+        "tokens": sum(_session_token_total(session) for session in sessions),
         "shell_runs": int(metrics.get("shell_executions") or 0),
         "mcp_calls": int(metrics.get("mcp_calls") or 0),
         "subagent_launches": int(
@@ -552,10 +521,7 @@ def _cohort_agent_comparison(
                 "prompts": sum(int(item.get("prompt_count") or 0) for item in agent_sessions),
                 "tools": sum(int(item.get("tool_calls") or 0) for item in agent_sessions),
                 "failures": sum(int(item.get("failure_count") or 0) for item in agent_sessions),
-                "tokens": sum(
-                    int(item.get("input_tokens") or 0) + int(item.get("output_tokens") or 0)
-                    for item in agent_sessions
-                ),
+                "tokens": sum(_session_token_total(item) for item in agent_sessions),
                 "total_cost": sum(
                     float(item.get("total_cost_usd") or 0) for item in agent_sessions
                 ),
@@ -598,14 +564,6 @@ def build_dashboard_payload(
     overview = sqlite_payload["overview"]
     sessions_page = sqlite_payload["sessions"]
     session_rows = sessions_page["rows"]
-    primary_models = (
-        {}
-        if (lazy_heavy_tabs or lazy_all_tabs) and model == "all"
-        else _sql_session_primary_models(
-            db_path,
-            {str(row["session_id"]) for row in session_rows},
-        )
-    )
     first_prompts = (
         {}
         if lazy_heavy_tabs or lazy_all_tabs
@@ -618,7 +576,6 @@ def build_dashboard_payload(
         session_card_from_row(
             dict(row),
             first_prompt=first_prompts.get(str(row["session_id"]), ""),
-            primary_model=primary_models.get(str(row["session_id"]), ""),
         )
         for row in session_rows
     ]
@@ -798,6 +755,7 @@ def build_dashboard_payload(
             "mcp_servers_by_count": metrics["mcp_servers_by_count"],
             "mcp_server_before": metrics["mcp_server_before"],
             "mcp_server_after": metrics["mcp_server_after"],
+            "mcp_server_status_known": metrics["mcp_server_status_known"],
         },
         "agents": {
             "agent_comparison": metrics["agent_comparison"],

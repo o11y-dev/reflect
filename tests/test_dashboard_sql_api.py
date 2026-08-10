@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from reflect.dashboard_query_common import session_card_from_row
 from reflect.dashboard_server import build_dashboard_app
 from reflect.improvements.models import (
     EvidenceRef,
@@ -22,6 +23,21 @@ from reflect.preparation import (
 )
 from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite
+
+
+def test_session_cards_explain_why_cost_is_unavailable():
+    base = {"session_id": "session", "status": "completed"}
+
+    no_tokens = session_card_from_row(base)
+    no_model = session_card_from_row({**base, "input_tokens": 100})
+    no_price = session_card_from_row(
+        {**base, "input_tokens": 100, "primary_model": "claude-sonnet"}
+    )
+
+    assert no_tokens["cost_status"] == "tokens_unavailable"
+    assert no_model["cost_status"] == "model_unavailable"
+    assert no_price["cost_status"] == "pricing_unavailable"
+    assert "claude-sonnet" in no_price["cost_unavailable_reason"]
 
 
 def _seed_sql_report_db(db_path):
@@ -1583,8 +1599,11 @@ def test_dashboard_api_applies_sql_filters_and_comparison(tmp_path, monkeypatch)
     comparison = tabs["cohort_comparison"]["comparison"]
     assert comparison["primary"]["avg_quality"] == 87
     assert comparison["baseline"]["avg_quality"] == 65
+    assert comparison["primary"]["tokens"] == 250
+    assert comparison["baseline"]["tokens"] == 100
     assert comparison["baseline_agents"][0]["avg_quality"] == 65
     assert tabs["cohort_comparison"]["agent_comparison"] == tabs["agents"]["agent_comparison"]
+    assert tabs["cohort_comparison"]["agent_comparison"][0]["tokens"] == 250
     assert {item["name"] for item in payload["sessions"][0]["quality_breakdown"]} >= {"Completion", "Efficiency"}
     assert payload["sessions"][0]["quality_breakdown"][0]["inputs"]
     assert len(metrics_calls) == 1

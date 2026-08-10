@@ -23,6 +23,7 @@ class SessionRow(ReflectModel):
     output_tokens: int
     cache_creation_tokens: int
     cache_read_tokens: int
+    primary_model: str | None = None
     estimated_cost_usd: float
 
 
@@ -31,6 +32,30 @@ class SessionPage(ReflectModel):
     total: int
     limit: int
     offset: int
+
+
+_WORK_SESSION_PREDICATE = """
+NOT (
+  EXISTS (
+    SELECT 1 FROM steps context_step
+    WHERE context_step.session_id = s.id AND context_step.type = 'memory_event'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM steps activity_step
+    WHERE activity_step.session_id = s.id AND activity_step.type <> 'memory_event'
+  )
+  AND NOT EXISTS (SELECT 1 FROM llm_calls WHERE llm_calls.session_id = s.id)
+  AND NOT EXISTS (SELECT 1 FROM tool_calls WHERE tool_calls.session_id = s.id)
+  AND COALESCE(sr.prompt_count, 0) = 0
+  AND COALESCE(sr.tool_call_count, 0) = 0
+  AND COALESCE(sr.input_tokens, s.input_tokens, 0)
+      + COALESCE(sr.output_tokens, s.output_tokens, 0)
+      + COALESCE(sr.cache_write_tokens, s.cache_creation_tokens, 0)
+      + COALESCE(sr.cache_read_tokens, s.cache_read_tokens, 0)
+      + COALESCE(s.reasoning_tokens, 0) = 0
+  AND COALESCE(sr.total_cost, s.estimated_cost_usd, 0) <= 0
+)
+"""
 
 
 def list_sessions(
@@ -47,6 +72,7 @@ def list_sessions(
     min_cost: float | None = None,
     max_cost: float | None = None,
     min_failures: int | None = None,
+    include_context_only: bool = False,
 ) -> SessionPage:
     """Return a paginated SQL-backed Sessions screen model."""
     page_limit = _clamp_limit(limit)
@@ -61,6 +87,7 @@ def list_sessions(
         min_cost=min_cost,
         max_cost=max_cost,
         min_failures=min_failures,
+        include_context_only=include_context_only,
     )
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     total = conn.execute(
@@ -106,6 +133,16 @@ def list_sessions(
           COALESCE(sr.output_tokens, s.output_tokens, 0) AS output_tokens,
           COALESCE(sr.cache_write_tokens, s.cache_creation_tokens, 0) AS cache_creation_tokens,
           COALESCE(sr.cache_read_tokens, s.cache_read_tokens, 0) AS cache_read_tokens,
+          (
+            SELECT COALESCE(NULLIF(model_call.response_model, ''), NULLIF(model_call.request_model, ''))
+            FROM llm_calls model_call
+            WHERE model_call.session_id = s.id
+              AND COALESCE(NULLIF(model_call.response_model, ''), NULLIF(model_call.request_model, '')) IS NOT NULL
+            GROUP BY COALESCE(NULLIF(model_call.response_model, ''), NULLIF(model_call.request_model, ''))
+            ORDER BY COUNT(*) DESC,
+                     COALESCE(NULLIF(model_call.response_model, ''), NULLIF(model_call.request_model, '')) ASC
+            LIMIT 1
+          ) AS primary_model,
           COALESCE(sr.total_cost, s.estimated_cost_usd, 0) AS estimated_cost_usd
         FROM sessions s
         LEFT JOIN agents a ON a.id = s.agent_id
@@ -143,8 +180,9 @@ def _session_filters(
     min_cost: float | None,
     max_cost: float | None,
     min_failures: int | None,
+    include_context_only: bool,
 ) -> tuple[list[str], list[Any]]:
-    where: list[str] = []
+    where: list[str] = [] if include_context_only else [_WORK_SESSION_PREDICATE]
     params: list[Any] = []
     if agent:
         where.append("COALESCE(a.name, sr.agent, '') = ?")

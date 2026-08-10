@@ -360,7 +360,7 @@
 <div class="tab-panel" id="tab-skills" role="tabpanel" aria-labelledby="tab-button-skills" hidden>
   <div class="product-hero">
     <div><h2>Skills Registry</h2><p>Inspect the versioned procedures available to agents, where each version is installed, and whether later task evidence shows it was actually used.</p></div>
-    <div class="product-count" id="skill-count">0<small>current skills</small></div>
+    <div class="product-count" id="skill-count">0<small>registry entries</small></div>
   </div>
   <section class="panel product-section" id="skill-registry-section">
     <div class="product-section-head">
@@ -382,6 +382,7 @@
     <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
     <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
   </div>
+  <div class="panel explore-view-status" id="tools-view-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
   <div class="tools-summary-grid">
     <div class="panel" style="margin-bottom:0">
@@ -442,6 +443,7 @@
     <button class="explore-link active" type="button" data-explore-view="graph">Graph</button>
     <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
   </div>
+  <div class="panel explore-view-status" id="graph-view-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
   <!-- 1. Behavioral Memory Graph -->
   <div class="panel">
@@ -511,6 +513,7 @@
     <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
     <button class="explore-link active" type="button" data-explore-view="context">Context &amp; system</button>
   </div>
+  <div class="panel explore-view-status" id="context-view-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
   <div class="stat-row" id="data-stat-row"></div>
 
   <details class="rule-registry" id="rule-registry">

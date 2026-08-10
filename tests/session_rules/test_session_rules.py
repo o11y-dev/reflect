@@ -113,6 +113,29 @@ def test_span_compatibility_api_delegates_to_default_scorer() -> None:
     )
 
 
+def test_rule_context_uses_cache_in_total_token_volume() -> None:
+    tokens = {
+        "input": 100,
+        "output": 20,
+        "cache_creation": 30,
+        "cache_read": 50,
+    }
+
+    span_context = context_from_spans("session-1", [], tokens)
+    summary_context = context_from_summary(
+        {
+            "id": "session-1",
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "cache_creation_tokens": 30,
+            "cache_read_tokens": 50,
+        }
+    )
+
+    assert span_context.total_tokens == 200
+    assert summary_context.total_tokens == 200
+
+
 def test_summary_adapter_marks_unavailable_detail_signals() -> None:
     context = context_from_summary(
         {

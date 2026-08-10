@@ -58,6 +58,7 @@ class McpViewModel(ReflectModel):
     mcp_servers_by_count: dict[str, int]
     mcp_server_before: dict[str, int]
     mcp_server_after: dict[str, int]
+    mcp_server_status_known: dict[str, int]
 
 
 class AgentsViewModel(ReflectModel):
@@ -832,9 +833,7 @@ def _command_patterns(conn: sqlite3.Connection, scoped_ids: list[str] | None) ->
         f"""
         SELECT input_preview_redacted, raw_attrs_json
         FROM tool_calls tc
-        WHERE (LOWER(tool_name) IN ('shell', 'bash', 'exec_command')
-           OR raw_attrs_json LIKE '%command%'
-           OR input_preview_redacted LIKE '%"cmd"%')
+        WHERE LOWER(tool_name) IN ('shell', 'bash', 'exec_command')
         {_and_scope('tc.session_id', scoped_ids)}
         """,
         scoped_ids or [],
@@ -856,9 +855,7 @@ def _grouped_tool_command_patterns(
         WITH command_calls AS (
           SELECT input_hash, input_preview_redacted, raw_attrs_json
           FROM tool_calls tc
-          WHERE (LOWER(tool_name) IN ('shell', 'bash', 'exec_command')
-             OR raw_attrs_json LIKE '%command%'
-             OR input_preview_redacted LIKE '%"cmd"%')
+          WHERE LOWER(tool_name) IN ('shell', 'bash', 'exec_command')
           {_and_scope('tc.session_id', scoped_ids)}
         )
         SELECT
@@ -1058,7 +1055,23 @@ def _build_mcp(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> McpVie
     mcp_scope, mcp_params = _scope_clause("tc.session_id", scoped_ids, prefix="AND")
     rows = _dict_rows(conn.execute(
         f"""
-        SELECT mc.server_name, COUNT(*) AS call_count
+        SELECT
+          mc.server_name,
+          COUNT(*) AS call_count,
+          SUM(
+            CASE
+              WHEN LOWER(COALESCE(tc.status, '')) IN ('ok', 'success', 'completed') THEN 1
+              ELSE 0
+            END
+          ) AS completion_count,
+          SUM(
+            CASE
+              WHEN LOWER(COALESCE(tc.status, '')) IN (
+                'ok', 'success', 'completed', 'error', 'failed', 'failure'
+              ) THEN 1
+              ELSE 0
+            END
+          ) AS status_known_count
         FROM mcp_calls AS mc
         JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
         WHERE mc.server_name IS NOT NULL AND mc.server_name <> ''
@@ -1069,18 +1082,20 @@ def _build_mcp(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> McpVie
         mcp_params,
     ))
     counts: Counter[str] = Counter()
+    completions: Counter[str] = Counter()
+    known_statuses: Counter[str] = Counter()
     for row in rows:
         server = _display_mcp_server_name(row["server_name"])
         if server:
             counts[server] += int(row["call_count"] or 0)
-    raw_counts, raw_after_counts = _raw_mcp_counts(conn, scoped_ids)
-    counts.update(raw_counts)
-    after = raw_after_counts or raw_counts
+            completions[server] += int(row["completion_count"] or 0)
+            known_statuses[server] += int(row["status_known_count"] or 0)
     return McpViewModel(
         mcp_calls=sum(counts.values()),
         mcp_servers_by_count=dict(counts),
         mcp_server_before=dict(counts),
-        mcp_server_after=dict(after),
+        mcp_server_after=dict(completions),
+        mcp_server_status_known=dict(known_statuses),
     )
 
 
@@ -1099,13 +1114,18 @@ def _display_mcp_server_name(value: object) -> str:
         for part in parts[1:]:
             parsed = urlparse(part)
             if parsed.scheme in {"http", "https"} and parsed.netloc:
-                return parsed.netloc
-        for part in parts[1:]:
-            if part.startswith("-"):
-                continue
-            return part.rsplit("/", 1)[-1] or "npx"
-        return "npx"
-    if lowered.startswith("docker run "):
+                text = parsed.netloc
+                break
+        else:
+            text = next(
+                (
+                    part.rsplit("/", 1)[-1]
+                    for part in parts[1:]
+                    if not part.startswith("-")
+                ),
+                "npx",
+            ) or "npx"
+    elif lowered.startswith("docker run "):
         try:
             parts = shlex.split(text)
         except ValueError:
@@ -1120,46 +1140,12 @@ def _display_mcp_server_name(value: object) -> str:
             if part.startswith("-"):
                 index += 1
                 continue
-            return part.rsplit("/", 1)[-1].split(":", 1)[0] or "docker"
-        return "docker"
-    return text
-
-
-def _raw_mcp_counts(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> tuple[Counter[str], Counter[str]]:
-    import json
-
-    rows = _dict_rows(conn.execute(
-        f"""
-        SELECT summary, raw_attrs_json
-        FROM steps
-        WHERE raw_attrs_json LIKE '%mcp%'
-        {_and_scope('session_id', scoped_ids)}
-        """,
-        scoped_ids or [],
-    ))
-    counts: Counter[str] = Counter()
-    after_counts: Counter[str] = Counter()
-    for row in rows:
-        try:
-            attrs = json.loads(str(row["raw_attrs_json"] or "{}"))
-        except json.JSONDecodeError:
-            attrs = {}
-        if not isinstance(attrs, dict):
-            continue
-        server = _display_mcp_server_name(
-            attrs.get("gen_ai.client.mcp_server")
-            or attrs.get("gen_ai.mcp.server")
-            or attrs.get("mcp.server")
-            or attrs.get("mcp.server.name")
-            or attrs.get("server.name")
-        )
-        if not server:
-            continue
-        counts[server] += 1
-        event = str(attrs.get("gen_ai.client.hook.event") or row["summary"] or "").lower()
-        if "after" in event:
-            after_counts[server] += 1
-    return counts, after_counts
+            text = part.rsplit("/", 1)[-1].split(":", 1)[0] or "docker"
+            break
+        else:
+            text = "docker"
+    text = re.sub(r"^user[-_]", "", text, flags=re.IGNORECASE)
+    return re.sub(r"-{2,}", "-", text.replace("_", "-")).strip("-")
 
 
 def _build_agents(
@@ -1176,7 +1162,14 @@ def _build_agents(
           COALESCE(SUM(sr.prompt_count), 0) AS prompts,
           COALESCE(SUM(sr.tool_call_count), 0) AS tools,
           COALESCE(SUM(sr.error_count), 0) AS failures,
-          COALESCE(SUM(sr.input_tokens + sr.output_tokens), 0) AS tokens,
+          COALESCE(SUM(sr.input_tokens), 0) AS input_tokens,
+          COALESCE(SUM(sr.output_tokens), 0) AS output_tokens,
+          COALESCE(SUM(sr.cache_write_tokens), 0) AS cache_creation_tokens,
+          COALESCE(SUM(sr.cache_read_tokens), 0) AS cache_read_tokens,
+          COALESCE(SUM(sr.input_tokens), 0)
+            + COALESCE(SUM(sr.output_tokens), 0)
+            + COALESCE(SUM(sr.cache_write_tokens), 0)
+            + COALESCE(SUM(sr.cache_read_tokens), 0) AS tokens,
           COALESCE(SUM(sr.total_cost), 0) AS total_cost,
           COALESCE(AVG(
             MAX(0, MIN(100,
@@ -1254,10 +1247,10 @@ def _build_agents(
             "failure_rate": round(100 * failures / tools, 1) if tools else 0,
             "mcp_calls": mcp_by_agent.get(name, 0),
             "subagents": sum(skill_subagent["subagents_by_agent"].get(name, Counter()).values()),
-            "input_tokens": int(row["tokens"] or 0),
-            "output_tokens": 0,
-            "cache_creation_tokens": 0,
-            "cache_read_tokens": 0,
+            "input_tokens": int(row["input_tokens"] or 0),
+            "output_tokens": int(row["output_tokens"] or 0),
+            "cache_creation_tokens": int(row["cache_creation_tokens"] or 0),
+            "cache_read_tokens": int(row["cache_read_tokens"] or 0),
             "total_cost_usd": total_cost,
             "top_model": "",
             "top_tools": dict(top_tools.get(name, Counter()).most_common(10)),

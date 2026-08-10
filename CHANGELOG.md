@@ -51,6 +51,7 @@
 
 ### Fixed
 
+- Made dashboard evidence trustworthy at first render: MCP calls now use one canonical logical-call ledger with merged server aliases and explicit outcome coverage, command patterns exclude orchestration wrappers, session and cohort token/tool totals share canonical semantics, context-only memory exposures stay out of work-session navigation, cost gaps identify missing tokens, models, or pricing, lazy Explore views distinguish loading from empty data, and workflow reviews separate linked provenance sessions from comparable task evidence before any unvalidated apply.
 - Kept explicit OTLP trace inputs isolated from the global log segment, preventing live local traffic from contaminating fixture, import, or alternate-store analysis.
 - Initialized empty JSON MCP configuration files during setup and limited the unsupported-agent warning to agents whose canonical capability is actually planned, so fresh Antigravity wiring no longer fails or mislabels supported clients.
 - Made validated project instructions path-applicable context and let `reflect_context` return bounded current content only when the source remains in scope and its hash still matches, instead of losing reusable guidance beyond the 360-character privacy preview.

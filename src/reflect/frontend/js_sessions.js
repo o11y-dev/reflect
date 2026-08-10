@@ -648,17 +648,15 @@ class SessionConversationPlayhead {
       const prompt = s.first_prompt ? escHtml(s.first_prompt.slice(0, 80)) + (s.first_prompt.length > 80 ? '…' : '') : 'No prompt data';
       const isActive = s._idx === selectedIdx;
       const estimatedTokens = getEstimatedSessionTokens(s);
-      const tokens = (estimatedTokens?.input ?? s.input_tokens ?? 0) + (estimatedTokens?.output ?? s.output_tokens ?? 0);
-      const cost = Number(s.total_cost_usd || s.total_cost || 0);
+      const tokens = sessionTokenTotal(s, estimatedTokens);
+      const costPresentation = sessionCostPresentation(s, estimatedTokens);
+      const cost = costPresentation.cost;
       const unit = String(s.pricing_unit || sqlTab('usage').pricing_unit || 'usd').toUpperCase();
-      const costUnavailableReason = tokens > 0
-        ? 'Model pricing is unavailable for the captured token usage.'
-        : 'Token usage was not exported by this telemetry source.';
       return `<button type="button" class="sb-card${isActive ? ' active' : ''}" data-idx="${s._idx}" aria-pressed="${isActive ? 'true' : 'false'}">
         <div class="sb-card-header">
           <div class="sb-card-agent-icon">${agentIconSvg(s.agent)}</div>
           <div class="sb-card-agent">${escHtml(agentName)}</div>
-          <div class="sb-card-time">${s.created_at || '—'}</div>
+          <div class="sb-card-time">${escHtml(fmtWorkflowDate(s.created_at))}</div>
         </div>
         <div class="sb-card-prompt">${prompt}</div>
         <div class="sb-card-badges">
@@ -666,7 +664,7 @@ class SessionConversationPlayhead {
           ${tokens > 0 ? `<div class="sb-card-badge">${estimatedTokens ? '~' : ''}${fmtTokenShort(tokens)} tok</div>` : ''}
           ${cost > 0
             ? `<div class="sb-card-badge">${fmtCost(cost)} ${escHtml(unit)}</div>`
-            : `<div class="sb-card-badge" style="color:var(--text-3)" title="${escHtml(costUnavailableReason)}">Cost unavailable</div>`}
+            : `<div class="sb-card-badge" style="color:var(--text-3)" title="${escHtml(costPresentation.reason)}">${escHtml(costPresentation.label)}</div>`}
           ${s.quality_available ? `<div class="sb-card-badge" style="color:${Number(s.quality_score || 0) > 70 ? 'var(--green)' : 'var(--yellow)'}">${Number(s.quality_score || 0).toFixed(0)}%</div>` : '<div class="sb-card-badge" style="color:var(--text-3)">No score</div>'}
         </div>
       </button>`;
@@ -698,11 +696,9 @@ class SessionConversationPlayhead {
     const inTok = estimatedTokens?.input ?? session.input_tokens ?? 0;
     const outTok = estimatedTokens?.output ?? session.output_tokens ?? 0;
     const cacheTok = session.cache_read_tokens || 0;
-    const sessionCost = Number(session.total_cost_usd || session.total_cost || 0);
+    const detailCostPresentation = sessionCostPresentation(session, estimatedTokens);
+    const sessionCost = detailCostPresentation.cost;
     const sessionUnit = String(session.pricing_unit || sqlTab('usage').pricing_unit || 'usd').toUpperCase();
-    const sessionCostUnavailableReason = (Number(session.input_tokens || 0) + Number(session.output_tokens || 0) + Number(session.cache_creation_tokens || 0) + Number(session.cache_read_tokens || 0)) > 0
-      ? 'Model pricing is unavailable for the captured token usage.'
-      : 'Token usage was not exported by this telemetry source.';
     const tokenMeta = estimatedTokens
       ? (session._fullLoaded ? 'Estimated from full Cursor transcript content.' : 'Estimated from available Cursor transcript preview.')
       : (session.token_note || '');
@@ -733,7 +729,7 @@ class SessionConversationPlayhead {
         ${cacheTok > 0 ? `<span>Cache: <strong>${fmtTokenShort(cacheTok)}</strong></span>` : ''}
         ${sessionCost > 0
           ? `<span title="Cost basis: ${escHtml(session.pricing_source || sqlTab('usage').pricing_source || 'unknown')}">Cost: <strong>${fmtCost(sessionCost)} ${escHtml(sessionUnit)}</strong></span>`
-          : `<span title="${escHtml(sessionCostUnavailableReason)}">Cost: <strong>Unavailable</strong></span>`}
+          : `<span title="${escHtml(detailCostPresentation.reason)}">Cost: <strong>${escHtml(detailCostPresentation.label)}</strong></span>`}
         ${session.failure_count > 0 ? `<span style="color:var(--red)">Failures: <strong>${session.failure_count}</strong></span>` : ''}
       </div>
       <div class="feedback-row" aria-label="Record session outcome">
@@ -1657,8 +1653,8 @@ class SessionConversationPlayhead {
       ['Status', session.is_completed ? 'completed' : 'not completed'],
       ['Failures', fmt(session.failure_count || session.failures || 0)],
       ['Recovered', fmt(session.recovered_failures || 0)],
-      ['Tools', fmt(Object.values(session.tools || {}).reduce((sum, value) => sum + Number(value || 0), 0))],
-      ['Tokens', fmtTokenShort((session.input_tokens || 0) + (session.output_tokens || 0) + (session.cache_creation_tokens || 0) + (session.cache_read_tokens || 0))],
+      ['Tool Calls', fmt(sessionToolCallTotal(session))],
+      ['Total Tokens', fmtTokenShort(sessionTokenTotal(session))],
     ];
     const formatMetricValue = value => {
       if (typeof value === 'number') return Number.isInteger(value) ? fmt(value) : String(Math.round(value * 100) / 100);

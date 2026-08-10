@@ -747,7 +747,7 @@ function buildImprovementSurfaces(){
         </article>`;
       }).join('') : query.trim()
         ? `<div class="session-ledger-empty">No skills match <strong>${escHtml(query.trim())}</strong>. Clear the search to return to the full registry.</div>`
-        : `<div class="session-ledger-empty">No current skills are registered. Run <code>reflect skills sync</code> to reconcile installed skills or <code>reflect skills discover</code> to stage evidence-backed drafts.</div>`;
+        : `<div class="session-ledger-empty">No skill records are registered. Run <code>reflect skills sync</code> to reconcile installed skills or <code>reflect skills discover</code> to stage evidence-backed drafts.</div>`;
     };
     if (searchInput) searchInput.oninput = renderSkillRegistry;
     renderSkillRegistry();

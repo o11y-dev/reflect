@@ -354,7 +354,7 @@ def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(p
     assert "Evidence Patterns" in text
     assert "finding_total_count" in text
     assert "skill_total_count" in text
-    assert "current skills" in text
+    assert "registry entries" in text
     assert "linked session(s)" in text
 
 
@@ -417,6 +417,14 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "fetch('/api/impact'" in text
     assert "new URL(`/api/explore/${encodeURIComponent(viewName)}`" in text
     assert "Loading command and tool patterns..." in text
+    assert "mcpTab.mcp_server_status_known || {}" in text
+    assert "`${known.toLocaleString()}/${calls.toLocaleString()} captured`" in text
+    assert '<th style="text-align:right">Outcome</th>' in text
+    assert "const exploreViewStates = new Map([['usage', 'ready']])" in text
+    assert "panel.setAttribute('aria-busy', loading ? 'true' : 'false')" in text
+    assert "Check the local report server, then reopen this view." in text
+    for view in ("tools", "graph", "context"):
+        assert f'id="{view}-view-status" role="status" aria-live="polite"' in text
     assert "/api/improvements" not in text
     assert "/api/measurements" not in text
     assert "/api/tabs/" not in text
@@ -470,7 +478,21 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "submitSessionFeedback(sessionId, outcome, button)" in text
     assert 'data-session-feedback="no-change-correct"' in text
     assert "trigger.textContent = 'Applying…'" in text
-    assert "trigger.textContent = 'Approve & Apply to This Project'" in text
+    assert "Apply Unvalidated Draft" in text
+    assert 'data-evidence-ready="${evidenceReady ? \'true\' : \'false\'}"' in text
+    assert "No comparable task evidence supports this workflow yet." in text
+    assert "trigger.textContent = trigger.dataset.idleLabel || 'Apply Workflow'" in text
+    assert "function sessionTokenTotal(session, estimatedTokens = null)" in text
+    assert "function sessionCostPresentation(session, estimatedTokens = null)" in text
+    assert "Tokens not captured" in text
+    assert "Model not captured" in text
+    assert "Price unresolved" in text
+    assert "function sessionToolCallTotal(session)" in text
+    assert "['Tool Calls', fmt(sessionToolCallTotal(session))]" in text
+    assert "['Total Tokens', fmtTokenShort(sessionTokenTotal(session))]" in text
+    assert "fmtWorkflowDate(D.first_event_ts)" in text
+    assert "linked sessions</div>" in text
+    assert "comparable tasks · ${evidenceReady ? 'task-bounded evidence' : 'unvalidated draft'}" in text
     assert "create:'New file'" in text
     assert "Exact File Diff" in text
     assert "Review &amp; Roll Back" in text

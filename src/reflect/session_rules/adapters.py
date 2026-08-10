@@ -60,7 +60,12 @@ def context_from_spans(
         has_stop=any(event in ("Stop", "SessionEnd") for event in events),
         has_subagent_stop=any(event == "SubagentStop" for event in events),
         tool_uses=len(tool_sequence),
-        total_tokens=int(tokens.get("input", 0)) + int(tokens.get("output", 0)),
+        total_tokens=(
+            int(tokens.get("input", 0))
+            + int(tokens.get("output", 0))
+            + int(tokens.get("cache_creation", 0))
+            + int(tokens.get("cache_read", 0))
+        ),
         failures=sum(1 for span in spans if not span.get("ok", True)),
         consecutive_pairs=consecutive_pairs,
         consecutive_triples=consecutive_triples,
@@ -89,6 +94,8 @@ def context_from_summary(
         total_tokens=(
             int(row.get("input_tokens") or 0)
             + int(row.get("output_tokens") or 0)
+            + int(row.get("cache_creation_tokens") or row.get("cache_write_tokens") or 0)
+            + int(row.get("cache_read_tokens") or 0)
         ),
         failures=int(row.get("failure_count") or row.get("failures") or 0),
         duration_ms=duration_ms,

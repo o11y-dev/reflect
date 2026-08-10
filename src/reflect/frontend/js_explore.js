@@ -183,6 +183,7 @@ function buildMcpPanel(){
   const mcpTab = sqlTab('mcp');
   const before = mcpTab.mcp_server_before || {};
   const after  = mcpTab.mcp_server_after  || {};
+  const statusKnown = mcpTab.mcp_server_status_known || {};
   const servers = Object.keys(before);
   if (!servers.length) {
     buildBarList('mcp-list', mcpTab.mcp_servers_by_count || {}, P.teal);
@@ -192,21 +193,34 @@ function buildMcpPanel(){
   const rows = servers.map(s => {
     const calls = before[s] || 0;
     const done  = after[s]  || 0;
-    const avail = calls > 0 ? Math.round(done / calls * 100) : 0;
-    const color = avail >= 95 ? 'var(--green)' : avail >= 80 ? 'var(--yellow)' : 'var(--red)';
+    const known = Math.min(calls, statusKnown[s] || 0);
+    const completeCoverage = calls > 0 && known === calls;
+    const completionRate = completeCoverage ? Math.round(done / calls * 100) : null;
+    const outcome = !known
+      ? 'Not captured'
+      : completeCoverage
+        ? `${completionRate}% complete`
+        : `${known.toLocaleString()}/${calls.toLocaleString()} captured`;
+    const color = !known
+      ? 'var(--text-3)'
+      : !completeCoverage
+        ? 'var(--yellow)'
+        : completionRate >= 95
+          ? 'var(--green)'
+          : completionRate >= 80 ? 'var(--yellow)' : 'var(--red)';
     return `<tr>
       <td title="${s}">${s}</td>
       <td style="text-align:right">${calls.toLocaleString()}</td>
       <td style="text-align:right">${done.toLocaleString()}</td>
-      <td style="text-align:right"><span style="color:${color};font-weight:600">${avail}%</span></td>
+      <td style="text-align:right"><span style="color:${color};font-weight:600">${outcome}</span></td>
     </tr>`;
   }).join('');
   document.getElementById('mcp-list').innerHTML = `<table class="data-table">
     <thead><tr>
       <th>Server</th>
       <th style="text-align:right">Calls</th>
-      <th style="text-align:right">Completed</th>
-      <th style="text-align:right">Avail</th>
+      <th style="text-align:right">Verified</th>
+      <th style="text-align:right">Outcome</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
@@ -372,7 +386,7 @@ renderToolsView();
       if(sid === excludeId) return;
       const opt = document.createElement('option');
       opt.value = sid;
-      opt.textContent = `${s.id}  ${s.created_at?'  '+s.created_at:''}  ${fmt(s.event_count)} events`;
+      opt.textContent = `${s.id}  ${s.created_at ? `  ${fmtWorkflowDate(s.created_at)}` : ''}  ${fmt(s.event_count)} events`;
       if(String(sid)===String(val)) opt.selected = true;
       sel.appendChild(opt);
     });

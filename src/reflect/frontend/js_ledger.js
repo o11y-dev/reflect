@@ -61,6 +61,51 @@ function fmtCost(n){
   return value.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
 }
 
+function sessionTokenTotal(session, estimatedTokens = null){
+  if (estimatedTokens) {
+    return Number(estimatedTokens.input || 0) + Number(estimatedTokens.output || 0);
+  }
+  const componentTotal = Number(session?.input_tokens || 0)
+    + Number(session?.output_tokens || 0)
+    + Number(session?.cache_creation_tokens || session?.cache_write_tokens || 0)
+    + Number(session?.cache_read_tokens || 0);
+  return componentTotal || Number(session?.total_tokens || 0);
+}
+
+function sessionCostPresentation(session, estimatedTokens = null){
+  const cost = Number(session?.total_cost_usd || session?.total_cost || 0);
+  if (cost > 0) return {cost, status:'estimated', label:'Estimated cost', reason:''};
+  const inferredStatus = sessionTokenTotal(session, estimatedTokens) <= 0
+    ? 'tokens_unavailable'
+    : session?.primary_model
+      ? 'pricing_unavailable'
+      : 'model_unavailable';
+  const status = String(session?.cost_status || inferredStatus);
+  const presentation = {
+    tokens_unavailable:['Tokens not captured', 'Token usage was not captured for this session.'],
+    model_unavailable:['Model not captured', 'Tokens were captured, but no model was available to resolve pricing.'],
+    pricing_unavailable:['Price unresolved', `Model "${session?.primary_model || 'unknown'}" did not resolve to a local price.`],
+  }[status] || ['Cost unavailable', 'The captured telemetry is insufficient to estimate this session cost.'];
+  return {
+    cost,
+    status,
+    label:presentation[0],
+    reason:String(session?.cost_unavailable_reason || presentation[1]),
+  };
+}
+
+function sessionToolCallTotal(session){
+  const canonical = session?.tool_calls ?? session?.tool_call_count;
+  if (canonical !== undefined && canonical !== null && Number.isFinite(Number(canonical))) {
+    return Math.max(0, Number(canonical));
+  }
+  const inventory = session?.tool_inventory?.tools;
+  if (Array.isArray(inventory)) {
+    return inventory.reduce((sum, tool) => sum + Number(tool?.count || 0), 0);
+  }
+  return Object.values(session?.tools || {}).reduce((sum, count) => sum + Number(count || 0), 0);
+}
+
 function colorForAgent(agent){
   const name = String(agent || '');
   if (!name) return 'var(--text-3)';
@@ -587,17 +632,21 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     const active = candidate.lifecycle?.deployment === 'active';
     const reviewable = !['rejected','stale'].includes(candidate.status);
     const applyAllowed = Boolean(preview.checks?.apply_allowed);
+    const evidenceReady = Number(ledger.support_execution_unit_count || 0) > 0;
+    const applyLabel = applyAllowed
+      ? (evidenceReady ? 'Approve & Apply to This Project' : 'Apply Unvalidated Draft')
+      : 'Choose a Project Folder';
     const reviewActions = active
       ? `<button type="button" class="ledger-button danger" data-ledger-action="rollback" data-candidate-id="${escHtml(candidateId)}">Roll Back</button>`
       : !reviewable
         ? ''
-        : `<button type="button" class="ledger-button" data-ledger-action="save-edit" data-candidate-id="${escHtml(candidateId)}">Save Draft</button><button type="button" class="ledger-button danger" data-ledger-action="reject" data-candidate-id="${escHtml(candidateId)}">Reject</button><button type="button" class="ledger-button primary" data-ledger-action="apply" data-candidate-id="${escHtml(candidateId)}" ${applyAllowed ? '' : 'disabled'}>${applyAllowed ? 'Approve &amp; Apply to This Project' : 'Choose a Project Folder'}</button>`;
+        : `<button type="button" class="ledger-button" data-ledger-action="save-edit" data-candidate-id="${escHtml(candidateId)}">Save Draft</button><button type="button" class="ledger-button danger" data-ledger-action="reject" data-candidate-id="${escHtml(candidateId)}">Reject</button><button type="button" class="ledger-button${evidenceReady ? ' primary' : ''}" data-ledger-action="apply" data-candidate-id="${escHtml(candidateId)}" data-evidence-ready="${evidenceReady ? 'true' : 'false'}" data-idle-label="${escHtml(applyLabel)}" ${applyAllowed ? '' : 'disabled'}>${escHtml(applyLabel)}</button>`;
     const content = candidate.content || {};
     const suggestions = (preview.suggested_project_roots || []).map(item => `<option value="${escHtml(item.path)}">${fmt(Number(item.provenance_sessions || 0))} provenance sessions${item.is_repository ? ' · Git repository' : item.is_directory ? ' · project folder' : ' · unavailable'}</option>`).join('');
     const issues = preview.checks?.issues || [];
     const checkClass = applyAllowed ? 'review-check' : 'review-check blocked';
     const checkCopy = applyAllowed
-      ? `Ready. Reflect will ${preview.change_kind === 'create' ? 'create' : preview.change_kind === 'update' ? 'update' : 'keep'} ${preview.target_relative_path || 'the project-local skill file'} in this project only.`
+      ? `Target ready. Reflect will ${preview.change_kind === 'create' ? 'create' : preview.change_kind === 'update' ? 'update' : 'keep'} ${preview.target_relative_path || 'the project-local skill file'} in this project only.`
       : issues.join(' ') || 'Choose an existing writable project folder before applying.';
     const advisories = (preview.checks?.advisories || []).filter(item => !String(item).startsWith('This application folder differs from'));
     const targetOwner = preview.checks?.target_owner;
@@ -609,6 +658,9 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
       ? `<div class="review-warning">Active target owner: ${escHtml(targetOwner.title || targetOwner.candidate_id)}. This is ownership recorded by Reflect for safe rollback, not a Git or filesystem lock.</div>`
       : '';
     const advisoryNotice = advisories.map(item => `<div class="review-warning">${escHtml(item)}</div>`).join('');
+    const evidenceReadinessNotice = evidenceReady
+      ? ''
+      : '<div class="review-warning"><strong>Unvalidated draft.</strong> No comparable task evidence supports this workflow yet. Applying installs the draft, but Impact must establish whether it helps.</div>';
     const supportTasks = renderWorkflowSessionLedger(ledger.support_execution_units, {
       empty:'No comparable execution units support this workflow.',
       total:ledger.support_execution_unit_count,
@@ -671,7 +723,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
           <p class="review-panel-copy">${escHtml(origin.detail)}</p>
         </div>
         <div class="workflow-approval-summary" aria-label="Workflow approval summary">
-          <div class="workflow-approval-item"><div class="workflow-approval-label">Evidence</div><div class="workflow-approval-value signal">${fmt(Number(candidate.support_execution_unit_count || 0))} supporting tasks</div><div class="workflow-approval-copy">${escHtml(origin.label)} · ${escHtml(behaviorType)} behavior</div></div>
+          <div class="workflow-approval-item"><div class="workflow-approval-label">Evidence</div><div class="workflow-approval-value signal">${fmt(Number(ledger.provenance_session_count || 0))} linked sessions</div><div class="workflow-approval-copy">${fmt(Number(ledger.support_execution_unit_count || 0))} comparable tasks · ${evidenceReady ? 'task-bounded evidence' : 'unvalidated draft'}</div></div>
           <div class="workflow-approval-item"><div class="workflow-approval-label">Selected Project</div><div class="workflow-approval-value">${escHtml(projectName)}</div><div class="workflow-approval-copy">${escHtml(relationLabel)}</div></div>
           <div class="workflow-approval-item"><div class="workflow-approval-label">File Change</div><div class="workflow-approval-value">${escHtml(changeLabel)}</div><div class="workflow-approval-copy" translate="no">${escHtml(targetFile || 'Target file unavailable')}</div></div>
         </div>
@@ -690,7 +742,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
                 <datalist id="workflow-project-root-options">${suggestions}</datalist>
                 <div class="workflow-target-file" title="${escHtml(preview.target_path || '')}" translate="no">${escHtml(targetFile || 'Target file unavailable')}</div>
               </div>
-              <div class="${checkClass}" aria-live="polite">${escHtml(checkCopy)}</div>${advisoryNotice}${evidenceVariantNotice}${ownerNotice}
+              <div class="${checkClass}" aria-live="polite">${escHtml(checkCopy)}</div>${evidenceReadinessNotice}${advisoryNotice}${evidenceVariantNotice}${ownerNotice}
             </section>
             <section class="review-panel review-section">
               <div class="review-panel-head"><h3 class="review-panel-title">${escHtml(origin.sectionLabel)}</h3><span class="ledger-pill signal">${escHtml(proposedSize)}</span></div>
@@ -836,6 +888,7 @@ document.addEventListener('click', async event => {
       if (workflowName !== String(ledgerDialog.dataset.workflowSlug || '')) {
         throw new Error('Save the renamed draft and review its updated target path before applying.');
       }
+      if (trigger.dataset.evidenceReady === 'false' && !window.confirm('No comparable task evidence supports this workflow yet. Apply this unvalidated draft to the selected project?')) return;
       trigger.disabled = true;
       trigger.textContent = 'Applying…';
       await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/apply`, {method:'POST', body:{project_root:projectRoot}});
@@ -853,7 +906,7 @@ document.addEventListener('click', async event => {
   } catch (error) {
     if (action === 'apply') {
       trigger.disabled = false;
-      trigger.textContent = 'Approve & Apply to This Project';
+      trigger.textContent = trigger.dataset.idleLabel || 'Apply Workflow';
       const status = document.querySelector('#ledger-dialog .review-check');
       if (status) {
         status.classList.add('blocked');
@@ -875,6 +928,28 @@ let filteredDashboardSessions = (D.sessions || []).slice();
 let dashboardFilterActive = false;
 let dashboardSelectedSessionId = currentParams().get('session') || '';
 const lazySqlTabRequests = new Map();
+const exploreViewStates = new Map([['usage', 'ready']]);
+const exploreViewLoadingCopy = {
+  tools:'Loading command and tool patterns...',
+  graph:'Loading graphs...',
+  context:'Loading context and system data...',
+};
+
+function setExploreViewState(viewName, state, errorMessage = ''){
+  exploreViewStates.set(viewName, state);
+  const panel = document.getElementById(`tab-explore-${viewName}`);
+  const status = document.getElementById(`${viewName}-view-status`);
+  if (!panel || !status) return;
+  const loading = state === 'loading';
+  panel.setAttribute('aria-busy', loading ? 'true' : 'false');
+  status.classList.toggle('error', state === 'error');
+  status.textContent = loading ? exploreViewLoadingCopy[viewName] : errorMessage;
+  status.hidden = state === 'ready';
+  [...panel.children].forEach(child => {
+    if (child === status || child.classList.contains('explore-subnav')) return;
+    child.hidden = state !== 'ready';
+  });
+}
 
 function exploreViewUrl(viewName){
   const url = new URL(`/api/explore/${encodeURIComponent(viewName)}`, window.location.href);
@@ -921,35 +996,22 @@ async function loadExploreView(viewName){
 }
 
 async function hydrateExploreView(viewName){
-  if (viewName === 'graph') {
-    showReportLoader(dashboardSelectedSessionId ? 'Loading session graphs...' : 'Loading graphs...');
-    try {
-      await loadExploreView('graph');
-    } finally {
-      hideReportLoader();
-    }
-    return;
-  }
-  if (viewName === 'context') {
-    showReportLoader(dashboardSelectedSessionId ? 'Loading session data...' : 'Loading data...');
-    try {
-      await loadExploreView('context');
-      renderSqlTabPayloads();
-    } finally {
-      hideReportLoader();
-    }
-    return;
-  }
-  if (viewName === 'tools') {
-    const tools = sqlTab('tools');
-    if (!Object.keys(tools.tools_by_count || {}).length) {
-      showReportLoader('Loading command and tool patterns...');
-      try {
-        await loadExploreView('tools');
-        renderToolsView();
-      } finally {
-        hideReportLoader();
-      }
-    }
+  if (viewName === 'usage' || exploreViewStates.get(viewName) === 'ready') return;
+  const loadingCopy = viewName === 'graph' && dashboardSelectedSessionId
+    ? 'Loading session graphs...'
+    : exploreViewLoadingCopy[viewName];
+  setExploreViewState(viewName, 'loading');
+  showReportLoader(loadingCopy);
+  try {
+    await loadExploreView(viewName);
+    if (viewName === 'context') renderSqlTabPayloads();
+    if (viewName === 'tools') renderToolsView();
+    setExploreViewState(viewName, 'ready');
+  } catch (error) {
+    const label = humanizeLedgerLabel(viewName);
+    setExploreViewState(viewName, 'error', `Could not load ${label} data. Check the local report server, then reopen this view.`);
+    throw error;
+  } finally {
+    hideReportLoader();
   }
 }

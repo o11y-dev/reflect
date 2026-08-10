@@ -113,7 +113,7 @@ activateTab(requestedInitialTab || defaultProductTab, {
 });
 
 /* ── Header ── */
-document.getElementById('hdr-range').textContent = D.first_event_ts + ' — ' + D.last_event_ts;
+document.getElementById('hdr-range').textContent = `${fmtWorkflowDate(D.first_event_ts)} — ${fmtWorkflowDate(D.last_event_ts)}`;
 document.getElementById('hdr-ts').textContent = 'Loaded ' + new Date().toLocaleString();
 startPreparationStatusPolling();
 window.setTimeout(requestDashboardRefresh, 250);

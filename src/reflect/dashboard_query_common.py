@@ -33,6 +33,19 @@ def session_card_from_row(
     failure_count = int(row.get("failure_count") or row.get("failures") or 0)
     model = primary_model or str(row.get("primary_model") or "")
     cost = float(row.get("estimated_cost_usd") or row.get("total_cost_usd") or 0)
+    total_tokens = input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens
+    if cost > 0:
+        cost_status = "estimated"
+        cost_unavailable_reason = ""
+    elif total_tokens <= 0:
+        cost_status = "tokens_unavailable"
+        cost_unavailable_reason = "Token usage was not captured for this session."
+    elif not model:
+        cost_status = "model_unavailable"
+        cost_unavailable_reason = "Tokens were captured, but no model was available to resolve pricing."
+    else:
+        cost_status = "pricing_unavailable"
+        cost_unavailable_reason = f'Model "{model}" did not resolve to a local price.'
     return {
         "id": session_id,
         "full_id": session_id,
@@ -59,12 +72,11 @@ def session_card_from_row(
         "output_tokens": output_tokens,
         "cache_creation_tokens": cache_creation_tokens,
         "cache_read_tokens": cache_read_tokens,
-        "total_tokens": input_tokens
-        + output_tokens
-        + cache_creation_tokens
-        + cache_read_tokens,
+        "total_tokens": total_tokens,
         "total_cost": cost,
         "total_cost_usd": cost,
+        "cost_status": cost_status,
+        "cost_unavailable_reason": cost_unavailable_reason,
         "pricing_unit": "usd",
         "primary_model": model,
         "models": {model: 1} if model else {},
@@ -397,6 +409,7 @@ def empty_sql_lazy_tabs() -> dict[str, object]:
             "mcp_servers_by_count": {},
             "mcp_server_before": {},
             "mcp_server_after": {},
+            "mcp_server_status_known": {},
         },
         "agents": {"agent_comparison": [], "agents": {}},
         "graph": {
