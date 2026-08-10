@@ -22,6 +22,7 @@
   <a href="https://reflect.o11y.dev/">Website</a> ·
   <a href="https://reflect.o11y.dev/report.html?report=reports/showcase.json">Live dashboard</a> ·
   <a href="https://pypi.org/project/o11y-reflect/">PyPI</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a> ·
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
@@ -250,8 +251,8 @@ REFLECT_REFRESH_INTERVAL_SECONDS=300        # refresh-enabled report server
 extension for MCP server, tool, transport, and protocol identity, not a second
 call ledger.
 
-See [the current architecture](docs/current-architecture.md) for module and data
-ownership.
+See the [contribution guide](CONTRIBUTING.md#architecture-and-ownership) for
+module ownership, data flow, and architectural guardrails.
 
 ## Common Commands
 
@@ -362,10 +363,9 @@ poetry run pytest -q --no-cov
 poetry run python scripts/release_workflow.py release-notes 0.9.7
 ```
 
-See [AGENTS.md](AGENTS.md) for repository conventions,
-[product.md](product.md) for bounded product priorities, and
-[the analysis schema](docs/ai-observability-schema.md) for canonical telemetry
-fields.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for architecture, development, and review
+conventions, and [the analysis schema](docs/ai-observability-schema.md) for
+canonical telemetry fields.
 
 ## License
 

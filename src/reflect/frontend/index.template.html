@@ -89,15 +89,28 @@
     </a>
     <span class="brand-badge" id="demo-badge">DEMO</span>
   </div>
+  <div id="preparation-status" class="preparation-status" role="status" aria-live="polite" aria-atomic="true" hidden>
+    <span class="preparation-status-dot" aria-hidden="true"></span>
+    <span class="preparation-status-copy-wrap">
+      <span id="preparation-status-kicker" class="preparation-status-kicker">Telemetry</span>
+      <span id="preparation-status-copy" class="preparation-status-copy">Checking local status…</span>
+    </span>
+    <span class="preparation-status-progress">
+      <span class="preparation-status-bars" aria-hidden="true">
+        <span class="preparation-status-bar"></span>
+        <span class="preparation-status-bar"></span>
+        <span class="preparation-status-bar"></span>
+        <span class="preparation-status-bar"></span>
+        <span class="preparation-status-bar"></span>
+      </span>
+      <span id="preparation-status-detail" class="preparation-status-detail">Connecting…</span>
+    </span>
+  </div>
   <div class="header-meta">
     <div id="hdr-range"></div>
     <div id="hdr-ts"></div>
   </div>
 </header>
-<div id="preparation-status" class="preparation-status" role="status" aria-live="polite" hidden>
-  <span class="preparation-status-dot" aria-hidden="true"></span>
-  <span id="preparation-status-copy">Refreshing local telemetry...</span>
-</div>
 
 <!-- ── Nav tabs ── -->
 <nav id="tabs" role="tablist" aria-label="Dashboard sections">

@@ -50,6 +50,24 @@ function hideReportLoader(){
 
 let preparationStatusPollTimer = null;
 const DASHBOARD_REFRESH_MIN_INTERVAL_MS = 30000;
+const PREPARATION_PHASES = Object.freeze({
+  opening_store: 1,
+  backing_up_store: 1,
+  migrating_schema: 1,
+  ingesting_traces: 2,
+  ingesting_logs: 2,
+  ingesting_sessions: 3,
+  normalizing: 3,
+  updating_canonical_state: 4,
+  pruning_sessions: 4,
+  refreshing_graph: 5,
+  refreshing_rollups: 5,
+  refreshing_improvements: 5,
+  vacuuming_store: 5,
+  complete: 5,
+});
+const PREPARATION_PHASE_LABELS = ['Store', 'Signals', 'Reconcile', 'Index', 'Derive'];
+
 function formatStorageBytes(value){
   const bytes = Math.max(0, Number(value || 0));
   if (bytes < 1024) return `${Math.round(bytes)} B`;
@@ -63,87 +81,142 @@ function formatStorageBytes(value){
   return `${size.toFixed(1)} ${unit}`;
 }
 
-function rawStorageNeedsAttention(rawStorage){
-  return Boolean(
-    rawStorage
-    && (
-      rawStorage.accepting_telemetry === false
-      || Number(rawStorage.usage_ratio || 0) >= 0.8
-      || rawStorage.error
-    )
-  );
+function formatPreparationElapsed(startedAt){
+  const started = Date.parse(startedAt || '');
+  if (!Number.isFinite(started)) return '';
+  const seconds = Math.max(1, Math.round((Date.now() - started) / 1000));
+  if (seconds < 60) return `${seconds}s elapsed`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${seconds % 60}s elapsed`;
+}
+
+function formatNextRefresh(automaticRefresh){
+  if (!automaticRefresh?.enabled) return 'Refresh on demand';
+  const nextRun = new Date(automaticRefresh.next_run_at || '');
+  if (Number.isNaN(nextRun.getTime())) return 'Automatic refresh on';
+  return `Next refresh ${nextRun.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`;
+}
+
+function updatePreparationStatus({tone, kicker, message, detail, phase = 0, active = false}){
+  const status = document.getElementById('preparation-status');
+  const kickerNode = document.getElementById('preparation-status-kicker');
+  const copy = document.getElementById('preparation-status-copy');
+  const detailNode = document.getElementById('preparation-status-detail');
+  if (!status || !kickerNode || !copy || !detailNode) return;
+  const boundedPhase = Math.max(0, Math.min(5, Number(phase || 0)));
+  status.className = `preparation-status ${tone}`;
+  status.dataset.phase = String(boundedPhase);
+  status.hidden = false;
+  kickerNode.textContent = kicker;
+  copy.textContent = message;
+  copy.title = message;
+  detailNode.textContent = detail;
+  detailNode.title = detail;
+  status.querySelectorAll('.preparation-status-bar').forEach((bar, index) => {
+    bar.classList.toggle('is-filled', index < boundedPhase);
+    bar.classList.toggle('is-active', active && index === boundedPhase - 1);
+  });
 }
 
 function renderRawStorageStatus(rawStorage){
-  const status = document.getElementById('preparation-status');
-  const copy = document.getElementById('preparation-status-copy');
-  if (!status || !copy || !rawStorage) return false;
+  if (!rawStorage) return false;
   const used = formatStorageBytes(rawStorage.raw_bytes);
   const limit = formatStorageBytes(rawStorage.raw_limit_bytes);
   if (rawStorage.accepting_telemetry === false) {
-    status.className = 'preparation-status failed';
-    status.hidden = false;
-    copy.textContent = `Capture paused: raw OTLP storage reached its ${limit} limit (${used} used). Refresh telemetry to resume capture.`;
+    updatePreparationStatus({
+      tone: 'failed',
+      kicker: 'Storage limit',
+      message: 'Telemetry capture is paused. Refresh to reclaim processed segments.',
+      detail: `${used} of ${limit} · action required`,
+      phase: 5,
+    });
     return true;
   }
   const ratio = Number(rawStorage.usage_ratio || 0);
   if (ratio >= 0.8) {
-    status.className = 'preparation-status warning';
-    status.hidden = false;
-    copy.textContent = `Raw OTLP storage is ${Math.round(ratio * 100)}% full (${used} of ${limit}). The next automatic refresh will reclaim processed segments.`;
+    updatePreparationStatus({
+      tone: 'warning',
+      kicker: 'Storage capacity',
+      message: `Raw OTLP storage is ${Math.round(ratio * 100)}% full. The next refresh will reclaim processed segments.`,
+      detail: `${used} of ${limit}`,
+      phase: Math.ceil(ratio * 5),
+    });
     return true;
   }
   if (rawStorage.error) {
-    status.className = 'preparation-status warning';
-    status.hidden = false;
-    copy.textContent = 'Capture storage status is unavailable. Check reflect doctor for details.';
+    updatePreparationStatus({
+      tone: 'warning',
+      kicker: 'Capture status',
+      message: 'Storage status is unavailable. Check reflect doctor for details.',
+      detail: 'Capture health unknown',
+    });
     return true;
   }
   return false;
 }
 
-function renderPreparationStatus(preparation, persistentOverride = false){
-  const status = document.getElementById('preparation-status');
-  const copy = document.getElementById('preparation-status-copy');
-  if (!status || !copy) return false;
+function renderPreparationStatus(preparation, automaticRefresh){
   const state = preparation?.state || 'idle';
-  status.className = `preparation-status ${state}`;
+  const phase = PREPARATION_PHASES[preparation?.stage] || 0;
+  const phaseLabel = PREPARATION_PHASE_LABELS[phase - 1] || 'Ready';
   if (state === 'running') {
-    status.hidden = false;
-    copy.textContent = preparation.message || 'Refreshing local telemetry...';
+    const elapsed = formatPreparationElapsed(preparation.started_at);
+    updatePreparationStatus({
+      tone: 'running',
+      kicker: `Telemetry refresh · ${phaseLabel}`,
+      message: preparation.message || 'Refreshing local telemetry…',
+      detail: `Step ${phase || 1} of 5${elapsed ? ` · ${elapsed}` : ''}`,
+      phase: phase || 1,
+      active: true,
+    });
     return true;
   }
   if (state === 'failed') {
-    status.hidden = false;
-    copy.textContent = preparation.error
-      ? `Refresh failed: ${preparation.error}`
-      : 'Refresh failed. Check the server log for details.';
+    updatePreparationStatus({
+      tone: 'failed',
+      kicker: 'Refresh failed',
+      message: preparation.error || 'Check the server log for details.',
+      detail: phase ? `Stopped at step ${phase} of 5` : 'Action required',
+      phase,
+    });
     return false;
   }
   if (state === 'complete') {
     const completion = preparation.finished_at || `generation:${preparation.generation || 0}`;
-    const deferredReplays = preparation.result?.deferred_replays || [];
+    const details = preparation.result?.details || {};
+    const deferredReplays = details.deferred_replays || [];
     let previousCompletion = '';
     try {
       previousCompletion = window.sessionStorage.getItem('reflect.preparation.finished_at') || '';
       window.sessionStorage.setItem('reflect.preparation.finished_at', completion);
     } catch {}
-    status.hidden = false;
-    copy.textContent = deferredReplays.length
-      ? `Sessions refreshed. Deferred replay for replaced ${deferredReplays.join(', ')}; run reflect refresh to reconcile it.`
-      : previousCompletion === completion
-        ? 'Local telemetry is current.'
-        : 'Refresh complete. Loading the new snapshot...';
+    const sessionCount = Number(details.sessions ?? details.changed_sessions ?? details.refreshed_sessions ?? 0);
+    const summary = sessionCount > 0
+      ? `${sessionCount.toLocaleString()} session${sessionCount === 1 ? '' : 's'} reconciled`
+      : 'Snapshot verified';
+    updatePreparationStatus({
+      tone: deferredReplays.length ? 'warning' : 'complete',
+      kicker: deferredReplays.length ? 'Replay deferred' : 'Telemetry ready',
+      message: deferredReplays.length
+        ? `Sessions refreshed. Run reflect refresh to reconcile ${deferredReplays.join(', ')}.`
+        : previousCompletion === completion
+          ? `${summary}. Local telemetry is current.`
+          : 'Refresh complete. Loading the new snapshot…',
+      detail: formatNextRefresh(automaticRefresh),
+      phase: 5,
+    });
     if (previousCompletion !== completion) {
       window.setTimeout(() => window.location.reload(), 450);
       return false;
     }
-    if (!persistentOverride) {
-      window.setTimeout(() => { status.hidden = true; }, 5000);
-    }
     return false;
   }
-  status.hidden = true;
+  updatePreparationStatus({
+    tone: 'idle',
+    kicker: 'Telemetry ready',
+    message: 'Waiting for the next local refresh.',
+    detail: formatNextRefresh(automaticRefresh),
+  });
   return false;
 }
 
@@ -155,10 +228,9 @@ async function pollPreparationStatus(){
     });
     if (!response.ok) throw new Error('status-unavailable');
     const payload = await response.json();
-    const storageNeedsAttention = rawStorageNeedsAttention(payload.raw_storage);
     const preparationRunning = renderPreparationStatus(
       payload.preparation,
-      storageNeedsAttention,
+      payload.automatic_refresh,
     );
     renderRawStorageStatus(payload.raw_storage);
     preparationStatusPollTimer = window.setTimeout(
@@ -166,8 +238,12 @@ async function pollPreparationStatus(){
       preparationRunning ? 750 : DASHBOARD_REFRESH_MIN_INTERVAL_MS,
     );
   } catch {
-    const status = document.getElementById('preparation-status');
-    if (status) status.hidden = true;
+    updatePreparationStatus({
+      tone: 'warning',
+      kicker: 'Status unavailable',
+      message: 'Dashboard data remains available while Reflect reconnects.',
+      detail: 'Retrying in 30s',
+    });
     preparationStatusPollTimer = window.setTimeout(
       pollPreparationStatus,
       DASHBOARD_REFRESH_MIN_INTERVAL_MS,

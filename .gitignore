@@ -39,6 +39,11 @@ state/
 docs/reports/*
 !docs/reports/showcase.json
 
+# Local architecture and product planning notes
+/product.md
+/docs/current-architecture.md
+/docs/plan/
+
 # Environment
 .env
 

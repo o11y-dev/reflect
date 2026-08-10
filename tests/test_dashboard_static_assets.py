@@ -102,15 +102,29 @@ def test_dashboard_html_surfaces_background_refresh_progress(path: Path):
     text = path.read_text(encoding="utf-8")
 
     assert 'id="preparation-status"' in text
+    assert 'id="preparation-status-kicker"' in text
     assert 'id="preparation-status-copy"' in text
+    assert 'id="preparation-status-detail"' in text
+    assert text.count('class="preparation-status-bar"') == 5
+    header = text[text.index("<header>") : text.index("</header>")]
+    assert 'id="preparation-status"' in header
+    assert "position:fixed;top:68px" not in text
     assert "function pollPreparationStatus()" in text
     assert "fetch('/api/status'" in text
-    assert "preparation.message || 'Refreshing local telemetry...'" in text
-    assert "'Refresh complete. Loading the new snapshot...'" in text
+    assert "opening_store: 1" in text
+    assert "ingesting_sessions: 3" in text
+    assert "normalizing: 3" in text
+    assert "updating_canonical_state: 4" in text
+    assert "refreshing_improvements: 5" in text
+    assert "preparation.message || 'Refreshing local telemetry…'" in text
+    assert "'Refresh complete. Loading the new snapshot…'" in text
+    assert "`Step ${phase || 1} of 5${elapsed ? ` · ${elapsed}` : ''}`" in text
+    assert "animation:preparation-sweep" in text
+    assert "@media(prefers-reduced-motion:reduce)" in text
     assert "window.location.reload()" in text
     assert "startPreparationStatusPolling();" in text
     assert "hdr-ts').textContent = 'Loaded '" in text
-    assert "Capture paused: raw OTLP storage reached its" in text
+    assert "Telemetry capture is paused. Refresh to reclaim processed segments." in text
     assert "Raw OTLP storage is ${Math.round(ratio * 100)}% full" in text
 
 

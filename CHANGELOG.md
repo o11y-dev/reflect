@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Replaced tracked internal architecture and planning notes with a public contribution guide covering canonical data flow, ownership, migrations, frontend generation, privacy, testing, and review expectations.
 - Refresh-enabled browser servers now prepare telemetry immediately and every five minutes through one non-overlapping coordinator; manual refresh uses the same lifecycle and performs complete rotated-segment reconciliation.
 - The typed agent capability registry now also owns active native-OTel surfaces. Historical Gemini remains ingestible but is excluded from setup and active telemetry status, with Antigravity named as the current Gemini-family target.
 - Made `reflect.views` the explicit public SQL read-model boundary and moved report process/preparation ownership out of the CLI composition root.
@@ -58,6 +59,7 @@
 
 ### Fixed
 
+- Moved refresh, storage-pressure, and failure notifications into a responsive header activity rail with five real preparation phases, richer status detail, and reduced-motion-safe animation so alerts no longer cover dashboard content.
 - Stopped materializing Codex runtime-internal OTLP spans in SQLite after classification; bounded raw segments still checkpoint and rotate without growing canonical evidence.
 - Added a combined 4 GiB raw trace/log admission guard that preserves existing evidence and rejects new telemetry at capacity, with HTTP/gRPC backpressure plus doctor, server, health API, and dashboard status.
 - Source checkouts now use the `pyproject.toml` version as runtime truth and explain stale installed environment metadata instead of reporting the checkout as an older release.
