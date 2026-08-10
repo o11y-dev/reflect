@@ -24,14 +24,6 @@ Usage:
     python3 src/reflect/core.py \\
         --otlp-traces ~/.reflect/state/otlp/otel-traces.active.jsonl
 
-    # Markdown report
-    python3 src/reflect/core.py \\
-        --otlp-traces ~/.reflect/state/otlp/otel-traces.active.jsonl --output reports/my-report.md
-
-    # From an explicit local hook source
-    python3 src/reflect/core.py \\
-        --sessions-dir ".cursor/hooks/opentelemetry-hook/.state/sessions" \\
-        --spans-dir ".cursor/hooks/opentelemetry-hook/.state/local_spans"
 """
 
 from __future__ import annotations
@@ -104,9 +96,9 @@ from reflect.preparation_pipeline import (
 )
 from reflect.processing import analyze_telemetry
 from reflect.raw_segments import readable_segment_paths, segment_inventory
-from reflect.report import render_report
 from reflect.shell_completion import (
     SUPPORTED_SHELLS,
+    CompletionInstallPlan,
     ShellCompletionManager,
     complete_loop_id,
     complete_observation_id,
@@ -631,8 +623,8 @@ def _resolve_and_analyze(
     spans_dir: Path | None,
     demo: bool,
     time_range: str,
-) -> tuple[TelemetryStats, Path | None, Path, Path, str, datetime | None]:
-    """Shared data-loading logic for main and subcommands."""
+) -> TelemetryStats:
+    """Load the bounded native evidence used by agent-assisted skill discovery."""
     if demo:
         _demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
         if not _demo_traces.exists():
@@ -659,29 +651,10 @@ def _resolve_and_analyze(
     if otlp_traces is None:
         otlp_traces = _default_otlp_traces()
 
-    stats = analyze_telemetry(sessions_dir, spans_dir, otlp_traces, since=since)
-    return stats, otlp_traces, sessions_dir, spans_dir, time_range, since
+    return analyze_telemetry(sessions_dir, spans_dir, otlp_traces, since=since)
 
 
 @click.group(invoke_without_command=True)
-@click.option(
-    "--sessions-dir",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="Directory containing session metadata JSON files.",
-)
-@click.option(
-    "--spans-dir",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="Directory containing local span JSONL files.",
-)
-@click.option(
-    "--output",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="Also save a markdown report to this file.",
-)
 @click.option(
     "--otlp-traces",
     type=click.Path(path_type=Path),
@@ -700,24 +673,19 @@ def _resolve_and_analyze(
     help="Run with bundled sample data. Great for first-time users or screenshots.",
 )
 @click.option("--foreground", is_flag=True, help="Keep the browser report server attached to this terminal.")
-@click.option("--period", "time_range", type=click.Choice(["day", "week", "month", "all"]), default="week", show_default=True)
 @click.pass_context
 def main(
     ctx: click.Context,
-    sessions_dir: Path | None,
-    spans_dir: Path | None,
-    output: Path | None,
     otlp_traces: Path | None,
     db_path: Path,
     demo: bool,
     foreground: bool,
-    time_range: str,
 ) -> None:
     """Open the local Reflect browser report."""
     if ctx.invoked_subcommand is not None:
         return
 
-    if not foreground and output is None and not demo:
+    if not foreground and not demo:
         _start_background_report_server(
             db_path=db_path,
             otlp_traces=otlp_traces,
@@ -727,11 +695,7 @@ def main(
 
     _run_browser_report(
         otlp_traces=otlp_traces,
-        sessions_dir=sessions_dir,
-        spans_dir=spans_dir,
-        time_range=time_range,
         demo=demo,
-        output=output,
         db_path=db_path,
         refresh=True,
     )
@@ -741,6 +705,24 @@ main.add_command(database_commands)
 main.add_command(ingest_command)
 main.add_command(memory_commands)
 main.add_command(schema_commands)
+
+
+def _completion_plan_lines(plan: CompletionInstallPlan) -> tuple[str, ...]:
+    lines = [
+        f"Shell completion install plan ({plan.shell}):",
+        f"  Script: {plan.script_path}",
+    ]
+    if plan.config_path is None:
+        lines.append("  Shell config: unchanged (autoload directory)")
+    else:
+        lines.extend(
+            (
+                f"  Shell config: {plan.config_path}",
+                "  Managed block:",
+                *(plan.managed_block or "").splitlines(),
+            )
+        )
+    return tuple(lines)
 
 
 @main.command("completion")
@@ -767,7 +749,10 @@ def completion(shell: str | None, install: bool) -> None:
     if not install:
         click.echo(manager.source(selected_shell), nl=False)
         return
-    result = manager.install(selected_shell)
+    plan = manager.plan(selected_shell)
+    for line in _completion_plan_lines(plan):
+        click.echo(line)
+    result = manager.install(plan)
     state = "Installed" if result.changed else "Already current"
     click.echo(f"{state}: {result.script_path}")
     if result.config_path is not None:
@@ -2057,11 +2042,7 @@ def _render_preparation_summary(console: Console, preparation: dict[str, object]
 def _run_browser_report(
     *,
     otlp_traces: Path | None,
-    sessions_dir: Path | None,
-    spans_dir: Path | None,
-    time_range: str,
     demo: bool,
-    output: Path | None,
     db_path: Path,
     refresh: bool,
     open_browser: bool = True,
@@ -2088,10 +2069,7 @@ def _run_browser_report(
                 and otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
             )
     preparation_worker = None
-    requires_fresh_snapshot = bool(
-        output is not None
-        or not _has_sql_report_snapshot(db_path)
-    )
+    requires_fresh_snapshot = not _has_sql_report_snapshot(db_path)
     if not refresh:
         if requires_fresh_snapshot:
             raise click.ClickException(
@@ -2134,18 +2112,6 @@ def _run_browser_report(
         )
         click.echo("Serving the current snapshot; refreshing telemetry in the background.")
 
-    sessions_dir = sessions_dir or _default_sessions_dir()
-    spans_dir = spans_dir or _default_spans_dir()
-    if output is not None:
-        stats, _, sessions_dir, spans_dir, _, _ = _resolve_and_analyze(
-            otlp_traces=otlp_traces,
-            sessions_dir=sessions_dir,
-            spans_dir=spans_dir,
-            demo=demo,
-            time_range=time_range,
-        )
-        render_report(stats, sessions_dir, spans_dir, output)
-        print(f"Report saved to: {output}")
     start_publish_server(
         db_path=db_path,
         preparation_worker=preparation_worker,
@@ -2591,7 +2557,7 @@ def _discover_skills(
     agent_bin, agent_flags = _resolve_skills_agent(agent)
 
     with console.status("[bold orange3]reflecting...[/bold orange3]", spinner="dots"):
-        stats, _, _, _, _, _ = _resolve_and_analyze(
+        stats = _resolve_and_analyze(
             otlp_traces=otlp_traces,
             sessions_dir=sessions_dir,
             spans_dir=spans_dir,
@@ -3191,10 +3157,9 @@ def _resolve_setup_agent_selection(
     shell_complete=_complete_setup_agent,
 )
 @click.option(
-    "--shell-completion/--no-shell-completion",
-    default=True,
-    show_default=True,
-    help="Install autocomplete during setup; use --no-shell-completion to opt out.",
+    "--shell-completion",
+    is_flag=True,
+    help="Preview and install autocomplete for the current shell.",
 )
 @click.option(
     "--autostart/--no-autostart",
@@ -3212,7 +3177,7 @@ def setup(
     agent_names: tuple[str, ...],
     all_agents: bool,
     local_agent_names: tuple[str, ...],
-    shell_completion: bool | None,
+    shell_completion: bool,
     autostart: bool | None,
 ) -> None:
     """Install opentelemetry-hooks, configure local data export, and suggest agent enablement."""
@@ -3266,7 +3231,7 @@ def setup(
         selected_agent_names=selected_agent_keys,
         local_agent_names=local_agent_keys,
     )
-    if shell_completion is not False:
+    if shell_completion:
         manager = ShellCompletionManager(main)
         selected_shell = manager.detect_shell()
         if selected_shell is None:
@@ -3276,7 +3241,10 @@ def setup(
             )
         else:
             try:
-                result = manager.install(selected_shell)
+                plan = manager.plan(selected_shell)
+                for line in _completion_plan_lines(plan):
+                    console.print(line, markup=False, highlight=False)
+                result = manager.install(plan)
             except OSError as exc:
                 console.print(
                     "[yellow]Telemetry setup completed, but shell autocomplete could not be "
@@ -3286,6 +3254,11 @@ def setup(
             else:
                 state = "installed" if result.changed else "already current"
                 console.print(f"[green]✓[/] Shell autocomplete {state}: {result.script_path}")
+    else:
+        console.print(
+            "[dim]Shell autocomplete unchanged; run `reflect completion --install` "
+            "or repeat setup with `--shell-completion`.[/dim]"
+        )
     if autostart is not False:
         _enable_autostart(console, required=autostart is True)
 

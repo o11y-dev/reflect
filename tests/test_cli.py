@@ -572,15 +572,16 @@ class TestBrowserMode:
             result = runner.invoke(main, [
                 "--foreground",
                 "--otlp-traces", str(otlp_file),
-                "--sessions-dir", str(tmp_path / "s"),
-                "--spans-dir", str(tmp_path / "sp"),
                 "--db-path", str(db_path),
             ])
             assert result.exit_code == 0
             mock_server.assert_called_once()
             assert mock_server.call_args.kwargs["db_path"] == db_path
 
-    @pytest.mark.parametrize("flag", ["--terminal", "--no-terminal", "--sql-only", "--day", "--week", "--month", "--all"])
+    @pytest.mark.parametrize(
+        "flag",
+        ["--terminal", "--no-terminal", "--sql-only", "--output", "--day", "--week", "--month", "--all"],
+    )
     def test_removed_legacy_flags_fail(self, runner, flag):
         result = runner.invoke(main, [flag])
         assert result.exit_code != 0
@@ -599,8 +600,6 @@ class TestBrowserReportCommandSurface:
             result = runner.invoke(main, [
                 "--foreground",
                 "--otlp-traces", str(otlp_file),
-                "--sessions-dir", str(tmp_path / "s"),
-                "--spans-dir", str(tmp_path / "sp"),
                 "--db-path", str(db_path),
             ])
         assert result.exit_code == 0
@@ -646,11 +645,7 @@ class TestBrowserReportCommandSurface:
              patch("reflect.preparation_pipeline.prepare_sql_report_db") as mock_prepare:
             core._run_browser_report(
                 otlp_traces=None,
-                sessions_dir=None,
-                spans_dir=None,
-                time_range="week",
                 demo=False,
-                output=None,
                 db_path=db_path,
                 refresh=False,
             )
@@ -799,21 +794,6 @@ class TestBrowserReportCommandSurface:
             ).fetchone()[0] > 0
         finally:
             conn.close()
-
-    def test_report_with_output_saves_markdown(self, runner, otlp_file, tmp_path):
-        with patch("reflect.core.start_publish_server"), \
-             patch("reflect.core.render_report") as mock_report:
-            mock_report.return_value = "# report"
-            db_path = tmp_path / "reflect.db"
-            result = runner.invoke(main, [
-                "--otlp-traces", str(otlp_file),
-                "--sessions-dir", str(tmp_path / "s"),
-                "--spans-dir", str(tmp_path / "sp"),
-                "--db-path", str(db_path),
-                "--output", str(tmp_path / "report.md"),
-            ])
-        assert result.exit_code == 0
-        mock_report.assert_called_once()
 
 _FAKE_SKILLS = [
     {"name": "debug-loop", "description": "Iterative debug workflow", "content": "## Steps\n1. Do the thing"},
@@ -1325,8 +1305,6 @@ class TestNoDataNoCrash:
              patch("reflect.preparation_pipeline._discover_rich_session_files", return_value=[]):
             result = runner.invoke(main, [
                 "--foreground",
-                "--sessions-dir", str(tmp_path / "s"),
-                "--spans-dir", str(tmp_path / "sp"),
                 "--db-path", str(tmp_path / "reflect.db"),
             ])
             assert result.exit_code == 0
@@ -1339,8 +1317,6 @@ class TestUpdateAdvisor:
             result = runner.invoke(main, [
                 "--foreground",
                 "--otlp-traces", str(otlp_file),
-                "--sessions-dir", str(tmp_path / "s"),
-                "--spans-dir", str(tmp_path / "sp"),
                 "--db-path", str(tmp_path / "reflect.db"),
             ])
         assert result.exit_code == 0
@@ -2315,7 +2291,7 @@ class TestSetup:
         ):
             result = runner.invoke(
                 main,
-                ["setup", "--all-agents", "--no-shell-completion"],
+                ["setup", "--all-agents"],
         )
 
         assert result.exit_code == 0
@@ -2336,7 +2312,6 @@ class TestSetup:
                 [
                     "setup",
                     "--all-agents",
-                    "--no-shell-completion",
                     "--no-autostart",
                 ],
             )

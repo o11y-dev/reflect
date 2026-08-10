@@ -207,11 +207,7 @@ def _run_daemon(config: ReportServerConfig, daemon: ReportServerDaemon) -> None:
     try:
         _run_browser_report(
             otlp_traces=config.otlp_traces,
-            sessions_dir=None,
-            spans_dir=None,
-            time_range="week",
             demo=False,
-            output=None,
             db_path=config.db_path,
             refresh=config.refresh,
             open_browser=config.open_browser,

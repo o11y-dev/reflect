@@ -75,7 +75,6 @@ session rows, and chart series are views over canonical evidence.
 | Conversation projection | `src/reflect/conversation_adapters.py` | Convert native provider records into high-fidelity session detail |
 | Cursor usage enrichment | `src/reflect/store/cursor_usage.py` | Add provenance-marked transcript usage estimates when exact usage is absent |
 | Session-rule context | `src/reflect/session_rules/context.py` | Map canonical summaries or detailed spans into scoring inputs |
-| Markdown | `src/reflect/report.py` | Render canonical `TelemetryStats` |
 
 `reflect.core:main` remains the installed CLI entry point. Domain logic belongs
 in the focused owner above, not in command handlers.

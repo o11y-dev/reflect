@@ -172,17 +172,19 @@ tokens, cost, hooks, or transcripts.
 
 | Agent | Status | Current evidence path |
 |---|---|---|
-| Claude Code | Supported | Native OTel, hooks, and native sessions |
-| OpenAI Codex CLI | Supported | Native OTel and native sessions |
-| GitHub Copilot | Supported | Native OTel, hooks, and native sessions |
-| Cursor | Supported | Native session/log adapters and optional hooks; exact tokens may be unavailable |
-| OpenCode | Supported | Native SQLite sessions and hooks |
-| Windsurf | Supported | Hooks and configuration snapshots; MCP is editor-config only |
-| Antigravity (`agy`) | Partial | Reflect MCP task runs; native tool telemetry and hooks are not verified |
-| Gemini CLI | Historical | Existing native OTel and session data remain readable; it is not a current live-test target |
+| Claude Code | Supported | Native OTel + hooks + native sessions |
+| Cursor | Supported | Session/log adapters + optional hooks |
+| Antigravity | Partial | Reflect MCP task runs; native tool telemetry unverified |
+| GitHub Copilot | Supported | Native OTel + hooks + native sessions |
+| OpenAI Codex CLI | Supported | Native OTel + native sessions |
+| OpenCode | Supported | Native SQLite sessions + hooks |
+| Windsurf | Supported | Hooks + configuration snapshots |
+| Gemini CLI | Historical | Historical native OTel + session adapter |
 
 Planned agents may be inventoried for configuration or skill paths, but Reflect
 does not label them as capturing.
+
+Antigravity's current CLI alias is `agy`; Windsurf MCP setup is editor-config only.
 
 The registry in `src/reflect/agent_capabilities.py` feeds setup, doctor, aliases,
 skill distribution, MCP configuration, and local-agent tests.
@@ -288,11 +290,12 @@ successful logical MCP calls once its runtime telemetry has been ingested.
 
 ## Shell Completion
 
-Setup installs Click completion for Bash, Zsh, or Fish by default. Restart the
-shell once, or manage it directly:
+Setup leaves shell files unchanged by default. Review the exact target paths and
+managed block before an explicit Bash, Zsh, or Fish installation:
 
 ```bash
 reflect completion --install
+reflect setup --shell-completion
 reflect completion --shell zsh
 ```
 
@@ -304,7 +307,7 @@ Source development uses Poetry:
 poetry install --extras test
 poetry run reflect --demo
 poetry run reflect doctor
-poetry run pytest tests/test_dashboard_json.py -q
+poetry run pytest tests/test_dashboard_sql_api.py -q
 poetry run pytest -q
 ```
 
@@ -324,7 +327,7 @@ poetry run python scripts/release_workflow.py release-notes 0.9.6
 ```
 
 See [AGENTS.md](AGENTS.md) for repository conventions,
-[PRODUCT.md](PRODUCT.md) for bounded product priorities, and
+[product.md](product.md) for bounded product priorities, and
 [the analysis schema](docs/ai-observability-schema.md) for canonical telemetry
 fields.
 

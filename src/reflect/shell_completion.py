@@ -35,6 +35,17 @@ _MANAGED_END = "# <<< reflect shell completion <<<"
 
 
 @dataclass(frozen=True)
+class CompletionInstallPlan:
+    """Exact shell files and content an approved installation will change."""
+
+    shell: str
+    script_path: Path
+    config_path: Path | None
+    script: str
+    managed_block: str | None
+
+
+@dataclass(frozen=True)
 class CompletionInstallResult:
     """One idempotent shell-completion installation result."""
 
@@ -78,21 +89,38 @@ class ShellCompletionManager:
             self.complete_var,
         ).source()
 
-    def install(self, shell: str) -> CompletionInstallResult:
-        """Install a generated script and activate it in the shell idempotently."""
+    def plan(self, shell: str) -> CompletionInstallPlan:
+        """Describe the exact completion files and content before installation."""
         script_path, config_path = self._installation_paths(shell)
         script = self.source(shell)
-        script_changed = self._write_if_changed(script_path, script)
-
-        config_changed = False
+        managed_block = None
         if config_path is not None:
             source_line = f"[ -f {shlex.quote(str(script_path))} ] && . {shlex.quote(str(script_path))}"
-            config_changed = self._upsert_managed_block(config_path, source_line)
-
-        return CompletionInstallResult(
+            managed_block = f"{_MANAGED_START}\n{source_line}\n{_MANAGED_END}"
+        return CompletionInstallPlan(
             shell=shell,
             script_path=script_path,
             config_path=config_path,
+            script=script,
+            managed_block=managed_block,
+        )
+
+    def install(self, plan: CompletionInstallPlan) -> CompletionInstallResult:
+        """Apply one reviewed completion plan idempotently."""
+        script_changed = self._write_if_changed(plan.script_path, plan.script)
+
+        config_changed = False
+        if plan.config_path is not None:
+            assert plan.managed_block is not None
+            config_changed = self._upsert_managed_block(
+                plan.config_path,
+                plan.managed_block,
+            )
+
+        return CompletionInstallResult(
+            shell=plan.shell,
+            script_path=plan.script_path,
+            config_path=plan.config_path,
             changed=script_changed or config_changed,
         )
 
@@ -116,9 +144,8 @@ class ShellCompletionManager:
         return True
 
     @staticmethod
-    def _upsert_managed_block(path: Path, source_line: str) -> bool:
+    def _upsert_managed_block(path: Path, block: str) -> bool:
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
-        block = f"{_MANAGED_START}\n{source_line}\n{_MANAGED_END}"
         pattern = re.compile(
             rf"{re.escape(_MANAGED_START)}.*?{re.escape(_MANAGED_END)}",
             flags=re.DOTALL,

@@ -153,29 +153,6 @@ Acceptance:
 Boundary: privacy metadata belongs to the canonical evidence and change-review
 contracts, not scattered renderer warnings.
 
-## Deferred simplification and trust gates
-
-These are bounded follow-ups, not part of the current cleanup:
-
-- **Capability-aware native discovery:** use configured agent homes and their
-  environment overrides when locating sessions. Acceptance: isolated-home tests
-  ingest every supported native source. Boundary: do not redesign normalization.
-- **Incremental OpenCode ingestion:** read only new or changed native records.
-  Acceptance: a second unchanged refresh scans no historical messages and adds
-  no logical events. Boundary: preserve exact source provenance.
-- **Standalone Markdown rendering:** provide a render-and-exit path that does not
-  start the browser server. Acceptance: one CLI test writes a report and exits.
-  Boundary: keep `TelemetryStats` as the Markdown input contract.
-- **Deletion-led CLI presentation cleanup:** move cohesive command families out
-  of `core.py` only when the change removes duplication or code. Acceptance: each
-  pass is net-negative and leaves command behavior unchanged.
-- **Reviewable completion installation:** preview or explicitly confirm shell
-  profile mutation. Acceptance: setup reports the exact managed file and block.
-  Boundary: retain idempotent Bash, Zsh, and Fish completion behavior.
-- **Release metadata accuracy:** keep supported agents, transports, and platform
-  claims aligned with the packaged product. Acceptance: release checks compare
-  public metadata with the capability registry and CI platform matrix.
-
 ## Packaged cross-agent proof
 
 Keep one deterministic fresh-wheel scenario in which six headless clients —

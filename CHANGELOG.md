@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Removed the standalone Markdown renderer, its unreachable aggregate insight and in-memory graph presentation stacks, and dead root report flags; shell completion is now an explicit reviewed installation with exact target and managed-block preview, while public agent/platform metadata is bound to the capability registry and CI matrix.
 - Deleted the orphaned terminal dashboard and its renderer-only tests, retained shared CLI preparation progress under `cli/`, and renamed native store, conversation, Cursor usage, and session-rule context modules for their actual responsibilities without compatibility aliases.
 - Declared macOS and Linux as the supported operating systems, matching the tested CI matrix and POSIX raw-segment locking contract.
 - Restored the Skills Registry as a first-class browser surface between Workflows and Impact, preserving the existing version, installation, exposure, and usage evidence while making durable procedures directly discoverable again.

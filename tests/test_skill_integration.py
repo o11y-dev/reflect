@@ -143,8 +143,6 @@ class TestCliInvocable:
             result = runner.invoke(main, [
                 "--foreground",
                 "--otlp-traces", str(p),
-                "--sessions-dir", str(tmp_path / "s"),
-                "--spans-dir", str(tmp_path / "sp"),
                 "--db-path", str(tmp_path / "reflect.db"),
             ])
         assert result.exit_code == 0

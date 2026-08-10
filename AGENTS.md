@@ -4,7 +4,7 @@ Guidance for AI agents working in this repository.
 
 ## What this project is
 
-**reflect** is a local-first CLI for AI agent telemetry and measurable workflow improvement. It reads OTLP plus supported agent-native stores, normalizes them into one SQLite model, and renders CLI, markdown, MCP, and browser views. Current client capabilities come from `agent_capabilities.py`; Gemini CLI is historical ingestion, while Antigravity is the current partial MCP/headless target.
+**reflect** is a local-first CLI for AI agent telemetry and measurable workflow improvement. It reads OTLP plus supported agent-native stores, normalizes them into one SQLite model, and renders CLI, MCP, and browser views. Current client capabilities come from `agent_capabilities.py`; Gemini CLI is historical ingestion, while Antigravity is the current partial MCP/headless target.
 
 CLI entry point: `reflect.core:main`
 Installed as: `reflect` for releases via `pipx install .`; source development uses Poetry.
@@ -17,9 +17,6 @@ poetry install --extras test
 
 # Open the local browser dashboard
 poetry run reflect --otlp-traces ~/.reflect/state/otlp/otel-traces.active.jsonl
-
-# Also save a Markdown report while serving the dashboard
-poetry run reflect --foreground --otlp-traces ~/.reflect/state/otlp/otel-traces.active.jsonl --output reports/my-report.md
 
 # Demo and health checks
 poetry run reflect --demo
@@ -49,17 +46,15 @@ poetry run reflect doctor
 | `src/reflect/dashboard_server.py` | Thin browser routes, cache, and publish server |
 | `src/reflect/frontend/` | Canonical authored browser template, CSS, and JavaScript |
 | `src/reflect/data/index.html` | Generated packaged browser artifact; do not edit directly |
-| `src/reflect/graph.py` | Tool transition, co-occurrence, latency, and timeline graph derivation |
-| `src/reflect/insights.py` | Observations, recommendations, achievements, token economy |
-| `src/reflect/report.py` | Markdown report rendering |
-| `reports/` | Generated markdown reports |
+| `src/reflect/graph.py` | Weekly activity trend derivation shared by SQL views |
+| `src/reflect/insights/` | Session-quality scoring and its local distribution profile |
 | `docs/` | Hosted docs and dashboard artifacts |
 | `src/reflect/data/skills/reflect/` | Canonical tracked and packaged `reflect` skill |
 | `tests/` | Fast regression coverage for parsing, CLI, dashboard JSON, graphs, raw segments, and skill packaging |
 
 ## Architecture in one paragraph
 
-`parsing.py` discovers source inputs, `store/ingest.py` checkpoints them, and `store/normalize.py` promotes them into canonical SQLite evidence. `processing.py` and `analyze_telemetry()` build `TelemetryStats` for Markdown output. The browser queries the same SQLite store through `dashboard_queries.py`; `dashboard_server.py` only wires routes and lifecycle. Native conversation adapters provide high-fidelity session detail but never feed aggregates. Workflow evidence and impact use execution units, while sessions remain navigation and aggregate-usage containers. Never aggregate from already-shaped session cards.
+`parsing.py` discovers source inputs, `store/ingest.py` checkpoints them, and `store/normalize.py` promotes them into canonical SQLite evidence. `processing.py` and `analyze_telemetry()` build `TelemetryStats` for bounded agent-assisted analysis. The browser queries the same SQLite store through `dashboard_queries.py`; `dashboard_server.py` only wires routes and lifecycle. Native conversation adapters provide high-fidelity session detail but never feed aggregates. Workflow evidence and impact use execution units, while sessions remain navigation and aggregate-usage containers. Never aggregate from already-shaped session cards.
 
 ## Conventions
 
@@ -78,7 +73,7 @@ poetry run reflect doctor
 ## Engineering design defaults
 
 - **Prefer OOP for new stateful or swappable behavior.** When a change introduces lifecycle, configuration, strategy selection, adapters, stores, or renderer-like behavior, default to small classes with explicit methods instead of growing procedural branches. Keep pure functions for stateless transformations.
-- **Write agnostic, interchangeable code.** Avoid hard-coding one agent, vendor, transport, storage backend, or renderer into shared logic. Put provider-specific behavior behind narrow adapters or strategy objects so Claude, Codex, Copilot, Cursor, Gemini, hooks, native OTLP, JSONL, SQLite, markdown, CLI, and dashboard paths can evolve independently.
+- **Write agnostic, interchangeable code.** Avoid hard-coding one agent, vendor, transport, storage backend, or renderer into shared logic. Put provider-specific behavior behind narrow adapters or strategy objects so Claude, Codex, Copilot, Cursor, Gemini, hooks, native OTLP, JSONL, SQLite, CLI, and dashboard paths can evolve independently.
 - **Keep contracts explicit.** Prefer typed dataclasses/models, protocols, and small interface surfaces over loosely shaped dict plumbing across module boundaries. If dicts are the existing contract, normalize them at the boundary and document required keys in tests.
 - **Keep code and architecture lean.** Make the smallest coherent change that preserves the architecture. Every new class, module, helper, or interface must own meaningful state or lifecycle, remove demonstrated duplication, or isolate a real variant. Prefer reusing existing domain objects and consolidating paths over parallel abstractions. During review, remove redundant functions, wrappers, and fixtures, and compare complexity and code size before and after. Avoid speculative frameworks and unrelated refactors.
 - **Composition over condition piles.** When branching grows around agent type, source type, or output target, introduce a mapper/adapter/strategy and register it close to the relevant domain instead of adding long `if/elif` ladders in orchestration code.
@@ -107,7 +102,7 @@ Use the current `docs/showcase.html` page as the product visual baseline for pub
 
 ```bash
 # Fast targeted validation
-poetry run pytest tests/test_dashboard_json.py -q
+poetry run pytest tests/test_dashboard_sql_api.py -q
 
 # Full suite
 poetry run pytest -q
@@ -124,7 +119,6 @@ To add a new tracked metric:
 2. Thread the data through parsing / processing helpers
 3. Populate the field during telemetry analysis
 4. Export it in the renderer that needs it:
-   - `report.py`
    - the owning `dashboard_*.py` query or adapter module
 5. Add or update regression coverage in `tests/`
 
