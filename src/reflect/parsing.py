@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
+from reflect.agent_capabilities import get_agent_capability
 from reflect.context_artifacts import codex_context_exposures
 from reflect.opencode_store import (
     OpenCodeMessageRecord,
@@ -272,7 +273,7 @@ def _first_attr(attrs: dict, *names: str) -> str:
 
 
 def _load_codex_default_model() -> str:
-    config_path = Path.home() / ".codex" / "config.toml"
+    config_path = _configured_agent_home("codex") / "config.toml"
     try:
         data = tomllib.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError):
@@ -682,16 +683,35 @@ def _agent_tool_attrs(
     return attrs
 
 
+def _configured_agent_home(agent: str) -> Path:
+    capability = get_agent_capability(agent)
+    if capability is None:
+        raise ValueError(f"Unknown agent capability: {agent}")
+    return capability.home()
+
+
 def _discover_rich_session_files() -> list[tuple[str, Path]]:
-    home = Path.home()
     candidates: list[tuple[str, Path]] = []
-    candidates.extend(("codex", p) for p in sorted((home / ".codex" / "sessions").glob("**/*.jsonl")))
-    candidates.extend(("copilot", p) for p in sorted((home / ".copilot" / "session-state").glob("*/events.jsonl")))
-    candidates.extend(("cursor", p) for p in sorted((home / ".cursor" / "projects").glob("**/agent-transcripts/**/*.jsonl")))
-    candidates.extend(("claude", p) for p in sorted((home / ".claude" / "projects").glob("**/*.jsonl")))
-    candidates.extend(("gemini", p) for p in sorted((home / ".gemini" / "tmp").glob("**/chats/session-*.json")))
-    data_home = Path(os.environ.get("XDG_DATA_HOME", home / ".local" / "share")).expanduser()
-    opencode_db = data_home / "opencode" / "opencode.db"
+    sources = (
+        ("codex", _configured_agent_home("codex") / "sessions", "**/*.jsonl"),
+        ("copilot", _configured_agent_home("copilot") / "session-state", "*/events.jsonl"),
+        ("cursor", _configured_agent_home("cursor") / "projects", "**/agent-transcripts/**/*.jsonl"),
+        ("claude", _configured_agent_home("claude") / "projects", "**/*.jsonl"),
+        ("gemini", _configured_agent_home("gemini") / "tmp", "**/chats/session-*.json"),
+    )
+    for agent, root, pattern in sources:
+        candidates.extend((agent, path) for path in sorted(root.glob(pattern)))
+
+    opencode_capability = get_agent_capability("opencode")
+    assert opencode_capability is not None
+    if any(os.environ.get(name) for name in opencode_capability.env_names):
+        opencode_home = opencode_capability.home()
+    else:
+        data_home = Path(
+            os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")
+        ).expanduser()
+        opencode_home = data_home / "opencode"
+    opencode_db = opencode_home / "opencode.db"
     if opencode_db.is_file():
         candidates.append(("opencode", opencode_db))
     return candidates

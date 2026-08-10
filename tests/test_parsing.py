@@ -7,6 +7,7 @@ from conftest import DAY1, HOUR, make_span, wrap_otlp
 
 from reflect.context_artifacts import context_artifact_id
 from reflect.parsing import (
+    _discover_rich_session_files,
     _flatten_otlp_attributes,
     _infer_otlp_logs_file,
     _iter_claude_log_spans,
@@ -17,10 +18,60 @@ from reflect.parsing import (
     _iter_copilot_session_spans,
     _iter_cursor_session_spans,
     _iter_gemini_session_spans,
+    _load_codex_default_model,
     _load_json_lines,
     _load_otlp_logs,
     _load_otlp_traces,
 )
+
+
+def test_native_session_discovery_uses_isolated_agent_homes(tmp_path, monkeypatch):
+    homes = {
+        "CODEX_HOME": tmp_path / "codex",
+        "COPILOT_HOME": tmp_path / "copilot",
+        "CURSOR_HOME": tmp_path / "cursor",
+        "CLAUDE_HOME": tmp_path / "claude",
+        "GEMINI_DIR": tmp_path / "gemini",
+        "OPENCODE_HOME": tmp_path / "opencode",
+    }
+    monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
+    monkeypatch.delenv("GEMINI_HOME", raising=False)
+    for name, path in homes.items():
+        monkeypatch.setenv(name, str(path))
+
+    expected = {
+        ("codex", homes["CODEX_HOME"] / "sessions" / "2026" / "rollout.jsonl"),
+        ("copilot", homes["COPILOT_HOME"] / "session-state" / "run" / "events.jsonl"),
+        (
+            "cursor",
+            homes["CURSOR_HOME"]
+            / "projects"
+            / "repo"
+            / "agent-transcripts"
+            / "run"
+            / "events.jsonl",
+        ),
+        ("claude", homes["CLAUDE_HOME"] / "projects" / "repo" / "session.jsonl"),
+        (
+            "gemini",
+            homes["GEMINI_DIR"] / "tmp" / "repo" / "chats" / "session-run.json",
+        ),
+        ("opencode", homes["OPENCODE_HOME"] / "opencode.db"),
+    }
+    for _agent, path in expected:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+
+    assert set(_discover_rich_session_files()) == expected
+
+
+def test_codex_default_model_uses_configured_home(tmp_path, monkeypatch):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text('model = "gpt-5.6"\n', encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    assert _load_codex_default_model() == "gpt-5.6"
 
 
 def test_explicit_otlp_traces_do_not_fall_back_to_global_logs(
