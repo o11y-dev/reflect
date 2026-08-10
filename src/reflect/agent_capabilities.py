@@ -20,6 +20,11 @@ class MCPClientSurface(StrEnum):
     EDITOR_CONFIG = "Editor config"
 
 
+class NativeOTelCoverage(StrEnum):
+    FULL = "Full"
+    PARTIAL = "Partial"
+
+
 @dataclass(frozen=True)
 class MCPClientCapability:
     agent_name: str
@@ -31,6 +36,18 @@ class MCPClientCapability:
     @property
     def locally_testable(self) -> bool:
         return self.local_agent_name is not None and self.executable is not None
+
+
+@dataclass(frozen=True)
+class NativeOTelCapability:
+    key: str
+    display_name: str
+    coverage: NativeOTelCoverage
+    traces: str
+    metrics: str
+    logs: str
+    config_surface: str
+    protocol: str
 
 
 @dataclass(frozen=True)
@@ -50,6 +67,7 @@ class AgentCapability:
     skill_cli: str | None = None
     skill_cli_flags: tuple[str, ...] = ()
     mcp: MCPClientCapability | None = None
+    native_otel: tuple[NativeOTelCapability, ...] = ()
 
     def home(self) -> Path:
         for env_name in self.env_names:
@@ -84,6 +102,18 @@ AGENT_CAPABILITIES: tuple[AgentCapability, ...] = (
             surface=MCPClientSurface.HEADLESS_CLI,
             local_agent_name="claude",
             executable="claude",
+        ),
+        native_otel=(
+            NativeOTelCapability(
+                key="claude-code",
+                display_name="Claude Code",
+                coverage=NativeOTelCoverage.PARTIAL,
+                traces="—",
+                metrics="Yes",
+                logs="Yes",
+                config_surface="~/.claude/settings.json or OTEL_* env",
+                protocol="OTLP gRPC/HTTP",
+            ),
         ),
     ),
     AgentCapability(
@@ -159,6 +189,28 @@ AGENT_CAPABILITIES: tuple[AgentCapability, ...] = (
             local_agent_name="copilot",
             executable="copilot",
         ),
+        native_otel=(
+            NativeOTelCapability(
+                key="copilot-vscode",
+                display_name="GitHub Copilot VS Code",
+                coverage=NativeOTelCoverage.FULL,
+                traces="Yes",
+                metrics="Yes",
+                logs="Yes",
+                config_surface="VS Code settings.json",
+                protocol="OTLP HTTP",
+            ),
+            NativeOTelCapability(
+                key="copilot-cli",
+                display_name="GitHub Copilot CLI",
+                coverage=NativeOTelCoverage.FULL,
+                traces="Yes",
+                metrics="Yes",
+                logs="Yes",
+                config_surface="VS Code settings env block",
+                protocol="OTLP HTTP",
+            ),
+        ),
     ),
     AgentCapability(
         key="codex",
@@ -181,6 +233,18 @@ AGENT_CAPABILITIES: tuple[AgentCapability, ...] = (
             surface=MCPClientSurface.HEADLESS_CLI,
             local_agent_name="codex",
             executable="codex",
+        ),
+        native_otel=(
+            NativeOTelCapability(
+                key="codex-cli",
+                display_name="OpenAI Codex CLI",
+                coverage=NativeOTelCoverage.PARTIAL,
+                traces="Interactive",
+                metrics="Interactive",
+                logs="Yes",
+                config_surface="~/.codex/config.toml [otel]",
+                protocol="OTLP gRPC",
+            ),
         ),
     ),
     AgentCapability(
@@ -264,6 +328,7 @@ AGENT_CAPABILITIES: tuple[AgentCapability, ...] = (
     ),
 )
 
+
 def _identity_token(name: object) -> str:
     return "-".join(str(name or "").strip().lower().replace("_", "-").split())
 
@@ -285,8 +350,16 @@ def normalize_agent_key(name: object) -> str:
     return capability.key if capability is not None else normalized
 
 
-def setup_agent_capabilities() -> tuple[AgentCapability, ...]:
+def agent_capabilities() -> tuple[AgentCapability, ...]:
     return AGENT_CAPABILITIES
+
+
+def setup_agent_capabilities() -> tuple[AgentCapability, ...]:
+    return tuple(
+        item
+        for item in AGENT_CAPABILITIES
+        if item.support in {AgentSupport.SUPPORTED, AgentSupport.PARTIAL}
+    )
 
 
 def skill_agent_capabilities() -> tuple[AgentCapability, ...]:
@@ -295,3 +368,18 @@ def skill_agent_capabilities() -> tuple[AgentCapability, ...]:
 
 def mcp_agent_capabilities() -> tuple[AgentCapability, ...]:
     return tuple(item for item in AGENT_CAPABILITIES if item.mcp is not None)
+
+
+def native_otel_capabilities() -> tuple[NativeOTelCapability, ...]:
+    return tuple(
+        surface
+        for capability in AGENT_CAPABILITIES
+        for surface in capability.native_otel
+    )
+
+
+def get_native_otel_capability(key: str) -> NativeOTelCapability | None:
+    return next(
+        (surface for surface in native_otel_capabilities() if surface.key == key),
+        None,
+    )

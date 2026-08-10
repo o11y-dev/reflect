@@ -9,7 +9,10 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from reflect.agent_capabilities import AgentSupport
+from reflect.agent_capabilities import (
+    get_native_otel_capability,
+    setup_agent_capabilities,
+)
 from reflect.hook_runtime import HookRuntime
 from reflect.mcp_clients import configure_reflect_mcp, get_mcp_client_configurator
 from reflect.parsing import _canonical_otlp_traces_path
@@ -46,8 +49,6 @@ def _agent_config_paths(agent: dict) -> list[Path]:
     candidates: list[Path] = []
     if name == "Claude Code":
         candidates.append(home / ".claude" / "settings.json")
-    elif name == "Gemini CLI":
-        candidates.append(home / ".gemini" / "settings.json")
     elif name == "GitHub Copilot":
         candidates.extend([
             home / "Library" / "Application Support" / "Code" / "User" / "settings.json",
@@ -78,10 +79,6 @@ def _copilot_otlp_endpoint(endpoint: str) -> str:
     return endpoint.replace(":4317", ":4318") if endpoint.endswith(":4317") else endpoint
 
 
-def _gemini_otlp_protocol(protocol: str) -> str:
-    return "http" if protocol.startswith("http") else "grpc"
-
-
 def _prompt_capture_enabled(hook_config: dict[str, str]) -> bool:
     return str(hook_config.get("IDE_OTEL_CAPTURE_TEXT", "")).lower() in {"1", "true", "yes", "on"}
 
@@ -108,13 +105,6 @@ def _native_otel_target(hook_config: dict[str, str], agent_name: str) -> dict[st
         "GitHub Copilot CLI": {
             "endpoint": _copilot_otlp_endpoint(grpc_endpoint),
             "protocol": "otlp-http",
-            "emit_logs": True,
-            "emit_traces": True,
-            "prompt_capture": prompt_capture,
-        },
-        "Gemini CLI": {
-            "endpoint": grpc_endpoint,
-            "protocol": _gemini_otlp_protocol(hook_protocol),
             "emit_logs": True,
             "emit_traces": True,
             "prompt_capture": prompt_capture,
@@ -157,18 +147,6 @@ def _copilot_cli_native_otel_env(hook_config: dict[str, str]) -> dict[str, objec
     return {
         "COPILOT_OTEL_ENABLED": "true",
         "COPILOT_OTEL_OTLP_ENDPOINT": target["endpoint"],
-    }
-
-
-def _gemini_native_otel_settings(hook_config: dict[str, str]) -> dict[str, object]:
-    target = _native_otel_target(hook_config, "Gemini CLI")
-    return {
-        "enabled": True,
-        "target": "local",
-        "useCollector": True,
-        "otlpEndpoint": target["endpoint"],
-        "otlpProtocol": target["protocol"],
-        "logPrompts": target["prompt_capture"],
     }
 
 
@@ -268,6 +246,7 @@ def _collect_native_otel_statuses(hook_config: dict[str, str]) -> list[dict[str,
     claude_desired = _claude_native_otel_env(hook_config)
     if not claude_path.exists():
         statuses.append({
+            "capability_key": "claude-code",
             "agent": "Claude Code",
             "status": "missing",
             "details": "No settings.json found yet.",
@@ -278,6 +257,7 @@ def _collect_native_otel_statuses(hook_config: dict[str, str]) -> list[dict[str,
             claude_settings = _json_loads(claude_path.read_text())
         except Exception as exc:
             statuses.append({
+                "capability_key": "claude-code",
                 "agent": "Claude Code",
                 "status": "unreadable",
                 "details": f"Failed to read settings.json: {exc}",
@@ -286,6 +266,7 @@ def _collect_native_otel_statuses(hook_config: dict[str, str]) -> list[dict[str,
         else:
             issues = _missing_desired_keys(claude_settings.get("env"), claude_desired)
             statuses.append({
+                "capability_key": "claude-code",
                 "agent": "Claude Code",
                 "status": "ready" if not issues else "incomplete",
                 "details": (
@@ -304,12 +285,14 @@ def _collect_native_otel_statuses(hook_config: dict[str, str]) -> list[dict[str,
         searched = "\n".join(str(path) for path in copilot_paths)
         statuses.extend([
             {
+                "capability_key": "copilot-vscode",
                 "agent": "GitHub Copilot VS Code",
                 "status": "missing",
                 "details": "No VS Code settings.json file was found.",
                 "path": searched,
             },
             {
+                "capability_key": "copilot-cli",
                 "agent": "GitHub Copilot CLI",
                 "status": "missing",
                 "details": "No VS Code settings.json file was found for the CLI env block.",
@@ -343,6 +326,7 @@ def _collect_native_otel_statuses(hook_config: dict[str, str]) -> list[dict[str,
                 copilot_cli_issues.append(f"{settings_path.name}: {', '.join(env_issues)}")
 
         statuses.append({
+            "capability_key": "copilot-vscode",
             "agent": "GitHub Copilot VS Code",
             "status": (
                 "ready" if copilot_ready else "unreadable" if copilot_unreadable and not copilot_issues else "incomplete"
@@ -361,6 +345,7 @@ def _collect_native_otel_statuses(hook_config: dict[str, str]) -> list[dict[str,
             "path": str(copilot_ready) if copilot_ready else "\n".join(str(path) for path in existing_copilot_paths),
         })
         statuses.append({
+            "capability_key": "copilot-cli",
             "agent": "GitHub Copilot CLI",
             "status": (
                 "ready"
@@ -383,43 +368,11 @@ def _collect_native_otel_statuses(hook_config: dict[str, str]) -> list[dict[str,
             ),
         })
 
-    gemini_path = Path.home() / ".gemini" / "settings.json"
-    gemini_desired = _gemini_native_otel_settings(hook_config)
-    if not gemini_path.exists():
-        statuses.append({
-            "agent": "Gemini CLI",
-            "status": "missing",
-            "details": "No settings.json found yet; reflect can only print env guidance until Gemini creates one.",
-            "path": str(gemini_path),
-        })
-    else:
-        try:
-            gemini_settings = _json_loads(gemini_path.read_text())
-        except Exception as exc:
-            statuses.append({
-                "agent": "Gemini CLI",
-                "status": "unreadable",
-                "details": f"Failed to read settings.json: {exc}",
-                "path": str(gemini_path),
-            })
-        else:
-            issues = _missing_desired_keys(gemini_settings.get("telemetry"), gemini_desired)
-            statuses.append({
-                "agent": "Gemini CLI",
-                "status": "ready" if not issues else "incomplete",
-                "details": (
-                    "Local collector mode is enabled and "
-                    + _capture_status(bool(gemini_desired["logPrompts"]), subject="prompt logging")
-                    if not issues
-                    else "Missing or incorrect telemetry keys: " + ", ".join(issues)
-                ),
-                "path": str(gemini_path),
-            })
-
     codex_path = Path.home() / ".codex" / "config.toml"
     codex_desired = _codex_native_otel_settings(hook_config)
     if not codex_path.exists():
         statuses.append({
+            "capability_key": "codex-cli",
             "agent": "OpenAI Codex CLI",
             "status": "missing",
             "details": "No config.toml found yet.",
@@ -430,6 +383,7 @@ def _collect_native_otel_statuses(hook_config: dict[str, str]) -> list[dict[str,
             codex_settings = tomllib.loads(codex_path.read_text())
         except Exception as exc:
             statuses.append({
+                "capability_key": "codex-cli",
                 "agent": "OpenAI Codex CLI",
                 "status": "unreadable",
                 "details": f"Failed to read config.toml: {exc}",
@@ -439,6 +393,7 @@ def _collect_native_otel_statuses(hook_config: dict[str, str]) -> list[dict[str,
             otel = codex_settings.get("otel")
             issues = _missing_desired_keys(otel, codex_desired)
             statuses.append({
+                "capability_key": "codex-cli",
                 "agent": "OpenAI Codex CLI",
                 "status": "ready" if not issues else "incomplete",
                 "details": (
@@ -539,41 +494,6 @@ def _configure_copilot_native_otel(console, hook_config: dict[str, str]) -> None
             console.print(f"    [dim]- {path}[/]")
 
 
-def _configure_gemini_native_otel(console, hook_config: dict[str, str]) -> None:
-    settings_path = Path.home() / ".gemini" / "settings.json"
-    if not settings_path.exists():
-        console.print("  [dim]•[/] No Gemini CLI settings file detected; kept env guidance only.")
-        return
-
-    try:
-        settings = _json_loads(settings_path.read_text())
-    except Exception as exc:
-        console.print(f"  [red]✗[/] Failed to read Gemini CLI settings {settings_path}: {exc}")
-        return
-
-    telemetry = settings.get("telemetry")
-    changed = not isinstance(telemetry, dict)
-    if not isinstance(telemetry, dict):
-        telemetry = {}
-        settings["telemetry"] = telemetry
-    desired = _gemini_native_otel_settings(hook_config)
-
-    for key, value in desired.items():
-        if telemetry.get(key) != value:
-            telemetry[key] = value
-            changed = True
-
-    if "outfile" in telemetry:
-        telemetry.pop("outfile", None)
-        changed = True
-
-    if changed:
-        settings_path.write_text(_json_stdlib.dumps(settings, indent=2) + "\n")
-        console.print(f"  [green]✓[/] Enabled native Gemini telemetry in {settings_path}")
-    else:
-        console.print(f"  [green]✓[/] Native Gemini telemetry already enabled in {settings_path}")
-
-
 def _configure_copilot_cli_native_otel(console, hook_config: dict[str, str]) -> None:
     """Set Copilot CLI OTel env vars in VS Code settings.json env block."""
     desired_env = _copilot_cli_native_otel_env(hook_config)
@@ -635,70 +555,20 @@ def _configure_codex_native_otel(console, hook_config: dict[str, str]) -> None:
     console.print(f"  [green]✓[/] Enabled native Codex OTel in {config_path}")
 
 
+_NATIVE_OTEL_CONFIGURATORS: dict[str, Callable[[object, dict[str, str]], None]] = {
+    "claude-code": _configure_claude_native_otel,
+    "copilot-vscode": _configure_copilot_native_otel,
+    "copilot-cli": _configure_copilot_cli_native_otel,
+    "codex-cli": _configure_codex_native_otel,
+}
+
+
 def _native_status_markup(status: str) -> str:
     if status == "ready":
         return "[green]ready[/]"
     if status == "incomplete":
         return "[yellow]incomplete[/]"
     return "[red]missing[/]" if status == "missing" else "[red]unreadable[/]"
-
-
-_NATIVE_OTEL_CAPABILITIES: dict[str, dict[str, str]] = {
-    "Claude Code": {
-        "native_otel": "Partial",
-        "traces": "—",
-        "metrics": "Yes",
-        "logs": "Yes",
-        "config_surface": "~/.claude/settings.json or OTEL_* env",
-        "protocol": "OTLP gRPC/HTTP",
-    },
-    "GitHub Copilot VS Code": {
-        "native_otel": "Full",
-        "traces": "Yes",
-        "metrics": "Yes",
-        "logs": "Yes",
-        "config_surface": "VS Code settings.json",
-        "protocol": "OTLP HTTP",
-    },
-    "GitHub Copilot CLI": {
-        "native_otel": "Full",
-        "traces": "Yes",
-        "metrics": "Yes",
-        "logs": "Yes",
-        "config_surface": "VS Code settings env block",
-        "protocol": "OTLP HTTP",
-    },
-    "Gemini CLI": {
-        "native_otel": "Full",
-        "traces": "Yes",
-        "metrics": "Yes",
-        "logs": "Yes",
-        "config_surface": "~/.gemini/settings.json",
-        "protocol": "OTLP gRPC",
-    },
-    "OpenAI Codex CLI": {
-        "native_otel": "Partial",
-        "traces": "Interactive",
-        "metrics": "Interactive",
-        "logs": "Yes",
-        "config_surface": "~/.codex/config.toml [otel]",
-        "protocol": "OTLP gRPC",
-    },
-}
-
-
-def _native_otel_capability(agent: str) -> dict[str, str]:
-    return _NATIVE_OTEL_CAPABILITIES.get(
-        agent,
-        {
-            "native_otel": "Unknown",
-            "traces": "—",
-            "metrics": "—",
-            "logs": "—",
-            "config_surface": "n/a",
-            "protocol": "n/a",
-        },
-    )
 
 
 def _render_native_otel_panel(console, hook_runtime_config: dict[str, str]) -> None:
@@ -718,15 +588,17 @@ def _render_native_otel_panel(console, hook_runtime_config: dict[str, str]) -> N
     native_otel.add_column("Status", no_wrap=True)
     statuses = _collect_native_otel_statuses(hook_runtime_config)
     for status in statuses:
-        capability = _native_otel_capability(status["agent"])
+        capability = get_native_otel_capability(status["capability_key"])
+        if capability is None:
+            continue
         native_otel.add_row(
-            status["agent"],
-            capability["native_otel"],
-            capability["traces"],
-            capability["metrics"],
-            capability["logs"],
-            capability["config_surface"],
-            capability["protocol"],
+            capability.display_name,
+            capability.coverage.value,
+            capability.traces,
+            capability.metrics,
+            capability.logs,
+            capability.config_surface,
+            capability.protocol,
             _native_status_markup(status["status"]),
         )
     details_lines = []
@@ -913,19 +785,15 @@ def _run_setup(
             "[bold]pipx reinstall o11y-reflect[/]"
         )
 
-    console.print("\n[bold]Step 6: Enable native OTel (Claude Code, Copilot, Gemini, Codex)[/]")
+    console.print("\n[bold]Step 6: Enable declared native OTel surfaces[/]")
     def selected(agent_name: str) -> bool:
         return selected_agent_names is None or agent_name.lower().replace(" ", "-") in selected_agent_names
 
-    if selected("Claude Code"):
-        _configure_claude_native_otel(console, config)
-    if selected("GitHub Copilot"):
-        _configure_copilot_native_otel(console, config)
-        _configure_copilot_cli_native_otel(console, config)
-    if selected("Gemini CLI"):
-        _configure_gemini_native_otel(console, config)
-    if selected("OpenAI Codex CLI"):
-        _configure_codex_native_otel(console, config)
+    for capability in setup_agent_capabilities():
+        if not selected(capability.display_name):
+            continue
+        for surface in capability.native_otel:
+            _NATIVE_OTEL_CONFIGURATORS[surface.key](console, config)
 
     console.print("\n[bold]Step 6b: Start local OTLP gateway[/]")
     from reflect.gateway import _is_running as _gateway_is_running
@@ -945,19 +813,6 @@ def _run_setup(
         except Exception as exc:
             console.print(f"  [red]✗[/] Failed to start gateway: {exc}")
             console.print("    Start manually: [bold]reflect gateway start[/]")
-
-    planned_agents = [
-        agent
-        for agent in detected_agents
-        if agent.get("support_status") == AgentSupport.PLANNED.value
-    ]
-    if planned_agents:
-        console.print("\n[bold yellow]Telemetry gaps still not implemented[/]")
-        for agent in planned_agents:
-            console.print(
-                f"  [yellow]•[/] {agent['name']}: {agent['telemetry_path']}. "
-                "reflect setup will not start collecting telemetry for this agent yet."
-            )
 
     console.print("\n[bold]Step 7: Configure Reflect MCP clients[/]")
     reflect_mcp = shutil.which("reflect-mcp") or "reflect-mcp"

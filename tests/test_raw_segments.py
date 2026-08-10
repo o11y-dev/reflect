@@ -4,9 +4,12 @@ import stat
 from concurrent.futures import ThreadPoolExecutor
 
 import orjson
+import pytest
 
 from reflect.raw_segments import (
     RawSegmentWriter,
+    RawStorageGuard,
+    RawStorageLimitExceeded,
     closed_segment_paths,
     readable_segment_paths,
     segment_inventory,
@@ -64,3 +67,48 @@ def test_writer_serializes_concurrent_thread_appends(tmp_path):
     records = [orjson.loads(line) for line in active.read_bytes().splitlines()]
     assert len(records) == 100
     assert {record["sequence"] for record in records} == set(range(100))
+
+
+def test_storage_guard_rejects_projected_write_without_deleting_raw(tmp_path):
+    traces = tmp_path / "otel-traces.active.jsonl"
+    logs = tmp_path / "otel-logs.active.jsonl"
+    traces.write_bytes(b"1234")
+    logs.write_bytes(b"56")
+    guard = RawStorageGuard((traces, logs), max_bytes=8)
+
+    with guard.admit(2):
+        logs.write_bytes(b"5678")
+
+    assert guard.status().raw_bytes == 8
+    assert guard.status().accepting_telemetry is False
+    with pytest.raises(RawStorageLimitExceeded), guard.admit(1):
+        raise AssertionError("rejected admission must not yield")
+    assert traces.read_bytes() == b"1234"
+    assert logs.read_bytes() == b"5678"
+
+    logs.unlink()
+    assert guard.status().accepting_telemetry is True
+
+
+def test_storage_guard_serializes_combined_trace_and_log_capacity(tmp_path):
+    traces = tmp_path / "otel-traces.active.jsonl"
+    logs = tmp_path / "otel-logs.active.jsonl"
+    trace_writer = RawSegmentWriter(traces, max_bytes=1024)
+    log_writer = RawSegmentWriter(logs, max_bytes=1024)
+    encoded = b'{"event":1}\n'
+    guard = RawStorageGuard((traces, logs), max_bytes=10 * len(encoded))
+
+    def append(sequence: int) -> bool:
+        writer = trace_writer if sequence % 2 else log_writer
+        try:
+            with guard.admit(len(encoded)):
+                writer.append_encoded(encoded)
+        except RawStorageLimitExceeded:
+            return False
+        return True
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        accepted = list(executor.map(append, range(40)))
+
+    assert sum(accepted) == 10
+    assert traces.stat().st_size + logs.stat().st_size == 10 * len(encoded)

@@ -95,7 +95,7 @@ class TestHelp:
         db_path = tmp_path / "reflect.db"
         spans_dir = tmp_path / "spans"
         spans_dir.mkdir()
-        monkeypatch.setattr(core, "_default_otlp_traces", lambda: None)
+        monkeypatch.setattr(core, "default_otlp_traces", lambda: None)
         (spans_dir / "codex.jsonl").write_text(
             json.dumps(
                 {
@@ -568,7 +568,7 @@ class TestHelp:
 
 class TestBrowserMode:
     def test_foreground_opens_browser_report(self, runner, otlp_file, tmp_path):
-        with patch("reflect.core.start_publish_server") as mock_server:
+        with patch("reflect.report_server.start_publish_server") as mock_server:
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "--foreground",
@@ -596,7 +596,7 @@ class TestBrowserReportCommandSurface:
         assert "No such command" in result.output
 
     def test_foreground_command_starts_server(self, runner, otlp_file, tmp_path):
-        with patch("reflect.core.start_publish_server") as mock_server:
+        with patch("reflect.report_server.start_publish_server") as mock_server:
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "--foreground",
@@ -619,21 +619,22 @@ class TestBrowserReportCommandSurface:
             otlp_traces=otlp_file,
             include_native_sessions=False,
         )
-        with patch("reflect.core.start_publish_server") as mock_server, \
-             patch("reflect.core.prepare_sql_report_db", return_value={"refreshed": True}) as mock_prepare:
+        with patch("reflect.report_server.start_publish_server") as mock_server, \
+             patch("reflect.report_server.prepare_sql_report_db", return_value={"refreshed": True}) as mock_prepare:
             result = runner.invoke(main, [
                 "--foreground",
                 "--otlp-traces", str(otlp_file),
                 "--db-path", str(db_path),
             ])
             assert result.exit_code == 0
-            assert "refreshing telemetry in the background" in result.output
+            assert "refreshing telemetry automatically every 300 seconds" in result.output
             mock_prepare.assert_not_called()
-            worker = mock_server.call_args.kwargs["preparation_worker"]
-            assert worker is not None
-            assert worker.start() is True
-            assert worker.wait(timeout=2) is True
+            scheduler = mock_server.call_args.kwargs["preparation_scheduler"]
+            assert scheduler is not None
+            assert scheduler.coordinator.start() is True
+            assert scheduler.coordinator.wait(timeout=2) is True
             mock_prepare.assert_called_once()
+            assert "defer_otlp_replay" not in mock_prepare.call_args.kwargs
 
     def test_existing_snapshot_can_be_served_without_refresh(self, otlp_file, tmp_path):
         db_path = tmp_path / "reflect.db"
@@ -642,9 +643,9 @@ class TestBrowserReportCommandSurface:
             otlp_traces=otlp_file,
             include_native_sessions=False,
         )
-        with patch("reflect.core.start_publish_server") as mock_server, \
+        with patch("reflect.report_server.start_publish_server") as mock_server, \
              patch("reflect.preparation_pipeline.prepare_sql_report_db") as mock_prepare:
-            core._run_browser_report(
+            core.run_browser_report(
                 otlp_traces=None,
                 demo=False,
                 db_path=db_path,
@@ -652,7 +653,7 @@ class TestBrowserReportCommandSurface:
             )
 
         mock_prepare.assert_not_called()
-        assert mock_server.call_args.kwargs["preparation_worker"] is None
+        assert mock_server.call_args.kwargs["preparation_scheduler"] is None
 
     def test_foreground_report_ingests_inferred_otlp_logs(self, runner, tmp_path):
         otlp_file = tmp_path / "otel-traces.json"
@@ -679,7 +680,7 @@ class TestBrowserReportCommandSurface:
             }],
         }) + "\n", encoding="utf-8")
 
-        with patch("reflect.core.start_publish_server"):
+        with patch("reflect.report_server.start_publish_server"):
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "--foreground",
@@ -733,8 +734,8 @@ class TestBrowserReportCommandSurface:
             encoding="utf-8",
         )
 
-        with patch("reflect.core.start_publish_server"), \
-             patch("reflect.core._default_otlp_traces", return_value=otlp_file), \
+        with patch("reflect.report_server.start_publish_server"), \
+             patch("reflect.report_server.default_otlp_traces", return_value=otlp_file), \
              patch("reflect.preparation_pipeline._discover_rich_session_files", return_value=[("cursor", cursor_file)]):
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
@@ -767,7 +768,7 @@ class TestBrowserReportCommandSurface:
         otlp_file = tmp_path / "copilot-traces.json"
         otlp_file.write_text(wrap_otlp([model_hint, token_row], agent="copilot") + "\n", encoding="utf-8")
 
-        with patch("reflect.core.start_publish_server"):
+        with patch("reflect.report_server.start_publish_server"):
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "--foreground",
@@ -1301,8 +1302,8 @@ def test_strip_json_fences_variants():
 
 class TestNoDataNoCrash:
     def test_empty_dirs_no_crash(self, runner, tmp_path):
-        with patch("reflect.core.start_publish_server"), \
-             patch("reflect.core._default_otlp_traces", return_value=None), \
+        with patch("reflect.report_server.start_publish_server"), \
+             patch("reflect.report_server.default_otlp_traces", return_value=None), \
              patch("reflect.preparation_pipeline._discover_rich_session_files", return_value=[]):
             result = runner.invoke(main, [
                 "--foreground",
@@ -1312,8 +1313,52 @@ class TestNoDataNoCrash:
 
 
 class TestUpdateAdvisor:
+    def test_source_checkout_version_overrides_stale_environment_metadata(
+        self,
+        tmp_path,
+    ):
+        core_path = tmp_path / "repo" / "src" / "reflect" / "core.py"
+        core_path.parent.mkdir(parents=True)
+        pyproject = tmp_path / "repo" / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "o11y-reflect"\nversion = "9.8.7"\n',
+            encoding="utf-8",
+        )
+
+        with patch("reflect.core.__file__", str(core_path)), patch(
+            "reflect.core._installed_reflect_version",
+            return_value="1.2.3",
+        ):
+            assert core._source_checkout_reflect_version() == "9.8.7"
+            assert core._current_reflect_version() == "9.8.7"
+
+    def test_update_advisor_explains_source_environment_version_mismatch(self):
+        advisor = {
+            "release": {
+                "current_version": "0.9.7",
+                "installed_version": "0.9.5",
+                "source_version": "0.9.7",
+                "source_checkout": True,
+                "latest_version": "0.9.7",
+                "checked_at": None,
+                "update_available": False,
+                "source": "cache",
+            },
+            "local_issues": [],
+        }
+        output = io.StringIO()
+
+        core._render_update_advisor_panel(core.Console(file=output, width=200), advisor)
+
+        rendered = output.getvalue()
+        assert "source checkout" in rendered
+        assert "Running source v0.9.7" in rendered
+        assert "environment metadata" in rendered
+        assert "v0.9.5" in rendered
+        assert "poetry install" in rendered
+
     def test_foreground_run_surfaces_startup_notice(self, runner, otlp_file, tmp_path):
-        with patch("reflect.core.start_publish_server"), \
+        with patch("reflect.report_server.start_publish_server"), \
              patch("reflect.core._build_startup_update_notice", return_value="v9.9.9 is available. Run reflect doctor for details."):
             result = runner.invoke(main, [
                 "--foreground",
@@ -2403,7 +2448,7 @@ class TestSetup:
         assert result.exit_code == 0
         _do_not_start_real_gateway.assert_not_called()
 
-    def test_setup_surfaces_detected_agent_guidance(self, runner, tmp_path):
+    def test_setup_rejects_historical_gemini_before_mutation(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
         hook_home = tmp_path / ".otel-hook-home"
         home_dir = tmp_path / "home"
@@ -2411,14 +2456,15 @@ class TestSetup:
         gemini_home.mkdir()
         with patch("reflect.core.REFLECT_HOME", reflect_home), \
              patch("reflect.core.HOOK_HOME", hook_home), \
-             patch("reflect.core.shutil.which", return_value="/usr/bin/otel-hook"), \
-             patch("reflect.core.subprocess.check_call"), \
-             patch("reflect.core._distribute_skills"), \
+             patch("reflect.core._instrumentation_run_setup") as run_setup, \
              patch.dict(os.environ, {"HOME": str(home_dir), "GEMINI_DIR": str(gemini_home)}, clear=False):
-            result = runner.invoke(main, ["setup"])
-        assert result.exit_code == 0
-        assert "native OTel" in result.output
-        assert "Gemini" in result.output
+            result = runner.invoke(main, ["setup", "--agent", "gemini"])
+
+        assert result.exit_code == 1
+        assert "Gemini CLI support is Historical" in result.output
+        assert "Use Antigravity" in result.output
+        run_setup.assert_not_called()
+        assert not reflect_home.exists()
 
     def test_setup_uses_bundled_hooks_before_wiring(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
@@ -2600,8 +2646,8 @@ class TestSetup:
 
     def test_setup_agent_selection_uses_interactive_picker(self):
         agents = [
-            {"name": "Claude Code", "detected": True, "support_status": "Implemented"},
-            {"name": "Cursor", "detected": True, "support_status": "Implemented"},
+            {"name": "Claude Code", "detected": True, "support_status": "Supported"},
+            {"name": "Cursor", "detected": True, "support_status": "Supported"},
         ]
         with patch("reflect.core._detect_agents", return_value=agents), \
              patch("reflect.core.sys.stdin.isatty", return_value=True), \
@@ -2613,7 +2659,7 @@ class TestSetup:
             )
 
         assert selected == {"cursor"}
-        assert "Claude Code (Implemented)" in picker.call_args.args[0]
+        assert "Claude Code (Supported)" in picker.call_args.args[0]
 
     def test_setup_writes_agent_env_files_and_backups(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
@@ -2648,7 +2694,6 @@ class TestSetup:
         hook_backup_dir = reflect_home / "agents" / "opentelemetry-hooks" / "config-snapshots"
         claude_backup_dir = reflect_home / "agents" / "claude-code" / "config-snapshots"
         copilot_backup_dir = reflect_home / "agents" / "github-copilot" / "config-snapshots"
-        gemini_backup_dir = reflect_home / "agents" / "gemini-cli" / "config-snapshots"
 
         # Claude Code: native OTel env block written to settings.json
         claude_settings = json.loads((claude_home / "settings.json").read_text())
@@ -2656,15 +2701,14 @@ class TestSetup:
         assert claude_settings["env"]["OTEL_METRICS_EXPORTER"] == "otlp"
         assert claude_settings["env"]["OTEL_LOGS_EXPORTER"] == "otlp"
 
-        # Gemini: native OTel settings written to settings.json
+        # Historical Gemini config remains untouched; setup only targets current agents.
         gemini_settings = json.loads((gemini_home / "settings.json").read_text())
-        assert gemini_settings["telemetry"]["enabled"] is True
-        assert gemini_settings["telemetry"]["target"] == "local"
-        assert gemini_settings["telemetry"]["useCollector"] is True
-        assert gemini_settings["telemetry"]["otlpEndpoint"] == "http://localhost:4317"
-        assert gemini_settings["telemetry"]["otlpProtocol"] == "grpc"
-        assert gemini_settings["telemetry"]["logPrompts"] is False
-        assert "outfile" not in gemini_settings["telemetry"]
+        assert gemini_settings == {
+            "telemetry": {
+                "enabled": False,
+                "outfile": ".gemini/telemetry.log",
+            }
+        }
 
         # Copilot VS Code: otel.* keys + CLI env vars written to settings.json
         copilot_settings = json.loads((vscode_settings / "settings.json").read_text())
@@ -2680,8 +2724,7 @@ class TestSetup:
         assert any(hook_backup_dir.iterdir())
         assert claude_backup_dir.exists()
         assert any(claude_backup_dir.iterdir())
-        assert gemini_backup_dir.exists()
-        assert any(gemini_backup_dir.iterdir())
+        assert not (reflect_home / "agents" / "gemini-cli").exists()
         assert copilot_backup_dir.exists()
         assert any(copilot_backup_dir.iterdir())
 
@@ -3188,6 +3231,22 @@ class TestNativeOtelConfig:
         claude = next(status for status in statuses if status["agent"] == "Claude Code")
         assert claude["status"] == "incomplete"
         assert "OTEL_EXPORTER_OTLP_PROTOCOL" in claude["details"]
+
+    def test_native_otel_status_excludes_historical_gemini(self, tmp_path):
+        gemini_settings = tmp_path / ".gemini" / "settings.json"
+        gemini_settings.parent.mkdir(parents=True)
+        gemini_settings.write_text('{"telemetry":{"enabled":true}}\n')
+
+        with patch("reflect.core.Path.home", return_value=tmp_path):
+            statuses = instrumentation._collect_native_otel_statuses(self.HOOK_CFG)
+
+        assert "Gemini CLI" not in {status["agent"] for status in statuses}
+        assert {status["capability_key"] for status in statuses} == {
+            "claude-code",
+            "copilot-vscode",
+            "copilot-cli",
+            "codex-cli",
+        }
 
     def test_native_otel_status_reports_ready_codex_config(self, tmp_path):
         with patch("reflect.core.Path.home", return_value=tmp_path):

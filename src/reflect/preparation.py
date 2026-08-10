@@ -4,7 +4,7 @@ import sqlite3
 import threading
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
@@ -448,6 +448,85 @@ class PreparationCoordinator:
                 message="Preparation complete.",
                 result=result,
             )
+
+
+@dataclass(frozen=True)
+class PreparationScheduleSnapshot:
+    enabled: bool
+    interval_seconds: float
+    next_run_at: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+class PreparationScheduler:
+    """Run one coordinator immediately and then on a fixed non-overlapping cadence."""
+
+    def __init__(
+        self,
+        coordinator: PreparationCoordinator,
+        *,
+        interval_seconds: float,
+        run_immediately: bool = True,
+        name: str = "reflect-report-preparation-scheduler",
+    ) -> None:
+        if interval_seconds <= 0:
+            raise ValueError("preparation interval_seconds must be positive")
+        self.coordinator = coordinator
+        self.interval_seconds = interval_seconds
+        self.run_immediately = run_immediately
+        self._name = name
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._next_run_at = ""
+
+    def start(self) -> bool:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return False
+            self._stop.clear()
+            self._next_run_at = self._next_timestamp()
+            self._thread = threading.Thread(target=self._run, name=self._name, daemon=True)
+            self._thread.start()
+        if self.run_immediately:
+            self.coordinator.start()
+        return True
+
+    def snapshot(self) -> PreparationScheduleSnapshot:
+        with self._lock:
+            enabled = self._thread is not None and self._thread.is_alive()
+            return PreparationScheduleSnapshot(
+                enabled=enabled,
+                interval_seconds=self.interval_seconds,
+                next_run_at=self._next_run_at if enabled else "",
+            )
+
+    def close(self, timeout: float = 5.0) -> bool:
+        self._stop.set()
+        with self._lock:
+            thread = self._thread
+        if thread is not None:
+            thread.join(timeout)
+        scheduler_stopped = thread is None or not thread.is_alive()
+        preparation_stopped = self.coordinator.close(timeout)
+        with self._lock:
+            if scheduler_stopped:
+                self._thread = None
+                self._next_run_at = ""
+        return scheduler_stopped and preparation_stopped
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval_seconds):
+            self.coordinator.start()
+            with self._lock:
+                self._next_run_at = self._next_timestamp()
+
+    def _next_timestamp(self) -> str:
+        return (
+            datetime.now(tz=UTC) + timedelta(seconds=self.interval_seconds)
+        ).isoformat()
 
 
 def _now() -> str:

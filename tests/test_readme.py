@@ -29,10 +29,10 @@ def test_readme_has_current_quick_start_contract():
 def test_readme_explains_current_product_surfaces():
     readme = _readme()
 
-    for surface in ("Sessions", "Workflows", "Impact", "Explore"):
+    for surface in ("Sessions", "Inbox", "Workflows", "Skills", "Impact", "Explore"):
         assert f"**{surface}**" in readme
 
-    assert "The browser has five surfaces" in readme
+    assert "The browser has six surfaces" in readme
     assert "### Skills Registry" in readme
     assert "Approval and" in readme
     assert "installation are separate" in readme

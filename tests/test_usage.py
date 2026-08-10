@@ -512,7 +512,7 @@ def test_refresh_command_explicitly_prepares_a_missing_snapshot(
         "session-refresh",
         timestamp="2026-07-30T10:00:00Z",
     )
-    monkeypatch.setattr("reflect.core._default_otlp_traces", lambda: None)
+    monkeypatch.setattr("reflect.core.default_otlp_traces", lambda: None)
     monkeypatch.setattr("reflect.core._default_spans_dir", lambda: tmp_path / "spans")
     monkeypatch.setattr(
         "reflect.preparation_pipeline._discover_rich_session_files",
@@ -578,7 +578,7 @@ def test_usage_refresh_ingests_only_the_runtime_native_session(tmp_path, monkeyp
             ("codex", prefix_collision),
         ],
     )
-    monkeypatch.setattr("reflect.core._default_otlp_traces", lambda: None)
+    monkeypatch.setattr("reflect.core.default_otlp_traces", lambda: None)
     monkeypatch.setenv("REFLECT_SESSION_ID", "session-stale")
     monkeypatch.setenv("CODEX_THREAD_ID", "session-runtime")
 
@@ -685,7 +685,7 @@ def test_usage_requires_explicit_refresh_for_pending_rollup_rebuild(
         assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
     finally:
         conn.close()
-    monkeypatch.setattr("reflect.core._default_otlp_traces", lambda: None)
+    monkeypatch.setattr("reflect.core.default_otlp_traces", lambda: None)
     monkeypatch.setattr("reflect.preparation_pipeline._discover_rich_session_files", lambda: [])
 
     read_result = CliRunner().invoke(

@@ -39,7 +39,13 @@ from opentelemetry.proto.collector.trace.v1 import (
     trace_service_pb2_grpc,
 )
 
-from reflect.raw_segments import DEFAULT_SEGMENT_BYTES, RawSegmentWriter
+from reflect.raw_segments import (
+    DEFAULT_RAW_STORAGE_BYTES,
+    DEFAULT_SEGMENT_BYTES,
+    RawSegmentWriter,
+    RawStorageGuard,
+    RawStorageLimitExceeded,
+)
 
 logger = logging.getLogger("reflect.gateway")
 
@@ -48,9 +54,24 @@ _DEFAULT_TRACES_PATH = _REFLECT_HOME / "state" / "otlp" / "otel-traces.active.js
 _DEFAULT_LOGS_PATH = _REFLECT_HOME / "state" / "otlp" / "otel-logs.active.jsonl"
 _PID_FILE = _REFLECT_HOME / "state" / "gateway.pid"
 _LOG_FILE = _REFLECT_HOME / "state" / "gateway.log"
-_SEGMENT_BYTES = int(os.environ.get("REFLECT_OTLP_SEGMENT_BYTES", DEFAULT_SEGMENT_BYTES))
+
+
+def _positive_env_int(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, default))
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a positive integer") from exc
+    if value <= 0:
+        raise RuntimeError(f"{name} must be a positive integer")
+    return value
+
+
+_SEGMENT_BYTES = _positive_env_int("REFLECT_OTLP_SEGMENT_BYTES", DEFAULT_SEGMENT_BYTES)
+_MAX_RAW_BYTES = _positive_env_int("REFLECT_OTLP_MAX_BYTES", DEFAULT_RAW_STORAGE_BYTES)
 _WRITERS: dict[Path, RawSegmentWriter] = {}
 _WRITERS_LOCK = threading.Lock()
+_STORAGE_GUARDS: dict[tuple[Path, Path], RawStorageGuard] = {}
+_STORAGE_GUARDS_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -67,16 +88,75 @@ def _writer_for(path: Path) -> RawSegmentWriter:
         )
 
 
-def _append_jsonl(path: Path, payload: dict) -> None:
-    _writer_for(path).append(payload)
+def _paired_path(path: Path, *, source: str, target: str) -> Path:
+    if source in path.name:
+        return path.with_name(path.name.replace(source, target, 1))
+    return path.with_name(f"otel-{target}.active.jsonl")
 
 
-def append_traces(payload: dict, traces_path: Path | None = None) -> None:
-    _append_jsonl(traces_path or _DEFAULT_TRACES_PATH, payload)
+def _storage_paths(
+    traces_path: Path | None = None,
+    logs_path: Path | None = None,
+) -> tuple[Path, Path]:
+    if traces_path is None and logs_path is None:
+        return _DEFAULT_TRACES_PATH, _DEFAULT_LOGS_PATH
+    if traces_path is None:
+        assert logs_path is not None
+        traces_path = _paired_path(logs_path, source="logs", target="traces")
+    if logs_path is None:
+        logs_path = _paired_path(traces_path, source="traces", target="logs")
+    return traces_path.expanduser().resolve(), logs_path.expanduser().resolve()
 
 
-def append_logs(payload: dict, logs_path: Path | None = None) -> None:
-    _append_jsonl(logs_path or _DEFAULT_LOGS_PATH, payload)
+def _storage_guard(
+    traces_path: Path | None = None,
+    logs_path: Path | None = None,
+) -> RawStorageGuard:
+    paths = _storage_paths(traces_path, logs_path)
+    with _STORAGE_GUARDS_LOCK:
+        return _STORAGE_GUARDS.setdefault(
+            paths,
+            RawStorageGuard(paths, max_bytes=_MAX_RAW_BYTES),
+        )
+
+
+def raw_storage_status(
+    traces_path: Path | None = None,
+    logs_path: Path | None = None,
+) -> dict[str, int | float | bool]:
+    status = _storage_guard(traces_path, logs_path).status()
+    return {
+        "accepting_telemetry": status.accepting_telemetry,
+        "raw_bytes": status.raw_bytes,
+        "raw_limit_bytes": status.raw_limit_bytes,
+        "usage_ratio": status.usage_ratio,
+    }
+
+
+def _append_jsonl(path: Path, payload: dict, *, guard: RawStorageGuard) -> None:
+    raw = orjson.dumps(payload) + b"\n"
+    with guard.admit(len(raw)):
+        _writer_for(path).append_encoded(raw)
+
+
+def append_traces(
+    payload: dict,
+    traces_path: Path | None = None,
+    *,
+    storage_guard: RawStorageGuard | None = None,
+) -> None:
+    path = traces_path or _DEFAULT_TRACES_PATH
+    _append_jsonl(path, payload, guard=storage_guard or _storage_guard(traces_path=path))
+
+
+def append_logs(
+    payload: dict,
+    logs_path: Path | None = None,
+    *,
+    storage_guard: RawStorageGuard | None = None,
+) -> None:
+    path = logs_path or _DEFAULT_LOGS_PATH
+    _append_jsonl(path, payload, guard=storage_guard or _storage_guard(logs_path=path))
 
 
 # ---------------------------------------------------------------------------
@@ -162,22 +242,48 @@ def _proto_to_logs_dict(request) -> dict:
 
 
 class TraceServiceServicer(trace_service_pb2_grpc.TraceServiceServicer):
-    def __init__(self, traces_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        traces_path: Path | None = None,
+        *,
+        storage_guard: RawStorageGuard | None = None,
+    ) -> None:
         self._traces_path = traces_path
+        self._storage_guard = storage_guard
 
     def Export(self, request, context):  # noqa: N802
         payload = _proto_to_traces_dict(request)
-        append_traces(payload, self._traces_path)
+        try:
+            append_traces(
+                payload,
+                self._traces_path,
+                storage_guard=self._storage_guard,
+            )
+        except RawStorageLimitExceeded as exc:
+            context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, str(exc))
         return trace_service_pb2.ExportTraceServiceResponse()
 
 
 class LogsServiceServicer(logs_service_pb2_grpc.LogsServiceServicer):
-    def __init__(self, logs_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        logs_path: Path | None = None,
+        *,
+        storage_guard: RawStorageGuard | None = None,
+    ) -> None:
         self._logs_path = logs_path
+        self._storage_guard = storage_guard
 
     def Export(self, request, context):  # noqa: N802
         payload = _proto_to_logs_dict(request)
-        append_logs(payload, self._logs_path)
+        try:
+            append_logs(
+                payload,
+                self._logs_path,
+                storage_guard=self._storage_guard,
+            )
+        except RawStorageLimitExceeded as exc:
+            context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, str(exc))
         return logs_service_pb2.ExportLogsServiceResponse()
 
 
@@ -189,30 +295,60 @@ class LogsServiceServicer(logs_service_pb2_grpc.LogsServiceServicer):
 def _build_http_app(
     traces_path: Path | None = None,
     logs_path: Path | None = None,
+    *,
+    storage_guard: RawStorageGuard | None = None,
 ) -> FastAPI:
+    resolved_traces, resolved_logs = _storage_paths(traces_path, logs_path)
+    guard = storage_guard or _storage_guard(resolved_traces, resolved_logs)
     app = FastAPI(title="reflect-gateway", docs_url=None, redoc_url=None)
+
+    def storage_full(exc: RawStorageLimitExceeded) -> Response:
+        return Response(
+            content=orjson.dumps({
+                "error": "raw_storage_full",
+                "detail": str(exc),
+                "raw_bytes": exc.status.raw_bytes,
+                "raw_limit_bytes": exc.status.raw_limit_bytes,
+            }),
+            status_code=507,
+            media_type="application/json",
+        )
 
     @app.post("/v1/traces")
     async def ingest_traces(request: Request) -> Response:
         body = await request.body()
         payload = _fix_trace_ids(orjson.loads(body))
-        append_traces(payload, traces_path)
+        try:
+            append_traces(payload, resolved_traces, storage_guard=guard)
+        except RawStorageLimitExceeded as exc:
+            return storage_full(exc)
         return Response(content=b"{}", media_type="application/json")
 
     @app.post("/v1/logs")
     async def ingest_logs(request: Request) -> Response:
         body = await request.body()
         payload = _fix_log_ids(orjson.loads(body))
-        append_logs(payload, logs_path)
+        try:
+            append_logs(payload, resolved_logs, storage_guard=guard)
+        except RawStorageLimitExceeded as exc:
+            return storage_full(exc)
         return Response(content=b"{}", media_type="application/json")
 
     @app.get("/health")
     async def health() -> dict:
+        storage_state = guard.status()
+        storage = {
+            "accepting_telemetry": storage_state.accepting_telemetry,
+            "raw_bytes": storage_state.raw_bytes,
+            "raw_limit_bytes": storage_state.raw_limit_bytes,
+            "usage_ratio": storage_state.usage_ratio,
+        }
         return {
-            "status": "ok",
+            "status": "ok" if storage["accepting_telemetry"] else "degraded",
             "pid": os.getpid(),
-            "traces_path": str(traces_path or _DEFAULT_TRACES_PATH),
-            "logs_path": str(logs_path or _DEFAULT_LOGS_PATH),
+            "traces_path": str(resolved_traces),
+            "logs_path": str(resolved_logs),
+            **storage,
         }
 
     return app
@@ -240,11 +376,12 @@ def start_gateway(
         futures.ThreadPoolExecutor(max_workers=4),
         options=(("grpc.so_reuseport", 0),),
     )
+    guard = _storage_guard(tp, lp)
     trace_service_pb2_grpc.add_TraceServiceServicer_to_server(
-        TraceServiceServicer(tp), grpc_server,
+        TraceServiceServicer(tp, storage_guard=guard), grpc_server,
     )
     logs_service_pb2_grpc.add_LogsServiceServicer_to_server(
-        LogsServiceServicer(lp), grpc_server,
+        LogsServiceServicer(lp, storage_guard=guard), grpc_server,
     )
     bound_port = grpc_server.add_insecure_port(f"127.0.0.1:{grpc_port}")
     if bound_port == 0:
@@ -254,7 +391,7 @@ def start_gateway(
     logger.info("gRPC listening on 127.0.0.1:%d", grpc_port)
 
     # HTTP server (runs in a daemon thread so we can join on gRPC)
-    http_app = _build_http_app(tp, lp)
+    http_app = _build_http_app(tp, lp, storage_guard=guard)
     http_config = uvicorn.Config(
         http_app,
         host="127.0.0.1",
@@ -365,7 +502,11 @@ def _probe_gateway(http_port: int = 4318, *, timeout: float = 0.25) -> dict | No
             payload = orjson.loads(response.read())
     except (HTTPError, URLError, TimeoutError, OSError, orjson.JSONDecodeError):
         return None
-    return payload if isinstance(payload, dict) and payload.get("status") == "ok" else None
+    return (
+        payload
+        if isinstance(payload, dict) and payload.get("status") in {"ok", "degraded"}
+        else None
+    )
 
 
 def daemon_start(grpc_port: int = 4317, http_port: int = 4318) -> int:
@@ -445,11 +586,17 @@ def daemon_status() -> dict:
     """Return gateway status dict."""
     pid = _is_running()
     health = _probe_gateway()
+    local_storage = raw_storage_status()
     listener_pid = health.get("pid") if health else None
     managed_listener = bool(pid and (listener_pid is None or listener_pid == pid))
     conflict = bool(health and not managed_listener)
     traces_path = _DEFAULT_TRACES_PATH
     logs_path = _DEFAULT_LOGS_PATH
+
+    def storage_value(key: str):
+        remote = health.get(key) if health else None
+        return remote if remote is not None else local_storage[key]
+
     return {
         "running": pid is not None and not conflict,
         "pid": pid,
@@ -458,6 +605,10 @@ def daemon_status() -> dict:
         "conflict": conflict,
         "listener_traces_path": health.get("traces_path") if health else None,
         "listener_logs_path": health.get("logs_path") if health else None,
+        "accepting_telemetry": storage_value("accepting_telemetry"),
+        "raw_bytes": storage_value("raw_bytes"),
+        "raw_limit_bytes": storage_value("raw_limit_bytes"),
+        "raw_usage_ratio": storage_value("usage_ratio"),
         "traces_path": str(traces_path),
         "logs_path": str(logs_path),
         "traces_size": traces_path.stat().st_size if traces_path.exists() else 0,

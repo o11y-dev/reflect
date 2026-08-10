@@ -1,5 +1,6 @@
 import sqlite3
 import threading
+import time
 
 import pytest
 
@@ -8,6 +9,7 @@ from reflect.preparation import (
     CommandPreparationPolicy,
     PreparationCoordinator,
     PreparationProgress,
+    PreparationScheduler,
     PreparationStage,
     PreparationState,
     SnapshotAction,
@@ -93,6 +95,101 @@ def test_preparation_coordinator_exposes_current_progress():
     assert completed.state is PreparationState.COMPLETE
     assert completed.stage is PreparationStage.COMPLETE
     assert completed.message == "Preparation complete."
+
+
+def test_preparation_scheduler_runs_immediately_and_on_interval():
+    completed = threading.Event()
+    calls = 0
+
+    def prepare(_progress):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            completed.set()
+        return {"calls": calls}
+
+    scheduler = PreparationScheduler(
+        PreparationCoordinator(prepare),
+        interval_seconds=0.02,
+    )
+
+    assert scheduler.start() is True
+    assert scheduler.start() is False
+    assert completed.wait(timeout=1) is True
+    snapshot = scheduler.snapshot()
+    assert snapshot.enabled is True
+    assert snapshot.interval_seconds == 0.02
+    assert snapshot.next_run_at
+    assert scheduler.close(timeout=1) is True
+    assert scheduler.snapshot().enabled is False
+
+
+def test_preparation_scheduler_does_not_overlap_refreshes():
+    started = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def prepare(_progress):
+        nonlocal calls
+        calls += 1
+        started.set()
+        release.wait(timeout=1)
+        return {"calls": calls}
+
+    coordinator = PreparationCoordinator(prepare)
+    scheduler = PreparationScheduler(coordinator, interval_seconds=0.01)
+
+    assert scheduler.start() is True
+    assert started.wait(timeout=1) is True
+    time.sleep(0.04)
+    assert calls == 1
+    release.set()
+    assert coordinator.wait(timeout=1) is True
+    assert scheduler.close(timeout=1) is True
+
+
+def test_preparation_scheduler_retries_after_failure():
+    recovered = threading.Event()
+    calls = 0
+
+    def prepare(_progress):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("temporary failure")
+        recovered.set()
+        return {"calls": calls}
+
+    coordinator = PreparationCoordinator(prepare)
+    scheduler = PreparationScheduler(coordinator, interval_seconds=0.02)
+
+    assert scheduler.start() is True
+    assert recovered.wait(timeout=1) is True
+    assert coordinator.wait(timeout=1) is True
+    assert coordinator.snapshot().generation == 1
+    assert scheduler.close(timeout=1) is True
+
+
+def test_preparation_scheduler_can_defer_first_run_until_interval():
+    called = threading.Event()
+    scheduler = PreparationScheduler(
+        PreparationCoordinator(lambda _progress: called.set() or {}),
+        interval_seconds=0.02,
+        run_immediately=False,
+    )
+
+    assert scheduler.start() is True
+    assert called.is_set() is False
+    assert called.wait(timeout=1) is True
+    assert scheduler.close(timeout=1) is True
+
+
+def test_preparation_scheduler_requires_positive_interval():
+    with pytest.raises(ValueError, match="must be positive"):
+        PreparationScheduler(
+            PreparationCoordinator(lambda _progress: {}),
+            interval_seconds=0,
+        )
 
 
 def test_report_preparation_progress_emits_a_typed_stage():

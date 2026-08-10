@@ -19,6 +19,7 @@ from reflect.dashboard_queries import build_dashboard_payload
 from reflect.dashboard_sessions import build_session_payload, load_session_detail
 from reflect.preparation import (
     PreparationCoordinator,
+    PreparationScheduler,
     PreparationSnapshot,
     PreparationState,
 )
@@ -85,7 +86,8 @@ def _bounded_query_limit(value: object, *, default: int, maximum: int) -> int:
 def start_publish_server(
     *,
     db_path: Path,
-    preparation_worker: PreparationCoordinator | None = None,
+    preparation_scheduler: PreparationScheduler | None = None,
+    raw_storage_status_loader: Callable[[], dict[str, object]] | None = None,
     open_browser: bool = True,
 ) -> None:
     """Start a local FastAPI server and open the dashboard in a browser.
@@ -99,7 +101,8 @@ def start_publish_server(
         port,
         docs_dir,
         db_path=db_path,
-        preparation_worker=preparation_worker,
+        preparation_scheduler=preparation_scheduler,
+        raw_storage_status_loader=raw_storage_status_loader,
         open_browser=open_browser,
     )
 
@@ -109,6 +112,8 @@ def build_dashboard_app(
     docs_dir: Path,
     db_path: Path,
     preparation_worker: PreparationCoordinator | None = None,
+    preparation_scheduler: PreparationScheduler | None = None,
+    raw_storage_status_loader: Callable[[], dict[str, object]] | None = None,
     project_root: Path | None = None,
 ):
     from fastapi import FastAPI, Request
@@ -118,6 +123,13 @@ def build_dashboard_app(
     globals()["Request"] = Request
 
     app = FastAPI(title="reflect dashboard", docs_url=None, redoc_url=None)
+    if preparation_worker is not None and preparation_scheduler is not None:
+        raise ValueError("pass a preparation worker or scheduler, not both")
+    active_preparation = (
+        preparation_scheduler.coordinator
+        if preparation_scheduler is not None
+        else preparation_worker
+    )
     workflow_project_root = (project_root or Path.cwd()).expanduser().resolve()
     improvement_adapter = DashboardImprovementAdapter(db_path)
 
@@ -125,7 +137,7 @@ def build_dashboard_app(
         requested = str(value or "").strip()
         return Path(requested).expanduser().resolve() if requested else workflow_project_root
 
-    if preparation_worker is not None:
+    if active_preparation is not None:
         dashboard_cache = DashboardDataCache(
             lambda: build_dashboard_payload(
                 db_path,
@@ -145,8 +157,8 @@ def build_dashboard_app(
                 db_path, lazy_heavy_tabs=True, base_tab_names=set(EXPLORE_VIEW_TABS["usage"])
             )
         )
-    if preparation_worker is not None:
-        preparation_worker.add_completion_callback(lambda _result: dashboard_cache.refresh())
+    if active_preparation is not None:
+        active_preparation.add_completion_callback(lambda _result: dashboard_cache.refresh())
 
     @app.get("/api/data")
     def api_data(request: Request):
@@ -236,20 +248,36 @@ def build_dashboard_app(
     @app.get("/api/status")
     def api_status():
         snapshot = (
-            preparation_worker.snapshot()
-            if preparation_worker is not None
+            active_preparation.snapshot()
+            if active_preparation is not None
             else PreparationSnapshot(state=PreparationState.IDLE, generation=0)
         )
+        schedule = (
+            preparation_scheduler.snapshot().as_dict()
+            if preparation_scheduler is not None
+            else {"enabled": False, "interval_seconds": 0, "next_run_at": ""}
+        )
+        raw_storage = None
+        if raw_storage_status_loader is not None:
+            try:
+                raw_storage = raw_storage_status_loader()
+            except OSError as exc:
+                raw_storage = {
+                    "accepting_telemetry": None,
+                    "error": str(exc),
+                }
         return JSONResponse(
             {
                 "preparation": snapshot.as_dict(),
-                "refresh_available": preparation_worker is not None,
+                "automatic_refresh": schedule,
+                "raw_storage": raw_storage,
+                "refresh_available": active_preparation is not None,
             }
         )
 
     @app.post("/api/refresh")
     def api_refresh():
-        if preparation_worker is None:
+        if active_preparation is None:
             return JSONResponse(
                 {
                     "error": "This report server is snapshot-only. Start Reflect normally or use `reflect server --refresh start`.",
@@ -257,12 +285,12 @@ def build_dashboard_app(
                 },
                 status_code=409,
             )
-        started = preparation_worker.start()
+        started = active_preparation.start()
         return JSONResponse(
             {
                 "started": started,
                 "refresh_available": True,
-                "preparation": preparation_worker.snapshot().as_dict(),
+                "preparation": active_preparation.snapshot().as_dict(),
             },
             status_code=202 if started else 200,
         )
@@ -489,6 +517,8 @@ def _serve_dashboard(
     *,
     db_path: Path,
     preparation_worker: PreparationCoordinator | None = None,
+    preparation_scheduler: PreparationScheduler | None = None,
+    raw_storage_status_loader: Callable[[], dict[str, object]] | None = None,
     open_browser: bool = True,
 ) -> None:
     """Inline FastAPI server for the local `reflect` browser report."""
@@ -511,16 +541,22 @@ def _serve_dashboard(
         docs_dir=docs_dir,
         db_path=db_path,
         preparation_worker=preparation_worker,
+        preparation_scheduler=preparation_scheduler,
+        raw_storage_status_loader=raw_storage_status_loader,
     )
     url = f"http://127.0.0.1:{port}/?report=api/data"
     if open_browser:
         threading.Timer(0.5, webbrowser.open, args=[url]).start()
     print(f"\n  Serving at: {url}")
     print("  Press Ctrl-C to stop\n")
-    if preparation_worker is not None:
+    if preparation_scheduler is not None:
+        preparation_scheduler.start()
+    elif preparation_worker is not None:
         preparation_worker.start()
     try:
         uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
     finally:
-        if preparation_worker is not None:
+        if preparation_scheduler is not None:
+            preparation_scheduler.close()
+        elif preparation_worker is not None:
             preparation_worker.close()

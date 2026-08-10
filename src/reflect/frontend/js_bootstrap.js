@@ -50,7 +50,59 @@ function hideReportLoader(){
 
 let preparationStatusPollTimer = null;
 const DASHBOARD_REFRESH_MIN_INTERVAL_MS = 30000;
-function renderPreparationStatus(preparation){
+function formatStorageBytes(value){
+  const bytes = Math.max(0, Number(value || 0));
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let size = bytes / 1024;
+  let unit = units[0];
+  for (let index = 1; index < units.length && size >= 1024; index += 1) {
+    size /= 1024;
+    unit = units[index];
+  }
+  return `${size.toFixed(1)} ${unit}`;
+}
+
+function rawStorageNeedsAttention(rawStorage){
+  return Boolean(
+    rawStorage
+    && (
+      rawStorage.accepting_telemetry === false
+      || Number(rawStorage.usage_ratio || 0) >= 0.8
+      || rawStorage.error
+    )
+  );
+}
+
+function renderRawStorageStatus(rawStorage){
+  const status = document.getElementById('preparation-status');
+  const copy = document.getElementById('preparation-status-copy');
+  if (!status || !copy || !rawStorage) return false;
+  const used = formatStorageBytes(rawStorage.raw_bytes);
+  const limit = formatStorageBytes(rawStorage.raw_limit_bytes);
+  if (rawStorage.accepting_telemetry === false) {
+    status.className = 'preparation-status failed';
+    status.hidden = false;
+    copy.textContent = `Capture paused: raw OTLP storage reached its ${limit} limit (${used} used). Refresh telemetry to resume capture.`;
+    return true;
+  }
+  const ratio = Number(rawStorage.usage_ratio || 0);
+  if (ratio >= 0.8) {
+    status.className = 'preparation-status warning';
+    status.hidden = false;
+    copy.textContent = `Raw OTLP storage is ${Math.round(ratio * 100)}% full (${used} of ${limit}). The next automatic refresh will reclaim processed segments.`;
+    return true;
+  }
+  if (rawStorage.error) {
+    status.className = 'preparation-status warning';
+    status.hidden = false;
+    copy.textContent = 'Capture storage status is unavailable. Check reflect doctor for details.';
+    return true;
+  }
+  return false;
+}
+
+function renderPreparationStatus(preparation, persistentOverride = false){
   const status = document.getElementById('preparation-status');
   const copy = document.getElementById('preparation-status-copy');
   if (!status || !copy) return false;
@@ -86,7 +138,9 @@ function renderPreparationStatus(preparation){
       window.setTimeout(() => window.location.reload(), 450);
       return false;
     }
-    window.setTimeout(() => { status.hidden = true; }, 5000);
+    if (!persistentOverride) {
+      window.setTimeout(() => { status.hidden = true; }, 5000);
+    }
     return false;
   }
   status.hidden = true;
@@ -101,12 +155,23 @@ async function pollPreparationStatus(){
     });
     if (!response.ok) throw new Error('status-unavailable');
     const payload = await response.json();
-    if (renderPreparationStatus(payload.preparation)) {
-      preparationStatusPollTimer = window.setTimeout(pollPreparationStatus, 750);
-    }
+    const storageNeedsAttention = rawStorageNeedsAttention(payload.raw_storage);
+    const preparationRunning = renderPreparationStatus(
+      payload.preparation,
+      storageNeedsAttention,
+    );
+    renderRawStorageStatus(payload.raw_storage);
+    preparationStatusPollTimer = window.setTimeout(
+      pollPreparationStatus,
+      preparationRunning ? 750 : DASHBOARD_REFRESH_MIN_INTERVAL_MS,
+    );
   } catch {
     const status = document.getElementById('preparation-status');
     if (status) status.hidden = true;
+    preparationStatusPollTimer = window.setTimeout(
+      pollPreparationStatus,
+      DASHBOARD_REFRESH_MIN_INTERVAL_MS,
+    );
   }
 }
 
@@ -127,6 +192,10 @@ async function requestDashboardRefresh(){
     const statusPayload = await statusResponse.json();
     if (!statusPayload.refresh_available) return;
     const preparation = statusPayload.preparation || {};
+    if (statusPayload.automatic_refresh?.enabled) {
+      if (preparation.state === 'running') startPreparationStatusPolling();
+      return;
+    }
     if (preparation.state === 'running') {
       startPreparationStatusPolling();
       return;

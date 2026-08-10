@@ -82,7 +82,9 @@ reflect
 ```
 
 The browser opens at `http://127.0.0.1:8765`. It reads the same local SQLite
-evidence as the CLI and MCP server.
+evidence as the CLI and MCP server. The normal refresh-enabled server prepares
+new telemetry immediately and every five minutes; `reflect server start` is
+snapshot-only unless `--refresh` is supplied.
 
 No data yet? Open the bundled cross-agent demonstration:
 
@@ -101,12 +103,13 @@ The product loop is:
 > task contract -> execution evidence -> human review -> installed workflow ->
 > comparable future tasks -> measured impact
 
-The browser has five surfaces:
+The browser has six surfaces:
 
 | Surface | What it answers |
 |---|---|
 | **Sessions** | What happened, what did it cost, and which source evidence is available? |
-| **Workflows** | Which findings, loops, and proposed procedures need review? |
+| **Inbox** | Which findings and repeated behaviors need investigation before becoming interventions? |
+| **Workflows** | Which bounded intervention contracts need review, installation, or rollback? |
 | **Skills** | Which versioned procedures exist, where are they installed, and have agents used them? |
 | **Impact** | Did comparable task outcomes move after installation, and is attribution supported? |
 | **Explore** | What do usage, tools, MCP, graph, context, and task contracts show? |
@@ -209,6 +212,23 @@ The gateway appends to `otel-traces.active.jsonl` and
 Refresh checkpoints each source, normalizes new records, and deletes only
 closed segments whose events normalized successfully. Use
 `--keep-processed-raw` when replay files must be retained.
+
+The combined trace-and-log replay buffer has a 4 GiB hard admission limit by
+default. At the limit the gateway preserves every existing byte and rejects new
+HTTP telemetry with `507` or gRPC telemetry with `RESOURCE_EXHAUSTED`; it never
+deletes unprocessed evidence to make room. The dashboard, `reflect doctor`, and
+`reflect gateway status` warn at 80% and show when capture is paused. A
+successful refresh removes eligible processed closed segments and capture then
+resumes automatically.
+
+Operators can override the positive byte and cadence values before starting the
+managed services:
+
+```bash
+REFLECT_OTLP_MAX_BYTES=4294967296           # combined raw traces + logs
+REFLECT_OTLP_SEGMENT_BYTES=268435456        # one active segment
+REFLECT_REFRESH_INTERVAL_SECONDS=300        # refresh-enabled report server
+```
 
 `tool_calls` stores one logical invocation. `mcp_calls` is a one-to-one metadata
 extension for MCP server, tool, transport, and protocol identity, not a second
@@ -323,7 +343,7 @@ Before a release:
 ```bash
 poetry run ruff check .
 poetry run pytest -q --no-cov
-poetry run python scripts/release_workflow.py release-notes 0.9.6
+poetry run python scripts/release_workflow.py release-notes 0.9.7
 ```
 
 See [AGENTS.md](AGENTS.md) for repository conventions,

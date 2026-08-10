@@ -1,7 +1,7 @@
 # Reflect current architecture
 
 Status: current implementation.
-Last reviewed: 2026-08-08
+Last reviewed: 2026-08-10
 
 This document describes the architecture that exists on this branch. It is a
 navigation aid and decision record, not a roadmap. When it disagrees with code
@@ -29,7 +29,7 @@ flowchart LR
         Context[Task contracts and memory]
     end
 
-    OTLP --> Segments[Bounded raw segments]
+    OTLP --> Segments[Guarded raw segments]
     Segments --> Ingest[Checkpointed ingestion]
     Native --> Ingest
     Context --> Ingest
@@ -66,9 +66,11 @@ Shared raw skill and subagent evidence extraction lives in
 | Preparation policy | `src/reflect/preparation.py` | Snapshot states, profiles, progress, background lifecycle, and coordinator |
 | Preparation pipeline | `src/reflect/preparation_pipeline.py` | Migrate, ingest, normalize, reconcile, derive, and publish a refreshed snapshot |
 | MCP | `src/reflect/mcp.py`, `context.py`, `changes.py` | Task guidance, completion, evidence inspection, and approval-gated changes |
-| Browser queries | `src/reflect/dashboard_query_common.py`, `dashboard_queries.py`, `dashboard_sessions.py`, `dashboard_explore.py` | Shared contracts, overview, session drill-down, and Explore read models |
+| SQL read models | `src/reflect/views/` | Typed overview, session, provenance, and report-tab queries over canonical SQLite evidence |
+| Browser queries | `src/reflect/dashboard_query_common.py`, `dashboard_queries.py`, `dashboard_sessions.py`, `dashboard_explore.py` | Adapt public SQL read models into bounded overview, session drill-down, and Explore payloads |
 | Improvement browser adapter | `src/reflect/dashboard_improvements.py` | Connection lifecycle and dashboard-ready findings, workflows, skills, and impact models |
 | Browser server | `src/reflect/dashboard_server.py` | HTTP routes, cache ownership, error mapping, and local server construction |
+| Report runtime | `src/reflect/report_server.py` | Foreground/detached report lifecycle, refresh scheduling, source selection, and daemon state |
 | Browser source | `src/reflect/frontend/` | Authored HTML template plus domain-oriented CSS and JavaScript modules |
 | Browser artifacts | `src/reflect/data/index.html`, `docs/report.html` | Generated, byte-identical single-file clients |
 | OTLP gateway | `src/reflect/gateway.py`, `raw_segments.py` | Receive OTLP, append active files, and rotate immutable segments |
@@ -93,6 +95,14 @@ One gateway process owns each active path. Within that boundary,
 before it exceeds the configured bound. Closed segments are immutable,
 timestamp-named JSONL files. Refresh reads closed segments oldest-first and then
 the active segment.
+
+One `RawStorageGuard` serializes admission across both signals. It measures all
+active and closed trace/log segments before each append. The default combined
+limit is 4 GiB (`REFLECT_OTLP_MAX_BYTES`); individual active segments default to
+256 MiB (`REFLECT_OTLP_SEGMENT_BYTES`). When a batch would exceed the combined
+limit, HTTP returns `507` and gRPC returns `RESOURCE_EXHAUSTED`. No raw evidence
+is deleted during admission. Capture resumes automatically after a refresh
+removes eligible processed closed segments.
 
 `source_ingestion_state` records the source fingerprint, append checkpoint,
 relational record cursor, decoder version, normalization time, and raw deletion
@@ -131,9 +141,9 @@ only the canonical model.
 
 ### Agent capabilities
 
-Setup, doctor, skill distribution, MCP configuration, aliases, and local-agent
-tests read the same `AgentCapability` registry. It is product metadata, not a
-telemetry parser registry.
+Setup, doctor, native-OTel surfaces, skill distribution, MCP configuration,
+aliases, and local-agent tests read the same `AgentCapability` registry. It is
+product metadata, not a telemetry parser registry.
 
 Provider-specific responsibilities use precise boundaries: `parsing.py`
 discovers native inputs and derives canonical source events,
@@ -155,8 +165,12 @@ conversation capture.
 
 ## Snapshot preparation
 
-`PreparationCoordinator` owns stateful preparation lifecycle and delegates the
-actual work to `prepare_usage_db()` or `prepare_sql_report_db()`.
+`PreparationCoordinator` owns one non-overlapping preparation lifecycle and
+delegates the actual work to `prepare_usage_db()` or `prepare_sql_report_db()`.
+`PreparationScheduler` adds cadence without adding a second execution path.
+Refresh-enabled report servers run immediately and then every 300 seconds by
+default (`REFLECT_REFRESH_INTERVAL_SECONDS`); manual `/api/refresh` requests use
+the same coordinator. Snapshot-only servers do not schedule preparation.
 
 The complete pipeline is:
 
@@ -264,17 +278,20 @@ task contracts.
 
 ## Browser architecture
 
-The browser exposes five product surfaces:
+The browser exposes six product surfaces:
 
 1. Sessions — source conversations, usage, cost, tools, and comparisons
-2. Workflows — findings, loops, and reviewable workflows
-3. Skills — durable versions, installation targets, exposure, and usage evidence
-4. Impact — measured comparable-task progress and evidence quality
-5. Explore — usage, tools, graph, and context/task-contract diagnostics
+2. Inbox — evidence-backed findings and loops that need investigation
+3. Workflows — explicit reviewable intervention contracts
+4. Skills — durable versions, installation targets, exposure, and usage evidence
+5. Impact — measured comparable-task progress and evidence quality
+6. Explore — usage, tools, graph, and context/task-contract diagnostics
 
-`dashboard_queries.py` builds bounded read models from SQLite.
-`dashboard_server.py` wires those functions to FastAPI and owns server/cache
-lifecycle. The authored client lives in `src/reflect/frontend/`; running
+`reflect.views` owns the public typed SQL read-model API. Dashboard query modules
+adapt those models into browser payloads; they do not import private view-module
+helpers. `dashboard_server.py` wires routes and cache state, while
+`report_server.py` owns process and preparation scheduling. The authored client
+lives in `src/reflect/frontend/`; running
 `scripts/build_dashboard.py` produces both shipped HTML files. Generated files
 must never be edited independently.
 
@@ -306,10 +323,11 @@ numbered migration and idempotency coverage.
 | A-006 | Review, deployment, installation, and measurement are separate lifecycle dimensions. | Cards cannot imply that approval means installation or impact. |
 | A-007 | `tool_calls` is the only logical-call ledger; `mcp_calls` is metadata. | MCP and total tool counts cannot double-count one invocation. |
 | A-008 | Agent support is declared once and per surface. | Configuration never masquerades as captured telemetry. |
-| A-009 | Closed raw segments are disposable after successful normalization. | Raw disk growth is bounded without deleting canonical evidence. |
+| A-009 | Closed raw segments are disposable only after successful normalization, and combined raw admission has a hard limit. | Disk use cannot grow past the configured guard through gateway writes; at capacity capture pauses without deleting unprocessed evidence. |
 | A-010 | Browser queries, server wiring, and authored client sources are separate owners. | UI changes do not grow a monolithic server module. |
 | A-011 | OOP is for state, lifecycle, strategy, and ownership; pure transforms stay functions. | Abstractions must remove duplication or isolate a demonstrated variant. |
 | A-012 | Database evolution is one-way. | New code has one runtime model instead of compatibility branches. |
+| A-013 | A source checkout version is runtime truth ahead of stale environment metadata. | Doctor reports the mismatch and asks the developer to sync Poetry instead of mislabeling the checkout as an older release. |
 
 ## Change guardrails
 

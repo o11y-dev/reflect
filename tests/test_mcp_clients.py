@@ -4,7 +4,13 @@ import json
 
 import pytest
 
-from reflect.agent_capabilities import AgentSupport, MCPClientSurface, get_agent_capability
+from reflect.agent_capabilities import (
+    AgentSupport,
+    MCPClientSurface,
+    get_agent_capability,
+    native_otel_capabilities,
+    setup_agent_capabilities,
+)
 from reflect.mcp_clients import (
     MCP_CLIENT_CAPABILITIES,
     MCP_CLIENT_CONFIGURATORS,
@@ -23,6 +29,21 @@ def test_mcp_client_matrix_uses_canonical_agent_capabilities() -> None:
     assert "Gemini CLI" not in declared_agents
     assert get_agent_capability("Gemini CLI").support is AgentSupport.HISTORICAL
     assert get_agent_capability("Antigravity").support is AgentSupport.PARTIAL
+
+
+def test_setup_and_native_otel_surfaces_use_current_capability_truth() -> None:
+    setup_keys = {capability.key for capability in setup_agent_capabilities()}
+    native_agents = {capability.display_name for capability in native_otel_capabilities()}
+
+    assert "gemini" not in setup_keys
+    assert "antigravity" in setup_keys
+    assert "Gemini CLI" not in native_agents
+    assert native_agents == {
+        "Claude Code",
+        "GitHub Copilot VS Code",
+        "GitHub Copilot CLI",
+        "OpenAI Codex CLI",
+    }
 
 
 def test_headless_clients_have_complete_local_test_identity() -> None:

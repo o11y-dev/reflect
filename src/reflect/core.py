@@ -37,6 +37,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import tomllib
 import zipfile
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -63,6 +64,8 @@ if TYPE_CHECKING:
 from reflect.agent_capabilities import (
     AgentCapability,
     AgentSupport,
+    agent_capabilities,
+    get_agent_capability,
     normalize_agent_key,
     setup_agent_capabilities,
     skill_agent_capabilities,
@@ -72,7 +75,6 @@ from reflect.cli.database import db as database_commands
 from reflect.cli.database import ingest as ingest_command
 from reflect.cli.memory import memory as memory_commands
 from reflect.cli.schema import schema as schema_commands
-from reflect.dashboard_server import start_publish_server
 from reflect.hook_runtime import HookMigrationError, HookPipxMigrator, HookRuntime
 from reflect.instrumentation import (
     _HOOK_CFG_ENDPOINT_KEY,
@@ -99,6 +101,12 @@ from reflect.raw_segments import (
     closed_segment_paths,
     readable_segment_paths,
     segment_inventory,
+)
+from reflect.report_server import (
+    default_otlp_traces,
+    has_sql_report_snapshot,
+    refresh_interval_from_env,
+    run_browser_report,
 )
 from reflect.shell_completion import (
     SUPPORTED_SHELLS,
@@ -134,13 +142,8 @@ HOOK_HOME = Path(
 # CLI
 # ---------------------------------------------------------------------------
 
-def _default_otlp_traces() -> Path | None:
-    """Return the canonical default OTLP traces path if it exists."""
-    p_otlp = _canonical_otlp_traces_path()
-    return p_otlp if readable_segment_paths(p_otlp) else None
-
-
-_AGENT_CAPABILITIES = setup_agent_capabilities()
+_AGENT_CAPABILITIES = agent_capabilities()
+_SETUP_AGENT_CAPABILITIES = setup_agent_capabilities()
 _SKILL_AGENT_CLI_NAMES = tuple(
     capability.skill_cli
     for capability in skill_agent_capabilities()
@@ -155,7 +158,7 @@ def _complete_setup_agent(
 ) -> list[str]:
     candidates = {
         name
-        for capability in _AGENT_CAPABILITIES
+        for capability in _SETUP_AGENT_CAPABILITIES
         for name in capability.setup_names
     }
     lowered = incomplete.lower()
@@ -267,11 +270,29 @@ _UPDATE_CACHE_TTL_SECONDS = 60 * 60 * 12
 _UPDATE_PYPI_JSON_URL = "https://pypi.org/pypi/o11y-reflect/json"
 
 
-def _current_reflect_version() -> str:
+def _installed_reflect_version() -> str:
     try:
         return importlib_metadata.version("o11y-reflect")
     except importlib_metadata.PackageNotFoundError:
         return "0.0.0"
+
+
+def _source_checkout_reflect_version() -> str | None:
+    pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    if not pyproject_path.is_file():
+        return None
+    try:
+        project = tomllib.loads(pyproject_path.read_text(encoding="utf-8")).get("project")
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    if not isinstance(project, dict) or project.get("name") != "o11y-reflect":
+        return None
+    version = project.get("version")
+    return version if isinstance(version, str) and version.strip() else None
+
+
+def _current_reflect_version() -> str:
+    return _source_checkout_reflect_version() or _installed_reflect_version()
 
 
 def _version_key(version: str) -> tuple[object, ...]:
@@ -316,6 +337,8 @@ def _fetch_latest_reflect_version(timeout: float = 1.5) -> str | None:
 
 def _release_update_status(*, allow_remote: bool) -> dict:
     current_version = _current_reflect_version()
+    installed_version = _installed_reflect_version()
+    source_version = _source_checkout_reflect_version()
     cache = _load_update_cache()
     latest_version = cache.get("latest_version") if isinstance(cache.get("latest_version"), str) else None
     checked_at = cache.get("checked_at") if isinstance(cache.get("checked_at"), str) else None
@@ -343,6 +366,9 @@ def _release_update_status(*, allow_remote: bool) -> dict:
     update_available = _is_newer_version(latest_version, current_version)
     return {
         "current_version": current_version,
+        "installed_version": installed_version,
+        "source_version": source_version,
+        "source_checkout": source_version is not None,
         "latest_version": latest_version,
         "checked_at": checked_at,
         "update_available": update_available,
@@ -586,7 +612,25 @@ def _render_update_advisor_panel(console, advisor: dict) -> None:
     table.add_column("Details")
     table.add_column("Next step", overflow="fold")
 
-    if release["update_available"]:
+    installed_version = str(
+        release.get("installed_version") or release["current_version"]
+    )
+    source_version = release.get("source_version")
+    source_checkout = bool(release.get("source_checkout"))
+    if source_checkout and source_version != installed_version:
+        release_status = "[yellow]source checkout[/]"
+        release_details = (
+            f"Running source v{source_version} with environment metadata "
+            f"v{installed_version}."
+        )
+        release_next = "Run poetry install to sync environment metadata."
+    elif source_checkout:
+        release_status = "[green]source checkout[/]"
+        release_details = (
+            f"Running source v{source_version}; environment metadata matches."
+        )
+        release_next = "No environment sync needed."
+    elif release["update_available"]:
         release_status = "[yellow]update available[/]"
         release_details = (
             f"Installed v{release['current_version']}; latest release is v{release['latest_version']}."
@@ -657,7 +701,7 @@ def _resolve_and_analyze(
     if spans_dir is None:
         spans_dir = _default_spans_dir()
     if otlp_traces is None:
-        otlp_traces = _default_otlp_traces()
+        otlp_traces = default_otlp_traces()
 
     return analyze_telemetry(sessions_dir, spans_dir, otlp_traces, since=since)
 
@@ -693,6 +737,10 @@ def main(
     if ctx.invoked_subcommand is not None:
         return
 
+    update_notice = _build_startup_update_notice()
+    if update_notice:
+        click.echo(f"reflect notice: {update_notice}")
+
     if not foreground and not demo:
         _start_background_report_server(
             db_path=db_path,
@@ -701,11 +749,12 @@ def main(
         )
         return
 
-    _run_browser_report(
+    run_browser_report(
         otlp_traces=otlp_traces,
         demo=demo,
         db_path=db_path,
         refresh=True,
+        refresh_interval_seconds=refresh_interval_from_env(),
     )
 
 
@@ -845,7 +894,7 @@ def _ensure_command_snapshot(
             otlp_traces=(
                 otlp_traces
                 if otlp_traces is not None
-                else _default_otlp_traces()
+                else default_otlp_traces()
             ),
             include_native_sessions=include_native_sessions,
             spans_dir=spans_dir,
@@ -1079,7 +1128,7 @@ def usage(
         ),
         prepare=lambda: _prepare_usage_db_with_progress(
             db_path,
-            otlp_traces=_default_otlp_traces(),
+            otlp_traces=default_otlp_traces(),
             include_native_sessions=True,
             native_session_ids=(
                 ()
@@ -1174,7 +1223,7 @@ def improve(
         _ensure_command_snapshot(
             db_path,
             refresh=refresh,
-            otlp_traces=_demo_otlp_traces() if demo else _default_otlp_traces(),
+            otlp_traces=_demo_otlp_traces() if demo else default_otlp_traces(),
             include_native_sessions=not demo,
         )
         conn, service = _open_improvement_service(db_path, read_only=True)
@@ -1945,6 +1994,7 @@ def _report_server_daemon(
         db_path=db_path.expanduser().resolve(),
         otlp_traces=otlp_traces.expanduser().resolve() if otlp_traces is not None else None,
         refresh=refresh,
+        refresh_interval_seconds=refresh_interval_from_env(),
     )
     return ReportServerDaemon(config, state_dir=REFLECT_HOME / "state")
 
@@ -1968,7 +2018,7 @@ def _start_background_report_server(
     if (
         not refresh
         and not daemon.status().running
-        and not _has_sql_report_snapshot(db_path)
+        and not has_sql_report_snapshot(db_path)
     ):
         raise click.ClickException(
             f"No report snapshot found at {db_path}. "
@@ -2003,128 +2053,9 @@ def _start_background_report_server(
         webbrowser.open(status.url)
     console.print(f"  Dashboard: [link={status.url}]{status.url}[/link]")
     console.print(f"  Log:       {status.log_file}")
+    if status.refresh:
+        console.print(f"  Refresh:   every {status.refresh_interval_seconds} seconds")
     console.print("  Manage:    reflect server status | reflect server stop")
-
-
-# ---------------------------------------------------------------------------
-# Report command
-# ---------------------------------------------------------------------------
-
-
-def _has_sql_report_snapshot(db_path: Path) -> bool:
-    from reflect.preparation import SQLiteSnapshotInspector
-    from reflect.store.sqlite import connect_sqlite_read_only
-
-    if not SQLiteSnapshotInspector(db_path).inspect().ready:
-        return False
-    try:
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            return bool(conn.execute("SELECT 1 FROM session_rollups LIMIT 1").fetchone())
-        finally:
-            conn.close()
-    except sqlite3.Error:
-        return False
-
-
-def _render_preparation_summary(console: Console, preparation: dict[str, object]) -> None:
-    ingest = preparation["ingest"]
-    normalize = preparation["normalize"]
-    rollups = preparation["rollups"]
-    assert isinstance(ingest, dict)
-    assert isinstance(normalize, dict)
-    assert isinstance(rollups, dict)
-    summary = Table.grid(padding=(0, 2))
-    summary.add_column(style="bold")
-    summary.add_column(justify="right")
-    for label, value in (
-        ("Inserted", ingest["inserted"]),
-        ("Skipped", ingest["skipped"]),
-        ("Normalized", normalize["processed"]),
-        ("Sessions", rollups["session_rollups"]),
-    ):
-        summary.add_row(label, f"{int(value):,}")
-    console.print(Panel(summary, title="[bold orange3]REFLECT[/bold orange3]", border_style="orange3"))
-
-
-def _run_browser_report(
-    *,
-    otlp_traces: Path | None,
-    demo: bool,
-    db_path: Path,
-    refresh: bool,
-    open_browser: bool = True,
-) -> None:
-    console = Console()
-    update_notice = _build_startup_update_notice()
-    if update_notice:
-        click.echo(f"reflect notice: {update_notice}")
-
-    include_native_sessions = False
-    if refresh:
-        if demo:
-            demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
-            if not demo_traces.exists():
-                demo_traces = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
-            otlp_traces = demo_traces if demo_traces.exists() else otlp_traces
-        elif otlp_traces is None:
-            otlp_traces = _default_otlp_traces()
-            include_native_sessions = True
-        else:
-            default_otlp = _default_otlp_traces()
-            include_native_sessions = (
-                default_otlp is not None
-                and otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
-            )
-    preparation_worker = None
-    requires_fresh_snapshot = not _has_sql_report_snapshot(db_path)
-    if not refresh:
-        if requires_fresh_snapshot:
-            raise click.ClickException(
-                f"No report snapshot found at {db_path}. "
-                "Enable refresh to create one."
-            )
-        click.echo("Serving the current snapshot without refreshing telemetry.")
-    elif requires_fresh_snapshot:
-        with console.status("[bold orange3]reflecting...[/bold orange3]", spinner="dots"):
-            preparation = prepare_sql_report_db(
-                db_path,
-                otlp_traces=otlp_traces,
-                include_native_sessions=include_native_sessions,
-            )
-        _render_preparation_summary(console, preparation)
-    else:
-        from reflect.preparation import PreparationCoordinator, PreparationRequest
-
-        def prepare_in_background(progress):
-            return prepare_sql_report_db(
-                db_path,
-                otlp_traces=otlp_traces,
-                include_native_sessions=include_native_sessions,
-                progress=progress,
-                defer_otlp_replay=True,
-            )
-
-        preparation_worker = PreparationCoordinator(
-            prepare_in_background,
-            request=PreparationRequest(
-                sources=tuple(
-                    source
-                    for source, enabled in (
-                        ("otlp", otlp_traces is not None),
-                        ("native_sessions", include_native_sessions),
-                    )
-                    if enabled
-                ),
-            ),
-        )
-        click.echo("Serving the current snapshot; refreshing telemetry in the background.")
-
-    start_publish_server(
-        db_path=db_path,
-        preparation_worker=preparation_worker,
-        open_browser=open_browser,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -2598,10 +2529,10 @@ def _discover_skills(
                 demo_traces = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
             sql_otlp_traces = demo_traces if demo_traces.exists() else otlp_traces
         elif sql_otlp_traces is None:
-            sql_otlp_traces = _default_otlp_traces()
+            sql_otlp_traces = default_otlp_traces()
             include_native_sessions = True
         else:
-            default_otlp = _default_otlp_traces()
+            default_otlp = default_otlp_traces()
             include_native_sessions = (
                 default_otlp is not None
                 and sql_otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
@@ -3093,7 +3024,29 @@ def _resolve_setup_agent_selection(
     agent_names: tuple[str, ...],
     all_agents: bool,
 ) -> set[str] | None:
-    detected = [agent for agent in _detect_agents() if agent.get("detected")]
+    for name in agent_names:
+        capability = get_agent_capability(name)
+        if capability is None:
+            continue
+        if capability.support is AgentSupport.HISTORICAL:
+            raise click.ClickException(
+                f"{capability.display_name} support is Historical: existing telemetry "
+                "remains readable, but Reflect will not configure new collection for it. "
+                "Use Antigravity for current Gemini-family simulations."
+            )
+        if capability.support is AgentSupport.PLANNED:
+            raise click.ClickException(
+                f"{capability.display_name} setup is not implemented yet. "
+                "Reflect only inventories its local configuration."
+            )
+
+    detected = [
+        agent
+        for agent in _detect_agents()
+        if agent.get("detected")
+        and agent.get("support_status")
+        in {AgentSupport.SUPPORTED.value, AgentSupport.PARTIAL.value}
+    ]
     if agent_names:
         selected, unknown = _resolve_setup_agent_name_keys(agent_names, detected)
         if unknown:
@@ -3102,7 +3055,7 @@ def _resolve_setup_agent_selection(
             )
         return selected
     if all_agents or not sys.stdin.isatty() or not detected:
-        return None
+        return {_agent_key(str(agent["name"])) for agent in detected}
 
     console.print("\n[bold]Agents to instrument[/]")
     labels = [
@@ -3110,8 +3063,6 @@ def _resolve_setup_agent_selection(
         for agent in detected
     ]
     selected_indexes = _interactive_pick(labels, multi=True)
-    if len(selected_indexes) == len(detected):
-        return None
     return {_agent_key(str(detected[index]["name"])) for index in selected_indexes}
 
 
@@ -3433,8 +3384,29 @@ def _run_doctor() -> None:
         gateway_health = _gateway_status()
     except (OSError, PermissionError, ValueError):
         gateway_health = {"running": False, "conflict": False}
-    if gateway_health.get("running"):
-        gateway_summary = f"[green]running (PID {gateway_health['pid']})[/]"
+    raw_bytes = int(gateway_health.get("raw_bytes") or 0)
+    raw_limit_bytes = int(gateway_health.get("raw_limit_bytes") or 0)
+    raw_usage_ratio = float(gateway_health.get("raw_usage_ratio") or 0)
+    raw_storage_summary = (
+        f"{_summarize_bytes(raw_bytes)} / {_summarize_bytes(raw_limit_bytes)}"
+        if raw_limit_bytes
+        else "limit unavailable"
+    )
+    if gateway_health.get("running") and not gateway_health.get("accepting_telemetry", True):
+        gateway_summary = (
+            f"[red]capture blocked[/] [dim]({raw_storage_summary}); "
+            "run reflect refresh[/]"
+        )
+    elif gateway_health.get("running") and raw_usage_ratio >= 0.8:
+        gateway_summary = (
+            f"[yellow]running near raw limit (PID {gateway_health['pid']})[/] "
+            f"[dim]{raw_storage_summary}[/]"
+        )
+    elif gateway_health.get("running"):
+        gateway_summary = (
+            f"[green]running (PID {gateway_health['pid']})[/] "
+            f"[dim]{raw_storage_summary}[/]"
+        )
     elif gateway_health.get("conflict"):
         destination = gateway_health.get("listener_traces_path") or "unknown destination"
         gateway_summary = (
@@ -4076,6 +4048,8 @@ def server_status(ctx: click.Context) -> None:
     console.print(f"  dashboard: {status.url}")
     console.print(f"  database:  {status.db_path}")
     console.print(f"  refresh:   {'enabled' if status.refresh else 'disabled'}")
+    if status.refresh:
+        console.print(f"  cadence:   every {status.refresh_interval_seconds} seconds")
     console.print(f"  log:       {status.log_file}")
 
 
@@ -4156,6 +4130,16 @@ def gateway_status() -> None:
         console.print("[red]stopped[/]")
     console.print(f"  traces: {status['traces_path']} ({_summarize_file(Path(status['traces_path']))})")
     console.print(f"  logs:   {status['logs_path']} ({_summarize_file(Path(status['logs_path']))})")
+    raw_storage = (
+        f"{_summarize_bytes(int(status['raw_bytes']))} / "
+        f"{_summarize_bytes(int(status['raw_limit_bytes']))}"
+    )
+    if not status["accepting_telemetry"]:
+        console.print(f"  capture: [red]blocked[/] ({raw_storage}); run `reflect refresh`")
+    elif float(status["raw_usage_ratio"]) >= 0.8:
+        console.print(f"  capture: [yellow]near limit[/] ({raw_storage})")
+    else:
+        console.print(f"  capture: [green]accepting[/] ({raw_storage})")
     console.print(f"  log:    {status['log_file']}")
 
 

@@ -37,9 +37,7 @@ def _sql_report_payload(
     include_tabs: bool = True,
 ) -> dict[str, object]:
     from reflect.store.sqlite import connect_sqlite_read_only
-    from reflect.views.overview import build_overview
-    from reflect.views.report_tabs import build_report_tabs
-    from reflect.views.sessions import list_sessions
+    from reflect.views import build_overview, build_report_tabs, list_sessions
 
     conn = connect_sqlite_read_only(db_path)
     try:
@@ -165,8 +163,11 @@ def _sql_dashboard_metrics(
     base_tab_names: set[str] | None = None,
 ) -> dict[str, object]:
     from reflect.store.sqlite import connect_sqlite_read_only
-    from reflect.views.overview import list_source_provenance
-    from reflect.views.report_tabs import build_report_tab, build_report_tabs
+    from reflect.views import (
+        build_report_tab,
+        build_report_tabs,
+        list_source_provenance,
+    )
 
     scoped = session_ids is not None
     scoped_ids = sorted(session_ids or [])

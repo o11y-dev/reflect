@@ -420,9 +420,12 @@ def _sql_response_preview(attrs: dict[str, object], call: dict[str, object]) -> 
 
 def build_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
     from reflect.store.sqlite import connect_sqlite_read_only
-    from reflect.views.overview import list_source_provenance
-    from reflect.views.report_tabs import _display_mcp_server_name, build_report_tab
-    from reflect.views.sessions import list_sessions
+    from reflect.views import (
+        build_report_tab,
+        display_mcp_server_name,
+        list_sessions,
+        list_source_provenance,
+    )
 
     conn = connect_sqlite_read_only(db_path)
     try:
@@ -581,7 +584,7 @@ def build_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
     tools_by_count = {str(row["tool_name"]): int(row["count"] or 0) for row in tool_rows}
     mcp_servers: Counter[str] = Counter()
     for row in mcp_rows:
-        server = _display_mcp_server_name(row["server_name"])
+        server = display_mcp_server_name(row["server_name"])
         if server:
             mcp_servers[server] += int(row["count"] or 0)
     mcp_servers_by_count = dict(mcp_servers)

@@ -45,6 +45,7 @@ poetry run reflect doctor
 | `src/reflect/dashboard_explore.py` | Explore view routing and bounded tab queries |
 | `src/reflect/dashboard_improvements.py` | Findings, workflows, skills, and impact dashboard adapter |
 | `src/reflect/dashboard_server.py` | Thin browser routes, cache, and publish server |
+| `src/reflect/report_server.py` | Report process lifecycle, refresh scheduling, and daemon state |
 | `src/reflect/frontend/` | Canonical authored browser template, CSS, and JavaScript |
 | `src/reflect/data/index.html` | Generated packaged browser artifact; do not edit directly |
 | `src/reflect/graph.py` | Weekly activity trend derivation shared by SQL views |
@@ -55,7 +56,7 @@ poetry run reflect doctor
 
 ## Architecture in one paragraph
 
-`parsing.py` discovers source inputs, `store/ingest.py` checkpoints them, and `store/normalize.py` promotes them into canonical SQLite evidence. `processing.py` and `analyze_telemetry()` build `TelemetryStats` for bounded agent-assisted analysis. The browser queries the same SQLite store through `dashboard_queries.py`; `dashboard_server.py` only wires routes and lifecycle. Native conversation adapters provide high-fidelity session detail but never feed aggregates. Workflow evidence and impact use execution units, while sessions remain navigation and aggregate-usage containers. Never aggregate from already-shaped session cards.
+`parsing.py` discovers source inputs, `store/ingest.py` checkpoints them, and `store/normalize.py` promotes them into canonical SQLite evidence. `processing.py` and `analyze_telemetry()` build `TelemetryStats` for bounded agent-assisted analysis. The browser consumes the public typed SQL read models in `reflect.views` through the `dashboard_*.py` adapters; `dashboard_server.py` wires routes/cache state and `report_server.py` owns process/preparation lifecycle. Native conversation adapters provide high-fidelity session detail but never feed aggregates. Workflow evidence and impact use execution units, while sessions remain navigation and aggregate-usage containers. Never aggregate from already-shaped session cards.
 
 ## Conventions
 
@@ -131,6 +132,7 @@ To add a new tracked metric:
 - **Treat `/api/data` as an interactive endpoint.** Filtered dashboard payloads should return in a few seconds on a large local SQLite store. If a new SQL widget needs expensive analysis, scope it by filtered `session_ids`, use rollup tables where possible, and validate with heavy filters such as `agents=cursor`.
 - **Be careful with `from __future__ import annotations` in `dashboard_server.py`.** FastAPI route annotations must resolve in module globals when the inline publish server is created.
 - **Keep browser state stable when touching filters.** URL filters, current tab, selected session, and comparison selection should survive server-backed dashboard refreshes when possible.
+- **Keep capture backpressure lossless.** The combined trace/log raw guard rejects new batches at its configured limit; it must never delete unprocessed segments to admit telemetry. Manual and scheduled refreshes share one coordinator and are the only normal path that reclaims processed closed segments.
 
 ## Memory initiative takeaways
 

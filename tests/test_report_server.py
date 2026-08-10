@@ -48,6 +48,23 @@ def test_report_server_daemon_passes_refresh_to_child(tmp_path):
 
     command = popen.call_args.args[0]
     assert "--refresh" in command
+    interval_index = command.index("--refresh-interval-seconds")
+    assert command[interval_index + 1] == "300"
+
+
+def test_report_server_refresh_interval_uses_positive_environment_value(monkeypatch):
+    from reflect.report_server import refresh_interval_from_env
+
+    monkeypatch.setenv("REFLECT_REFRESH_INTERVAL_SECONDS", "45")
+    assert refresh_interval_from_env() == 45
+
+    monkeypatch.setenv("REFLECT_REFRESH_INTERVAL_SECONDS", "0")
+    try:
+        refresh_interval_from_env()
+    except RuntimeError as exc:
+        assert "must be a positive integer" in str(exc)
+    else:
+        raise AssertionError("expected an invalid refresh interval")
 
 
 def test_report_server_daemon_requests_refresh_from_running_server(tmp_path):
@@ -161,6 +178,7 @@ def test_report_server_status_uses_persisted_runtime_config(tmp_path):
 
     assert status.url == "http://127.0.0.1:9876/?report=api/data"
     assert status.db_path == tmp_path / "reflect.db"
+    assert status.refresh_interval_seconds == 300
 
 
 def test_report_server_daemon_status_cleans_stale_pid(tmp_path):
@@ -226,9 +244,10 @@ def test_direct_report_server_claims_state_without_opening_browser(tmp_path):
         assert int(pid_file.read_text()) == os.getpid()
         assert json.loads(metadata_file.read_text())["open_browser"] is False
         assert kwargs["open_browser"] is False
+        assert kwargs["refresh_interval_seconds"] == 300
 
     with patch.object(daemon, "_port_in_use", return_value=False), patch(
-        "reflect.core._run_browser_report",
+        "reflect.report_server.run_browser_report",
         side_effect=assert_state,
     ):
         _run_daemon(config, daemon)
@@ -241,7 +260,7 @@ def test_bare_reflect_detaches_report_server(tmp_path):
     runner = CliRunner()
     db_path = tmp_path / "reflect.db"
     with patch("reflect.core._start_background_report_server") as start, patch(
-        "reflect.core._run_browser_report"
+        "reflect.report_server.run_browser_report"
     ) as foreground:
         result = runner.invoke(main, ["--db-path", str(db_path)])
 

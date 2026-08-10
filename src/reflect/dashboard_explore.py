@@ -13,7 +13,7 @@ def _sql_dashboard_tab_payload(
     session_id: str = "",
 ) -> dict[str, object]:
     from reflect.store.sqlite import connect_sqlite_read_only
-    from reflect.views.report_tabs import build_report_tab
+    from reflect.views import build_report_tab
 
     scoped_ids = {session_id} if session_id else None
     conn = connect_sqlite_read_only(db_path)

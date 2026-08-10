@@ -568,7 +568,7 @@ def _graph_mcp_server_counts(
     ))
     counts: Counter[str] = Counter()
     for row in rows:
-        server = _display_mcp_server_name(row["server_name"])
+        server = display_mcp_server_name(row["server_name"])
         if server:
             counts[server] += int(row["call_count"] or 0)
     return dict(counts)
@@ -1003,7 +1003,7 @@ def _build_mcp(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> McpVie
     completions: Counter[str] = Counter()
     known_statuses: Counter[str] = Counter()
     for row in rows:
-        server = _display_mcp_server_name(row["server_name"])
+        server = display_mcp_server_name(row["server_name"])
         if server:
             counts[server] += int(row["call_count"] or 0)
             completions[server] += int(row["completion_count"] or 0)
@@ -1017,7 +1017,7 @@ def _build_mcp(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> McpVie
     )
 
 
-def _display_mcp_server_name(value: object) -> str:
+def display_mcp_server_name(value: object) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
@@ -1837,7 +1837,7 @@ def _dependency_graph(
         links.append({"source": tool_id, "target": server_id, "value": count})
     for row in mcp_rows:
         agent = str(row["agent"] or "unknown")
-        server = _display_mcp_server_name(row["server_name"])
+        server = display_mcp_server_name(row["server_name"])
         count = int(row["count"] or 0)
         if not server or count <= 0:
             continue

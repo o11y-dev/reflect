@@ -19,6 +19,7 @@ from reflect.improvements.skills import SkillRegistryService
 from reflect.preparation import (
     PreparationCoordinator,
     PreparationProgress,
+    PreparationScheduler,
     PreparationStage,
 )
 from reflect.store.migrate import migrate
@@ -867,6 +868,38 @@ def test_dashboard_api_reports_background_preparation_status(tmp_path):
     assert status["state"] == "complete"
     assert status["generation"] == 1
     assert status["result"]["details"] == {"refreshed_sessions": 1}
+
+
+def test_dashboard_status_exposes_automatic_refresh_and_raw_storage(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    scheduler = PreparationScheduler(
+        PreparationCoordinator(lambda _progress: {"refreshed_sessions": 1}),
+        interval_seconds=300,
+        run_immediately=False,
+    )
+    app = build_dashboard_app(
+        docs_dir=tmp_path,
+        db_path=db_path,
+        preparation_scheduler=scheduler,
+        raw_storage_status_loader=lambda: {
+            "accepting_telemetry": False,
+            "raw_bytes": 4_294_967_296,
+            "raw_limit_bytes": 4_294_967_296,
+            "usage_ratio": 1.0,
+        },
+    )
+    client = TestClient(app)
+
+    assert scheduler.start() is True
+    status = client.get("/api/status").json()
+
+    assert status["automatic_refresh"]["enabled"] is True
+    assert status["automatic_refresh"]["interval_seconds"] == 300
+    assert status["automatic_refresh"]["next_run_at"]
+    assert status["raw_storage"]["accepting_telemetry"] is False
+    assert status["raw_storage"]["raw_limit_bytes"] == 4_294_967_296
+    assert scheduler.close(timeout=1) is True
 
 
 def test_dashboard_refresh_endpoint_starts_background_preparation(tmp_path):

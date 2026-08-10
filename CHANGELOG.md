@@ -1,9 +1,12 @@
 # Changelog
 
-## 0.9.6 (unreleased)
+## 0.9.7 (unreleased)
 
 ### Changed
 
+- Refresh-enabled browser servers now prepare telemetry immediately and every five minutes through one non-overlapping coordinator; manual refresh uses the same lifecycle and performs complete rotated-segment reconciliation.
+- The typed agent capability registry now also owns active native-OTel surfaces. Historical Gemini remains ingestible but is excluded from setup and active telemetry status, with Antigravity named as the current Gemini-family target.
+- Made `reflect.views` the explicit public SQL read-model boundary and moved report process/preparation ownership out of the CLI composition root.
 - Removed the standalone Markdown renderer, its unreachable aggregate insight and in-memory graph presentation stacks, and dead root report flags; shell completion is now an explicit reviewed installation with exact target and managed-block preview, while public agent/platform metadata is bound to the capability registry and CI matrix.
 - Deleted the orphaned terminal dashboard and its renderer-only tests, retained shared CLI preparation progress under `cli/`, and renamed native store, conversation, Cursor usage, and session-rule context modules for their actual responsibilities without compatibility aliases.
 - Declared macOS and Linux as the supported operating systems, matching the tested CI matrix and POSIX raw-segment locking contract.
@@ -54,6 +57,8 @@
 
 ### Fixed
 
+- Added a combined 4 GiB raw trace/log admission guard that preserves existing evidence and rejects new telemetry at capacity, with HTTP/gRPC backpressure plus doctor, server, health API, and dashboard status.
+- Source checkouts now use the `pyproject.toml` version as runtime truth and explain stale installed environment metadata instead of reporting the checkout as an older release.
 - Moved shared skill and subagent evidence extraction out of dashboard presentation code, removing duplicate implementations and restoring the normalization-to-presentation dependency direction.
 - Made `reflect doctor` distinguish pending, processed, and temporarily unclassified closed OTLP segments, report pending bytes and the last successful normalization, and recommend `reflect refresh` when capture is already configured.
 - Made OpenCode SQLite ingestion persist a composite record cursor so changed stores load only new or updated sessions while decoder changes still trigger a complete replay.

@@ -49,16 +49,21 @@ control plane and does not rank developers or agents.
   call counts by representing the same operation twice.
 - The gateway uses bounded active and immutable closed JSONL segments. Closed
   raw segments are removed only after successful normalization unless retention
-  is explicitly requested.
+  is explicitly requested. Combined trace/log admission stops at 4 GiB without
+  deleting unprocessed evidence, and capture health is visible in the UI and
+  diagnostics.
 - One capability registry feeds setup, doctor, aliases, skills, MCP clients, and
   cross-agent fixtures. Antigravity replaces Gemini as the current headless
   target; historical Gemini evidence remains readable.
 - Stateful snapshot preparation has one coordinator. CLI database commands,
   dashboard queries, route construction, and authored frontend modules have
-  explicit owners.
-- The browser has five product surfaces: Sessions, Workflows, Skills, Impact,
-  and Explore. The durable Skills Registry remains visible between a reviewed
-  workflow and its measured impact.
+  explicit owners. Refresh-enabled dashboards reuse that coordinator on a
+  five-minute cadence, so freshness is a product behavior rather than a manual
+  operator ritual.
+- The browser has six product surfaces: Sessions, Inbox, Workflows, Skills,
+  Impact, and Explore. Inbox owns evidence that still needs investigation; the
+  durable Skills Registry remains visible between a reviewed workflow and its
+  measured impact.
 - Database evolution is one-way. New code does not maintain dual writes, old
   routes, aliases, or fallback readers for retired models.
 

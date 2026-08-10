@@ -110,6 +110,8 @@ def test_dashboard_html_surfaces_background_refresh_progress(path: Path):
     assert "window.location.reload()" in text
     assert "startPreparationStatusPolling();" in text
     assert "hdr-ts').textContent = 'Loaded '" in text
+    assert "Capture paused: raw OTLP storage reached its" in text
+    assert "Raw OTLP storage is ${Math.round(ratio * 100)}% full" in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)

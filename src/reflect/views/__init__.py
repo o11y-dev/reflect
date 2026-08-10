@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from reflect.views.overview import OverviewViewModel, build_overview
+from reflect.views.overview import (
+    OverviewViewModel,
+    build_overview,
+    list_source_provenance,
+)
 from reflect.views.report_tabs import (
     ActivityViewModel,
     AgentsViewModel,
@@ -10,7 +14,9 @@ from reflect.views.report_tabs import (
     ModelsViewModel,
     ReportTabsViewModel,
     ToolsViewModel,
+    build_report_tab,
     build_report_tabs,
+    display_mcp_server_name,
 )
 from reflect.views.sessions import SessionPage, SessionRow, list_sessions
 
@@ -27,6 +33,9 @@ __all__ = [
     "SessionRow",
     "ToolsViewModel",
     "build_overview",
+    "build_report_tab",
     "build_report_tabs",
+    "display_mcp_server_name",
+    "list_source_provenance",
     "list_sessions",
 ]

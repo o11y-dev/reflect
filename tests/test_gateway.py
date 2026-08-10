@@ -277,6 +277,68 @@ class TestHttpEndpoints:
         logs_on_disk = json.loads(logs_path.read_text().strip())
         assert "resourceLogs" in logs_on_disk
 
+    def test_raw_storage_limit_rejects_http_and_recovers_without_restart(
+        self,
+        traces_path,
+        logs_path,
+    ):
+        from fastapi.testclient import TestClient
+
+        from reflect.gateway import _build_http_app
+        from reflect.raw_segments import RawStorageGuard
+
+        expected_raw = b'{"resourceSpans":[]}\n'
+        raw_limit = 2 * len(expected_raw)
+        traces_path.write_bytes(b"x" * raw_limit)
+        guard = RawStorageGuard((traces_path, logs_path), max_bytes=raw_limit)
+        client = TestClient(
+            _build_http_app(
+                traces_path=traces_path,
+                logs_path=logs_path,
+                storage_guard=guard,
+            )
+        )
+
+        blocked = client.post("/v1/traces", json={"resourceSpans": []})
+
+        assert blocked.status_code == 507
+        assert blocked.json()["error"] == "raw_storage_full"
+        assert traces_path.read_bytes() == b"x" * raw_limit
+        degraded = client.get("/health").json()
+        assert degraded["status"] == "degraded"
+        assert degraded["accepting_telemetry"] is False
+        assert degraded["raw_bytes"] == degraded["raw_limit_bytes"] == raw_limit
+
+        traces_path.unlink()
+        resumed = client.post("/v1/traces", json={"resourceSpans": []})
+        assert resumed.status_code == 200
+        assert client.get("/health").json()["status"] == "ok"
+
+    def test_raw_storage_limit_rejects_grpc_with_resource_exhausted(
+        self,
+        traces_path,
+        logs_path,
+    ):
+        import grpc
+        from opentelemetry.proto.collector.trace.v1 import trace_service_pb2
+
+        from reflect.gateway import TraceServiceServicer
+        from reflect.raw_segments import RawStorageGuard
+
+        traces_path.write_bytes(b"x")
+        guard = RawStorageGuard((traces_path, logs_path), max_bytes=1)
+        context = MagicMock()
+        context.abort.side_effect = RuntimeError("aborted")
+
+        with pytest.raises(RuntimeError, match="aborted"):
+            TraceServiceServicer(
+                traces_path,
+                storage_guard=guard,
+            ).Export(trace_service_pb2.ExportTraceServiceRequest(), context)
+
+        context.abort.assert_called_once()
+        assert context.abort.call_args.args[0] is grpc.StatusCode.RESOURCE_EXHAUSTED
+
 
 # ---------------------------------------------------------------------------
 # Daemon helpers tests
