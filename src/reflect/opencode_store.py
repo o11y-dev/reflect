@@ -80,7 +80,13 @@ class OpenCodeSessionStore:
     def __init__(self, path: Path) -> None:
         self.path = path.expanduser().resolve()
 
-    def load(self, session_id: str | None = None) -> tuple[OpenCodeSessionRecord, ...]:
+    def load(
+        self,
+        session_id: str | None = None,
+        *,
+        after_updated_ms: int = 0,
+        after_session_id: str = "",
+    ) -> tuple[OpenCodeSessionRecord, ...]:
         conn = sqlite3.connect(
             f"{self.path.as_uri()}?mode=ro",
             uri=True,
@@ -94,6 +100,12 @@ class OpenCodeSessionStore:
             if session_id:
                 where = "WHERE s.id = ?"
                 params = (session_id,)
+            elif after_updated_ms or after_session_id:
+                where = """
+                WHERE s.time_updated > ?
+                   OR (s.time_updated = ? AND s.id > ?)
+                """
+                params = (after_updated_ms, after_updated_ms, after_session_id)
             rows = conn.execute(
                 f"""
                 SELECT
@@ -114,7 +126,7 @@ class OpenCodeSessionStore:
                 LEFT JOIN part p ON p.message_id = m.id
                 {where}
                 ORDER BY
-                  s.time_created, s.id,
+                  s.time_updated, s.id,
                   m.time_created, m.id,
                   p.time_created, p.id
                 """,

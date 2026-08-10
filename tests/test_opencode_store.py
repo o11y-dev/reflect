@@ -153,6 +153,33 @@ def test_opencode_store_exposes_typed_session_records(tmp_path):
     ]
 
 
+def test_opencode_store_loads_records_after_composite_cursor(tmp_path):
+    source = _write_opencode_store(tmp_path / "opencode.db")
+    conn = sqlite3.connect(source)
+    try:
+        conn.execute(
+            "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "open-session-2",
+                None,
+                "/work/repo",
+                "Same timestamp",
+                1_780_000_000_500,
+                1_780_000_003_000,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    sessions = OpenCodeSessionStore(source).load(
+        after_updated_ms=1_780_000_003_000,
+        after_session_id="open-session-1",
+    )
+
+    assert [session.id for session in sessions] == ["open-session-2"]
+
+
 def test_opencode_native_spans_preserve_usage_tools_and_lineage(tmp_path):
     source = _write_opencode_store(tmp_path / "opencode.db")
 
@@ -224,7 +251,12 @@ def test_opencode_native_store_normalizes_to_canonical_usage(tmp_path):
         result = ingest_native_session_file(conn, file_path=source, agent="opencode")
         normalize_pending_raw_events(conn)
 
-        assert result == {"inserted": 6, "skipped": 0}
+        assert result == {
+            "inserted": 6,
+            "skipped": 0,
+            "unchanged": 0,
+            "scanned_sessions": 1,
+        }
         session = conn.execute(
             """
             SELECT a.name, s.input_tokens, s.output_tokens,
@@ -280,8 +312,120 @@ def test_opencode_ingestion_detects_sessions_appended_in_sqlite_wal(tmp_path):
             skip_unchanged=True,
         )
 
-        assert first["inserted"] == 6
-        assert second == {"inserted": 2, "skipped": 6, "unchanged": 0}
+        third = ingest_native_session_file(
+            reflect_conn,
+            file_path=source,
+            agent="opencode",
+            skip_unchanged=True,
+        )
+
+        assert first == {
+            "inserted": 6,
+            "skipped": 0,
+            "unchanged": 0,
+            "scanned_sessions": 1,
+        }
+        assert second == {
+            "inserted": 2,
+            "skipped": 0,
+            "unchanged": 0,
+            "scanned_sessions": 1,
+        }
+        assert third == {
+            "inserted": 0,
+            "skipped": 0,
+            "unchanged": 1,
+            "scanned_sessions": 0,
+        }
+    finally:
+        writer.close()
+        reflect_conn.close()
+
+
+def test_opencode_decoder_change_replays_from_the_start(tmp_path):
+    source = _write_opencode_store(tmp_path / "opencode.db")
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        first = ingest_native_session_file(
+            conn,
+            file_path=source,
+            agent="opencode",
+            skip_unchanged=True,
+        )
+        conn.execute(
+            "UPDATE source_ingestion_state SET decoder_version = decoder_version - 1"
+        )
+        conn.commit()
+
+        replay = ingest_native_session_file(
+            conn,
+            file_path=source,
+            agent="opencode",
+            skip_unchanged=True,
+        )
+
+        assert first["scanned_sessions"] == 1
+        assert replay == {
+            "inserted": 0,
+            "skipped": 6,
+            "unchanged": 0,
+            "scanned_sessions": 1,
+        }
+    finally:
+        conn.close()
+
+
+def test_opencode_ingestion_rescans_only_an_updated_session(tmp_path):
+    source = _write_opencode_store(tmp_path / "opencode.db")
+    reflect_conn = connect_sqlite(tmp_path / "reflect.db")
+    writer = sqlite3.connect(source)
+    try:
+        migrate(reflect_conn)
+        ingest_native_session_file(
+            reflect_conn,
+            file_path=source,
+            agent="opencode",
+            skip_unchanged=True,
+        )
+        writer.execute(
+            "UPDATE session SET time_updated = ? WHERE id = ?",
+            (1_780_000_004_000, "open-session-1"),
+        )
+        writer.execute(
+            "INSERT INTO message VALUES (?, ?, ?, ?)",
+            (
+                "message-follow-up",
+                "open-session-1",
+                1_780_000_003_500,
+                json.dumps({"role": "user", "agent": "build"}),
+            ),
+        )
+        writer.execute(
+            "INSERT INTO part VALUES (?, ?, ?, ?, ?)",
+            (
+                "part-follow-up",
+                "message-follow-up",
+                "open-session-1",
+                1_780_000_003_501,
+                json.dumps({"type": "text", "text": "Verify the fix"}),
+            ),
+        )
+        writer.commit()
+
+        result = ingest_native_session_file(
+            reflect_conn,
+            file_path=source,
+            agent="opencode",
+            skip_unchanged=True,
+        )
+        cursor = reflect_conn.execute(
+            "SELECT record_cursor_time, record_cursor_id FROM source_ingestion_state"
+        ).fetchone()
+
+        assert result["scanned_sessions"] == 1
+        assert result["inserted"] == 2
+        assert tuple(cursor) == (1_780_000_004_000, "open-session-1")
     finally:
         writer.close()
         reflect_conn.close()

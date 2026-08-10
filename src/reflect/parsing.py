@@ -1287,6 +1287,12 @@ def _iter_opencode_session_spans(file_path: Path) -> Iterable[dict]:
         logger.warning("Failed to read OpenCode session store %s: %s", file_path, exc)
         return
 
+    yield from _iter_opencode_records_spans(sessions)
+
+
+def _iter_opencode_records_spans(
+    sessions: Iterable[OpenCodeSessionRecord],
+) -> Iterable[dict]:
     for session in sessions:
         trace_id = _stable_hex_id("opencode", session.id, length=32)
         base_attrs = _opencode_base_attrs(session)

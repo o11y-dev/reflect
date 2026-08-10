@@ -94,10 +94,13 @@ timestamp-named JSONL files. Refresh reads closed segments oldest-first and then
 the active segment.
 
 `source_ingestion_state` records the source fingerprint, append checkpoint,
-decoder version, normalization time, and raw deletion time. A closed segment is
-eligible for deletion only after every inserted raw event completed canonical
-normalization. The active segment is never deleted by refresh. Operators can
-retain processed closed segments with `--keep-processed-raw`.
+relational record cursor, decoder version, normalization time, and raw deletion
+time. JSONL sources advance byte offsets; OpenCode advances a composite
+`(time_updated, session_id)` cursor and reads only new or updated sessions. A
+closed segment is eligible for deletion only after every inserted raw event
+completed canonical normalization. The active segment is never deleted by
+refresh. Operators can retain processed closed segments with
+`--keep-processed-raw`.
 
 SQLite is the durable analytical store. Closed raw segments are replay buffers,
 not a second database.

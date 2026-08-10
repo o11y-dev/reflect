@@ -8,6 +8,20 @@ from reflect.store.sqlite import connect_sqlite
 
 
 def _apply_migrations_through(conn, version: int) -> None:
+    from reflect.improvements.workflow_identity import workflow_identity_from_json
+
+    conn.create_function(
+        "reflect_workflow_contract_signature",
+        2,
+        lambda title, content: workflow_identity_from_json(title, content).contract_signature,
+        deterministic=True,
+    )
+    conn.create_function(
+        "reflect_workflow_revision_hash",
+        2,
+        lambda title, content: workflow_identity_from_json(title, content).revision_hash,
+        deterministic=True,
+    )
     for migration in load_migrations():
         if migration.version > version:
             break
@@ -28,7 +42,7 @@ def test_migrate_applies_initial_schema(tmp_path):
     try:
         applied = migrate(conn)
         assert applied == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
         ]
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "raw_events" in tables
@@ -112,7 +126,11 @@ def test_migrate_applies_initial_schema(tmp_path):
         assert "contract_signature" in {
             row[1] for row in conn.execute("PRAGMA table_info('workflow_candidates')")
         }
-        assert "decoder_version" in {
+        assert {
+            "decoder_version",
+            "record_cursor_time",
+            "record_cursor_id",
+        } <= {
             row[1] for row in conn.execute("PRAGMA table_info('source_ingestion_state')")
         }
     finally:
@@ -123,9 +141,35 @@ def test_migrate_is_idempotent(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
         assert migrate(conn) == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
         ]
         assert migrate(conn) == []
+    finally:
+        conn.close()
+
+
+def test_relational_source_cursor_migration_preserves_existing_checkpoints(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        _apply_migrations_through(conn, 30)
+        conn.execute(
+            """
+            INSERT INTO source_ingestion_state(
+              source_id, source_type, size_bytes, modified_ns, updated_at
+            ) VALUES ('native_session:opencode:/tmp/opencode.db', 'native_session', 10, 20, '2026-08-10')
+            """
+        )
+        conn.commit()
+
+        assert migrate(conn) == [31]
+        row = conn.execute(
+            """
+            SELECT size_bytes, modified_ns, record_cursor_time, record_cursor_id
+            FROM source_ingestion_state
+            """
+        ).fetchone()
+
+        assert tuple(row) == (10, 20, None, None)
     finally:
         conn.close()
 
@@ -172,7 +216,7 @@ def test_context_artifact_migration_backfills_exposures_without_replaying_sessio
         )
         conn.commit()
 
-        assert migrate(conn) == [26, 27, 28, 29, 30]
+        assert migrate(conn) == [26, 27, 28, 29, 30, 31]
 
         assert tuple(conn.execute(
             "SELECT memory_id, session_id FROM memory_exposures"
@@ -235,8 +279,8 @@ def test_migrate_serializes_concurrent_background_requests(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: run_migration(), range(2)))
 
-    assert sorted(len(result) for result in results) == [0, 30]
-    assert sorted(version for result in results for version in result) == list(range(1, 31))
+    assert sorted(len(result) for result in results) == [0, 31]
+    assert sorted(version for result in results for version in result) == list(range(1, 32))
 
 
 def test_migrate_uses_read_only_fast_path_when_schema_is_current(tmp_path):
@@ -260,11 +304,11 @@ def test_migrate_can_preserve_a_caller_owned_transaction(tmp_path):
         _apply_migrations_through(conn, 21)
         conn.execute("BEGIN IMMEDIATE")
 
-        assert migrate(conn, commit=False) == [22, 23, 24, 25, 26, 27, 28, 29, 30]
+        assert migrate(conn, commit=False) == [22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
         assert conn.in_transaction is True
         assert conn.execute(
             "SELECT MAX(version) FROM schema_migrations"
-        ).fetchone()[0] == 30
+        ).fetchone()[0] == 31
 
         conn.rollback()
         assert conn.execute(
@@ -401,7 +445,7 @@ def test_logical_tool_call_migration_merges_invocation_and_result(tmp_path):
             )
         conn.commit()
 
-        assert migrate(conn) == [25, 26, 27, 28, 29, 30]
+        assert migrate(conn) == [25, 26, 27, 28, 29, 30, 31]
         row = conn.execute(
             """
             SELECT logical_call_id, tool_name, status, duration_ms,
@@ -459,7 +503,7 @@ def test_mcp_identity_migration_merges_invocation_and_result(tmp_path):
             )
         conn.commit()
 
-        assert migrate(conn) == [27, 28, 29, 30]
+        assert migrate(conn) == [27, 28, 29, 30, 31]
         assert tuple(
             conn.execute(
                 """
@@ -540,7 +584,7 @@ def test_database_doctor_reports_pending_migrations(tmp_path):
     assert status["ok"] is False
     assert status["applied_migrations"] == []
     assert status["pending_migrations"] == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
     ]
 
 
@@ -570,7 +614,7 @@ def test_migrate_adds_task_reconciliation_state_without_losing_phase_one_runs(tm
         )
         conn.commit()
 
-        assert migrate(conn) == [17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+        assert migrate(conn) == [17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
         row = conn.execute(
             """
             SELECT id, session_linked_at, session_outcome_recorded,
@@ -612,7 +656,7 @@ def test_migrate_adds_change_reviews_without_changing_phase_two_task_runs(tmp_pa
         )
         conn.commit()
 
-        assert migrate(conn) == [18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+        assert migrate(conn) == [18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
         assert tuple(
             conn.execute(
                 """
@@ -735,7 +779,7 @@ def test_migrate_reingests_codex_desktop_logs_and_removes_noisy_trace_session(tm
         )
         conn.commit()
 
-        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
         assert conn.execute(
             "SELECT COUNT(*) FROM source_ingestion_state"
         ).fetchone()[0] == 0
@@ -787,7 +831,7 @@ def test_retention_migration_keeps_unrecoverable_epoch_start(tmp_path):
         )
         conn.commit()
 
-        assert migrate(conn) == [22, 23, 24, 25, 26, 27, 28, 29, 30]
+        assert migrate(conn) == [22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
         assert conn.execute(
             "SELECT started_at FROM sessions WHERE id = 'session-epoch'"
         ).fetchone()[0] == "1970-01-01T00:00:00+00:00"
@@ -950,7 +994,7 @@ def test_canonical_workflow_migration_removes_legacy_session_ledger_rebuild(tmp_
             (observation_id,),
         ).fetchone()[0] == 20
 
-        assert migrate(conn) == [22, 23, 24, 25, 26, 27, 28, 29, 30]
+        assert migrate(conn) == [22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
         assert conn.execute(
             """
             SELECT value FROM store_metadata

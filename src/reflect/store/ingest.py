@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from enum import StrEnum
 from itertools import chain
 from pathlib import Path
 
+from reflect.opencode_store import OpenCodeSessionStore
 from reflect.parsing import (
     _iter_claude_log_spans,
     _iter_claude_session_spans,
@@ -20,7 +22,7 @@ from reflect.parsing import (
     _iter_cursor_session_spans,
     _iter_gemini_log_spans,
     _iter_gemini_session_spans,
-    _iter_opencode_session_spans,
+    _iter_opencode_records_spans,
     _load_json_lines,
     _load_otlp_logs,
     _load_otlp_traces,
@@ -31,6 +33,7 @@ from reflect.store.provenance import apply_origin_kind, classify_origin_kind, st
 CHECKPOINT_HASH_WINDOW_BYTES = 64 * 1024
 JSONL_SCAN_CHUNK_BYTES = 64 * 1024
 SOURCE_DECODER_VERSION = 2
+logger = logging.getLogger(__name__)
 
 IngestionResult = dict[str, int | str]
 
@@ -71,6 +74,8 @@ class SourceCheckpoint:
     processed_offset_bytes: int
     checkpoint_tail_sha256: str
     decoder_version: int
+    record_cursor_time: int | None
+    record_cursor_id: str
 
 
 @dataclass(frozen=True)
@@ -137,7 +142,8 @@ class SourceIngestionState:
         row = self._conn.execute(
             """
             SELECT size_bytes, modified_ns, processed_offset_bytes,
-                   COALESCE(checkpoint_tail_sha256, ''), decoder_version
+                   COALESCE(checkpoint_tail_sha256, ''), decoder_version,
+                   record_cursor_time, COALESCE(record_cursor_id, '')
             FROM source_ingestion_state
             WHERE source_id = ? AND source_type = ?
             """,
@@ -151,6 +157,8 @@ class SourceIngestionState:
             processed_offset_bytes=int(row[2]),
             checkpoint_tail_sha256=str(row[3] or ""),
             decoder_version=int(row[4] or 0),
+            record_cursor_time=int(row[5]) if row[5] is not None else None,
+            record_cursor_id=str(row[6] or ""),
         )
 
     def matches(self, source_id: str, source_type: str, fingerprint: SourceFingerprint) -> bool:
@@ -176,14 +184,17 @@ class SourceIngestionState:
         *,
         processed_offset_bytes: int,
         checkpoint_tail_sha256: str,
+        record_cursor_time: int | None = None,
+        record_cursor_id: str = "",
     ) -> None:
         self._conn.execute(
             """
             INSERT INTO source_ingestion_state(
               source_id, source_type, size_bytes, modified_ns, updated_at,
               processed_offset_bytes, checkpoint_tail_sha256, decoder_version,
+              record_cursor_time, record_cursor_id,
               normalized_at, raw_deleted_at
-            ) VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, NULL, NULL)
+            ) VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), NULL, NULL)
             ON CONFLICT(source_id, source_type) DO UPDATE SET
               size_bytes = excluded.size_bytes,
               modified_ns = excluded.modified_ns,
@@ -191,6 +202,14 @@ class SourceIngestionState:
               processed_offset_bytes = excluded.processed_offset_bytes,
               checkpoint_tail_sha256 = excluded.checkpoint_tail_sha256,
               decoder_version = excluded.decoder_version,
+              record_cursor_time = COALESCE(
+                excluded.record_cursor_time,
+                source_ingestion_state.record_cursor_time
+              ),
+              record_cursor_id = COALESCE(
+                excluded.record_cursor_id,
+                source_ingestion_state.record_cursor_id
+              ),
               normalized_at = NULL,
               raw_deleted_at = NULL
             """,
@@ -203,6 +222,8 @@ class SourceIngestionState:
                 processed_offset_bytes,
                 checkpoint_tail_sha256,
                 SOURCE_DECODER_VERSION,
+                record_cursor_time,
+                record_cursor_id,
             ),
         )
 
@@ -821,6 +842,79 @@ def ingest_local_spans_file(
     )
 
 
+def ingest_opencode_session_store(
+    db_conn: sqlite3.Connection,
+    *,
+    file_path: Path,
+    source_id: str | None = None,
+    skip_unchanged: bool = False,
+) -> IngestionResult:
+    """Ingest only OpenCode sessions beyond the durable relational cursor."""
+
+    source = source_id or f"native_session:opencode:{file_path}"
+    source_type = "native_session"
+    fingerprint = SourceFingerprint.from_path(file_path)
+    state = SourceIngestionState(db_conn)
+    if skip_unchanged and state.matches(source, source_type, fingerprint):
+        return {
+            "inserted": 0,
+            "skipped": 0,
+            "unchanged": 1,
+            "scanned_sessions": 0,
+        }
+
+    checkpoint = state.load(source, source_type)
+    cursor_time = 0
+    cursor_id = ""
+    if (
+        skip_unchanged
+        and checkpoint is not None
+        and checkpoint.decoder_version == SOURCE_DECODER_VERSION
+    ):
+        cursor_time = checkpoint.record_cursor_time or 0
+        cursor_id = checkpoint.record_cursor_id
+
+    try:
+        sessions = OpenCodeSessionStore(file_path).load(
+            after_updated_ms=cursor_time,
+            after_session_id=cursor_id,
+        )
+    except (OSError, sqlite3.DatabaseError) as exc:
+        logger.warning("Failed to read OpenCode session store %s: %s", file_path, exc)
+        return {
+            "inserted": 0,
+            "skipped": 0,
+            "unchanged": 0,
+            "scanned_sessions": 0,
+            "failed": 1,
+        }
+
+    result = _ingest_spans(
+        db_conn,
+        spans=_iter_opencode_records_spans(sessions),
+        source=source,
+        source_type=source_type,
+    )
+    if sessions:
+        cursor_time = sessions[-1].updated_ms
+        cursor_id = sessions[-1].id
+    state.record(
+        source,
+        source_type,
+        fingerprint,
+        processed_offset_bytes=fingerprint.size_bytes,
+        checkpoint_tail_sha256="",
+        record_cursor_time=cursor_time or None,
+        record_cursor_id=cursor_id,
+    )
+    db_conn.commit()
+    result.update({
+        "unchanged": 0,
+        "scanned_sessions": len(sessions),
+    })
+    return result
+
+
 def ingest_native_session_file(
     db_conn,
     *,
@@ -831,6 +925,13 @@ def ingest_native_session_file(
     skip_unchanged: bool = False,
 ) -> IngestionResult:
     source = source_id or f"native_session:{agent}:{file_path}"
+    if agent == "opencode":
+        return ingest_opencode_session_store(
+            db_conn,
+            file_path=file_path,
+            source_id=source,
+            skip_unchanged=skip_unchanged,
+        )
     if agent == "codex":
         spans = _iter_codex_session_spans(file_path)
     elif agent == "copilot":
@@ -841,8 +942,6 @@ def ingest_native_session_file(
         spans = _iter_claude_session_spans(file_path)
     elif agent == "gemini":
         spans = _iter_gemini_session_spans(file_path)
-    elif agent == "opencode":
-        spans = _iter_opencode_session_spans(file_path)
     else:
         spans = ()
     return _ingest_file_spans(

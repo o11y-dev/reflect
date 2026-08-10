@@ -53,6 +53,7 @@
 
 ### Fixed
 
+- Made OpenCode SQLite ingestion persist a composite record cursor so changed stores load only new or updated sessions while decoder changes still trigger a complete replay.
 - Made native Claude, Codex, Copilot, Cursor, OpenCode, and historical Gemini session discovery honor each agent's configured home and environment overrides.
 - Restored Inbox as the evidence-attention surface without projecting workflow titles onto findings, and aligned session trace waterfalls from canonical span timestamps instead of placing every child span at zero.
 - Made dashboard evidence trustworthy at first render: MCP calls now use one canonical logical-call ledger with merged server aliases and explicit outcome coverage, command patterns exclude orchestration wrappers, session and cohort token/tool totals share canonical semantics, context-only memory exposures stay out of work-session navigation, cost gaps identify missing tokens, models, or pricing, lazy Explore views distinguish loading from empty data, and workflow reviews separate linked provenance sessions from comparable task evidence before any unvalidated apply.
