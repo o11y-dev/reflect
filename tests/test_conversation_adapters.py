@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from reflect.session_adapters import (
-    DEFAULT_SESSION_ADAPTERS,
+from reflect.conversation_adapters import (
+    DEFAULT_CONVERSATION_ADAPTERS,
     ClaudeConversationAdapter,
     SessionConversationAdapterRegistry,
 )
@@ -102,7 +102,7 @@ def test_jsonl_adapters_preserve_assistant_responses(
 ):
     source = _write_jsonl(tmp_path / filename, payload)
 
-    transcript = DEFAULT_SESSION_ADAPTERS.load("sess-1", agent, source)
+    transcript = DEFAULT_CONVERSATION_ADAPTERS.load("sess-1", agent, source)
 
     responses = [event for event in transcript.events if event.type == "response"]
     assert [event.content for event in responses] == [expected_response]
@@ -129,7 +129,7 @@ def test_gemini_adapter_preserves_assistant_response(tmp_path):
         encoding="utf-8",
     )
 
-    transcript = DEFAULT_SESSION_ADAPTERS.load("sess-1", "gemini", source)
+    transcript = DEFAULT_CONVERSATION_ADAPTERS.load("sess-1", "gemini", source)
 
     response = next(event for event in transcript.events if event.type == "response")
     assert response.content == "Fixed from Gemini"
@@ -171,7 +171,7 @@ def test_claude_adapter_pairs_tool_calls_and_results(tmp_path):
         ],
     )
 
-    transcript = DEFAULT_SESSION_ADAPTERS.load("sess-1", "claude", source)
+    transcript = DEFAULT_CONVERSATION_ADAPTERS.load("sess-1", "claude", source)
 
     assert [event.type for event in transcript.events] == ["tool_call", "tool_result"]
     assert transcript.events[1].tool_name == "Read"
@@ -195,5 +195,5 @@ def test_adapter_registry_rejects_duplicates():
     ],
 )
 def test_default_registry_supports_common_agent_aliases(alias, canonical):
-    assert DEFAULT_SESSION_ADAPTERS.supports(alias)
-    assert canonical in DEFAULT_SESSION_ADAPTERS.supported_agents()
+    assert DEFAULT_CONVERSATION_ADAPTERS.supports(alias)
+    assert canonical in DEFAULT_CONVERSATION_ADAPTERS.supported_agents()

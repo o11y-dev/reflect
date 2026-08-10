@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Deleted the orphaned terminal dashboard and its renderer-only tests, retained shared CLI preparation progress under `cli/`, and renamed native store, conversation, Cursor usage, and session-rule context modules for their actual responsibilities without compatibility aliases.
+- Declared macOS and Linux as the supported operating systems, matching the tested CI matrix and POSIX raw-segment locking contract.
 - Restored the Skills Registry as a first-class browser surface between Workflows and Impact, preserving the existing version, installation, exposure, and usage evidence while making durable procedures directly discoverable again.
 - Made the remaining dashboard and CLI ownership boundaries concrete: session and Explore queries now have focused modules, improvement route data uses one adapter, memory/schema commands live under `cli/`, and shared snapshot/JSON helpers no longer have duplicate implementations.
 - Deleted obsolete core re-exports, duplicate session-card shapers, dead helpers, and unused dashboard styles while preserving the existing dashboard and CLI behavior.
@@ -12,7 +14,7 @@
 - Made database evolution one-way for the new workflow, execution-unit, MCP-call, and source-lifecycle models: migrations move durable data forward, while runtime dual reads, dual writes, retired routes, presentation aliases, and legacy fallback branches are removed.
 - Split snapshot preparation, database command wiring, dashboard queries, dashboard server construction, and authored frontend modules into explicit owners. The generated packaged and documentation dashboards now come from one build and remain byte-identical.
 - Consolidated the browser around Sessions, Inbox, Workflows, Skills, Impact, and Explore. Inbox owns findings and actionable loops, Workflows owns explicit intervention contracts, and durable skill versions remain a distinct registry surface.
-- Centralized agent support, aliases, native stores, hooks, skill targets, MCP configuration, and headless-test capability in one typed registry used by setup, doctor, adapters, and validation.
+- Centralized current-client support, aliases, setup paths, hooks, skill targets, MCP configuration, and headless-test capability in one typed registry used by setup, doctor, and validation.
 - Replaced unbounded gateway cache files with bounded active OTLP JSONL segments and immutable closed segments; successfully normalized closed segments are deleted by default and can be retained explicitly with `--keep-processed-raw`.
 - Made explicit snapshot refresh ingest unchanged-aware hook JSONL files before native session adapters, so fresh and repaired stores reconcile current agent events without replaying unchanged files.
 - Made recovery impacts measure repeated unchanged calls rather than raw first failures, and withhold impact claims until signal coverage, agent/source comparability, and observed workflow adherence pass an explicit evidence-quality gate.
@@ -38,7 +40,7 @@
 - Added a decision-oriented product direction covering simplification, packaged proof, adoption, privacy, and evidence requirements for developer trust.
 - Added a fresh-wheel cross-agent blog handoff suite and a deterministic six-agent telemetry contract covering validated memory selection, task completion, logical MCP calls, token totals, and repeat-refresh idempotency.
 - Added a direction-aware progress graph to every Impact card, plotting the baseline and each stored comparable-cohort check without extra dashboard queries.
-- Added a native OpenCode SQLite adapter shared by canonical ingestion and session-detail rendering, including prompts, responses, exact model/token/cache usage, tool results, workspace context, and parent-session lineage.
+- Added a typed OpenCode SQLite store reader shared by canonical ingestion and session-detail rendering, including prompts, responses, exact model/token/cache usage, tool results, workspace context, and parent-session lineage.
 - Added privacy-safe Codex context discovery for user instructions and memory files, canonical per-session memory exposure evidence with dashboard counts, and automatic task-contract registration when `reflect_context` receives an explicit task file.
 - Added read-only `reflect_impact` MCP inspection for persisted before/after measurements and their exact compared execution-unit cohorts.
 - Added a current architecture map covering canonical data flow, domain ownership, one-way migration, workflow lifecycle, raw-segment retention, browser generation, and guardrails for keeping future changes lean.

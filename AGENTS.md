@@ -4,7 +4,7 @@ Guidance for AI agents working in this repository.
 
 ## What this project is
 
-**reflect** is a local-first CLI for AI agent telemetry and measurable workflow improvement. It reads OTLP plus supported agent-native stores, normalizes them into one SQLite model, and renders terminal, markdown, MCP, and browser views. Current client capabilities come from `agent_capabilities.py`; Gemini CLI is historical ingestion, while Antigravity is the current partial MCP/headless target.
+**reflect** is a local-first CLI for AI agent telemetry and measurable workflow improvement. It reads OTLP plus supported agent-native stores, normalizes them into one SQLite model, and renders CLI, markdown, MCP, and browser views. Current client capabilities come from `agent_capabilities.py`; Gemini CLI is historical ingestion, while Antigravity is the current partial MCP/headless target.
 
 CLI entry point: `reflect.core:main`
 Installed as: `reflect` for releases via `pipx install .`; source development uses Poetry.
@@ -15,14 +15,11 @@ Installed as: `reflect` for releases via `pipx install .`; source development us
 # Install dependencies for source-based development
 poetry install --extras test
 
-# Terminal dashboard (default)
+# Open the local browser dashboard
 poetry run reflect --otlp-traces ~/.reflect/state/otlp/otel-traces.active.jsonl
 
-# Markdown report
-poetry run reflect --otlp-traces ~/.reflect/state/otlp/otel-traces.active.jsonl --no-terminal --output reports/my-report.md
-
-# Open local dashboard server
-poetry run reflect report --otlp-traces ~/.reflect/state/otlp/otel-traces.active.jsonl
+# Also save a Markdown report while serving the dashboard
+poetry run reflect --foreground --otlp-traces ~/.reflect/state/otlp/otel-traces.active.jsonl --output reports/my-report.md
 
 # Demo and health checks
 poetry run reflect --demo
@@ -40,6 +37,10 @@ poetry run reflect doctor
 | `src/reflect/gateway.py` | Local OTLP gateway (gRPC + HTTP servers, file writer, daemon lifecycle) |
 | `src/reflect/preparation.py` | Snapshot lifecycle, policies, progress, and coordinator |
 | `src/reflect/preparation_pipeline.py` | Explicit ingest/normalize/derive preparation pipeline |
+| `src/reflect/cli/progress.py` | Shared Rich progress for snapshot preparation commands |
+| `src/reflect/opencode_store.py` | Typed read-only access to OpenCode's native SQLite store |
+| `src/reflect/conversation_adapters.py` | Provider-native session projection into dashboard conversations |
+| `src/reflect/store/cursor_usage.py` | Provenance-marked Cursor transcript usage estimation and repair |
 | `src/reflect/dashboard_query_common.py` | Shared typed query helpers and session quality read models |
 | `src/reflect/dashboard_queries.py` | Shared bounded overview read models |
 | `src/reflect/dashboard_sessions.py` | Session payload and drill-down queries |
@@ -51,15 +52,14 @@ poetry run reflect doctor
 | `src/reflect/graph.py` | Tool transition, co-occurrence, latency, and timeline graph derivation |
 | `src/reflect/insights.py` | Observations, recommendations, achievements, token economy |
 | `src/reflect/report.py` | Markdown report rendering |
-| `src/reflect/terminal.py` | Terminal dashboard rendering |
 | `reports/` | Generated markdown reports |
 | `docs/` | Hosted docs and dashboard artifacts |
 | `src/reflect/data/skills/reflect/` | Canonical tracked and packaged `reflect` skill |
-| `tests/` | Fast regression coverage for parsing, CLI, dashboard JSON, graphs, terminal output, and skill packaging |
+| `tests/` | Fast regression coverage for parsing, CLI, dashboard JSON, graphs, raw segments, and skill packaging |
 
 ## Architecture in one paragraph
 
-`parsing.py` discovers source inputs, `store/ingest.py` checkpoints them, and `store/normalize.py` promotes them into canonical SQLite evidence. `processing.py` and `analyze_telemetry()` build `TelemetryStats` for terminal and markdown renderers. The browser queries the same SQLite store through `dashboard_queries.py`; `dashboard_server.py` only wires routes and lifecycle. Workflow evidence and impact use execution units, while sessions remain navigation and aggregate-usage containers. Never aggregate from already-shaped session cards.
+`parsing.py` discovers source inputs, `store/ingest.py` checkpoints them, and `store/normalize.py` promotes them into canonical SQLite evidence. `processing.py` and `analyze_telemetry()` build `TelemetryStats` for Markdown output. The browser queries the same SQLite store through `dashboard_queries.py`; `dashboard_server.py` only wires routes and lifecycle. Native conversation adapters provide high-fidelity session detail but never feed aggregates. Workflow evidence and impact use execution units, while sessions remain navigation and aggregate-usage containers. Never aggregate from already-shaped session cards.
 
 ## Conventions
 
@@ -72,13 +72,13 @@ poetry run reflect doctor
 - **Treat generated browser files as build outputs.** Edit `src/reflect/frontend/`, run `poetry run python scripts/build_dashboard.py`, and verify `src/reflect/data/index.html` and `docs/report.html` remain byte-identical.
 - **orjson first, stdlib json fallback.** Reuse the existing import shim pattern.
 - **Keep the changelog release-ready.** If your work adds features, fixes bugs, or changes dependencies, add or update a `## 0.x.x (unreleased)` section at the top of `CHANGELOG.md` before finishing. The release automation (`scripts/bump_version.py`) matches that exact heading pattern and stamps it with the version and date on release. Group entries under `### Added`, `### Fixed`, `### Changed`, or `### Dependencies` as appropriate. Do **not** use `## Unreleased` — it will not be picked up by the release script.
-- **If you test the pipx-installed live dashboard, source edits are not enough.** Sync changed files into `~/.local/pipx/venvs/o11y-reflect/lib/python*/site-packages/reflect/` or reinstall before validating `reflect report`.
+- **If you test the pipx-installed live dashboard, source edits are not enough.** Sync changed files into `~/.local/pipx/venvs/o11y-reflect/lib/python*/site-packages/reflect/` or reinstall before validating `reflect`.
 - **Roadmap items do not live here by default.** If you discover durable roadmap or future-work items while working in `reflect`, mirror them into `../office/roadmap.md` or `../office/plan.md`. Keep this repo focused on implementation guidance and repo-local decisions.
 
 ## Engineering design defaults
 
 - **Prefer OOP for new stateful or swappable behavior.** When a change introduces lifecycle, configuration, strategy selection, adapters, stores, or renderer-like behavior, default to small classes with explicit methods instead of growing procedural branches. Keep pure functions for stateless transformations.
-- **Write agnostic, interchangeable code.** Avoid hard-coding one agent, vendor, transport, storage backend, or renderer into shared logic. Put provider-specific behavior behind narrow adapters or strategy objects so Claude, Codex, Copilot, Cursor, Gemini, hooks, native OTLP, JSONL, SQLite, markdown, terminal, and dashboard paths can evolve independently.
+- **Write agnostic, interchangeable code.** Avoid hard-coding one agent, vendor, transport, storage backend, or renderer into shared logic. Put provider-specific behavior behind narrow adapters or strategy objects so Claude, Codex, Copilot, Cursor, Gemini, hooks, native OTLP, JSONL, SQLite, markdown, CLI, and dashboard paths can evolve independently.
 - **Keep contracts explicit.** Prefer typed dataclasses/models, protocols, and small interface surfaces over loosely shaped dict plumbing across module boundaries. If dicts are the existing contract, normalize them at the boundary and document required keys in tests.
 - **Keep code and architecture lean.** Make the smallest coherent change that preserves the architecture. Every new class, module, helper, or interface must own meaningful state or lifecycle, remove demonstrated duplication, or isolate a real variant. Prefer reusing existing domain objects and consolidating paths over parallel abstractions. During review, remove redundant functions, wrappers, and fixtures, and compare complexity and code size before and after. Avoid speculative frameworks and unrelated refactors.
 - **Composition over condition piles.** When branching grows around agent type, source type, or output target, introduce a mapper/adapter/strategy and register it close to the relevant domain instead of adding long `if/elif` ladders in orchestration code.
@@ -99,7 +99,7 @@ Use the current `docs/showcase.html` page as the product visual baseline for pub
 - **Brand palette:** near-black `#050505`, signal orange `#F28A1A`, warm off-white `#F5F2EA`, muted warm text such as `#D7D1C6` / `#BEB8AD`, and graphite panels. Avoid reverting primary chrome to blue/purple gradients.
 - **Logo:** use the clean product mark: off-white triangle with an orange ring/lens centered optically low, around 60% of mark height, on a near-black field. The dashboard header mark should match the showcase mark and link to `https://reflect.o11y.dev/`.
 - **Surface language:** prefer sharp, technical, premium UI: 6-8px panel/card radii, restrained borders, warm shadows, dense information hierarchy, and orange used as signal/activity/insight.
-- **Dashboard parity:** author changes in `src/reflect/frontend/`, then run `scripts/build_dashboard.py` so `src/reflect/data/index.html` and `docs/report.html` stay byte-for-byte identical. `docs/report.html` is what local `reflect`/`reflect report` serves, not `docs/index.html` (the marketing page). If validating through pipx, reinstall the package before checking the live UI.
+- **Dashboard parity:** author changes in `src/reflect/frontend/`, then run `scripts/build_dashboard.py` so `src/reflect/data/index.html` and `docs/report.html` stay byte-for-byte identical. `docs/report.html` is what local `reflect` serves, not `docs/index.html` (the marketing page). If validating through pipx, reinstall the package before checking the live UI.
 - **Compare/report emphasis:** active tabs, filters, compare cards, selection states, and key dashboard accents should visibly use orange; do not rely only on subtle token swaps that leave a tab visually neutral.
 - **Copy tone:** lead with concrete workflow pain and evidence: failures, stalls, limits, loops, token/cost burn, and better future human + AI runs.
 
@@ -124,7 +124,6 @@ To add a new tracked metric:
 2. Thread the data through parsing / processing helpers
 3. Populate the field during telemetry analysis
 4. Export it in the renderer that needs it:
-   - `terminal.py`
    - `report.py`
    - the owning `dashboard_*.py` query or adapter module
 5. Add or update regression coverage in `tests/`

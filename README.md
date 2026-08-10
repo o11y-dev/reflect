@@ -37,6 +37,7 @@ evidence, workflow reviews, and SQLite state remain on your machine.
 
 Reflect requires Python 3.12+ and
 [pipx](https://pipx.pypa.io/stable/installation/).
+The supported operating systems are macOS and Linux.
 
 ```bash
 pipx install o11y-reflect

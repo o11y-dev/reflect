@@ -1,4 +1,4 @@
-"""Adapters from Reflect telemetry and SQLite rows into session-rule context."""
+"""Map Reflect telemetry and SQLite summaries into session-rule context."""
 from __future__ import annotations
 
 from collections.abc import Mapping

@@ -47,7 +47,6 @@ class AgentCapability:
     recommendation: str
     aliases: tuple[str, ...] = ()
     hook_agent: str | None = None
-    native_session_adapter: bool = False
     skill_cli: str | None = None
     skill_cli_flags: tuple[str, ...] = ()
     mcp: MCPClientCapability | None = None
@@ -77,7 +76,6 @@ AGENT_CAPABILITIES: tuple[AgentCapability, ...] = (
         confidence="High",
         recommendation="Use native OTel and hooks; Reflect also reads Claude transcripts for conversation detail.",
         hook_agent="claude",
-        native_session_adapter=True,
         skill_cli="claude",
         skill_cli_flags=("--print",),
         mcp=MCPClientCapability(
@@ -101,7 +99,6 @@ AGENT_CAPABILITIES: tuple[AgentCapability, ...] = (
         confidence="Medium",
         recommendation="Use native session and log adapters for desktop; hooks cover supported CLI launches.",
         hook_agent="cursor",
-        native_session_adapter=True,
         skill_cli="cursor-agent",
         skill_cli_flags=("--print", "--trust", "--mode", "ask"),
         mcp=MCPClientCapability(
@@ -153,7 +150,6 @@ AGENT_CAPABILITIES: tuple[AgentCapability, ...] = (
         confidence="High",
         recommendation="Prefer native Copilot OTel on OTLP HTTP; use hooks for additional governance events.",
         hook_agent="copilot",
-        native_session_adapter=True,
         skill_cli="copilot",
         skill_cli_flags=("--prompt",),
         mcp=MCPClientCapability(
@@ -177,7 +173,6 @@ AGENT_CAPABILITIES: tuple[AgentCapability, ...] = (
         confidence="High",
         recommendation="Use native Codex OTel; Reflect reads Codex rollouts for conversations, tool calls, MCP, context, and memory evidence.",
         hook_agent="codex",
-        native_session_adapter=True,
         skill_cli="codex",
         skill_cli_flags=("exec",),
         mcp=MCPClientCapability(
@@ -200,7 +195,6 @@ AGENT_CAPABILITIES: tuple[AgentCapability, ...] = (
         confidence="Medium",
         recommendation="Use OpenCode native sessions; hooks add supported lifecycle events.",
         hook_agent="opencode",
-        native_session_adapter=True,
         skill_cli="opencode",
         skill_cli_flags=("run",),
         mcp=MCPClientCapability(
@@ -241,7 +235,6 @@ AGENT_CAPABILITIES: tuple[AgentCapability, ...] = (
         telemetry_path="Historical native OTel + session adapter",
         confidence="High",
         recommendation="Existing Gemini telemetry remains readable; use Antigravity for new local simulations.",
-        native_session_adapter=True,
     ),
     *(
         AgentCapability(

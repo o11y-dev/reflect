@@ -58,6 +58,7 @@ session rows, and chart series are views over canonical evidence.
 |---|---|---|
 | CLI composition | `src/reflect/core.py` | Click entry point, command wiring, setup, and top-level operator flows |
 | CLI shared contracts | `src/reflect/cli/common.py` | Reflect home, JSON output, and query-only snapshot readiness |
+| CLI progress | `src/reflect/cli/progress.py` | Rich preparation feedback on stderr without contaminating command output |
 | Database commands | `src/reflect/cli/database.py` | Ingest, retention, vacuum, and database inspection commands |
 | Memory and schema commands | `src/reflect/cli/memory.py`, `schema.py` | Scoped memory lifecycle and schema export |
 | Preparation policy | `src/reflect/preparation.py` | Snapshot states, profiles, progress, background lifecycle, and coordinator |
@@ -70,7 +71,11 @@ session rows, and chart series are views over canonical evidence.
 | Browser artifacts | `src/reflect/data/index.html`, `docs/report.html` | Generated, byte-identical single-file clients |
 | OTLP gateway | `src/reflect/gateway.py`, `raw_segments.py` | Receive OTLP, append active files, and rotate immutable segments |
 | Agent capabilities | `src/reflect/agent_capabilities.py` | Support level, aliases, paths, hooks, skills, MCP, and headless-test surfaces |
-| Terminal and Markdown | `terminal.py`, `report.py` | Render canonical `TelemetryStats` |
+| Native store access | `src/reflect/opencode_store.py` | Typed read-only access to OpenCode's relational source records |
+| Conversation projection | `src/reflect/conversation_adapters.py` | Convert native provider records into high-fidelity session detail |
+| Cursor usage enrichment | `src/reflect/store/cursor_usage.py` | Add provenance-marked transcript usage estimates when exact usage is absent |
+| Session-rule context | `src/reflect/session_rules/context.py` | Map canonical summaries or detailed spans into scoring inputs |
+| Markdown | `src/reflect/report.py` | Render canonical `TelemetryStats` |
 
 `reflect.core:main` remains the installed CLI entry point. Domain logic belongs
 in the focused owner above, not in command handlers.
@@ -82,9 +87,11 @@ The gateway writes only to:
 - `otel-traces.active.jsonl`
 - `otel-logs.active.jsonl`
 
-`RawSegmentWriter` atomically rotates an active file before it exceeds the
-configured bound. Closed segments are immutable, timestamp-named JSONL files.
-Refresh reads closed segments oldest-first and then the active segment.
+One gateway process owns each active path. Within that boundary,
+`RawSegmentWriter` serializes appends and atomically rotates an active file
+before it exceeds the configured bound. Closed segments are immutable,
+timestamp-named JSONL files. Refresh reads closed segments oldest-first and then
+the active segment.
 
 `source_ingestion_state` records the source fingerprint, append checkpoint,
 decoder version, normalization time, and raw deletion time. A closed segment is
@@ -121,8 +128,14 @@ only the canonical model.
 ### Agent capabilities
 
 Setup, doctor, skill distribution, MCP configuration, aliases, and local-agent
-tests read the same `AgentCapability` registry. Provider-specific formats stay
-inside adapters and strategies.
+tests read the same `AgentCapability` registry. It is product metadata, not a
+telemetry parser registry.
+
+Provider-specific responsibilities use precise boundaries: `parsing.py`
+discovers native inputs and derives canonical source events,
+`opencode_store.py` owns relational source access, `conversation_adapters.py`
+owns high-fidelity session projection, and `store/cursor_usage.py` owns derived
+usage estimation. These roles do not share a generic adapter lifecycle.
 
 Current capability labels are deliberately per product surface:
 

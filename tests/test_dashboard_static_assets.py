@@ -12,6 +12,15 @@ DASHBOARD_HTML_FILES = (
     REPO_ROOT / "src/reflect/data/index.html",
     REPO_ROOT / "docs/report.html",
 )
+PUBLIC_HTML_FILES = (*DASHBOARD_HTML_FILES, REPO_ROOT / "docs/index.html")
+
+
+@pytest.mark.parametrize("path", PUBLIC_HTML_FILES)
+def test_public_metadata_matches_supported_operating_systems(path: Path):
+    text = path.read_text(encoding="utf-8")
+
+    assert '"operatingSystem": "macOS, Linux"' in text
+    assert '"operatingSystem": "macOS, Linux, Windows"' not in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)

@@ -58,7 +58,7 @@ def segment_inventory(active_path: Path) -> RawSegmentInventory:
 
 
 class RawSegmentWriter:
-    """Append OTLP envelopes and atomically close bounded JSONL segments."""
+    """Append and rotate OTLP JSONL for one owning gateway process."""
 
     def __init__(self, active_path: Path, *, max_bytes: int = DEFAULT_SEGMENT_BYTES):
         if max_bytes <= 0:

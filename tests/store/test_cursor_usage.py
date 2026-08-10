@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from reflect.store.cursor_adapter import (
+from reflect.store.cursor_usage import (
     apply_cursor_transcript_usage_estimates,
     repair_misattributed_cursor_transcript_usage,
 )

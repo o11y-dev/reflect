@@ -25,7 +25,7 @@ def prepare_usage_db(
 ) -> dict[str, object]:
     """Refresh usage facts without rebuilding graph or improvement state."""
     from reflect.preparation import PreparationStage, report_preparation_progress
-    from reflect.store.cursor_adapter import (
+    from reflect.store.cursor_usage import (
         apply_cursor_transcript_usage_estimates,
         repair_misattributed_cursor_transcript_usage,
     )
@@ -265,7 +265,7 @@ def prepare_sql_report_db(
 ) -> dict[str, object]:
     from reflect.preparation import PreparationStage, report_preparation_progress
     from reflect.store.cost_refresh import CostRefreshState
-    from reflect.store.cursor_adapter import (
+    from reflect.store.cursor_usage import (
         apply_cursor_transcript_usage_estimates,
         repair_misattributed_cursor_transcript_usage,
     )
@@ -456,13 +456,13 @@ def prepare_sql_report_db(
             timestamp=datetime.now(UTC).isoformat(),
             changed_session_ids=changed_session_ids,
         )
-        cursor_adapter_result = apply_cursor_transcript_usage_estimates(
+        cursor_usage_result = apply_cursor_transcript_usage_estimates(
             conn,
             cursor_native_files,
         )
         changed_session_ids.update(
             str(session_id)
-            for session_id in cursor_adapter_result.get("session_ids", [])
+            for session_id in cursor_usage_result.get("session_ids", [])
             if session_id
         )
         reconciled_legacy_data = rollup_rebuild_pending(conn)
@@ -611,7 +611,7 @@ def prepare_sql_report_db(
         "tool_call_fingerprints": fingerprint_result,
         "session_context": context_result,
         "cursor_provenance": cursor_provenance_result,
-        "cursor_adapter": cursor_adapter_result,
+        "cursor_usage_estimates": cursor_usage_result,
         "refresh_plan": refresh_plan.as_dict(),
         "graph": graph_result,
         "rollups": rollup_result,

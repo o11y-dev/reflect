@@ -255,6 +255,7 @@ def db_prune_sessions(
     """Preview or prune inactive sessions selected by the retention policy."""
     from dataclasses import asdict
 
+    from reflect.cli.progress import TerminalPreparationProgress
     from reflect.preparation import PreparationStage, report_preparation_progress
     from reflect.store.migrate import migrate
     from reflect.store.retention import SessionPruner, SessionRetentionPolicy
@@ -264,7 +265,6 @@ def db_prune_sessions(
         connect_sqlite,
         connect_sqlite_read_only,
     )
-    from reflect.terminal import TerminalPreparationProgress
 
     if vacuum and not apply_changes:
         raise click.UsageError("--vacuum requires --apply")

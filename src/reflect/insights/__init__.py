@@ -1,9 +1,4 @@
-"""Insights engine — backward-compatible public API.
-
-All existing call sites (core.py, dashboard.py, report.py, terminal.py)
-import from ``reflect.insights``.  This package re-exports every public
-name so those imports keep working as the internals are refactored.
-"""
+"""Public insight builders shared by CLI, report, and dashboard consumers."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

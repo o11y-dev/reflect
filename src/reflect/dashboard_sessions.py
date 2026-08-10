@@ -1359,12 +1359,16 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
     conversation_warnings: list[str] = []
     native_path = _native_session_path(session_row)
     if native_path is not None:
-        from reflect.session_adapters import DEFAULT_SESSION_ADAPTERS
+        from reflect.conversation_adapters import DEFAULT_CONVERSATION_ADAPTERS
 
         agent = str(session_row.get("agent") or "")
-        if DEFAULT_SESSION_ADAPTERS.supports(agent):
+        if DEFAULT_CONVERSATION_ADAPTERS.supports(agent):
             try:
-                native_transcript = DEFAULT_SESSION_ADAPTERS.load(session_id, agent, native_path)
+                native_transcript = DEFAULT_CONVERSATION_ADAPTERS.load(
+                    session_id,
+                    agent,
+                    native_path,
+                )
                 native_events = [event.as_dict() for event in native_transcript.events]
                 if any(
                     event.get("type") == "response" and str(event.get("content") or "").strip()

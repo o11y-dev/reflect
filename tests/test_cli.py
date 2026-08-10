@@ -1474,7 +1474,11 @@ class TestUpdateAdvisor:
         assert "New aliases" in result.output
         assert "1" in result.output
 
-    def test_prepare_sql_report_db_applies_cursor_adapter_before_rollups(self, tmp_path, monkeypatch):
+    def test_prepare_sql_report_db_applies_cursor_usage_before_rollups(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
         from reflect.store.sqlite import connect_sqlite
 
         db_path = tmp_path / "reflect.db"
@@ -1500,12 +1504,13 @@ class TestUpdateAdvisor:
 
         result = preparation_pipeline.prepare_sql_report_db(db_path, otlp_traces=None, include_native_sessions=True)
 
-        assert result["cursor_adapter"] == {
+        assert result["cursor_usage_estimates"] == {
             "updated": 1,
             "skipped": 0,
             "missing": 0,
             "session_ids": ["cursor-native-sess-1"],
         }
+        assert "cursor_adapter" not in result
         assert result["rollups"] == {"session_rollups": 1, "daily_rollups": 1, "tool_rollups": 0}
         conn = connect_sqlite(db_path)
         try:

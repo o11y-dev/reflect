@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from reflect.agent_capabilities import normalize_agent_key
-from reflect.opencode_adapter import OpenCodeSessionStore, opencode_tool_success
+from reflect.opencode_store import OpenCodeSessionStore, opencode_tool_success
 from reflect.utils import _flatten_text_content, _json_dumps, _json_loads, _load_json_lines
 
 MAX_CONTENT_CHARS = 20_000
@@ -597,7 +597,7 @@ class SessionConversationAdapterRegistry:
         return normalize_agent_key(agent)
 
 
-DEFAULT_SESSION_ADAPTERS = SessionConversationAdapterRegistry(
+DEFAULT_CONVERSATION_ADAPTERS = SessionConversationAdapterRegistry(
     (
         ClaudeConversationAdapter(),
         CodexConversationAdapter(),
@@ -616,7 +616,7 @@ __all__ = [
     "ConversationTranscript",
     "CopilotConversationAdapter",
     "CursorConversationAdapter",
-    "DEFAULT_SESSION_ADAPTERS",
+    "DEFAULT_CONVERSATION_ADAPTERS",
     "GeminiConversationAdapter",
     "OpenCodeConversationAdapter",
     "SessionConversationAdapter",

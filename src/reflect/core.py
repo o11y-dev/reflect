@@ -814,7 +814,7 @@ def _prepare_sql_snapshot_with_progress(
     spans_dir: Path | None = None,
     keep_processed_raw: bool = False,
 ) -> dict[str, object]:
-    from reflect.terminal import TerminalPreparationProgress
+    from reflect.cli.progress import TerminalPreparationProgress
 
     return TerminalPreparationProgress().run(
         lambda progress: prepare_sql_report_db(
@@ -962,7 +962,7 @@ def _prepare_usage_db_with_progress(
     include_native_sessions: bool,
     native_session_ids: tuple[str, ...] = (),
 ) -> dict[str, object]:
-    from reflect.terminal import TerminalPreparationProgress
+    from reflect.cli.progress import TerminalPreparationProgress
 
     return TerminalPreparationProgress().run(
         lambda progress: prepare_usage_db(

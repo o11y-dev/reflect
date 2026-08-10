@@ -1,6 +1,6 @@
 import json
 
-from reflect.store.cursor_adapter import apply_cursor_transcript_usage_estimates
+from reflect.store.cursor_usage import apply_cursor_transcript_usage_estimates
 from reflect.store.ingest import (
     AppendOnlyReplayPolicy,
     _complete_jsonl_offset,

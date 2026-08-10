@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from reflect.context_artifacts import codex_context_exposures
-from reflect.opencode_adapter import (
+from reflect.opencode_store import (
     OpenCodeMessageRecord,
     OpenCodeSessionRecord,
     OpenCodeSessionStore,

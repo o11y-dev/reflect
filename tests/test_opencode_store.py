@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from reflect.opencode_adapter import OpenCodeSessionStore
+from reflect.conversation_adapters import DEFAULT_CONVERSATION_ADAPTERS
+from reflect.opencode_store import OpenCodeSessionStore
 from reflect.parsing import _discover_rich_session_files, _iter_opencode_session_spans
-from reflect.session_adapters import DEFAULT_SESSION_ADAPTERS
 from reflect.store.ingest import ingest_native_session_file
 from reflect.store.migrate import migrate
 from reflect.store.normalize import normalize_pending_raw_events
@@ -290,7 +290,11 @@ def test_opencode_ingestion_detects_sessions_appended_in_sqlite_wal(tmp_path):
 def test_opencode_conversation_adapter_reads_selected_session(tmp_path):
     source = _write_opencode_store(tmp_path / "opencode.db")
 
-    transcript = DEFAULT_SESSION_ADAPTERS.load("open-session-1", "opencode", source)
+    transcript = DEFAULT_CONVERSATION_ADAPTERS.load(
+        "open-session-1",
+        "opencode",
+        source,
+    )
 
     assert [event.type for event in transcript.events] == [
         "prompt",

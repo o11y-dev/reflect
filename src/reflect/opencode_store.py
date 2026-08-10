@@ -1,4 +1,4 @@
-"""Read OpenCode's native SQLite session store behind one narrow adapter."""
+"""Read OpenCode's native SQLite session store into typed source records."""
 
 from __future__ import annotations
 
