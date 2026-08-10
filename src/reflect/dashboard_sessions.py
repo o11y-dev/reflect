@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,6 +18,14 @@ from reflect.dashboard_query_common import (
 )
 from reflect.graph import _compute_weekly_trends
 from reflect.store.hook_facts import HookFactRepository
+from reflect.telemetry_facts import (
+    clean_subagent_name,
+    extract_skill_name_from_path,
+    extract_skill_name_from_preview,
+    extract_skill_names_from_text,
+    extract_subagent_name_from_tool,
+    extract_subagent_names_from_text,
+)
 from reflect.utils import logger
 
 
@@ -85,28 +92,6 @@ def _sanitize_telemetry_attrs(attrs: dict) -> dict:
     return safe
 
 
-def _extract_skill_name_from_preview(preview: str) -> str:
-    if not isinstance(preview, str) or not preview.strip():
-        return ""
-    try:
-        payload = json.loads(preview)
-    except json.JSONDecodeError:
-        match = re.search(r'"skill"\s*:\s*"([^"]+)"', preview)
-        return match.group(1).strip() if match else ""
-    if isinstance(payload, dict):
-        skill = payload.get("skill")
-        if isinstance(skill, str):
-            return skill.strip()
-    return ""
-
-
-def _extract_skill_name_from_path(path: str) -> str:
-    if not isinstance(path, str) or not path.strip():
-        return ""
-    match = re.search(r"(?:^|/)skills/(?:.*/)?([^/]+)/SKILL\.md$", path)
-    return match.group(1).strip() if match else ""
-
-
 def _extract_file_path_from_attrs(attrs: dict[str, object]) -> str:
     return str(
         sql_attr(
@@ -121,25 +106,6 @@ def _extract_file_path_from_attrs(attrs: dict[str, object]) -> str:
         )
         or ""
     ).strip()
-
-
-def _extract_skill_names_from_text(text: str) -> set[str]:
-    if not isinstance(text, str) or not text.strip():
-        return set()
-    names: set[str] = set()
-    for match in re.finditer(r"(?<![:\w.-])/([A-Za-z0-9][A-Za-z0-9_-]{1,60})", text):
-        name = match.group(1).strip().strip(".,;:)")
-        lowered = name.lower()
-        if (
-            "-" not in lowered
-            and not lowered.endswith("skill")
-            and lowered not in {"review", "investigate"}
-        ):
-            continue
-        names.add(name)
-    for match in re.finditer(r"`([^`/\n]{2,80})`\s+skill\b", text, flags=re.IGNORECASE):
-        names.add(match.group(1).strip())
-    return {name for name in names if name}
 
 
 def _build_tool_inventory(
@@ -177,19 +143,19 @@ def _build_tool_inventory(
         if preview and len(tool_examples[tool_name]) < 3:
             tool_examples[tool_name].append(preview[:500])
         file_path = str(event.get("file_path") or "").strip()
-        path_skill = _extract_skill_name_from_path(file_path)
+        path_skill = extract_skill_name_from_path(file_path)
         if path_skill:
             skills[path_skill] += count
             skill_tools[path_skill][tool_name] += count
         if tool_name == "skill":
-            skill_name = _extract_skill_name_from_preview(preview)
+            skill_name = extract_skill_name_from_preview(preview)
             if skill_name:
                 skills[skill_name] += count
                 skill_tools[skill_name][tool_name] += count
         attrs = event.get("attrs")
         if not isinstance(attrs, dict):
             attrs = {}
-        subagent_name = _extract_subagent_name_from_tool(tool_name, attrs, preview)
+        subagent_name = extract_subagent_name_from_tool(tool_name, attrs, preview)
         if subagent_name:
             subagents[subagent_name] += count
             subagent_sources[subagent_name][tool_name] += count
@@ -206,7 +172,7 @@ def _build_tool_inventory(
             mcp_servers[server_name] += 1
 
     for event in subagent_events or []:
-        name = _clean_subagent_name(event.get("name")) or "unknown"
+        name = clean_subagent_name(event.get("name")) or "unknown"
         status = str(event.get("status") or "start").lower()
         if status == "stop":
             subagent_stops[name] += 1
@@ -299,54 +265,6 @@ def _add_subagent_hints_to_inventory(
             hinted
         )
     return inventory
-
-
-def _extract_subagent_names_from_text(text: str) -> set[str]:
-    if not isinstance(text, str) or not text.strip():
-        return set()
-    names: set[str] = set()
-    for match in re.finditer(r"`([^`/\n]{2,80})`\s+subagent\b", text, flags=re.IGNORECASE):
-        names.add(match.group(1).strip())
-    for match in re.finditer(
-        r"\b(?:use|run|invoke|launch|call)\s+(?:the\s+)?([A-Za-z0-9][A-Za-z0-9_-]{2,80})\s+subagent\b",
-        text,
-        flags=re.IGNORECASE,
-    ):
-        names.add(match.group(1).strip())
-    return {name for name in names if name}
-
-
-def _extract_subagent_name_from_tool(
-    tool_name: str, attrs: dict | None = None, preview: str = ""
-) -> str:
-    normalized_tool = str(tool_name or "").strip().lower()
-    attrs = attrs or {}
-    payload = load_json_dict(preview)
-
-    def first_value(*keys: str) -> str:
-        for key in keys:
-            value = sql_attr(attrs, f"gen_ai.client.tool.input.{key}", f"tool.input.{key}")
-            if value in (None, ""):
-                value = payload.get(key)
-            cleaned = _clean_subagent_name(value)
-            if cleaned:
-                return cleaned
-        return ""
-
-    if normalized_tool in {"subagent", "agent"}:
-        return first_value("subagent_type", "agent_type", "name", "agent_id", "description")
-    if normalized_tool in {"task", "read_agent"}:
-        return first_value("agent_id", "name", "agent_type")
-    return ""
-
-
-def _clean_subagent_name(value: object) -> str:
-    if not isinstance(value, str):
-        return ""
-    name = value.strip()
-    if not name or "REDACTED" in name.upper() or name.startswith("["):
-        return ""
-    return name[:80]
 
 
 def _sql_step_id_for_raw_event(raw_event_id: object) -> str:
@@ -1394,7 +1312,7 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
             skill_name
             for event in conversation
             if event.get("type") in {"prompt", "response"}
-            for skill_name in _extract_skill_names_from_text(
+            for skill_name in extract_skill_names_from_text(
                 str(event.get("preview") or event.get("content") or "")
             )
         },
@@ -1405,7 +1323,7 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
             subagent_name
             for event in conversation
             if event.get("type") in {"prompt", "response"}
-            for subagent_name in _extract_subagent_names_from_text(
+            for subagent_name in extract_subagent_names_from_text(
                 str(event.get("preview") or event.get("content") or "")
             )
         },

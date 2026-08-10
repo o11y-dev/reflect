@@ -54,6 +54,8 @@
 
 ### Fixed
 
+- Moved shared skill and subagent evidence extraction out of dashboard presentation code, removing duplicate implementations and restoring the normalization-to-presentation dependency direction.
+- Made `reflect doctor` distinguish pending, processed, and temporarily unclassified closed OTLP segments, report pending bytes and the last successful normalization, and recommend `reflect refresh` when capture is already configured.
 - Made OpenCode SQLite ingestion persist a composite record cursor so changed stores load only new or updated sessions while decoder changes still trigger a complete replay.
 - Made native Claude, Codex, Copilot, Cursor, OpenCode, and historical Gemini session discovery honor each agent's configured home and environment overrides.
 - Restored Inbox as the evidence-attention surface without projecting workflow titles onto findings, and aligned session trace waterfalls from canonical span timestamps instead of placing every child span at zero.

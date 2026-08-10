@@ -30,6 +30,7 @@ poetry run reflect doctor
 | `src/reflect/core.py` | CLI entrypoint and high-level orchestration |
 | `src/reflect/parsing.py` | Finds local telemetry sources and OTLP inputs |
 | `src/reflect/processing.py` | Span/session normalization and aggregation helpers |
+| `src/reflect/telemetry_facts.py` | Shared pure skill/subagent evidence extraction for normalization and presentation |
 | `src/reflect/models.py` | `TelemetryStats` and `AgentStats` dataclasses |
 | `src/reflect/gateway.py` | Local OTLP gateway (gRPC + HTTP servers, file writer, daemon lifecycle) |
 | `src/reflect/preparation.py` | Snapshot lifecycle, policies, progress, and coordinator |

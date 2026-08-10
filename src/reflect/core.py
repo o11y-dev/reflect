@@ -95,7 +95,11 @@ from reflect.preparation_pipeline import (
     prepare_usage_db,
 )
 from reflect.processing import analyze_telemetry
-from reflect.raw_segments import readable_segment_paths, segment_inventory
+from reflect.raw_segments import (
+    closed_segment_paths,
+    readable_segment_paths,
+    segment_inventory,
+)
 from reflect.shell_completion import (
     SUPPORTED_SHELLS,
     CompletionInstallPlan,
@@ -112,6 +116,7 @@ from reflect.skill_extraction import (
     _build_skills_extraction_prompt_from_bundle,
     _load_extracted_skills,
 )
+from reflect.store.doctor import inspect_segment_preparation
 from reflect.utils import _json_loads, logger
 
 # ---------------------------------------------------------------------------
@@ -228,24 +233,27 @@ def _summarize_file(path: Path | None) -> str:
         size = path.stat().st_size
     except OSError:
         return "present"
-    if size < 1024:
-        return f"{size} B"
-    if size < 1024 * 1024:
-        return f"{size / 1024:.1f} KB"
-    return f"{size / (1024 * 1024):.1f} MB"
+    return _summarize_bytes(size)
+
+
+def _summarize_bytes(size: int) -> str:
+    value = float(max(size, 0))
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    raise AssertionError("unreachable")
 
 
 def _summarize_segment_inventory(path: Path) -> str:
     inventory = segment_inventory(path)
-    size = inventory.total_bytes
-    if size < 1024:
-        size_text = f"{size} B"
-    elif size < 1024 * 1024:
-        size_text = f"{size / 1024:.1f} KB"
-    else:
-        size_text = f"{size / (1024 * 1024):.1f} MB"
     active = "active" if inventory.active_exists else "no active segment"
-    return f"{active}, {inventory.closed_count} closed, {size_text} total"
+    return (
+        f"{active}, {inventory.closed_count} closed, "
+        f"{_summarize_bytes(inventory.total_bytes)} total"
+    )
 
 
 def _count_glob(path: Path, pattern: str) -> int:
@@ -3339,6 +3347,10 @@ def _run_doctor() -> None:
     logs_active_path = traces_active_path.with_name("otel-logs.active.jsonl")
     traces_inventory = segment_inventory(traces_active_path)
     logs_inventory = segment_inventory(logs_active_path)
+    segment_preparation = inspect_segment_preparation(
+        REFLECT_HOME / "state" / "reflect.db",
+        (*closed_segment_paths(traces_active_path), *closed_segment_paths(logs_active_path)),
+    )
     agents = _detect_agents()
     detected_agents = [agent for agent in agents if agent["detected"]]
     span_files = _count_glob(spans_dir, "*.jsonl")
@@ -3378,6 +3390,34 @@ def _run_doctor() -> None:
         f"[bold]{traces_inventory.closed_count + logs_inventory.closed_count}[/] "
         "closed segment(s)",
     )
+    if segment_preparation.pending_count:
+        backlog_markup = (
+            f"[yellow]{segment_preparation.pending_count} pending closed segment(s), "
+            f"{_summarize_bytes(segment_preparation.pending_bytes)}[/]"
+        )
+    elif segment_preparation.unclassified_count:
+        backlog_markup = (
+            f"[yellow]unknown — {segment_preparation.unclassified_count} closed segment(s), "
+            f"{_summarize_bytes(segment_preparation.unclassified_bytes)}; store unavailable[/]"
+        )
+    else:
+        backlog_markup = "[green]none[/]"
+    summary.add_row("refresh backlog", backlog_markup)
+    if segment_preparation.last_normalized_at:
+        normalization_status = _delivery_timestamp(
+            segment_preparation.last_normalized_at
+        )
+    elif segment_preparation.store_available:
+        normalization_status = "none recorded"
+    else:
+        normalization_status = "store unavailable"
+    summary.add_row("last normalization", normalization_status)
+    if segment_preparation.processed_on_disk_count:
+        summary.add_row(
+            "processed raw on disk",
+            f"{segment_preparation.processed_on_disk_count} segment(s), "
+            f"{_summarize_bytes(segment_preparation.processed_on_disk_bytes)}",
+        )
     if hook_report:
         exporter = hook_report.get("exporter")
         exporter = exporter if isinstance(exporter, dict) else {}
@@ -3626,7 +3666,38 @@ def _run_doctor() -> None:
         )
     console.print(Panel(mcp_clients, title="MCP client matrix", border_style="green"))
 
-    action_line = "[bold]Next:[/] run [cyan]reflect setup[/] or enable native telemetry on a supported agent."
+    capture_configured = bool(
+        hook_config.exists()
+        or hook_report
+        or traces_inventory.total_bytes
+        or logs_inventory.total_bytes
+        or span_files
+        or session_files
+        or gateway_health.get("running")
+    )
+    if segment_preparation.pending_count:
+        action_line = (
+            "[bold]Next:[/] run [cyan]reflect refresh[/] to ingest "
+            f"{segment_preparation.pending_count} pending closed segment(s) "
+            f"({_summarize_bytes(segment_preparation.pending_bytes)}) and delete them after "
+            "successful normalization."
+        )
+    elif segment_preparation.unclassified_count:
+        action_line = (
+            "[bold]Next:[/] run [cyan]reflect refresh[/] to reconcile "
+            f"{segment_preparation.unclassified_count} unclassified closed segment(s); "
+            "doctor could not read the ingestion ledger."
+        )
+    elif capture_configured:
+        action_line = (
+            "[bold]Next:[/] run [cyan]reflect refresh[/] to ingest new telemetry and update "
+            "the prepared snapshot."
+        )
+    else:
+        action_line = (
+            "[bold]Next:[/] run [cyan]reflect setup[/] or enable native telemetry on a "
+            "supported agent."
+        )
 
     next_steps_lines = [
         "- [bold]Use native telemetry first[/] where the agent supports it well.",

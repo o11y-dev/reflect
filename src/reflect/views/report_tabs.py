@@ -10,6 +10,14 @@ from typing import Any
 from urllib.parse import urlparse
 
 from reflect.schema.base import ReflectModel
+from reflect.telemetry_facts import (
+    extract_skill_name_from_path,
+    extract_skill_name_from_preview,
+    extract_skill_names_from_text,
+    extract_subagent_name_from_tool,
+    extract_subagent_names_from_text,
+    first_attr,
+)
 from reflect.utils import _sanitize_command_display
 
 
@@ -594,13 +602,13 @@ def _skill_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | Non
         if not isinstance(attrs, dict):
             continue
         agent = str(
-            _attr(attrs, "gen_ai.client.name", "ide.name", "agent.name")
+            first_attr(attrs, "gen_ai.client.name", "ide.name", "agent.name")
             or row["agent"]
             or "unknown"
         )
-        event = str(_attr(attrs, "gen_ai.client.hook.event", "ide.hook.event") or row["summary"] or "")
+        event = str(first_attr(attrs, "gen_ai.client.hook.event", "ide.hook.event") or row["summary"] or "")
         event_lc = event.lower()
-        subagent_type = str(_attr(attrs, "gen_ai.client.subagent_type", "ide.subagent_type", "subagent.type") or "")
+        subagent_type = str(first_attr(attrs, "gen_ai.client.subagent_type", "ide.subagent_type", "subagent.type") or "")
         is_subagent_start = event == "SubagentStart" or event.endswith(".SubagentStart")
         is_subagent_stop = event == "SubagentStop" or event.endswith(".SubagentStop")
         if subagent_type or is_subagent_start or is_subagent_stop:
@@ -610,15 +618,15 @@ def _skill_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | Non
             else:
                 subagent_starts[subagent_type] += 1
                 subagents_by_agent.setdefault(agent, Counter())[subagent_type] += 1
-        tool_name = str(_attr(attrs, "gen_ai.client.tool_name") or "")
-        preview = str(_attr(attrs, "gen_ai.client.tool.input", "tool.input") or "")
-        tool_subagent = _extract_subagent_name_from_tool(tool_name, attrs, preview)
+        tool_name = str(first_attr(attrs, "gen_ai.client.tool_name") or "")
+        preview = str(first_attr(attrs, "gen_ai.client.tool.input", "tool.input") or "")
+        tool_subagent = extract_subagent_name_from_tool(tool_name, attrs, preview)
         if tool_subagent and (event == "PreToolUse" or event.endswith(".PreToolUse")):
             subagent_starts[tool_subagent] += 1
             subagents_by_agent.setdefault(agent, Counter())[tool_subagent] += 1
-        prompt_text = str(_attr(attrs, "gen_ai.client.prompt", "gen_ai.client.prompt.text", "prompt") or "")
+        prompt_text = str(first_attr(attrs, "gen_ai.client.prompt", "gen_ai.client.prompt.text", "prompt") or "")
         file_path = str(
-            _attr(
+            first_attr(
                 attrs,
                 "gen_ai.client.file_path",
                 "gen_ai.client.tool.input.file_path",
@@ -630,19 +638,19 @@ def _skill_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | Non
             )
             or ""
         )
-        skill_names = set(_extract_skill_names_from_text(prompt_text))
-        path_skill = _extract_skill_name_from_path(file_path)
+        skill_names = set(extract_skill_names_from_text(prompt_text))
+        path_skill = extract_skill_name_from_path(file_path)
         if path_skill:
             skill_names.add(path_skill)
         if tool_name == "skill":
-            skill_name = _extract_skill_name_from_preview(preview)
+            skill_name = extract_skill_name_from_preview(preview)
             if skill_name:
                 skill_names.add(skill_name)
-        skill_names.update(_extract_skill_names_from_text(preview))
+        skill_names.update(extract_skill_names_from_text(preview))
         for skill_name in sorted(skill_names):
             skills[skill_name] += 1
             skills_by_agent.setdefault(agent, Counter())[skill_name] += 1
-        for subagent_name in sorted(_extract_subagent_names_from_text(prompt_text)):
+        for subagent_name in sorted(extract_subagent_names_from_text(prompt_text)):
             subagent_starts[subagent_name] += 1
             subagents_by_agent.setdefault(agent, Counter())[subagent_name] += 1
     return {
@@ -685,13 +693,13 @@ def _usage_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | Non
     for row in rows:
         attrs = _load_json_dict(str(row["raw_attrs_json"] or "{}"))
         agent = str(
-            _attr(attrs, "gen_ai.client.name", "ide.name", "agent.name")
+            first_attr(attrs, "gen_ai.client.name", "ide.name", "agent.name")
             or row["agent"]
             or "unknown"
         )
-        event = str(_attr(attrs, "gen_ai.client.hook.event", "ide.hook.event") or row["summary"] or "")
+        event = str(first_attr(attrs, "gen_ai.client.hook.event", "ide.hook.event") or row["summary"] or "")
         event_lc = event.lower()
-        subagent_type = str(_attr(attrs, "gen_ai.client.subagent_type", "ide.subagent_type", "subagent.type") or "")
+        subagent_type = str(first_attr(attrs, "gen_ai.client.subagent_type", "ide.subagent_type", "subagent.type") or "")
         is_start = event == "SubagentStart" or event.endswith(".SubagentStart")
         is_stop = event == "SubagentStop" or event.endswith(".SubagentStop")
         if subagent_type or is_start or is_stop:
@@ -701,14 +709,14 @@ def _usage_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | Non
             else:
                 starts[subagent_type] += 1
                 by_agent.setdefault(agent, Counter())[subagent_type] += 1
-        tool_name = str(_attr(attrs, "gen_ai.client.tool_name") or "")
-        preview = str(_attr(attrs, "gen_ai.client.tool.input", "tool.input") or "")
-        tool_subagent = _extract_subagent_name_from_tool(tool_name, attrs, preview)
+        tool_name = str(first_attr(attrs, "gen_ai.client.tool_name") or "")
+        preview = str(first_attr(attrs, "gen_ai.client.tool.input", "tool.input") or "")
+        tool_subagent = extract_subagent_name_from_tool(tool_name, attrs, preview)
         if tool_subagent and (event == "PreToolUse" or event.endswith(".PreToolUse")):
             starts[tool_subagent] += 1
             by_agent.setdefault(agent, Counter())[tool_subagent] += 1
-        prompt_text = str(_attr(attrs, "gen_ai.client.prompt", "gen_ai.client.prompt.text", "prompt") or "")
-        for subagent_name in sorted(_extract_subagent_names_from_text(prompt_text)):
+        prompt_text = str(first_attr(attrs, "gen_ai.client.prompt", "gen_ai.client.prompt.text", "prompt") or "")
+        for subagent_name in sorted(extract_subagent_names_from_text(prompt_text)):
             starts[subagent_name] += 1
             by_agent.setdefault(agent, Counter())[subagent_name] += 1
     return {
@@ -720,36 +728,6 @@ def _usage_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | Non
     }
 
 
-def _attr(attrs: dict[str, Any], *keys: str) -> Any:
-    for key in keys:
-        value = attrs.get(key)
-        if value not in (None, ""):
-            return value
-    return None
-
-
-def _extract_skill_name_from_preview(preview: str) -> str:
-    if not isinstance(preview, str) or not preview.strip():
-        return ""
-    try:
-        payload = json.loads(preview)
-    except json.JSONDecodeError:
-        match = re.search(r'"skill"\s*:\s*"([^"]+)"', preview)
-        return match.group(1).strip() if match else ""
-    if isinstance(payload, dict):
-        skill = payload.get("skill")
-        if isinstance(skill, str):
-            return skill.strip()
-    return ""
-
-
-def _extract_skill_name_from_path(path: str) -> str:
-    if not isinstance(path, str) or not path.strip():
-        return ""
-    match = re.search(r"(?:^|/)skills/(?:.*/)?([^/]+)/SKILL\.md$", path)
-    return match.group(1).strip() if match else ""
-
-
 def _load_json_dict(value: str) -> dict[str, Any]:
     if not isinstance(value, str) or not value.strip():
         return {}
@@ -758,66 +736,6 @@ def _load_json_dict(value: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
-
-
-def _extract_subagent_name_from_tool(tool_name: str, attrs: dict[str, Any], preview: str) -> str:
-    normalized_tool = str(tool_name or "").strip().lower()
-    payload = _load_json_dict(preview)
-
-    def first_value(*keys: str) -> str:
-        for key in keys:
-            value = _attr(attrs, f"gen_ai.client.tool.input.{key}", f"tool.input.{key}")
-            if value in (None, ""):
-                value = payload.get(key)
-            cleaned = _clean_subagent_name(value)
-            if cleaned:
-                return cleaned
-        return ""
-
-    if normalized_tool in {"subagent", "agent"}:
-        return first_value("subagent_type", "agent_type", "name", "agent_id", "description")
-    if normalized_tool in {"task", "read_agent"}:
-        return first_value("agent_id", "name", "agent_type")
-    return ""
-
-
-def _clean_subagent_name(value: object) -> str:
-    if not isinstance(value, str):
-        return ""
-    name = value.strip()
-    if not name or "REDACTED" in name.upper() or name.startswith("["):
-        return ""
-    return name[:80]
-
-
-def _extract_skill_names_from_text(text: str) -> set[str]:
-    if not isinstance(text, str) or not text.strip():
-        return set()
-    names: set[str] = set()
-    for match in re.finditer(r"(?<![:\w.-])/([A-Za-z0-9][A-Za-z0-9_-]{1,60})", text):
-        name = match.group(1).strip().strip(".,;:)")
-        lowered = name.lower()
-        if "-" not in lowered and not lowered.endswith("skill") and lowered not in {"review", "investigate"}:
-            continue
-        names.add(name)
-    for match in re.finditer(r"`([^`/\n]{2,80})`\s+skill\b", text, flags=re.IGNORECASE):
-        names.add(match.group(1).strip())
-    return {name for name in names if name}
-
-
-def _extract_subagent_names_from_text(text: str) -> set[str]:
-    if not isinstance(text, str) or not text.strip():
-        return set()
-    names: set[str] = set()
-    for match in re.finditer(r"`([^`/\n]{2,80})`\s+subagent\b", text, flags=re.IGNORECASE):
-        names.add(match.group(1).strip())
-    for match in re.finditer(
-        r"\b(?:use|run|invoke|launch|call)\s+(?:the\s+)?([A-Za-z0-9][A-Za-z0-9_-]{2,80})\s+subagent\b",
-        text,
-        flags=re.IGNORECASE,
-    ):
-        names.add(match.group(1).strip())
-    return {name for name in names if name}
 
 
 def _and_scope(column: str, scoped_ids: list[str] | None) -> str:

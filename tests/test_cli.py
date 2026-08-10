@@ -22,6 +22,7 @@ from reflect import preparation_pipeline
 from reflect.agent_capabilities import get_agent_capability
 from reflect.core import main
 from reflect.hook_runtime import HookMigrationError, HookMigrationResult, HookRuntime
+from reflect.store.doctor import SegmentPreparationStatus
 
 
 @pytest.fixture
@@ -2008,6 +2009,89 @@ class TestUpdateAdvisor:
         assert "unsupported value" in drift["summary"]
 
 class TestDoctor:
+    def test_doctor_reports_pending_segments_and_recommends_refresh(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        traces_active = reflect_home / "state" / "otlp" / "otel-traces.active.jsonl"
+        traces_active.parent.mkdir(parents=True)
+        traces_active.write_bytes(b"active")
+        (traces_active.parent / "otel-traces.0001.jsonl").write_bytes(b"a" * 1024)
+        (traces_active.parent / "otel-traces.0002.jsonl").write_bytes(b"b" * 2048)
+        hook_home.mkdir(parents=True)
+        advisor = {
+            "release": {
+                "current_version": "1.0.0",
+                "latest_version": None,
+                "checked_at": None,
+                "update_available": False,
+                "source": "unknown",
+            },
+            "local_issues": [],
+        }
+        preparation = SegmentPreparationStatus(
+            pending_count=2,
+            pending_bytes=3 * 1024,
+            processed_on_disk_count=0,
+            processed_on_disk_bytes=0,
+            unclassified_count=0,
+            unclassified_bytes=0,
+            last_normalized_at="2026-08-10T12:00:00+00:00",
+            store_available=True,
+        )
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core._canonical_otlp_traces_path", return_value=traces_active), \
+             patch("reflect.core.HookRuntime.discover", return_value=None), \
+             patch("reflect.core.inspect_segment_preparation", return_value=preparation), \
+             patch("reflect.core._collect_update_advisor", return_value=advisor):
+            result = runner.invoke(main, ["doctor"])
+
+        assert result.exit_code == 0
+        assert "refresh backlog" in result.output
+        assert "2 pending closed segment(s)" in result.output
+        assert "3.0 KB" in result.output
+        assert "last normalization" in result.output
+        assert "2026-08-10 12:00 UTC" in result.output
+        assert "reflect refresh" in result.output
+
+    def test_doctor_recommends_refresh_when_capture_is_configured(self, runner, tmp_path):
+        reflect_home = tmp_path / ".reflect"
+        hook_home = tmp_path / ".otel-hook-home"
+        (reflect_home / "state").mkdir(parents=True)
+        hook_home.mkdir(parents=True)
+        (hook_home / "otel_config.json").write_text("{}\n")
+        advisor = {
+            "release": {
+                "current_version": "1.0.0",
+                "latest_version": None,
+                "checked_at": None,
+                "update_available": False,
+                "source": "unknown",
+            },
+            "local_issues": [],
+        }
+        preparation = SegmentPreparationStatus(
+            pending_count=0,
+            pending_bytes=0,
+            processed_on_disk_count=0,
+            processed_on_disk_bytes=0,
+            unclassified_count=0,
+            unclassified_bytes=0,
+            last_normalized_at=None,
+            store_available=True,
+        )
+        with patch("reflect.core.REFLECT_HOME", reflect_home), \
+             patch("reflect.core.HOOK_HOME", hook_home), \
+             patch("reflect.core.HookRuntime.discover", return_value=None), \
+             patch("reflect.core.inspect_segment_preparation", return_value=preparation), \
+             patch("reflect.core._collect_update_advisor", return_value=advisor):
+            result = runner.invoke(main, ["doctor"])
+
+        next_steps = result.output.rsplit("Suggested next steps", 1)[-1]
+        assert result.exit_code == 0
+        assert "reflect refresh" in next_steps
+        assert "reflect setup" not in next_steps
+
     def test_doctor_reports_managed_report_server_status(self, runner, tmp_path):
         reflect_home = tmp_path / ".reflect"
         hook_home = tmp_path / ".otel-hook-home"

@@ -8,13 +8,13 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from reflect.store.hook_facts import HookFactRepository
-from reflect.views.report_tabs import (
-    _attr,
-    _extract_skill_name_from_path,
-    _extract_skill_name_from_preview,
-    _extract_skill_names_from_text,
-    _extract_subagent_name_from_tool,
-    _extract_subagent_names_from_text,
+from reflect.telemetry_facts import (
+    extract_skill_name_from_path,
+    extract_skill_name_from_preview,
+    extract_skill_names_from_text,
+    extract_subagent_name_from_tool,
+    extract_subagent_names_from_text,
+    first_attr,
 )
 
 
@@ -602,9 +602,9 @@ def rebuild_graph(
                 )
                 edges += int(inserted)
 
-                prompt_text = str(_attr(step_attrs, "gen_ai.client.prompt", "gen_ai.client.prompt.text", "prompt") or "")
+                prompt_text = str(first_attr(step_attrs, "gen_ai.client.prompt", "gen_ai.client.prompt.text", "prompt") or "")
                 file_path = str(
-                    _attr(
+                    first_attr(
                         step_attrs,
                         "gen_ai.client.file_path",
                         "gen_ai.client.tool.input.file_path",
@@ -616,8 +616,8 @@ def rebuild_graph(
                     )
                     or ""
                 )
-                skill_names = set(_extract_skill_names_from_text(prompt_text))
-                path_skill = _extract_skill_name_from_path(file_path)
+                skill_names = set(extract_skill_names_from_text(prompt_text))
+                path_skill = extract_skill_name_from_path(file_path)
                 if path_skill:
                     skill_names.add(path_skill)
                 for skill_name in sorted(skill_names):
@@ -645,14 +645,14 @@ def rebuild_graph(
                 agent_event = hook_facts.agent_event_for_step(step["id"]) or {}
                 event = str(
                     agent_event.get("event_name")
-                    or _attr(step_attrs, "gen_ai.client.hook.event", "ide.hook.event")
+                    or first_attr(step_attrs, "gen_ai.client.hook.event", "ide.hook.event")
                     or step["summary"]
                     or ""
                 )
                 event_lc = event.lower()
                 subagent_type = str(
                     agent_event.get("agent_type")
-                    or _attr(
+                    or first_attr(
                         step_attrs,
                         "gen_ai.client.subagent_type",
                         "ide.subagent_type",
@@ -665,12 +665,12 @@ def rebuild_graph(
                     subagent_name = subagent_type or "unknown"
                     agent_id = str(
                         agent_event.get("agent_id")
-                        or _attr(step_attrs, "gen_ai.client.agent_id", "gen_ai.agent.id")
+                        or first_attr(step_attrs, "gen_ai.client.agent_id", "gen_ai.agent.id")
                         or ""
                     )
                     parent_agent_id = str(
                         agent_event.get("parent_agent_id")
-                        or _attr(step_attrs, "gen_ai.client.parent_agent_id")
+                        or first_attr(step_attrs, "gen_ai.client.parent_agent_id")
                         or ""
                     )
                     subagent_node, inserted = _insert_node(
@@ -734,7 +734,7 @@ def rebuild_graph(
                         )
                         edges += int(inserted)
 
-                for subagent_name in sorted(_extract_subagent_names_from_text(prompt_text)):
+                for subagent_name in sorted(extract_subagent_names_from_text(prompt_text)):
                     subagent_node, inserted = _insert_node(
                         conn,
                         kind="Subagent",
@@ -834,12 +834,12 @@ def rebuild_graph(
             )
             edges += int(inserted)
 
-            skill_names = set(_extract_skill_names_from_text(preview))
+            skill_names = set(extract_skill_names_from_text(preview))
             if str(tool["tool_name"]).lower() == "skill":
-                skill_name = _extract_skill_name_from_preview(preview)
+                skill_name = extract_skill_name_from_preview(preview)
                 if skill_name:
                     skill_names.add(skill_name)
-            explicit_path = _attr(
+            explicit_path = first_attr(
                     tool_attrs,
                     "gen_ai.client.file_path",
                     "gen_ai.client.tool.input.file_path",
@@ -850,7 +850,7 @@ def rebuild_graph(
                     "path",
                 )
             for path in _path_candidates(explicit_path, preview=preview):
-                path_skill = _extract_skill_name_from_path(path)
+                path_skill = extract_skill_name_from_path(path)
                 if path_skill:
                     skill_names.add(path_skill)
                 context = session_contexts.get(str(tool["session_id"]), {})
@@ -995,7 +995,7 @@ def rebuild_graph(
                 )
                 edges += int(inserted)
 
-            subagent_name = _extract_subagent_name_from_tool(str(tool["tool_name"]), tool_attrs, preview)
+            subagent_name = extract_subagent_name_from_tool(str(tool["tool_name"]), tool_attrs, preview)
             if subagent_name:
                 subagent_node, inserted = _insert_node(
                     conn,

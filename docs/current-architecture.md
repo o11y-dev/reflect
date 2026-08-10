@@ -51,6 +51,8 @@ source adapters -> ingestion -> normalization -> canonical SQLite
 
 Presentation objects are never aggregation inputs. Dashboard cards, truncated
 session rows, and chart series are views over canonical evidence.
+Shared raw skill and subagent evidence extraction lives in
+`telemetry_facts.py`; store code must not import from `reflect.views`.
 
 ## Runtime ownership
 
