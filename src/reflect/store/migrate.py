@@ -54,6 +54,22 @@ def _migration_statements(sql: str) -> list[str]:
 
 def migrate(conn: sqlite3.Connection, *, commit: bool = True) -> list[int]:
     """Apply pending migrations, optionally inside a caller-owned transaction."""
+    from reflect.improvements.workflow_identity import workflow_identity_from_json
+
+    conn.create_function(
+        "reflect_workflow_contract_signature",
+        2,
+        lambda title, content: workflow_identity_from_json(
+            title, content
+        ).contract_signature,
+        deterministic=True,
+    )
+    conn.create_function(
+        "reflect_workflow_revision_hash",
+        2,
+        lambda title, content: workflow_identity_from_json(title, content).revision_hash,
+        deterministic=True,
+    )
     migrations = load_migrations()
     try:
         applied_fast = {

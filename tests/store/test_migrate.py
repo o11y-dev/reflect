@@ -3,12 +3,25 @@ from concurrent.futures import ThreadPoolExecutor
 
 from reflect.improvements.repository import _observation_id
 from reflect.improvements.rules import MissingVerificationRule
-from reflect.improvements.service import ImprovementService
 from reflect.store.migrate import load_migrations, migrate
 from reflect.store.sqlite import connect_sqlite
 
 
 def _apply_migrations_through(conn, version: int) -> None:
+    from reflect.improvements.workflow_identity import workflow_identity_from_json
+
+    conn.create_function(
+        "reflect_workflow_contract_signature",
+        2,
+        lambda title, content: workflow_identity_from_json(title, content).contract_signature,
+        deterministic=True,
+    )
+    conn.create_function(
+        "reflect_workflow_revision_hash",
+        2,
+        lambda title, content: workflow_identity_from_json(title, content).revision_hash,
+        deterministic=True,
+    )
     for migration in load_migrations():
         if migration.version > version:
             break
@@ -29,7 +42,7 @@ def test_migrate_applies_initial_schema(tmp_path):
     try:
         applied = migrate(conn)
         assert applied == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
         ]
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "raw_events" in tables
@@ -49,6 +62,7 @@ def test_migrate_applies_initial_schema(tmp_path):
         assert "requirements" in tables
         assert "evidence" in tables
         assert "memories" in tables
+        assert "memory_exposures" in tables
         assert "privacy_findings" in tables
         assert "session_rollups" in tables
         assert "daily_rollups" in tables
@@ -69,7 +83,7 @@ def test_migrate_applies_initial_schema(tmp_path):
         assert "interventions" in tables
         assert "measurements" in tables
         assert "operator_feedback" in tables
-        assert "session_task_archetypes" in tables
+        assert "session_task_archetypes" not in tables
         assert "evaluations" in tables
         assert "loop_patterns" in tables
         assert "loop_occurrences" in tables
@@ -80,11 +94,15 @@ def test_migrate_applies_initial_schema(tmp_path):
         assert "skill_usage" in tables
         assert "skill_measurements" in tables
         assert "mcp_task_runs" in tables
+        assert "execution_units" in tables
+        assert "execution_unit_steps" in tables
+        assert "execution_unit_archetypes" in tables
         assert "change_reviews" in tables
         session_columns = {
             row[1] for row in conn.execute("PRAGMA table_info('sessions')")
         }
         assert "last_observed_at" in session_columns
+        assert "token_provenance" in session_columns
         outcome_columns = {
             row[1] for row in conn.execute("PRAGMA table_info('session_outcomes')")
         }
@@ -93,6 +111,144 @@ def test_migrate_applies_initial_schema(tmp_path):
         }
         assert "pruned_session_id" in outcome_columns
         assert "pruned_session_id" in feedback_columns
+        task_run_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info('mcp_task_runs')")
+        }
+        assert "selected_memories_json" in task_run_columns
+        assert "memory_exposure_recorded_count" in task_run_columns
+        assert {
+            "tool_call_id",
+            "server_name",
+            "tool_name",
+        } <= {row[1] for row in conn.execute("PRAGMA table_info('mcp_calls')")}
+        assert "status" not in {
+            row[1] for row in conn.execute("PRAGMA table_info('mcp_calls')")
+        }
+        assert "contract_signature" in {
+            row[1] for row in conn.execute("PRAGMA table_info('workflow_candidates')")
+        }
+        assert {
+            "decoder_version",
+            "record_cursor_time",
+            "record_cursor_id",
+        } <= {
+            row[1] for row in conn.execute("PRAGMA table_info('source_ingestion_state')")
+        }
+    finally:
+        conn.close()
+
+
+def test_token_provenance_migration_repairs_lifecycle_llm_calls(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        _apply_migrations_through(conn, 31)
+        now = "2026-08-11T10:00:00+00:00"
+        conn.executemany(
+            """
+            INSERT INTO sessions(
+              id, started_at, input_tokens, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                ("local", now, 100, now, now),
+                ("estimated", now, 25, now, now),
+                ("measured-zero", now, 0, now, now),
+                ("missing", now, 0, now, now),
+            ],
+        )
+        steps = [
+            (
+                "prompt",
+                "local",
+                0,
+                "llm_call",
+                "UserPromptSubmit",
+                '{"gen_ai.client.hook.event":"UserPromptSubmit"}',
+            ),
+            (
+                "stop-weak",
+                "local",
+                1,
+                "llm_call",
+                "Stop",
+                '{"gen_ai.client.hook.event":"Stop"}',
+            ),
+            (
+                "stop-model",
+                "local",
+                2,
+                "llm_call",
+                "Stop",
+                '{"gen_ai.client.hook.event":"Stop","gen_ai.request.model":"gpt-test"}',
+            ),
+            (
+                "session-end",
+                "local",
+                3,
+                "llm_call",
+                "SessionEnd",
+                '{"gen_ai.client.hook.event":"SessionEnd","gen_ai.usage.input_tokens":100}',
+            ),
+            (
+                "estimate",
+                "estimated",
+                0,
+                "token_estimate",
+                "cursor.transcript.token_estimate",
+                '{"reflect.token.source":"estimated_cursor_transcript"}',
+            ),
+            (
+                "zero-usage",
+                "measured-zero",
+                0,
+                "llm_call",
+                "SessionEnd",
+                '{"gen_ai.client.hook.event":"SessionEnd","gen_ai.usage.input_tokens":0}',
+            ),
+        ]
+        conn.executemany(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status, summary,
+              raw_attrs_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, 'ok', ?, ?, ?, ?)
+            """,
+            [(*row[:4], now, row[4], row[5], now, now) for row in steps],
+        )
+        conn.executemany(
+            """
+            INSERT INTO llm_calls(
+              id, step_id, session_id, request_model, operation_name,
+              input_tokens, raw_attrs_json, created_at, updated_at
+            ) VALUES (?, ?, 'local', ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("llm-prompt", "prompt", None, "UserPromptSubmit", 0, steps[0][5], now, now),
+                ("llm-stop-weak", "stop-weak", None, "Stop", 0, steps[1][5], now, now),
+                ("llm-stop-model", "stop-model", "gpt-test", "Stop", 0, steps[2][5], now, now),
+                ("llm-session-end", "session-end", None, "SessionEnd", 100, steps[3][5], now, now),
+            ],
+        )
+        conn.commit()
+
+        assert migrate(conn) == [32]
+        provenance = dict(conn.execute("SELECT id, token_provenance FROM sessions"))
+        assert provenance == {
+            "estimated": "estimated_cursor_transcript",
+            "local": "local_telemetry",
+            "measured-zero": "local_telemetry",
+            "missing": "unavailable",
+        }
+        assert {row[0] for row in conn.execute("SELECT id FROM llm_calls")} == {
+            "llm-session-end",
+            "llm-stop-model",
+        }
+        step_types = dict(conn.execute("SELECT id, type FROM steps"))
+        assert step_types["prompt"] == "conversation_event"
+        assert step_types["stop-weak"] == "conversation_event"
+        assert step_types["stop-model"] == "llm_call"
+        assert step_types["session-end"] == "llm_call"
+        assert step_types["zero-usage"] == "lifecycle"
     finally:
         conn.close()
 
@@ -101,9 +257,127 @@ def test_migrate_is_idempotent(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
         assert migrate(conn) == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
         ]
         assert migrate(conn) == []
+    finally:
+        conn.close()
+
+
+def test_relational_source_cursor_migration_preserves_existing_checkpoints(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        _apply_migrations_through(conn, 30)
+        conn.execute(
+            """
+            INSERT INTO source_ingestion_state(
+              source_id, source_type, size_bytes, modified_ns, updated_at
+            ) VALUES ('native_session:opencode:/tmp/opencode.db', 'native_session', 10, 20, '2026-08-10')
+            """
+        )
+        conn.commit()
+
+        assert migrate(conn) == [31, 32]
+        row = conn.execute(
+            """
+            SELECT size_bytes, modified_ns, record_cursor_time, record_cursor_id
+            FROM source_ingestion_state
+            """
+        ).fetchone()
+
+        assert tuple(row) == (10, 20, None, None)
+    finally:
+        conn.close()
+
+
+def test_context_artifact_migration_backfills_exposures_without_replaying_sessions(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        _apply_migrations_through(conn, 25)
+        now = "2026-08-06T08:00:00+00:00"
+        conn.execute(
+            "INSERT INTO agents(id, name, created_at, updated_at) VALUES ('codex', 'codex', ?, ?)",
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO sessions(id, agent_id, started_at, status, created_at, updated_at)
+            VALUES ('session-1', 'codex', ?, 'ok', ?, ?)
+            """,
+            (now, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO memories(
+              id, scope, type, session_id, content_hash, confidence,
+              sensitivity, source, last_seen_at, raw_attrs_json, created_at, updated_at
+            ) VALUES (
+              'memory-1', 'user', 'codex_memory_summary', 'session-1', 'hash', 1.0,
+              'private', 'codex_session_context', ?, '{}', ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+        conn.executemany(
+            """
+            INSERT INTO source_ingestion_state(
+              source_id, source_type, size_bytes, modified_ns, updated_at,
+              processed_offset_bytes
+            ) VALUES (?, 'native_session', 1, 1, ?, 1)
+            """,
+            [
+                ("native_session:codex:/codex.jsonl", now),
+                ("native_session:claude:/claude.jsonl", now),
+            ],
+        )
+        conn.commit()
+
+        assert migrate(conn) == [26, 27, 28, 29, 30, 31, 32]
+
+        assert tuple(conn.execute(
+            "SELECT memory_id, session_id FROM memory_exposures"
+        ).fetchone()) == ("memory-1", "session-1")
+        assert conn.execute(
+            "SELECT COUNT(*) FROM source_ingestion_state WHERE source_type = 'native_session'"
+        ).fetchone()[0] == 2
+        assert "task_contract_id" in {
+            row[1] for row in conn.execute("PRAGMA table_info('mcp_task_runs')")
+        }
+        assert "task_contract_hash" in {
+            row[1] for row in conn.execute("PRAGMA table_info('mcp_task_runs')")
+        }
+        assert "content_hash" in {
+            row[1] for row in conn.execute("PRAGMA table_info('specs')")
+        }
+    finally:
+        conn.close()
+
+
+def test_migrate_indexes_session_retention_foreign_key_paths(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        expected = {
+            "execution_unit_steps": {"session_id"},
+            "loop_occurrences": {"session_id"},
+            "skill_usage": {"session_id"},
+            "workflow_exposures": {"session_id"},
+            "evidence": {"step_id"},
+            "llm_calls": {"step_id"},
+            "memories": {"step_id"},
+            "memory_exposures": {"session_id", "step_id"},
+            "observation_evidence": {"step_id", "llm_call_id", "tool_call_id"},
+            "privacy_findings": {"step_id"},
+            "tool_calls": {"step_id"},
+        }
+        for table, columns in expected.items():
+            leading_columns = {
+                str(info[2])
+                for index in conn.execute(f"PRAGMA index_list('{table}')")
+                for info in conn.execute(f"PRAGMA index_info('{index[1]}')")
+                if int(info[0]) == 0
+            }
+            assert columns <= leading_columns
     finally:
         conn.close()
 
@@ -121,8 +395,8 @@ def test_migrate_serializes_concurrent_background_requests(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: run_migration(), range(2)))
 
-    assert sorted(len(result) for result in results) == [0, 22]
-    assert sorted(version for result in results for version in result) == list(range(1, 23))
+    assert sorted(len(result) for result in results) == [0, 32]
+    assert sorted(version for result in results for version in result) == list(range(1, 33))
 
 
 def test_migrate_uses_read_only_fast_path_when_schema_is_current(tmp_path):
@@ -146,11 +420,11 @@ def test_migrate_can_preserve_a_caller_owned_transaction(tmp_path):
         _apply_migrations_through(conn, 21)
         conn.execute("BEGIN IMMEDIATE")
 
-        assert migrate(conn, commit=False) == [22]
+        assert migrate(conn, commit=False) == [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
         assert conn.in_transaction is True
         assert conn.execute(
             "SELECT MAX(version) FROM schema_migrations"
-        ).fetchone()[0] == 22
+        ).fetchone()[0] == 32
 
         conn.rollback()
         assert conn.execute(
@@ -218,8 +492,7 @@ def test_migrate_creates_canonical_indexes(tmp_path):
         assert "idx_tool_calls_input_fingerprint" in tool_indexes
 
         mcp_indexes = {row[1] for row in conn.execute("PRAGMA index_list('mcp_calls')")}
-        assert "idx_mcp_calls_session_status" in mcp_indexes
-        assert "idx_mcp_calls_session_tool_call" in mcp_indexes
+        assert "idx_mcp_calls_server_name" in mcp_indexes
 
         graph_indexes = {row[1] for row in conn.execute("PRAGMA index_list('graph_nodes')")}
         assert "idx_graph_nodes_session_kind" in graph_indexes
@@ -236,6 +509,138 @@ def test_migrate_creates_canonical_indexes(tmp_path):
         }
         assert "idx_operator_feedback_session" in feedback_indexes
         assert "idx_operator_feedback_pruned_session" in feedback_indexes
+    finally:
+        conn.close()
+
+
+def test_logical_tool_call_migration_merges_invocation_and_result(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        _apply_migrations_through(conn, 24)
+        now = "2026-08-05T10:00:00+00:00"
+        conn.execute(
+            "INSERT INTO agents(id, name, created_at, updated_at) VALUES ('a', 'codex', ?, ?)",
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO sessions(id, agent_id, started_at, status, created_at, updated_at)
+            VALUES ('s', 'a', ?, 'completed', ?, ?)
+            """,
+            (now, now, now),
+        )
+        attrs = json.dumps({"gen_ai.client.tool_use_id": "call-1"})
+        for index, status in enumerate(("unknown",) * 12_000 + ("ok",)):
+            conn.execute(
+                """
+                INSERT INTO steps(
+                  id, session_id, seq, type, started_at, status,
+                  raw_attrs_json, created_at, updated_at
+                ) VALUES (?, 's', ?, 'tool_call', ?, ?, ?, ?, ?)
+                """,
+                (f"step-{index}", index, now, status, attrs, now, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO tool_calls(
+                  id, step_id, session_id, tool_name, status, duration_ms,
+                  output_preview_redacted, raw_attrs_json, created_at, updated_at
+                ) VALUES (?, ?, 's', ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"tool-{index}",
+                    f"step-{index}",
+                    "CallMcpTool" if index == 0 else "mcp__reflect__reflect_context",
+                    status,
+                    index * 20,
+                    "done" if index else None,
+                    attrs,
+                    now,
+                    now,
+                ),
+            )
+        conn.commit()
+
+        assert migrate(conn) == [25, 26, 27, 28, 29, 30, 31, 32]
+        row = conn.execute(
+            """
+            SELECT logical_call_id, tool_name, status, duration_ms,
+                   output_preview_redacted
+            FROM tool_calls
+            """
+        ).fetchone()
+        assert tuple(row) == (
+            "call-1",
+            "mcp__reflect__reflect_context",
+            "ok",
+            240_000,
+            "done",
+        )
+        assert conn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_mcp_identity_migration_merges_invocation_and_result(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        _apply_migrations_through(conn, 26)
+        now = "2026-08-06T10:00:00+00:00"
+        conn.execute(
+            "INSERT INTO agents(id, name, created_at, updated_at) VALUES ('a', 'codex', ?, ?)",
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO sessions(id, agent_id, started_at, status, created_at, updated_at)
+            VALUES ('s', 'a', ?, 'completed', ?, ?)
+            """,
+            (now, now, now),
+        )
+        for index, status in enumerate(("unknown", "ok")):
+            conn.execute(
+                """
+                INSERT INTO steps(
+                  id, session_id, seq, type, started_at, status,
+                  raw_attrs_json, created_at, updated_at
+                ) VALUES (?, 's', ?, 'mcp_call', ?, ?, '{}', ?, ?)
+                """,
+                (f"step-{index}", index, now, status, now, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO mcp_calls(
+                  id, step_id, session_id, tool_call_id, server_name, tool_name,
+                  status, duration_ms, raw_attrs_json, created_at, updated_at
+                ) VALUES (?, ?, 's', 'call-1', 'reflect', 'reflect_context',
+                          ?, ?, '{}', ?, ?)
+                """,
+                (f"mcp-{index}", f"step-{index}", status, index * 20, now, now),
+            )
+        conn.commit()
+
+        assert migrate(conn) == [27, 28, 29, 30, 31, 32]
+        assert tuple(
+            conn.execute(
+                """
+                SELECT tc.status, tc.duration_ms
+                FROM mcp_calls AS mc
+                JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+                WHERE tc.logical_call_id = 'call-1'
+                """
+            ).fetchone()
+        ) == ("ok", 20)
+        assert conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0] == 1
+        assert conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM mcp_calls AS mc
+            JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+            WHERE tc.logical_call_id = 'call-1'
+              AND mc.server_name = 'reflect'
+              AND mc.tool_name = 'reflect_context'
+            """
+        ).fetchone()[0] == 1
     finally:
         conn.close()
 
@@ -295,7 +700,7 @@ def test_database_doctor_reports_pending_migrations(tmp_path):
     assert status["ok"] is False
     assert status["applied_migrations"] == []
     assert status["pending_migrations"] == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
     ]
 
 
@@ -325,7 +730,7 @@ def test_migrate_adds_task_reconciliation_state_without_losing_phase_one_runs(tm
         )
         conn.commit()
 
-        assert migrate(conn) == [17, 18, 19, 20, 21, 22]
+        assert migrate(conn) == [17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
         row = conn.execute(
             """
             SELECT id, session_linked_at, session_outcome_recorded,
@@ -367,7 +772,7 @@ def test_migrate_adds_change_reviews_without_changing_phase_two_task_runs(tmp_pa
         )
         conn.commit()
 
-        assert migrate(conn) == [18, 19, 20, 21, 22]
+        assert migrate(conn) == [18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
         assert tuple(
             conn.execute(
                 """
@@ -490,7 +895,7 @@ def test_migrate_reingests_codex_desktop_logs_and_removes_noisy_trace_session(tm
         )
         conn.commit()
 
-        assert migrate(conn) == [19, 20, 21, 22]
+        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
         assert conn.execute(
             "SELECT COUNT(*) FROM source_ingestion_state"
         ).fetchone()[0] == 0
@@ -542,7 +947,7 @@ def test_retention_migration_keeps_unrecoverable_epoch_start(tmp_path):
         )
         conn.commit()
 
-        assert migrate(conn) == [22]
+        assert migrate(conn) == [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
         assert conn.execute(
             "SELECT started_at FROM sessions WHERE id = 'session-epoch'"
         ).fetchone()[0] == "1970-01-01T00:00:00+00:00"
@@ -550,7 +955,7 @@ def test_retention_migration_keeps_unrecoverable_epoch_start(tmp_path):
         conn.close()
 
 
-def test_retention_migration_marks_capped_attribution_for_one_time_rebuild(tmp_path):
+def test_canonical_workflow_migration_removes_legacy_session_ledger_rebuild(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
         _apply_migrations_through(conn, 20)
@@ -705,25 +1110,16 @@ def test_retention_migration_marks_capped_attribution_for_one_time_rebuild(tmp_p
             (observation_id,),
         ).fetchone()[0] == 20
 
-        assert migrate(conn) == [22]
+        assert migrate(conn) == [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
         assert conn.execute(
             """
             SELECT value FROM store_metadata
             WHERE key = 'observation_session_ledger_v1'
             """
-        ).fetchone()[0] == "pending_rebuild"
-
-        service = ImprovementService(conn)
-        assert service.ensure_observation_session_ledger() is True
+        ).fetchone() is None
         assert conn.execute(
             "SELECT COUNT(*) FROM observation_sessions WHERE observation_id = ?",
             (observation_id,),
-        ).fetchone()[0] == 25
-        assert conn.execute(
-            """
-            SELECT value FROM store_metadata
-            WHERE key = 'observation_session_ledger_v1'
-            """
-        ).fetchone()[0] == "complete"
+        ).fetchone()[0] == 20
     finally:
         conn.close()

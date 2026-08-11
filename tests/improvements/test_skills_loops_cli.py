@@ -120,6 +120,7 @@ def test_skills_sync_is_explicit_and_read_only_list_does_not_reconcile(tmp_path)
         main,
         [
             "skills",
+            "sync",
             "--json",
             "--path",
             str(root.parent),
@@ -128,7 +129,6 @@ def test_skills_sync_is_explicit_and_read_only_list_does_not_reconcile(tmp_path)
         ],
     )
     assert resynced.exit_code == 0, resynced.output
-    assert "--path on `reflect skills` is deprecated" in resynced.stderr
     assert json.loads(resynced.stdout)["skills"][0]["version_count"] == 2
 
 
@@ -137,7 +137,7 @@ def test_loops_list_show_and_build_promote_selected_evidence_to_pending_skill(tm
     loop_id = _seed_loop(db_path)
     runner = CliRunner()
 
-    with patch("reflect.core._prepare_sql_report_db"):
+    with patch("reflect.core.prepare_sql_report_db"):
         listed = runner.invoke(main, ["loops", "--json", "--db-path", str(db_path)])
         shown = runner.invoke(
             main,
@@ -162,7 +162,7 @@ def test_loops_list_show_and_build_promote_selected_evidence_to_pending_skill(tm
         ),
         stderr="",
     )
-    with patch("reflect.core._prepare_sql_report_db"), patch(
+    with patch("reflect.core.prepare_sql_report_db"), patch(
         "reflect.core.shutil.which", return_value="/usr/bin/codex"
     ), patch("subprocess.run", return_value=agent_result):
         built = runner.invoke(

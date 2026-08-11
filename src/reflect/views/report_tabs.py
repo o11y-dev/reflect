@@ -10,6 +10,14 @@ from typing import Any
 from urllib.parse import urlparse
 
 from reflect.schema.base import ReflectModel
+from reflect.telemetry_facts import (
+    extract_skill_name_from_path,
+    extract_skill_name_from_preview,
+    extract_skill_names_from_text,
+    extract_subagent_name_from_tool,
+    extract_subagent_names_from_text,
+    first_attr,
+)
 from reflect.utils import _sanitize_command_display
 
 
@@ -58,6 +66,7 @@ class McpViewModel(ReflectModel):
     mcp_servers_by_count: dict[str, int]
     mcp_server_before: dict[str, int]
     mcp_server_after: dict[str, int]
+    mcp_server_status_known: dict[str, int]
 
 
 class AgentsViewModel(ReflectModel):
@@ -82,7 +91,7 @@ class UsageToolSummaryViewModel(ReflectModel):
     agents: dict[str, dict[str, Any]]
 
 
-class GraphsViewModel(ReflectModel):
+class GraphViewModel(ReflectModel):
     graph_tool_transitions: list[dict[str, Any]]
     graph_cooccurrence: dict[str, Any]
     graph_dep: dict[str, Any]
@@ -129,7 +138,7 @@ class ReportTabsViewModel(ReflectModel):
     tools: ToolsViewModel
     mcp: McpViewModel
     agents: AgentsViewModel
-    graphs: GraphsViewModel
+    graph: GraphViewModel
     specs: SpecsViewModel
     memory: MemoryViewModel
     privacy: PrivacyViewModel
@@ -146,7 +155,7 @@ def build_report_tabs(conn: sqlite3.Connection, *, session_ids: set[str] | None 
     tools = _build_tools(conn, scoped, skill_subagent)
     mcp = _build_mcp(conn, scoped)
     agents = _build_agents(conn, scoped, skill_subagent)
-    graphs = _build_graphs(conn, scoped, tools.tools_by_count, mcp.mcp_servers_by_count)
+    graph = _build_graph(conn, scoped, tools.tools_by_count, mcp.mcp_servers_by_count)
     specs = _build_specs(conn, scoped)
     memory = _build_memory(conn, scoped)
     privacy = _build_privacy(conn, scoped)
@@ -158,7 +167,7 @@ def build_report_tabs(conn: sqlite3.Connection, *, session_ids: set[str] | None 
         tools=tools,
         mcp=mcp,
         agents=agents,
-        graphs=graphs,
+        graph=graph,
         specs=specs,
         memory=memory,
         privacy=privacy,
@@ -191,8 +200,8 @@ def build_report_tab(
         return _build_agents(conn, scoped, skill_subagent).model_dump()
     if normalized == "usage_tools":
         return _build_usage_tool_summary(conn, scoped).model_dump()
-    if normalized == "graphs":
-        return _build_graphs(
+    if normalized == "graph":
+        return _build_graph(
             conn,
             scoped,
             _top_tool_counts(conn, scoped),
@@ -217,18 +226,47 @@ def _scope_clause(column: str, scoped_ids: list[str] | None, *, prefix: str = "W
     return f"{prefix} {column} IN ({', '.join('?' for _ in scoped_ids)})", scoped_ids
 
 
+def _artifact_memory_scope_clause(
+    scoped_ids: list[str] | None,
+    *,
+    type_filter: str,
+    prefix: str = "WHERE",
+) -> tuple[str, list[str]]:
+    if scoped_ids is None:
+        return f"{prefix} {type_filter}", []
+    if not scoped_ids:
+        return f"{prefix} 1 = 0 AND {type_filter}", []
+    placeholders = ", ".join("?" for _ in scoped_ids)
+    return (
+        f"""
+        {prefix} {type_filter}
+          AND (
+            memories.session_id IN ({placeholders})
+            OR EXISTS (
+              SELECT 1 FROM memory_exposures me
+              WHERE me.memory_id = memories.id
+                AND me.session_id IN ({placeholders})
+            )
+          )
+        """,
+        [*scoped_ids, *scoped_ids],
+    )
+
+
 def _cursor_plan_scope_clause(scoped_ids: list[str] | None, *, prefix: str = "WHERE") -> tuple[str, list[str]]:
-    base_scope, params = _scope_clause("session_id", scoped_ids, prefix=prefix)
-    if not base_scope:
-        return f"{prefix} type = 'cursor_plan'", []
-    return f"{base_scope} AND type = 'cursor_plan'", params
+    return _artifact_memory_scope_clause(
+        scoped_ids,
+        type_filter="type = 'cursor_plan'",
+        prefix=prefix,
+    )
 
 
 def _memory_scope_clause(scoped_ids: list[str] | None, *, prefix: str = "WHERE") -> tuple[str, list[str]]:
-    base_scope, params = _scope_clause("session_id", scoped_ids, prefix=prefix)
-    if not base_scope:
-        return f"{prefix} type <> 'cursor_plan'", []
-    return f"{base_scope} AND type <> 'cursor_plan'", params
+    return _artifact_memory_scope_clause(
+        scoped_ids,
+        type_filter="type <> 'cursor_plan'",
+        prefix=prefix,
+    )
 
 
 def _dict_rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
@@ -514,22 +552,23 @@ def _graph_mcp_server_counts(
     conn: sqlite3.Connection,
     scoped_ids: list[str] | None,
 ) -> dict[str, int]:
-    scope, params = _scope_clause("session_id", scoped_ids, prefix="AND")
+    scope, params = _scope_clause("tc.session_id", scoped_ids, prefix="AND")
     rows = _dict_rows(conn.execute(
         f"""
-        SELECT server_name, COUNT(*) AS call_count
-        FROM mcp_calls
-        WHERE server_name IS NOT NULL AND server_name <> ''
+        SELECT mc.server_name, COUNT(*) AS call_count
+        FROM mcp_calls AS mc
+        JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+        WHERE mc.server_name IS NOT NULL AND mc.server_name <> ''
         {scope}
-        GROUP BY server_name
-        ORDER BY call_count DESC, server_name ASC
+        GROUP BY mc.server_name
+        ORDER BY call_count DESC, mc.server_name ASC
         LIMIT 25
         """,
         params,
     ))
     counts: Counter[str] = Counter()
     for row in rows:
-        server = _display_mcp_server_name(row["server_name"])
+        server = display_mcp_server_name(row["server_name"])
         if server:
             counts[server] += int(row["call_count"] or 0)
     return dict(counts)
@@ -563,13 +602,13 @@ def _skill_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | Non
         if not isinstance(attrs, dict):
             continue
         agent = str(
-            _attr(attrs, "gen_ai.client.name", "ide.name", "agent.name")
+            first_attr(attrs, "gen_ai.client.name", "ide.name", "agent.name")
             or row["agent"]
             or "unknown"
         )
-        event = str(_attr(attrs, "gen_ai.client.hook.event", "ide.hook.event") or row["summary"] or "")
+        event = str(first_attr(attrs, "gen_ai.client.hook.event", "ide.hook.event") or row["summary"] or "")
         event_lc = event.lower()
-        subagent_type = str(_attr(attrs, "gen_ai.client.subagent_type", "ide.subagent_type", "subagent.type") or "")
+        subagent_type = str(first_attr(attrs, "gen_ai.client.subagent_type", "ide.subagent_type", "subagent.type") or "")
         is_subagent_start = event == "SubagentStart" or event.endswith(".SubagentStart")
         is_subagent_stop = event == "SubagentStop" or event.endswith(".SubagentStop")
         if subagent_type or is_subagent_start or is_subagent_stop:
@@ -579,15 +618,15 @@ def _skill_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | Non
             else:
                 subagent_starts[subagent_type] += 1
                 subagents_by_agent.setdefault(agent, Counter())[subagent_type] += 1
-        tool_name = str(_attr(attrs, "gen_ai.client.tool_name") or "")
-        preview = str(_attr(attrs, "gen_ai.client.tool.input", "tool.input") or "")
-        tool_subagent = _extract_subagent_name_from_tool(tool_name, attrs, preview)
+        tool_name = str(first_attr(attrs, "gen_ai.client.tool_name") or "")
+        preview = str(first_attr(attrs, "gen_ai.client.tool.input", "tool.input") or "")
+        tool_subagent = extract_subagent_name_from_tool(tool_name, attrs, preview)
         if tool_subagent and (event == "PreToolUse" or event.endswith(".PreToolUse")):
             subagent_starts[tool_subagent] += 1
             subagents_by_agent.setdefault(agent, Counter())[tool_subagent] += 1
-        prompt_text = str(_attr(attrs, "gen_ai.client.prompt", "gen_ai.client.prompt.text", "prompt") or "")
+        prompt_text = str(first_attr(attrs, "gen_ai.client.prompt", "gen_ai.client.prompt.text", "prompt") or "")
         file_path = str(
-            _attr(
+            first_attr(
                 attrs,
                 "gen_ai.client.file_path",
                 "gen_ai.client.tool.input.file_path",
@@ -599,19 +638,19 @@ def _skill_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | Non
             )
             or ""
         )
-        skill_names = set(_extract_skill_names_from_text(prompt_text))
-        path_skill = _extract_skill_name_from_path(file_path)
+        skill_names = set(extract_skill_names_from_text(prompt_text))
+        path_skill = extract_skill_name_from_path(file_path)
         if path_skill:
             skill_names.add(path_skill)
         if tool_name == "skill":
-            skill_name = _extract_skill_name_from_preview(preview)
+            skill_name = extract_skill_name_from_preview(preview)
             if skill_name:
                 skill_names.add(skill_name)
-        skill_names.update(_extract_skill_names_from_text(preview))
+        skill_names.update(extract_skill_names_from_text(preview))
         for skill_name in sorted(skill_names):
             skills[skill_name] += 1
             skills_by_agent.setdefault(agent, Counter())[skill_name] += 1
-        for subagent_name in sorted(_extract_subagent_names_from_text(prompt_text)):
+        for subagent_name in sorted(extract_subagent_names_from_text(prompt_text)):
             subagent_starts[subagent_name] += 1
             subagents_by_agent.setdefault(agent, Counter())[subagent_name] += 1
     return {
@@ -654,13 +693,13 @@ def _usage_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | Non
     for row in rows:
         attrs = _load_json_dict(str(row["raw_attrs_json"] or "{}"))
         agent = str(
-            _attr(attrs, "gen_ai.client.name", "ide.name", "agent.name")
+            first_attr(attrs, "gen_ai.client.name", "ide.name", "agent.name")
             or row["agent"]
             or "unknown"
         )
-        event = str(_attr(attrs, "gen_ai.client.hook.event", "ide.hook.event") or row["summary"] or "")
+        event = str(first_attr(attrs, "gen_ai.client.hook.event", "ide.hook.event") or row["summary"] or "")
         event_lc = event.lower()
-        subagent_type = str(_attr(attrs, "gen_ai.client.subagent_type", "ide.subagent_type", "subagent.type") or "")
+        subagent_type = str(first_attr(attrs, "gen_ai.client.subagent_type", "ide.subagent_type", "subagent.type") or "")
         is_start = event == "SubagentStart" or event.endswith(".SubagentStart")
         is_stop = event == "SubagentStop" or event.endswith(".SubagentStop")
         if subagent_type or is_start or is_stop:
@@ -670,14 +709,14 @@ def _usage_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | Non
             else:
                 starts[subagent_type] += 1
                 by_agent.setdefault(agent, Counter())[subagent_type] += 1
-        tool_name = str(_attr(attrs, "gen_ai.client.tool_name") or "")
-        preview = str(_attr(attrs, "gen_ai.client.tool.input", "tool.input") or "")
-        tool_subagent = _extract_subagent_name_from_tool(tool_name, attrs, preview)
+        tool_name = str(first_attr(attrs, "gen_ai.client.tool_name") or "")
+        preview = str(first_attr(attrs, "gen_ai.client.tool.input", "tool.input") or "")
+        tool_subagent = extract_subagent_name_from_tool(tool_name, attrs, preview)
         if tool_subagent and (event == "PreToolUse" or event.endswith(".PreToolUse")):
             starts[tool_subagent] += 1
             by_agent.setdefault(agent, Counter())[tool_subagent] += 1
-        prompt_text = str(_attr(attrs, "gen_ai.client.prompt", "gen_ai.client.prompt.text", "prompt") or "")
-        for subagent_name in sorted(_extract_subagent_names_from_text(prompt_text)):
+        prompt_text = str(first_attr(attrs, "gen_ai.client.prompt", "gen_ai.client.prompt.text", "prompt") or "")
+        for subagent_name in sorted(extract_subagent_names_from_text(prompt_text)):
             starts[subagent_name] += 1
             by_agent.setdefault(agent, Counter())[subagent_name] += 1
     return {
@@ -687,36 +726,6 @@ def _usage_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | Non
         "subagent_stops": stops,
         "subagents_by_agent": by_agent,
     }
-
-
-def _attr(attrs: dict[str, Any], *keys: str) -> Any:
-    for key in keys:
-        value = attrs.get(key)
-        if value not in (None, ""):
-            return value
-    return None
-
-
-def _extract_skill_name_from_preview(preview: str) -> str:
-    if not isinstance(preview, str) or not preview.strip():
-        return ""
-    try:
-        payload = json.loads(preview)
-    except json.JSONDecodeError:
-        match = re.search(r'"skill"\s*:\s*"([^"]+)"', preview)
-        return match.group(1).strip() if match else ""
-    if isinstance(payload, dict):
-        skill = payload.get("skill")
-        if isinstance(skill, str):
-            return skill.strip()
-    return ""
-
-
-def _extract_skill_name_from_path(path: str) -> str:
-    if not isinstance(path, str) or not path.strip():
-        return ""
-    match = re.search(r"(?:^|/)skills/(?:.*/)?([^/]+)/SKILL\.md$", path)
-    return match.group(1).strip() if match else ""
 
 
 def _load_json_dict(value: str) -> dict[str, Any]:
@@ -729,66 +738,6 @@ def _load_json_dict(value: str) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _extract_subagent_name_from_tool(tool_name: str, attrs: dict[str, Any], preview: str) -> str:
-    normalized_tool = str(tool_name or "").strip().lower()
-    payload = _load_json_dict(preview)
-
-    def first_value(*keys: str) -> str:
-        for key in keys:
-            value = _attr(attrs, f"gen_ai.client.tool.input.{key}", f"tool.input.{key}")
-            if value in (None, ""):
-                value = payload.get(key)
-            cleaned = _clean_subagent_name(value)
-            if cleaned:
-                return cleaned
-        return ""
-
-    if normalized_tool in {"subagent", "agent"}:
-        return first_value("subagent_type", "agent_type", "name", "agent_id", "description")
-    if normalized_tool in {"task", "read_agent"}:
-        return first_value("agent_id", "name", "agent_type")
-    return ""
-
-
-def _clean_subagent_name(value: object) -> str:
-    if not isinstance(value, str):
-        return ""
-    name = value.strip()
-    if not name or "REDACTED" in name.upper() or name.startswith("["):
-        return ""
-    return name[:80]
-
-
-def _extract_skill_names_from_text(text: str) -> set[str]:
-    if not isinstance(text, str) or not text.strip():
-        return set()
-    names: set[str] = set()
-    for match in re.finditer(r"(?<![:\w.-])/([A-Za-z0-9][A-Za-z0-9_-]{1,60})", text):
-        name = match.group(1).strip().strip(".,;:)")
-        lowered = name.lower()
-        if "-" not in lowered and not lowered.endswith("skill") and lowered not in {"review", "investigate"}:
-            continue
-        names.add(name)
-    for match in re.finditer(r"`([^`/\n]{2,80})`\s+skill\b", text, flags=re.IGNORECASE):
-        names.add(match.group(1).strip())
-    return {name for name in names if name}
-
-
-def _extract_subagent_names_from_text(text: str) -> set[str]:
-    if not isinstance(text, str) or not text.strip():
-        return set()
-    names: set[str] = set()
-    for match in re.finditer(r"`([^`/\n]{2,80})`\s+subagent\b", text, flags=re.IGNORECASE):
-        names.add(match.group(1).strip())
-    for match in re.finditer(
-        r"\b(?:use|run|invoke|launch|call)\s+(?:the\s+)?([A-Za-z0-9][A-Za-z0-9_-]{2,80})\s+subagent\b",
-        text,
-        flags=re.IGNORECASE,
-    ):
-        names.add(match.group(1).strip())
-    return {name for name in names if name}
-
-
 def _and_scope(column: str, scoped_ids: list[str] | None) -> str:
     if scoped_ids is None:
         return ""
@@ -798,35 +747,16 @@ def _and_scope(column: str, scoped_ids: list[str] | None) -> str:
 
 
 def _command_patterns(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Counter[str]:
-    step_rows = _dict_rows(conn.execute(
-        f"""
-        SELECT type, summary, raw_attrs_json
-        FROM steps
-        WHERE (raw_attrs_json LIKE '%command%' OR type = 'shell_command')
-        {_and_scope('session_id', scoped_ids)}
-        """,
-        scoped_ids or [],
-    ))
     tool_rows = _dict_rows(conn.execute(
         f"""
         SELECT input_preview_redacted, raw_attrs_json
         FROM tool_calls tc
-        WHERE (LOWER(tool_name) IN ('shell', 'bash', 'exec_command')
-           OR raw_attrs_json LIKE '%command%'
-           OR input_preview_redacted LIKE '%"cmd"%')
+        WHERE LOWER(tool_name) IN ('shell', 'bash', 'exec_command')
         {_and_scope('tc.session_id', scoped_ids)}
         """,
         scoped_ids or [],
     ))
     commands: Counter[str] = Counter()
-    for row in step_rows:
-        command = _extract_command(
-            row["raw_attrs_json"],
-            row["summary"],
-            allow_text_fallback=str(row["type"] or "") == "shell_command",
-        )
-        if command:
-            commands[_sanitize_command(command)] += 1
     for row in tool_rows:
         command = _extract_command(row["raw_attrs_json"], row["input_preview_redacted"])
         if command:
@@ -843,9 +773,7 @@ def _grouped_tool_command_patterns(
         WITH command_calls AS (
           SELECT input_hash, input_preview_redacted, raw_attrs_json
           FROM tool_calls tc
-          WHERE (LOWER(tool_name) IN ('shell', 'bash', 'exec_command')
-             OR raw_attrs_json LIKE '%command%'
-             OR input_preview_redacted LIKE '%"cmd"%')
+          WHERE LOWER(tool_name) IN ('shell', 'bash', 'exec_command')
           {_and_scope('tc.session_id', scoped_ids)}
         )
         SELECT
@@ -1042,35 +970,54 @@ def _usage_file_counts(conn: sqlite3.Connection, scoped_ids: list[str] | None) -
 
 
 def _build_mcp(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> McpViewModel:
-    mcp_scope, mcp_params = _scope_clause("session_id", scoped_ids, prefix="AND")
+    mcp_scope, mcp_params = _scope_clause("tc.session_id", scoped_ids, prefix="AND")
     rows = _dict_rows(conn.execute(
         f"""
-        SELECT server_name, COUNT(*) AS call_count
-        FROM mcp_calls
-        WHERE server_name IS NOT NULL AND server_name <> ''
+        SELECT
+          mc.server_name,
+          COUNT(*) AS call_count,
+          SUM(
+            CASE
+              WHEN LOWER(COALESCE(tc.status, '')) IN ('ok', 'success', 'completed') THEN 1
+              ELSE 0
+            END
+          ) AS completion_count,
+          SUM(
+            CASE
+              WHEN LOWER(COALESCE(tc.status, '')) IN (
+                'ok', 'success', 'completed', 'error', 'failed', 'failure'
+              ) THEN 1
+              ELSE 0
+            END
+          ) AS status_known_count
+        FROM mcp_calls AS mc
+        JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+        WHERE mc.server_name IS NOT NULL AND mc.server_name <> ''
         {mcp_scope}
-        GROUP BY server_name
-        ORDER BY call_count DESC, server_name ASC
+        GROUP BY mc.server_name
+        ORDER BY call_count DESC, mc.server_name ASC
         """,
         mcp_params,
     ))
     counts: Counter[str] = Counter()
+    completions: Counter[str] = Counter()
+    known_statuses: Counter[str] = Counter()
     for row in rows:
-        server = _display_mcp_server_name(row["server_name"])
+        server = display_mcp_server_name(row["server_name"])
         if server:
             counts[server] += int(row["call_count"] or 0)
-    raw_counts, raw_after_counts = _raw_mcp_counts(conn, scoped_ids)
-    counts.update(raw_counts)
-    after = raw_after_counts or raw_counts
+            completions[server] += int(row["completion_count"] or 0)
+            known_statuses[server] += int(row["status_known_count"] or 0)
     return McpViewModel(
         mcp_calls=sum(counts.values()),
         mcp_servers_by_count=dict(counts),
         mcp_server_before=dict(counts),
-        mcp_server_after=dict(after),
+        mcp_server_after=dict(completions),
+        mcp_server_status_known=dict(known_statuses),
     )
 
 
-def _display_mcp_server_name(value: object) -> str:
+def display_mcp_server_name(value: object) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
@@ -1085,13 +1032,18 @@ def _display_mcp_server_name(value: object) -> str:
         for part in parts[1:]:
             parsed = urlparse(part)
             if parsed.scheme in {"http", "https"} and parsed.netloc:
-                return parsed.netloc
-        for part in parts[1:]:
-            if part.startswith("-"):
-                continue
-            return part.rsplit("/", 1)[-1] or "npx"
-        return "npx"
-    if lowered.startswith("docker run "):
+                text = parsed.netloc
+                break
+        else:
+            text = next(
+                (
+                    part.rsplit("/", 1)[-1]
+                    for part in parts[1:]
+                    if not part.startswith("-")
+                ),
+                "npx",
+            ) or "npx"
+    elif lowered.startswith("docker run "):
         try:
             parts = shlex.split(text)
         except ValueError:
@@ -1106,46 +1058,12 @@ def _display_mcp_server_name(value: object) -> str:
             if part.startswith("-"):
                 index += 1
                 continue
-            return part.rsplit("/", 1)[-1].split(":", 1)[0] or "docker"
-        return "docker"
-    return text
-
-
-def _raw_mcp_counts(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> tuple[Counter[str], Counter[str]]:
-    import json
-
-    rows = _dict_rows(conn.execute(
-        f"""
-        SELECT summary, raw_attrs_json
-        FROM steps
-        WHERE raw_attrs_json LIKE '%mcp%'
-        {_and_scope('session_id', scoped_ids)}
-        """,
-        scoped_ids or [],
-    ))
-    counts: Counter[str] = Counter()
-    after_counts: Counter[str] = Counter()
-    for row in rows:
-        try:
-            attrs = json.loads(str(row["raw_attrs_json"] or "{}"))
-        except json.JSONDecodeError:
-            attrs = {}
-        if not isinstance(attrs, dict):
-            continue
-        server = _display_mcp_server_name(
-            attrs.get("gen_ai.client.mcp_server")
-            or attrs.get("gen_ai.mcp.server")
-            or attrs.get("mcp.server")
-            or attrs.get("mcp.server.name")
-            or attrs.get("server.name")
-        )
-        if not server:
-            continue
-        counts[server] += 1
-        event = str(attrs.get("gen_ai.client.hook.event") or row["summary"] or "").lower()
-        if "after" in event:
-            after_counts[server] += 1
-    return counts, after_counts
+            text = part.rsplit("/", 1)[-1].split(":", 1)[0] or "docker"
+            break
+        else:
+            text = "docker"
+    text = re.sub(r"^user[-_]", "", text, flags=re.IGNORECASE)
+    return re.sub(r"-{2,}", "-", text.replace("_", "-")).strip("-")
 
 
 def _build_agents(
@@ -1162,7 +1080,14 @@ def _build_agents(
           COALESCE(SUM(sr.prompt_count), 0) AS prompts,
           COALESCE(SUM(sr.tool_call_count), 0) AS tools,
           COALESCE(SUM(sr.error_count), 0) AS failures,
-          COALESCE(SUM(sr.input_tokens + sr.output_tokens), 0) AS tokens,
+          COALESCE(SUM(sr.input_tokens), 0) AS input_tokens,
+          COALESCE(SUM(sr.output_tokens), 0) AS output_tokens,
+          COALESCE(SUM(sr.cache_write_tokens), 0) AS cache_creation_tokens,
+          COALESCE(SUM(sr.cache_read_tokens), 0) AS cache_read_tokens,
+          COALESCE(SUM(sr.input_tokens), 0)
+            + COALESCE(SUM(sr.output_tokens), 0)
+            + COALESCE(SUM(sr.cache_write_tokens), 0)
+            + COALESCE(SUM(sr.cache_read_tokens), 0) AS tokens,
           COALESCE(SUM(sr.total_cost), 0) AS total_cost,
           COALESCE(AVG(
             MAX(0, MIN(100,
@@ -1199,9 +1124,10 @@ def _build_agents(
     mcp_rows = _dict_rows(conn.execute(
         f"""
         SELECT COALESCE(NULLIF(sr.agent, ''), 'unknown') AS agent, COUNT(*) AS count
-        FROM mcp_calls mc
-        LEFT JOIN session_rollups sr ON sr.session_id = mc.session_id
-        {_scope_clause('mc.session_id', scoped_ids)[0]}
+        FROM mcp_calls AS mc
+        JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+        LEFT JOIN session_rollups sr ON sr.session_id = tc.session_id
+        {_scope_clause('tc.session_id', scoped_ids)[0]}
         GROUP BY COALESCE(NULLIF(sr.agent, ''), 'unknown')
         """,
         scoped_ids or [],
@@ -1239,10 +1165,10 @@ def _build_agents(
             "failure_rate": round(100 * failures / tools, 1) if tools else 0,
             "mcp_calls": mcp_by_agent.get(name, 0),
             "subagents": sum(skill_subagent["subagents_by_agent"].get(name, Counter()).values()),
-            "input_tokens": int(row["tokens"] or 0),
-            "output_tokens": 0,
-            "cache_creation_tokens": 0,
-            "cache_read_tokens": 0,
+            "input_tokens": int(row["input_tokens"] or 0),
+            "output_tokens": int(row["output_tokens"] or 0),
+            "cache_creation_tokens": int(row["cache_creation_tokens"] or 0),
+            "cache_read_tokens": int(row["cache_read_tokens"] or 0),
             "total_cost_usd": total_cost,
             "top_model": "",
             "top_tools": dict(top_tools.get(name, Counter()).most_common(10)),
@@ -1276,12 +1202,12 @@ def _build_agents(
     return AgentsViewModel(agent_comparison=comparison, agents=agents)
 
 
-def _build_graphs(
+def _build_graph(
     conn: sqlite3.Connection,
     scoped_ids: list[str] | None,
     tools_by_count: dict[str, int],
     mcp_servers_by_count: dict[str, int],
-) -> GraphsViewModel:
+) -> GraphViewModel:
     tool_scope, tool_params = _scope_clause("tc.session_id", scoped_ids)
     transitions = _dict_rows(conn.execute(
         f"""
@@ -1308,7 +1234,7 @@ def _build_graphs(
     timeline = _timeline(conn, scoped_ids)
     graph_dep = _dependency_graph(conn, scoped_ids, tools_by_count, mcp_servers_by_count)
     graph_semantic = _semantic_graph(conn, scoped_ids)
-    return GraphsViewModel(
+    return GraphViewModel(
         graph_tool_transitions=[
             {"from": row["source"], "to": row["target"], "count": int(row["count"] or 0)}
             for row in transitions
@@ -1871,7 +1797,7 @@ def _dependency_graph(
     mcp_params: list[str] = []
     if scoped_ids is not None:
         if scoped_ids:
-            mcp_filters.append(f"mc.session_id IN ({', '.join('?' for _ in scoped_ids)})")
+            mcp_filters.append(f"tc.session_id IN ({', '.join('?' for _ in scoped_ids)})")
             mcp_params.extend(scoped_ids)
         else:
             mcp_filters.append("1 = 0")
@@ -1881,8 +1807,9 @@ def _dependency_graph(
           COALESCE(NULLIF(sr.agent, ''), 'unknown') AS agent,
           mc.server_name,
           COUNT(*) AS count
-        FROM mcp_calls mc
-        LEFT JOIN session_rollups sr ON sr.session_id = mc.session_id
+        FROM mcp_calls AS mc
+        JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+        LEFT JOIN session_rollups sr ON sr.session_id = tc.session_id
         WHERE {' AND '.join(mcp_filters)}
         GROUP BY COALESCE(NULLIF(sr.agent, ''), 'unknown'), mc.server_name
         ORDER BY count DESC
@@ -1910,7 +1837,7 @@ def _dependency_graph(
         links.append({"source": tool_id, "target": server_id, "value": count})
     for row in mcp_rows:
         agent = str(row["agent"] or "unknown")
-        server = _display_mcp_server_name(row["server_name"])
+        server = display_mcp_server_name(row["server_name"])
         count = int(row["count"] or 0)
         if not server or count <= 0:
             continue
@@ -1944,10 +1871,23 @@ def _scoped_spec_filter(scoped_ids: list[str] | None) -> tuple[str, list[str]]:
           UNION
           SELECT m.spec_id
           FROM memories m
-          WHERE m.session_id IN ({placeholders}) AND m.spec_id IS NOT NULL
+          WHERE m.spec_id IS NOT NULL
+            AND (
+              m.session_id IN ({placeholders})
+              OR EXISTS (
+                SELECT 1 FROM memory_exposures me
+                WHERE me.memory_id = m.id
+                  AND me.session_id IN ({placeholders})
+              )
+            )
+          UNION
+          SELECT tr.task_contract_id
+          FROM mcp_task_runs tr
+          WHERE tr.runtime_session_id IN ({placeholders})
+            AND tr.task_contract_id IS NOT NULL
         )
         """,
-        [*scoped_ids, *scoped_ids],
+        [*scoped_ids, *scoped_ids, *scoped_ids, *scoped_ids],
     )
 
 
@@ -2088,7 +2028,13 @@ def _build_memory(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Mem
     scope, params = _memory_scope_clause(scoped_ids)
     rows = _dict_rows(conn.execute(
         f"""
-        SELECT id, scope, type, sensitivity, source, confidence, content_preview_redacted, last_seen_at, session_id
+        SELECT id, scope, type, sensitivity, source, confidence,
+               content_preview_redacted, last_seen_at, session_id,
+               (
+                 SELECT COUNT(*)
+                 FROM memory_exposures me
+                 WHERE me.memory_id = memories.id
+               ) AS exposure_count
         FROM memories
         {scope}
         ORDER BY COALESCE(last_seen_at, updated_at, created_at) DESC, id ASC
@@ -2153,6 +2099,7 @@ def _build_memory(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Mem
                 "source": row["source"],
                 "confidence": float(row["confidence"] or 0),
                 "preview": row["content_preview_redacted"] or "",
+                "exposure_count": int(row["exposure_count"] or 0),
                 "last_seen_at": row["last_seen_at"] or "",
                 "session_id": row["session_id"] or "",
             }
@@ -2201,8 +2148,8 @@ def _build_exports(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Ex
         "steps": _count_rows(conn, "steps", "session_id", scoped_ids),
         "llm_calls": _count_rows(conn, "llm_calls", "session_id", scoped_ids),
         "tool_calls": _count_rows(conn, "tool_calls", "session_id", scoped_ids),
-        "mcp_calls": _count_rows(conn, "mcp_calls", "session_id", scoped_ids),
-        "memories": _count_rows(conn, "memories", "session_id", scoped_ids),
+        "mcp_calls": _count_mcp_calls(conn, scoped_ids),
+        "memories": _count_memories(conn, scoped_ids),
         "privacy_findings": _count_rows(conn, "privacy_findings", "session_id", scoped_ids),
         "evidence": _count_evidence(conn, scoped_ids),
         "specs": _count_specs(conn, scoped_ids),
@@ -2218,6 +2165,19 @@ def _build_exports(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Ex
 def _count_rows(conn: sqlite3.Connection, table: str, scope_column: str, scoped_ids: list[str] | None) -> int:
     scope, params = _scope_clause(scope_column, scoped_ids)
     return int(conn.execute(f"SELECT COUNT(*) FROM {table} {scope}", params).fetchone()[0] or 0)
+
+
+def _count_mcp_calls(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> int:
+    scope, params = _scope_clause("tc.session_id", scoped_ids)
+    return int(conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM mcp_calls AS mc
+        JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+        {scope}
+        """,
+        params,
+    ).fetchone()[0] or 0)
 
 
 def _count_by(
@@ -2244,6 +2204,11 @@ def _count_by(
 def _count_specs(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> int:
     spec_where, spec_params = _scoped_spec_filter(scoped_ids)
     return int(conn.execute(f"SELECT COUNT(*) FROM specs s {spec_where}", spec_params).fetchone()[0] or 0)
+
+
+def _count_memories(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> int:
+    scope, params = _artifact_memory_scope_clause(scoped_ids, type_filter="1 = 1")
+    return int(conn.execute(f"SELECT COUNT(*) FROM memories {scope}", params).fetchone()[0] or 0)
 
 
 def _count_evidence(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> int:

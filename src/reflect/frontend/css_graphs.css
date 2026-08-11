@@ -1,0 +1,87 @@
+/* ── Graph panels ────────────────────────────────────────── */
+.graph-svg{width:100%;overflow:visible}
+.graph-svg text{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif}
+.semantic-graph-shell{position:relative;height:620px;border:1px solid var(--glass-border);border-radius:8px;overflow:hidden;background:radial-gradient(circle at 50% 45%,rgba(255,255,255,.045),rgba(255,255,255,.012) 42%,rgba(0,0,0,.22))}
+.semantic-graph-toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap}
+.semantic-graph-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.semantic-graph-toolbar select{min-height:32px;border:1px solid var(--glass-border);border-radius:6px;background:rgba(0,0,0,.24);color:var(--text-1);padding:4px 8px;font:inherit;font-size:12px}
+.semantic-graph-context{margin:-4px 0 12px;color:var(--text-3);font-size:11px;line-height:1.5}
+.semantic-graph-svg{display:block;width:100%;height:100%;cursor:grab}
+.semantic-graph-svg:active{cursor:grabbing}
+.semantic-graph-link{stroke:rgba(245,242,234,.15);stroke-width:1.1;stroke-linecap:round}
+.semantic-graph-node circle{stroke:rgba(255,255,255,.28);stroke-width:1.1;transition:stroke-width .12s,filter .12s}
+.semantic-graph-node text{pointer-events:none;font-size:11px;font-weight:650;fill:rgba(245,242,234,.78);paint-order:stroke;stroke:rgba(5,5,5,.72);stroke-width:3px;stroke-linejoin:round}
+.semantic-graph-node.is-hovered circle{stroke-width:2.2;filter:drop-shadow(0 0 10px rgba(242,138,26,.6))}
+.semantic-graph-tip{position:absolute;left:12px;top:12px;max-width:min(360px,calc(100% - 24px));padding:10px 12px;border:1px solid var(--glass-border);border-radius:6px;background:rgba(9,8,7,.92);box-shadow:0 16px 50px rgba(0,0,0,.32);font-size:12px;color:var(--text-2);pointer-events:none;opacity:0;transition:opacity .12s}
+.semantic-graph-tip.is-visible{opacity:1}
+.semantic-graph-tip strong{display:block;color:var(--signal);margin-bottom:4px;overflow-wrap:anywhere}
+.semantic-graph-tip dl{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:0}
+.semantic-graph-tip dt{color:var(--text-3)}
+.semantic-graph-tip dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.semantic-graph-empty{height:220px;display:flex;align-items:center;justify-content:center;color:var(--text-3);font-size:13px;border:1px dashed var(--glass-border);border-radius:8px}
+/* Co-occurrence matrix */
+.matrix-wrap{overflow-x:auto}
+.matrix-table{border-collapse:collapse;margin:0 auto}
+.matrix-table td,.matrix-table th{width:36px;height:36px;text-align:center;font-size:11px;padding:0}
+.matrix-table th{font-size:11px;font-weight:500;color:var(--text-3);white-space:nowrap;max-width:36px;overflow:hidden;text-overflow:ellipsis}
+.matrix-cell{border-radius:4px;cursor:default;transition:opacity .15s}
+.matrix-cell:hover{opacity:.75}
+/* Session timeline */
+.timeline-wrap{overflow-x:auto}
+.timeline-lane{display:flex;align-items:center;gap:10px;margin-bottom:10px;min-width:0}
+.timeline-sid{flex:0 0 90px;font-size:12px;color:var(--text-3);font-family:'SF Mono',ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis}
+.timeline-track{flex:1;position:relative;height:24px;background:rgba(255,255,255,.04);border-radius:4px;overflow:hidden;min-width:400px}
+.timeline-span{position:absolute;top:3px;height:18px;border-radius:3px;cursor:default;transition:opacity .15s;min-width:2px}
+.timeline-span:hover{opacity:.7}
+/* Latency histogram */
+.hist-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+@media(max-width:800px){.hist-grid{grid-template-columns:1fr}}
+.hist-item{}
+.hist-label{font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:8px;font-family:'SF Mono',ui-monospace,monospace}
+.hist-bars{display:flex;gap:4px;align-items:flex-end;height:80px}
+.hist-bar{flex:1;border-radius:3px 3px 0 0;min-height:2px;cursor:default;transition:opacity .15s}
+.hist-bar:hover{opacity:.7}
+.hist-bLabels{display:flex;gap:4px;margin-top:4px}
+.hist-bLabel{flex:1;text-align:center;font-size:9px;color:var(--text-3)}
+/* Graph legend */
+.graph-legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px}
+.graph-legend-item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-3)}
+.graph-legend-dot{width:10px;height:10px;border-radius:50%}
+
+/* ── Footer ──────────────────────────────────────────────── */
+footer{text-align:center;padding:14px 24px;font-size:13px;color:var(--text-3);border-top:1px solid var(--glass-border)}
+footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
+@media (prefers-reduced-motion: reduce){
+  .panel,
+  .stat,
+  .hm-cell,
+  .hour-bar,
+  .sb-pill,
+  .sb-card,
+  .sb-load-btn,
+  .report-loader,
+  .loader-mark,
+  .loader-bar span,
+  .tab,
+  .matrix-cell,
+  .timeline-span,
+  .hist-bar,
+  .bar-fill,
+  .ev-preview,
+  .session-timeline-span,
+  .session-playhead-grip::after,
+  .session-playhead-bubble,
+  [data-conversation-event-index]{
+    transition:none!important;
+  }
+  .hm-cell:hover,
+  .hour-bar:hover,
+  .panel:hover,
+  .stat:hover{
+    transform:none;
+  }
+  .loader-mark,
+  .loader-bar span{
+    animation:none;
+  }
+}

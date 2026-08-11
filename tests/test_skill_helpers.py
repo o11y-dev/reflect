@@ -5,7 +5,8 @@ from __future__ import annotations
 import sqlite3
 from collections import Counter
 
-from reflect.core import (
+from reflect.models import TelemetryStats
+from reflect.skill_extraction import (
     _build_graph_evidence,
     _build_skill_evidence_bundle,
     _build_skill_evidence_bundle_from_sql,
@@ -15,7 +16,6 @@ from reflect.core import (
     _extract_recovery_chains,
     _serialize_sessions_for_skills,
 )
-from reflect.models import TelemetryStats
 
 # ---------------------------------------------------------------------------
 # _compress_tool_sequence

@@ -4,12 +4,12 @@ import json
 import os
 import signal
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
-from reflect.core import main
-from reflect.report_server import ReportServerConfig, ReportServerDaemon
+from reflect.core import _start_background_report_server, main
+from reflect.report_server import ReportServerConfig, ReportServerDaemon, ReportServerStatus
 
 
 def _daemon(tmp_path: Path) -> ReportServerDaemon:
@@ -48,6 +48,101 @@ def test_report_server_daemon_passes_refresh_to_child(tmp_path):
 
     command = popen.call_args.args[0]
     assert "--refresh" in command
+    interval_index = command.index("--refresh-interval-seconds")
+    assert command[interval_index + 1] == "300"
+
+
+def test_report_server_refresh_interval_uses_positive_environment_value(monkeypatch):
+    from reflect.report_server import refresh_interval_from_env
+
+    monkeypatch.setenv("REFLECT_REFRESH_INTERVAL_SECONDS", "45")
+    assert refresh_interval_from_env() == 45
+
+    monkeypatch.setenv("REFLECT_REFRESH_INTERVAL_SECONDS", "0")
+    try:
+        refresh_interval_from_env()
+    except RuntimeError as exc:
+        assert "must be a positive integer" in str(exc)
+    else:
+        raise AssertionError("expected an invalid refresh interval")
+
+
+def test_report_server_daemon_requests_refresh_from_running_server(tmp_path):
+    daemon = _daemon(tmp_path)
+    response = MagicMock()
+    response.__enter__.return_value.read.return_value = (
+        b'{"started":true,"preparation":{"state":"running"}}'
+    )
+
+    with patch(
+        "reflect.report_server.urllib_request.urlopen",
+        return_value=response,
+    ) as urlopen:
+        payload = daemon.request_refresh()
+
+    request = urlopen.call_args.args[0]
+    assert request.full_url == "http://127.0.0.1:9876/api/refresh"
+    assert request.get_method() == "POST"
+    assert payload["preparation"] == {"state": "running"}
+
+
+def test_opening_reflect_upgrades_snapshot_only_server(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    log_file = tmp_path / "report.log"
+    snapshot_only = ReportServerStatus(
+        running=True,
+        pid=4321,
+        port_in_use=False,
+        url="http://127.0.0.1:8765/?report=api/data",
+        log_file=log_file,
+        db_path=db_path,
+        refresh=False,
+    )
+    refreshed = ReportServerStatus(
+        running=True,
+        pid=4322,
+        port_in_use=False,
+        url=snapshot_only.url,
+        log_file=log_file,
+        db_path=db_path,
+        refresh=True,
+    )
+    daemon = MagicMock()
+    daemon.status.side_effect = [snapshot_only, refreshed]
+    daemon.start.return_value = (4322, True)
+
+    with patch("reflect.core._report_server_daemon", return_value=daemon):
+        _start_background_report_server(db_path=db_path, refresh=True)
+
+    daemon.stop.assert_called_once_with()
+    daemon.start.assert_called_once_with()
+
+
+def test_opening_reflect_refreshes_existing_refresh_server(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    status = ReportServerStatus(
+        running=True,
+        pid=4321,
+        port_in_use=False,
+        url="http://127.0.0.1:8765/?report=api/data",
+        log_file=tmp_path / "report.log",
+        db_path=db_path,
+        refresh=True,
+    )
+    daemon = MagicMock()
+    daemon.status.return_value = status
+    daemon.start.return_value = (4321, False)
+    daemon.request_refresh.return_value = {
+        "preparation": {"state": "running"},
+    }
+
+    with patch("reflect.core._report_server_daemon", return_value=daemon), patch(
+        "webbrowser.open"
+    ):
+        _start_background_report_server(db_path=db_path, refresh=True)
+
+    daemon.stop.assert_not_called()
+    daemon.request_refresh.assert_called_once_with()
 
 
 def test_report_server_daemon_rejects_unmanaged_port_conflict(tmp_path):
@@ -83,6 +178,7 @@ def test_report_server_status_uses_persisted_runtime_config(tmp_path):
 
     assert status.url == "http://127.0.0.1:9876/?report=api/data"
     assert status.db_path == tmp_path / "reflect.db"
+    assert status.refresh_interval_seconds == 300
 
 
 def test_report_server_daemon_status_cleans_stale_pid(tmp_path):
@@ -148,9 +244,10 @@ def test_direct_report_server_claims_state_without_opening_browser(tmp_path):
         assert int(pid_file.read_text()) == os.getpid()
         assert json.loads(metadata_file.read_text())["open_browser"] is False
         assert kwargs["open_browser"] is False
+        assert kwargs["refresh_interval_seconds"] == 300
 
     with patch.object(daemon, "_port_in_use", return_value=False), patch(
-        "reflect.core._run_browser_report",
+        "reflect.report_server.run_browser_report",
         side_effect=assert_state,
     ):
         _run_daemon(config, daemon)
@@ -163,7 +260,7 @@ def test_bare_reflect_detaches_report_server(tmp_path):
     runner = CliRunner()
     db_path = tmp_path / "reflect.db"
     with patch("reflect.core._start_background_report_server") as start, patch(
-        "reflect.core._run_browser_report"
+        "reflect.report_server.run_browser_report"
     ) as foreground:
         result = runner.invoke(main, ["--db-path", str(db_path)])
 

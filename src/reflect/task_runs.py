@@ -9,6 +9,8 @@ from pathlib import Path
 
 from pydantic import Field
 
+from reflect.context_artifacts import TaskContractArtifact, task_contract_artifact
+from reflect.execution_units import ExecutionUnitRepository
 from reflect.improvements.repository import utc_now
 from reflect.schema.base import ReflectModel
 from reflect.usage import UsageService
@@ -31,6 +33,15 @@ class MCPSelectedSkillRef(ReflectModel):
     slug: str
 
 
+class MCPSelectedMemoryRef(ReflectModel):
+    """Stable, content-free memory identity captured when context is delivered."""
+
+    memory_id: str
+    provider: str
+    validation_status: str = ""
+    content_hash: str = ""
+
+
 class MCPTaskRunLinkState(StrEnum):
     """Observable relationship between a task run and normalized telemetry."""
 
@@ -51,13 +62,19 @@ class MCPTaskRunStatus(ReflectModel):
     summary_redacted: str = ""
     workflow_id: str | None = None
     selected_skills: list[MCPSelectedSkillRef] = Field(default_factory=list)
+    selected_memories: list[MCPSelectedMemoryRef] = Field(default_factory=list)
     workspace_path: str
     task_file_path: str | None = None
+    task_contract_id: str | None = None
+    task_contract_hash: str | None = None
     runtime_session_id: str | None = None
     runtime_agent: str | None = None
+    execution_unit_id: str | None = None
+    milestone_count: int = Field(default=0, ge=0)
     link_state: MCPTaskRunLinkState
     session_outcome_recorded: bool = False
     skill_usage_recorded_count: int = Field(default=0, ge=0)
+    memory_exposure_recorded_count: int = Field(default=0, ge=0)
     started_at: str
     completed_at: str | None = None
     updated_at: str
@@ -81,6 +98,7 @@ class MCPTaskRunResult(ReflectModel):
     verification_passed: bool | None = None
     completed_at: str | None = None
     runtime_session_id: str | None = None
+    execution_unit_id: str | None = None
     linked_to_session: bool
     idempotent: bool
 
@@ -96,7 +114,11 @@ class MCPTaskRunService:
     ) -> None:
         self.conn = conn
         self.usage = usage or UsageService(conn)
-        self.reconciler = TaskRunReconciler(conn)
+        self.execution_units = ExecutionUnitRepository(conn)
+        self.reconciler = TaskRunReconciler(
+            conn,
+            execution_units=self.execution_units,
+        )
 
     def start(
         self,
@@ -106,17 +128,25 @@ class MCPTaskRunService:
         task_file_path: Path | None,
         workflow_id: str | None,
         selected_skills: list[MCPSelectedSkillRef],
+        selected_memories: list[MCPSelectedMemoryRef],
     ) -> str:
         session_hint = self.usage.runtime_session_hint()
         task_run_id = f"mcp_task_{uuid.uuid4().hex}"
         now = utc_now()
+        contract = self._register_task_contract(
+            task_file_path,
+            workspace_path=workspace_path,
+            owner=session_hint.agent if session_hint else None,
+            now=now,
+        )
         self.conn.execute(
             """
             INSERT INTO mcp_task_runs(
               id, runtime_session_id, runtime_agent, workspace_path, task_file_path,
-              question_hash, workflow_id, selected_skills_json, status,
+              task_contract_id, task_contract_hash, question_hash, workflow_id,
+              selected_skills_json, selected_memories_json, status,
               started_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'started', ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'started', ?, ?, ?)
             """,
             (
                 task_run_id,
@@ -124,10 +154,16 @@ class MCPTaskRunService:
                 session_hint.agent if session_hint else None,
                 str(workspace_path),
                 str(task_file_path) if task_file_path else None,
+                contract.artifact_id if contract else None,
+                contract.content_hash if contract else None,
                 hashlib.sha256(question.encode("utf-8")).hexdigest(),
                 workflow_id,
                 json.dumps(
                     [skill.model_dump(mode="json") for skill in selected_skills],
+                    sort_keys=True,
+                ),
+                json.dumps(
+                    [memory.model_dump(mode="json") for memory in selected_memories],
                     sort_keys=True,
                 ),
                 now,
@@ -135,8 +171,49 @@ class MCPTaskRunService:
                 now,
             ),
         )
+        if session_hint:
+            self.execution_units.sync_task_run(
+                task_run_id,
+                session_hint.session_id,
+                now=now,
+            )
         self.conn.commit()
         return task_run_id
+
+    def _register_task_contract(
+        self,
+        path: Path | None,
+        *,
+        workspace_path: Path,
+        owner: str | None,
+        now: str,
+    ) -> TaskContractArtifact | None:
+        if path is None:
+            return None
+        contract = task_contract_artifact(path, workspace_root=workspace_path)
+        self.conn.execute(
+            """
+            INSERT INTO specs(
+              id, title, status, owner, source_path, content_hash, created_at, updated_at
+            ) VALUES (?, ?, 'tracked', ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              title = excluded.title,
+              owner = COALESCE(excluded.owner, specs.owner),
+              source_path = excluded.source_path,
+              content_hash = excluded.content_hash,
+              updated_at = excluded.updated_at
+            """,
+            (
+                contract.artifact_id,
+                contract.title,
+                owner,
+                contract.source_path,
+                contract.content_hash,
+                now,
+                now,
+            ),
+        )
+        return contract
 
     def complete(
         self,
@@ -209,10 +286,19 @@ class MCPTaskRunService:
         row = self.conn.execute(
             """
             SELECT id, runtime_session_id, runtime_agent, workspace_path,
-                   task_file_path, workflow_id, selected_skills_json, status,
+                   task_file_path, workflow_id, selected_skills_json,
+                   selected_memories_json, status,
                    outcome, verification_passed, completion_summary_redacted,
                    started_at, completed_at, updated_at, session_linked_at,
-                   session_outcome_recorded, skill_usage_recorded_count
+                   session_outcome_recorded, skill_usage_recorded_count,
+                   memory_exposure_recorded_count,
+                   execution_unit_id, task_contract_id, task_contract_hash,
+                   (
+                     SELECT COUNT(*) FROM improvement_events ie
+                     WHERE ie.entity_type = 'mcp_task_run'
+                       AND ie.entity_id = mcp_task_runs.id
+                       AND ie.event_type = 'workflow_milestone'
+                   ) AS milestone_count
             FROM mcp_task_runs WHERE id = ?
             """,
             (task_run_id,),
@@ -220,6 +306,7 @@ class MCPTaskRunService:
         if row is None:
             raise KeyError(f"MCP task run not found: {task_run_id}")
         selected_skills = _selected_skills(str(row[6] or "[]"))
+        selected_memories = _selected_memories(str(row[7] or "[]"))
         runtime_session_id = str(row[1] or "") or None
         session_exists = bool(
             runtime_session_id
@@ -228,9 +315,9 @@ class MCPTaskRunService:
                 (runtime_session_id,),
             ).fetchone()
         )
-        if row[14]:
+        if row[15]:
             link_state = MCPTaskRunLinkState.LINKED
-        elif session_exists and str(row[7]) == "completed":
+        elif session_exists and str(row[8]) == "completed":
             link_state = MCPTaskRunLinkState.READY_TO_RECONCILE
         elif session_exists:
             link_state = MCPTaskRunLinkState.SESSION_AVAILABLE
@@ -242,20 +329,26 @@ class MCPTaskRunService:
             task_run_id=str(row[0]),
             runtime_session_id=runtime_session_id,
             runtime_agent=str(row[2]) if row[2] else None,
+            execution_unit_id=str(row[19]) if row[19] else None,
+            task_contract_id=str(row[20]) if row[20] else None,
+            task_contract_hash=str(row[21]) if row[21] else None,
+            milestone_count=int(row[22] or 0),
             workspace_path=str(row[3]),
             task_file_path=str(row[4]) if row[4] else None,
             workflow_id=str(row[5]) if row[5] else None,
             selected_skills=selected_skills,
-            status=str(row[7]),
-            outcome=MCPTaskOutcome(str(row[8])) if row[8] else None,
-            verification_passed=None if row[9] is None else bool(row[9]),
-            summary_redacted=str(row[10] or ""),
-            started_at=str(row[11]),
-            completed_at=str(row[12]) if row[12] else None,
-            updated_at=str(row[13]),
+            selected_memories=selected_memories,
+            status=str(row[8]),
+            outcome=MCPTaskOutcome(str(row[9])) if row[9] else None,
+            verification_passed=None if row[10] is None else bool(row[10]),
+            summary_redacted=str(row[11] or ""),
+            started_at=str(row[12]),
+            completed_at=str(row[13]) if row[13] else None,
+            updated_at=str(row[14]),
             link_state=link_state,
-            session_outcome_recorded=bool(row[15]),
-            skill_usage_recorded_count=int(row[16] or 0),
+            session_outcome_recorded=bool(row[16]),
+            skill_usage_recorded_count=int(row[17] or 0),
+            memory_exposure_recorded_count=int(row[18] or 0),
         )
 
     def _result(
@@ -268,7 +361,7 @@ class MCPTaskRunService:
         row = self.conn.execute(
             """
             SELECT runtime_session_id, status, outcome, verification_passed,
-                   completed_at, session_linked_at
+                   completed_at, session_linked_at, execution_unit_id
             FROM mcp_task_runs WHERE id = ?
             """,
             (task_run_id,),
@@ -285,6 +378,7 @@ class MCPTaskRunService:
             verification_passed=None if row[3] is None else bool(row[3]),
             completed_at=row[4],
             runtime_session_id=session_id or None,
+            execution_unit_id=str(row[6]) if row[6] else None,
             linked_to_session=linked_to_session,
             idempotent=idempotent,
         )
@@ -293,8 +387,14 @@ class MCPTaskRunService:
 class TaskRunReconciler:
     """Link completed MCP task runs after their runtime sessions are normalized."""
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        execution_units: ExecutionUnitRepository | None = None,
+    ) -> None:
         self.conn = conn
+        self.execution_units = execution_units or ExecutionUnitRepository(conn)
 
     def reconcile(
         self,
@@ -323,9 +423,10 @@ class TaskRunReconciler:
         rows = self.conn.execute(
             f"""
             SELECT tr.id, tr.runtime_session_id, tr.selected_skills_json,
-                   tr.outcome, tr.verification_passed,
+                   tr.selected_memories_json, tr.outcome, tr.verification_passed,
                    tr.completion_summary_redacted, tr.session_linked_at,
-                   tr.session_outcome_recorded, tr.skill_usage_recorded_count
+                   tr.session_outcome_recorded, tr.skill_usage_recorded_count,
+                   tr.memory_exposure_recorded_count
             FROM mcp_task_runs tr
             JOIN sessions s ON s.id = tr.runtime_session_id
             WHERE {' AND '.join(clauses)}
@@ -341,26 +442,45 @@ class TaskRunReconciler:
             try:
                 self.conn.execute(f"SAVEPOINT {savepoint}")
                 selected_skills = _selected_skills(str(row[2] or "[]"))
-                if bool(row[6]) and bool(row[7]) and int(row[8] or 0) >= len(selected_skills):
+                selected_memories = _selected_memories(str(row[3] or "[]"))
+                if (
+                    bool(row[7])
+                    and bool(row[8])
+                    and int(row[9] or 0) >= len(selected_skills)
+                    and int(row[10] or 0) >= len(selected_memories)
+                ):
                     self.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
                     unchanged += 1
                     continue
                 now = utc_now()
-                outcome = MCPTaskOutcome(str(row[3]))
-                verification_passed = None if row[4] is None else bool(row[4])
+                outcome = MCPTaskOutcome(str(row[4]))
+                verification_passed = None if row[5] is None else bool(row[5])
+                execution_unit_id = self.execution_units.sync_task_run(
+                    str(row[0]),
+                    str(row[1]),
+                    now=now,
+                )
+                if execution_unit_id is None:
+                    raise KeyError(f"Session not found: {row[1]}")
                 self._record_session_outcome(
                     str(row[0]),
                     str(row[1]),
                     outcome=outcome,
                     verification_passed=verification_passed,
-                    has_summary=bool(str(row[5] or "")),
+                    has_summary=bool(str(row[6] or "")),
                     now=now,
                 )
                 usage_count = self._record_skill_outcomes(
                     str(row[1]),
+                    execution_unit_id,
                     selected_skills,
                     outcome=outcome,
                     verification_passed=verification_passed,
+                    now=now,
+                )
+                memory_count = self._record_memory_exposures(
+                    str(row[1]),
+                    selected_memories,
                     now=now,
                 )
                 self.conn.execute(
@@ -369,10 +489,11 @@ class TaskRunReconciler:
                     SET session_linked_at = COALESCE(session_linked_at, ?),
                         session_outcome_recorded = 1,
                         skill_usage_recorded_count = ?,
+                        memory_exposure_recorded_count = ?,
                         updated_at = ?
                     WHERE id = ?
                     """,
-                    (now, usage_count, now, row[0]),
+                    (now, usage_count, memory_count, now, row[0]),
                 )
                 self.conn.execute(f"RELEASE SAVEPOINT {savepoint}")
                 linked += 1
@@ -430,6 +551,7 @@ class TaskRunReconciler:
     def _record_skill_outcomes(
         self,
         session_id: str,
+        execution_unit_id: str,
         selected_skills: list[MCPSelectedSkillRef],
         *,
         outcome: MCPTaskOutcome,
@@ -442,15 +564,15 @@ class TaskRunReconciler:
                 continue
             usage_id = (
                 "skill_usage_"
-                + hashlib.sha256(f"{skill.skill_id}:{session_id}".encode()).hexdigest()[:24]
+                + hashlib.sha256(f"{skill.skill_id}:{execution_unit_id}".encode()).hexdigest()[:24]
             )
             self.conn.execute(
                 """
                 INSERT INTO skill_usage(
-                  id, skill_id, skill_version_id, session_id, state, outcome,
+                  id, skill_id, skill_version_id, session_id, execution_unit_id, state, outcome,
                   confidence, evidence_json, observed_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, 'reported', ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(skill_id, session_id) DO UPDATE SET
+                ) VALUES (?, ?, ?, ?, ?, 'reported', ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(skill_id, execution_unit_id) DO UPDATE SET
                   skill_version_id = excluded.skill_version_id,
                   state = excluded.state,
                   outcome = excluded.outcome,
@@ -464,6 +586,7 @@ class TaskRunReconciler:
                     skill.skill_id,
                     skill.version_id or None,
                     session_id,
+                    execution_unit_id,
                     outcome.value,
                     0.9 if verification_passed is not None else 0.7,
                     json.dumps(
@@ -481,9 +604,56 @@ class TaskRunReconciler:
             recorded += 1
         return recorded
 
+    def _record_memory_exposures(
+        self,
+        session_id: str,
+        selected_memories: list[MCPSelectedMemoryRef],
+        *,
+        now: str,
+    ) -> int:
+        recorded = 0
+        seen: set[str] = set()
+        for memory in selected_memories:
+            if not memory.memory_id or memory.memory_id in seen:
+                continue
+            seen.add(memory.memory_id)
+            self.conn.execute(
+                """
+                INSERT INTO memory_exposures(
+                  memory_id, session_id, step_id, content_hash, source,
+                  observed_at, created_at, updated_at
+                ) VALUES (?, ?, NULL, NULLIF(?, ''), 'reflect_context', ?, ?, ?)
+                ON CONFLICT(memory_id, session_id) DO UPDATE SET
+                  content_hash = COALESCE(
+                    excluded.content_hash,
+                    memory_exposures.content_hash
+                  ),
+                  source = 'reflect_context',
+                  observed_at = excluded.observed_at,
+                  updated_at = excluded.updated_at
+                """,
+                (
+                    memory.memory_id,
+                    session_id,
+                    memory.content_hash,
+                    now,
+                    now,
+                    now,
+                ),
+            )
+            recorded += 1
+        return recorded
+
 
 def _selected_skills(raw: str) -> list[MCPSelectedSkillRef]:
     payload = json.loads(raw)
     if not isinstance(payload, list):
         raise TypeError("selected_skills_json must contain a list")
     return [MCPSelectedSkillRef.model_validate(item) for item in payload]
+
+
+def _selected_memories(raw: str) -> list[MCPSelectedMemoryRef]:
+    payload = json.loads(raw)
+    if not isinstance(payload, list):
+        raise TypeError("selected_memories_json must contain a list")
+    return [MCPSelectedMemoryRef.model_validate(item) for item in payload]

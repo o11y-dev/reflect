@@ -13,6 +13,12 @@ from reflect.changes import (
     ChangeReviewAnswer,
     ChangeReviewService,
 )
+from reflect.improvements.contracts import WorkflowContract, WorkflowMilestoneEvidence
+from reflect.improvements.milestones import (
+    WorkflowMilestoneResult,
+    WorkflowMilestoneService,
+    WorkflowMilestoneState,
+)
 from reflect.improvements.models import (
     AskAnswer,
     LoopKind,
@@ -20,7 +26,7 @@ from reflect.improvements.models import (
     SkillLifecycleState,
     WorkflowStatus,
 )
-from reflect.improvements.scope import ImprovementScopeResolver
+from reflect.improvements.scope import ImprovementScopeResolver, session_scope_predicate
 from reflect.improvements.service import ImprovementService
 from reflect.inspection import (
     AgentInspectionService,
@@ -32,6 +38,7 @@ from reflect.inspection import (
 from reflect.memory import MemoryService
 from reflect.schema.base import ReflectModel
 from reflect.task_runs import (
+    MCPSelectedMemoryRef,
     MCPSelectedSkillRef,
     MCPTaskOutcome,
     MCPTaskRunResult,
@@ -57,6 +64,9 @@ class ContextMemory(ReflectModel):
     source_ref: str = ""
     path: str = ""
     workspace_root: str = ""
+    content_hash: str = ""
+    content_source: str = "redacted_preview"
+    content_truncated: bool = False
 
 
 class ContextNextAction(ReflectModel):
@@ -97,6 +107,7 @@ class ContextSkill(ReflectModel):
     installation_state: SkillInstallationState
     installation_requires_operator_approval: bool
     content_hash: str
+    workflow_contract: WorkflowContract | None = None
     instructions: str
     instructions_truncated: bool = False
     full_instructions_action: ContextNextAction | None = None
@@ -132,6 +143,7 @@ class ReflectContextService:
         )
         self.usage = UsageService(conn)
         self.task_runs = MCPTaskRunService(conn, usage=self.usage)
+        self.milestones = WorkflowMilestoneService(conn)
         self.agent_inspection = AgentInspectionService(
             conn,
             skills=self.improvements.skills,
@@ -153,12 +165,13 @@ class ReflectContextService:
         memory_provider: str = "local_sqlite",
         memory_limit: int = 5,
     ) -> ReflectContextAnswer:
-        answer = self.improvements.ask(question, task_file=task_file, path=path)
+        resolved_path = (path or Path.cwd()).expanduser().resolve()
+        answer = self.improvements.ask(question, task_file=task_file, path=resolved_path)
         limitations = list(answer.limitations)
         try:
-            rows = self.memory.search(
+            rows = self.memory.select_context(
                 question,
-                path=path or Path.cwd(),
+                path=resolved_path,
                 provider=memory_provider,
                 limit=max(1, min(memory_limit, 20)),
             )
@@ -166,7 +179,10 @@ class ReflectContextService:
             rows = []
             limitations.append(f"Memory provider {memory_provider!r} was unavailable: {exc}")
 
-        memories = [self._context_memory(row, memory_provider) for row in rows]
+        memories = [
+            self._context_memory(row, memory_provider)
+            for row in rows
+        ]
         memories = [memory for memory in memories if memory.validation_status != "stale"]
         unvalidated = sum(
             1
@@ -231,12 +247,22 @@ class ReflectContextService:
             )
             for skill in selected_skills
         ]
+        memory_refs = [
+            MCPSelectedMemoryRef(
+                memory_id=memory.id,
+                provider=memory.provider,
+                validation_status=memory.validation_status,
+                content_hash=memory.content_hash,
+            )
+            for memory in answer.memories
+        ]
         task_run_id = self.task_runs.start(
             question=question,
             workspace_path=resolved_path,
             task_file_path=resolved_task,
             workflow_id=answer.workflow_id,
             selected_skills=skill_refs,
+            selected_memories=memory_refs,
         )
         return answer.model_copy(
             update={
@@ -281,11 +307,19 @@ class ReflectContextService:
         self,
         *,
         limit: int = 20,
+        offset: int = 0,
+        detail: str = "summary",
+        evidence_limit: int = 10,
         path: Path | None = None,
         session_id: str | None = None,
         global_scope: bool = False,
         period: str | None = None,
     ) -> dict[str, Any]:
+        if detail not in {"summary", "full"}:
+            raise ValueError("detail must be 'summary' or 'full'")
+        page_limit = max(1, min(limit, 100))
+        page_offset = max(0, offset)
+        bounded_evidence = max(0, min(evidence_limit, 50))
         selectors = int(path is not None) + int(session_id is not None) + int(global_scope)
         if selectors > 1:
             raise ValueError("path, session_id, and global_scope are mutually exclusive")
@@ -298,19 +332,65 @@ class ReflectContextService:
             scope = resolver.session(session_id)
         else:
             scope = resolver.path(path)
-        findings = self.improvements.list_inbox_findings(
-            limit=max(1, min(limit, 100)),
-            scope=scope,
+        all_findings = self.improvements.list_findings(limit=500, scope=scope)
+        findings = all_findings[page_offset : page_offset + page_limit]
+        attribution_complete = self.improvements.repository.finding_evidence_complete()
+        serialized: list[dict[str, Any]] = []
+        for finding in findings:
+            evidence_count = len(finding.evidence)
+            provenance_session_count = len(finding.source_sessions)
+            if detail == "full":
+                item = finding.model_dump(mode="json")
+                item["evidence"] = item["evidence"][:bounded_evidence]
+                item["provenance_sessions"] = item.pop("source_sessions")[
+                    :bounded_evidence
+                ]
+            else:
+                item = finding.model_dump(
+                    mode="json",
+                    exclude={"evidence", "source_sessions", "baseline_query"},
+                )
+            item["evidence_count"] = evidence_count
+            item["provenance_session_count"] = provenance_session_count
+            serialized.append(item)
+        evidence_cutoff = max(
+            (finding.latest_source_at or finding.last_seen_at for finding in all_findings),
+            default=None,
         )
-        attribution_complete = (
-            self.improvements.repository.observation_session_ledger_complete()
-        )
+        refresh_row = self.conn.execute(
+            "SELECT value FROM store_metadata WHERE key = 'last_successful_refresh'"
+        ).fetchone()
+        last_successful_refresh = str(refresh_row[0]) if refresh_row else None
+        excluded_new_sessions = 0
+        if evidence_cutoff:
+            scope_predicate, scope_params = session_scope_predicate(scope)
+            excluded_new_sessions = int(
+                self.conn.execute(
+                    f"SELECT COUNT(*) FROM sessions s WHERE julianday(s.started_at) > julianday(?) AND {scope_predicate}",
+                    [evidence_cutoff, *scope_params],
+                ).fetchone()[0]
+            )
         return {
-            "findings": [finding.model_dump(mode="json") for finding in findings],
-            "count": len(findings),
+            "findings": serialized,
+            "count": len(serialized),
+            "total": len(all_findings),
+            "offset": page_offset,
+            "limit": page_limit,
+            "has_more": page_offset + len(serialized) < len(all_findings),
+            "truncated": len(all_findings) == 500,
+            "detail": detail,
             "provenance": "local_telemetry",
             "resolved_scope": scope.model_dump(mode="json"),
             "attribution_complete": attribution_complete,
+            "freshness": {
+                "evidence_cutoff": evidence_cutoff,
+                "last_successful_refresh": last_successful_refresh,
+                "excluded_new_sessions": excluded_new_sessions,
+                "safe_for_before_after": bool(
+                    evidence_cutoff and last_successful_refresh and attribution_complete
+                    and excluded_new_sessions == 0
+                ),
+            },
             "limitations": (
                 []
                 if attribution_complete
@@ -363,10 +443,80 @@ class ReflectContextService:
             limit=limit,
         )
 
+    def impact(
+        self,
+        *,
+        impact_id: str | None = None,
+        workflow_id: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """Inspect persisted impact checks without recomputing measurements."""
+
+        bounded_limit = max(1, min(limit, 100))
+        if impact_id:
+            try:
+                comparison = self.improvements.measurements.sessions(impact_id)
+            except KeyError:
+                return {
+                    "found": False,
+                    "reason": "impact_not_found",
+                    "impact_id": impact_id,
+                    "provenance": "reflect_measurement_ledger",
+                }
+            impact_check = next(
+                (
+                    item
+                    for item in self.improvements.measurements.list(limit=500)
+                    if item["id"] == impact_id
+                ),
+                None,
+            )
+            return {
+                "found": True,
+                "provenance": "reflect_measurement_ledger",
+                "impact_check": impact_check,
+                "comparison": comparison,
+            }
+
+        query_limit = 500 if workflow_id else bounded_limit
+        impact_checks = self.improvements.measurements.list(limit=query_limit)
+        if workflow_id:
+            impact_checks = [
+                item
+                for item in impact_checks
+                if item["candidate_id"] == workflow_id
+            ][:bounded_limit]
+        return {
+            "impact_checks": impact_checks,
+            "count": len(impact_checks),
+            "provenance": "reflect_measurement_ledger",
+        }
+
     def task_status(self, task_run_id: str) -> MCPTaskRunStatus:
         """Return a read-only task lifecycle snapshot."""
 
         return self.task_runs.status(task_run_id)
+
+    def record_milestone(
+        self,
+        *,
+        task_run_id: str,
+        skill_version_id: str,
+        milestone_id: str,
+        state: WorkflowMilestoneState | str,
+        idempotency_key: str,
+        evidence: WorkflowMilestoneEvidence | None = None,
+    ) -> WorkflowMilestoneResult:
+        """Record one typed checkpoint for a workflow selected on this task."""
+
+        return self.milestones.record(
+            task_run_id=task_run_id,
+            skill_version_id=skill_version_id,
+            milestone_id=milestone_id,
+            state=state,
+            idempotency_key=idempotency_key,
+            evidence=evidence,
+        )
 
     def review_change(
         self,
@@ -395,20 +545,20 @@ class ReflectContextService:
     def explain(self, entity_id: str) -> dict[str, Any]:
         observation = self.improvements.repository.get_observation(entity_id)
         if observation is not None:
-            ledger = self.improvements.finding_session_ledger(entity_id, limit=50)
+            ledger = self.improvements.finding_evidence_ledger(entity_id, limit=50)
             return {
                 "found": True,
                 "kind": "observation",
                 "provenance": "local_telemetry",
                 "entity": {
                     **observation.model_dump(mode="json"),
-                    "session_ledger": ledger.model_dump(mode="json"),
+                    "evidence_ledger": ledger.model_dump(mode="json"),
                 },
             }
         workflow = self.improvements.repository.get_candidate(entity_id)
         if workflow is not None:
             entity = workflow.model_dump(mode="json")
-            entity["session_ledger"] = self.improvements.repository.workflow_session_ledger(
+            entity["evidence_ledger"] = self.improvements.repository.workflow_evidence_ledger(
                 entity_id,
                 limit=50,
             ).model_dump(mode="json")
@@ -546,6 +696,9 @@ class ReflectContextService:
                 ),
                 installation_requires_operator_approval=True,
                 content_hash=current.content_hash,
+                workflow_contract=WorkflowContract.from_raw(
+                    current.workflow.get("workflow_contract")
+                ),
                 instructions=current.content_markdown[:instructions_limit],
                 instructions_truncated=instructions_truncated,
                 full_instructions_action=(
@@ -582,7 +735,9 @@ class ReflectContextService:
         )
         if version is None:
             return None
-        source_sessions = self.agent_inspection.skill_source_sessions(version.id)
+        source_execution_units = self.agent_inspection.skill_source_execution_units(
+            version.id
+        )
         usage_sessions = [
             item
             for item in detail.usage_sessions
@@ -602,8 +757,8 @@ class ReflectContextService:
                 "version": version.model_dump(mode="json"),
                 "instructions_truncated": False,
                 "evidence": detail.evidence[:50],
-                "source_sessions": [
-                    item.model_dump(mode="json") for item in source_sessions
+                "source_execution_units": [
+                    item.model_dump(mode="json") for item in source_execution_units
                 ],
                 "usage_sessions": [
                     item.model_dump(mode="json") for item in usage_sessions[:50]
@@ -615,12 +770,20 @@ class ReflectContextService:
         }
 
     @staticmethod
-    def _context_memory(row: dict[str, Any], requested_provider: str) -> ContextMemory:
+    def _context_memory(
+        row: dict[str, Any],
+        requested_provider: str,
+    ) -> ContextMemory:
         source = row.get("source_metadata") or {}
         provider = str(row.get("provider") or requested_provider)
         return ContextMemory(
             id=str(row.get("id") or row.get("memory_id") or ""),
-            content=str(row.get("content_preview_redacted") or row.get("content") or "")[:1000],
+            content=str(
+                row.get("context_content")
+                or row.get("content_preview_redacted")
+                or row.get("content")
+                or ""
+            )[:4_000],
             type=str(row.get("type") or ""),
             scope=str(row.get("scope") or ""),
             provider=provider,
@@ -632,4 +795,7 @@ class ReflectContextService:
             source_ref=str(source.get("source_ref") or ""),
             path=str(source.get("path") or ""),
             workspace_root=str(source.get("workspace_root") or ""),
+            content_hash=str(row.get("content_hash") or ""),
+            content_source=str(row.get("context_content_source") or "redacted_preview"),
+            content_truncated=bool(row.get("context_content_truncated")),
         )

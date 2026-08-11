@@ -26,6 +26,10 @@ def test_discover_instruction_files_and_store_memories(tmp_path):
     (home / ".claude" / "CLAUDE.md").write_text("# user claude\n", encoding="utf-8")
     (home / ".gemini").mkdir(parents=True)
     (home / ".gemini" / "GEMINI.md").write_text("# gemini\n", encoding="utf-8")
+    (home / ".codex" / "memories").mkdir(parents=True)
+    (home / ".codex" / "AGENTS.md").write_text("# codex instructions\n", encoding="utf-8")
+    (home / ".codex" / "memories" / "MEMORY.md").write_text("# memory index\n", encoding="utf-8")
+    (home / ".codex" / "memories" / "memory_summary.md").write_text("# summary\n", encoding="utf-8")
 
     discovered = discover_instruction_files(workspace, home_root=home)
     discovered_names = {path.name for path in discovered}
@@ -57,6 +61,9 @@ def test_discover_instruction_files_and_store_memories(tmp_path):
         scopes = {(row[0], row[1]) for row in rows}
         assert ("user", "claude_memory") in scopes
         assert ("user", "gemini_memory") in scopes
+        assert ("user", "codex_instruction") in scopes
+        assert ("user", "codex_memory") in scopes
+        assert ("user", "codex_memory_summary") in scopes
         assert ("project", "claude_memory") in scopes
         assert ("project", "copilot_instruction") in scopes
         assert ("project", "agent_instruction") in scopes

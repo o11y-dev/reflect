@@ -65,3 +65,7 @@ def test_classifier_composes_custom_identity_strategy():
     assert classifier.identify(
         {"vendor.server": "custom", "vendor.tool": "inspect"}
     ) == MCPIdentity("custom", "inspect")
+
+
+def test_classifier_reads_standard_gen_ai_tool_call_id():
+    assert MCPCallClassifier.call_id({"gen_ai.tool.call.id": "call-42"}) == "call-42"

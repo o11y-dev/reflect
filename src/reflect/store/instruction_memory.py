@@ -6,6 +6,8 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+from reflect.context_artifacts import context_artifact_id
+
 _INSTRUCTION_NAMES = {
     "AGENTS.md": ("agent_instruction", "project"),
     "CLAUDE.md": ("claude_memory", "project"),
@@ -17,10 +19,6 @@ _INSTRUCTION_NAMES = {
 
 def _now() -> str:
     return datetime.now(tz=UTC).isoformat()
-
-
-def _stable_id(path: Path) -> str:
-    return f"instruction_{hashlib.sha1(str(path).encode('utf-8')).hexdigest()}"
 
 
 def _preview(text: str, *, max_chars: int = 360) -> str:
@@ -50,6 +48,9 @@ def _redacted_preview(path: Path, *, max_chars: int = 100) -> str:
 
 def _user_memory_files(home_root: Path) -> tuple[Path, ...]:
     return (
+        home_root / ".codex" / "AGENTS.md",
+        home_root / ".codex" / "memories" / "MEMORY.md",
+        home_root / ".codex" / "memories" / "memory_summary.md",
         home_root / ".claude" / "CLAUDE.md",
         home_root / ".gemini" / "GEMINI.md",
         home_root / ".cursor" / ".cursorrules",
@@ -58,6 +59,12 @@ def _user_memory_files(home_root: Path) -> tuple[Path, ...]:
 
 def _classify_instruction(path: Path, workspace_root: Path | None, *, home_root: Path) -> tuple[str, str]:
     name = path.name
+    if path == home_root / ".codex" / "AGENTS.md":
+        return "codex_instruction", "user"
+    if path == home_root / ".codex" / "memories" / "MEMORY.md":
+        return "codex_memory", "user"
+    if path == home_root / ".codex" / "memories" / "memory_summary.md":
+        return "codex_memory_summary", "user"
     if path.as_posix().endswith(".github/instructions/" + name):
         return "copilot_instruction", "path"
     if ".cursor/rules/" in path.as_posix():
@@ -189,7 +196,7 @@ def upsert_instruction_memories(
             "size": stat.st_size,
             "mtime": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
         }
-        memory_id = _stable_id(path)
+        memory_id = context_artifact_id(path)
         existed = conn.execute("SELECT 1 FROM memories WHERE id = ?", (memory_id,)).fetchone() is not None
         conn.execute(
             """

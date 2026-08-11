@@ -1,6 +1,6 @@
 ---
 name: reflect
-description: Use when the user wants task-specific guidance from prior AI coding sessions, actionable workflow improvements, a Reflect dashboard, telemetry analysis, tool/model/MCP/subagent investigation, provider usage explanations, or local-first versus gateway architecture advice. Start every non-trivial repository task with approved local guidance, close the task after validation, keep configuration changes explicitly approved, and distinguish local evidence from provider evidence and inference.
+description: Use when the user wants task-specific guidance from prior AI coding sessions, actionable workflow improvements, workflow or skill impact, an evidence-backed case study, a Reflect dashboard, telemetry analysis, tool/model/MCP/subagent investigation, provider usage explanations, or local-first versus gateway architecture advice. Start every non-trivial repository task with approved local guidance, close the task after validation, keep configuration changes explicitly approved, and distinguish local evidence from provider evidence and inference.
 ---
 
 # reflect skill
@@ -51,7 +51,9 @@ Always follow this order:
    - Treat pending workflow guidance as unapproved evidence: do not install or apply it automatically.
    - Stop and ask the operator when the answer's fallback applies.
 
-2. **Close the MCP task after validation**
+2. **Record contracted milestones, then close the MCP task after validation**
+   - When a selected skill includes a non-empty `workflow_contract`, call `reflect_record_milestone` for each named checkpoint as it changes state. Pass the selected skill `version_id`, the current `task_run_id`, a stable idempotency key, and the privacy-safe fingerprint fields requested by that milestone when available.
+   - Treat the milestone call as agent-reported procedure evidence. It does not prove the checkpoint by itself; Reflect evaluates the same contract against the canonical execution unit and observed tool and conversation evidence.
    - When `reflect_context` returned a `task_run_id`, call `reflect_complete` exactly once after validation and before the final response.
    - Report `success`, `partial`, `failure`, or `abandoned`, whether verification passed when known, and a short redacted summary.
    - If the task exposed a repeated success, failure, recovery pattern, or workflow gap, follow the returned `reflect_improvements` next action and explain any relevant finding to the operator. Do not apply it automatically.
@@ -60,6 +62,7 @@ Always follow this order:
    - Prefer `reflect_improvements` for the highest-impact durable observations.
    - Use `reflect_skills` to search the durable registry by lifecycle, installation availability, source agent, or evidence count.
    - Use `reflect_patterns` to inspect existing stalled or productive loops and workflow candidates without running detectors.
+   - Use `reflect_impact` to inspect persisted before/after measurements and their exact compared-execution-unit ledger.
    - Use `reflect_explain` for bounded provenance on an observation, workflow, loop, skill version, task run, or local memory.
    - Use `reflect_task_status` when task completion or late-ingestion linkage is unclear. Treat it as inspection only; ingestion performs reconciliation.
    - When the user wants to approve, install, or roll back a workflow, call `reflect_review_change` first. Present its exact target, diff, evidence, risks, rollback plan, and expiration without displaying the approval token.
@@ -70,6 +73,18 @@ Always follow this order:
    - When MCP is unavailable, use the equivalent `reflect improve`, `reflect loops`, `reflect skills`, and `reflect workflows list|show` CLI commands as an agent-operated fallback.
    - Use `reflect loops build <loop-id>` or `reflect workflows add <SKILL.md>` only when the operator wants a selected source turned into a pending workflow. Neither operation installs the skill package.
    - Run `reflect skills apply`, `reflect workflows apply`, or rollback CLI commands only as an agent-operated fallback after explicit operator approval.
+
+### Impact gate for case studies and ROI
+
+Before concluding that an installed workflow has insufficient evidence, inspect its
+latest `reflect_impact` result and comparison ledger.
+
+- Report a measured before/after delta as an **outcome shift**, even when attribution is incomplete.
+- Claim **attributable intervention impact** only when the cohorts contain comparable eligible, non-mixed execution units and the workflow exposure was followed or used with corroborated contract evidence.
+- Audit repository or workspace scope, task archetype, agent/model composition, capture source, sample counts, and missing telemetry before comparing cohorts.
+- Keep each impact result attached to its own workflow; never transfer impact from one workflow to another finding.
+- Treat ignored or unobserved exposure as an attribution limitation, not as proof that no outcome shift exists.
+- If the impact surface is unavailable or was not inspected, say `impact not inspected`; do not say `no impact`.
 
 ### Making `reflect improve` actionable
 
@@ -93,7 +108,7 @@ current registry.
 
 4. **Baseline from local telemetry**
    - For current-session, selected-session, or global token/cost/tool/model statistics, use `$reflect-usage` and run `reflect usage --json` with the matching scope. Keep provider limit and billing reconciliation in this skill.
-   - Prefer OTLP JSON traces such as `~/.reflect/state/otlp/otel-traces.json`.
+   - Prefer the managed OTLP segments at `~/.reflect/state/otlp/otel-traces.active.jsonl`.
    - Use the existing `reflect` CLI or `python3 src/reflect/core.py`.
     - Remember the current CLI behavior:
       - `reflect`: open the local browser report from the SQLite store
@@ -101,7 +116,7 @@ current registry.
       - `reflect memory sync .`: sync local folder instruction memories into SQLite
       - `reflect memory list .`: inspect local folder memories
       - `reflect memory providers`: report local SQLite plus optional OMEGA, LiteLLM, Memory Palace, Agent Memory, Mem0, Graphiti, and TencentDB-Agent-Memory adapters
-   - If local traces are unavailable, fall back to legacy local state such as Cursor hook directories when present.
+   - If OTLP is unavailable, use a supported native session or hook source when present.
 
 ### `reflect.db` direct queries — known schema and pitfalls
 
@@ -121,7 +136,7 @@ llm_count = db.execute("SELECT COUNT(*) FROM llm_calls WHERE session_id = ?", (s
 tools = db.execute("SELECT tool_name, COUNT(*) FROM tool_calls WHERE session_id = ? GROUP BY tool_name", (sid,)).fetchall()
 ```
 
-Use `reflect improve --session SESSION_ID` for parent/child traversal and the finding's Source Sessions ledger for task correlation. Treat direct SQL as an advanced compatibility/debugging fallback only.
+Use `reflect improve --session SESSION_ID` for parent/child traversal and the finding's task evidence ledger for correlation. Treat direct SQL as an advanced debugging fallback only.
 
 5. **Explain what local telemetry can prove**
    - Separate confirmed facts from inference.

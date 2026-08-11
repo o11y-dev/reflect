@@ -1,8 +1,10 @@
 import json
 
-from reflect.store.cursor_adapter import apply_cursor_transcript_usage_estimates
+from reflect.store.cursor_usage import apply_cursor_transcript_usage_estimates
 from reflect.store.ingest import (
+    AppendOnlyReplayPolicy,
     _complete_jsonl_offset,
+    ingest_codex_context_file,
     ingest_local_spans_file,
     ingest_native_session_file,
     ingest_otlp_logs_file,
@@ -251,6 +253,29 @@ def _write_codex_session_file(path):
     path.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
 
 
+def _add_codex_memory_context(path):
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    records.insert(
+        1,
+        {
+            "timestamp": "2026-05-08T00:42:07.991Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "developer",
+                "content": [{
+                    "type": "input_text",
+                    "text": "========= MEMORY_SUMMARY BEGINS =========\nprivate memory\n========= MEMORY_SUMMARY ENDS =========",
+                }],
+            },
+        },
+    )
+    path.write_text(
+        "\n".join(json.dumps(record) for record in records) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_cursor_session_file(path):
     records = [
         {
@@ -301,7 +326,7 @@ def test_ingest_otlp_traces_dedupes(tmp_path):
         conn.close()
 
 
-def test_ingest_retains_codex_runtime_trace_without_creating_session(tmp_path):
+def test_ingest_skips_codex_runtime_trace(tmp_path):
     db = tmp_path / "reflect.db"
     otlp = tmp_path / "traces.json"
     _write_codex_trace_file(otlp, attributes={"code.module.name": "h2::codec"})
@@ -311,8 +336,8 @@ def test_ingest_retains_codex_runtime_trace_without_creating_session(tmp_path):
         migrate(conn)
 
         assert ingest_otlp_traces_file(conn, file_path=otlp) == {
-            "inserted": 1,
-            "skipped": 0,
+            "inserted": 0,
+            "skipped": 1,
         }
         assert normalize_pending_raw_events(conn) == {
             "processed": 0,
@@ -320,15 +345,7 @@ def test_ingest_retains_codex_runtime_trace_without_creating_session(tmp_path):
             "skipped": 0,
         }
 
-        row = conn.execute(
-            """
-            SELECT normalized_status, session_id, attrs_json
-            FROM raw_events
-            """
-        ).fetchone()
-        attrs = json.loads(row[2])
-        assert row[:2] == ("ignored", None)
-        assert attrs["reflect.telemetry.classification"] == "runtime_internal"
+        assert conn.execute("SELECT COUNT(*) FROM raw_events").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM steps").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0] == 0
@@ -523,6 +540,45 @@ def test_incremental_otlp_ingest_falls_back_after_truncation(tmp_path):
         conn.close()
 
 
+def test_interactive_otlp_ingest_defers_replay_after_truncation(tmp_path):
+    db = tmp_path / "reflect.db"
+    otlp = tmp_path / "traces.json"
+    _write_otlp_file(otlp)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        ingest_otlp_traces_file(conn, file_path=otlp, skip_unchanged=True)
+
+        payload = json.loads(otlp.read_text(encoding="utf-8"))
+        span = payload["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+        span["traceId"] = "replacement-trace"
+        span["spanId"] = "replacement-span"
+        span["attributes"][0]["value"]["stringValue"] = "replacement-session"
+        otlp.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+        result = ingest_otlp_traces_file(
+            conn,
+            file_path=otlp,
+            skip_unchanged=True,
+            replay_policy=AppendOnlyReplayPolicy.DEFER,
+        )
+
+        assert result == {
+            "inserted": 0,
+            "skipped": 0,
+            "unchanged": 0,
+            "mode": "replay_deferred",
+            "bytes_read": 0,
+            "processed_offset_bytes": 0,
+            "pending_bytes": otlp.stat().st_size,
+            "replay_required": 1,
+        }
+        assert conn.execute("SELECT COUNT(*) FROM raw_events").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
 def test_ingest_otlp_logs_normalizes_codex_records(tmp_path):
     db = tmp_path / "reflect.db"
     logs = tmp_path / "otel-logs.json"
@@ -606,6 +662,42 @@ def test_ingest_native_codex_session_file(tmp_path):
         conn.close()
 
 
+def test_normalize_codex_context_records_one_artifact_with_session_exposure(tmp_path):
+    db = tmp_path / "reflect.db"
+    session_file = tmp_path / "rollout-codex-native-sess-1.jsonl"
+    _write_codex_session_file(session_file)
+    _add_codex_memory_context(session_file)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        assert ingest_codex_context_file(
+            conn,
+            file_path=session_file,
+        ) == {"inserted": 1, "skipped": 0, "unchanged": 0}
+        assert normalize_pending_raw_events(conn) == {
+            "processed": 1,
+            "failed": 0,
+            "skipped": 0,
+        }
+
+        memory = conn.execute(
+            "SELECT id, type, source, content_preview_redacted FROM memories"
+        ).fetchone()
+        exposure = conn.execute(
+            "SELECT memory_id, session_id, source, content_hash FROM memory_exposures"
+        ).fetchone()
+        assert memory[1:] == (
+            "codex_memory_summary",
+            "codex_session_context",
+            "[Codex memory summary]",
+        )
+        assert exposure[:3] == (memory[0], "codex-native-sess-1", "codex_session_context")
+        assert exposure[3]
+    finally:
+        conn.close()
+
+
 def test_ingest_native_session_skips_session_already_created_from_otlp(tmp_path):
     db = tmp_path / "reflect.db"
     logs = tmp_path / "otel-logs.json"
@@ -639,6 +731,100 @@ def test_ingest_native_session_skips_session_already_created_from_otlp(tmp_path)
             "failed": 0,
             "skipped": 0,
         }
+    finally:
+        conn.close()
+
+
+def test_ingest_keeps_codex_context_when_otlp_owns_the_session(tmp_path):
+    db = tmp_path / "reflect.db"
+    logs = tmp_path / "otel-logs.json"
+    session_file = tmp_path / "rollout-codex-native-sess-1.jsonl"
+    _write_codex_logs_file(logs, session_id="codex-native-sess-1")
+    _write_codex_session_file(session_file)
+    _add_codex_memory_context(session_file)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        ingest_otlp_logs_file(conn, file_path=logs)
+
+        assert ingest_codex_context_file(
+            conn,
+            file_path=session_file,
+        ) == {"inserted": 1, "skipped": 0, "unchanged": 0}
+        normalize_pending_raw_events(conn)
+
+        assert conn.execute("SELECT COUNT(*) FROM memory_exposures").fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT source_kind FROM sessions WHERE id = 'codex-native-sess-1'"
+        ).fetchone()[0] == "otlp_logs_json"
+    finally:
+        conn.close()
+
+
+def test_ingest_native_session_enriches_normalized_otlp_without_tokens(tmp_path):
+    db = tmp_path / "reflect.db"
+    logs = tmp_path / "otel-logs.json"
+    session_file = tmp_path / "rollout-codex-native-sess-1.jsonl"
+    _write_codex_logs_file(logs, session_id="codex-native-sess-1")
+    _write_codex_session_file(session_file)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        ingest_otlp_logs_file(conn, file_path=logs)
+        normalize_pending_raw_events(conn)
+
+        result = ingest_native_session_file(
+            conn,
+            file_path=session_file,
+            agent="codex",
+            skip_existing_sessions=True,
+            skip_unchanged=True,
+        )
+        assert result == {"inserted": 6, "skipped": 0, "unchanged": 0}
+
+        normalize_pending_raw_events(conn)
+        row = conn.execute(
+            """
+            SELECT source_kind, input_tokens, output_tokens, cache_read_tokens
+            FROM sessions
+            WHERE id = 'codex-native-sess-1'
+            """
+        ).fetchone()
+        assert row == ("native_session", 750, 80, 250)
+    finally:
+        conn.close()
+
+
+def test_ingest_native_session_does_not_duplicate_normalized_otlp_tokens(tmp_path):
+    db = tmp_path / "reflect.db"
+    logs = tmp_path / "otel-logs.json"
+    session_file = tmp_path / "rollout-codex-native-sess-1.jsonl"
+    _write_codex_logs_file(logs, session_id="codex-native-sess-1")
+    _write_codex_session_file(session_file)
+
+    conn = connect_sqlite(db)
+    try:
+        migrate(conn)
+        ingest_otlp_logs_file(conn, file_path=logs)
+        normalize_pending_raw_events(conn)
+        conn.execute(
+            "UPDATE sessions SET input_tokens = 25 WHERE id = 'codex-native-sess-1'"
+        )
+        conn.commit()
+
+        result = ingest_native_session_file(
+            conn,
+            file_path=session_file,
+            agent="codex",
+            skip_existing_sessions=True,
+            skip_unchanged=True,
+        )
+        assert result == {"inserted": 0, "skipped": 0, "unchanged": 1}
+        assert conn.execute(
+            "SELECT COUNT(*) FROM raw_events WHERE source_type = 'native_session'"
+        ).fetchone()[0] == 0
     finally:
         conn.close()
 
@@ -754,7 +940,7 @@ def test_ingest_native_cursor_session_file_extracts_tool_and_mcp_calls(tmp_path)
             "missing": 0,
             "session_ids": ["cursor-native-sess-1"],
         }
-        assert rebuild_rollups(conn) == {"session_rollups": 1, "daily_rollups": 1, "tool_rollups": 1}
+        assert rebuild_rollups(conn) == {"session_rollups": 1, "daily_rollups": 1, "tool_rollups": 2}
         rollup = conn.execute(
             """
             SELECT agent, input_tokens, output_tokens, total_cost

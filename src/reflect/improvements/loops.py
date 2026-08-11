@@ -325,6 +325,10 @@ class LoopService:
             seen.add(loop_id)
             baseline = _loads(row[10], {})
             signature = str(baseline.get("tool_signature") or "")
+            if not signature:
+                signature = " > ".join(
+                    str(item) for item in baseline.get("milestone_roles") or []
+                )
             signature_tools = [item.strip() for item in signature.split(">") if item.strip()]
             self._upsert_pattern(
                 loop_id=loop_id,
@@ -344,6 +348,7 @@ class LoopService:
                     "observation_id": str(row[0]),
                     "task_archetype_id": baseline.get("task_archetype_id"),
                     "tool_signature": signature,
+                    "milestone_roles": baseline.get("milestone_roles") or [],
                     "classification": "confirmed_failure_free_routine",
                 },
                 now=now,

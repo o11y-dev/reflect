@@ -72,6 +72,7 @@ class TestSkillMd:
         assert 'reflect ask "<task question>" --json' in content
         assert "`reflect_skills`" in content
         assert "`reflect_patterns`" in content
+        assert "`reflect_impact`" in content
         assert "`reflect_task_status`" in content
         assert "`reflect_review_change`" in content
         assert "`reflect_apply_change`" in content
@@ -79,6 +80,16 @@ class TestSkillMd:
         assert "reflect loops build <loop-id>" in content
         assert "Do not run `reflect setup`" in content
         assert "only as an agent-operated fallback after explicit operator approval" in content
+
+    def test_reflect_skill_requires_impact_gate_before_insufficient_evidence(self):
+        content = SKILL_MD.read_text(encoding="utf-8")
+
+        assert "Impact gate for case studies and ROI" in content
+        assert "outcome shift" in content
+        assert "attributable intervention impact" in content
+        assert "comparable eligible, non-mixed execution units" in content
+        assert "never transfer impact from one workflow to another finding" in content
+        assert "impact not inspected" in content
 
     def test_reflect_skill_packages_session_evidence_guidance(self):
         required_fragments = (
@@ -128,12 +139,10 @@ class TestCliInvocable:
         p = tmp_path / "traces.json"
         p.write_text(wrap_otlp(spans) + "\n")
         runner = CliRunner()
-        with patch("reflect.core._start_publish_server"):
+        with patch("reflect.report_server.start_publish_server"):
             result = runner.invoke(main, [
                 "--foreground",
                 "--otlp-traces", str(p),
-                "--sessions-dir", str(tmp_path / "s"),
-                "--spans-dir", str(tmp_path / "sp"),
                 "--db-path", str(tmp_path / "reflect.db"),
             ])
         assert result.exit_code == 0

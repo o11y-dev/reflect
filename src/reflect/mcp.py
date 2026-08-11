@@ -10,6 +10,8 @@ from mcp.types import ToolAnnotations
 
 from reflect.changes import ChangeAction
 from reflect.context import ReflectContextService
+from reflect.improvements.contracts import WorkflowMilestoneEvidence
+from reflect.improvements.milestones import WorkflowMilestoneState
 from reflect.improvements.models import (
     LoopKind,
     LoopStatus,
@@ -35,10 +37,14 @@ execution_state is retrieve_full_instructions, call the provided full_instructio
 Registry lifecycle and installation fields do not override execution_state. Call reflect_context
 again only when the goal, repository, or subsystem changes materially.
 After validation, call reflect_complete exactly once with the returned task_run_id.
+When selected workflow instructions expose a workflow contract, record its named checkpoints with
+reflect_record_milestone before reflect_complete; milestone self-report is not treated as
+independently verified evidence.
 Do this before the final response. Skip this flow for trivial factual lookups
 and tasks that do not involve a repository. Treat provider memory as context rather than
 Reflect-verified evidence, and never install or apply workflows without explicit operator approval.
 Use the read-only inspection tools when you need registry, pattern, provenance, or task-link status.
+Use reflect_impact before concluding that an installed workflow has no measured impact.
 For a requested workflow mutation, call reflect_review_change and present its exact target, diff,
 evidence, risks, and rollback plan. Do not expose or apply its approval token yet. If the user asks
 for a revision, prepare a new review and present the replacement diff. Call reflect_apply_change
@@ -60,6 +66,12 @@ TASK_START_TOOL = ToolAnnotations(
     openWorldHint=False,
 )
 TASK_COMPLETE_TOOL = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+)
+MILESTONE_TOOL = ToolAnnotations(
     readOnlyHint=False,
     destructiveHint=False,
     idempotentHint=True,
@@ -155,9 +167,35 @@ def reflect_complete(
     )
 
 
+@mcp.tool(annotations=MILESTONE_TOOL)
+def reflect_record_milestone(
+    task_run_id: str,
+    skill_version_id: str,
+    milestone_id: str,
+    state: WorkflowMilestoneState,
+    idempotency_key: str,
+    evidence: WorkflowMilestoneEvidence | None = None,
+) -> dict[str, Any]:
+    """Record one idempotent workflow checkpoint against the active Reflect task run."""
+
+    return _with_service(
+        lambda service: service.record_milestone(
+            task_run_id=task_run_id,
+            skill_version_id=skill_version_id,
+            milestone_id=milestone_id,
+            state=state,
+            idempotency_key=idempotency_key,
+            evidence=evidence,
+        ).model_dump(mode="json")
+    )
+
+
 @mcp.tool(annotations=READ_ONLY_TOOL)
 def reflect_improvements(
     limit: int = 20,
+    offset: int = 0,
+    detail: str = "summary",
+    evidence_limit: int = 10,
     path: str = "",
     session_id: str = "",
     global_scope: bool = False,
@@ -169,6 +207,9 @@ def reflect_improvements(
     return _with_service(
         lambda service: service.improvements_summary(
             limit=limit,
+            offset=offset,
+            detail=detail,
+            evidence_limit=evidence_limit,
             path=resolved_path,
             session_id=session_id or None,
             global_scope=global_scope,
@@ -223,6 +264,24 @@ def reflect_patterns(
             loop_status=loop_status,
             limit=limit,
         ).model_dump(mode="json"),
+        read_only=True,
+    )
+
+
+@mcp.tool(annotations=READ_ONLY_TOOL)
+def reflect_impact(
+    impact_id: str = "",
+    workflow_id: str = "",
+    limit: int = 20,
+) -> dict[str, Any]:
+    """List impact checks or inspect one persisted before/after comparison."""
+
+    return _with_service(
+        lambda service: service.impact(
+            impact_id=impact_id or None,
+            workflow_id=workflow_id or None,
+            limit=limit,
+        ),
         read_only=True,
     )
 

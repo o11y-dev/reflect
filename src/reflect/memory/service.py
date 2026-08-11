@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from reflect.context_artifacts import context_artifact_id
 from reflect.memory.models import MemoryItem, MemorySourceMetadata, utc_now
 from reflect.memory.registry import MemoryProviderRegistry
 from reflect.memory.sqlite_provider import LocalSQLiteMemoryProvider
@@ -107,6 +108,65 @@ class MemoryService:
         results = self.registry.get(provider).search(query, path=scoped_path, filters=filters, limit=limit)
         return [{"score": result.score, "provider": result.provider, **result.item} for result in results]
 
+    def select_context(
+        self,
+        query: str,
+        *,
+        path: Path,
+        provider: str = "local_sqlite",
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Return semantic matches plus always-applicable project instructions."""
+
+        bounded_limit = max(1, min(limit, 20))
+        matches = self.search(
+            query,
+            path=path,
+            provider=provider,
+            limit=bounded_limit,
+        )
+        if provider != "local_sqlite":
+            return matches
+        applicable = [
+            {"score": 0.0, "provider": "local_sqlite", **row}
+            for row in self.local.list(
+                path=str(path.expanduser().resolve()),
+                filters={"validated": True},
+                limit=50,
+            )
+            if str((row.get("source_metadata") or {}).get("source_kind") or "")
+            == "filesystem_instruction_scan"
+            and str(row.get("scope") or "") != "user"
+        ]
+        merged: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in [*applicable, *matches]:
+            memory_id = str(row.get("id") or row.get("memory_id") or "")
+            if not memory_id or memory_id in seen:
+                continue
+            seen.add(memory_id)
+            merged.append(row)
+            if len(merged) >= bounded_limit:
+                break
+        selected: list[dict[str, Any]] = []
+        for row in merged:
+            provider_name = str(row.get("provider") or provider)
+            content, source, truncated, status = _context_content(
+                row,
+                provider=provider_name,
+                requested_path=path,
+            )
+            selected.append(
+                {
+                    **row,
+                    "validation_status": status,
+                    "context_content": content,
+                    "context_content_source": source,
+                    "context_content_truncated": truncated,
+                }
+            )
+        return selected
+
     def sync_path(self, path: Path, *, home_root: Path | None = None) -> dict[str, int]:
         workspace_root = path.expanduser().resolve()
         files = discover_instruction_files(workspace_root, home_root=home_root or Path.home())
@@ -120,7 +180,7 @@ class MemoryService:
                 continue
             kind, scope = _classify_instruction(source_path, workspace_root, home_root=home_root or Path.home())
             content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-            memory_id = f"instruction_{hashlib.sha1(str(source_path).encode('utf-8')).hexdigest()}"
+            memory_id = context_artifact_id(source_path)
             existed = self.local.inspect(memory_id) is not None
             attrs = {
                 "path": str(source_path),
@@ -338,6 +398,61 @@ def _redacted_preview(path: Path, text: str, *, max_chars: int = 360) -> str:
     except ValueError:
         cleaned = " ".join(line.strip() for line in text.splitlines() if line.strip())
         return cleaned[:max_chars]
+
+
+def _context_content(
+    row: dict[str, Any],
+    *,
+    provider: str,
+    requested_path: Path,
+    max_chars: int = 4_000,
+) -> tuple[str, str, bool, str]:
+    """Resolve current local instruction text without weakening stored privacy."""
+
+    preview = str(row.get("content_preview_redacted") or row.get("content") or "")
+    source = row.get("source_metadata") or {}
+    validation_status = str(row.get("validation_status") or "")
+    try:
+        source_size = int(source.get("size") or 0)
+    except (TypeError, ValueError):
+        source_size = 0
+    preview_truncated = len(preview) > max_chars or source_size > len(preview)
+    fallback = (
+        preview[:max_chars],
+        "redacted_preview",
+        preview_truncated,
+        validation_status,
+    )
+    if (
+        provider != "local_sqlite"
+        or validation_status != "validated"
+        or str(row.get("scope") or "") == "user"
+        or str(source.get("source_kind") or "") != "filesystem_instruction_scan"
+    ):
+        return fallback
+
+    source_path_text = str(source.get("path") or "")
+    workspace_root_text = str(source.get("workspace_root") or "")
+    expected_hash = str(row.get("content_hash") or source.get("content_hash") or "")
+    if not source_path_text or not workspace_root_text or not expected_hash:
+        return fallback
+    source_path = Path(source_path_text).expanduser().resolve()
+    workspace_root = Path(workspace_root_text).expanduser().resolve()
+    requested_path = requested_path.expanduser().resolve()
+    try:
+        source_path.relative_to(workspace_root)
+        requested_path.relative_to(workspace_root)
+    except ValueError:
+        return fallback
+    if not source_path.is_file():
+        return fallback[0], fallback[1], fallback[2], "stale"
+    try:
+        text = source_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return fallback[0], fallback[1], fallback[2], "stale"
+    if hashlib.sha256(text.encode("utf-8")).hexdigest() != expected_hash:
+        return fallback[0], fallback[1], fallback[2], "stale"
+    return text[:max_chars], "validated_source_file", len(text) > max_chars, validation_status
 
 
 def _env_enabled(name: str) -> bool:

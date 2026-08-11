@@ -49,16 +49,19 @@ class SkillInspectionAnswer(ReflectModel):
     truncated: bool = False
 
 
-class SkillSourceSession(ReflectModel):
-    """Bounded source-session provenance for one skill version."""
+class SkillSourceExecutionUnit(ReflectModel):
+    """Bounded task-level provenance for one skill version."""
 
+    execution_unit_id: str
     session_id: str
     relationship: str
     confidence: float = Field(ge=0, le=1)
+    source: str
     title: str | None = None
     agent: str | None = None
     started_at: str
     status: str
+    outcome: str | None = None
     workspace: str | None = None
 
 
@@ -212,38 +215,42 @@ class AgentInspectionService:
             ),
         )
 
-    def skill_source_sessions(
+    def skill_source_execution_units(
         self,
         skill_version_id: str,
         *,
         limit: int = 50,
-    ) -> list[SkillSourceSession]:
-        """Resolve version-specific session evidence without exposing raw event content."""
+    ) -> list[SkillSourceExecutionUnit]:
+        """Resolve version-specific task evidence without exposing raw event content."""
 
         rows = self.conn.execute(
             """
-            SELECT s.id, e.relationship, e.confidence, s.title, a.name,
-                   s.started_at, s.status, w.root_path
+            SELECT eu.id, eu.session_id, e.relationship, e.confidence, eu.source,
+                   s.title, a.name, eu.started_at, eu.status, eu.outcome, w.root_path
             FROM skill_evidence e
-            JOIN sessions s ON s.id = e.entity_id
-            LEFT JOIN agents a ON a.id = s.agent_id
-            LEFT JOIN workspaces w ON w.id = s.workspace_id
-            WHERE e.skill_version_id = ? AND e.entity_type = 'session'
-            ORDER BY s.started_at DESC, s.id
+            JOIN execution_units eu ON eu.id = e.entity_id
+            JOIN sessions s ON s.id = eu.session_id
+            LEFT JOIN agents a ON a.id = COALESCE(eu.agent_id, s.agent_id)
+            LEFT JOIN workspaces w ON w.id = COALESCE(eu.workspace_id, s.workspace_id)
+            WHERE e.skill_version_id = ? AND e.entity_type = 'execution_unit'
+            ORDER BY eu.started_at DESC, eu.id
             LIMIT ?
             """,
             (skill_version_id, max(1, min(limit, 100))),
         ).fetchall()
         return [
-            SkillSourceSession(
-                session_id=str(row[0]),
-                relationship=str(row[1]),
-                confidence=float(row[2]),
-                title=str(row[3]) if row[3] else None,
-                agent=str(row[4]) if row[4] else None,
-                started_at=str(row[5]),
-                status=str(row[6]),
-                workspace=str(row[7]) if row[7] else None,
+            SkillSourceExecutionUnit(
+                execution_unit_id=str(row[0]),
+                session_id=str(row[1]),
+                relationship=str(row[2]),
+                confidence=float(row[3]),
+                source=str(row[4]),
+                title=str(row[5]) if row[5] else None,
+                agent=str(row[6]) if row[6] else None,
+                started_at=str(row[7]),
+                status=str(row[8]),
+                outcome=str(row[9]) if row[9] else None,
+                workspace=str(row[10]) if row[10] else None,
             )
             for row in rows
         ]

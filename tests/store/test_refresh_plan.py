@@ -77,3 +77,20 @@ def test_refresh_plan_scopes_a_required_maintenance_rebuild_to_rollups():
     assert plan.rollup_mode is RefreshMode.FULL
     assert plan.graph_reason == "graph state is current"
     assert plan.rollup_reason == "migration maintenance is pending"
+
+
+def test_refresh_plan_reprices_and_rebuilds_rollups_when_pricing_inputs_change():
+    plan = plan_derived_refresh(
+        changed_session_ids=set(),
+        all_session_ids={"session-1"},
+        graph_session_ids={"session-1"},
+        rollup_session_ids={"session-1"},
+        graph_exists=True,
+        force_full_cost_reason="pricing rates or model aliases changed",
+    )
+
+    assert plan.cost_mode is RefreshMode.FULL
+    assert plan.cost_reason == "pricing rates or model aliases changed"
+    assert plan.graph_mode is RefreshMode.SKIP
+    assert plan.rollup_mode is RefreshMode.FULL
+    assert plan.rollup_reason == "pricing rates or model aliases changed"

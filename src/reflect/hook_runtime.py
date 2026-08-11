@@ -37,6 +37,26 @@ class HookRuntime:
             return cls(Path(path_executable), bundled=False)
         return None
 
+    def doctor_report(self) -> dict[str, Any] | None:
+        """Return the hook's read-only health report when the CLI is responsive."""
+
+        try:
+            completed = subprocess.run(
+                [str(self.executable), "doctor", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if completed.returncode:
+            return None
+        try:
+            payload = json.loads(completed.stdout)
+        except (TypeError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
 
 @dataclass(frozen=True)
 class PipxPackage:

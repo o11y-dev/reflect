@@ -15,6 +15,7 @@ from typing import Any
 
 from reflect.improvements.models import WorkflowCandidateRecord
 from reflect.improvements.repository import ImprovementRepository, utc_now
+from reflect.improvements.workflow_identity import WorkflowIdentity
 
 _SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
@@ -46,20 +47,21 @@ class WorkflowService:
             ]
         grouped: dict[str, list[WorkflowCandidateRecord]] = {}
         for candidate in candidates:
-            slug = str(candidate.content.get("slug") or candidate.id)
-            grouped.setdefault(slug, []).append(candidate)
+            grouped.setdefault(candidate.contract_signature, []).append(candidate)
 
         reviewable: list[WorkflowCandidateRecord] = []
         for members in grouped.values():
             eligible = members
             if statuses:
-                if statuses == {"pending"} and any(item.status.value == "active" for item in members):
+                if statuses == {"pending"} and any(
+                    item.lifecycle.deployment.value == "active" for item in members
+                ):
                     continue
                 eligible = [item for item in members if item.status.value in statuses]
             if not eligible:
                 continue
             representative = min(eligible, key=self._representative_sort_key)
-            ledger = self.repository.workflow_session_ledger(representative.id, limit=1)
+            ledger = self.repository.workflow_evidence_ledger(representative.id, limit=1)
             ledger_observation_ids = set(ledger.observation_ids)
             evidence_members = [
                 item for item in members if item.observation_id in ledger_observation_ids
@@ -67,7 +69,9 @@ class WorkflowService:
             reviewable.append(
                 representative.model_copy(
                     update={
-                        "support_count": ledger.source_session_count,
+                        "support_execution_unit_count": (
+                            ledger.support_execution_unit_count
+                        ),
                         "confidence": max(item.confidence for item in evidence_members),
                         "variant_count": len(evidence_members),
                         "supporting_observation_count": len(ledger_observation_ids),
@@ -82,16 +86,17 @@ class WorkflowService:
         candidate = self.repository.get_candidate(candidate_id)
         if candidate is None:
             raise KeyError(f"Workflow candidate not found: {candidate_id}")
-        slug = str(candidate.content.get("slug") or candidate.id)
-        members = self.repository.list_candidates_by_slug(slug)
-        ledger = self.repository.workflow_session_ledger(candidate.id, limit=1)
+        members = list(
+            self.repository.list_candidates_by_contract(candidate.contract_signature)
+        )
+        ledger = self.repository.workflow_evidence_ledger(candidate.id, limit=1)
         ledger_observation_ids = set(ledger.observation_ids)
         evidence_members = [
             item for item in members if item.observation_id in ledger_observation_ids
         ] or [candidate]
         return candidate.model_copy(
             update={
-                "support_count": ledger.source_session_count,
+                "support_execution_unit_count": ledger.support_execution_unit_count,
                 "confidence": max(item.confidence for item in evidence_members),
                 "variant_count": len(evidence_members),
                 "supporting_observation_count": max(1, len(ledger_observation_ids)),
@@ -102,17 +107,15 @@ class WorkflowService:
     @staticmethod
     def _representative_sort_key(candidate: WorkflowCandidateRecord) -> tuple[int, float, int, str]:
         status_priority = {
-            "active": 0,
-            "approved": 1,
-            "pending": 2,
-            "stale": 3,
-            "rejected": 4,
-            "rolled_back": 5,
+            "approved": 0,
+            "pending": 1,
+            "stale": 2,
+            "rejected": 3,
         }
         return (
             status_priority.get(candidate.status.value, 9),
             -candidate.confidence,
-            -candidate.support_count,
+            -candidate.support_execution_unit_count,
             candidate.id,
         )
 
@@ -130,9 +133,9 @@ class WorkflowService:
                 tofile=str(target),
             )
         )
-        ledger = self.repository.workflow_session_ledger(candidate_id, limit=50)
+        ledger = self.repository.workflow_evidence_ledger(candidate_id, limit=50)
         workspace_counts = Counter(
-            item.workspace for item in ledger.source_sessions if item.workspace
+            item.workspace for item in ledger.provenance_sessions if item.workspace
         )
         suggested_root_counts: Counter[tuple[str, bool]] = Counter()
         for workspace, count in workspace_counts.items():
@@ -141,7 +144,7 @@ class WorkflowService:
         suggested_roots = [
             {
                 "path": path,
-                "source_sessions": count,
+                "provenance_sessions": count,
                 "is_repository": is_repository,
                 "is_directory": Path(path).is_dir(),
             }
@@ -153,6 +156,12 @@ class WorkflowService:
             if item["is_directory"]
         }
         checks = self._target_checks(candidate, root=root, target=target)
+        suggested_unique_slug = (
+            self._suggest_unique_slug(candidate, root=root)
+            if checks["target_conflicts"] and not checks["contract_conflicts"]
+            else None
+        )
+        checks["suggested_unique_slug"] = suggested_unique_slug
         evidence_scope_match = (
             str(root) in evidence_project_paths if evidence_project_paths else None
         )
@@ -185,11 +194,13 @@ class WorkflowService:
             "diff": diff,
             "content": content,
             "checks": checks,
+            "suggested_unique_slug": suggested_unique_slug,
             "suggested_project_roots": suggested_roots,
             "evidence_project_paths": sorted(evidence_project_paths),
             "evidence_repository_paths": sorted(evidence_project_paths),
-            "source_session_count": ledger.source_session_count,
-            "exposure_session_count": ledger.exposure_session_count,
+            "support_execution_unit_count": ledger.support_execution_unit_count,
+            "provenance_session_count": ledger.provenance_session_count,
+            "exposed_execution_unit_count": ledger.exposed_execution_unit_count,
         }
 
     def approve(
@@ -207,13 +218,7 @@ class WorkflowService:
                 "status": "approved",
                 "idempotent": True,
             }
-        if candidate.status.value == "active":
-            return {
-                "candidate_id": candidate_id,
-                "status": "active",
-                "idempotent": True,
-            }
-        if candidate.status.value in {"stale", "rejected", "rolled_back"}:
+        if candidate.status.value in {"stale", "rejected"}:
             raise RuntimeError(
                 f"Workflow {candidate_id} is {candidate.status.value}; review it before approving"
             )
@@ -253,7 +258,7 @@ class WorkflowService:
         actor: str = "local_operator",
     ) -> dict[str, Any]:
         candidate = self.show(candidate_id)
-        if candidate.status.value in {"stale", "rejected", "rolled_back"}:
+        if candidate.status.value in {"stale", "rejected"}:
             raise RuntimeError(f"Workflow {candidate_id} is {candidate.status.value}; review it before applying")
         content = self._render_skill(candidate)
         root, target = self._target_for(candidate, project_root)
@@ -384,12 +389,17 @@ class WorkflowService:
                 ),
             )
             self.conn.execute(
-                "UPDATE workflow_candidates SET status = 'active', reviewer = ?, reviewed_at = ?, updated_at = ? WHERE id = ?",
-                (actor, now, now, candidate_id),
-            )
-            self.conn.execute(
                 "UPDATE observations SET status = 'active', updated_at = ? WHERE id = ?",
                 (now, candidate.observation_id),
+            )
+            self.conn.execute(
+                """
+                UPDATE workflow_candidates
+                SET status = 'approved', reviewer = ?, reviewed_at = COALESCE(reviewed_at, ?),
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (actor, now, now, candidate_id),
             )
             self.repository.record_event(
                 entity_type="intervention",
@@ -424,20 +434,24 @@ class WorkflowService:
     ) -> WorkflowCandidateRecord:
         """Replace a pending candidate's structured content and return it to review."""
         candidate = self.show(candidate_id)
-        if candidate.status.value == "active":
+        if candidate.lifecycle.deployment.value == "active":
             raise RuntimeError("Roll back an active workflow before editing it")
         normalized = self._validate_content(content)
+        identity = WorkflowIdentity.from_content(candidate.title, normalized)
         now = utc_now()
         self.conn.execute(
             """
             UPDATE workflow_candidates
-            SET content_json = ?, status = 'pending', reviewer = NULL,
-                reviewed_at = NULL, checks_json = ?, updated_at = ?
+            SET content_json = ?, contract_signature = ?, revision_hash = ?,
+                status = 'pending', reviewer = NULL, reviewed_at = NULL,
+                checks_json = ?, updated_at = ?
             WHERE id = ?
             """,
             (
                 json.dumps(normalized, sort_keys=True),
-                json.dumps({"schema": "valid", "review_required": True, "applied": False}),
+                identity.contract_signature,
+                identity.revision_hash,
+                json.dumps({"schema": "valid", "review_required": True}),
                 now,
                 candidate_id,
             ),
@@ -466,7 +480,7 @@ class WorkflowService:
         actor: str = "local_operator",
     ) -> WorkflowCandidateRecord:
         candidate = self.show(candidate_id)
-        if candidate.status.value == "active":
+        if candidate.lifecycle.deployment.value == "active":
             raise RuntimeError("Roll back an active workflow before rejecting it")
         now = utc_now()
         self.conn.execute(
@@ -601,10 +615,6 @@ class WorkflowService:
             WHERE id = ?
             """,
             (now, reason, now, row["intervention_id"]),
-        )
-        self.conn.execute(
-            "UPDATE workflow_candidates SET status = 'rolled_back', updated_at = ? WHERE id = ?",
-            (now, candidate_id),
         )
         self.conn.execute(
             "UPDATE observations SET status = 'rolled_back', updated_at = ? WHERE id = ?",
@@ -766,8 +776,30 @@ class WorkflowService:
                 (str(target),),
             ).fetchall()
         ]
-        active_conflicts = [owner for owner in active_owners if owner["candidate_id"] != candidate.id]
-        slug = str(candidate.content.get("slug") or "")
+        contract_owners = [
+            {"candidate_id": str(row[0]), "title": str(row[1])}
+            for row in self.conn.execute(
+                """
+                SELECT wc.id, wc.title
+                FROM interventions i
+                JOIN workflow_versions wv ON wv.id = i.workflow_version_id
+                JOIN workflow_candidates wc ON wc.id = wv.candidate_id
+                WHERE i.status = 'active' AND wc.contract_signature = ?
+                ORDER BY i.created_at DESC
+                """,
+                (candidate.contract_signature,),
+            ).fetchall()
+        ]
+        target_conflicts = [
+            owner for owner in active_owners if owner["candidate_id"] != candidate.id
+        ]
+        contract_conflicts = [
+            owner for owner in contract_owners if owner["candidate_id"] != candidate.id
+        ]
+        active_conflicts = {
+            owner["candidate_id"]: owner
+            for owner in [*target_conflicts, *contract_conflicts]
+        }
         alternatives = [
             {"candidate_id": str(row[0]), "title": str(row[1]), "status": str(row[2])}
             for row in self.conn.execute(
@@ -775,11 +807,11 @@ class WorkflowService:
                 SELECT id, title, status
                 FROM workflow_candidates
                 WHERE id <> ?
-                  AND json_extract(content_json, '$.slug') = ?
-                  AND status NOT IN ('rejected', 'rolled_back')
-                ORDER BY confidence DESC, support_count DESC, updated_at DESC
+                  AND contract_signature = ?
+                  AND status <> 'rejected'
+                ORDER BY confidence DESC, updated_at DESC
                 """,
-                (candidate.id, slug),
+                (candidate.id, candidate.contract_signature),
             ).fetchall()
         ]
         issues: list[str] = []
@@ -795,38 +827,69 @@ class WorkflowService:
             issues.append(f"Workflow target is not a file: {target}")
         elif not writable:
             issues.append(f"Target project folder is not writable: {root}")
-        if active_conflicts:
+        conflict_list = list(active_conflicts.values())
+        if conflict_list:
             issues.append(
-                f"Another active workflow already owns {target}: {active_conflicts[0]['title']}"
+                "The same procedure is already active through "
+                f"{conflict_list[0]['title']}"
             )
         return {
             "schema_valid": True,
             "project_directory": project_directory,
             "repository_root": repository_root,
             "writable": writable,
-            "target_available": not active_conflicts,
+            "target_available": not conflict_list,
             "apply_allowed": (
                 project_directory
                 and not unsafe_project_root
                 and invalid_parent is None
                 and target_supported
                 and writable
-                and not active_conflicts
+                and not conflict_list
             ),
             "issues": issues,
             "target_owner": active_owners[0] if active_owners else None,
-            "active_conflicts": active_conflicts,
+            "active_conflicts": conflict_list,
+            "target_conflicts": target_conflicts,
+            "contract_conflicts": contract_conflicts,
             "alternative_candidates": alternatives,
         }
+
+    def _suggest_unique_slug(
+        self,
+        candidate: WorkflowCandidateRecord,
+        *,
+        root: Path,
+    ) -> str:
+        """Return the first deterministic project-local slug not already in use."""
+
+        base = str(candidate.content.get("slug") or "workflow")
+        occupied = {
+            str(row[0])
+            for row in self.conn.execute(
+                """
+                SELECT DISTINCT json_extract(content_json, '$.slug')
+                FROM workflow_candidates
+                WHERE id <> ? AND status <> 'rejected'
+                """,
+                (candidate.id,),
+            ).fetchall()
+            if row[0]
+        }
+        skills_root = root / ".agents" / "skills"
+        if skills_root.is_dir():
+            occupied.update(item.name for item in skills_root.iterdir() if item.is_dir())
+        for index in range(2, 1000):
+            suffix = f"-{index}"
+            suggestion = f"{base[: 63 - len(suffix)].rstrip('-')}{suffix}"
+            if suggestion not in occupied:
+                return suggestion
+        raise RuntimeError(f"Could not generate an available workflow name for {base!r}")
 
     def _mark_stale(self, candidate_id: str, intervention_id: str, *, now: str) -> None:
         self.conn.execute(
             "UPDATE interventions SET status = 'stale', updated_at = ? WHERE id = ?",
             (now, intervention_id),
-        )
-        self.conn.execute(
-            "UPDATE workflow_candidates SET status = 'stale', updated_at = ? WHERE id = ?",
-            (now, candidate_id),
         )
         self.repository.record_event(
             entity_type="intervention",

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 from unittest.mock import patch
@@ -53,6 +54,38 @@ def test_context_service_combines_memory_with_guidance(tmp_path):
     assert "no matching approved workflow" in answer.answer
 
 
+def test_context_service_reads_current_validated_project_instruction(tmp_path):
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    content = (
+        "# Release gate\n\n"
+        + " ".join("Verify the packaged artifact." for _ in range(30))
+        + "\n\n## Revision\nUniqueRevisionContract"
+    )
+    source = workspace / "AGENTS.md"
+    source.write_text(content, encoding="utf-8")
+    db_path = tmp_path / "reflect.db"
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        memory = MemoryService(conn)
+        memory.sync_path(workspace, home_root=tmp_path / "empty-home")
+        memory_id = memory.list_memories(path=workspace)[0]["id"]
+        assert memory.validate(str(memory_id))["status"] == "validated"
+
+        answer = ReflectContextService(conn).ask("UniqueRevisionContract", path=workspace)
+
+        assert answer.memories[0].content == content
+        assert answer.memories[0].content_source == "validated_source_file"
+        assert answer.memories[0].content_truncated is False
+
+        source.write_text(content + "Changed after validation.\n", encoding="utf-8")
+        stale = ReflectContextService(conn).ask("release gate", path=workspace)
+        assert stale.memories == []
+    finally:
+        conn.close()
+
+
 def test_mcp_read_service_factory_does_not_run_migrations(tmp_path, monkeypatch):
     from reflect.mcp import _with_service
 
@@ -88,18 +121,30 @@ def test_context_service_records_and_completes_an_agent_task(tmp_path):
     conn = connect_sqlite(db_path)
     try:
         service = ReflectContextService(conn)
-        answer = service.begin_task("release gate with private detail", path=tmp_path)
+        answer = service.begin_task("release gate", path=tmp_path)
 
         assert answer.task_run_id
         assert answer.next_action
         assert answer.next_action.tool == "reflect_complete"
         assert answer.next_action.arguments == {"task_run_id": answer.task_run_id}
         row = conn.execute(
-            "SELECT question_hash, status FROM mcp_task_runs WHERE id = ?",
+            """
+            SELECT question_hash, status, selected_memories_json
+            FROM mcp_task_runs WHERE id = ?
+            """,
             (answer.task_run_id,),
         ).fetchone()
-        assert row[0] != "release gate with private detail"
+        assert row[0] != "release gate"
         assert row[1] == "started"
+        selected_memories = json.loads(row[2])
+        assert selected_memories == [
+            {
+                "content_hash": answer.memories[0].content_hash,
+                "memory_id": answer.memories[0].id,
+                "provider": "local_sqlite",
+                "validation_status": "validated",
+            }
+        ]
 
         completed = service.complete_task(
             answer.task_run_id,
@@ -120,6 +165,89 @@ def test_context_service_records_and_completes_an_agent_task(tmp_path):
         assert repeated.idempotent is True
         with pytest.raises(RuntimeError, match="already completed"):
             service.complete_task(answer.task_run_id, outcome="failure")
+    finally:
+        conn.close()
+
+
+def test_context_service_reconciles_selected_memory_exposure(tmp_path, monkeypatch):
+    db_path = tmp_path / "reflect.db"
+    memory_id = _seed_memory(db_path, tmp_path)
+    conn = connect_sqlite(db_path)
+    try:
+        now = "2026-08-06T10:00:00+00:00"
+        conn.execute(
+            "INSERT INTO agents(id, name, created_at, updated_at) VALUES ('a', 'codex', ?, ?)",
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO sessions(id, agent_id, started_at, status, created_at, updated_at)
+            VALUES ('memory-session', 'a', ?, 'completed', ?, ?)
+            """,
+            (now, now, now),
+        )
+        conn.commit()
+        monkeypatch.setenv("REFLECT_SESSION_ID", "memory-session")
+
+        service = ReflectContextService(conn)
+        answer = service.begin_task("Run the release gate", path=tmp_path)
+        completed = service.complete_task(
+            str(answer.task_run_id),
+            outcome="success",
+            verification_passed=True,
+        )
+        status = service.task_status(str(answer.task_run_id))
+
+        assert completed.linked_to_session is True
+        assert status.selected_memories[0].memory_id == memory_id
+        assert status.memory_exposure_recorded_count == 1
+        assert tuple(
+            conn.execute(
+                """
+                SELECT memory_id, session_id, source
+                FROM memory_exposures
+                """
+            ).fetchone()
+        ) == (memory_id, "memory-session", "reflect_context")
+    finally:
+        conn.close()
+
+
+def test_context_service_registers_explicit_task_file_as_contract(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    contract = workspace / "dashboard-contract.md"
+    contract.write_text("# Dashboard contract\n\nAcceptance: filtered context is visible.\n", encoding="utf-8")
+    conn = connect_sqlite(db_path)
+    try:
+        migrate(conn)
+        service = ReflectContextService(conn)
+        answer = service.begin_task(
+            "Implement the reviewed dashboard contract",
+            path=workspace,
+            task_file=contract,
+        )
+
+        status = service.task_runs.status(str(answer.task_run_id))
+        task_run = conn.execute(
+            "SELECT task_contract_id FROM mcp_task_runs WHERE id = ?",
+            (answer.task_run_id,),
+        ).fetchone()
+        stored = conn.execute(
+            "SELECT id, title, status, source_path, content_hash FROM specs WHERE id = ?",
+            (task_run[0],),
+        ).fetchone()
+
+        assert status.task_contract_id == task_run[0]
+        assert status.task_contract_hash
+        assert stored == (
+            task_run[0],
+            "dashboard contract",
+            "tracked",
+            "dashboard-contract.md",
+            status.task_contract_hash,
+        )
     finally:
         conn.close()
 
@@ -176,20 +304,23 @@ def test_context_service_returns_and_measures_the_selected_versioned_skill(
         assert len(answer.selected_skills) == 1
         selected = answer.selected_skills[0]
         assert selected.slug == "safe-release"
-        assert selected.workflow_status == "active"
+        assert selected.workflow_status == "approved"
         assert selected.registry_lifecycle_state == "active"
         assert selected.execution_state == "follow_allowed"
         assert selected.instructions_truncated is False
         assert selected.installation_state == "installed"
         assert selected.installation_requires_operator_approval is True
         assert "Run the focused release validation" in selected.instructions
-        assert context.task_status(answer.task_run_id).link_state == "session_available"
+        started_status = context.task_status(answer.task_run_id)
+        assert started_status.link_state == "session_available"
+        assert started_status.execution_unit_id is not None
         completed = context.complete_task(
             answer.task_run_id,
             outcome="success",
             verification_passed=True,
         )
         assert completed.linked_to_session is True
+        assert completed.execution_unit_id == started_status.execution_unit_id
         assert tuple(
             conn.execute(
                 "SELECT state, outcome FROM skill_usage WHERE skill_id = ?",
@@ -206,7 +337,7 @@ def test_context_service_returns_and_measures_the_selected_versioned_skill(
         conn.close()
 
 
-def test_context_service_makes_approved_pending_skill_execution_unambiguous(tmp_path):
+def test_context_service_does_not_execute_approved_but_uninstalled_skill(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
         service = ImprovementService(conn)
@@ -233,12 +364,9 @@ def test_context_service_makes_approved_pending_skill_execution_unambiguous(tmp_
             path=tmp_path,
         )
 
-        selected = answer.selected_skills[0]
-        assert selected.workflow_status == "approved"
-        assert selected.registry_lifecycle_state == "pending"
-        assert selected.execution_state == "follow_allowed"
-        assert selected.installation_state == "not_installed"
-        assert selected.installation_requires_operator_approval is True
+        assert answer.workflow_id is None
+        assert answer.selected_skills == []
+        assert any("not installed" in item for item in answer.limitations)
     finally:
         conn.close()
 
@@ -262,11 +390,8 @@ def test_context_service_requires_full_skill_retrieval_when_inline_content_is_tr
             session_ids=[],
             source_agent="codex",
         )[0]
-        conn.execute(
-            "UPDATE workflow_candidates SET status = 'approved' WHERE id = ?",
-            (candidate_id,),
-        )
-        conn.commit()
+        (tmp_path / ".git").mkdir()
+        service.workflows.apply(candidate_id, project_root=tmp_path)
 
         context = ReflectContextService(conn)
         answer = context.begin_task(
@@ -360,6 +485,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
                 "reflect_patterns",
                 {"pattern_type": "all", "query": "release"},
             )
+            impact = await session.call_tool("reflect_impact", {})
             review = await session.call_tool(
                 "reflect_review_change",
                 {
@@ -381,6 +507,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
                 task_status,
                 skills,
                 patterns,
+                impact,
                 review,
                 applied,
             )
@@ -393,6 +520,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
         task_status,
         skills,
         patterns,
+        impact,
         review,
         applied,
     ) = asyncio.run(exercise_server())
@@ -402,14 +530,17 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
     assert "At the start of every non-trivial repository task" in initialized.instructions
     assert "execution_state is follow_allowed" in initialized.instructions
     assert "call reflect_complete exactly once" in initialized.instructions
+    assert "Use reflect_impact before concluding" in initialized.instructions
     assert "only after the user explicitly approves" in initialized.instructions
     assert names == {
         "reflect_apply_change",
         "reflect_complete",
         "reflect_context",
         "reflect_explain",
+        "reflect_impact",
         "reflect_improvements",
         "reflect_patterns",
+        "reflect_record_milestone",
         "reflect_review_change",
         "reflect_skills",
         "reflect_task_status",
@@ -430,6 +561,8 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
     assert not patterns.isError
     assert patterns.structuredContent["workflow_count"] == 1
     assert patterns.structuredContent["loop_count"] == 0
+    assert not impact.isError
+    assert impact.structuredContent["count"] == 0
     assert not review.isError
     assert review.structuredContent["candidate_id"] == candidate_id
     assert review.structuredContent["state"] == "pending"
@@ -438,6 +571,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
     assert not {"memory_search", "memory_remember", "memory_validate"} & names
     assert discovered["reflect_context"].annotations.readOnlyHint is False
     assert discovered["reflect_complete"].annotations.readOnlyHint is False
+    assert discovered["reflect_record_milestone"].annotations.readOnlyHint is False
     assert discovered["reflect_review_change"].annotations.readOnlyHint is False
     assert discovered["reflect_apply_change"].annotations.readOnlyHint is False
     assert discovered["reflect_apply_change"].annotations.destructiveHint is True
@@ -447,6 +581,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
         - {
             "reflect_context",
             "reflect_complete",
+            "reflect_record_milestone",
             "reflect_review_change",
             "reflect_apply_change",
         }

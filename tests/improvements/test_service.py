@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import stat
 from pathlib import Path
 from unittest.mock import patch
@@ -8,7 +9,9 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
+from reflect.context import ReflectContextService
 from reflect.core import main
+from reflect.improvements.milestones import WorkflowMilestoneService
 from reflect.improvements.models import (
     EvidenceRef,
     ImprovementSummary,
@@ -24,11 +27,81 @@ from reflect.improvements.nudges import HookNudgeBridge, NudgeService
 from reflect.improvements.rules import RetryLoopRule
 from reflect.improvements.service import ImprovementService
 from reflect.improvements.team import TeamBundleService
+from reflect.improvements.workflow_identity import (
+    workflow_contract_signature,
+    workflow_revision_hash,
+)
 from reflect.store.migrate import migrate
 from reflect.store.normalize import backfill_tool_call_hashes
 from reflect.store.sqlite import connect_sqlite
 
 NOW = "2026-07-01T10:00:00+00:00"
+CONTRACT_SIGNALS = (("Read", "inspect"), ("Edit", "apply patch"), ("exec", "pytest"))
+
+
+def test_improvement_summary_is_paginated_and_summary_first(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        service.repository.sync_rule_definitions(
+            [
+                RuleDefinition(
+                    id="bounded_evidence",
+                    version=1,
+                    category="reliability",
+                    title="Bounded evidence",
+                    description="Exercise the bounded MCP response.",
+                )
+            ],
+            now=NOW,
+        )
+        observation_id = service.repository.upsert_observation(
+            ObservationDraft(
+                rule_id="bounded_evidence",
+                rule_version=1,
+                scope_type="project",
+                scope_id="repo-1",
+                fingerprint="bounded-evidence",
+                category="reliability",
+                title="Bounded evidence",
+                summary="A concise finding.",
+                metric_name="calls",
+                metric_value=1,
+                metric_unit="calls",
+                metric_direction="lower_is_better",
+                impact_score=50,
+                severity=Severity.MEDIUM,
+                confidence=0.8,
+                evidence=[
+                    EvidenceRef(
+                        entity_type="session",
+                        entity_id="session-1",
+                        session_id="session-1",
+                        summary_redacted="Evidence row",
+                    )
+                ],
+            ),
+            now=NOW,
+        )
+        conn.commit()
+
+        context = ReflectContextService(conn, initialize_schema=False)
+        summary = context.improvements_summary(path=tmp_path, limit=1)
+        full = context.improvements_summary(
+            path=tmp_path,
+            limit=1,
+            detail="full",
+            evidence_limit=1,
+        )
+
+        assert summary["count"] == 1
+        assert summary["findings"][0]["id"] == observation_id
+        assert "evidence" not in summary["findings"][0]
+        assert summary["findings"][0]["evidence_count"] == 1
+        assert summary["freshness"]["evidence_cutoff"] is not None
+        assert summary["freshness"]["safe_for_before_after"] is False
+        assert full["findings"][0]["evidence"][0]["session_id"] == "session-1"
+    finally:
+        conn.close()
 
 
 def _seed(conn) -> None:
@@ -125,6 +198,147 @@ def _service(tmp_path: Path) -> tuple[ImprovementService, object]:
     )
     conn.commit()
     return ImprovementService(conn), conn
+
+
+def _workflow_contract(
+    signature_hash: str,
+    *,
+    applicability: dict[str, str] | None = None,
+    validation: dict[str, int] | None = None,
+) -> dict[str, object]:
+    contract: dict[str, object] = {
+        "signature_hash": signature_hash,
+        "milestones": [
+            {"id": role, "role": role, "required": True, "evidence": "corroborated"}
+            for role in ("observe", "act", "verify")
+        ],
+    }
+    if applicability:
+        contract["applicability"] = applicability
+    if validation:
+        contract["validation"] = validation
+    return contract
+
+
+def _configure_contract(
+    conn: sqlite3.Connection,
+    *,
+    candidate_id: str,
+    intervention_id: str,
+    contract: dict[str, object],
+    exposed_at: str,
+    target_metric: str | None = None,
+    measurement_window: int | None = None,
+    metric_direction: str | None = None,
+) -> None:
+    conn.execute(
+        """
+        UPDATE workflow_candidates
+        SET target_metric = COALESCE(?, target_metric),
+            task_archetype_id = 'implementation',
+            measurement_window = COALESCE(?, measurement_window),
+            content_json = json_set(content_json, '$.workflow_contract', json(?))
+        WHERE id = ?
+        """,
+        (target_metric, measurement_window, json.dumps(contract), candidate_id),
+    )
+    conn.execute(
+        """
+        UPDATE workflow_versions
+        SET content_json = json_set(content_json, '$.workflow_contract', json(?))
+        WHERE id = (
+          SELECT workflow_version_id FROM interventions WHERE id = ?
+        )
+        """,
+        (json.dumps(contract), intervention_id),
+    )
+    if metric_direction:
+        conn.execute(
+            """
+            UPDATE observations SET metric_direction = ?
+            WHERE id = (SELECT observation_id FROM workflow_candidates WHERE id = ?)
+            """,
+            (metric_direction, candidate_id),
+        )
+    conn.execute(
+        "UPDATE interventions SET exposure_started_at = ? WHERE id = ?",
+        (exposed_at, intervention_id),
+    )
+
+
+def _insert_contract_execution(
+    conn: sqlite3.Connection,
+    execution_unit_id: str,
+    *,
+    started_at: str,
+    sequence_base: int,
+    verification_passed: bool = True,
+    mcp_task_run_id: str | None = None,
+    tool_count: int = len(CONTRACT_SIGNALS),
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO execution_units(
+          id, session_id, mcp_task_run_id, source, source_confidence,
+          workspace_id, repo_id, agent_id, started_at, ended_at, status,
+          outcome, verification_passed, eligible, boundary_json, created_at, updated_at
+        ) VALUES (?, 'session-1', ?, 'mcp_task_run', 1, 'workspace-1', 'repo-1',
+                  'agent-1', ?, ?, 'completed', 'success', ?, 1, '{}', ?, ?)
+        """,
+        (
+            execution_unit_id,
+            mcp_task_run_id,
+            started_at,
+            started_at,
+            int(verification_passed),
+            NOW,
+            NOW,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO execution_unit_archetypes(
+          execution_unit_id, task_archetype_id, confidence, mixed, features_json,
+          classified_at, updated_at
+        ) VALUES (?, 'implementation', 1, 0, '{}', ?, ?)
+        """,
+        (execution_unit_id, NOW, NOW),
+    )
+    for offset, (tool_name, preview) in enumerate(CONTRACT_SIGNALS):
+        step_id = f"{execution_unit_id}-step-{offset}"
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status, raw_attrs_json,
+              created_at, updated_at
+            ) VALUES (?, 'session-1', ?, 'tool_call', ?, 'ok', '{}', ?, ?)
+            """,
+            (step_id, sequence_base + offset, started_at, NOW, NOW),
+        )
+        conn.execute(
+            """
+            INSERT INTO execution_unit_steps(execution_unit_id, step_id, session_id, created_at)
+            VALUES (?, ?, 'session-1', ?)
+            """,
+            (execution_unit_id, step_id, NOW),
+        )
+        if offset < tool_count:
+            conn.execute(
+                """
+                INSERT INTO tool_calls(
+                  id, step_id, session_id, tool_name, status,
+                  input_preview_redacted, raw_attrs_json, created_at, updated_at
+                ) VALUES (?, ?, 'session-1', ?, 'ok', ?, '{}', ?, ?)
+                """,
+                (
+                    f"{execution_unit_id}-tool-{offset}",
+                    step_id,
+                    tool_name,
+                    preview,
+                    NOW,
+                    NOW,
+                ),
+            )
 
 
 def test_refresh_persists_versioned_observations_and_pending_candidates(tmp_path):
@@ -267,8 +481,7 @@ def test_refresh_retires_legacy_retry_observations_without_deleting_history(tmp_
     try:
         definition = RetryLoopRule.definition
         service.repository.sync_rule_definitions((definition,), now=NOW)
-        observation_id = service.repository.upsert_observation(
-            ObservationDraft(
+        draft = ObservationDraft(
                 rule_id=definition.id,
                 rule_version=definition.version,
                 scope_type="repository",
@@ -287,8 +500,52 @@ def test_refresh_retires_legacy_retry_observations_without_deleting_history(tmp_
                 confidence=0.9,
                 occurrence_count=3,
                 affected_session_count=1,
+            )
+        observation_id = service.repository.upsert_observation(
+            draft,
+            now=NOW,
+        )
+        proposal = WorkflowProposal(
+            title="Workflow: legacy retry",
+            hypothesis="Changing state before retrying should reduce identical calls.",
+            risk="low",
+            content={
+                "slug": "legacy-retry",
+                "behavior_type": "loop",
+                "suggested_artifact": "skill",
+                "steps": ["Change relevant state before retrying."],
+            },
+            target_metric="identical_retry_calls",
+            target_value=0,
+            measurement_window=5,
+        )
+        pending_candidate_id = service.repository.ensure_candidate(
+            observation_id,
+            proposal=proposal,
+            now=NOW,
+        )
+        active_observation_id = service.repository.upsert_observation(
+            draft.model_copy(
+                update={
+                    "fingerprint": "legacy-retry-active",
+                    "title": "active exec retries repeat without a changed input",
+                }
             ),
             now=NOW,
+        )
+        active_candidate_id = service.repository.ensure_candidate(
+            active_observation_id,
+            proposal=proposal.model_copy(
+                update={
+                    "title": "Workflow: active legacy retry",
+                    "content": {**proposal.content, "slug": "legacy-retry-active"},
+                }
+            ),
+            now=NOW,
+        )
+        conn.execute(
+            "UPDATE workflow_candidates SET status = 'approved' WHERE id = ?",
+            (active_candidate_id,),
         )
         conn.commit()
 
@@ -306,6 +563,16 @@ def test_refresh_retires_legacy_retry_observations_without_deleting_history(tmp_
             "SELECT COUNT(*) FROM observations WHERE id = ?",
             (observation_id,),
         ).fetchone()[0] == 1
+        pending_status, pending_checks = conn.execute(
+            "SELECT status, checks_json FROM workflow_candidates WHERE id = ?",
+            (pending_candidate_id,),
+        ).fetchone()
+        assert pending_status == "stale"
+        assert json.loads(pending_checks)["stale_reason"] == "source_rule_retired"
+        assert conn.execute(
+            "SELECT status FROM workflow_candidates WHERE id = ?",
+            (active_candidate_id,),
+        ).fetchone()[0] == "approved"
     finally:
         conn.close()
 
@@ -428,32 +695,52 @@ def test_workflow_lookup_and_grouping_include_candidates_beyond_first_page(tmp_p
     try:
         service.refresh()
         target = service.workflows.list()[0]
-        target_content = {**target.content, "slug": "overflow-target"}
-        filler_content = {**target.content, "slug": "bulk-filler"}
+        target_content = {
+            **target.content,
+            "slug": "overflow-target",
+            "description": "Overflow target procedure.",
+        }
+        filler_content = {
+            **target.content,
+            "slug": "bulk-filler",
+            "description": "Bulk filler procedure.",
+        }
         conn.execute(
-            "UPDATE workflow_candidates SET content_json = ?, confidence = 0 WHERE id = ?",
-            (json.dumps(target_content, sort_keys=True), target.id),
+            """
+            UPDATE workflow_candidates
+            SET content_json = ?, contract_signature = ?, revision_hash = ?, confidence = 0
+            WHERE id = ?
+            """,
+            (
+                json.dumps(target_content, sort_keys=True),
+                workflow_contract_signature(target_content),
+                workflow_revision_hash(target.title, target_content),
+                target.id,
+            ),
         )
         conn.executemany(
             """
             INSERT INTO workflow_candidates(
               id, observation_id, task_archetype_id, action_type, title, hypothesis,
-              scope, risk, content_json, support_count, confidence, target_metric,
+              scope, risk, content_json, contract_signature, revision_hash,
+              confidence, target_metric,
               target_value, measurement_window, status, checks_json, provenance_json,
               created_at, updated_at
             )
             SELECT ?, observation_id, task_archetype_id, ?, title, hypothesis,
-                   scope, risk, ?, support_count, 1.0, target_metric,
+                   scope, risk, ?, ?, ?, 1.0, target_metric,
                    target_value, measurement_window, status, checks_json, provenance_json,
                    created_at, updated_at
             FROM workflow_candidates WHERE id = ?
             """,
             [
                 (
-                    f"bulk-candidate-{index:03d}",
-                    f"bulk-action-{index:03d}",
-                    json.dumps(filler_content, sort_keys=True),
-                    target.id,
+                        f"bulk-candidate-{index:03d}",
+                        f"bulk-action-{index:03d}",
+                        json.dumps(filler_content, sort_keys=True),
+                        workflow_contract_signature(filler_content),
+                        workflow_revision_hash(target.title, filler_content),
+                        target.id,
                 )
                 for index in range(500)
             ],
@@ -541,6 +828,11 @@ def test_inbox_groups_scope_specific_observations_by_workflow(tmp_path):
         )
         candidate = service.repository.get_candidate(source.candidate_id)
         assert candidate is not None
+        rule = next(
+            item
+            for item in service.repository.list_rule_summaries()
+            if item.id == source.rule_id
+        )
         clone_data = {
             name: getattr(source, name)
             for name in ObservationDraft.model_fields
@@ -568,25 +860,55 @@ def test_inbox_groups_scope_specific_observations_by_workflow(tmp_path):
             ),
             now=NOW,
         )
+        variant_data = dict(clone_data)
+        variant_data.update(
+            {
+                "scope_id": f"{source.scope_id}-different-procedure",
+                "fingerprint": f"{source.fingerprint}-different-procedure",
+            }
+        )
+        variant_observation_id = service.repository.upsert_observation(
+            ObservationDraft.model_validate(variant_data),
+            now=NOW,
+        )
+        variant_content = {
+            **candidate.content,
+            "description": "Use when a different tool repeats without a changed input.",
+        }
+        variant_candidate_id = service.repository.ensure_candidate(
+            variant_observation_id,
+            proposal=WorkflowProposal(
+                title="Workflow: Different tool retries repeat without a changed input",
+                hypothesis=candidate.hypothesis,
+                risk=candidate.risk,
+                content=variant_content,
+                target_metric=candidate.target_metric,
+                target_value=candidate.target_value,
+                measurement_window=candidate.measurement_window,
+            ),
+            now=NOW,
+        )
         conn.commit()
 
         observations = service.repository.list_observations(limit=500)
         candidates = {
             item.id: item for item in service.repository.list_candidates(limit=500)
         }
-        target_slug = str(candidate.content["slug"])
+        target_signature = workflow_contract_signature(candidate.content)
         target_observations = [
             item
             for item in observations
             if item.candidate_id
-            and str(candidates[item.candidate_id].content.get("slug")) == target_slug
+            and workflow_contract_signature(candidates[item.candidate_id].content)
+            == target_signature
         ]
-        findings = service.list_inbox_findings(limit=500)
+        findings = service.list_findings(limit=500)
         target_finding = next(
             item
             for item in findings
             if item.candidate_id
-            and str(candidates[item.candidate_id].content.get("slug")) == target_slug
+            and workflow_contract_signature(candidates[item.candidate_id].content)
+            == target_signature
         )
 
         assert len(target_observations) >= 2
@@ -594,6 +916,24 @@ def test_inbox_groups_scope_specific_observations_by_workflow(tmp_path):
         assert target_finding.source_scope_count == len(
             {f"{item.scope_type}:{item.scope_id}" for item in target_observations}
         )
+        assert target_finding.title == rule.title
+        assert target_finding.summary.startswith(rule.description)
+        assert target_finding.title != candidate.title
+        assert target_finding.summary != candidate.content["description"]
+        variant_finding = next(
+            item for item in findings if item.candidate_id == variant_candidate_id
+        )
+        assert variant_finding.observation_count == 1
+        assert variant_finding.candidate_id == variant_candidate_id
+        assert variant_finding.title == source.title
+        assert variant_finding.summary == source.summary
+        assert variant_observation_id not in service.finding_observation_ids(source.id)
+        assert variant_observation_id not in service.repository.workflow_evidence_ledger(
+            candidate.id
+        ).observation_ids
+        assert variant_candidate_id in {
+            item.id for item in service.workflows.list(limit=500)
+        }
         assert len(findings) < len(observations)
     finally:
         conn.close()
@@ -611,8 +951,10 @@ def test_workflow_apply_and_rollback_are_hash_guarded(tmp_path):
         target = Path(applied["target_path"])
         assert target.exists()
         assert "Source observation:" not in target.read_text(encoding="utf-8")
-        assert service.repository.workflow_session_ledger(candidate.id).observation_ids
-        assert service.workflows.show(candidate.id).status == WorkflowStatus.ACTIVE
+        assert service.repository.workflow_evidence_ledger(candidate.id).observation_ids
+        active = service.workflows.show(candidate.id)
+        assert active.status == WorkflowStatus.APPROVED
+        assert active.lifecycle.deployment.value == "active"
         assert conn.execute(
             "SELECT status FROM evaluations WHERE workflow_version_id = (SELECT workflow_version_id FROM interventions WHERE id = ?)",
             (applied["intervention_id"],),
@@ -621,7 +963,9 @@ def test_workflow_apply_and_rollback_are_hash_guarded(tmp_path):
         rolled_back = service.workflows.rollback(candidate.id)
         assert rolled_back["status"] == "rolled_back"
         assert not target.exists()
-        assert service.workflows.show(candidate.id).status == WorkflowStatus.ROLLED_BACK
+        rolled_back_candidate = service.workflows.show(candidate.id)
+        assert rolled_back_candidate.status == WorkflowStatus.APPROVED
+        assert rolled_back_candidate.lifecycle.deployment.value == "rolled_back"
     finally:
         conn.close()
 
@@ -679,13 +1023,13 @@ def test_observation_session_ledger_without_workflow_candidate(tmp_path):
         observation = service.repository.get_observation(observation_id)
         assert observation.candidate_id is None
 
-        ledger = service.repository.observation_session_ledger(observation_id)
-        assert ledger.candidate_id == ""
+        ledger = service.finding_evidence_ledger(observation_id)
+        assert ledger.candidate_id is None
         assert ledger.observation_id == observation_id
-        assert ledger.source_session_count == 2
-        assert {row.session_id for row in ledger.source_sessions} == {"session-1", "session-2"}
-        assert ledger.exposure_session_count == 0
-        assert ledger.exposure_sessions == []
+        assert ledger.provenance_session_count == 2
+        assert {row.session_id for row in ledger.provenance_sessions} == {"session-1", "session-2"}
+        assert ledger.support_execution_unit_count == 0
+        assert ledger.support_execution_units == []
     finally:
         conn.close()
 
@@ -694,7 +1038,7 @@ def test_observation_session_ledger_missing_observation_raises(tmp_path):
     service, conn = _service(tmp_path)
     try:
         with pytest.raises(KeyError):
-            service.repository.observation_session_ledger("missing-observation")
+            service.finding_evidence_ledger("missing-observation")
     finally:
         conn.close()
 
@@ -750,7 +1094,7 @@ def test_observation_session_ledger_reflects_grouped_finding(tmp_path):
         second_id = service.repository.upsert_observation(_draft("scope-b", "session-2"), now=NOW)
         conn.commit()
 
-        findings = service.list_inbox_findings()
+        findings = service.list_findings()
         # A 2+ member finding surfaces the rule title, not the individual observation title.
         finding = next(item for item in findings if item.title == "Test rule grouped across scopes")
         assert finding.observation_count == 2
@@ -760,12 +1104,62 @@ def test_observation_session_ledger_reflects_grouped_finding(tmp_path):
         resolved_ids = service.resolve_finding_observation_ids(first_id)
         assert set(resolved_ids) == {first_id, second_id}
 
-        ledger = service.repository.observation_session_ledger(
-            first_id,
-            observation_ids=resolved_ids,
+        ledger = service.finding_evidence_ledger(first_id)
+        assert ledger.provenance_session_count == 2
+        assert {row.session_id for row in ledger.provenance_sessions} == {"session-1", "session-2"}
+    finally:
+        conn.close()
+
+
+def test_inbox_omits_findings_without_retained_provenance_sessions(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        service.repository.sync_rule_definitions(
+            [
+                RuleDefinition(
+                    id="test_rule_pruned_source",
+                    version=1,
+                    category="reliability",
+                    title="Test pruned source rule",
+                    description="Synthetic rule used to test retained evidence filtering.",
+                )
+            ],
+            now=NOW,
         )
-        assert ledger.source_session_count == 2
-        assert {row.session_id for row in ledger.source_sessions} == {"session-1", "session-2"}
+        draft = ObservationDraft(
+            rule_id="test_rule_pruned_source",
+            rule_version=1,
+            scope_type="project",
+            scope_id="repo-1",
+            fingerprint="test-fingerprint-pruned-source",
+            category="reliability",
+            title="Finding whose source session was pruned",
+            summary="Example summary",
+            metric_name="retries",
+            metric_value=3,
+            metric_unit="calls",
+            metric_direction="lower_is_better",
+            impact_score=70,
+            severity=Severity.MEDIUM,
+            confidence=0.9,
+            affected_session_count=1,
+            evidence=[
+                EvidenceRef(
+                    entity_type="session",
+                    entity_id="session-1",
+                    session_id="session-1",
+                    summary_redacted="Source evidence",
+                )
+            ],
+        )
+        observation_id = service.repository.upsert_observation(draft, now=NOW)
+        conn.commit()
+        assert any(item.id == observation_id for item in service.list_findings())
+
+        conn.execute("DELETE FROM sessions WHERE id = 'session-1'")
+        conn.commit()
+
+        assert all(item.id != observation_id for item in service.list_findings())
     finally:
         conn.close()
 
@@ -908,8 +1302,59 @@ def test_workflow_apply_blocks_another_active_candidate_for_the_same_target(tmp_
 
         assert preview["checks"]["apply_allowed"] is False
         assert preview["checks"]["active_conflicts"][0]["candidate_id"] == first.id
-        with pytest.raises(RuntimeError, match="already owns"):
+        assert preview["suggested_unique_slug"] == f"{first.content['slug']}-2"
+        with pytest.raises(RuntimeError, match="same procedure is already active"):
             service.workflows.apply(second.id, project_root=project_root)
+
+        renamed = service.workflows.edit(
+            second.id,
+            content={**second.content, "slug": preview["suggested_unique_slug"]},
+        )
+        renamed_preview = service.workflows.preview(renamed.id, project_root=project_root)
+        assert renamed_preview["checks"]["apply_allowed"] is True
+        assert renamed_preview["change_kind"] == "create"
+    finally:
+        conn.close()
+
+
+def test_tool_failure_workflows_use_tool_specific_names_and_retry_impact(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        for index, session_id in enumerate(("session-1", "session-2"), start=1):
+            step_id = f"read-failure-step-{index}"
+            conn.execute(
+                """
+                INSERT INTO steps(
+                  id, session_id, seq, type, started_at, status, raw_attrs_json,
+                  created_at, updated_at
+                ) VALUES (?, ?, ?, 'tool_call', ?, 'failed', '{}', ?, ?)
+                """,
+                (step_id, session_id, 90 + index, NOW, NOW, NOW),
+            )
+            conn.execute(
+                """
+                INSERT INTO tool_calls(
+                  id, step_id, session_id, tool_name, status, input_hash, error_type,
+                  raw_attrs_json, created_at, updated_at
+                ) VALUES (?, ?, ?, 'Read', 'failed', ?, 'missing_file', '{}', ?, ?)
+                """,
+                (f"read-failure-{index}", step_id, session_id, f"read-{index}", NOW, NOW),
+            )
+        conn.commit()
+
+        service.refresh()
+        candidates = [
+            item
+            for item in service.workflows.list()
+            if item.content.get("source", {}).get("rule_id") == "repeated_tool_failure_chain"
+        ]
+
+        assert len(candidates) == 2
+        assert {item.target_metric for item in candidates} == {"identical_retry_calls"}
+        slugs = {str(item.content["slug"]) for item in candidates}
+        assert len(slugs) == 2
+        assert all(slug.startswith("tool-failure-recovery-") for slug in slugs)
+        assert "tool-failure-recovery" not in slugs
     finally:
         conn.close()
 
@@ -1012,6 +1457,196 @@ def test_task_archetypes_scope_workflow_adherence(tmp_path):
         conn.close()
 
 
+def test_procedure_impact_uses_first_five_comparable_execution_units(tmp_path):
+    service, conn = _service(tmp_path)
+    project_root = tmp_path / "project"
+    (project_root / ".git").mkdir(parents=True)
+    try:
+        service.refresh()
+        candidate = service.workflows.list()[0]
+        applied = service.workflows.apply(candidate.id, project_root=project_root)
+        contract = _workflow_contract(
+            "observe-act-verify",
+            applicability={
+                "repo_id": "repo-1",
+                "workspace_id": "workspace-1",
+                "task_archetype_id": "implementation",
+            },
+            validation={"baseline_minimum": 3, "baseline_maximum": 20},
+        )
+        _configure_contract(
+            conn,
+            candidate_id=candidate.id,
+            intervention_id=applied["intervention_id"],
+            contract=contract,
+            exposed_at="2026-07-10T00:00:00+00:00",
+            target_metric="workflow_adherence",
+            measurement_window=5,
+            metric_direction="higher_is_better",
+        )
+        for index in range(8):
+            task_id = f"procedure-task-{index}"
+            started_at = (
+                f"2026-07-0{index + 4}T10:00:00+00:00"
+                if index < 3
+                else f"2026-07-{index + 8:02d}T10:00:00+00:00"
+            )
+            _insert_contract_execution(
+                conn,
+                task_id,
+                started_at=started_at,
+                sequence_base=100 + index * 3,
+                verification_passed=index != 7,
+            )
+            if index >= 3:
+                state = "ignored" if index == 7 else "followed"
+                conn.execute(
+                    """
+                    INSERT INTO workflow_exposures(
+                      id, intervention_id, session_id, execution_unit_id,
+                      state, evidence_json, created_at
+                    ) VALUES (?, ?, 'session-1', ?, ?, '{}', ?)
+                    """,
+                    (
+                        f"procedure-exposure-{index}",
+                        applied["intervention_id"],
+                        task_id,
+                        state,
+                        NOW,
+                    ),
+                )
+        conn.commit()
+
+        result = service.measurements.measure(candidate.id)
+        ledger = service.measurements.sessions(result["id"])
+
+        assert result["before_count"] == 3
+        assert result["after_count"] == 5
+        assert result["before_value"] == 1.0
+        assert result["after_value"] == 0.8
+        assert result["verdict"] == "regressed"
+        assert result["cohort"]["unit"] == "execution_units"
+        assert ledger["unit"] == "execution_units"
+        assert len(ledger["before_execution_units"]) == 3
+        assert len(ledger["after_execution_units"]) == 5
+        assert all(item["evidence_count"] == 3 for item in ledger["before_execution_units"])
+        assert all(item["metric_value"] == 1.0 for item in ledger["before_execution_units"])
+        assert ledger["after_execution_units"][-1]["adherence_state"] == "not_followed"
+        assert ledger["after_execution_units"][-1]["metric_value"] == 0.0
+        assert ledger["after_execution_units"][0]["evidence_summaries"] == [
+            "Observed roles: observe → act → verify",
+            "100% required milestone coverage",
+        ]
+    finally:
+        conn.close()
+
+
+def test_reported_procedure_milestones_require_independent_tool_corroboration(tmp_path):
+    service, conn = _service(tmp_path)
+    project_root = tmp_path / "project"
+    (project_root / ".git").mkdir(parents=True)
+    try:
+        service.refresh()
+        candidate = service.workflows.list()[0]
+        applied = service.workflows.apply(candidate.id, project_root=project_root)
+        contract = _workflow_contract("corroboration-sequence")
+        _configure_contract(
+            conn,
+            candidate_id=candidate.id,
+            intervention_id=applied["intervention_id"],
+            contract=contract,
+            exposed_at="2026-07-01T00:00:00+00:00",
+        )
+        service.skills.refresh()
+        version_id = conn.execute(
+            """
+            SELECT sv.id
+            FROM skill_versions sv
+            JOIN skills s ON s.id = sv.skill_id
+            WHERE json_extract(sv.workflow_json, '$.workflow_contract.signature_hash')
+                  = 'corroboration-sequence'
+            """
+        ).fetchone()[0]
+        conn.execute(
+            """
+            INSERT INTO mcp_task_runs(
+              id, runtime_session_id, runtime_agent, workspace_path, question_hash,
+              selected_skills_json, status, started_at, completed_at, outcome,
+              verification_passed, created_at, updated_at
+                ) VALUES ('procedure-run', 'session-1', 'codex', ?, 'question', ?,
+                          'started', ?, ?, 'success', 1, ?, ?)
+            """,
+            (
+                str(project_root),
+                json.dumps([{"skill_id": "unused", "version_id": version_id}]),
+                "2026-07-03T10:00:00+00:00",
+                "2026-07-03T10:10:00+00:00",
+                NOW,
+                NOW,
+            ),
+        )
+        _insert_contract_execution(
+            conn,
+            "procedure-unit",
+            started_at="2026-07-03T10:00:00+00:00",
+            sequence_base=200,
+            mcp_task_run_id="procedure-run",
+            tool_count=1,
+        )
+        conn.execute(
+            "UPDATE mcp_task_runs SET execution_unit_id = 'procedure-unit' WHERE id = 'procedure-run'"
+        )
+        conn.commit()
+        milestones = WorkflowMilestoneService(conn)
+        for role in ("observe", "act", "verify"):
+            milestones.record(
+                task_run_id="procedure-run",
+                skill_version_id=version_id,
+                milestone_id=role,
+                state="completed",
+                idempotency_key=f"{role}-done",
+            )
+
+        service.adherence.refresh()
+        assert conn.execute(
+            "SELECT state FROM workflow_exposures WHERE execution_unit_id = 'procedure-unit'"
+        ).fetchone()[0] == "invoked"
+
+        for offset, (tool_name, preview) in enumerate(
+            CONTRACT_SIGNALS[1:],
+            start=1,
+        ):
+            conn.execute(
+                """
+                INSERT INTO tool_calls(
+                  id, step_id, session_id, tool_name, status,
+                  input_preview_redacted, raw_attrs_json, created_at, updated_at
+                ) VALUES (?, ?, 'session-1', ?, 'ok', ?, '{}', ?, ?)
+                """,
+                (
+                    f"procedure-unit-tool-{offset}",
+                    f"procedure-unit-step-{offset}",
+                    tool_name,
+                    preview,
+                    NOW,
+                    NOW,
+                ),
+            )
+        conn.commit()
+        service.adherence.refresh()
+
+        state, evidence_json = conn.execute(
+            """
+            SELECT state, evidence_json FROM workflow_exposures
+            WHERE execution_unit_id = 'procedure-unit'
+            """
+        ).fetchone()
+        assert state == "followed"
+        assert json.loads(evidence_json)["corroborated"] is True
+    finally:
+        conn.close()
+
+
 def test_feedback_records_explicit_session_outcome(tmp_path):
     service, conn = _service(tmp_path)
     try:
@@ -1053,9 +1688,9 @@ def test_remaining_p0_rules_use_explicit_outcomes_and_canonical_signals(tmp_path
             conn.execute(
                 """
                 INSERT INTO sessions(
-                  id, agent_id, repo_id, started_at, ended_at, status,
+                  id, agent_id, workspace_id, repo_id, started_at, ended_at, status,
                   created_at, updated_at
-                ) VALUES (?, 'agent-1', 'repo-1', ?, ?, 'completed', ?, ?)
+                ) VALUES (?, 'agent-1', 'workspace-1', 'repo-1', ?, ?, 'completed', ?, ?)
                 """,
                 (
                     session_id,
@@ -1070,10 +1705,11 @@ def test_remaining_p0_rules_use_explicit_outcomes_and_canonical_signals(tmp_path
                     step_id = f"p0-step-{index}-{seq}"
                     conn.execute(
                         """
-                        INSERT INTO steps(
-                          id, session_id, seq, type, started_at, status, raw_attrs_json,
-                          created_at, updated_at
-                        ) VALUES (?, ?, ?, 'tool_call', ?, 'ok', '{}', ?, ?)
+                            INSERT INTO steps(
+                              id, session_id, seq, type, started_at, status, raw_attrs_json,
+                              summary, created_at, updated_at
+                            ) VALUES (?, ?, ?, 'tool_call', ?, 'ok', '{}',
+                                      'Implement feature change', ?, ?)
                         """,
                         (step_id, session_id, seq, NOW, NOW, NOW),
                     )
@@ -1092,8 +1728,24 @@ def test_remaining_p0_rules_use_explicit_outcomes_and_canonical_signals(tmp_path
                             f"p0-input-{index}-{seq}",
                             NOW,
                             NOW,
-                        ),
-                    )
+                            ),
+                        )
+                conn.execute(
+                    """
+                    INSERT INTO conversation_facts(
+                      id, step_id, session_id, kind, role, content_hash,
+                      content_length, raw_attrs_json, created_at, updated_at
+                    ) VALUES (?, ?, ?, 'prompt', 'user', ?, 24, '{}', ?, ?)
+                    """,
+                    (
+                        f"p0-prompt-{index}",
+                        f"p0-step-{index}-1",
+                        session_id,
+                        f"p0-prompt-hash-{index}",
+                        NOW,
+                        NOW,
+                    ),
+                )
             else:
                 conn.execute(
                     """
@@ -1127,7 +1779,38 @@ def test_remaining_p0_rules_use_explicit_outcomes_and_canonical_signals(tmp_path
             JOIN observations o ON o.id = wc.observation_id
             WHERE o.rule_id = 'high_performing_repeated_workflow'
             """
-        ).fetchone()[0] == 0
+        ).fetchone()[0] == 1
+        candidate_row = conn.execute(
+            """
+            SELECT wc.id, wc.measurement_window,
+                   json_extract(wc.content_json, '$.workflow_contract.signature_hash')
+            FROM workflow_candidates wc
+            JOIN observations o ON o.id = wc.observation_id
+            WHERE o.rule_id = 'high_performing_repeated_workflow'
+            """
+        ).fetchone()
+        assert candidate_row[1] == 5
+        assert candidate_row[2]
+
+        project_root = tmp_path
+        (project_root / ".git").mkdir(parents=True)
+        service.workflows.apply(candidate_row[0], project_root=project_root)
+        service.skills.refresh()
+        service.refresh()
+
+        assert conn.execute(
+            """
+            SELECT status FROM observations
+            WHERE rule_id = 'high_performing_repeated_workflow'
+            """
+        ).fetchone()[0] == "resolved"
+        assert conn.execute(
+            """
+            SELECT COUNT(*) FROM workflow_candidates wc
+            JOIN observations o ON o.id = wc.observation_id
+            WHERE o.rule_id = 'high_performing_repeated_workflow'
+            """
+        ).fetchone()[0] == 1
     finally:
         conn.close()
 
@@ -1141,14 +1824,14 @@ def test_refresh_automatically_measures_new_comparable_sessions_once(tmp_path):
         candidate = next(
             item
             for item in service.workflows.list()
-            if item.target_metric == "tool_failure_rate"
+            if item.content.get("source", {}).get("rule_id") == "repeated_tool_failure_chain"
         )
         applied = service.workflows.apply(candidate.id, project_root=project_root)
         conn.execute(
             "UPDATE interventions SET exposure_started_at = '2026-07-10T00:00:00+00:00' WHERE id = ?",
             (applied["intervention_id"],),
         )
-        for index in range(3, 11):
+        for index in range(1, 16):
             before = index <= 5
             session_id = f"measure-session-{index}"
             started_at = (
@@ -1168,29 +1851,57 @@ def test_refresh_automatically_measures_new_comparable_sessions_once(tmp_path):
                 (session_id, started_at, started_at, int(not before), NOW, NOW),
             )
             step_id = f"measure-step-{index}"
+            for repeat in range(1 if before else 3):
+                repeated_step_id = f"{step_id}-{repeat}"
+                conn.execute(
+                    """
+                    INSERT INTO steps(
+                      id, session_id, seq, type, started_at, status, summary, raw_attrs_json,
+                      created_at, updated_at
+                    ) VALUES (?, ?, ?, 'tool_call', ?, ?, 'Fix failing error', ?, ?, ?)
+                    """,
+                    (
+                        repeated_step_id,
+                        session_id,
+                        repeat + 1,
+                        started_at,
+                        status,
+                        json.dumps({"skill": candidate.content["slug"]}) if not before else "{}",
+                        NOW,
+                        NOW,
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO tool_calls(
+                      id, step_id, session_id, tool_name, status, input_hash,
+                      input_preview_redacted, error_type, raw_attrs_json, created_at, updated_at
+                    ) VALUES (?, ?, ?, 'exec', ?, ?, ?, ?, '{}', ?, ?)
+                    """,
+                    (
+                        f"measure-tool-{index}-{repeat}",
+                        repeated_step_id,
+                        session_id,
+                        status,
+                        f"measure-input-{index}",
+                        "poetry run pytest -q" if not before else "safe command",
+                        error_type,
+                        NOW,
+                        NOW,
+                    ),
+                )
             conn.execute(
                 """
-                INSERT INTO steps(
-                  id, session_id, seq, type, started_at, status, raw_attrs_json,
-                  created_at, updated_at
-                ) VALUES (?, ?, 1, 'tool_call', ?, ?, '{}', ?, ?)
-                """,
-                (step_id, session_id, started_at, status, NOW, NOW),
-            )
-            conn.execute(
-                """
-                INSERT INTO tool_calls(
-                  id, step_id, session_id, tool_name, status, input_hash, error_type,
-                  raw_attrs_json, created_at, updated_at
-                ) VALUES (?, ?, ?, 'exec', ?, ?, ?, '{}', ?, ?)
+                INSERT INTO conversation_facts(
+                  id, step_id, session_id, kind, role, content_hash,
+                  content_length, raw_attrs_json, created_at, updated_at
+                ) VALUES (?, ?, ?, 'prompt', 'user', ?, 17, '{}', ?, ?)
                 """,
                 (
-                    f"measure-tool-{index}",
-                    step_id,
+                    f"measure-prompt-{index}",
+                    f"{step_id}-0",
                     session_id,
-                    status,
-                    f"measure-input-{index}",
-                    error_type,
+                    f"measure-prompt-hash-{index}",
                     NOW,
                     NOW,
                 ),
@@ -1209,17 +1920,32 @@ def test_refresh_automatically_measures_new_comparable_sessions_once(tmp_path):
         assert measurement["before_count"] >= 5
         assert measurement["after_count"] >= 5
         assert measurement["verdict"] == "regressed"
+        assert measurement["cohort"]["measurement_state"] == "measured"
+        assert measurement["cohort"]["quality"]["after_signal_coverage"] == 1
         cohorts = service.measurements.sessions(measurement["id"])
         assert cohorts["candidate_id"] == candidate.id
         assert cohorts["snapshot_exact"] is True
         assert cohorts["before_count"] == measurement["before_count"]
         assert cohorts["after_count"] == measurement["after_count"]
-        assert len(cohorts["before_sessions"]) == measurement["before_count"]
-        assert len(cohorts["after_sessions"]) == measurement["after_count"]
-        assert {item["session_id"] for item in cohorts["after_sessions"]} >= {
+        assert len(cohorts["before_execution_units"]) == measurement["before_count"]
+        assert len(cohorts["after_execution_units"]) == measurement["after_count"]
+        assert {item["session_id"] for item in cohorts["after_execution_units"]} >= {
             "measure-session-6",
             "measure-session-10",
         }
+        metric_values = {
+            item["session_id"]: item["metric_value"]
+            for item in [
+                *cohorts["before_execution_units"],
+                *cohorts["after_execution_units"],
+            ]
+        }
+        assert metric_values["measure-session-3"] == 0.0
+        assert metric_values["measure-session-6"] == 3.0
+        assert all(
+            item["metric_value"] is not None
+            for item in cohorts["after_execution_units"]
+        )
         skill = service.skills.skill_for_candidate(candidate.id)
         assert skill.measurement_count == 1
         assert service.skills.show(skill.id).measurements[0].verdict == "regressed"
@@ -1229,7 +1955,102 @@ def test_refresh_automatically_measures_new_comparable_sessions_once(tmp_path):
         conn.close()
 
 
-def test_measurement_refreshes_when_fixed_size_cohort_rotates(tmp_path):
+def test_failure_rate_impact_is_not_measurable_with_unknown_status_baseline(tmp_path):
+    service, conn = _service(tmp_path)
+    project_root = tmp_path / "project"
+    (project_root / ".git").mkdir(parents=True)
+    try:
+        service.refresh()
+        candidate = next(
+            item
+            for item in service.workflows.list()
+            if item.content.get("source", {}).get("rule_id") == "repeated_tool_failure_chain"
+        )
+        conn.execute(
+            """
+            UPDATE workflow_candidates
+            SET target_metric = 'tool_failure_rate', task_archetype_id = NULL
+            WHERE id = ?
+            """,
+            (candidate.id,),
+        )
+        applied = service.workflows.apply(candidate.id, project_root=project_root)
+        conn.execute(
+            "UPDATE interventions SET exposure_started_at = '2026-07-10T00:00:00+00:00' WHERE id = ?",
+            (applied["intervention_id"],),
+        )
+        for index in range(5):
+            session_id = f"unknown-baseline-{index}"
+            started_at = f"2026-07-0{index + 3}T12:00:00+00:00"
+            conn.execute(
+                """
+                INSERT INTO sessions(
+                  id, agent_id, repo_id, started_at, ended_at, status,
+                  created_at, updated_at
+                ) VALUES (?, 'agent-1', 'repo-1', ?, ?, 'completed', ?, ?)
+                """,
+                (session_id, started_at, started_at, NOW, NOW),
+            )
+            conn.execute(
+                """
+                INSERT INTO steps(
+                  id, session_id, seq, type, started_at, status, summary, raw_attrs_json,
+                  created_at, updated_at
+                ) VALUES (?, ?, 1, 'tool_call', ?, 'unknown', 'Fix failing error', '{}', ?, ?)
+                """,
+                (f"unknown-step-{index}", session_id, started_at, NOW, NOW),
+            )
+            conn.execute(
+                """
+                INSERT INTO tool_calls(
+                  id, step_id, session_id, tool_name, status, input_hash,
+                  raw_attrs_json, created_at, updated_at
+                ) VALUES (?, ?, ?, 'Read', 'unknown', ?, '{}', ?, ?)
+                """,
+                (
+                    f"unknown-tool-{index}",
+                    f"unknown-step-{index}",
+                    session_id,
+                    f"unknown-input-{index}",
+                    NOW,
+                    NOW,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO conversation_facts(
+                  id, step_id, session_id, kind, role, content_hash,
+                  content_length, raw_attrs_json, created_at, updated_at
+                ) VALUES (?, ?, ?, 'prompt', 'user', ?, 17, '{}', ?, ?)
+                """,
+                (
+                    f"unknown-prompt-{index}",
+                    f"unknown-step-{index}",
+                    session_id,
+                    f"unknown-prompt-hash-{index}",
+                    NOW,
+                    NOW,
+                ),
+            )
+        conn.commit()
+
+        service.prepare_workflow_evidence()
+        result = service.measurements.measure(candidate.id)
+        ledger = service.measurements.sessions(result["id"])
+
+        assert result["verdict"] == "insufficient_data"
+        assert result["before_value"] is None
+        assert result["after_value"] is None
+        assert result["cohort"]["measurement_state"] == "not_measurable"
+        assert result["cohort"]["quality"]["before_signal_coverage"] < 0.9
+        assert "Baseline execution-unit signal coverage" in result["cohort"]["measurement_reasons"][0]
+        assert ledger["measurement_state"] == "not_measurable"
+        assert ledger["measurement_reasons"] == result["cohort"]["measurement_reasons"]
+    finally:
+        conn.close()
+
+
+def test_measurement_keeps_completed_fixed_size_cohort_stable(tmp_path):
     service, conn = _service(tmp_path)
     project_root = tmp_path / "project"
     (project_root / ".git").mkdir(parents=True)
@@ -1248,9 +2069,9 @@ def test_measurement_refreshes_when_fixed_size_cohort_rotates(tmp_path):
         conn.execute(
             """
             INSERT INTO steps(
-              id, session_id, seq, type, started_at, status, raw_attrs_json,
+              id, session_id, seq, type, started_at, status, summary, raw_attrs_json,
               created_at, updated_at
-            ) VALUES (?, ?, 1, 'tool_call', ?, ?, '{}', ?, ?)
+            ) VALUES (?, ?, 1, 'tool_call', ?, ?, 'Fix failing error', '{}', ?, ?)
             """,
             (f"step-{session_id}", session_id, started_at, status, NOW, NOW),
         )
@@ -1272,11 +2093,37 @@ def test_measurement_refreshes_when_fixed_size_cohort_rotates(tmp_path):
                 NOW,
             ),
         )
+        conn.execute(
+            """
+            INSERT INTO conversation_facts(
+              id, step_id, session_id, kind, role, content_hash,
+              content_length, raw_attrs_json, created_at, updated_at
+            ) VALUES (?, ?, ?, 'prompt', 'user', ?, 17, '{}', ?, ?)
+            """,
+            (
+                f"prompt-{session_id}",
+                f"step-{session_id}",
+                session_id,
+                f"prompt-hash-{session_id}",
+                NOW,
+                NOW,
+            ),
+        )
 
     try:
         service.refresh()
         candidate = next(
-            item for item in service.workflows.list() if item.target_metric == "tool_failure_rate"
+            item
+            for item in service.workflows.list()
+            if item.content.get("source", {}).get("rule_id") == "repeated_tool_failure_chain"
+        )
+        service.workflows.edit(
+            candidate.id,
+            content={**candidate.content, "behavior_type": "verification"},
+        )
+        conn.execute(
+            "UPDATE workflow_candidates SET target_metric = 'tool_failure_rate' WHERE id = ?",
+            (candidate.id,),
         )
         applied = service.workflows.apply(candidate.id, project_root=project_root)
         conn.execute(
@@ -1293,18 +2140,20 @@ def test_measurement_refreshes_when_fixed_size_cohort_rotates(tmp_path):
             add_session(f"after-{index:02d}", f"2026-07-11T00:{index:02d}:00+00:00")
         conn.commit()
 
+        service.prepare_workflow_evidence()
         first = service.measurements.measure(candidate.id)
         add_session("after-newest", "2026-07-11T01:00:00+00:00", failed=True)
         conn.commit()
+        service.prepare_workflow_evidence(session_ids={"after-newest"})
         second = service.measurements.measure(candidate.id, skip_unchanged=True)
         second_sessions = service.measurements.sessions(second["id"])
 
-        assert first["after_count"] == second["after_count"] == 50
-        assert second["created"] is True
-        assert second["id"] != first["id"]
-        assert second["after_value"] > first["after_value"]
-        assert "after-newest" in {
-            item["session_id"] for item in second_sessions["after_sessions"]
+        assert first["after_count"] == second["after_count"] == candidate.measurement_window
+        assert second["created"] is False
+        assert second["id"] == first["id"]
+        assert second["after_value"] == first["after_value"]
+        assert "after-newest" not in {
+            item["session_id"] for item in second_sessions["after_execution_units"]
         }
     finally:
         conn.close()
@@ -1332,7 +2181,7 @@ def test_ask_returns_one_active_workflow_with_constraints_and_fallback(tmp_path)
         candidate = next(
             item
             for item in service.workflows.list()
-            if item.target_metric == "tool_failure_rate"
+            if item.content.get("source", {}).get("rule_id") == "repeated_tool_failure_chain"
         )
         service.workflows.apply(candidate.id, project_root=project_root)
 
@@ -1453,10 +2302,10 @@ def test_simplified_cli_contract_reads_the_durable_ledger(tmp_path):
         conn.close()
     runner = CliRunner()
 
-    with patch("reflect.core._prepare_sql_report_db") as prepare:
+    with patch("reflect.core.prepare_sql_report_db") as prepare:
         improve_result = runner.invoke(
             main,
-            ["improve", "--global", "--all", "--json", "--db-path", str(db_path)],
+            ["improve", "--global", "--period", "all", "--json", "--db-path", str(db_path)],
         )
         prepare.assert_not_called()
         ask_result = runner.invoke(
@@ -1495,7 +2344,7 @@ def test_improve_labels_cli_table_as_observed_improvements(tmp_path):
 
     result = CliRunner().invoke(
         main,
-        ["improve", "--global", "--all", "--no-refresh", "--db-path", str(db_path)],
+        ["improve", "--global", "--period", "all", "--no-refresh", "--db-path", str(db_path)],
     )
 
     assert result.exit_code == 0
@@ -1524,13 +2373,14 @@ def test_improve_reports_progress_on_stderr_without_corrupting_json(tmp_path):
         )
         return {}
 
-    with patch("reflect.core._prepare_sql_report_db", side_effect=prepare):
+    with patch("reflect.core.prepare_sql_report_db", side_effect=prepare):
         result = runner.invoke(
             main,
             [
                 "improve",
                 "--global",
-                "--all",
+                "--period",
+                "all",
                 "--refresh",
                 "--json",
                 "--db-path",
@@ -1544,7 +2394,7 @@ def test_improve_reports_progress_on_stderr_without_corrupting_json(tmp_path):
     assert "\x1b" not in result.stderr
 
 
-def test_improve_requires_an_explicit_global_time_flag(tmp_path):
+def test_improve_requires_an_explicit_global_period(tmp_path):
     service, conn = _service(tmp_path)
     db_path = tmp_path / "reflect.db"
     try:
@@ -1559,20 +2409,13 @@ def test_improve_requires_an_explicit_global_time_flag(tmp_path):
     )
     unscoped_period = runner.invoke(
         main,
-        ["improve", "--week", "--db-path", str(db_path)],
-    )
-    multiple_periods = runner.invoke(
-        main,
-        ["improve", "--global", "--day", "--week", "--db-path", str(db_path)],
+        ["improve", "--period", "week", "--db-path", str(db_path)],
     )
 
     assert missing_period.exit_code == 2
     assert "--global requires" in missing_period.output
     assert unscoped_period.exit_code == 2
     assert "--period requires --global" in unscoped_period.output
-    assert "--week is deprecated for improve" in unscoped_period.output
-    assert multiple_periods.exit_code == 2
-    assert "Use only one" in multiple_periods.output
 
 
 def test_snapshot_commands_refresh_only_when_explicit(tmp_path):
@@ -1584,7 +2427,7 @@ def test_snapshot_commands_refresh_only_when_explicit(tmp_path):
         conn.close()
 
     runner = CliRunner()
-    with patch("reflect.core._prepare_sql_report_db", return_value={}) as prepare:
+    with patch("reflect.core.prepare_sql_report_db", return_value={}) as prepare:
         ask_result = runner.invoke(
             main,
             ["ask", "What should I do?", "--json", "--db-path", str(db_path)],
@@ -1626,7 +2469,7 @@ def test_feedback_never_refreshes_implicitly(tmp_path):
     finally:
         conn.close()
 
-    with patch("reflect.core._prepare_sql_report_db") as prepare:
+    with patch("reflect.core.prepare_sql_report_db") as prepare:
         result = CliRunner().invoke(
             main,
             [
@@ -1650,7 +2493,7 @@ def test_improve_never_prepares_a_missing_snapshot_without_refresh(
     refresh_flag,
 ):
     db_path = tmp_path / "missing.db"
-    with patch("reflect.core._prepare_sql_report_db") as prepare:
+    with patch("reflect.core.prepare_sql_report_db") as prepare:
         result = CliRunner().invoke(
             main,
             ["improve", *refresh_flag, "--db-path", str(db_path)],
@@ -1756,8 +2599,7 @@ def test_workflows_add_preserves_agent_and_source_workflow_provenance(tmp_path):
     try:
         row = conn.execute(
             """
-            SELECT support_count,
-                   json_extract(content_json, '$.source.kind'),
+            SELECT json_extract(content_json, '$.source.kind'),
                    json_extract(content_json, '$.source.agent'),
                    json_extract(content_json, '$.source.workflow_id'),
                    json_extract(provenance_json, '$.source')
@@ -1766,11 +2608,16 @@ def test_workflows_add_preserves_agent_and_source_workflow_provenance(tmp_path):
             """
         ).fetchone()
         assert tuple(row) == (
-            source.support_count,
             "agent_authored",
             "codex",
             source.id,
             "agent_authored",
         )
+        added = next(
+            item
+            for item in ImprovementService(conn).workflows.list(limit=500)
+            if item.content.get("slug") == "bounded-debug-loop"
+        )
+        assert added.support_execution_unit_count == source.support_execution_unit_count
     finally:
         conn.close()

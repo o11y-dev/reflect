@@ -62,6 +62,7 @@ class SessionRuleContext:
     has_subagent_stop: bool = False
     tool_uses: int = 0
     total_tokens: int = 0
+    token_provenance: str = "unavailable"
     failures: int = 0
     consecutive_pairs: int | None = None
     consecutive_triples: int | None = None
@@ -69,6 +70,7 @@ class SessionRuleContext:
     timing_available: bool = False
     timestamp_count: int | None = None
     recovered: int = 0
+    recovery_available: bool = False
     distinct_tools: int | None = None
     edits: int | None = None
     reads: int | None = None
@@ -109,6 +111,7 @@ class SessionRuleResult:
     earned: float
     summary: str
     metrics: dict[str, object] = field(default_factory=dict)
+    available: bool = True
 
     def to_payload(self, definition: SessionRuleDefinition) -> dict[str, object]:
         earned = round(max(0.0, min(definition.max_points, self.earned)), 2)
@@ -116,6 +119,7 @@ class SessionRuleResult:
             "name": definition.name,
             "earned": earned,
             "max": definition.max_points,
+            "available": self.available,
             "summary": self.summary,
             "metrics": self.metrics,
             "inputs": [
@@ -164,6 +168,8 @@ class BaseSessionRule(ABC):
         earned: float,
         summary: str,
         metrics: dict[str, object] | None = None,
+        *,
+        available: bool = True,
     ) -> SessionRuleResult:
         """Build a correctly identified result for this rule."""
         return SessionRuleResult(
@@ -172,7 +178,16 @@ class BaseSessionRule(ABC):
             earned=earned,
             summary=summary,
             metrics=metrics or {},
+            available=available,
         )
+
+    def unavailable(
+        self,
+        summary: str,
+        metrics: dict[str, object] | None = None,
+    ) -> SessionRuleResult:
+        """Return an explicit no-evidence result that cannot affect the score."""
+        return self.result(0.0, summary, metrics, available=False)
 
 
 class SessionRuleRegistry:
@@ -247,8 +262,28 @@ class SessionRuleScorer:
         ]
 
     def score(self, context: SessionRuleContext) -> float:
-        score = sum(float(item["earned"]) for item in self.breakdown(context))
-        return min(100.0, max(0.0, score))
+        return self.score_from_breakdown(self.breakdown(context))
+
+    def score_from_breakdown(self, breakdown: list[dict[str, object]]) -> float:
+        available = [item for item in breakdown if item.get("available") is not False]
+        available_max = sum(float(item["max"]) for item in available)
+        if available_max <= 0:
+            return 0.0
+        registered_max = sum(rule.definition.max_points for rule in self.registry)
+        earned = sum(float(item["earned"]) for item in available)
+        score = earned / available_max * registered_max
+        return min(registered_max, max(0.0, score))
+
+    def coverage_from_breakdown(self, breakdown: list[dict[str, object]]) -> float:
+        registered_max = sum(rule.definition.max_points for rule in self.registry)
+        if registered_max <= 0:
+            return 0.0
+        available_max = sum(
+            float(item["max"])
+            for item in breakdown
+            if item.get("available") is not False
+        )
+        return min(100.0, max(0.0, available_max / registered_max * 100.0))
 
     def rules_payload(self) -> list[dict[str, object]]:
         return [rule.definition.to_payload() for rule in self.registry]

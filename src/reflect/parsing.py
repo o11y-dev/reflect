@@ -4,6 +4,7 @@ import hashlib
 import json as _json_stdlib
 import os
 import re
+import sqlite3
 import tomllib
 from collections import Counter
 from collections.abc import Iterable
@@ -11,6 +12,15 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
+from reflect.agent_capabilities import get_agent_capability
+from reflect.context_artifacts import codex_context_exposures
+from reflect.opencode_store import (
+    OpenCodeMessageRecord,
+    OpenCodeSessionRecord,
+    OpenCodeSessionStore,
+    opencode_tool_success,
+)
+from reflect.raw_segments import readable_segment_paths
 from reflect.store.mcp import DEFAULT_MCP_CLASSIFIER
 from reflect.store.provenance import is_codex_otel_service
 from reflect.utils import (
@@ -23,6 +33,22 @@ from reflect.utils import (
 
 REFLECT_HOME = Path(os.environ.get("REFLECT_HOME", Path.home() / ".reflect"))
 HOOK_HOME = Path(os.environ.get("IDE_OTEL_HOOK_HOME", Path.home() / ".local" / "share" / "opentelemetry-hooks"))
+
+
+def _default_source_dir(name: str) -> Path:
+    """Resolve one local telemetry directory from the configured Reflect home."""
+    reflect_path = REFLECT_HOME / "state" / name
+    if reflect_path.is_dir() or Path.home() / ".reflect" != REFLECT_HOME:
+        return reflect_path
+    return HOOK_HOME / ".state" / name
+
+
+def _default_sessions_dir() -> Path:
+    return _default_source_dir("sessions")
+
+
+def _default_spans_dir() -> Path:
+    return _default_source_dir("local_spans")
 
 
 def _flatten_otlp_attributes(otlp_attrs: list[dict]) -> dict:
@@ -142,8 +168,9 @@ def _is_codex_runtime_internal_span(span: dict) -> bool:
 
     Codex emits useful session/model/tool records as OTLP logs today. Its trace
     stream is dominated by Rust HTTP/runtime internals (`h2`, `hyper`, etc.)
-    under `codex_cli_rs` / `codex-app-server` / `Codex Desktop`. Preserve these
-    spans as raw evidence while excluding them from normalized analytics.
+    under `codex_cli_rs` / `codex-app-server` / `Codex Desktop`. Classify these
+    spans at the source boundary so bounded raw segments can be checkpointed and
+    rotated without materializing runtime noise in canonical SQLite evidence.
     """
     attrs = span.get("attributes") or {}
     service = str(attrs.get("service.name") or "").lower()
@@ -247,7 +274,7 @@ def _first_attr(attrs: dict, *names: str) -> str:
 
 
 def _load_codex_default_model() -> str:
-    config_path = Path.home() / ".codex" / "config.toml"
+    config_path = _configured_agent_home("codex") / "config.toml"
     try:
         data = tomllib.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError):
@@ -636,11 +663,19 @@ def _codex_record_timestamp_ns(record: dict) -> int:
     )
 
 
-def _agent_tool_attrs(tool_name: str, tool_input: object) -> dict:
+def _agent_tool_attrs(
+    tool_name: str,
+    tool_input: object,
+    call_id: object | None = None,
+) -> dict:
     attrs = {
         "gen_ai.client.tool_name": tool_name,
         "gen_ai.client.tool.input": tool_input if isinstance(tool_input, str) else _json_dumps(tool_input or {}),
     }
+    normalized_call_id = str(call_id or "").strip()
+    if normalized_call_id:
+        attrs["gen_ai.client.tool_use_id"] = normalized_call_id
+        attrs["gen_ai.tool.call.id"] = normalized_call_id
     identity = DEFAULT_MCP_CLASSIFIER.identify(attrs)
     if identity.server_name:
         attrs["gen_ai.client.mcp_server"] = identity.server_name
@@ -649,14 +684,37 @@ def _agent_tool_attrs(tool_name: str, tool_input: object) -> dict:
     return attrs
 
 
+def _configured_agent_home(agent: str) -> Path:
+    capability = get_agent_capability(agent)
+    if capability is None:
+        raise ValueError(f"Unknown agent capability: {agent}")
+    return capability.home()
+
+
 def _discover_rich_session_files() -> list[tuple[str, Path]]:
-    home = Path.home()
     candidates: list[tuple[str, Path]] = []
-    candidates.extend(("codex", p) for p in sorted((home / ".codex" / "sessions").glob("**/*.jsonl")))
-    candidates.extend(("copilot", p) for p in sorted((home / ".copilot" / "session-state").glob("*/events.jsonl")))
-    candidates.extend(("cursor", p) for p in sorted((home / ".cursor" / "projects").glob("**/agent-transcripts/**/*.jsonl")))
-    candidates.extend(("claude", p) for p in sorted((home / ".claude" / "projects").glob("**/*.jsonl")))
-    candidates.extend(("gemini", p) for p in sorted((home / ".gemini" / "tmp").glob("**/chats/session-*.json")))
+    sources = (
+        ("codex", _configured_agent_home("codex") / "sessions", "**/*.jsonl"),
+        ("copilot", _configured_agent_home("copilot") / "session-state", "*/events.jsonl"),
+        ("cursor", _configured_agent_home("cursor") / "projects", "**/agent-transcripts/**/*.jsonl"),
+        ("claude", _configured_agent_home("claude") / "projects", "**/*.jsonl"),
+        ("gemini", _configured_agent_home("gemini") / "tmp", "**/chats/session-*.json"),
+    )
+    for agent, root, pattern in sources:
+        candidates.extend((agent, path) for path in sorted(root.glob(pattern)))
+
+    opencode_capability = get_agent_capability("opencode")
+    assert opencode_capability is not None
+    if any(os.environ.get(name) for name in opencode_capability.env_names):
+        opencode_home = opencode_capability.home()
+    else:
+        data_home = Path(
+            os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")
+        ).expanduser()
+        opencode_home = data_home / "opencode"
+    opencode_db = opencode_home / "opencode.db"
+    if opencode_db.is_file():
+        candidates.append(("opencode", opencode_db))
     return candidates
 
 
@@ -672,12 +730,7 @@ def _native_session_path_matches_id(file_path: Path, session_id: str) -> bool:
     )
 
 
-def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
-    records = list(_load_json_lines(file_path))
-    if not records:
-        return
-
-    meta = next((r.get("payload") or {} for r in records if r.get("type") == "session_meta"), {})
+def _codex_session_identity(meta: dict, file_path: Path) -> tuple[str, str, dict]:
     session_id = str(meta.get("id") or file_path.stem).removeprefix("rollout-")
     trace_id = _stable_hex_id("codex", session_id, length=32)
     base_attrs = {
@@ -698,6 +751,52 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
         base_attrs["gen_ai.system"] = str(meta["model_provider"])
     if meta.get("cwd"):
         base_attrs["code.workspace.root"] = str(meta["cwd"])
+    return session_id, trace_id, base_attrs
+
+
+def _iter_codex_context_spans(file_path: Path, *, max_records: int = 64) -> Iterable[dict]:
+    """Read only the bounded Codex preamble that carries injected context."""
+
+    records: list[dict] = []
+    for index, record in enumerate(_load_json_lines(file_path)):
+        if index >= max_records:
+            break
+        records.append(record)
+    if not records:
+        return
+    meta = next((r.get("payload") or {} for r in records if r.get("type") == "session_meta"), {})
+    _, trace_id, base_attrs = _codex_session_identity(meta, file_path)
+    workspace_root = Path(str(meta.get("cwd"))) if meta.get("cwd") else None
+    for index, record in enumerate(records):
+        payload = record.get("payload") or {}
+        if record.get("type") != "response_item" or payload.get("type") != "message":
+            continue
+        text = _codex_content_text(payload.get("content"))
+        for exposure_index, exposure in enumerate(
+            codex_context_exposures(text, workspace_root=workspace_root)
+        ):
+            timestamp_ns = _codex_record_timestamp_ns(record)
+            yield _make_flat_span(
+                "gen_ai.client.context.exposure",
+                timestamp_ns,
+                timestamp_ns,
+                {
+                    **base_attrs,
+                    "gen_ai.client.hook.event": "ContextExposure",
+                    **exposure.as_memory_attributes(),
+                },
+                trace_id,
+                f"{index}:context:{exposure_index}:{exposure.artifact_id}",
+            )
+
+
+def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
+    records = list(_load_json_lines(file_path))
+    if not records:
+        return
+
+    meta = next((r.get("payload") or {} for r in records if r.get("type") == "session_meta"), {})
+    _, trace_id, base_attrs = _codex_session_identity(meta, file_path)
 
     first_ts = 0
     last_ts = 0
@@ -746,10 +845,14 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
                         trace_id,
                         f"{index}:assistant",
                     )
-            elif item_type == "function_call":
+            elif item_type in {"function_call", "custom_tool_call"}:
                 call_id = str(payload.get("call_id") or payload.get("id") or f"{index}")
                 tool_name = str(payload.get("name") or "")
-                arguments = payload.get("arguments")
+                arguments = (
+                    payload.get("arguments")
+                    if item_type == "function_call"
+                    else payload.get("input")
+                )
                 active_tools[call_id] = {
                     "start_ns": ts_ns,
                     "tool_name": tool_name,
@@ -761,13 +864,12 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
                     {
                         **base_attrs,
                         "gen_ai.client.hook.event": "PreToolUse",
-                        "gen_ai.client.tool_use_id": call_id,
-                        **_agent_tool_attrs(tool_name, arguments),
+                        **_agent_tool_attrs(tool_name, arguments, call_id),
                     },
                     trace_id,
                     f"{index}:function_call:{call_id}",
                 )
-            elif item_type == "function_call_output":
+            elif item_type in {"function_call_output", "custom_tool_call_output"}:
                 call_id = str(payload.get("call_id") or payload.get("id") or f"{index}")
                 start_info = active_tools.pop(call_id, {})
                 output = payload.get("output")
@@ -780,6 +882,7 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
                         "gen_ai.client.hook.event": "PostToolUse",
                         "gen_ai.client.tool_name": str(start_info.get("tool_name") or payload.get("name") or ""),
                         "gen_ai.client.tool_use_id": call_id,
+                        "gen_ai.tool.call.id": call_id,
                         "gen_ai.client.tool.output": output if isinstance(output, str) else _json_dumps(output or {}),
                     },
                     trace_id,
@@ -896,21 +999,27 @@ def _iter_copilot_session_spans(file_path: Path) -> Iterable[dict]:
                     "gen_ai.usage.cache_creation.input_tokens": total_cw,
                 }, trace_id, f"{index}:session.shutdown")
         elif event_type == "tool.execution_start":
-            tool_call_id = data.get("toolCallId") or f"{index}"
+            tool_call_id = str(data.get("toolCallId") or f"{index}")
             active_tools[tool_call_id] = {"start_ns": ts_ns, "tool_name": data.get("toolName", "")}
             yield _make_flat_span("gen_ai.client.hook.PreToolUse", ts_ns, ts_ns, {
                 **attrs,
                 "gen_ai.client.hook.event": "PreToolUse",
-                **_agent_tool_attrs(data.get("toolName", ""), data.get("arguments", {})),
+                **_agent_tool_attrs(
+                    data.get("toolName", ""),
+                    data.get("arguments", {}),
+                    tool_call_id,
+                ),
             }, trace_id, f"{index}:tool.execution_start")
         elif event_type == "tool.execution_complete":
-            tool_call_id = data.get("toolCallId") or f"{index}"
+            tool_call_id = str(data.get("toolCallId") or f"{index}")
             start_info = active_tools.get(tool_call_id, {})
             success = bool(data.get("success", False))
             span_attrs = {
                 **attrs,
                 "gen_ai.client.hook.event": "PostToolUse" if success else "PostToolUseFailure",
                 "gen_ai.client.tool_name": start_info.get("tool_name", ""),
+                "gen_ai.client.tool_use_id": tool_call_id,
+                "gen_ai.tool.call.id": tool_call_id,
             }
             if data.get("model"):
                 span_attrs["gen_ai.request.model"] = data["model"]
@@ -996,7 +1105,11 @@ def _iter_claude_session_spans(file_path: Path) -> Iterable[dict]:
                 tool_attrs = {
                     **attrs,
                     "gen_ai.client.hook.event": "PreToolUse",
-                    **_agent_tool_attrs(tool_name, item.get("input", {})),
+                    **_agent_tool_attrs(
+                        tool_name,
+                        item.get("input", {}),
+                        item.get("id"),
+                    ),
                 }
                 yield _make_flat_span("gen_ai.client.hook.PreToolUse", ts_ns, ts_ns, tool_attrs, trace_id, f"{index}:tool_use:{tool_idx}")
         elif event_type == "summary":
@@ -1066,7 +1179,11 @@ def _iter_cursor_session_spans(file_path: Path) -> Iterable[dict]:
                 if not isinstance(item, dict) or item.get("type") != "tool_use":
                     continue
                 tool_name = str(item.get("name") or "")
-                tool_attrs = _agent_tool_attrs(tool_name, item.get("input"))
+                tool_attrs = _agent_tool_attrs(
+                    tool_name,
+                    item.get("input"),
+                    f"cursor-native:{index}:{tool_idx}",
+                )
                 yield _make_flat_span(
                     "gen_ai.client.hook.PreToolUse",
                     ts_ns,
@@ -1095,6 +1212,222 @@ def _iter_cursor_session_spans(file_path: Path) -> Iterable[dict]:
             "session.id": session_id,
             "gen_ai.client.hook.event": "SessionEnd",
         }, trace_id, "synthetic:session.end")
+
+
+def _opencode_message_usage(message: OpenCodeMessageRecord) -> dict[str, int]:
+    usage = {
+        "input": 0,
+        "output": 0,
+        "cache_write": 0,
+        "cache_read": 0,
+        "reasoning": 0,
+    }
+    for part in message.parts:
+        if part.type != "step-finish":
+            continue
+        tokens = part.data.get("tokens")
+        if not isinstance(tokens, dict):
+            continue
+        cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+        usage["input"] += _coerce_int(tokens.get("input"))
+        usage["output"] += _coerce_int(tokens.get("output"))
+        usage["reasoning"] += _coerce_int(tokens.get("reasoning"))
+        usage["cache_write"] += _coerce_int(cache.get("write"))
+        usage["cache_read"] += _coerce_int(cache.get("read"))
+    return usage
+
+
+def _opencode_base_attrs(session: OpenCodeSessionRecord) -> dict[str, object]:
+    attrs: dict[str, object] = {
+        "gen_ai.client.name": "opencode",
+        "gen_ai.client.session_id": session.id,
+        "session.id": session.id,
+        "service.name": "opencode",
+    }
+    if session.directory:
+        attrs["code.workspace.root"] = session.directory
+    if session.parent_id:
+        attrs["gen_ai.client.parent_session_id"] = session.parent_id
+    if session.title:
+        attrs["gen_ai.client.session_title"] = session.title
+    return attrs
+
+
+def _opencode_tool_attrs(
+    session: OpenCodeSessionRecord,
+    tool_name: str,
+    tool_input: object,
+    call_id: str,
+) -> dict[str, object]:
+    """Resolve OpenCode's ``server_tool`` encoding only from configured servers."""
+
+    attrs = _agent_tool_attrs(tool_name, tool_input, call_id)
+    if attrs.get("gen_ai.client.mcp_server") or not session.directory:
+        return attrs
+    config_path = Path(session.directory) / "opencode.json"
+    try:
+        config = _json_loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return attrs
+    servers = config.get("mcp") if isinstance(config, dict) else None
+    if not isinstance(servers, dict):
+        return attrs
+    for server_name in sorted(servers, key=len, reverse=True):
+        prefix = f"{server_name}_"
+        if tool_name.startswith(prefix) and tool_name != prefix:
+            attrs["gen_ai.client.mcp_server"] = server_name
+            attrs["gen_ai.client.mcp_tool"] = tool_name[len(prefix) :]
+            break
+    return attrs
+
+
+def _iter_opencode_session_spans(file_path: Path) -> Iterable[dict]:
+    try:
+        sessions = OpenCodeSessionStore(file_path).load()
+    except (OSError, sqlite3.DatabaseError) as exc:
+        logger.warning("Failed to read OpenCode session store %s: %s", file_path, exc)
+        return
+
+    yield from _iter_opencode_records_spans(sessions)
+
+
+def _iter_opencode_records_spans(
+    sessions: Iterable[OpenCodeSessionRecord],
+) -> Iterable[dict]:
+    for session in sessions:
+        trace_id = _stable_hex_id("opencode", session.id, length=32)
+        base_attrs = _opencode_base_attrs(session)
+        start_ns = _parse_timestamp_to_ns(session.created_ms)
+        end_ns = _parse_timestamp_to_ns(session.updated_ms) or start_ns
+        if start_ns:
+            yield _make_flat_span(
+                "gen_ai.client.hook.SessionStart",
+                start_ns,
+                start_ns,
+                {**base_attrs, "gen_ai.client.hook.event": "SessionStart"},
+                trace_id,
+                "synthetic:session.start",
+            )
+
+        for message in session.messages:
+            message_ns = _parse_timestamp_to_ns(message.created_ms) or start_ns
+            provider = message.provider or "opencode"
+            message_attrs = {
+                **base_attrs,
+                "gen_ai.provider.name": provider,
+                "gen_ai.system": provider,
+            }
+            text = "\n".join(
+                str(part.data.get("text") or "")
+                for part in message.parts
+                if part.type == "text" and part.data.get("text")
+            )
+            if message.role == "user" and text:
+                yield _make_flat_span(
+                    "gen_ai.client.hook.UserPromptSubmit",
+                    message_ns,
+                    message_ns,
+                    {
+                        **message_attrs,
+                        "gen_ai.client.hook.event": "UserPromptSubmit",
+                        "gen_ai.client.prompt": text,
+                    },
+                    trace_id,
+                    f"{message.id}:user",
+                )
+            elif message.role == "assistant":
+                usage = _opencode_message_usage(message)
+                stop_attrs: dict[str, object] = {
+                    **message_attrs,
+                    "gen_ai.client.hook.event": "Stop",
+                    "gen_ai.request.model": message.model,
+                    "gen_ai.usage.input_tokens": usage["input"],
+                    "gen_ai.usage.output_tokens": usage["output"],
+                    "gen_ai.usage.cache_creation.input_tokens": usage["cache_write"],
+                    "gen_ai.usage.cache_read.input_tokens": usage["cache_read"],
+                    "gen_ai.usage.reasoning_output_tokens": usage["reasoning"],
+                }
+                if text:
+                    stop_attrs["gen_ai.client.output"] = text
+                error = message.data.get("error")
+                if error:
+                    stop_attrs["gen_ai.client.status"] = "error"
+                    if isinstance(error, dict):
+                        stop_attrs["error.type"] = str(error.get("name") or "OpenCodeError")
+                    stop_attrs["error.message"] = _json_dumps(error)[:500]
+                message_end_ns = max(
+                    (
+                        _parse_timestamp_to_ns(part.created_ms)
+                        for part in message.parts
+                    ),
+                    default=message_ns,
+                )
+                yield _make_flat_span(
+                    "gen_ai.client.hook.Stop",
+                    message_ns,
+                    message_end_ns,
+                    stop_attrs,
+                    trace_id,
+                    f"{message.id}:assistant",
+                )
+
+            for part in message.parts:
+                if part.type != "tool":
+                    continue
+                state = part.data.get("state")
+                state = state if isinstance(state, dict) else {}
+                timing = state.get("time") if isinstance(state.get("time"), dict) else {}
+                tool_name = str(part.data.get("tool") or "")
+                call_id = str(part.data.get("callID") or part.id)
+                tool_start_ns = _parse_timestamp_to_ns(timing.get("start") or part.created_ms)
+                tool_end_ns = _parse_timestamp_to_ns(timing.get("end")) or tool_start_ns
+                tool_attrs = {
+                    **message_attrs,
+                    **_opencode_tool_attrs(
+                        session,
+                        tool_name,
+                        state.get("input"),
+                        call_id,
+                    ),
+                }
+                yield _make_flat_span(
+                    "gen_ai.client.hook.PreToolUse",
+                    tool_start_ns,
+                    tool_start_ns,
+                    {**tool_attrs, "gen_ai.client.hook.event": "PreToolUse"},
+                    trace_id,
+                    f"{part.id}:tool:start",
+                )
+                success = opencode_tool_success(state.get("status"))
+                if success is None:
+                    continue
+                result_attrs: dict[str, object] = {
+                    **tool_attrs,
+                    "gen_ai.client.hook.event": "PostToolUse" if success else "PostToolUseFailure",
+                    "gen_ai.client.status": "ok" if success else "error",
+                }
+                if state.get("output") not in (None, ""):
+                    result_attrs["gen_ai.client.tool.output"] = str(state["output"])
+                if not success and state.get("error") not in (None, ""):
+                    result_attrs["error.message"] = str(state["error"])[:500]
+                yield _make_flat_span(
+                    f"gen_ai.client.hook.{result_attrs['gen_ai.client.hook.event']}",
+                    tool_start_ns,
+                    tool_end_ns,
+                    result_attrs,
+                    trace_id,
+                    f"{part.id}:tool:end",
+                )
+
+        if end_ns:
+            yield _make_flat_span(
+                "gen_ai.client.hook.SessionEnd",
+                end_ns,
+                end_ns,
+                {**base_attrs, "gen_ai.client.hook.event": "SessionEnd"},
+                trace_id,
+                "synthetic:session.end",
+            )
 
 
 def _iter_gemini_session_spans(file_path: Path) -> Iterable[dict]:
@@ -1152,10 +1485,16 @@ def _iter_gemini_session_spans(file_path: Path) -> Iterable[dict]:
                     continue
                 tool_ts = _parse_timestamp_to_ns(call.get("timestamp")) or ts_ns
                 tool_name = call.get("displayName") or call.get("name", "")
+                call_id = str(
+                    call.get("id")
+                    or call.get("callId")
+                    or call.get("toolCallId")
+                    or f"gemini-native:{index}:{tool_idx}"
+                )
                 yield _make_flat_span("gen_ai.client.hook.PreToolUse", tool_ts, tool_ts, {
                     **attrs,
                     "gen_ai.client.hook.event": "PreToolUse",
-                    **_agent_tool_attrs(tool_name, call.get("args", {})),
+                    **_agent_tool_attrs(tool_name, call.get("args", {}), call_id),
                 }, trace_id, f"{index}:tool:{tool_idx}:start")
                 yield _make_flat_span(
                     f"gen_ai.client.hook.{'PostToolUse' if call.get('status') == 'success' else 'PostToolUseFailure'}",
@@ -1165,6 +1504,8 @@ def _iter_gemini_session_spans(file_path: Path) -> Iterable[dict]:
                         **attrs,
                         "gen_ai.client.hook.event": "PostToolUse" if call.get("status") == "success" else "PostToolUseFailure",
                         "gen_ai.client.tool_name": tool_name,
+                        "gen_ai.client.tool_use_id": call_id,
+                        "gen_ai.tool.call.id": call_id,
                     },
                     trace_id,
                     f"{index}:tool:{tool_idx}:end",
@@ -1199,6 +1540,8 @@ def _load_rich_session_spans() -> tuple[list[dict], dict[str, int], dict[str, tu
             derived = list(_iter_claude_session_spans(file_path))
         elif source == "gemini":
             derived = list(_iter_gemini_session_spans(file_path))
+        elif source == "opencode":
+            derived = list(_iter_opencode_session_spans(file_path))
         else:
             derived = []
         if derived:
@@ -1240,7 +1583,7 @@ def _encode_otlp_span(span: dict) -> dict:
 
 
 def _canonical_otlp_traces_path() -> Path:
-    return REFLECT_HOME / "state" / "otlp" / "otel-traces.json"
+    return REFLECT_HOME / "state" / "otlp" / "otel-traces.active.jsonl"
 
 
 def _materialize_local_otlp_traces(
@@ -1371,11 +1714,15 @@ def _extract_model_name(attrs: dict) -> str:
 
 def _infer_otlp_logs_file(otlp_traces_file: Path | None) -> Path | None:
     if otlp_traces_file:
-        sibling = otlp_traces_file.with_name("otel-logs.json")
-        if sibling.exists():
+        sibling = otlp_traces_file.with_name(
+            otlp_traces_file.name.replace("otel-traces", "otel-logs", 1)
+        )
+        if readable_segment_paths(sibling):
             return sibling
-    default_logs = REFLECT_HOME / "state" / "otel-logs.json"
-    return default_logs if default_logs.exists() else None
+        if otlp_traces_file != _canonical_otlp_traces_path():
+            return None
+    default_logs = REFLECT_HOME / "state" / "otlp" / "otel-logs.active.jsonl"
+    return default_logs if readable_segment_paths(default_logs) else None
 
 
 def _load_session_model_hints(session_files: list[Path]) -> dict[str, str]:
@@ -1433,9 +1780,3 @@ def _enrich_missing_session_models_from_logs(
                 )
                 model_counts[preferred] += 1
             session_models[session_id] = model_counts
-
-
-def _default_sessions_dir() -> Path:
-    """Lazy import to avoid circular dependency with core."""
-    from reflect.core import _default_sessions_dir as _core_default_sessions_dir
-    return _core_default_sessions_dir()

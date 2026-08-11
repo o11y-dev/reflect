@@ -1,5 +1,88 @@
 # Changelog
 
+## 0.9.7 (unreleased)
+
+### Changed
+
+- Quality scores now normalize only across dimensions backed by observed evidence, expose coverage explicitly, and withhold low-coverage scores instead of rewarding or penalizing missing telemetry as zero.
+- Consolidated durable architecture, MCP execution, and review contracts in the public contribution guide; removed completed implementation notes; and rewrote the public telemetry schema around current normalization and capability ownership.
+- Refresh-enabled browser servers now prepare telemetry immediately and every five minutes through one non-overlapping coordinator; manual refresh uses the same lifecycle and performs complete rotated-segment reconciliation.
+- The typed agent capability registry now also owns active native-OTel surfaces. Historical Gemini remains ingestible but is excluded from setup and active telemetry status, with Antigravity named as the current Gemini-family target.
+- Made `reflect.views` the explicit public SQL read-model boundary and moved report process/preparation ownership out of the CLI composition root.
+- Removed the standalone Markdown renderer, its unreachable aggregate insight and in-memory graph presentation stacks, and dead root report flags; shell completion is now an explicit reviewed installation with exact target and managed-block preview, while public agent/platform metadata is bound to the capability registry and CI matrix.
+- Deleted the orphaned terminal dashboard and its renderer-only tests, retained shared CLI preparation progress under `cli/`, and renamed native store, conversation, Cursor usage, and session-rule context modules for their actual responsibilities without compatibility aliases.
+- Declared macOS and Linux as the supported operating systems, matching the tested CI matrix and POSIX raw-segment locking contract.
+- Restored the Skills Registry as a first-class browser surface between Workflows and Impact, preserving the existing version, installation, exposure, and usage evidence while making durable procedures directly discoverable again.
+- Made the remaining dashboard and CLI ownership boundaries concrete: session and Explore queries now have focused modules, improvement route data uses one adapter, memory/schema commands live under `cli/`, and shared snapshot/JSON helpers no longer have duplicate implementations.
+- Deleted obsolete core re-exports, duplicate session-card shapers, dead helpers, and unused dashboard styles while preserving the existing dashboard and CLI behavior.
+- Replaced deprecated Gemini CLI execution paths with Antigravity `agy` for skill extraction, MCP setup, and fresh-install agent validation; historical Gemini telemetry remains readable through its historical adapter without participating in current client setup.
+- Canonicalized workflow identity around the normalized contract signature and exact revision hash, and projected review, deployment, installation, and measurement as separate lifecycle dimensions. Approved but uninstalled workflows are no longer executable guidance.
+- Made database evolution one-way for the new workflow, execution-unit, MCP-call, and source-lifecycle models: migrations move durable data forward, while runtime dual reads, dual writes, retired routes, presentation aliases, and legacy fallback branches are removed.
+- Split snapshot preparation, database command wiring, dashboard queries, dashboard server construction, and authored frontend modules into explicit owners. The generated packaged and documentation dashboards now come from one build and remain byte-identical.
+- Consolidated the browser around Sessions, Inbox, Workflows, Skills, Impact, and Explore. Inbox owns findings and actionable loops, Workflows owns explicit intervention contracts, and durable skill versions remain a distinct registry surface.
+- Centralized current-client support, aliases, setup paths, hooks, skill targets, MCP configuration, and headless-test capability in one typed registry used by setup, doctor, and validation.
+- Replaced unbounded gateway cache files with bounded active OTLP JSONL segments and immutable closed segments; successfully normalized closed segments are deleted by default and can be retained explicitly with `--keep-processed-raw`.
+- Made explicit snapshot refresh ingest unchanged-aware hook JSONL files before native session adapters, so fresh and repaired stores reconcile current agent events without replaying unchanged files.
+- Made recovery impacts measure repeated unchanged calls rather than raw first failures, and withhold impact claims until signal coverage, agent/source comparability, and observed workflow adherence pass an explicit evidence-quality gate.
+- Renamed the Context & System Specs presentation to Task Contracts and made that noun consistent across the current browser and documentation surfaces.
+- Session retention now deletes only the selected sessions, refreshes their affected graph and usage-rollup keys, and relies on enforced SQLite constraints instead of rebuilding and globally validating the complete derived store.
+- Made improvement discovery and impact measurement execution-aware: long-lived sessions are segmented into canonical execution units, mixed or low-confidence archetypes are excluded from procedure cohorts, and workflow contracts are evaluated symmetrically against the first five comparable post-installation executions.
+- Reused the existing observation, workflow, skill, intervention, and measurement lifecycle for successful repeated procedures, suppressing duplicate proposals when an active installed skill already covers the same procedure signature.
+- Standardized usage, improvement, skill-discovery, and foreground-report filtering on `--period day|week|month|all`, removing the deprecated individual period aliases.
+- Kept direct SQLite guidance as an advanced debugging fallback while making scoped commands and bounded task-evidence ledgers the primary analysis path.
+- Made the browser report SQLite-only, removed the legacy artifact, SQL-tab, and duplicate improvement/measurement APIs, and switched dashboard reads to query-only connections that never migrate during a request.
+- Made `tool_calls` the canonical logical-invocation ledger: invocation/result phases sharing a provider call ID are merged, MCP aliases resolve to one name, and migration 25 reconciles retained duplicates before rollups and command-pattern analysis.
+- Bounded `reflect_improvements` with summary-first responses, pagination, opt-in capped evidence, and explicit evidence cutoff, refresh, excluded-session, attribution, and before/after safety metadata.
+
+### Added
+
+- Added a public, reviewable curl installer that preserves the package owner on updates, prefers pipx, uv, then an isolated pip environment for fresh installs, and runs private local setup only after first installation.
+- Added a fresh-wheel cross-agent blog handoff suite and a deterministic six-agent telemetry contract covering validated memory selection, task completion, logical MCP calls, token totals, and repeat-refresh idempotency.
+- Added a direction-aware progress graph to every Impact card, plotting the baseline and each stored comparable-cohort check without extra dashboard queries.
+- Added a typed OpenCode SQLite store reader shared by canonical ingestion and session-detail rendering, including prompts, responses, exact model/token/cache usage, tool results, workspace context, and parent-session lineage.
+- Added privacy-safe Codex context discovery for user instructions and memory files, canonical per-session memory exposure evidence with dashboard counts, and automatic task-contract registration when `reflect_context` receives an explicit task file.
+- Added read-only `reflect_impact` MCP inspection for persisted before/after measurements and their exact compared execution-unit cohorts.
+- Added typed workflow contracts and the idempotent `reflect_record_milestone` MCP tool, with task-run, skill-version, execution-unit, target, provider, approval, write, and read-back fingerprint evidence; self-reports remain separate from corroborated adherence.
+- Added contract-level procedure evidence and five-execution validation progress to workflow and Impact dashboard views.
+- Added complete finding-to-task attribution, scoped finding statistics, actionable CLI drilldown, and `/api/findings/{observation_id}/evidence`.
+
+### Fixed
+
+- Added canonical token provenance and stopped materializing lifecycle-only prompt/session events as LLM calls, while preserving conversation facts, usage-bearing lifecycle records, session token totals, and model-backed assistant responses.
+- Moved refresh, storage-pressure, and failure notifications into a responsive header activity rail with five real preparation phases, richer status detail, and reduced-motion-safe animation so alerts no longer cover dashboard content.
+- Stopped materializing Codex runtime-internal OTLP spans in SQLite after classification; bounded raw segments still checkpoint and rotate without growing canonical evidence.
+- Added a combined 4 GiB raw trace/log admission guard that preserves existing evidence and rejects new telemetry at capacity, with HTTP/gRPC backpressure plus doctor, server, health API, and dashboard status.
+- Source checkouts now use the `pyproject.toml` version as runtime truth and explain stale installed environment metadata instead of reporting the checkout as an older release.
+- Moved shared skill and subagent evidence extraction out of dashboard presentation code, removing duplicate implementations and restoring the normalization-to-presentation dependency direction.
+- Made `reflect doctor` distinguish pending, processed, and temporarily unclassified closed OTLP segments, report pending bytes and the last successful normalization, and recommend `reflect refresh` when capture is already configured.
+- Made OpenCode SQLite ingestion persist a composite record cursor so changed stores load only new or updated sessions while decoder changes still trigger a complete replay.
+- Made native Claude, Codex, Copilot, Cursor, OpenCode, and historical Gemini session discovery honor each agent's configured home and environment overrides.
+- Restored Inbox as the evidence-attention surface without projecting workflow titles onto findings, and aligned session trace waterfalls from canonical span timestamps instead of placing every child span at zero.
+- Made dashboard evidence trustworthy at first render: MCP calls now use one canonical logical-call ledger with merged server aliases and explicit outcome coverage, command patterns exclude orchestration wrappers, session and cohort token/tool totals share canonical semantics, context-only memory exposures stay out of work-session navigation, cost gaps identify missing tokens, models, or pricing, lazy Explore views distinguish loading from empty data, and workflow reviews separate linked provenance sessions from comparable task evidence before any unvalidated apply.
+- Kept explicit OTLP trace inputs isolated from the global log segment, preventing live local traffic from contaminating fixture, import, or alternate-store analysis.
+- Initialized empty JSON MCP configuration files during setup and limited the unsupported-agent warning to agents whose canonical capability is actually planned, so fresh Antigravity wiring no longer fails or mislabels supported clients.
+- Made validated project instructions path-applicable context and let `reflect_context` return bounded current content only when the source remains in scope and its hash still matches, instead of losing reusable guidance beyond the 360-character privacy preview.
+- Preserved provider tool-call identities across native adapters, reconciled invocation/result MCP rows by logical call ID, and attributed `reflect_context` memory exposure after the task's runtime session is ingested.
+- Generated tool-specific names for failure-recovery workflows and added an editable workflow name with a deterministic unique-name suggestion when another active workflow owns the proposed target.
+- Prevented Cursor transcript estimates from attaching to sessions owned by another agent, repaired retained cross-agent estimate provenance, let explicit native sources correct earlier agent attribution, made model token breakdowns deduplicate the same exact usage records used by canonical session totals, and labeled token-bearing zero-cost sessions as unpriced rather than implicitly free.
+- Made `reflect doctor` distinguish hook registration from events actually delivered to Reflect, while exposing exporter health, pending batches, and hook-state writability.
+- Lazy-loaded filtered Tools data when entering Explore, preserving agent and cohort filters so command patterns no longer remain empty after filtering from another dashboard view.
+- Made session, daily, and per-tool rollups count canonical `tool_calls` rows instead of raw phase steps or provider IDs reused across sessions.
+- Deferred full tool and graph calculation until their Explore views are requested, allowing snapshot-only dashboard servers to bind promptly on large stores instead of blocking startup on eager analysis.
+- Kept Context & System project-wide when a session is selected, so specs, durable memory, privacy findings, and store records no longer render as empty session-owned data.
+- Required Reflect case-study and ROI analysis to inspect existing impact measurements, distinguish outcome shifts from attributable intervention impact, and audit cohort comparability before reporting insufficient evidence.
+- Refreshed long-lived browser dashboards when reopened or focused so newly completed native sessions appear without a manual ingest, while deferring automatic replay when an OTLP JSONL was replaced or truncated.
+- Allowed richer native session telemetry to supply missing token usage when an existing OTLP-owned session has no tokens, while preserving source ownership when OTLP already contains usage; session cards now label unavailable cost instead of silently omitting it.
+- Replaced misleading `0 signals` badges in Impact comparison details with each session's actual metric contribution, while contract-based task cohorts now expose observed signal counts, workflow roles, and adherence state.
+- Retired pending workflow candidates when their detector is retired, and made the dashboard default/count represent reviewable workflows while preserving stale history behind the State filter.
+- Omitted findings whose source evidence was pruned, preventing the findings API from validating evidence-less historical records.
+- Added the missing SQLite child-key indexes used by session-retention cascades, and made execution-unit and task-archetype preparation session-scoped so recent workflow cohorts can refresh without rebuilding unrelated history.
+- Repriced persisted sessions and rebuilt dependent usage rollups when pricing rates or model aliases change, so recent session costs no longer remain at zero after the pricing cache learns a model.
+- Kept workflow findings, review targets, and source-execution ledgers bound to the exact proposed artifact instead of merging different procedures that share a skill slug.
+- Added an explicit `--all-inactive-sessions` retention mode so operators can enforce a true age cutoff while the conservative invalid-timestamp policy remains the default.
+- Derived dashboard session event counts from canonical steps so missing usage rollups cannot silently make active sessions appear to have zero events.
+- Kept retention previews query-only, created apply backups before schema migration, rolled back pruning when derived rebuilds fail, rejected structurally incomplete usage rollups, and preserved the feedback lookup index.
+
 ## 0.9.5 (2026-08-02)
 
 ### Changed

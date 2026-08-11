@@ -8,13 +8,13 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from reflect.store.hook_facts import HookFactRepository
-from reflect.views.report_tabs import (
-    _attr,
-    _extract_skill_name_from_path,
-    _extract_skill_name_from_preview,
-    _extract_skill_names_from_text,
-    _extract_subagent_name_from_tool,
-    _extract_subagent_names_from_text,
+from reflect.telemetry_facts import (
+    extract_skill_name_from_path,
+    extract_skill_name_from_preview,
+    extract_skill_names_from_text,
+    extract_subagent_name_from_tool,
+    extract_subagent_names_from_text,
+    first_attr,
 )
 
 
@@ -35,6 +35,30 @@ def _load_json_dict(value: object) -> dict:
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _memory_exposure_rows(conn: sqlite3.Connection, memory_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT session_id, MIN(created_at) AS first_seen_at,
+               MAX(updated_at) AS last_seen_at
+        FROM memory_exposures
+        WHERE memory_id = ?
+        GROUP BY session_id
+        UNION ALL
+        SELECT session_id, created_at, updated_at
+        FROM memories
+        WHERE id = ?
+          AND COALESCE(session_id, '') <> ''
+          AND NOT EXISTS (
+            SELECT 1 FROM memory_exposures me
+            WHERE me.memory_id = memories.id
+              AND me.session_id = memories.session_id
+          )
+        ORDER BY session_id
+        """,
+        (memory_id, memory_id),
+    ).fetchall()
 
 
 def _short_id(value: object, length: int = 10) -> str:
@@ -578,9 +602,9 @@ def rebuild_graph(
                 )
                 edges += int(inserted)
 
-                prompt_text = str(_attr(step_attrs, "gen_ai.client.prompt", "gen_ai.client.prompt.text", "prompt") or "")
+                prompt_text = str(first_attr(step_attrs, "gen_ai.client.prompt", "gen_ai.client.prompt.text", "prompt") or "")
                 file_path = str(
-                    _attr(
+                    first_attr(
                         step_attrs,
                         "gen_ai.client.file_path",
                         "gen_ai.client.tool.input.file_path",
@@ -592,8 +616,8 @@ def rebuild_graph(
                     )
                     or ""
                 )
-                skill_names = set(_extract_skill_names_from_text(prompt_text))
-                path_skill = _extract_skill_name_from_path(file_path)
+                skill_names = set(extract_skill_names_from_text(prompt_text))
+                path_skill = extract_skill_name_from_path(file_path)
                 if path_skill:
                     skill_names.add(path_skill)
                 for skill_name in sorted(skill_names):
@@ -621,14 +645,14 @@ def rebuild_graph(
                 agent_event = hook_facts.agent_event_for_step(step["id"]) or {}
                 event = str(
                     agent_event.get("event_name")
-                    or _attr(step_attrs, "gen_ai.client.hook.event", "ide.hook.event")
+                    or first_attr(step_attrs, "gen_ai.client.hook.event", "ide.hook.event")
                     or step["summary"]
                     or ""
                 )
                 event_lc = event.lower()
                 subagent_type = str(
                     agent_event.get("agent_type")
-                    or _attr(
+                    or first_attr(
                         step_attrs,
                         "gen_ai.client.subagent_type",
                         "ide.subagent_type",
@@ -641,12 +665,12 @@ def rebuild_graph(
                     subagent_name = subagent_type or "unknown"
                     agent_id = str(
                         agent_event.get("agent_id")
-                        or _attr(step_attrs, "gen_ai.client.agent_id", "gen_ai.agent.id")
+                        or first_attr(step_attrs, "gen_ai.client.agent_id", "gen_ai.agent.id")
                         or ""
                     )
                     parent_agent_id = str(
                         agent_event.get("parent_agent_id")
-                        or _attr(step_attrs, "gen_ai.client.parent_agent_id")
+                        or first_attr(step_attrs, "gen_ai.client.parent_agent_id")
                         or ""
                     )
                     subagent_node, inserted = _insert_node(
@@ -710,7 +734,7 @@ def rebuild_graph(
                         )
                         edges += int(inserted)
 
-                for subagent_name in sorted(_extract_subagent_names_from_text(prompt_text)):
+                for subagent_name in sorted(extract_subagent_names_from_text(prompt_text)):
                     subagent_node, inserted = _insert_node(
                         conn,
                         kind="Subagent",
@@ -810,12 +834,12 @@ def rebuild_graph(
             )
             edges += int(inserted)
 
-            skill_names = set(_extract_skill_names_from_text(preview))
+            skill_names = set(extract_skill_names_from_text(preview))
             if str(tool["tool_name"]).lower() == "skill":
-                skill_name = _extract_skill_name_from_preview(preview)
+                skill_name = extract_skill_name_from_preview(preview)
                 if skill_name:
                     skill_names.add(skill_name)
-            explicit_path = _attr(
+            explicit_path = first_attr(
                     tool_attrs,
                     "gen_ai.client.file_path",
                     "gen_ai.client.tool.input.file_path",
@@ -826,7 +850,7 @@ def rebuild_graph(
                     "path",
                 )
             for path in _path_candidates(explicit_path, preview=preview):
-                path_skill = _extract_skill_name_from_path(path)
+                path_skill = extract_skill_name_from_path(path)
                 if path_skill:
                     skill_names.add(path_skill)
                 context = session_contexts.get(str(tool["session_id"]), {})
@@ -971,7 +995,7 @@ def rebuild_graph(
                 )
                 edges += int(inserted)
 
-            subagent_name = _extract_subagent_name_from_tool(str(tool["tool_name"]), tool_attrs, preview)
+            subagent_name = extract_subagent_name_from_tool(str(tool["tool_name"]), tool_attrs, preview)
             if subagent_name:
                 subagent_node, inserted = _insert_node(
                     conn,
@@ -1194,7 +1218,20 @@ def rebuild_graph(
                 )
                 edges += int(inserted)
 
-        for mcp in conn.execute("SELECT * FROM mcp_calls WHERE server_name IS NOT NULL ORDER BY created_at, id"):
+        for mcp in conn.execute(
+            """
+            SELECT
+              mc.*,
+              mc.tool_call_id AS id,
+              tc.session_id,
+              tc.status,
+              tc.duration_ms
+            FROM mcp_calls AS mc
+            JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+            WHERE mc.server_name IS NOT NULL
+            ORDER BY mc.created_at, mc.tool_call_id
+            """
+        ):
             session_node, _ = _insert_node(
                 conn,
                 kind="Session",
@@ -1310,12 +1347,12 @@ def rebuild_graph(
                             timestamp=timestamp,
                         )
                         edges += int(inserted)
-            if memory["session_id"]:
+            for exposure in _memory_exposure_rows(conn, str(memory["id"])):
                 session_node, _ = _insert_node(
                     conn,
                     kind="Session",
-                    label=memory["session_id"],
-                    session_id=memory["session_id"],
+                    label=exposure["session_id"],
+                    session_id=exposure["session_id"],
                     timestamp=timestamp,
                 )
                 _, inserted = _insert_edge(
@@ -1323,7 +1360,9 @@ def rebuild_graph(
                     source_node_id=session_node,
                     target_node_id=memory_node,
                     kind="recorded_memory",
-                    session_id=memory["session_id"],
+                    session_id=exposure["session_id"],
+                    first_seen_at=exposure["first_seen_at"],
+                    last_seen_at=exposure["last_seen_at"],
                     timestamp=timestamp,
                 )
                 edges += int(inserted)
@@ -1430,12 +1469,12 @@ def rebuild_graph(
                             timestamp=timestamp,
                         )
                         edges += int(inserted)
-            if memory["session_id"]:
+            for exposure in _memory_exposure_rows(conn, str(memory["id"])):
                 session_node, _ = _insert_node(
                     conn,
                     kind="Session",
-                    label=memory["session_id"],
-                    session_id=memory["session_id"],
+                    label=exposure["session_id"],
+                    session_id=exposure["session_id"],
                     timestamp=timestamp,
                 )
                 _, inserted = _insert_edge(
@@ -1443,10 +1482,10 @@ def rebuild_graph(
                     source_node_id=session_node,
                     target_node_id=spec_node,
                     kind="planned_spec",
-                    session_id=memory["session_id"],
+                    session_id=exposure["session_id"],
                     attrs={"memory_id": memory["id"]},
-                    first_seen_at=memory["created_at"],
-                    last_seen_at=memory["last_seen_at"],
+                    first_seen_at=exposure["first_seen_at"],
+                    last_seen_at=exposure["last_seen_at"],
                     timestamp=timestamp,
                 )
                 edges += int(inserted)
@@ -1515,7 +1554,6 @@ def refresh_graph(
         "sessions": "id",
         "steps": "session_id",
         "tool_calls": "session_id",
-        "mcp_calls": "session_id",
         "memories": "session_id",
         "evidence": "session_id",
     }
@@ -1530,6 +1568,21 @@ def refresh_graph(
                   ON changed.session_id = source.{session_column}
                 """
             )
+        conn.execute(
+            """
+            CREATE TEMP VIEW mcp_calls AS
+            SELECT
+              source.*,
+              source.tool_call_id AS id,
+              tc.session_id,
+              tc.status,
+              tc.duration_ms
+            FROM main.mcp_calls AS source
+            JOIN main.tool_calls AS tc ON tc.id = source.tool_call_id
+            JOIN reflect_changed_sessions AS changed
+              ON changed.session_id = tc.session_id
+            """
+        )
         result = rebuild_graph(conn, reset=False)
         return {
             **result,

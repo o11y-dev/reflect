@@ -12,6 +12,10 @@ def test_readme_has_current_quick_start_contract():
 
     assert "Evidence, Not Vibes." in readme
     assert readme.count("## Quick Start") == 1
+    assert "curl -fsSL https://reflect.o11y.dev/install.sh | sh" in readme
+    assert "https://reflect.o11y.dev/install.sh" in readme
+    assert "pipx, uv, then Python's pip in an isolated environment" in readme
+    assert "preserves the existing setup" in readme
     assert "pipx install o11y-reflect" in readme
     assert "reflect setup" in readme
     assert "reflect doctor" in readme
@@ -29,11 +33,14 @@ def test_readme_has_current_quick_start_contract():
 def test_readme_explains_current_product_surfaces():
     readme = _readme()
 
-    for surface in ("Inbox", "Sessions", "Workflows", "Skills", "Impact", "Explore"):
+    for surface in ("Sessions", "Inbox", "Workflows", "Skills", "Impact", "Explore"):
         assert f"**{surface}**" in readme
 
-    assert "A repeated loop can motivate a workflow" in readme
-    assert "neither conversion happens automatically" in readme
+    assert "The browser has six surfaces" in readme
+    assert "### Skills Registry" in readme
+    assert "Approval and" in readme
+    assert "installation are separate" in readme
+    assert "missing baseline evidence is shown as unavailable rather than zero" in readme
 
 
 def test_readme_does_not_restore_superseded_opening():

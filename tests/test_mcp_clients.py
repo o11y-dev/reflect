@@ -4,23 +4,46 @@ import json
 
 import pytest
 
-from reflect import core
+from reflect.agent_capabilities import (
+    AgentSupport,
+    MCPClientSurface,
+    get_agent_capability,
+    native_otel_capabilities,
+    setup_agent_capabilities,
+)
 from reflect.mcp_clients import (
     MCP_CLIENT_CAPABILITIES,
     MCP_CLIENT_CONFIGURATORS,
-    MCPClientSurface,
     configure_reflect_mcp,
     get_mcp_client_capability,
 )
 
 
-def test_mcp_client_matrix_covers_every_implemented_agent() -> None:
+def test_mcp_client_matrix_uses_canonical_agent_capabilities() -> None:
     declared_agents = {
         capability.agent_name for capability in MCP_CLIENT_CAPABILITIES
     }
 
     assert len(declared_agents) == len(MCP_CLIENT_CAPABILITIES)
-    assert declared_agents == set(core._IMPLEMENTED_AGENT_SUPPORT)
+    assert "Antigravity" in declared_agents
+    assert "Gemini CLI" not in declared_agents
+    assert get_agent_capability("Gemini CLI").support is AgentSupport.HISTORICAL
+    assert get_agent_capability("Antigravity").support is AgentSupport.PARTIAL
+
+
+def test_setup_and_native_otel_surfaces_use_current_capability_truth() -> None:
+    setup_keys = {capability.key for capability in setup_agent_capabilities()}
+    native_agents = {capability.display_name for capability in native_otel_capabilities()}
+
+    assert "gemini" not in setup_keys
+    assert "antigravity" in setup_keys
+    assert "Gemini CLI" not in native_agents
+    assert native_agents == {
+        "Claude Code",
+        "GitHub Copilot VS Code",
+        "GitHub Copilot CLI",
+        "OpenAI Codex CLI",
+    }
 
 
 def test_headless_clients_have_complete_local_test_identity() -> None:
@@ -84,6 +107,29 @@ def test_cursor_configurator_preserves_existing_servers_and_is_idempotent(
     }
 
 
+def test_antigravity_configurator_initializes_an_empty_config(tmp_path) -> None:
+    antigravity_home = tmp_path / ".gemini" / "antigravity-cli"
+    config_path = antigravity_home.parent / "config" / "mcp_config.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text("", encoding="utf-8")
+
+    result = configure_reflect_mcp(
+        "Antigravity",
+        antigravity_home,
+        command="/usr/local/bin/reflect-mcp",
+    )
+
+    assert result is not None and result.changed
+    assert json.loads(config_path.read_text()) == {
+        "mcpServers": {
+            "reflect": {
+                "command": "/usr/local/bin/reflect-mcp",
+                "args": [],
+            }
+        }
+    }
+
+
 def test_codex_configurator_preserves_reflect_server_options(tmp_path) -> None:
     codex_home = tmp_path / ".codex"
     codex_home.mkdir()
@@ -129,9 +175,9 @@ def test_codex_configurator_preserves_reflect_server_options(tmp_path) -> None:
             {"command": "/usr/local/bin/reflect-mcp", "args": []},
         ),
         (
-            "Gemini CLI",
-            ".gemini",
-            "settings.json",
+            "Antigravity",
+            ".gemini/antigravity-cli",
+            "../config/mcp_config.json",
             "mcpServers",
             {"command": "/usr/local/bin/reflect-mcp", "args": []},
         ),

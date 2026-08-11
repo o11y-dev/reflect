@@ -1,4 +1,4 @@
-"""Declared MCP client surfaces for Reflect's implemented agents."""
+"""Declared MCP client surfaces, independent of telemetry ingestion support."""
 
 from __future__ import annotations
 
@@ -6,35 +6,14 @@ import json as _json_stdlib
 import re
 import tomllib
 from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
+from reflect.agent_capabilities import (
+    MCPClientCapability,
+    mcp_agent_capabilities,
+)
 from reflect.utils import _json_loads
-
-
-class MCPClientSurface(StrEnum):
-    """How an agent can connect to a local Reflect MCP server."""
-
-    HEADLESS_CLI = "Headless CLI"
-    EDITOR_CONFIG = "Editor config"
-
-
-@dataclass(frozen=True)
-class MCPClientCapability:
-    """One implemented agent's MCP client and local-test contract."""
-
-    agent_name: str
-    config_surface: str
-    surface: MCPClientSurface
-    local_agent_name: str | None = None
-    executable: str | None = None
-
-    @property
-    def locally_testable(self) -> bool:
-        """Whether the machine-only suite can exercise this client headlessly."""
-
-        return self.local_agent_name is not None and self.executable is not None
 
 
 @dataclass(frozen=True)
@@ -100,7 +79,8 @@ class JsonMCPClientConfigurator:
     ) -> MCPConfigurationResult:
         path = self.config_path(agent_home)
         if path.exists():
-            data = _json_loads(path.read_text())
+            raw = path.read_text(encoding="utf-8")
+            data = _json_loads(raw) if raw.strip() else {}
             if not isinstance(data, dict):
                 raise ValueError(f"{path} must contain a JSON object")
         else:
@@ -200,54 +180,10 @@ class CodexMCPClientConfigurator:
         return MCPConfigurationResult(path=path, changed=True)
 
 
-MCP_CLIENT_CAPABILITIES: tuple[MCPClientCapability, ...] = (
-    MCPClientCapability(
-        agent_name="Claude Code",
-        config_surface="~/.claude.json",
-        surface=MCPClientSurface.HEADLESS_CLI,
-        local_agent_name="claude",
-        executable="claude",
-    ),
-    MCPClientCapability(
-        agent_name="Cursor",
-        config_surface=".cursor/mcp.json",
-        surface=MCPClientSurface.HEADLESS_CLI,
-        local_agent_name="cursor",
-        executable="cursor-agent",
-    ),
-    MCPClientCapability(
-        agent_name="Gemini CLI",
-        config_surface=".gemini/settings.json",
-        surface=MCPClientSurface.HEADLESS_CLI,
-        local_agent_name="gemini",
-        executable="gemini",
-    ),
-    MCPClientCapability(
-        agent_name="GitHub Copilot",
-        config_surface="~/.copilot/mcp-config.json",
-        surface=MCPClientSurface.HEADLESS_CLI,
-        local_agent_name="copilot",
-        executable="copilot",
-    ),
-    MCPClientCapability(
-        agent_name="OpenAI Codex CLI",
-        config_surface="~/.codex/config.toml",
-        surface=MCPClientSurface.HEADLESS_CLI,
-        local_agent_name="codex",
-        executable="codex",
-    ),
-    MCPClientCapability(
-        agent_name="Windsurf",
-        config_surface="~/.codeium/windsurf/mcp_config.json",
-        surface=MCPClientSurface.EDITOR_CONFIG,
-    ),
-    MCPClientCapability(
-        agent_name="OpenCode",
-        config_surface="~/.config/opencode/opencode.json",
-        surface=MCPClientSurface.HEADLESS_CLI,
-        local_agent_name="opencode",
-        executable="opencode",
-    ),
+MCP_CLIENT_CAPABILITIES: tuple[MCPClientCapability, ...] = tuple(
+    capability.mcp
+    for capability in mcp_agent_capabilities()
+    if capability.mcp is not None
 )
 
 _MCP_CLIENTS_BY_AGENT = {
@@ -261,7 +197,11 @@ MCP_CLIENT_CONFIGURATORS: tuple[MCPClientConfigurator, ...] = (
         parent_of_home=True,
     ),
     JsonMCPClientConfigurator(agent_name="Cursor", filename="mcp.json"),
-    JsonMCPClientConfigurator(agent_name="Gemini CLI", filename="settings.json"),
+    JsonMCPClientConfigurator(
+        agent_name="Antigravity",
+        filename="config/mcp_config.json",
+        parent_of_home=True,
+    ),
     JsonMCPClientConfigurator(
         agent_name="GitHub Copilot",
         filename="mcp-config.json",

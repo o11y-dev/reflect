@@ -125,9 +125,9 @@ def test_rebuild_rollups_from_canonical_tables(tmp_path):
             WHERE session_id = 'sess-rollup'
             """
         ).fetchone()
-        assert session == ("claude", 1, 3, 1, 100, 50)
+        assert session == ("claude", 1, 2, 1, 100, 50)
         day = conn.execute("SELECT session_count, prompt_count, tool_call_count, error_count FROM daily_rollups").fetchone()
-        assert day == (1, 1, 3, 1)
+        assert day == (1, 1, 2, 1)
         tool = conn.execute(
             "SELECT tool_name, call_count, success_count, error_count, total_duration_ms FROM tool_rollups"
         ).fetchone()
@@ -241,12 +241,12 @@ def test_refresh_rollups_only_updates_changed_sessions_and_affected_aggregates(t
         ).fetchone()[0] == other_updated_at
         assert conn.execute(
             "SELECT tool_call_count FROM session_rollups WHERE session_id = 'sess-rollup'"
-        ).fetchone()[0] == 4
+        ).fetchone()[0] == 3
         assert tuple(conn.execute(
             "SELECT session_count, prompt_count, tool_call_count FROM daily_rollups"
-        ).fetchone()) == (2, 2, 7)
+        ).fetchone()) == (2, 2, 5)
         assert dict(conn.execute(
             "SELECT tool_name, call_count FROM tool_rollups ORDER BY tool_name"
-        ).fetchall()) == {"Read": 3, "Write": 1}
+        ).fetchall()) == {"Read": 4, "Write": 1}
     finally:
         conn.close()

@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from reflect.execution_units import ExecutionUnitRepository
 from reflect.improvements.models import (
     SkillDetail,
     SkillInstallationRecord,
@@ -18,6 +19,7 @@ from reflect.improvements.models import (
     SkillUsageSessionRecord,
     SkillVersionRecord,
     SkillVersionStatus,
+    WorkflowCandidateRecord,
 )
 from reflect.improvements.repository import ImprovementRepository, utc_now
 from reflect.improvements.workflows import WorkflowService
@@ -61,6 +63,7 @@ class SkillRegistryService:
             migrate(conn)
         self.repository = ImprovementRepository(conn)
         self.workflows = WorkflowService(conn)
+        self.execution_units = ExecutionUnitRepository(conn)
 
     def refresh(
         self,
@@ -105,7 +108,7 @@ class SkillRegistryService:
             )
             origin = self._origin_for(source_kind)
             rendered = self.workflows._render_skill(candidate)
-            version_status, lifecycle = self._candidate_status(candidate.status.value)
+            version_status, lifecycle = self._candidate_status(candidate)
             skill_id, version_id, created = self._track_version(
                 slug=str(candidate.content.get("slug") or candidate.id),
                 name=str(candidate.content.get("slug") or candidate.title),
@@ -124,15 +127,19 @@ class SkillRegistryService:
             )
             tracked += 1
             versions += int(created)
-            ledger = self.repository.workflow_session_ledger(candidate.id, limit=200)
+            ledger = self.repository.workflow_evidence_ledger(candidate.id, limit=200)
             for observation_id in ledger.observation_ids or [candidate.observation_id]:
                 self._link_evidence(version_id, "observation", observation_id)
             if source.get("loop_id"):
                 self._link_evidence(version_id, "loop", str(source["loop_id"]))
             if source.get("workflow_id"):
                 self._link_evidence(version_id, "workflow", str(source["workflow_id"]))
-            for source_session in ledger.source_sessions:
-                self._link_evidence(version_id, "session", source_session.session_id)
+            for execution_unit in ledger.support_execution_units:
+                self._link_evidence(
+                    version_id,
+                    "execution_unit",
+                    execution_unit.execution_unit_id,
+                )
             installation_rows = self.conn.execute(
                 """
                 SELECT i.target_path, i.applied_hash, i.status, i.created_at, i.updated_at
@@ -281,15 +288,36 @@ class SkillRegistryService:
                 (skill_id,),
             ).fetchone()
             version_id = str(version_row[0]) if version_row and version_row[0] else None
-            usage_id = f"skill_usage_{_hash(f'{skill_id}:{session_id}')[:24]}"
             timestamp = str(observed_at or now)
+            execution_row = self.conn.execute(
+                """
+                SELECT id FROM execution_units
+                WHERE session_id = ?
+                  AND started_at <= ?
+                  AND (ended_at IS NULL OR ended_at >= ?)
+                ORDER BY source_confidence DESC, started_at DESC
+                LIMIT 1
+                """,
+                (session_id, timestamp, timestamp),
+            ).fetchone()
+            if execution_row is None:
+                execution_unit_id = self.execution_units.ensure_session_fallback(
+                    str(session_id),
+                    now=timestamp,
+                )
+                if execution_unit_id is None:
+                    continue
+            else:
+                execution_unit_id = str(execution_row[0])
+            usage_id = f"skill_usage_{_hash(f'{skill_id}:{execution_unit_id}')[:24]}"
             self.conn.execute(
                 """
                 INSERT INTO skill_usage(
-                  id, skill_id, skill_version_id, session_id, state, confidence,
+                  id, skill_id, skill_version_id, session_id, execution_unit_id,
+                  state, confidence,
                   evidence_json, observed_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, 'observed', ?, ?, ?, ?, ?)
-                ON CONFLICT(skill_id, session_id) DO UPDATE SET
+                ) VALUES (?, ?, ?, ?, ?, 'observed', ?, ?, ?, ?, ?)
+                ON CONFLICT(skill_id, execution_unit_id) DO UPDATE SET
                   skill_version_id = excluded.skill_version_id,
                   confidence = MAX(skill_usage.confidence, excluded.confidence),
                   evidence_json = excluded.evidence_json,
@@ -301,6 +329,7 @@ class SkillRegistryService:
                     skill_id,
                     version_id,
                     str(session_id),
+                    execution_unit_id,
                     min(0.95, 0.55 + float(weight or 1) * 0.05),
                     _json({"source": "behavioral_memory_graph", "edge_kind": "used_skill"}),
                     timestamp,
@@ -937,14 +966,19 @@ class SkillRegistryService:
         return SkillOrigin.RULE_BLUEPRINT
 
     @staticmethod
-    def _candidate_status(status: str) -> tuple[SkillVersionStatus, SkillLifecycleState]:
+    def _candidate_status(
+        candidate: WorkflowCandidateRecord,
+    ) -> tuple[SkillVersionStatus, SkillLifecycleState]:
+        if candidate.lifecycle.deployment.value == "active":
+            return SkillVersionStatus.ACTIVE, SkillLifecycleState.ACTIVE
+        if candidate.lifecycle.deployment.value == "rolled_back":
+            return SkillVersionStatus.ROLLED_BACK, SkillLifecycleState.RETIRED
+        status = candidate.status.value
         mapping = {
-            "active": (SkillVersionStatus.ACTIVE, SkillLifecycleState.ACTIVE),
             "pending": (SkillVersionStatus.PENDING, SkillLifecycleState.PENDING),
             "approved": (SkillVersionStatus.PENDING, SkillLifecycleState.PENDING),
             "stale": (SkillVersionStatus.STALE, SkillLifecycleState.STALE),
             "rejected": (SkillVersionStatus.REJECTED, SkillLifecycleState.REJECTED),
-            "rolled_back": (SkillVersionStatus.ROLLED_BACK, SkillLifecycleState.RETIRED),
         }
         return mapping.get(status, (SkillVersionStatus.PENDING, SkillLifecycleState.PENDING))
 

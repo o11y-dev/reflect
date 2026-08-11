@@ -136,7 +136,7 @@ def _seed_view_db(conn):
                 4,
                 "2026-05-02T11:03:00+00:00",
                 "gen_ai.client.hook.PreToolUse",
-                '{"gen_ai.client.hook.event":"PreToolUse","gen_ai.client.name":"codex","gen_ai.client.tool_name":"Read","gen_ai.client.command.preview":"not-a-shell-command"}',
+                '{"gen_ai.client.hook.event":"PreToolUse","gen_ai.client.name":"codex","gen_ai.client.tool_name":"Read","gen_ai.client.command.preview":"not-a-shell-command","mcp.server":"user-gitlab-mcp"}',
                 now,
                 now,
             ),
@@ -211,13 +211,13 @@ def _seed_view_db(conn):
         """
         INSERT INTO tool_calls(
           id, step_id, session_id, tool_name, tool_type, input_preview_redacted,
-          status, duration_ms, created_at, updated_at
+          status, duration_ms, raw_attrs_json, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, 'tool', ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, 'tool', ?, ?, ?, ?, ?, ?)
         """,
         [
-            ("tool-1", "step-1", "sess-1", "Read", "{}", "ok", 100, now, now),
-            ("tool-2", "step-2", "sess-2", "Edit", '{"cmd":"poetry run pytest"}', "error", 250, now, now),
+            ("tool-1", "step-1", "sess-1", "Read", "{}", "ok", 100, "{}", now, now),
+            ("tool-2", "step-2", "sess-2", "Edit", '{"cmd":"poetry run pytest"}', "error", 250, "{}", now, now),
             (
                 "tool-rtk-1",
                 "step-2",
@@ -226,6 +226,7 @@ def _seed_view_db(conn):
                 '{"cmd":"rtk memory sync --project /tmp/reflect --format json"}',
                 "ok",
                 75,
+                "{}",
                 now,
                 now,
             ),
@@ -237,6 +238,19 @@ def _seed_view_db(conn):
                 '{"cmd":"rtk memory sync --project /tmp/reflect --dry-run"}',
                 "ok",
                 80,
+                "{}",
+                now,
+                now,
+            ),
+            (
+                "tool-wrapper",
+                "step-hook-command-noise",
+                "sess-2",
+                "exec",
+                "{}",
+                "ok",
+                10,
+                '{"command":"const result = await tools.exec_command({cmd: request.cmd});"}',
                 now,
                 now,
             ),
@@ -244,10 +258,26 @@ def _seed_view_db(conn):
     )
     conn.executemany(
         """
-        INSERT INTO mcp_calls(
-          id, step_id, session_id, server_name, tool_name, status, duration_ms, raw_attrs_json, created_at, updated_at
+        INSERT INTO tool_calls(
+          id, step_id, session_id, tool_name, tool_type, status,
+          duration_ms, raw_attrs_json, created_at, updated_at
         )
-        VALUES (?, 'step-2', 'sess-2', ?, ?, 'ok', 50, '{}', ?, ?)
+        VALUES (?, 'step-2', 'sess-2', ?, 'mcp', ?, 50, '{}', ?, ?)
+        """,
+        [
+            ("mcp-1", "mcp__mcp-issue-tracker__jira_search", "ok", now, now),
+            ("mcp-2", "mcp__metrics__cx_dashboards", "ok", now, now),
+            ("mcp-alias-1", "mcp__user-gitlab-mcp__search", "ok", now, now),
+            ("mcp-alias-2", "mcp__gitlab_mcp__search", "error", now, now),
+            ("mcp-alias-3", "mcp__gitlab-mcp__search", "unknown", now, now),
+        ],
+    )
+    conn.executemany(
+        """
+        INSERT INTO mcp_calls(
+          tool_call_id, server_name, tool_name, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?)
         """,
         [
             (
@@ -264,6 +294,9 @@ def _seed_view_db(conn):
                 now,
                 now,
             ),
+            ("mcp-alias-1", "user-gitlab-mcp", "search", now, now),
+            ("mcp-alias-2", "gitlab_mcp", "search", now, now),
+            ("mcp-alias-3", "gitlab-mcp", "search", now, now),
         ],
     )
     conn.execute(
@@ -479,6 +512,150 @@ def test_list_sessions_paginates_and_filters_from_sql(tmp_path):
         conn.close()
 
 
+def test_list_sessions_excludes_context_only_records_without_deleting_them(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        _seed_view_db(conn)
+        now = "2026-05-03T12:00:00+00:00"
+        conn.execute(
+            """
+            INSERT INTO sessions(
+              id, agent_id, started_at, ended_at, status, input_tokens,
+              output_tokens, estimated_cost_usd, created_at, updated_at
+            ) VALUES (
+              'context-only', 'agent-codex', ?, ?, 'unknown', 0, 0, 0, ?, ?
+            )
+            """,
+            (now, now, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status, summary,
+              raw_attrs_json, created_at, updated_at
+            ) VALUES (
+              'context-step', 'context-only', 0, 'memory_event', ?, 'ok',
+              'gen_ai.client.context.exposure', '{}', ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+        conn.commit()
+
+        assert list_sessions(conn).total == 2
+        assert conn.execute(
+            "SELECT COUNT(*) FROM sessions WHERE id = 'context-only'"
+        ).fetchone()[0] == 1
+        assert build_report_tab(conn, "exports")["row_counts"]["sessions"] == 3
+
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status, summary,
+              raw_attrs_json, created_at, updated_at
+            ) VALUES (
+              'work-step', 'context-only', 1, 'tool_call', ?, 'ok',
+              'gen_ai.client.hook.PostToolUse', '{}', ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+        conn.commit()
+
+        assert {row.session_id for row in list_sessions(conn).rows} == {
+            "sess-1",
+            "sess-2",
+            "context-only",
+        }
+    finally:
+        conn.close()
+
+
+def test_context_tabs_scope_artifacts_through_exposure_and_task_contract(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        _seed_view_db(conn)
+        now = "2026-05-03T12:00:00+00:00"
+        conn.execute(
+            """
+            INSERT INTO memories(
+              id, scope, type, content_hash, content_preview_redacted,
+              confidence, sensitivity, source, last_seen_at, raw_attrs_json,
+              created_at, updated_at
+            ) VALUES (
+              'codex-memory', 'user', 'codex_memory_summary', 'hash',
+              '[Codex memory summary]', 1.0, 'private', 'codex_session_context',
+              ?, '{}', ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO memory_exposures(
+              memory_id, session_id, content_hash, source, observed_at,
+              created_at, updated_at
+            ) VALUES (
+              'codex-memory', 'sess-2', 'hash', 'codex_session_context', ?, ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO specs(id, title, status, owner, source_path, created_at, updated_at)
+            VALUES ('task-contract', 'Dashboard contract', 'tracked', 'codex',
+                    'docs/dashboard-contract.md', ?, ?)
+            """,
+            (now, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO mcp_task_runs(
+              id, runtime_session_id, runtime_agent, workspace_path,
+              task_file_path, task_contract_id, question_hash,
+              selected_skills_json, status, started_at, created_at, updated_at
+            ) VALUES (
+              'task-run', 'sess-2', 'codex', '/workspace',
+              '/workspace/docs/dashboard-contract.md', 'task-contract', 'hash',
+              '[]', 'started', ?, ?, ?
+            )
+            """,
+            (now, now, now),
+        )
+        conn.commit()
+
+        memory = build_report_tab(conn, "memory", session_ids={"sess-2"})
+        contracts = build_report_tab(conn, "specs", session_ids={"sess-2"})
+
+        assert memory["memories_by_type"]["codex_memory_summary"] == 1
+        codex_memory = next(
+            item for item in memory["recent_memories"] if item["id"] == "codex-memory"
+        )
+        assert codex_memory["exposure_count"] == 1
+        assert any(item["id"] == "task-contract" for item in contracts["specs"])
+    finally:
+        conn.close()
+
+
+def test_list_sessions_uses_canonical_events_when_rollup_is_missing(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        _seed_view_db(conn)
+        conn.execute("DELETE FROM session_rollups WHERE session_id = 'sess-2'")
+
+        row = list_sessions(conn, agent="codex").rows[0]
+
+        assert row.event_count == 4
+        assert row.prompt_count == 0
+        assert row.tool_call_count == 0
+    finally:
+        conn.close()
+
+
 def test_list_sessions_prefers_valid_end_time_over_epoch_start(tmp_path):
     db = tmp_path / "views.db"
     conn = connect_sqlite(db)
@@ -530,26 +707,35 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         ]
         assert tabs.tools.tools_by_count == {"Edit": 2, "Read": 1}
         assert tabs.agents.agent_comparison[0]["name"] == "codex"
-        assert tabs.graphs.graph_session_timeline
-        assert tabs.graphs.graph_semantic["nodes"]
+        assert tabs.graph.graph_session_timeline
+        assert tabs.graph.graph_semantic["nodes"]
         assert any(
             node["kind"] == "Session" and node["label"] == "sess-2"
-            for node in tabs.graphs.graph_semantic["nodes"]
+            for node in tabs.graph.graph_semantic["nodes"]
         )
         assert {"addressed_spec", "described_by_path"} <= {
-            edge["kind"] for edge in tabs.graphs.graph_semantic["edges"]
+            edge["kind"] for edge in tabs.graph.graph_semantic["edges"]
         }
-        assert any(node["kind"] == "Spec" and node["label"] == "SQL view test spec" for node in tabs.graphs.graph_semantic["nodes"])
-        assert any(item["kind"] == "Spec" for item in tabs.graphs.graph_semantic["legend"])
-        unscoped_node_ids = {node["id"] for node in tabs.graphs.graph_semantic["nodes"]}
+        assert any(node["kind"] == "Spec" and node["label"] == "SQL view test spec" for node in tabs.graph.graph_semantic["nodes"])
+        assert any(item["kind"] == "Spec" for item in tabs.graph.graph_semantic["legend"])
+        unscoped_node_ids = {node["id"] for node in tabs.graph.graph_semantic["nodes"]}
         unscoped_edge_node_ids = {
             node_id
-            for edge in tabs.graphs.graph_semantic["edges"]
+            for edge in tabs.graph.graph_semantic["edges"]
             for node_id in (edge["source"], edge["target"])
         }
         assert unscoped_node_ids <= unscoped_edge_node_ids
 
-        assert scoped.tools.tools_by_count == {"Bash": 2, "Edit": 1}
+        assert scoped.tools.tools_by_count == {
+            "Bash": 2,
+            "Edit": 1,
+            "exec": 1,
+            "mcp__gitlab-mcp__search": 1,
+            "mcp__gitlab_mcp__search": 1,
+            "mcp__mcp-issue-tracker__jira_search": 1,
+            "mcp__metrics__cx_dashboards": 1,
+            "mcp__user-gitlab-mcp__search": 1,
+        }
         assert scoped.tools.skills_by_count == {"review-skill": 1}
         assert scoped.tools.subagent_types_by_count == {
             "legacy-helper": 1,
@@ -558,12 +744,11 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         }
         assert scoped.tools.top_commands == [
             {"command": "rtk memory sync", "count": 2},
-            {"command": "poetry run pytest", "count": 1},
         ]
         assert scoped.costs.agent_cost_over_time == [
             {"day": "2026-05-02", "agent": "codex", "total_cost": 0.75},
         ]
-        assert usage_tools["shell_executions"] == 3
+        assert usage_tools["shell_executions"] == 2
         assert usage_tools["file_edits"] == 1
         assert usage_tools["subagent_launches"] == 3
         assert usage_tools["agent_comparison"][0]["name"] == "codex"
@@ -572,19 +757,27 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
             item["command"] != "gen_ai.client.hook.PreToolUse"
             for item in scoped.tools.top_commands
         )
-        assert scoped.mcp.mcp_servers_by_count == {"metrics.example.test": 1, "mcp-issue-tracker": 1}
+        assert all("tools.exec_command" not in item["command"] for item in scoped.tools.top_commands)
+        assert scoped.mcp.mcp_calls == 5
+        assert scoped.mcp.mcp_servers_by_count == {
+            "gitlab-mcp": 3,
+            "metrics.example.test": 1,
+            "mcp-issue-tracker": 1,
+        }
+        assert scoped.mcp.mcp_server_after["gitlab-mcp"] == 1
+        assert scoped.mcp.mcp_server_status_known["gitlab-mcp"] == 2
         assert scoped.agents.agents["codex"]["top_skills"] == {"review-skill": 1}
         assert scoped.agents.agents["codex"]["subagents"] == 1
         assert scoped.agents.agents["copilot"]["subagents"] == 1
         assert scoped.agents.agents["cursor"]["subagents"] == 1
-        assert any(node["label"] == "AGENTS.md" for node in scoped.graphs.graph_semantic["nodes"])
-        assert any(node["kind"] == "Spec" and node["label"] == "SQL view test spec" for node in scoped.graphs.graph_semantic["nodes"])
-        assert all(node["label"] != "global-memory" for node in scoped.graphs.graph_semantic["nodes"])
-        assert all(node["label"] != "global.md" for node in scoped.graphs.graph_semantic["nodes"])
-        scoped_node_ids = {node["id"] for node in scoped.graphs.graph_semantic["nodes"]}
+        assert any(node["label"] == "AGENTS.md" for node in scoped.graph.graph_semantic["nodes"])
+        assert any(node["kind"] == "Spec" and node["label"] == "SQL view test spec" for node in scoped.graph.graph_semantic["nodes"])
+        assert all(node["label"] != "global-memory" for node in scoped.graph.graph_semantic["nodes"])
+        assert all(node["label"] != "global.md" for node in scoped.graph.graph_semantic["nodes"])
+        scoped_node_ids = {node["id"] for node in scoped.graph.graph_semantic["nodes"]}
         scoped_edge_node_ids = {
             node_id
-            for edge in scoped.graphs.graph_semantic["edges"]
+            for edge in scoped.graph.graph_semantic["edges"]
             for node_id in (edge["source"], edge["target"])
         }
         assert scoped_node_ids <= scoped_edge_node_ids
@@ -597,10 +790,10 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         assert scoped.privacy.findings_by_severity == {"medium": 1}
         assert scoped.exports.row_counts["memories"] == 2
         assert scoped.exports.row_counts["privacy_findings"] == 1
-        assert {node["type"] for node in scoped.graphs.graph_dep["nodes"]} >= {"agent", "tool", "mcp_tool", "mcp_server"}
+        assert {node["type"] for node in scoped.graph.graph_dep["nodes"]} >= {"agent", "tool", "mcp_tool", "mcp_server"}
         assert {
             (link["source"], link["target"])
-            for link in scoped.graphs.graph_dep["links"]
+            for link in scoped.graph.graph_dep["links"]
         } >= {
             ("agent:codex", "mcp_tool:mcp-issue-tracker"),
             ("agent:codex", "mcp_tool:metrics.example.test"),

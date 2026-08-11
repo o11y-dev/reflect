@@ -1,39 +1,8 @@
-"""Core types for the insights engine."""
+"""Distribution types for session-quality analysis."""
 from __future__ import annotations
 
 import statistics
-from dataclasses import dataclass, field
-from enum import IntEnum
-from typing import Any
-
-
-class Severity(IntEnum):
-    """Ordinal severity. Higher = more important."""
-    LOW = 1
-    MEDIUM = 2
-    HIGH = 3
-    CRITICAL = 4
-
-
-@dataclass(frozen=True)
-class Insight:
-    """A single structured insight produced by a signal function."""
-    kind: str                  # "strength" | "observation" | "recommendation" | "example"
-    title: str                 # Short heading
-    body: str                  # Explanation / detail text
-    category: str              # e.g. "efficiency", "cost", "reliability"
-    severity: Severity
-    confidence: float          # 0.0-1.0
-    evidence: dict[str, Any] = field(default_factory=dict)
-    # For examples only:
-    before: str = ""
-    after: str = ""
-
-    @property
-    def priority(self) -> float:
-        """Sort key: higher = show first."""
-        return float(self.severity) * self.confidence
-
+from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
 # Distribution statistics
@@ -73,20 +42,8 @@ class DistributionStats:
         """Tukey upper fence: p75 + k * IQR."""
         return self.p75 + k * self.iqr()
 
-    def lower_fence(self, k: float = 1.5) -> float:
-        """Tukey lower fence: p25 - k * IQR."""
-        return self.p25 - k * self.iqr()
-
     def is_outlier_high(self, value: float, k: float = 1.5) -> bool:
         return value > self.upper_fence(k)
-
-    def is_outlier_low(self, value: float, k: float = 1.5) -> bool:
-        return value < self.lower_fence(k)
-
-    def z_score(self, value: float) -> float:
-        if self.stdev <= 0:
-            return 0.0
-        return (value - self.mean) / self.stdev
 
 
 _EMPTY_DIST = DistributionStats(0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
@@ -118,44 +75,10 @@ def compute_distribution(values: list[float]) -> DistributionStats:
 
 @dataclass
 class DataProfile:
-    """Cached statistical summary of the user's own data distribution."""
-    # Per-session distributions
+    """Distributions used by the registered session-quality rules."""
+
     session_total_tokens: DistributionStats = _EMPTY_DIST
-    session_input_tokens: DistributionStats = _EMPTY_DIST
-    session_output_tokens: DistributionStats = _EMPTY_DIST
     session_tool_count: DistributionStats = _EMPTY_DIST
-    session_prompt_count: DistributionStats = _EMPTY_DIST
     session_failure_count: DistributionStats = _EMPTY_DIST
     session_duration_ms: DistributionStats = _EMPTY_DIST
-    session_quality_scores: DistributionStats = _EMPTY_DIST
-
-    # Cross-session ratio distributions
     tokens_per_tool: DistributionStats = _EMPTY_DIST
-    tools_per_prompt: DistributionStats = _EMPTY_DIST
-    reads_per_prompt: DistributionStats = _EMPTY_DIST
-    session_token_share: DistributionStats = _EMPTY_DIST
-
-    # Aggregate counts
-    total_sessions: int = 0
-    total_prompts: int = 0
-    total_tool_calls: int = 0
-    total_failures: int = 0
-    cache_reuse_ratio: float = 0.0
-    heavy_model_share: float = 0.0
-
-    # Token economy (computed once, reused everywhere)
-    token_economy: dict[str, Any] = field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
-# Confidence helper
-# ---------------------------------------------------------------------------
-
-def confidence_for(dist: DistributionStats, base: float = 0.8) -> float:
-    """Scale confidence by data sufficiency."""
-    if dist.count >= 10:
-        return base
-    elif dist.count >= 5:
-        return base * 0.8
-    else:
-        return 0.5

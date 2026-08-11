@@ -386,7 +386,7 @@ class ChangeReviewService:
         project_root: Path | None,
     ) -> dict[str, Any]:
         if action == ChangeAction.APPROVE_WORKFLOW:
-            if candidate.status.value not in {"pending", "approved", "active"}:
+            if candidate.status.value not in {"pending", "approved"}:
                 raise RuntimeError(
                     f"Workflow {candidate.id} is {candidate.status.value}; it cannot be approved"
                 )
@@ -488,7 +488,7 @@ class ChangeReviewService:
         if action == ChangeAction.APPROVE_WORKFLOW:
             candidate = self.workflows.show(candidate_id)
             return (
-                candidate.status.value in {"approved", "active"}
+                candidate.status.value == "approved"
                 and self._candidate_content_hash(candidate)
                 == payload.get("candidate_content_hash")
             )
@@ -552,12 +552,12 @@ class ChangeReviewService:
         *,
         measurements: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        ledger = self.workflows.repository.workflow_session_ledger(candidate.id, limit=10)
+        ledger = self.workflows.repository.workflow_evidence_ledger(candidate.id, limit=10)
         return {
-            "support_count": candidate.support_count,
+            "support_execution_unit_count": candidate.support_execution_unit_count,
             "confidence": candidate.confidence,
-            "source_session_count": ledger.source_session_count,
-            "source_sessions": [
+            "provenance_session_count": ledger.provenance_session_count,
+            "provenance_sessions": [
                 {
                     "session_id": item.session_id,
                     "agent": item.agent,
@@ -565,7 +565,11 @@ class ChangeReviewService:
                     "status": item.status,
                     "evidence_summaries": item.evidence_summaries,
                 }
-                for item in ledger.source_sessions
+                for item in ledger.provenance_sessions
+            ],
+            "support_execution_units": [
+                item.model_dump(mode="json")
+                for item in ledger.support_execution_units
             ],
             "measurements": measurements,
             "provenance": candidate.provenance,

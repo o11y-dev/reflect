@@ -136,17 +136,7 @@ def test_normalize_persists_hook_conversation_agent_and_native_facts(tmp_path):
             ("prompt", prompt_hash, 14, None),
             ("response", response_hash, 13, "safe response"),
         ]
-        llm = conn.execute(
-            """
-            SELECT operation_name, prompt_hash, response_hash, response_preview_redacted
-            FROM llm_calls
-            ORDER BY operation_name
-            """
-        ).fetchall()
-        assert [tuple(row) for row in llm] == [
-            ("Stop", None, response_hash, "safe response"),
-            ("UserPromptSubmit", prompt_hash, None, None),
-        ]
+        assert conn.execute("SELECT COUNT(*) FROM llm_calls").fetchone()[0] == 0
         agent = conn.execute(
             """
             SELECT event_name, event_id, agent_id, parent_agent_id, agent_type,

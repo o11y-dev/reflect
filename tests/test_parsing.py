@@ -5,19 +5,89 @@ from pathlib import Path
 import pytest
 from conftest import DAY1, HOUR, make_span, wrap_otlp
 
-from reflect.core import (
+from reflect.context_artifacts import context_artifact_id
+from reflect.parsing import (
+    _discover_rich_session_files,
     _flatten_otlp_attributes,
+    _infer_otlp_logs_file,
     _iter_claude_log_spans,
     _iter_claude_session_spans,
+    _iter_codex_context_spans,
     _iter_codex_log_spans,
     _iter_codex_session_spans,
     _iter_copilot_session_spans,
     _iter_cursor_session_spans,
     _iter_gemini_session_spans,
+    _load_codex_default_model,
     _load_json_lines,
     _load_otlp_logs,
     _load_otlp_traces,
 )
+
+
+def test_native_session_discovery_uses_isolated_agent_homes(tmp_path, monkeypatch):
+    homes = {
+        "CODEX_HOME": tmp_path / "codex",
+        "COPILOT_HOME": tmp_path / "copilot",
+        "CURSOR_HOME": tmp_path / "cursor",
+        "CLAUDE_HOME": tmp_path / "claude",
+        "GEMINI_DIR": tmp_path / "gemini",
+        "OPENCODE_HOME": tmp_path / "opencode",
+    }
+    monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
+    monkeypatch.delenv("GEMINI_HOME", raising=False)
+    for name, path in homes.items():
+        monkeypatch.setenv(name, str(path))
+
+    expected = {
+        ("codex", homes["CODEX_HOME"] / "sessions" / "2026" / "rollout.jsonl"),
+        ("copilot", homes["COPILOT_HOME"] / "session-state" / "run" / "events.jsonl"),
+        (
+            "cursor",
+            homes["CURSOR_HOME"]
+            / "projects"
+            / "repo"
+            / "agent-transcripts"
+            / "run"
+            / "events.jsonl",
+        ),
+        ("claude", homes["CLAUDE_HOME"] / "projects" / "repo" / "session.jsonl"),
+        (
+            "gemini",
+            homes["GEMINI_DIR"] / "tmp" / "repo" / "chats" / "session-run.json",
+        ),
+        ("opencode", homes["OPENCODE_HOME"] / "opencode.db"),
+    }
+    for _agent, path in expected:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+
+    assert set(_discover_rich_session_files()) == expected
+
+
+def test_codex_default_model_uses_configured_home(tmp_path, monkeypatch):
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text('model = "gpt-5.6"\n', encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    assert _load_codex_default_model() == "gpt-5.6"
+
+
+def test_explicit_otlp_traces_do_not_fall_back_to_global_logs(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    reflect_home = tmp_path / ".reflect"
+    default_logs = reflect_home / "state" / "otlp" / "otel-logs.active.jsonl"
+    default_logs.parent.mkdir(parents=True)
+    default_logs.write_text("{}\n", encoding="utf-8")
+    explicit_traces = tmp_path / "fixture" / "otel-traces.json"
+    explicit_traces.parent.mkdir()
+    explicit_traces.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr("reflect.parsing.REFLECT_HOME", reflect_home)
+
+    assert _infer_otlp_logs_file(explicit_traces) is None
 
 
 class TestFlattenOtlpAttributes:
@@ -538,9 +608,117 @@ class TestCodexSessionFiles:
         assert spans[0]["attributes"]["gen_ai.client.session_id"] == "019e0506-efd5-7030-b2d2-6c41433270fb"
         assert spans[0]["attributes"]["gen_ai.client.prompt"] == "please inspect the tests"
         assert spans[1]["attributes"]["gen_ai.client.tool_name"] == "exec_command"
+        assert spans[1]["attributes"]["gen_ai.tool.call.id"] == "call-1"
         assert spans[2]["attributes"]["gen_ai.client.tool_use_id"] == "call-1"
         assert spans[3]["attributes"]["gen_ai.client.output"] == "Tests pass."
         assert spans[4]["attributes"]["gen_ai.request.model"] == "gpt-5.5"
+
+    def test_codex_custom_tool_envelope_is_preserved_without_inner_inference(self, tmp_path):
+        session = tmp_path / "rollout-custom.jsonl"
+        records = [
+            {
+                "timestamp": "2026-08-03T10:00:00Z",
+                "type": "session_meta",
+                "payload": {"id": "codex-custom"},
+            },
+            {
+                "timestamp": "2026-08-03T10:00:01Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "name": "exec",
+                    "call_id": "call-custom-1",
+                    "input": "await tools.mcp__reflect__reflect_context({})",
+                },
+            },
+            {
+                "timestamp": "2026-08-03T10:00:02Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "call-custom-1",
+                    "output": "ok",
+                },
+            },
+        ]
+        session.write_text(
+            "\n".join(json.dumps(record) for record in records) + "\n",
+            encoding="utf-8",
+        )
+
+        spans = list(_iter_codex_session_spans(session))
+        tools = [
+            span
+            for span in spans
+            if span["attributes"].get("gen_ai.client.tool_use_id") == "call-custom-1"
+        ]
+
+        assert [span["attributes"]["gen_ai.client.tool_name"] for span in tools] == [
+            "exec",
+            "exec",
+        ]
+        assert all(
+            "gen_ai.client.mcp_server" not in span["attributes"] for span in tools
+        )
+
+    def test_codex_session_emits_private_context_exposures(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        workspace = tmp_path / "repo"
+        home.mkdir()
+        workspace.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: home)
+        agent_path = workspace / "AGENTS.md"
+        p = tmp_path / "rollout-session.jsonl"
+        records = [
+            {
+                "timestamp": "2026-05-08T00:42:07.990Z",
+                "type": "session_meta",
+                "payload": {"id": "codex-session", "cwd": str(workspace)},
+            },
+            {
+                "timestamp": "2026-05-08T00:42:07.991Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [{
+                        "type": "input_text",
+                        "text": "========= MEMORY_SUMMARY BEGINS =========\nprivate memory\n========= MEMORY_SUMMARY ENDS =========",
+                    }],
+                },
+            },
+            {
+                "timestamp": "2026-05-08T00:42:07.992Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{
+                        "type": "input_text",
+                        "text": f"# AGENTS.md instructions for {agent_path}\n\n<INSTRUCTIONS>\nprivate instructions\n</INSTRUCTIONS>",
+                    }],
+                },
+            },
+        ]
+        p.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+
+        spans = list(_iter_codex_context_spans(p))
+        exposures = [
+            span for span in spans
+            if span["attributes"].get("gen_ai.client.hook.event") == "ContextExposure"
+        ]
+
+        assert {span["attributes"]["gen_ai.memory.type"] for span in exposures} == {
+            "agent_instruction",
+            "codex_memory_summary",
+        }
+        assert {span["attributes"]["gen_ai.memory.id"] for span in exposures} == {
+            context_artifact_id(agent_path),
+            context_artifact_id(home / ".codex" / "memories" / "memory_summary.md"),
+        }
+        serialized = json.dumps([span["attributes"] for span in exposures])
+        assert "private memory" not in serialized
+        assert "private instructions" not in serialized
 
     def test_codex_session_skips_environment_context_prompts(self, tmp_path):
         p = tmp_path / "rollout-session.jsonl"

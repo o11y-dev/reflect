@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import click
@@ -17,6 +16,8 @@ from reflect.core import main
 from reflect.shell_completion import (
     MEMORY_PROVIDER_NAMES,
     SUPPORTED_SHELLS,
+    CompletionInstallPlan,
+    CompletionInstallResult,
     ShellCompletionManager,
     SqliteCompletionCatalog,
     complete_memory_provider,
@@ -34,9 +35,10 @@ def test_completion_command_generates_click_source(shell: str) -> None:
 
 def test_completion_manager_installs_zsh_idempotently(tmp_path: Path) -> None:
     manager = ShellCompletionManager(main, home=tmp_path)
+    plan = manager.plan("zsh")
 
-    first = manager.install("zsh")
-    second = manager.install("zsh")
+    first = manager.install(plan)
+    second = manager.install(plan)
 
     assert first.changed is True
     assert second.changed is False
@@ -44,68 +46,104 @@ def test_completion_manager_installs_zsh_idempotently(tmp_path: Path) -> None:
     zshrc = (tmp_path / ".zshrc").read_text(encoding="utf-8")
     assert zshrc.count(">>> reflect shell completion >>>") == 1
     assert str(first.script_path) in zshrc
+    assert plan.managed_block == zshrc.strip()
 
 
 def test_completion_manager_uses_fish_autoload_directory(tmp_path: Path) -> None:
-    result = ShellCompletionManager(main, home=tmp_path).install("fish")
+    manager = ShellCompletionManager(main, home=tmp_path)
+    plan = manager.plan("fish")
+    result = manager.install(plan)
 
     assert result.script_path == tmp_path / ".config" / "fish" / "completions" / "reflect.fish"
     assert result.config_path is None
     assert result.script_path.is_file()
+    assert plan.managed_block is None
+
+
+def _zsh_install() -> tuple[CompletionInstallPlan, CompletionInstallResult]:
+    script_path = Path("/tmp/reflect.zsh")
+    config_path = Path("/tmp/.zshrc")
+    block = (
+        "# >>> reflect shell completion >>>\n"
+        "[ -f /tmp/reflect.zsh ] && . /tmp/reflect.zsh\n"
+        "# <<< reflect shell completion <<<"
+    )
+    plan = CompletionInstallPlan("zsh", script_path, config_path, "script", block)
+    return plan, CompletionInstallResult("zsh", script_path, config_path, True)
+
+
+def test_completion_install_previews_exact_mutation() -> None:
+    plan, install_result = _zsh_install()
+    with (
+        patch.object(core.ShellCompletionManager, "detect_shell", return_value="zsh"),
+        patch.object(core.ShellCompletionManager, "plan", return_value=plan),
+        patch.object(core.ShellCompletionManager, "install", return_value=install_result) as install,
+    ):
+        result = CliRunner().invoke(main, ["completion", "--install"])
+
+    assert result.exit_code == 0
+    install.assert_called_once_with(plan)
+    assert str(plan.script_path) in result.output
+    assert str(plan.config_path) in result.output
+    assert plan.managed_block in result.output
 
 
 def test_setup_can_explicitly_install_shell_completion() -> None:
-    install_result = SimpleNamespace(changed=True, script_path=Path("/tmp/reflect.zsh"))
+    plan, install_result = _zsh_install()
     with (
-        patch.object(core, "_run_setup"),
+        patch.object(core, "_instrumentation_run_setup"),
         patch.object(core, "_detect_agents", return_value=[]),
         patch.object(core.ShellCompletionManager, "detect_shell", return_value="zsh"),
+        patch.object(core.ShellCompletionManager, "plan", return_value=plan),
         patch.object(core.ShellCompletionManager, "install", return_value=install_result) as install,
     ):
         result = CliRunner().invoke(
             main,
-            ["setup", "--text-capture-mode", "metadata", "--shell-completion"],
+            [
+                "setup",
+                "--text-capture-mode",
+                "metadata",
+                "--shell-completion",
+                "--no-autostart",
+            ],
         )
 
     assert result.exit_code == 0
-    install.assert_called_once_with("zsh")
+    install.assert_called_once_with(plan)
+    assert plan.managed_block in result.output
     assert "Shell autocomplete installed" in result.output
 
 
-def test_setup_installs_shell_completion_by_default_for_automation() -> None:
-    install_result = SimpleNamespace(changed=True, script_path=Path("/tmp/reflect.zsh"))
+def test_setup_leaves_shell_completion_unchanged_by_default() -> None:
     with (
-        patch.object(core, "_run_setup"),
-        patch.object(core, "_detect_agents", return_value=[]),
-        patch.object(core.ShellCompletionManager, "detect_shell", return_value="zsh"),
-        patch.object(core.ShellCompletionManager, "install", return_value=install_result) as install,
-    ):
-        result = CliRunner().invoke(main, ["setup", "--text-capture-mode", "metadata"])
-
-    assert result.exit_code == 0
-    install.assert_called_once_with("zsh")
-
-
-def test_setup_no_shell_completion_is_an_explicit_opt_out() -> None:
-    with (
-        patch.object(core, "_run_setup"),
+        patch.object(core, "_instrumentation_run_setup"),
         patch.object(core, "_detect_agents", return_value=[]),
         patch.object(core.ShellCompletionManager, "install") as install,
     ):
         result = CliRunner().invoke(
             main,
-            ["setup", "--text-capture-mode", "metadata", "--no-shell-completion"],
+            ["setup", "--text-capture-mode", "metadata", "--no-autostart"],
         )
 
     assert result.exit_code == 0
     install.assert_not_called()
+    assert "Shell autocomplete unchanged" in result.output
+
+
+def test_setup_rejects_removed_shell_completion_opt_out() -> None:
+    result = CliRunner().invoke(main, ["setup", "--no-shell-completion"])
+
+    assert result.exit_code != 0
+    assert "No such option" in result.output
 
 
 def test_setup_warns_when_optional_shell_completion_cannot_be_written() -> None:
+    plan, _ = _zsh_install()
     with (
-        patch.object(core, "_run_setup") as run_setup,
+        patch.object(core, "_instrumentation_run_setup") as run_setup,
         patch.object(core, "_detect_agents", return_value=[]),
         patch.object(core.ShellCompletionManager, "detect_shell", return_value="zsh"),
+        patch.object(core.ShellCompletionManager, "plan", return_value=plan),
         patch.object(
             core.ShellCompletionManager,
             "install",
@@ -114,7 +152,13 @@ def test_setup_warns_when_optional_shell_completion_cannot_be_written() -> None:
     ):
         result = CliRunner().invoke(
             main,
-            ["setup", "--text-capture-mode", "metadata", "--shell-completion"],
+            [
+                "setup",
+                "--text-capture-mode",
+                "metadata",
+                "--shell-completion",
+                "--no-autostart",
+            ],
         )
 
     assert result.exit_code == 0

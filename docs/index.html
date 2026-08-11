@@ -36,10 +36,10 @@
         "@type": "SoftwareApplication",
         "name": "reflect",
         "applicationCategory": "DeveloperApplication",
-        "operatingSystem": "macOS, Linux, Windows",
+        "operatingSystem": "macOS, Linux",
         "description": "Evidence-backed improvement for AI agent work. Reflect turns local sessions into better procedures, smarter capacity decisions, reusable practices, and measured improvements across teams.",
         "url": "https://reflect.o11y.dev/",
-        "downloadUrl": "https://pypi.org/project/o11y-reflect/",
+        "downloadUrl": "https://reflect.o11y.dev/install.sh",
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
         "license": "https://www.apache.org/licenses/LICENSE-2.0"
       },
@@ -913,16 +913,16 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
           <div>
             <p class="kicker">Start Locally</p>
             <h2 id="install-title">From Install to Agent-Ready Evidence in 60 Seconds.</h2>
-            <p>Connect Reflect once, ask through your coding agent, and open the visual dashboard whenever you want the complete evidence and review path.</p>
+            <p>Run one reviewable script. It prefers pipx, then uv, then an isolated pip environment, configures a fresh installation, and upgrades an existing installation through its current owner.</p>
             <div class="install-links">
               <a href="https://github.com/o11y-dev/reflect">Read the Documentation</a>
+              <a href="./install.sh">Review the Install Script</a>
               <a href="https://pypi.org/project/o11y-reflect/">View on PyPI</a>
             </div>
           </div>
           <div class="terminal">
             <div class="terminal-head"><span class="terminal-dot"></span><span class="terminal-dot"></span><span class="terminal-dot"></span><span>Quick Start</span></div>
-            <pre tabindex="0"><code translate="no"><span class="prompt">$</span> pipx install o11y-reflect
-<span class="prompt">$</span> reflect setup
+            <pre tabindex="0"><code translate="no"><span class="prompt">$</span> curl -fsSL https://reflect.o11y.dev/install.sh | sh
 
 <span class="comment"># Then ask in your coding agent</span>
 <span class="prompt">›</span> Use Reflect to explain why our team needs more AI budget.
