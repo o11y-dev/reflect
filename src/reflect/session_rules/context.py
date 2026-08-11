@@ -17,6 +17,12 @@ def context_from_spans(
     profile: DataProfile | None = None,
 ) -> SessionRuleContext:
     """Normalize detailed telemetry for the session-rule scorer."""
+    token_fields = ("input", "output", "cache_creation", "cache_read")
+    total_tokens = sum(int(tokens.get(field, 0)) for field in token_fields)
+    token_provenance = str(
+        tokens.get("source")
+        or ("local_telemetry" if any(field in tokens for field in token_fields) else "unavailable")
+    )
     events = [str(span.get("event") or "") for span in spans]
     tool_sequence = [str(span["tool"]) for span in spans if span.get("tool")]
     consecutive_pairs = 0
@@ -60,47 +66,50 @@ def context_from_spans(
         has_stop=any(event in ("Stop", "SessionEnd") for event in events),
         has_subagent_stop=any(event == "SubagentStop" for event in events),
         tool_uses=len(tool_sequence),
-        total_tokens=(
-            int(tokens.get("input", 0))
-            + int(tokens.get("output", 0))
-            + int(tokens.get("cache_creation", 0))
-            + int(tokens.get("cache_read", 0))
-        ),
+        total_tokens=total_tokens,
+        token_provenance=token_provenance,
         failures=sum(1 for span in spans if not span.get("ok", True)),
-        consecutive_pairs=consecutive_pairs,
-        consecutive_triples=consecutive_triples,
+        consecutive_pairs=consecutive_pairs if spans else None,
+        consecutive_triples=consecutive_triples if spans else None,
         duration_ms=duration_ms,
         timing_available=timing_available,
         timestamp_count=len(timestamps),
         recovered=recovered,
-        distinct_tools=len(set(tool_sequence)),
-        edits=sum(1 for span in spans if span.get("event") == "AfterFileEdit"),
-        reads=sum(1 for span in spans if span.get("event") == "BeforeReadFile"),
+        recovery_available=bool(spans),
+        distinct_tools=len(set(tool_sequence)) if spans else None,
+        edits=(sum(1 for span in spans if span.get("event") == "AfterFileEdit") if spans else None),
+        reads=(sum(1 for span in spans if span.get("event") == "BeforeReadFile") if spans else None),
     )
 
 
 def context_from_summary(
     row: Mapping[str, object],
     *,
-    recovered: int = 0,
+    recovered: int | None = None,
 ) -> SessionRuleContext:
     """Normalize a SQLite/dashboard summary row without inventing absent signals."""
     duration_ms = float(row.get("duration_ms") or 0)
+    total_tokens = (
+        int(row.get("input_tokens") or 0)
+        + int(row.get("output_tokens") or 0)
+        + int(row.get("cache_creation_tokens") or row.get("cache_write_tokens") or 0)
+        + int(row.get("cache_read_tokens") or 0)
+    )
+    token_provenance = str(row.get("token_provenance") or "unavailable")
+    if token_provenance == "unavailable" and total_tokens > 0:
+        token_provenance = "local_telemetry"
     return SessionRuleContext(
         session_id=str(row.get("id") or row.get("session_id") or "unknown"),
         source="summary",
         status=str(row.get("status") or "unknown"),
         tool_uses=int(row.get("tool_call_count") or row.get("tool_calls") or 0),
-        total_tokens=(
-            int(row.get("input_tokens") or 0)
-            + int(row.get("output_tokens") or 0)
-            + int(row.get("cache_creation_tokens") or row.get("cache_write_tokens") or 0)
-            + int(row.get("cache_read_tokens") or 0)
-        ),
+        total_tokens=total_tokens,
+        token_provenance=token_provenance,
         failures=int(row.get("failure_count") or row.get("failures") or 0),
         duration_ms=duration_ms,
         timing_available=duration_ms > 0,
-        recovered=recovered,
+        recovered=int(recovered or 0),
+        recovery_available=recovered is not None,
     )
 
 

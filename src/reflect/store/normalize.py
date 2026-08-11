@@ -170,6 +170,32 @@ def _agent_name(attrs: dict[str, Any]) -> str:
     )
 
 
+_TOKEN_ATTRIBUTE_KEYS = (
+    "gen_ai.usage.input_tokens",
+    "gen_ai.usage.output_tokens",
+    "gen_ai.usage.cache_creation.input_tokens",
+    "gen_ai.usage.cache_read.input_tokens",
+    "gen_ai.usage.reasoning_output_tokens",
+)
+
+
+def _has_token_attributes(attrs: dict[str, Any]) -> bool:
+    return any(key in attrs for key in _TOKEN_ATTRIBUTE_KEYS)
+
+
+def _has_token_usage(attrs: dict[str, Any]) -> bool:
+    return any(_to_int(attrs.get(key)) > 0 for key in _TOKEN_ATTRIBUTE_KEYS)
+
+
+def _has_model_exchange_evidence(attrs: dict[str, Any]) -> bool:
+    return bool(
+        attrs.get("gen_ai.operation.name")
+        or attrs.get("gen_ai.request.model")
+        or attrs.get("gen_ai.response.model")
+        or _has_token_attributes(attrs)
+    )
+
+
 def _step_type(event_type: str, attrs: dict[str, Any]) -> str:
     event = _event_name(event_type, attrs).lower()
     if attrs.get("gen_ai.memory.id"):
@@ -182,17 +208,18 @@ def _step_type(event_type: str, attrs: dict[str, Any]) -> str:
         return "shell_command"
     if attrs.get("gen_ai.client.tool_name") or attrs.get("ide.tool_name") or "tool" in event:
         return "tool_call"
+    if event in {"userpromptsubmit", "user.message", "user_message"}:
+        return "llm_call" if _has_token_usage(attrs) else "conversation_event"
+    if event in {"sessionstart", "sessionend", "session.start", "session.end"}:
+        return "llm_call" if _has_token_usage(attrs) else "lifecycle"
+    if event == "stop" and not _has_model_exchange_evidence(attrs):
+        return "conversation_event"
     if (
-        attrs.get("gen_ai.request.model")
-        or attrs.get("gen_ai.response.model")
-        or attrs.get("gen_ai.usage.input_tokens")
-        or attrs.get("gen_ai.usage.output_tokens")
+        _has_model_exchange_evidence(attrs)
         or attrs.get("gen_ai.client.prompt.sha256")
         or attrs.get("gen_ai.client.response.sha256")
         or attrs.get("gen_ai.client.stop_message.sha256")
-        or "prompt" in event
         or "llm" in event
-        or event == "stop"
     ):
         return "llm_call"
     if "error" in event or "fail" in event:
@@ -261,6 +288,7 @@ def _upsert_session(
     cache_creation = _to_int(attrs.get("gen_ai.usage.cache_creation.input_tokens"))
     cache_read = _to_int(attrs.get("gen_ai.usage.cache_read.input_tokens"))
     reasoning = _to_int(attrs.get("gen_ai.usage.reasoning_output_tokens"))
+    token_provenance = "local_telemetry" if _has_token_attributes(attrs) else "unavailable"
     source_timestamps = [
         str(value)
         for value in (raw_event["observed_at"], raw_event["received_at"])
@@ -273,8 +301,8 @@ def _upsert_session(
         INSERT INTO sessions(
           id, agent_id, started_at, ended_at, status, input_tokens, output_tokens,
           cache_creation_tokens, cache_read_tokens, reasoning_tokens, source_kind,
-          source_ref, last_observed_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          source_ref, token_provenance, last_observed_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           agent_id = CASE
             WHEN excluded.source_kind = 'native_session' THEN excluded.agent_id
@@ -309,6 +337,13 @@ def _upsert_session(
           cache_creation_tokens = sessions.cache_creation_tokens + excluded.cache_creation_tokens,
           cache_read_tokens = sessions.cache_read_tokens + excluded.cache_read_tokens,
           reasoning_tokens = sessions.reasoning_tokens + excluded.reasoning_tokens,
+          token_provenance = CASE
+            WHEN excluded.token_provenance = 'local_telemetry'
+              THEN excluded.token_provenance
+            WHEN sessions.token_provenance = 'unavailable'
+              THEN excluded.token_provenance
+            ELSE sessions.token_provenance
+          END,
           status = CASE
             WHEN sessions.status = 'error' OR excluded.status = 'error' THEN 'error'
             WHEN excluded.status = 'ok' THEN 'ok'
@@ -338,6 +373,7 @@ def _upsert_session(
             reasoning,
             None if context_only else raw_event["source_type"],
             None if context_only else raw_event["source_id"],
+            token_provenance,
             last_observed_at,
             timestamp,
             timestamp,

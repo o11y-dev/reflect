@@ -60,7 +60,7 @@ class CompletionSessionRule(BaseSessionRule):
 class EfficiencySessionRule(BaseSessionRule):
     definition = SessionRuleDefinition(
         id="efficiency",
-        version=1,
+        version=2,
         name="Efficiency",
         description=(
             "Penalizes high token-per-tool usage and unusually large tool counts, "
@@ -71,6 +71,14 @@ class EfficiencySessionRule(BaseSessionRule):
     )
 
     def score(self, context: SessionRuleContext) -> SessionRuleResult:
+        if context.token_provenance == "unavailable":
+            return self.unavailable(
+                "Token telemetry was unavailable, so efficiency was not scored.",
+                {
+                    "tool_uses": context.tool_uses,
+                    "token_provenance": context.token_provenance,
+                },
+            )
         earned = 20.0
         profile = context.profile
         if context.tool_uses > 0:
@@ -191,7 +199,7 @@ class ToolReliabilitySessionRule(BaseSessionRule):
 class LoopDetectionSessionRule(BaseSessionRule):
     definition = SessionRuleDefinition(
         id="loop_detection",
-        version=1,
+        version=2,
         name="Loop detection",
         description=(
             "Penalizes repeated use of the same tool in adjacent steps, which "
@@ -203,9 +211,8 @@ class LoopDetectionSessionRule(BaseSessionRule):
 
     def score(self, context: SessionRuleContext) -> SessionRuleResult:
         if context.consecutive_pairs is None or context.consecutive_triples is None:
-            return self.result(
-                10.0,
-                "No repeated-tool loop signal was present in the session summary.",
+            return self.unavailable(
+                "Tool sequence telemetry was unavailable, so loop detection was not scored.",
                 {"tool_sequence_available": False},
             )
         penalty = min(
@@ -230,11 +237,11 @@ class LoopDetectionSessionRule(BaseSessionRule):
 class DurationHealthSessionRule(BaseSessionRule):
     definition = SessionRuleDefinition(
         id="duration_health",
-        version=1,
+        version=2,
         name="Duration health",
         description=(
-            "Gives partial credit when timing data is sparse, penalizes very "
-            "short sessions and long outliers."
+            "Penalizes very short sessions and long outliers when sufficient "
+            "timing evidence is available."
         ),
         max_points=10.0,
         signals=("session span timestamps",),
@@ -247,9 +254,8 @@ class DurationHealthSessionRule(BaseSessionRule):
                 metrics = {"duration_ms": context.duration_ms}
             else:
                 metrics = {"timestamp_count": context.timestamp_count or 0}
-            return self.result(
-                5.0,
-                "Only partial timing data was available.",
+            return self.unavailable(
+                "Timing evidence was unavailable, so duration health was not scored.",
                 metrics,
             )
 
@@ -284,7 +290,7 @@ class DurationHealthSessionRule(BaseSessionRule):
 class ErrorRecoverySessionRule(BaseSessionRule):
     definition = SessionRuleDefinition(
         id="error_recovery",
-        version=1,
+        version=2,
         name="Error recovery",
         description=(
             "Rewards sessions that recover after failed tool calls; sessions "
@@ -295,6 +301,14 @@ class ErrorRecoverySessionRule(BaseSessionRule):
     )
 
     def score(self, context: SessionRuleContext) -> SessionRuleResult:
+        if context.failures > 0 and not context.recovery_available:
+            return self.unavailable(
+                "Recovery sequence telemetry was unavailable, so recovery was not scored.",
+                {
+                    "failures": context.failures,
+                    "recovery_available": False,
+                },
+            )
         if context.failures == 0:
             earned = 7.0
             summary = "No failures were observed, so recovery gets baseline credit."
@@ -314,7 +328,7 @@ class ErrorRecoverySessionRule(BaseSessionRule):
 class ToolDiversitySessionRule(BaseSessionRule):
     definition = SessionRuleDefinition(
         id="tool_diversity",
-        version=1,
+        version=2,
         name="Tool diversity",
         description=(
             "Rewards sessions that use a reasonable mix of tools instead of a "
@@ -326,9 +340,8 @@ class ToolDiversitySessionRule(BaseSessionRule):
 
     def score(self, context: SessionRuleContext) -> SessionRuleResult:
         if context.distinct_tools is None:
-            return self.result(
-                0.0,
-                "Distinct per-session tool count was not present in the session summary.",
+            return self.unavailable(
+                "Distinct-tool telemetry was unavailable, so diversity was not scored.",
                 {"distinct_tools_available": False},
             )
         if context.distinct_tools >= 5:
@@ -349,7 +362,7 @@ class ToolDiversitySessionRule(BaseSessionRule):
 class EditProductivitySessionRule(BaseSessionRule):
     definition = SessionRuleDefinition(
         id="edit_productivity",
-        version=1,
+        version=2,
         name="Edit productivity",
         description=(
             "Rewards sessions that convert exploration into edits, using the "
@@ -361,9 +374,8 @@ class EditProductivitySessionRule(BaseSessionRule):
 
     def score(self, context: SessionRuleContext) -> SessionRuleResult:
         if context.edits is None or context.reads is None:
-            return self.result(
-                0.0,
-                "Read/edit productivity events were not present in the session summary.",
+            return self.unavailable(
+                "Read/edit telemetry was unavailable, so productivity was not scored.",
                 {"edit_events_available": False},
             )
         if context.edits > 0:

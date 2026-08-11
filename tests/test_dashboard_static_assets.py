@@ -284,6 +284,9 @@ def test_dashboard_session_detail_restructures_quality_and_telemetry_as_product_
     assert "<th>Input</th>" in text
     assert "<th>Value</th>" in text
     assert "Final displayed score" in text
+    assert "Evidence Coverage" in text
+    assert "item.available === false ? 'N/A'" in text
+    assert "breakdown.filter(item => item.available !== false)" in text
     assert "No score" in text
     assert "Quality Rules" in text
     assert "SQL summary heuristic" not in text
@@ -516,7 +519,10 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "Price unresolved" in text
     assert "function sessionToolCallTotal(session)" in text
     assert "['Tool Calls', fmt(sessionToolCallTotal(session))]" in text
-    assert "['Total Tokens', fmtTokenShort(sessionTokenTotal(session))]" in text
+    assert "session.token_provenance === 'unavailable'" in text
+    assert "? 'not captured'" in text
+    assert ": fmtTokenShort(sessionTokenTotal(session))" in text
+    assert "['Evidence Coverage', `${coverage.toFixed(0)}%`]" in text
     assert "fmtWorkflowDate(D.first_event_ts)" in text
     assert "linked sessions</div>" in text
     assert "comparable tasks · ${evidenceReady ? 'task-bounded evidence' : 'unvalidated draft'}" in text

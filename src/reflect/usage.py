@@ -382,29 +382,10 @@ class UsageService:
             + """
             SELECT
               s.id,
-              (
-                s.input_tokens + s.output_tokens + s.cache_creation_tokens
-                + s.cache_read_tokens + s.reasoning_tokens
-              ) AS total_tokens,
-              EXISTS (
-                SELECT 1
-                FROM steps st
-                WHERE st.session_id = s.id
-                  AND json_extract(st.raw_attrs_json, '$."reflect.token.source"')
-                      = 'estimated_cursor_transcript'
-                  AND lower(COALESCE(a.name, '')) = 'cursor'
-              ) AS has_cursor_estimate,
-              EXISTS (
-                SELECT 1
-                FROM llm_calls exact_lc
-                WHERE exact_lc.session_id = s.id
-                  AND (
-                    exact_lc.input_tokens + exact_lc.output_tokens
-                    + exact_lc.cache_creation_input_tokens
-                    + exact_lc.cache_read_input_tokens
-                    + exact_lc.reasoning_output_tokens
-                  ) > 0
-              ) AS has_exact_llm_tokens,
+              s.token_provenance,
+              lower(COALESCE(a.name, '')) AS agent,
+              s.input_tokens + s.output_tokens + s.cache_creation_tokens
+                + s.cache_read_tokens + s.reasoning_tokens AS total_tokens,
               EXISTS (
                 SELECT 1 FROM llm_calls lc WHERE lc.session_id = s.id
               ) AS has_llm_calls
@@ -418,17 +399,11 @@ class UsageService:
         estimated = 0
         unavailable = 0
         sources: set[str] = set()
-        for (
-            _session_id,
-            total_tokens,
-            has_estimate,
-            has_exact_llm_tokens,
-            has_llm_calls,
-        ) in rows:
-            if bool(has_exact_llm_tokens):
+        for _session_id, provenance, agent, total_tokens, has_llm_calls in rows:
+            if provenance == "local_telemetry":
                 exact += 1
                 sources.add("local_telemetry")
-            elif bool(has_estimate):
+            elif provenance == "estimated_cursor_transcript" and agent == "cursor":
                 estimated += 1
                 sources.add("estimated_cursor_transcript")
             elif int(total_tokens or 0) > 0:

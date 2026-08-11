@@ -306,7 +306,7 @@ def _sql_cohort_summary(
     quality_values = [
         float(session.get("quality_score") or 0)
         for session in sessions
-        if float(session.get("quality_score") or 0) > 0
+        if session.get("quality_available") is True
     ]
     tools = metrics.get("tools_by_count") or {}
     commands = metrics.get("top_commands") or []
@@ -386,6 +386,8 @@ def _sql_comparison_payload(
     )
     quality_by_agent: dict[str, list[float]] = {}
     for session in baseline_sessions:
+        if session.get("quality_available") is not True:
+            continue
         quality_by_agent.setdefault(str(session.get("agent") or "unknown"), []).append(
             float(session.get("quality_score") or 0)
         )
@@ -514,7 +516,11 @@ def _cohort_agent_comparison(
         grouped.setdefault(str(session.get("agent") or "unknown"), []).append(session)
     rows = []
     for name, agent_sessions in grouped.items():
-        quality = [float(item.get("quality_score") or 0) for item in agent_sessions]
+        quality = [
+            float(item.get("quality_score") or 0)
+            for item in agent_sessions
+            if item.get("quality_available") is True
+        ]
         rows.append(
             {
                 "name": name,
@@ -614,6 +620,9 @@ def build_dashboard_payload(
             "estimated_cost_usd": session["total_cost_usd"],
             "total_tokens": session["total_tokens"],
             "quality_score": session["quality_score"],
+            "quality_available": session["quality_available"],
+            "quality_coverage_pct": session["quality_coverage_pct"],
+            "token_provenance": session["token_provenance"],
         }
         for session in nav_sessions
     ]
@@ -665,15 +674,15 @@ def build_dashboard_payload(
         else 0.0
     )
     weekly_trends = _compute_weekly_trends(Counter(metrics["activity_by_day"]))
+    quality_values = [
+        float(row.get("quality_score") or 0)
+        for row in scoped_sessions
+        if row.get("quality_available") is True
+    ]
     sqlite_payload["tabs"] = {
         **dict(sqlite_payload.get("tabs") or {}),
         "usage": {
-            "avg_quality_score": (
-                sum(float(row.get("quality_score") or 0) for row in scoped_sessions)
-                / len(scoped_sessions)
-                if scoped_sessions
-                else 0
-            ),
+            "avg_quality_score": sum(quality_values) / len(quality_values) if quality_values else 0,
             "unique_sessions": scoped_overview["session_count"],
             "first_event_ts": first_event_ts,
             "prompt_submits": prompt_count,

@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Quality scores now normalize only across dimensions backed by observed evidence, expose coverage explicitly, and withhold low-coverage scores instead of rewarding or penalizing missing telemetry as zero.
 - Replaced tracked internal architecture and planning notes with a public contribution guide covering canonical data flow, ownership, migrations, frontend generation, privacy, testing, and review expectations.
 - Refresh-enabled browser servers now prepare telemetry immediately and every five minutes through one non-overlapping coordinator; manual refresh uses the same lifecycle and performs complete rotated-segment reconciliation.
 - The typed agent capability registry now also owns active native-OTel surfaces. Historical Gemini remains ingestible but is excluded from setup and active telemetry status, with Antigravity named as the current Gemini-family target.
@@ -59,6 +60,7 @@
 
 ### Fixed
 
+- Added canonical token provenance and stopped materializing lifecycle-only prompt/session events as LLM calls, while preserving conversation facts, usage-bearing lifecycle records, session token totals, and model-backed assistant responses.
 - Moved refresh, storage-pressure, and failure notifications into a responsive header activity rail with five real preparation phases, richer status detail, and reduced-motion-safe animation so alerts no longer cover dashboard content.
 - Stopped materializing Codex runtime-internal OTLP spans in SQLite after classification; bounded raw segments still checkpoint and rotate without growing canonical evidence.
 - Added a combined 4 GiB raw trace/log admission guard that preserves existing evidence and rejects new telemetry at capacity, with HTTP/gRPC backpressure plus doctor, server, health API, and dashboard status.

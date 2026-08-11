@@ -5,14 +5,12 @@ from pathlib import Path
 
 from reflect.session_rules import DEFAULT_SESSION_RULE_SCORER, context_from_summary
 
+MIN_QUALITY_COVERAGE_PCT = 50.0
+
 
 def quality_rules_payload() -> list[dict[str, object]]:
     """Dashboard copy for the session quality scoring rubric."""
     return DEFAULT_SESSION_RULE_SCORER.rules_payload()
-
-
-def sql_quality_breakdown(row: dict[str, object], recovered: int = 0) -> list[dict[str, object]]:
-    return DEFAULT_SESSION_RULE_SCORER.breakdown(context_from_summary(row, recovered=recovered))
 
 
 def session_card_from_row(
@@ -25,7 +23,24 @@ def session_card_from_row(
     """Shape one canonical session summary for dashboard navigation."""
     session_id = str(row.get("session_id") or row.get("id") or "")
     status = str(row.get("status") or "")
-    quality_breakdown = sql_quality_breakdown(row)
+    quality_context = context_from_summary(row)
+    quality_breakdown = DEFAULT_SESSION_RULE_SCORER.breakdown(quality_context)
+    quality_score = DEFAULT_SESSION_RULE_SCORER.score_from_breakdown(quality_breakdown)
+    quality_coverage = DEFAULT_SESSION_RULE_SCORER.coverage_from_breakdown(quality_breakdown)
+    quality_available = quality_coverage >= MIN_QUALITY_COVERAGE_PCT
+    quality_missing_reason = (
+        ""
+        if quality_coverage >= 100
+        else (
+            f"Score normalized across {quality_coverage:.0f}% evidence coverage; "
+            "unavailable dimensions were excluded."
+            if quality_available
+            else (
+                f"Only {quality_coverage:.0f}% of quality evidence was available; "
+                f"at least {MIN_QUALITY_COVERAGE_PCT:.0f}% is required to display a score."
+            )
+        )
+    )
     input_tokens = int(row.get("input_tokens") or 0)
     output_tokens = int(row.get("output_tokens") or 0)
     cache_creation_tokens = int(row.get("cache_creation_tokens") or 0)
@@ -34,12 +49,16 @@ def session_card_from_row(
     model = primary_model or str(row.get("primary_model") or "")
     cost = float(row.get("estimated_cost_usd") or row.get("total_cost_usd") or 0)
     total_tokens = input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens
+    token_provenance = quality_context.token_provenance
     if cost > 0:
         cost_status = "estimated"
         cost_unavailable_reason = ""
-    elif total_tokens <= 0:
+    elif token_provenance == "unavailable":
         cost_status = "tokens_unavailable"
         cost_unavailable_reason = "Token usage was not captured for this session."
+    elif total_tokens <= 0:
+        cost_status = "zero_usage"
+        cost_unavailable_reason = "Token telemetry was captured and reported no usage."
     elif not model:
         cost_status = "model_unavailable"
         cost_unavailable_reason = "Tokens were captured, but no model was available to resolve pricing."
@@ -62,9 +81,10 @@ def session_card_from_row(
         "tool_calls": int(row.get("tool_call_count") or row.get("tool_calls") or 0),
         "failures": failure_count,
         "failure_count": failure_count,
-        "quality_score": sum(float(item["earned"]) for item in quality_breakdown),
-        "quality_available": True,
-        "quality_missing_reason": "",
+        "quality_score": quality_score,
+        "quality_available": quality_available,
+        "quality_coverage_pct": quality_coverage,
+        "quality_missing_reason": quality_missing_reason,
         "quality_breakdown": quality_breakdown,
         "is_completed": status in {"ok", "completed", "success"},
         "recovered_failures": 0,
@@ -72,6 +92,7 @@ def session_card_from_row(
         "output_tokens": output_tokens,
         "cache_creation_tokens": cache_creation_tokens,
         "cache_read_tokens": cache_read_tokens,
+        "token_provenance": token_provenance,
         "total_tokens": total_tokens,
         "total_cost": cost,
         "total_cost_usd": cost,

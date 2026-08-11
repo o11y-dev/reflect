@@ -1642,6 +1642,7 @@ class SessionConversationPlayhead {
     const rules = D.quality_rules || [];
     const hasScore = session.quality_available === true;
     const score = Number(session.quality_score || 0);
+    const coverage = Number(session.quality_coverage_pct || 0);
     const breakdown = session.quality_breakdown || [];
     const status = hasScore
       ? (score >= 80 ? 'Strong' : score >= 60 ? 'Watch' : 'Needs attention')
@@ -1654,7 +1655,13 @@ class SessionConversationPlayhead {
       ['Failures', fmt(session.failure_count || session.failures || 0)],
       ['Recovered', fmt(session.recovered_failures || 0)],
       ['Tool Calls', fmt(sessionToolCallTotal(session))],
-      ['Total Tokens', fmtTokenShort(sessionTokenTotal(session))],
+      [
+        'Total Tokens',
+        session.token_provenance === 'unavailable'
+          ? 'not captured'
+          : fmtTokenShort(sessionTokenTotal(session)),
+      ],
+      ['Evidence Coverage', `${coverage.toFixed(0)}%`],
     ];
     const formatMetricValue = value => {
       if (typeof value === 'number') return Number.isInteger(value) ? fmt(value) : String(Math.round(value * 100) / 100);
@@ -1674,15 +1681,16 @@ class SessionConversationPlayhead {
       return entries.map(([key, value], index) => `
         <tr>
           ${index === 0 ? `<td class="quality-breakdown-name" rowspan="${rowSpan}">${escHtml(item.name || '')}</td>` : ''}
-          ${index === 0 ? `<td class="quality-breakdown-score" rowspan="${rowSpan}">${Number(item.earned || 0).toFixed(1)} / ${Number(item.max || 0).toFixed(0)}</td>` : ''}
+          ${index === 0 ? `<td class="quality-breakdown-score" rowspan="${rowSpan}">${item.available === false ? 'N/A' : `${Number(item.earned || 0).toFixed(1)} / ${Number(item.max || 0).toFixed(0)}`}</td>` : ''}
           <td class="quality-breakdown-input">${escHtml(key)}</td>
           <td class="quality-breakdown-value">${escHtml(formatMetricValue(value))}</td>
           ${index === 0 ? `<td rowspan="${rowSpan}"><div class="quality-breakdown-summary">${escHtml(item.summary || '')}</div></td>` : ''}
         </tr>
       `).join('');
     };
-    const breakdownTotal = breakdown.reduce((sum, item) => sum + Number(item.earned || 0), 0);
-    const breakdownMax = breakdown.reduce((sum, item) => sum + Number(item.max || 0), 0);
+    const scoredBreakdown = breakdown.filter(item => item.available !== false);
+    const breakdownTotal = scoredBreakdown.reduce((sum, item) => sum + Number(item.earned || 0), 0);
+    const breakdownMax = scoredBreakdown.reduce((sum, item) => sum + Number(item.max || 0), 0);
     return `<div class="quality-shell">
       <div class="quality-summary">
         <div class="quality-score-card">
@@ -1713,8 +1721,8 @@ class SessionConversationPlayhead {
             ${breakdown.map(item => renderBreakdownRows(item)).join('')}
             <tr class="quality-breakdown-total">
               <td>Total</td>
-              <td class="quality-breakdown-score">${breakdownTotal.toFixed(1)} / ${breakdownMax.toFixed(0)}</td>
-              <td colspan="3">Final displayed score: ${hasScore ? score.toFixed(0) + '%' : '--'}</td>
+              <td class="quality-breakdown-score">${breakdownTotal.toFixed(1)} / ${breakdownMax.toFixed(0)} observed</td>
+              <td colspan="3">Final displayed score: ${hasScore ? score.toFixed(0) + '%' : '--'} · Evidence coverage: ${coverage.toFixed(0)}%</td>
             </tr>
           </tbody>
         </table>

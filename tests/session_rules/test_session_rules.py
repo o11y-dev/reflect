@@ -66,6 +66,7 @@ def test_custom_session_rule_is_registered_scored_and_clamped() -> None:
             "name": "Constant",
             "earned": 12.0,
             "max": 12.0,
+            "available": True,
             "summary": "Scored session-1.",
             "metrics": {"source": "spans"},
             "inputs": [{"name": "source", "value": "spans"}],
@@ -134,6 +135,8 @@ def test_rule_context_uses_cache_in_total_token_volume() -> None:
 
     assert span_context.total_tokens == 200
     assert summary_context.total_tokens == 200
+    assert span_context.token_provenance == "local_telemetry"
+    assert summary_context.token_provenance == "local_telemetry"
 
 
 def test_summary_adapter_marks_unavailable_detail_signals() -> None:
@@ -149,8 +152,43 @@ def test_summary_adapter_marks_unavailable_detail_signals() -> None:
     by_name = {item["name"]: item for item in breakdown}
 
     assert by_name["Completion"]["earned"] == 25.0
+    assert by_name["Efficiency"]["available"] is False
     assert by_name["Loop detection"]["metrics"] == {
         "tool_sequence_available": False
     }
+    assert by_name["Loop detection"]["available"] is False
     assert by_name["Tool diversity"]["earned"] == 0.0
+    assert by_name["Tool diversity"]["available"] is False
     assert by_name["Edit productivity"]["earned"] == 0.0
+    assert by_name["Edit productivity"]["available"] is False
+    assert DEFAULT_SESSION_RULE_SCORER.coverage_from_breakdown(breakdown) == 60.0
+    assert DEFAULT_SESSION_RULE_SCORER.score_from_breakdown(breakdown) == 95.0
+
+
+def test_measured_zero_tokens_are_distinct_from_unavailable_tokens() -> None:
+    unavailable = context_from_summary(
+        {
+            "id": "missing",
+            "status": "completed",
+            "tool_call_count": 2,
+            "duration_ms": 60_000,
+            "token_provenance": "unavailable",
+        }
+    )
+    measured_zero = context_from_summary(
+        {
+            "id": "measured-zero",
+            "status": "completed",
+            "tool_call_count": 2,
+            "duration_ms": 60_000,
+            "token_provenance": "local_telemetry",
+        }
+    )
+
+    unavailable_efficiency = DEFAULT_SESSION_RULE_SCORER.breakdown(unavailable)[1]
+    measured_efficiency = DEFAULT_SESSION_RULE_SCORER.breakdown(measured_zero)[1]
+
+    assert unavailable_efficiency["available"] is False
+    assert unavailable_efficiency["earned"] == 0.0
+    assert measured_efficiency["available"] is True
+    assert measured_efficiency["earned"] == 20.0

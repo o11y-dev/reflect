@@ -44,8 +44,7 @@ def estimate_cursor_transcript_usage(file_path: Path) -> dict[str, int]:
 def _session_token_state(conn: sqlite3.Connection, session_id: str) -> tuple[bool, bool] | None:
     row = conn.execute(
         """
-        SELECT lower(COALESCE(a.name, '')), s.input_tokens, s.output_tokens,
-               s.cache_creation_tokens, s.cache_read_tokens, s.reasoning_tokens
+        SELECT lower(COALESCE(a.name, '')), s.token_provenance
         FROM sessions s
         LEFT JOIN agents a ON a.id = s.agent_id
         WHERE s.id = ?
@@ -54,7 +53,7 @@ def _session_token_state(conn: sqlite3.Connection, session_id: str) -> tuple[boo
     ).fetchone()
     if row is None:
         return None
-    return str(row[0]) == "cursor", any(int(value or 0) > 0 for value in row[1:])
+    return str(row[0]) == "cursor", str(row[1]) != "unavailable"
 
 
 def repair_misattributed_cursor_transcript_usage(
@@ -107,10 +106,19 @@ def repair_misattributed_cursor_transcript_usage(
             UPDATE sessions
             SET input_tokens = ?, output_tokens = ?, cache_creation_tokens = ?,
                 cache_read_tokens = ?, reasoning_tokens = ?,
-                estimated_cost_usd = 0, updated_at = ?
+                estimated_cost_usd = 0,
+                token_provenance = CASE
+                  WHEN ? > 0 THEN 'local_telemetry' ELSE 'unavailable'
+                END,
+                updated_at = ?
             WHERE id = ?
             """,
-            (*[int(value or 0) for value in usage], timestamp, session_id),
+            (
+                *[int(value or 0) for value in usage],
+                sum(int(value or 0) for value in usage),
+                timestamp,
+                session_id,
+            ),
         )
         conn.execute(
             """
@@ -213,6 +221,7 @@ def apply_cursor_transcript_usage_estimates(
             UPDATE sessions
             SET input_tokens = ?,
                 output_tokens = ?,
+                token_provenance = 'estimated_cursor_transcript',
                 updated_at = ?
             WHERE id = ?
               AND EXISTS (

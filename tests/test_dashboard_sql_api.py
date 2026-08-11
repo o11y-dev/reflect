@@ -34,11 +34,36 @@ def test_session_cards_explain_why_cost_is_unavailable():
     no_price = session_card_from_row(
         {**base, "input_tokens": 100, "primary_model": "claude-sonnet"}
     )
+    measured_zero = session_card_from_row(
+        {**base, "token_provenance": "local_telemetry"}
+    )
 
     assert no_tokens["cost_status"] == "tokens_unavailable"
     assert no_model["cost_status"] == "model_unavailable"
     assert no_price["cost_status"] == "pricing_unavailable"
+    assert measured_zero["cost_status"] == "zero_usage"
     assert "claude-sonnet" in no_price["cost_unavailable_reason"]
+
+
+def test_session_cards_exclude_unavailable_quality_dimensions():
+    card = session_card_from_row(
+        {
+            "session_id": "session",
+            "status": "error",
+            "tool_call_count": 57,
+            "failure_count": 1,
+            "duration_ms": 1_598_019,
+            "token_provenance": "unavailable",
+        }
+    )
+    by_name = {item["name"]: item for item in card["quality_breakdown"]}
+
+    assert card["quality_available"] is True
+    assert card["quality_coverage_pct"] == 50.0
+    assert card["quality_score"] == 46.5
+    assert by_name["Efficiency"]["available"] is False
+    assert by_name["Loop detection"]["available"] is False
+    assert "50% evidence coverage" in card["quality_missing_reason"]
 
 
 def _seed_sql_report_db(db_path):
@@ -1636,11 +1661,12 @@ def test_dashboard_api_applies_sql_filters_and_comparison(tmp_path, monkeypatch)
     assert tabs["usage"]["unique_sessions"] == 1
     assert [session["id"] for session in payload["sessions"]] == ["sess-sql"]
     comparison = tabs["cohort_comparison"]["comparison"]
-    assert comparison["primary"]["avg_quality"] == 87
-    assert comparison["baseline"]["avg_quality"] == 65
+    assert comparison["primary"]["avg_quality"] == 96.25
+    assert round(comparison["baseline"]["avg_quality"], 2) == 78.57
+    assert payload["sessions"][0]["quality_coverage_pct"] == 80.0
     assert comparison["primary"]["tokens"] == 250
     assert comparison["baseline"]["tokens"] == 100
-    assert comparison["baseline_agents"][0]["avg_quality"] == 65
+    assert round(comparison["baseline_agents"][0]["avg_quality"], 2) == 78.57
     assert tabs["cohort_comparison"]["agent_comparison"] == tabs["agents"]["agent_comparison"]
     assert tabs["cohort_comparison"]["agent_comparison"][0]["tokens"] == 250
     assert {item["name"] for item in payload["sessions"][0]["quality_breakdown"]} >= {"Completion", "Efficiency"}

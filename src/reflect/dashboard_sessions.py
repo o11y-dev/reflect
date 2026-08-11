@@ -461,6 +461,7 @@ def build_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
               COALESCE(sr.output_tokens, s.output_tokens, 0) AS output_tokens,
               COALESCE(sr.cache_write_tokens, s.cache_creation_tokens, 0) AS cache_creation_tokens,
               COALESCE(sr.cache_read_tokens, s.cache_read_tokens, 0) AS cache_read_tokens,
+              s.token_provenance,
               COALESCE(sr.total_cost, s.estimated_cost_usd, 0) AS estimated_cost_usd
             FROM sessions s
             LEFT JOIN agents a ON a.id = s.agent_id
@@ -597,6 +598,7 @@ def build_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
         tools=tools_by_count,
     )
     quality_score = float(session_card["quality_score"])
+    reported_quality_score = quality_score if session_card["quality_available"] else 0.0
     total_tokens = int(session_card["total_tokens"])
     navigation_cards = [
         session_card
@@ -622,7 +624,7 @@ def build_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
     tabs = empty_sql_lazy_tabs()
     tabs["usage"].update(
         {
-            "avg_quality_score": quality_score,
+            "avg_quality_score": reported_quality_score,
             "unique_sessions": 1,
             "first_event_ts": session_row["started_at"] or "",
             "prompt_submits": scoped_overview["prompt_count"],
@@ -696,7 +698,7 @@ def build_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
         "tokens": total_tokens,
         "total_cost": cost,
         "total_cost_usd": cost,
-        "avg_quality": quality_score,
+        "avg_quality": reported_quality_score,
         "completed": 1 if session_card["is_completed"] else 0,
         "recovered": 0,
     }

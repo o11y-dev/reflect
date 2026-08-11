@@ -1,6 +1,8 @@
 import hashlib
 import json
 
+import pytest
+
 from reflect.store import normalize as normalize_mod
 from reflect.store.ingest import ingest_local_spans_file
 from reflect.store.migrate import migrate
@@ -17,7 +19,7 @@ from reflect.store.sqlite import connect_sqlite
 def _write_spans(path):
     spans = [
         {
-            "name": "UserPromptSubmit",
+            "name": "chat",
             "traceId": "trace-1",
             "spanId": "span-1",
             "parentSpanId": "",
@@ -26,6 +28,7 @@ def _write_spans(path):
             "attributes": {
                 "gen_ai.client.name": "claude",
                 "gen_ai.client.session_id": "sess-1",
+                "gen_ai.operation.name": "chat",
                 "gen_ai.request.model": "claude-4.6-opus",
                 "gen_ai.usage.input_tokens": 100,
                 "gen_ai.usage.output_tokens": 50,
@@ -101,8 +104,8 @@ def test_normalize_pending_raw_events_populates_canonical_tables(tmp_path):
         ).fetchall()
         parent_by_summary = {row[0]: row[1] for row in parent_rows}
         assert parent_by_summary == {
-            "UserPromptSubmit": None,
-            "PreToolUse": "UserPromptSubmit",
+            "chat": None,
+            "PreToolUse": "chat",
             "BeforeMCPExecution": "PreToolUse",
         }
         llm_call = conn.execute(
@@ -125,6 +128,103 @@ def test_normalize_pending_raw_events_populates_canonical_tables(tmp_path):
             "[redacted file preview]",
         )
         assert conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("agent", ["copilot", "codex"])
+def test_normalize_keeps_lifecycle_only_events_out_of_llm_calls(tmp_path, agent):
+    spans = tmp_path / f"{agent}-lifecycle.jsonl"
+    session_id = f"{agent}-session"
+    events = [
+        {
+            "name": "gen_ai.client.hook.UserPromptSubmit",
+            "traceId": "trace-lifecycle",
+            "spanId": "prompt",
+            "start_time_ns": 100,
+            "end_time_ns": 100,
+            "attributes": {
+                "gen_ai.client.name": agent,
+                "gen_ai.client.session_id": session_id,
+                "gen_ai.client.hook.event": "UserPromptSubmit",
+                "gen_ai.request.model": "gpt-test",
+                "gen_ai.client.prompt": "Review the implementation",
+            },
+        },
+        {
+            "name": "gen_ai.client.hook.Stop",
+            "traceId": "trace-lifecycle",
+            "spanId": "stop-without-model",
+            "start_time_ns": 200,
+            "end_time_ns": 200,
+            "attributes": {
+                "gen_ai.client.name": agent,
+                "gen_ai.client.session_id": session_id,
+                "gen_ai.client.hook.event": "Stop",
+                "gen_ai.client.output": "Done",
+            },
+        },
+        {
+            "name": "gen_ai.client.hook.Stop",
+            "traceId": "trace-lifecycle",
+            "spanId": "model-response",
+            "start_time_ns": 300,
+            "end_time_ns": 300,
+            "attributes": {
+                "gen_ai.client.name": agent,
+                "gen_ai.client.session_id": session_id,
+                "gen_ai.client.hook.event": "Stop",
+                "gen_ai.response.model": "gpt-test",
+                "gen_ai.client.output": "Model response",
+            },
+        },
+        {
+            "name": "gen_ai.client.hook.SessionEnd",
+            "traceId": "trace-lifecycle",
+            "spanId": "session-end",
+            "start_time_ns": 400,
+            "end_time_ns": 400,
+            "attributes": {
+                "gen_ai.client.name": agent,
+                "gen_ai.client.session_id": session_id,
+                "gen_ai.client.hook.event": "SessionEnd",
+                "gen_ai.usage.input_tokens": 100,
+                "gen_ai.usage.output_tokens": 20,
+            },
+        },
+    ]
+    spans.write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        ingest_local_spans_file(conn, file_path=spans)
+        assert normalize_pending_raw_events(conn) == {
+            "processed": 4,
+            "failed": 0,
+            "skipped": 0,
+        }
+
+        llm_calls = conn.execute(
+            "SELECT operation_name, response_model FROM llm_calls"
+        ).fetchall()
+        assert {tuple(row) for row in llm_calls} == {
+            ("Stop", "gpt-test"),
+            ("SessionEnd", None),
+        }
+        step_type_counts = dict(
+            conn.execute("SELECT type, COUNT(*) FROM steps GROUP BY type")
+        )
+        assert step_type_counts == {
+            "conversation_event": 2,
+            "llm_call": 2,
+        }
+        session = conn.execute(
+            "SELECT input_tokens, output_tokens, token_provenance FROM sessions"
+        ).fetchone()
+        assert tuple(session) == (100, 20, "local_telemetry")
     finally:
         conn.close()
 

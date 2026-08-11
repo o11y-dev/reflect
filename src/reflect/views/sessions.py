@@ -23,6 +23,7 @@ class SessionRow(ReflectModel):
     output_tokens: int
     cache_creation_tokens: int
     cache_read_tokens: int
+    token_provenance: str
     primary_model: str | None = None
     estimated_cost_usd: float
 
@@ -133,6 +134,7 @@ def list_sessions(
           COALESCE(sr.output_tokens, s.output_tokens, 0) AS output_tokens,
           COALESCE(sr.cache_write_tokens, s.cache_creation_tokens, 0) AS cache_creation_tokens,
           COALESCE(sr.cache_read_tokens, s.cache_read_tokens, 0) AS cache_read_tokens,
+          s.token_provenance,
           (
             SELECT COALESCE(NULLIF(model_call.response_model, ''), NULLIF(model_call.request_model, ''))
             FROM llm_calls model_call

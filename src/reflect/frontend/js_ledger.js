@@ -82,6 +82,7 @@ function sessionCostPresentation(session, estimatedTokens = null){
       : 'model_unavailable';
   const status = String(session?.cost_status || inferredStatus);
   const presentation = {
+    zero_usage:['No billable usage', 'Token telemetry was captured and reported no usage.'],
     tokens_unavailable:['Tokens not captured', 'Token usage was not captured for this session.'],
     model_unavailable:['Model not captured', 'Tokens were captured, but no model was available to resolve pricing.'],
     pricing_unavailable:['Price unresolved', `Model "${session?.primary_model || 'unknown'}" did not resolve to a local price.`],
