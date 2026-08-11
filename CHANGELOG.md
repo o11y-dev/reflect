@@ -28,14 +28,7 @@
 - Session retention now deletes only the selected sessions, refreshes their affected graph and usage-rollup keys, and relies on enforced SQLite constraints instead of rebuilding and globally validating the complete derived store.
 - Made improvement discovery and impact measurement execution-aware: long-lived sessions are segmented into canonical execution units, mixed or low-confidence archetypes are excluded from procedure cohorts, and workflow contracts are evaluated symmetrically against the first five comparable post-installation executions.
 - Reused the existing observation, workflow, skill, intervention, and measurement lifecycle for successful repeated procedures, suppressing duplicate proposals when an active installed skill already covers the same procedure signature.
-- Bundled `opentelemetry-hooks` inside Reflect while preserving the public `otel-hook` command. `reflect setup` now uses the bundled runtime, and `reflect update --apply` removes a verified legacy standalone pipx environment, hands the command to Reflect, validates `otel-hook doctor --json`, and restores the prior package if the handoff fails.
-- Raised the minimum supported Python version from 3.11 to 3.12 to match the bundled hook runtime.
-- Made `reflect setup` register the OTLP gateway and report server for automatic startup after macOS user login by default, with `--no-autostart` as an explicit opt-out.
-- Made `reflect improve` snapshot-first and current-project scoped by default, with explicit path, parent/child session, and bounded global time scopes shared by CLI and MCP guidance.
-- Added reusable object-oriented snapshot inspection, preparation policy, and refresh strategy layers; `usage`, `improve`, `ask`, workflow/loop/skill reads, memory reads, and read-only MCP tools now use query-only SQLite connections and return actionable errors instead of implicitly migrating, ingesting, reconciling, or rebuilding.
-- Added `reflect refresh` as the explicit complete snapshot rebuild and `reflect skills sync` as the explicit skill-file, workflow, usage, and measurement reconciliation point; plain skill listing and inspection no longer create revisions.
 - Standardized usage, improvement, skill-discovery, and foreground-report filtering on `--period day|week|month|all`, removing the deprecated individual period aliases.
-- Moved identical-input retry analysis exclusively to the stricter `reflect loops` ledger and retired historical duplicate retry observations without deleting their evidence.
 - Kept direct SQLite guidance as an advanced debugging fallback while making scoped commands and bounded task-evidence ledgers the primary analysis path.
 - Made the browser report SQLite-only, removed the legacy artifact, SQL-tab, and duplicate improvement/measurement APIs, and switched dashboard reads to query-only connections that never migrate during a request.
 - Made `tool_calls` the canonical logical-invocation ledger: invocation/result phases sharing a provider call ID are merged, MCP aliases resolve to one name, and migration 25 reconciles retained duplicates before rollups and command-pattern analysis.
@@ -44,19 +37,14 @@
 ### Added
 
 - Added a public, reviewable curl installer that preserves the package owner on updates, prefers pipx, uv, then an isolated pip environment for fresh installs, and runs private local setup only after first installation.
-- Added a decision-oriented product direction covering simplification, packaged proof, adoption, privacy, and evidence requirements for developer trust.
 - Added a fresh-wheel cross-agent blog handoff suite and a deterministic six-agent telemetry contract covering validated memory selection, task completion, logical MCP calls, token totals, and repeat-refresh idempotency.
 - Added a direction-aware progress graph to every Impact card, plotting the baseline and each stored comparable-cohort check without extra dashboard queries.
 - Added a typed OpenCode SQLite store reader shared by canonical ingestion and session-detail rendering, including prompts, responses, exact model/token/cache usage, tool results, workspace context, and parent-session lineage.
 - Added privacy-safe Codex context discovery for user instructions and memory files, canonical per-session memory exposure evidence with dashboard counts, and automatic task-contract registration when `reflect_context` receives an explicit task file.
 - Added read-only `reflect_impact` MCP inspection for persisted before/after measurements and their exact compared execution-unit cohorts.
-- Added a current architecture map covering canonical data flow, domain ownership, one-way migration, workflow lifecycle, raw-segment retention, browser generation, and guardrails for keeping future changes lean.
 - Added typed workflow contracts and the idempotent `reflect_record_milestone` MCP tool, with task-run, skill-version, execution-unit, target, provider, approval, write, and read-back fingerprint evidence; self-reports remain separate from corroborated adherence.
 - Added contract-level procedure evidence and five-execution validation progress to workflow and Impact dashboard views.
-- Added `reflect autostart enable|status|disable` and a swappable user-service manager, with macOS LaunchAgent support for restart-safe local services.
 - Added complete finding-to-task attribution, scoped finding statistics, actionable CLI drilldown, and `/api/findings/{observation_id}/evidence`.
-- Added exact, transcript-estimated, and unavailable token provenance to `reflect usage`.
-- Added trusted session activity timestamps, pruned-session tombstones, and a dry-run-first `reflect db prune-sessions` command with a default pre-apply backup plus opt-in apply and vacuum behavior.
 
 ### Fixed
 
@@ -93,11 +81,36 @@
 - Kept workflow findings, review targets, and source-execution ledgers bound to the exact proposed artifact instead of merging different procedures that share a skill slug.
 - Added an explicit `--all-inactive-sessions` retention mode so operators can enforce a true age cutoff while the conservative invalid-timestamp policy remains the default.
 - Derived dashboard session event counts from canonical steps so missing usage rollups cannot silently make active sessions appear to have zero events.
+- Kept retention previews query-only, created apply backups before schema migration, rolled back pruning when derived rebuilds fail, rejected structurally incomplete usage rollups, and preserved the feedback lookup index.
+
+## 0.9.5 (2026-08-02)
+
+### Changed
+
+- Bundled `opentelemetry-hooks` inside Reflect while preserving the public `otel-hook` command. `reflect setup` now uses the bundled runtime, and `reflect update --apply` removes a verified legacy standalone pipx environment, hands the command to Reflect, validates `otel-hook doctor --json`, and restores the prior package if the handoff fails.
+- Raised the minimum supported Python version from 3.11 to 3.12 to match the bundled hook runtime.
+- Made `reflect setup` register the OTLP gateway and report server for automatic startup after macOS user login by default, with `--no-autostart` as an explicit opt-out.
+- Made `reflect improve` snapshot-first and current-project scoped by default, with explicit path, parent/child session, and bounded global time scopes shared by CLI and MCP guidance.
+- Added reusable object-oriented snapshot inspection, preparation policy, and refresh strategy layers; `usage`, `improve`, `ask`, workflow/loop/skill reads, memory reads, and read-only MCP tools now use query-only SQLite connections and return actionable errors instead of implicitly migrating, ingesting, reconciling, or rebuilding.
+- Added `reflect refresh` as the explicit complete snapshot rebuild and `reflect skills sync` as the explicit skill-file, workflow, usage, and measurement reconciliation point; plain skill listing and inspection no longer create revisions.
+- Standardized new usage, improvement, and skill-discovery examples on `--period day|week|month|all`; the individual period flags remain deprecated compatibility aliases.
+- Moved identical-input retry analysis exclusively to the stricter `reflect loops` ledger and retired historical duplicate retry observations without deleting their evidence.
+- Kept direct SQLite guidance as an advanced skill fallback while making scoped commands and Source Sessions the primary analysis path.
+
+### Added
+
+- Added `reflect autostart enable|status|disable` and a swappable user-service manager, with macOS LaunchAgent support for restart-safe local services.
+- Added complete observation-to-session attribution, scoped finding statistics, actionable CLI drilldown, and `/api/inbox/{observation_id}/sessions`.
+- Added exact, transcript-estimated, and unavailable token provenance to `reflect usage`.
+- Added trusted session activity timestamps, pruned-session tombstones, and a dry-run-first `reflect db prune-sessions` command with a default pre-apply backup plus opt-in apply and vacuum behavior.
+
+### Fixed
+
 - Preserved gateway and report-server PID ownership when launchd starts them directly, and suppressed automatic browser windows during login startup.
 - Prevented `reflect_context` and improvement queries from selecting higher-impact findings from unrelated repositories on large multi-project stores.
 - Preserved all producing-session links even when detailed observation evidence is capped at 20 rows.
 - Corrected sticky epoch session starts when valid source timestamps arrive, preserved durable memory and evidence provenance during pruning, and blocked old source files from resurrecting tombstoned sessions.
-- Kept retention previews query-only, created apply backups before schema migration, rolled back pruning when derived rebuilds fail, rejected structurally incomplete usage rollups, and preserved the feedback lookup index.
+- Kept retention previews query-only, created apply backups before schema migration, rolled back pruning when derived rebuilds fail, rejected structurally incomplete usage rollups, preserved the feedback lookup index, and retained deprecated `reflect skills --path` compatibility.
 - Held the pruning write lock across backup, migration, and deletion, published backup files only after a complete copy, and scoped explicit-session usage readiness to that session instead of unrelated rollup gaps.
 - Added reusable terminal refresh stages, percentage-aware SQLite backup feedback, usage and pruning progress, and a dashboard background-refresh status banner that reloads the completed snapshot.
 
