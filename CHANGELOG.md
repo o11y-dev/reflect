@@ -5,7 +5,7 @@
 ### Changed
 
 - Quality scores now normalize only across dimensions backed by observed evidence, expose coverage explicitly, and withhold low-coverage scores instead of rewarding or penalizing missing telemetry as zero.
-- Replaced tracked internal architecture and planning notes with a public contribution guide covering canonical data flow, ownership, migrations, frontend generation, privacy, testing, and review expectations.
+- Consolidated durable architecture, MCP execution, and review contracts in the public contribution guide; removed completed implementation notes; and rewrote the public telemetry schema around current normalization and capability ownership.
 - Refresh-enabled browser servers now prepare telemetry immediately and every five minutes through one non-overlapping coordinator; manual refresh uses the same lifecycle and performs complete rotated-segment reconciliation.
 - The typed agent capability registry now also owns active native-OTel surfaces. Historical Gemini remains ingestible but is excluded from setup and active telemetry status, with Antigravity named as the current Gemini-family target.
 - Made `reflect.views` the explicit public SQL read-model boundary and moved report process/preparation ownership out of the CLI composition root.

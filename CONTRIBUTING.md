@@ -49,6 +49,23 @@ Contributions must preserve these guarantees:
 Do not add developer or agent ranking, automatic workflow installation, or
 hidden mutation to read-oriented commands.
 
+### MCP execution contract
+
+MCP is the agent runtime interface, not a second workflow or rendering model.
+`WorkflowContract` defines a procedure, `ExecutionUnit` is one bounded
+occurrence, and a versioned skill is the durable approved instruction package.
+
+For non-trivial repository work, an agent calls `reflect_context` once after
+identifying the task and path. It follows selected guidance only when the
+returned execution state permits it, records contracted milestones when
+present, and calls `reflect_complete` after validation. Milestone reports remain
+self-reported evidence until canonical telemetry corroborates them.
+
+Read-oriented MCP tools inspect the prepared snapshot without refreshing or
+migrating it. A mutation requires an exact `reflect_review_change` result and
+explicit approval of that review before `reflect_apply_change`; approval,
+application, and rollback remain separate actions.
+
 ## Architecture and ownership
 
 The canonical dependency direction is:

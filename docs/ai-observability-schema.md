@@ -1,169 +1,93 @@
 # AI observability schema for `reflect`
 
-This document is the canonical analysis-side schema for `reflect`.
+This document defines Reflect's public analysis-side telemetry contract. It
+describes the facts accepted at normalization boundaries and the guarantees of
+the canonical SQLite model. Capture configuration belongs to agents, hooks, and
+collectors; interpretation belongs here.
 
-It defines how `reflect` should interpret, normalize, and merge telemetry from multiple AI tools after the data has already been captured.
+## Ownership and data flow
 
-## Why this lives in `reflect`
+```text
+source adapters -> raw_events -> canonical normalization -> SQLite
+    -> derived state -> typed read models -> CLI, MCP, and browser
+```
 
-Configuring OpenTelemetry and analyzing OpenTelemetry are different responsibilities:
+`src/reflect/agent_capabilities.py` is the source of truth for current,
+partial, historical, and planned agent support. This document intentionally
+does not duplicate that changing support matrix.
 
-- capture/configuration belongs in agent setup, skills, collectors, and hook tooling
-- interpretation/normalization belongs in `reflect`
+Raw source attributes and provenance remain available for evidence and
+debugging. Canonical rows provide shared identities and semantics for
+aggregation. Native conversation adapters may enrich session detail, but they
+never feed aggregates.
 
-`reflect` is where we answer questions like:
+## Normalization contract
 
-- which fields are safe for shared dashboards
-- which vendor-specific signals should be preserved for drill-down
-- how Claude, Gemini, Copilot, Codex, and future tools line up semantically
-- how traces, logs, and metrics should be merged into one analysis model
+Adapters map provider-native records into these shared inputs before or during
+normalization:
 
-## Core analysis model
+| Concept | Accepted input | Canonical behavior |
+|---|---|---|
+| Agent | `gen_ai.client.name`, then `ide.name`, `agent.name`, or `service.name` | Resolve one agent identity; do not use the model provider as the agent |
+| Session | Source session ID, then `session.id`, `gen_ai.client.session_id`, or `conversation.id` | Preserve a stable provider conversation container or derive a source-stable fallback |
+| Provider | `gen_ai.system` | Store LLM provider metadata independently from agent identity |
+| Model | `gen_ai.request.model`, `gen_ai.response.model` | Preserve requested and observed models separately |
+| Tokens | `gen_ai.usage.*` input, output, cache, and reasoning fields | Store measured usage and its provenance; never infer exact usage from missing fields |
+| Tool | Provider call ID, `tool.id`, `tool_call.id`, or `gen_ai.tool.call.id` | Merge invocation and result phases into one logical `tool_calls` row |
+| MCP | Server, tool, transport, and protocol attributes | Extend the canonical logical tool call through one-to-one `mcp_calls` metadata |
+| Source | Adapter source kind, source reference, and raw event ID | Retain provenance so reconciliation decisions remain explainable |
 
-`reflect` should treat incoming telemetry as two layers:
+Provider-specific adapters may derive these inputs from native JSONL, SQLite,
+OTLP traces or logs, and hook facts. Derivation happens at the adapter boundary;
+shared normalization must not grow provider condition piles.
 
-1. **Portable semantic layer**
-   - standard OpenTelemetry and GenAI semantic-convention fields
-   - used for shared dashboards, comparisons, alerts, and longitudinal analysis
+## Evidence semantics
 
-2. **Vendor-native operational layer**
-   - tool-specific fields and event names
-   - used for product-specific drill-down, debugging, and explanation
+- A lifecycle event is not an LLM call unless it contains model-exchange or
+  usage evidence.
+- A logical tool invocation is counted once even when a provider emits separate
+  request and result records.
+- Exact local tokens, transcript estimates, and unavailable usage remain
+  distinct provenance states.
+- Missing optional telemetry remains unavailable. It is not converted to zero
+  for quality, cost, or impact claims.
+- Richer native evidence may fill fields missing from OTLP; estimates never
+  replace exact observed usage.
+- Raw attributes support drill-down and repair; canonical tables support
+  aggregation. Presentation cards and bounded top-N rows are never aggregation
+  inputs.
+- Execution units, not whole long-lived sessions, are the comparison samples
+  for workflow adherence and impact.
 
-The rule is:
+No signal type wins globally. Traces commonly provide hierarchy and timing,
+logs and hook facts provide lifecycle detail, and native stores may provide
+conversation or usage records. Normalization resolves each fact using explicit
+source provenance and field-level evidence.
 
-- normalize to shared fields for rollups
-- preserve native fields for forensics
+## Cardinality and privacy
 
-## Preferred shared attributes
+Session, conversation, prompt, tool-call, file, and user identifiers are useful
+correlation keys but unsafe default metric dimensions. Aggregate only bounded
+dimensions such as canonical agent, model, operation, and a controlled tool
+set.
 
-These are the preferred cross-tool attributes `reflect` should use internally when they are available or can be derived safely.
+Prompt, response, tool input, paths, and identifiers must remain redacted,
+hashed, normalized, or opt-in according to the source contract. Durable
+repository facts should use repository-relative paths when a workspace root can
+be established.
 
-| Concept | Preferred shared field | Notes |
-|--------|-------------------------|-------|
-| Agent identity | `gen_ai.system` | Primary dimension for cross-tool comparisons |
-| Conversation/session correlation | `gen_ai.conversation.id` | Shared conceptual field; keep vendor-native source too |
-| Prompt/turn correlation | `gen_ai.prompt.id` | Use only when the source exposes a stable prompt-level identifier |
-| Request model | `gen_ai.request.model` | Model requested by the agent |
-| Response model | `gen_ai.response.model` | Model actually used/returned |
-| Operation name | `gen_ai.operation.name` | High-level action such as chat, completion, tool call |
-| Tool name | `gen_ai.tool.name` | Standardized tool/function name |
-| Tool call id | `gen_ai.tool.call_id` | Only when the source exposes a stable identifier |
-| Input tokens | `gen_ai.usage.input_tokens` | Prefer semconv attrs/metrics where available |
-| Output tokens | `gen_ai.usage.output_tokens` | Prefer semconv attrs/metrics where available |
-| Operation latency | `gen_ai.client.operation.duration` | Shared latency measure for GenAI agents |
-| Finish reason | `gen_ai.response.finish_reason` | Used for stop/error/limit analysis |
+## Adding or changing a source
 
-## Cross-tool mapping
+A source change should:
 
-This table defines how current tools should map into the shared model.
+1. register current client capabilities in `agent_capabilities.py` when
+   applicable
+2. map vendor fields into the existing normalization contract at the adapter
+   boundary
+3. preserve stable source identity, provenance, and raw evidence
+4. prove idempotent ingestion, logical-call reconciliation, token provenance,
+   and optional-field behavior in tests
+5. update this document only when the shared contract changes
 
-| Concept | Claude Code | Gemini CLI | GitHub Copilot | OpenAI Codex CLI |
-|--------|-------------|------------|----------------|------------------|
-| Agent identity | derive `gen_ai.system=claude_code` from `service.name` or `claude_code.*` | native `gen_ai.system`; also `gen_ai.agent.name=gemini-cli` | native `gen_ai.system` | derive `gen_ai.system=codex_cli` from `service.name` or `codex.*` |
-| Conversation/session correlation | `session.id` | native `gen_ai.conversation.id` | `gen_ai.thread.id` | `session.id` |
-| Prompt/turn correlation | `prompt.id` | `prompt_id` | use trace/thread linkage; no single universal public prompt field | vendor/session-local fields only |
-| Request model | map `model` to `gen_ai.request.model` | native `gen_ai.request.model` | native request model fields | map `model` to `gen_ai.request.model` |
-| Response model | map `model` to `gen_ai.response.model` when only one model field exists | native `gen_ai.response.model` | native response model fields | map `model` to `gen_ai.response.model` |
-| Operation name | derive from event/span type | native `gen_ai.operation.name` | native `gen_ai.operation.name` | derive from event/span type |
-| Tool name | map `tool.name` to `gen_ai.tool.name` | map `function_name` or native span attr to `gen_ai.tool.name` | native tool-related attrs where emitted | map vendor tool field to `gen_ai.tool.name` |
-| Tool call id | derive only if a stable id exists | native `gen_ai.tool.call_id` on spans | vendor-dependent | vendor-dependent |
-| Input tokens | map from `claude_code.tokens.input` | native GenAI attrs/metrics | native GenAI attrs/metrics | map from `codex.tokens.used{direction=input}` |
-| Output tokens | map from `claude_code.tokens.output` | native GenAI attrs/metrics | native GenAI attrs/metrics | map from `codex.tokens.used{direction=output}` |
-| Latency | map from `claude_code.api.request.duration` | native `gen_ai.client.operation.duration` | native `gen_ai.client.operation.duration` | map from `codex.request.latency` |
-| Finish reason | derive when exposed | map from `finish_reasons` or native attrs | native `gen_ai.response.finish_reason` | derive when exposed |
-
-## Vendor-native operational layer
-
-`reflect` should preserve vendor-native fields because they often carry the most explanatory detail.
-
-Examples:
-
-- `claude_code.*` for Claude-specific usage, cache, and request behavior
-- `gemini_cli.*` for routing, tool decisions, retries, startup, agent lifecycle, and extensions
-- `codex.*` for Codex-specific session and execution behavior
-
-These should not be discarded during normalization.
-
-Instead:
-
-- promote shared equivalents when safe
-- retain the original fields alongside the normalized record
-
-## Metric-dimension safety rules
-
-Some fields are excellent correlation keys and terrible metric dimensions.
-
-| Field | Use in metrics? | Use in logs/traces? | Notes |
-|------|------------------|---------------------|-------|
-| `session.id` | No | Yes | Unbounded cardinality |
-| `prompt.id` | No | Yes | Unbounded cardinality |
-| `gen_ai.thread.id` | No | Yes | Unbounded cardinality |
-| `gen_ai.conversation.id` | No | Yes | Treat as correlation field, not metric dimension |
-| `user.id` | Sometimes | Yes | Only as metric dimension for small, bounded populations |
-| `gen_ai.system` | Yes | Yes | Safe shared grouping field |
-| `model` / `gen_ai.request.model` | Yes | Yes | Safe shared grouping field |
-| `gen_ai.operation.name` | Yes | Yes | Safe shared grouping field |
-| `gen_ai.tool.name` | Usually | Yes | Safe if the tool set is bounded |
-
-## Merge rules for traces, logs, and metrics
-
-`reflect` should merge signals with a clear precedence model:
-
-### 1. Traces
-
-Use traces as the primary structure for:
-
-- execution hierarchy
-- step ordering
-- tool nesting
-- latency attribution
-- agent-to-tool flow reconstruction
-
-### 2. Logs/events
-
-Use logs/events to enrich traces with:
-
-- prompt-level detail
-- approval decisions
-- routing rationale
-- retries, fallbacks, and truncation
-- lifecycle milestones not represented as spans
-
-### 3. Metrics
-
-Use metrics for:
-
-- longitudinal rollups
-- cost/token trend analysis
-- latency percentiles
-- comparative dashboards
-- health and volume summaries
-
-### Precedence rule
-
-When the same concept appears in multiple signals:
-
-- use **traces** for structure and sequencing
-- use **logs/events** for explanatory detail
-- use **metrics** for aggregate rollups
-
-## Guidance for future tool onboarding
-
-When adding a new tool, `reflect` should document four things:
-
-1. the tool's **portable semantic layer**
-2. the tool's **vendor-native operational layer**
-3. the mapping between vendor fields and shared fields
-4. any cardinality or privacy caveats
-
-This keeps analysis consistent even when telemetry maturity varies widely across tools.
-
-## Current position
-
-Today:
-
-- OpenTelemetry skills and hook tooling should explain how to **configure and emit** telemetry
-- `reflect` should define how to **interpret and merge** that telemetry
-
-That separation keeps the capture side flexible and the analysis side coherent.
+Avoid adding a second support registry, session aggregate, workflow identity, or
+presentation-derived telemetry path.
