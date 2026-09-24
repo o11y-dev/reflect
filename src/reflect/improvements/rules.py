@@ -466,12 +466,12 @@ class MissingVerificationRule(BaseImprovementRule):
 class ContextExplosionRule(BaseImprovementRule):
     definition = RuleDefinition(
         id="context_explosion",
-        version=1,
+        version=2,
         category="context",
         title="Context explosion",
         description="Finds sessions whose token volume is a robust outlier within the same repository.",
         detector_config={"minimum_tokens": 250000, "median_multiplier": 2.5},
-        required_signals=["sessions.input_tokens", "sessions.output_tokens"],
+        required_signals=["sessions.input_tokens", "sessions.output_tokens", "sessions.cache_read_tokens", "sessions.cache_creation_tokens"],
     )
     workflow = WorkflowDefinition(
         slug="context-budget-checkpoints",
@@ -487,9 +487,11 @@ class ContextExplosionRule(BaseImprovementRule):
     def detect(self, conn: sqlite3.Connection) -> list[ObservationDraft]:
         rows = conn.execute(
             """
-            SELECT id, repo_id, input_tokens + output_tokens AS total_tokens
+            SELECT id, repo_id,
+                   input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens
+                   AS total_tokens
             FROM sessions
-            WHERE input_tokens + output_tokens > 0
+            WHERE input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens > 0
             ORDER BY repo_id, total_tokens
             """
         ).fetchall()
@@ -546,7 +548,7 @@ class ContextExplosionRule(BaseImprovementRule):
                             entity_type="session",
                             entity_id=session_id,
                             session_id=session_id,
-                            summary_redacted=f"Session used {tokens:,} input and output tokens",
+                            summary_redacted=f"Session used {tokens:,} billed tokens including cache",
                             attrs={"total_tokens": tokens, "threshold": threshold},
                         )
                         for session_id, tokens in sorted(
@@ -558,9 +560,7 @@ class ContextExplosionRule(BaseImprovementRule):
                     source_sessions=[
                         ObservationSessionRef(
                             session_id=session_id,
-                            summary_redacted=(
-                                f"Session used {tokens:,} input and output tokens"
-                            ),
+                            summary_redacted=f"Session used {tokens:,} billed tokens including cache",
                             focus_entity_type="session",
                             focus_entity_id=session_id,
                             attrs={"total_tokens": tokens, "threshold": threshold},

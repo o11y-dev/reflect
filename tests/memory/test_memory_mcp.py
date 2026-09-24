@@ -486,6 +486,10 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
                 {"pattern_type": "all", "query": "release"},
             )
             impact = await session.call_tool("reflect_impact", {})
+            efficiency = await session.call_tool(
+                "reflect_guidance_efficiency",
+                {"repo_id": "missing", "task_archetype_id": "review", "model": "model-a"},
+            )
             review = await session.call_tool(
                 "reflect_review_change",
                 {
@@ -508,6 +512,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
                 skills,
                 patterns,
                 impact,
+                efficiency,
                 review,
                 applied,
             )
@@ -521,6 +526,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
         skills,
         patterns,
         impact,
+        efficiency,
         review,
         applied,
     ) = asyncio.run(exercise_server())
@@ -537,6 +543,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
         "reflect_complete",
         "reflect_context",
         "reflect_explain",
+        "reflect_guidance_efficiency",
         "reflect_impact",
         "reflect_improvements",
         "reflect_patterns",
@@ -563,6 +570,8 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
     assert patterns.structuredContent["loop_count"] == 0
     assert not impact.isError
     assert impact.structuredContent["count"] == 0
+    assert not efficiency.isError
+    assert efficiency.structuredContent["guided"]["count"] == 0
     assert not review.isError
     assert review.structuredContent["candidate_id"] == candidate_id
     assert review.structuredContent["state"] == "pending"

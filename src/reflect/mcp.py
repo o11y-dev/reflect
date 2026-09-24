@@ -287,6 +287,23 @@ def reflect_impact(
 
 
 @mcp.tool(annotations=READ_ONLY_TOOL)
+def reflect_guidance_efficiency(
+    repo_id: str, task_archetype_id: str, model: str, limit: int = 100
+) -> dict[str, Any]:
+    """Compare verified tasks for one repository, task archetype and exact model."""
+
+    return _with_service(
+        lambda service: service.guidance_efficiency(
+            repo_id=repo_id,
+            task_archetype_id=task_archetype_id,
+            model=model,
+            limit=limit,
+        ),
+        read_only=True,
+    )
+
+
+@mcp.tool(annotations=READ_ONLY_TOOL)
 def reflect_task_status(task_run_id: str) -> dict[str, Any]:
     """Inspect task completion and late-ingestion linkage without changing either."""
 
