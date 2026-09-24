@@ -597,7 +597,11 @@ class MeasurementService:
               GROUP BY execution_unit_id
             ), token_summary AS (
               SELECT eus.execution_unit_id,
-                     SUM(COALESCE(llm.input_tokens, 0) + COALESCE(llm.output_tokens, 0))
+                     SUM(COALESCE(llm.input_tokens, 0)
+                         + COALESCE(llm.output_tokens, 0)
+                         + COALESCE(llm.cache_read_input_tokens, 0)
+                         + COALESCE(llm.cache_creation_input_tokens, 0)
+                         + COALESCE(llm.reasoning_output_tokens, 0))
                        AS tokens
               FROM execution_unit_steps eus
               JOIN llm_calls llm ON llm.step_id = eus.step_id

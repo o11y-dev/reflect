@@ -200,6 +200,34 @@ def _service(tmp_path: Path) -> tuple[ImprovementService, object]:
     return ImprovementService(conn), conn
 
 
+def test_impact_context_tokens_include_cache_and_reasoning(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        _insert_contract_execution(
+            conn,
+            "unit-context",
+            started_at=NOW,
+            sequence_base=100,
+        )
+        conn.execute(
+            """
+            INSERT INTO llm_calls(
+              id, step_id, session_id, input_tokens, output_tokens,
+              cache_read_input_tokens, cache_creation_input_tokens,
+              reasoning_output_tokens, created_at, updated_at
+            ) VALUES ('llm-context', 'unit-context-step-0', 'session-1',
+                      1, 2, 3, 4, 5, ?, ?)
+            """,
+            (NOW, NOW),
+        )
+
+        assert service.measurements._execution_unit_metric_values(
+            "context_outlier_sessions", ["unit-context"]
+        ) == {"unit-context": 15.0}
+    finally:
+        conn.close()
+
+
 def _workflow_contract(
     signature_hash: str,
     *,
