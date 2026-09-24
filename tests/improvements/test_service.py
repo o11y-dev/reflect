@@ -203,11 +203,35 @@ def _service(tmp_path: Path) -> tuple[ImprovementService, object]:
 def test_impact_context_tokens_include_cache_and_reasoning(tmp_path):
     service, conn = _service(tmp_path)
     try:
-        _insert_contract_execution(
-            conn,
-            "unit-context",
-            started_at=NOW,
-            sequence_base=100,
+        conn.execute(
+            """
+            INSERT INTO execution_units(
+              id, session_id, source, source_confidence, workspace_id,
+              repo_id, agent_id, started_at, ended_at, status, outcome,
+              verification_passed, eligible, boundary_json, created_at, updated_at
+            ) VALUES ('unit-context', 'session-1', 'mcp_task_run', 1,
+                      'workspace-1', 'repo-1', 'agent-1', ?, ?, 'completed',
+                      'success', 1, 1, '{}', ?, ?)
+            """,
+            (NOW, NOW, NOW, NOW),
+        )
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status,
+              raw_attrs_json, created_at, updated_at
+            ) VALUES ('unit-context-step-0', 'session-1', 100,
+                      'llm_call', ?, 'ok', '{}', ?, ?)
+            """,
+            (NOW, NOW, NOW),
+        )
+        conn.execute(
+            """
+            INSERT INTO execution_unit_steps(
+              execution_unit_id, step_id, session_id, created_at
+            ) VALUES ('unit-context', 'unit-context-step-0', 'session-1', ?)
+            """,
+            (NOW,),
         )
         conn.execute(
             """
