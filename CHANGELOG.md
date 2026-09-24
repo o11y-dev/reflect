@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.8 (unreleased)
+
+### Added
+
+- Added a read-only MCP comparison of verified execution units with and without Reflect guidance, scoped to the same repository, task archetype, and model. It reports recorded skill use separately and withholds cost averages when pricing is missing.
+
+### Fixed
+
+- Context outlier findings now include cache read and creation tokens. The dashboard reports observed cache-read token share instead of labeling a reuse ratio as provider cache hit rate.
+
 ## 0.9.7 (2026-08-11)
 
 ### Changed
