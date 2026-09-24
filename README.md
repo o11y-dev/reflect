@@ -309,8 +309,11 @@ does not invent a new procedure.
   `reflect_impact` — bounded read-only evidence
 - `reflect_guidance_efficiency` — descriptive cost and turn comparison for
   verified task executions in one repository, archetype, and exact model.
-  Guidance delivery and recorded skill use are reported separately. Missing
-  task-level usage is excluded and this comparison does not prove causation.
+  Guidance delivery and reported selected skill outcomes are separate. An
+  outcome report does not prove the skill was followed. Guided tasks remain
+  in the cohort even without a selected skill outcome. Tasks with
+  missing model identity or task-level model usage are excluded; this
+  comparison does not prove causation.
 - `reflect_explain` and `reflect_usage` — provenance and exact usage
 - `reflect_review_change` — return an exact diff, target, risks, and rollback
 - `reflect_apply_change` — consume only the explicitly approved exact review
