@@ -5,6 +5,7 @@
 ### Added
 
 - Added a read-only MCP comparison of verified execution units with and without Reflect guidance, scoped to the same repository, task archetype, and model. It reports selected skill outcomes separately from guidance delivery and withholds cost averages when pricing is missing.
+- Guidance comparisons expose cache token mix, observed cache-read share, verified success rate, and cost per verified success to show cost drivers alongside outcome.
 
 ### Fixed
 
