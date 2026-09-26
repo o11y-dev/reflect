@@ -13,6 +13,7 @@ from reflect.changes import (
     ChangeReviewAnswer,
     ChangeReviewService,
 )
+from reflect.guidance_efficiency import GuidanceEfficiencyService
 from reflect.improvements.contracts import WorkflowContract, WorkflowMilestoneEvidence
 from reflect.improvements.milestones import (
     WorkflowMilestoneResult,
@@ -496,6 +497,18 @@ class ReflectContextService:
         """Return a read-only task lifecycle snapshot."""
 
         return self.task_runs.status(task_run_id)
+
+    def guidance_efficiency(
+        self, *, repo_id: str, task_archetype_id: str, model: str, limit: int = 100
+    ) -> dict[str, Any]:
+        """Compare observed, verified task units with and without Reflect guidance."""
+
+        return GuidanceEfficiencyService(self.conn).compare(
+            repo_id=repo_id,
+            task_archetype_id=task_archetype_id,
+            model=model,
+            limit=limit,
+        )
 
     def record_milestone(
         self,
