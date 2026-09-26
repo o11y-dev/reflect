@@ -98,33 +98,53 @@ class GuidanceEfficiencyService:
 
         def summarize(items: list[dict[str, Any]]) -> dict[str, Any]:
             count = len(items)
+            successes = sum(item["verified_success"] for item in items)
+            model_calls = sum(item["model_calls"] for item in items)
+            input_tokens = sum(item["input_tokens"] for item in items)
+            output_tokens = sum(item["output_tokens"] for item in items)
+            cache_read_tokens = sum(item["cache_read_tokens"] for item in items)
+            cache_creation_tokens = sum(item["cache_creation_tokens"] for item in items)
+            reasoning_tokens = sum(item["reasoning_tokens"] for item in items)
+            input_total = input_tokens + cache_read_tokens + cache_creation_tokens
+            priced = count > 0 and all(
+                item["priced_calls"] == item["model_calls"] for item in items
+            )
+            total_cost = sum(item["estimated_cost_usd"] for item in items)
             return {
                 "count": count,
-                "verified_success_count": sum(item["verified_success"] for item in items),
+                "verified_success_count": successes,
+                "verified_success_rate": successes / count if count else None,
                 "reported_selected_skill_count": sum(
                     item["selected_skill_outcome_recorded"] for item in items
                 ),
-                "mean_model_calls": sum(item["model_calls"] for item in items) / count
-                if count
-                else None,
+                "mean_model_calls": model_calls / count if count else None,
                 "mean_tool_calls": sum(item["tool_calls"] for item in items) / count
                 if count
                 else None,
-                "mean_billed_tokens": sum(
-                    item["input_tokens"]
-                    + item["output_tokens"]
-                    + item["cache_read_tokens"]
-                    + item["cache_creation_tokens"]
-                    + item["reasoning_tokens"]
-                    for item in items
-                )
-                / count
+                "mean_billed_tokens": (
+                    input_total + output_tokens + reasoning_tokens
+                ) / count
                 if count
                 else None,
-                "mean_estimated_cost_usd": (
-                    sum(item["estimated_cost_usd"] for item in items) / count
-                    if count and all(item["priced_calls"] == item["model_calls"] for item in items)
-                    else None
+                "token_mix": {
+                    "uncached_input": input_tokens,
+                    "cache_read_input": cache_read_tokens,
+                    "cache_creation_input": cache_creation_tokens,
+                    "output": output_tokens,
+                    "reasoning_output": reasoning_tokens,
+                    "observed_cache_read_share_of_input": (
+                        cache_read_tokens / input_total if input_total else None
+                    ),
+                },
+                "mean_input_tokens_per_model_call": input_total / model_calls
+                if model_calls
+                else None,
+                "mean_estimated_cost_usd": total_cost / count if priced else None,
+                "estimated_cost_per_verified_success_usd": (
+                    total_cost / successes if priced and successes else None
+                ),
+                "unpriced_model_calls": model_calls - sum(
+                    item["priced_calls"] for item in items
                 ),
                 "execution_unit_ids": [item["execution_unit_id"] for item in items],
             }
@@ -145,6 +165,8 @@ class GuidanceEfficiencyService:
                 "Selected skill outcomes are recorded at task completion; they do not prove skill use or adherence.",
                 "Only eligible, unmixed task archetypes with at least 0.65 classification confidence are compared.",
                 "Only observed calls mapped to execution-unit steps are counted; missing usage and pricing are not imputed.",
+                "Observed cache-read share is a token mix, not a provider cache-hit rate or a measured savings estimate.",
+                "Cost per verified success includes the cost of failed tasks when all calls have pricing; it is unavailable when no successes are observed.",
                 "This is a descriptive comparison, not a randomized or causal impact estimate.",
             ],
         }

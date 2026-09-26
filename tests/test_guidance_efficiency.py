@@ -49,16 +49,43 @@ def test_guidance_comparison_keeps_model_and_usage_evidence_separate():
     assert result["guided"]["count"] == result["unguided"]["count"] == 1
     assert result["guided"]["reported_selected_skill_count"] == 1
     assert result["guided"]["mean_billed_tokens"] == 265
+    assert result["guided"]["token_mix"] == {
+        "uncached_input": 20,
+        "cache_read_input": 200,
+        "cache_creation_input": 30,
+        "output": 10,
+        "reasoning_output": 5,
+        "observed_cache_read_share_of_input": 0.8,
+    }
+    assert result["guided"]["mean_input_tokens_per_model_call"] == 250
+    assert result["guided"]["verified_success_rate"] == 1
+    assert result["guided"]["estimated_cost_per_verified_success_usd"] == 0.5
     assert result["unguided"]["mean_billed_tokens"] == 60
     assert result["guided"]["mean_tool_calls"] == 2
     assert result["excluded"]["mixed_or_other_model"] == 2
     assert result["scanned"] == 4
     assert result["guided"]["mean_estimated_cost_usd"] == 0.5
+    conn.executescript("""
+        INSERT INTO execution_units VALUES
+            ('failed', 'repo', 'run', 'failed', 0, 1, 'completed', '2026-01-06');
+        INSERT INTO execution_unit_archetypes VALUES ('failed', 'review', 0, 0.9);
+        INSERT INTO execution_unit_steps VALUES ('failed', 'f');
+        INSERT INTO llm_calls VALUES
+            ('f1', 'f', 'model-a', 'model-a', 20, 10, 0, 0, 0.2, 0);
+    """)
+    with_failure = GuidanceEfficiencyService(conn).compare(
+        repo_id="repo", task_archetype_id="review", model="model-a", limit=10
+    )
+    assert with_failure["guided"]["verified_success_rate"] == 0.5
+    assert with_failure["guided"]["mean_estimated_cost_usd"] == 0.35
+    assert with_failure["guided"]["estimated_cost_per_verified_success_usd"] == 0.7
     conn.execute("UPDATE llm_calls SET estimated_cost_usd = 0 WHERE id = 'g1'")
     unpriced = GuidanceEfficiencyService(conn).compare(
         repo_id="repo", task_archetype_id="review", model="model-a"
     )
     assert unpriced["guided"]["mean_estimated_cost_usd"] is None
+    assert unpriced["guided"]["estimated_cost_per_verified_success_usd"] is None
+    assert unpriced["guided"]["unpriced_model_calls"] == 1
 
 
 def test_context_explosion_counts_cache_reads():
