@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Tool-result normalization now recognizes explicit execution and MCP failure envelopes across providers, without treating quoted errors as failures; a one-way migration repairs retained tool and session outcomes.
 - Context outlier findings now include cache read, creation, and reasoning tokens. The dashboard reports observed cache-read token share instead of labeling a reuse ratio as provider cache hit rate.
 - Guidance comparisons exclude calls with unknown model identity, include reasoning output in billed-token means, and apply the result limit after matching a single model and an unambiguous task archetype.
 - Impact measurements of context outliers now count cache read, cache creation, and reasoning tokens consistently with the finding they measure.

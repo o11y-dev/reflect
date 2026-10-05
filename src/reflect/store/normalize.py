@@ -11,6 +11,7 @@ from reflect.store.mcp import DEFAULT_MCP_CLASSIFIER, MCPCallBackfill
 from reflect.store.provenance import apply_origin_kind, classify_origin_kind
 from reflect.store.workspaces import backfill_session_context
 from reflect.task_runs import TaskRunReconciler
+from reflect.tool_outcomes import with_tool_outcome
 
 
 def _now() -> str:
@@ -937,7 +938,7 @@ def normalize_pending_raw_events(
             session_id = ""
             try:
                 conn.execute(f"SAVEPOINT {savepoint}")
-                attrs = _load_json(row["attrs_json"])
+                attrs = with_tool_outcome(row["event_type"], _load_json(row["attrs_json"]))
                 session_id = (
                     row["session_id"]
                     or attrs.get("session.id")
