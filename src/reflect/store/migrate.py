@@ -55,6 +55,20 @@ def _migration_statements(sql: str) -> list[str]:
 def migrate(conn: sqlite3.Connection, *, commit: bool = True) -> list[int]:
     """Apply pending migrations, optionally inside a caller-owned transaction."""
     from reflect.improvements.workflow_identity import workflow_identity_from_json
+    from reflect.tool_outcomes import tool_failure
+    from reflect.utils import _json_dumps, _json_loads
+
+    def failure_json(event: str, raw_attrs: str) -> str | None:
+        try:
+            attrs = _json_loads(raw_attrs)
+        except (ValueError, TypeError):
+            return None
+        if not isinstance(attrs, dict):
+            return None
+        failure = tool_failure(event, attrs)
+        return _json_dumps({"type": failure.error_type, "message": failure.message}) if failure else None
+
+    conn.create_function("reflect_tool_failure", 2, failure_json, deterministic=True)
 
     conn.create_function(
         "reflect_workflow_contract_signature",

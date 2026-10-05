@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from reflect.store.normalize import refresh_all_session_statuses, refresh_session_statuses
 
 CODEX_DESKTOP_ROLLUP_REBUILD_TASK = "rebuild_rollups_after_codex_desktop_otel"
+TOOL_OUTCOME_ROLLUP_REBUILD_TASK = "rebuild_rollups_after_tool_outcomes"
 
 
 def _now() -> str:
@@ -18,8 +19,8 @@ def rollup_rebuild_pending(conn: sqlite3.Connection) -> bool:
     try:
         return (
             conn.execute(
-                "SELECT 1 FROM maintenance_tasks WHERE task = ?",
-                (CODEX_DESKTOP_ROLLUP_REBUILD_TASK,),
+                "SELECT 1 FROM maintenance_tasks WHERE task IN (?, ?)",
+                (CODEX_DESKTOP_ROLLUP_REBUILD_TASK, TOOL_OUTCOME_ROLLUP_REBUILD_TASK),
             ).fetchone()
             is not None
         )
@@ -361,8 +362,8 @@ def rebuild_rollups(
 
     if rollup_rebuild_pending(conn):
         conn.execute(
-            "DELETE FROM maintenance_tasks WHERE task = ?",
-            (CODEX_DESKTOP_ROLLUP_REBUILD_TASK,),
+            "DELETE FROM maintenance_tasks WHERE task IN (?, ?)",
+            (CODEX_DESKTOP_ROLLUP_REBUILD_TASK, TOOL_OUTCOME_ROLLUP_REBUILD_TASK),
         )
     if commit:
         conn.commit()

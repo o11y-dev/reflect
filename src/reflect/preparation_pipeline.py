@@ -495,7 +495,7 @@ def prepare_sql_report_db(
                 else ""
             ),
             force_full_rollup_reason=(
-                "Codex Desktop telemetry migration requires reconciliation"
+                "Telemetry migration requires reconciliation"
                 if reconciled_legacy_data
                 else ""
             ),
