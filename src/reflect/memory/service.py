@@ -134,13 +134,18 @@ class MemoryService:
                 filters={"validated": True},
                 limit=50,
             )
-            if str((row.get("source_metadata") or {}).get("source_kind") or "")
-            == "filesystem_instruction_scan"
-            and str(row.get("scope") or "") != "user"
+            if _project_instruction_applies(row, path)
         ]
         merged: list[dict[str, Any]] = []
         seen: set[str] = set()
         for row in [*applicable, *matches]:
+            source = row.get("source_metadata") or {}
+            if (
+                source.get("source_kind") == "filesystem_instruction_scan"
+                and row.get("scope") in {"project", "project_local"}
+                and not _project_instruction_applies(row, path)
+            ):
+                continue
             memory_id = str(row.get("id") or row.get("memory_id") or "")
             if not memory_id or memory_id in seen:
                 continue
@@ -389,6 +394,22 @@ class MemoryService:
                 ),
             )
         self.conn.commit()
+
+
+def _project_instruction_applies(row: dict[str, Any], requested_path: Path) -> bool:
+    """Only inherit project instructions down their source directory tree."""
+    source = row.get("source_metadata") or {}
+    if (
+        source.get("source_kind") != "filesystem_instruction_scan"
+        or row.get("scope") not in {"project", "project_local"}
+        or not source.get("path")
+    ):
+        return False
+    source_path = Path(source["path"]).expanduser().resolve()
+    root = source_path.parent
+    if source_path.name == "copilot-instructions.md" and root.name == ".github":
+        root = root.parent
+    return requested_path.expanduser().resolve().is_relative_to(root)
 
 
 def _redacted_preview(path: Path, text: str, *, max_chars: int = 360) -> str:

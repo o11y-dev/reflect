@@ -38,23 +38,23 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     return payload
 
 
-def _path_scope_clause(path: str) -> tuple[str, list[str]]:
+def _path_scope_clause(path: str) -> tuple[str, list[object]]:
     if not path:
         return "", []
-    resolved = str(Path(path).expanduser().resolve())
-    like = f"{resolved.rstrip('/')}/%"
+    requested = Path(path).expanduser().resolve()
+    resolved = str(requested)
+    roots = [str(root) for root in (requested, *requested.parents)]
+    prefix = f"{resolved.rstrip('/')}/"
     return (
-        """
+        f"""
         AND (
-          json_extract(source_metadata_json, '$.workspace_root') = ?
+          m.scope = 'user'
+          OR json_extract(source_metadata_json, '$.workspace_root') IN ({','.join('?' for _ in roots)})
           OR json_extract(source_metadata_json, '$.path') = ?
-          OR json_extract(source_metadata_json, '$.path') LIKE ?
-          OR json_extract(raw_attrs_json, '$.workspace_root') = ?
-          OR json_extract(raw_attrs_json, '$.path') = ?
-          OR json_extract(raw_attrs_json, '$.path') LIKE ?
+          OR substr(json_extract(source_metadata_json, '$.path'), 1, ?) = ?
         )
         """,
-        [resolved, resolved, like, resolved, resolved, like],
+        [*roots, resolved, len(prefix), prefix],
     )
 
 
@@ -65,7 +65,7 @@ def _filter_clause(filters: dict | None) -> tuple[str, list[str]]:
     for column in ("type", "scope", "source", "provider", "validation_status"):
         value = filters.get(column)
         if value:
-            clauses.append(f"{column} = ?")
+            clauses.append(f"m.{column} = ?")
             params.append(str(value))
     if filters.get("stale"):
         clauses.append("COALESCE(stale_reason, '') <> ''")
@@ -197,8 +197,8 @@ class LocalSQLiteMemoryProvider:
             filter_clause, filter_params = _filter_clause(filters)
             rows = self.conn.execute(
                 f"""
-                SELECT *
-                FROM memories
+                SELECT m.*
+                FROM memories m
                 WHERE 1 = 1
                   {path_clause}
                   {filter_clause}

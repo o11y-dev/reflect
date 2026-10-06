@@ -12,6 +12,7 @@ from reflect.store.provenance import apply_origin_kind, classify_origin_kind
 from reflect.store.workspaces import backfill_session_context
 from reflect.task_runs import TaskRunReconciler
 from reflect.tool_outcomes import with_tool_outcome
+from reflect.utils import _json_dumps
 
 
 def _now() -> str:
@@ -701,19 +702,34 @@ def _insert_memory_record(
     memory_id = attrs.get("gen_ai.memory.id")
     if not memory_id:
         return
+    from reflect.memory.models import MemorySourceMetadata
+
+    source_path = str(attrs.get("gen_ai.memory.source_path") or attrs.get("path") or "")
+    source = MemorySourceMetadata(
+        source_kind=str(attrs.get("gen_ai.memory.source") or "opentelemetry_hook"),
+        source_ref=source_path or str(memory_id),
+        path=source_path,
+        workspace_root=str(attrs.get("code.workspace.root") or attrs.get("workspace_root") or ""),
+        content_hash=str(attrs.get("gen_ai.memory.content_hash") or ""),
+    )
     conn.execute(
         """
         INSERT INTO memories(
           id, scope, type, session_id, step_id, content_hash,
           content_preview_redacted, confidence, sensitivity, source, expires_at,
-          last_seen_at, raw_attrs_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          last_seen_at, raw_attrs_json, source_metadata_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
-          content_hash = COALESCE(excluded.content_hash, memories.content_hash),
-          content_preview_redacted = COALESCE(
+          content_hash = CASE WHEN memories.source = 'filesystem_instruction_scan'
+            THEN memories.content_hash ELSE COALESCE(excluded.content_hash, memories.content_hash) END,
+          content_preview_redacted = CASE WHEN memories.source = 'filesystem_instruction_scan'
+            THEN memories.content_preview_redacted ELSE COALESCE(
             excluded.content_preview_redacted,
             memories.content_preview_redacted
-          ),
+          ) END,
+          source_metadata_json = CASE WHEN memories.source = 'filesystem_instruction_scan'
+            THEN memories.source_metadata_json
+            ELSE json_patch(memories.source_metadata_json, excluded.source_metadata_json) END,
           last_seen_at = CASE
             WHEN memories.last_seen_at IS NULL THEN excluded.last_seen_at
             WHEN excluded.last_seen_at IS NULL THEN memories.last_seen_at
@@ -735,6 +751,7 @@ def _insert_memory_record(
             attrs.get("gen_ai.memory.expires_at"),
             attrs.get("gen_ai.memory.last_seen_at") or raw_event["observed_at"],
             raw_event["attrs_json"],
+            _json_dumps(source.to_json_dict()),
             timestamp,
             timestamp,
         ),
