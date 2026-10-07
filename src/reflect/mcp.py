@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from reflect.improvements.models import (
 from reflect.inspection import PatternType, SkillAvailability
 from reflect.preparation import (
     CommandPreparationPolicy,
+    PreparationProfile,
     SnapshotLifecycleService,
     SQLiteSnapshotInspector,
 )
@@ -104,17 +106,19 @@ def _with_service[ResultT](
     *,
     read_only: bool = False,
     require_sessions: bool = False,
+    timeout_ms: int | None = None,
+    profile: PreparationProfile = PreparationProfile.SNAPSHOT,
 ) -> ResultT:
     db_path = _db_path()
     if read_only:
         SnapshotLifecycleService(
-            SQLiteSnapshotInspector(db_path),
+            SQLiteSnapshotInspector(db_path, profile=profile),
             policy=CommandPreparationPolicy(require_sessions=require_sessions),
             refresh_hint="Run `reflect refresh` before using this read-only tool.",
         ).prepare(requested_refresh=None)
-        conn = connect_sqlite_read_only(db_path)
+        conn = connect_sqlite_read_only(db_path, profile=profile.value)
     else:
-        conn = connect_sqlite(db_path)
+        conn = connect_sqlite(db_path, timeout_ms=timeout_ms)
     try:
         if not read_only:
             migrate(conn)
@@ -137,15 +141,34 @@ def reflect_context(
 
     resolved_path = Path(path).expanduser().resolve() if path else Path.cwd()
     resolved_task = Path(task_file).expanduser().resolve() if task_file else None
-    return _with_service(
-        lambda service: service.begin_task(
-            question,
-            task_file=resolved_task,
-            path=resolved_path,
-            memory_provider=memory_provider,
-            memory_limit=memory_limit,
-        ).model_dump(mode="json")
-    )
+    from reflect.store.sqlite import busy_timeout_ms, is_sqlite_busy
+
+    try:
+        return _with_service(
+            lambda service: service.begin_task(
+                question, task_file=resolved_task, path=resolved_path,
+                memory_provider=memory_provider, memory_limit=memory_limit,
+            ).model_dump(mode="json"),
+            timeout_ms=min(busy_timeout_ms(), 1000),
+        )
+    except sqlite3.OperationalError as exc:
+        if not is_sqlite_busy(exc):
+            raise
+        # Do not let optional tracking take down guidance. A separate read-only
+        # connection discards any failed write transaction and cannot migrate.
+        conn = connect_sqlite_read_only(_db_path(), profile=None)
+        try:
+            answer = ReflectContextService(conn, initialize_schema=False).ask(
+                question, task_file=resolved_task, path=resolved_path,
+                memory_provider=memory_provider, memory_limit=memory_limit,
+            )
+            answer.limitations.append(
+                "Task tracking was not recorded because the local store is busy. "
+                "Guidance is available; no reflect_complete call is required for this response."
+            )
+            return answer.model_dump(mode="json")
+        finally:
+            conn.close()
 
 
 @mcp.tool(annotations=TASK_COMPLETE_TOOL)
@@ -372,6 +395,7 @@ def reflect_usage(
         ),
         read_only=True,
         require_sessions=True,
+        profile=PreparationProfile.USAGE,
     )
 
 

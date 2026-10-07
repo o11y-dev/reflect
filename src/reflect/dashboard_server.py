@@ -23,6 +23,7 @@ from reflect.preparation import (
     PreparationSnapshot,
     PreparationState,
 )
+from reflect.store.sqlite import SnapshotNotReadyError
 from reflect.utils import logger
 
 
@@ -37,16 +38,38 @@ class DashboardDataCache:
     ) -> None:
         self._refresh_loader = refresh_loader or loader
         self._lock = threading.Lock()
-        self._payload = loader()
+        self._refresh_pending = False
+        try:
+            self._payload = loader()
+        except SnapshotNotReadyError:
+            # The server can start during another process's refresh. Its routes
+            # report preparing until a coherent generation becomes available.
+            self._payload = None
 
     def get(self) -> dict[str, object]:
         with self._lock:
-            return self._payload
+            payload = self._payload
+            pending = self._refresh_pending
+        if payload is None or pending:
+            refreshed = self.refresh()
+            if refreshed is not None:
+                return refreshed
+        if payload is None:
+            raise SnapshotNotReadyError("The report is preparing. Retry after the active refresh completes.")
+        return payload
 
-    def refresh(self) -> dict[str, object]:
-        payload = self._refresh_loader()
+    def refresh(self) -> dict[str, object] | None:
+        try:
+            payload = self._refresh_loader()
+        except SnapshotNotReadyError:
+            # Another process may start refreshing after our pipeline releases
+            # its lock. Retain the completed cache and retry on the next read.
+            with self._lock:
+                self._refresh_pending = True
+            return None
         with self._lock:
             self._payload = payload
+            self._refresh_pending = False
         return payload
 
 
@@ -123,6 +146,13 @@ def build_dashboard_app(
     globals()["Request"] = Request
 
     app = FastAPI(title="reflect dashboard", docs_url=None, redoc_url=None)
+
+    @app.exception_handler(SnapshotNotReadyError)
+    async def snapshot_not_ready(_request, exc):
+        return JSONResponse(
+            {"error": str(exc), "state": "preparing"},
+            status_code=503, headers={"Retry-After": "2"},
+        )
     if preparation_worker is not None and preparation_scheduler is not None:
         raise ValueError("pass a preparation worker or scheduler, not both")
     active_preparation = (
@@ -233,6 +263,8 @@ def build_dashboard_app(
             )
         except ValueError as exc:
             return JSONResponse({"error": str(exc), "view": view_name}, status_code=404)
+        except SnapshotNotReadyError:
+            raise
         except Exception as exc:
             return JSONResponse({"error": str(exc), "db_path": str(db_path)}, status_code=500)
         finally:
@@ -307,6 +339,8 @@ def build_dashboard_app(
                     limit=_bounded_query_limit(params.get("limit"), default=100, maximum=500),
                 )
             )
+        except SnapshotNotReadyError:
+            raise
         except (ValueError, sqlite3.Error) as exc:
             return JSONResponse({"error": str(exc), "db_path": str(db_path)}, status_code=500)
 

@@ -18,6 +18,7 @@ from reflect.dashboard_query_common import (
 )
 from reflect.graph import _compute_weekly_trends
 from reflect.store.hook_facts import HookFactRepository
+from reflect.store.sqlite import consistent_snapshot
 from reflect.telemetry_facts import (
     clean_subagent_name,
     extract_skill_name_from_path,
@@ -418,6 +419,7 @@ def _sql_response_preview(attrs: dict[str, object], call: dict[str, object]) -> 
     return f"Assistant turn completed{status_text}; captured {token_text}."
 
 
+@consistent_snapshot
 def build_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
     from reflect.store.sqlite import connect_sqlite_read_only
     from reflect.views import (
@@ -809,6 +811,7 @@ def build_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
     }
 
 
+@consistent_snapshot
 def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | None:
     from reflect.store.sqlite import connect_sqlite_read_only
 

@@ -9,6 +9,8 @@
 
 ### Fixed
 
+- Dashboard cache publication defers safely when another process starts a refresh, retaining the completed view and retrying on the next read instead of reporting a successful refresh as failed.
+- Concurrent dashboard, CLI, usage, and database-maintenance operations now coordinate per database. Ingestion and normalization commit event batches without repeating global hash repair per batch; interrupted refreshes remain visibly incomplete and rebuild derived data on retry without replaying usage. No-change usage refreshes preserve completed reports. MCP guidance reads one consistent snapshot and remains available when task tracking is busy. SQLite writer waits are configurable with `REFLECT_SQLITE_BUSY_TIMEOUT_MS` (30 seconds by default).
 - Memory retrieval now includes user-scoped records in project queries and inherits project instructions only within their directory scope, without automatically injecting optional roles. Retained and new telemetry use canonical source metadata, and memory exposures preserve synced instruction content.
 - Tool-result normalization now recognizes explicit execution and MCP failure envelopes across providers, without treating quoted errors as failures; a one-way migration repairs retained tool and session outcomes.
 - Context outlier findings now include cache read, creation, and reasoning tokens. The dashboard reports observed cache-read token share instead of labeling a reuse ratio as provider cache hit rate.

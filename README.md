@@ -245,7 +245,17 @@ managed services:
 REFLECT_OTLP_MAX_BYTES=4294967296           # combined raw traces + logs
 REFLECT_OTLP_SEGMENT_BYTES=268435456        # one active segment
 REFLECT_REFRESH_INTERVAL_SECONDS=300        # refresh-enabled report server
+REFLECT_SQLITE_BUSY_TIMEOUT_MS=30000         # writer wait; 0 means no wait
 ```
+
+Refresh and maintenance commands coordinate across processes. Imports commit in
+batches, and a failed refresh remains incomplete until `reflect refresh` repairs
+it. The dashboard can retain its last completed cached view; requests needing an
+incomplete snapshot return a retryable response. MCP context caps each SQLite
+writer wait at one second, then returns available memory/guidance with an explicit
+tracking limitation. Guidance queries share one read transaction, and no-change
+usage refreshes preserve completed reports. Increasing the SQLite timeout permits longer waits; it does
+not increase the number of simultaneous writers.
 
 `tool_calls` stores one logical invocation. `mcp_calls` is a one-to-one metadata
 extension for MCP server, tool, transport, and protocol identity, not a second
