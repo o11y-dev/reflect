@@ -880,9 +880,11 @@ def _ensure_command_snapshot(
     keep_processed_raw: bool = False,
     prepare: Callable[[], dict[str, object]] | None = None,
     readiness_probes: tuple[SnapshotReadinessProbe, ...] = (),
+    profile: str = "snapshot",
 ) -> SnapshotPreparationResult:
     from reflect.preparation import (
         CallableSnapshotRefresher,
+        PreparationProfile,
         SnapshotLifecycleService,
         SnapshotUnavailableError,
         SQLiteSnapshotInspector,
@@ -905,6 +907,7 @@ def _ensure_command_snapshot(
         SQLiteSnapshotInspector(
             db_path,
             readiness_probes=readiness_probes,
+            profile=PreparationProfile(profile),
         ),
         refresher=CallableSnapshotRefresher(refresh_operation),
         refresh_hint=(
@@ -916,6 +919,15 @@ def _ensure_command_snapshot(
         return lifecycle.prepare(requested_refresh=refresh)
     except SnapshotUnavailableError as exc:
         raise click.ClickException(str(exc)) from exc
+    except sqlite3.OperationalError as exc:
+        from reflect.store.sqlite import is_sqlite_busy
+
+        if is_sqlite_busy(exc):
+            raise click.ClickException(
+                "The telemetry store is busy with another writer. Let the active "
+                "operation finish, then run `reflect refresh` again."
+            ) from exc
+        raise
 
 
 def _format_usage_duration(duration_ms: int) -> str:
@@ -1121,6 +1133,7 @@ def usage(
     _ensure_command_snapshot(
         db_path,
         refresh=refresh,
+        profile="usage",
         readiness_probes=(
             UsageRollupReadinessProbe(
                 session_ids=(session_id,) if session_id and not global_scope else None
@@ -1139,7 +1152,7 @@ def usage(
         ),
     )
 
-    conn = connect_sqlite_read_only(db_path)
+    conn = connect_sqlite_read_only(db_path, profile="usage")
     try:
         report = UsageService(conn).report(
             session_id=session_id,
@@ -3701,41 +3714,45 @@ def doctor_cost(db_path: Path, alias_path: Path | None) -> None:
     from rich.console import Console
     from rich.table import Table
 
+    from reflect.preparation import PreparationLock
     from reflect.store.cost_refresh import CostRefreshState
     from reflect.store.migrate import migrate
     from reflect.store.rollups import rebuild_rollups
-    from reflect.store.sqlite import connect_sqlite
+    from reflect.store.sqlite import connect_sqlite, mark_snapshot
 
     console = Console(force_terminal=True)
     alias_result = None
     max_attempts = 3
-    for attempt in range(1, max_attempts + 1):
-        conn = connect_sqlite(db_path)
-        try:
-            migrate(conn)
-            cost_state = CostRefreshState(conn)
-            cost_inputs = cost_state.inspect(alias_path=alias_path)
-            alias_result = ensure_sql_costs(
-                conn,
-                alias_path=alias_path,
-                refresh_inputs=cost_inputs,
-            )
-            rebuild_rollups(conn)
-            if cost_inputs.requires_full_refresh:
-                cost_state.mark_current(cost_inputs)
-            break
-        except sqlite3.OperationalError as exc:
-            if "database is locked" not in str(exc).lower() or attempt >= max_attempts:
-                raise click.ClickException(str(exc)) from exc
-            time.sleep(1.5 * attempt)
-        finally:
-            conn.close()
+    with PreparationLock(db_path):
+        for attempt in range(1, max_attempts + 1):
+            conn = connect_sqlite(db_path)
+            try:
+                migrate(conn)
+                mark_snapshot(conn, ready=False)
+                cost_state = CostRefreshState(conn)
+                cost_inputs = cost_state.inspect(alias_path=alias_path)
+                alias_result = ensure_sql_costs(
+                    conn,
+                    alias_path=alias_path,
+                    refresh_inputs=cost_inputs,
+                )
+                rebuild_rollups(conn)
+                if cost_inputs.requires_full_refresh:
+                    cost_state.mark_current(cost_inputs)
+                break
+            except sqlite3.OperationalError as exc:
+                if "database is locked" not in str(exc).lower() or attempt >= max_attempts:
+                    raise click.ClickException(str(exc)) from exc
+                time.sleep(1.5 * attempt)
+            finally:
+                conn.close()
 
     if alias_result is None:
         raise click.ClickException(
             "database is locked; stop concurrent writers and retry `reflect doctor cost`"
         )
 
+    click.echo("Run `reflect refresh` to publish the updated costs with all derived views.")
     table = Table(box=box.SIMPLE_HEAVY, expand=True)
     table.add_column("Check", style="bold cyan")
     table.add_column("Result", overflow="fold")

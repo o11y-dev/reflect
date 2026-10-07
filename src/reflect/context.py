@@ -13,6 +13,7 @@ from reflect.changes import (
     ChangeReviewAnswer,
     ChangeReviewService,
 )
+from reflect.guidance_efficiency import GuidanceEfficiencyService
 from reflect.improvements.contracts import WorkflowContract, WorkflowMilestoneEvidence
 from reflect.improvements.milestones import (
     WorkflowMilestoneResult,
@@ -165,58 +166,69 @@ class ReflectContextService:
         memory_provider: str = "local_sqlite",
         memory_limit: int = 5,
     ) -> ReflectContextAnswer:
-        resolved_path = (path or Path.cwd()).expanduser().resolve()
-        answer = self.improvements.ask(question, task_file=task_file, path=resolved_path)
-        limitations = list(answer.limitations)
-        try:
-            rows = self.memory.select_context(
-                question,
-                path=resolved_path,
-                provider=memory_provider,
-                limit=max(1, min(memory_limit, 20)),
-            )
-        except Exception as exc:  # noqa: BLE001 - context must preserve local guidance
-            rows = []
-            limitations.append(f"Memory provider {memory_provider!r} was unavailable: {exc}")
+        from reflect.store.sqlite import read_transaction, snapshot_incomplete
 
-        memories = [
-            self._context_memory(row, memory_provider)
-            for row in rows
-        ]
-        memories = [memory for memory in memories if memory.validation_status != "stale"]
-        unvalidated = sum(
-            1
-            for memory in memories
-            if memory.provider == "local_sqlite" and memory.validation_status != "validated"
-        )
-        if unvalidated:
-            limitations.append(
-                f"{unvalidated} matching local memory item(s) are unvalidated context, not approved guidance."
-            )
+        with read_transaction(self.conn):
+            resolved_path = (path or Path.cwd()).expanduser().resolve()
+            if snapshot_incomplete(self.conn):
+                answer = AskAnswer(
+                    question=question,
+                    answer="Telemetry insights are unavailable until the snapshot refresh completes.",
+                    guidance=[], evidence=[], confidence=0,
+                    limitations=["The telemetry snapshot is incomplete; only independent memory context is available."],
+                )
+            else:
+                answer = self.improvements.ask(question, task_file=task_file, path=resolved_path)
+            limitations = list(answer.limitations)
+            try:
+                rows = self.memory.select_context(
+                    question,
+                    path=resolved_path,
+                    provider=memory_provider,
+                    limit=max(1, min(memory_limit, 20)),
+                )
+            except Exception as exc:  # noqa: BLE001 - context must preserve local guidance
+                rows = []
+                limitations.append(f"Memory provider {memory_provider!r} was unavailable: {exc}")
 
-        answer_text = answer.answer
-        confidence = answer.confidence
-        if memories and not answer.evidence:
-            answer_text = (
-                f"Reflect found {len(memories)} scoped memory item(s), but no matching approved workflow. "
-                "Treat memory as context and verify it against the current repository state."
+            memories = [
+                self._context_memory(row, memory_provider)
+                for row in rows
+            ]
+            memories = [memory for memory in memories if memory.validation_status != "stale"]
+            unvalidated = sum(
+                1
+                for memory in memories
+                if memory.provider == "local_sqlite" and memory.validation_status != "validated"
             )
-            confidence = min(0.8, sum(memory.confidence for memory in memories) / len(memories))
-        elif memories:
-            answer_text = (
-                f"Reflect found {len(answer.evidence)} workflow or observation item(s) and "
-                f"{len(memories)} scoped memory item(s). Use approved guidance first and treat memory "
-                "as supporting context."
-            )
+            if unvalidated:
+                limitations.append(
+                    f"{unvalidated} matching local memory item(s) are unvalidated context, not approved guidance."
+                )
 
-        return ReflectContextAnswer(
-            **answer.model_dump(exclude={"answer", "evidence", "confidence", "limitations"}),
-            answer=answer_text,
-            evidence=answer.evidence,
-            confidence=confidence,
-            limitations=list(dict.fromkeys(limitations)),
-            memories=memories,
-        )
+            answer_text = answer.answer
+            confidence = answer.confidence
+            if memories and not answer.evidence:
+                answer_text = (
+                    f"Reflect found {len(memories)} scoped memory item(s), but no matching approved workflow. "
+                    "Treat memory as context and verify it against the current repository state."
+                )
+                confidence = min(0.8, sum(memory.confidence for memory in memories) / len(memories))
+            elif memories:
+                answer_text = (
+                    f"Reflect found {len(answer.evidence)} workflow or observation item(s) and "
+                    f"{len(memories)} scoped memory item(s). Use approved guidance first and treat memory "
+                    "as supporting context."
+                )
+
+            return ReflectContextAnswer(
+                **answer.model_dump(exclude={"answer", "evidence", "confidence", "limitations"}),
+                answer=answer_text,
+                evidence=answer.evidence,
+                confidence=confidence,
+                limitations=list(dict.fromkeys(limitations)),
+                memories=memories,
+            )
 
     def begin_task(
         self,
@@ -231,14 +243,17 @@ class ReflectContextService:
 
         resolved_path = (path or Path.cwd()).expanduser().resolve()
         resolved_task = task_file.expanduser().resolve() if task_file else None
-        answer = self.ask(
-            question,
-            task_file=resolved_task,
-            path=resolved_path,
-            memory_provider=memory_provider,
-            memory_limit=memory_limit,
-        )
-        selected_skills = self._selected_skills(answer.workflow_id)
+        from reflect.store.sqlite import read_transaction
+
+        with read_transaction(self.conn):
+            answer = self.ask(
+                question,
+                task_file=resolved_task,
+                path=resolved_path,
+                memory_provider=memory_provider,
+                memory_limit=memory_limit,
+            )
+            selected_skills = self._selected_skills(answer.workflow_id)
         skill_refs = [
             MCPSelectedSkillRef(
                 skill_id=skill.skill_id,
@@ -496,6 +511,18 @@ class ReflectContextService:
         """Return a read-only task lifecycle snapshot."""
 
         return self.task_runs.status(task_run_id)
+
+    def guidance_efficiency(
+        self, *, repo_id: str, task_archetype_id: str, model: str, limit: int = 100
+    ) -> dict[str, Any]:
+        """Compare observed, verified task units with and without Reflect guidance."""
+
+        return GuidanceEfficiencyService(self.conn).compare(
+            repo_id=repo_id,
+            task_archetype_id=task_archetype_id,
+            model=model,
+            limit=limit,
+        )
 
     def record_milestone(
         self,

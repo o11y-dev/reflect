@@ -11,6 +11,8 @@ from reflect.store.mcp import DEFAULT_MCP_CLASSIFIER, MCPCallBackfill
 from reflect.store.provenance import apply_origin_kind, classify_origin_kind
 from reflect.store.workspaces import backfill_session_context
 from reflect.task_runs import TaskRunReconciler
+from reflect.tool_outcomes import with_tool_outcome
+from reflect.utils import _json_dumps
 
 
 def _now() -> str:
@@ -700,19 +702,34 @@ def _insert_memory_record(
     memory_id = attrs.get("gen_ai.memory.id")
     if not memory_id:
         return
+    from reflect.memory.models import MemorySourceMetadata
+
+    source_path = str(attrs.get("gen_ai.memory.source_path") or attrs.get("path") or "")
+    source = MemorySourceMetadata(
+        source_kind=str(attrs.get("gen_ai.memory.source") or "opentelemetry_hook"),
+        source_ref=source_path or str(memory_id),
+        path=source_path,
+        workspace_root=str(attrs.get("code.workspace.root") or attrs.get("workspace_root") or ""),
+        content_hash=str(attrs.get("gen_ai.memory.content_hash") or ""),
+    )
     conn.execute(
         """
         INSERT INTO memories(
           id, scope, type, session_id, step_id, content_hash,
           content_preview_redacted, confidence, sensitivity, source, expires_at,
-          last_seen_at, raw_attrs_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          last_seen_at, raw_attrs_json, source_metadata_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
-          content_hash = COALESCE(excluded.content_hash, memories.content_hash),
-          content_preview_redacted = COALESCE(
+          content_hash = CASE WHEN memories.source = 'filesystem_instruction_scan'
+            THEN memories.content_hash ELSE COALESCE(excluded.content_hash, memories.content_hash) END,
+          content_preview_redacted = CASE WHEN memories.source = 'filesystem_instruction_scan'
+            THEN memories.content_preview_redacted ELSE COALESCE(
             excluded.content_preview_redacted,
             memories.content_preview_redacted
-          ),
+          ) END,
+          source_metadata_json = CASE WHEN memories.source = 'filesystem_instruction_scan'
+            THEN memories.source_metadata_json
+            ELSE json_patch(memories.source_metadata_json, excluded.source_metadata_json) END,
           last_seen_at = CASE
             WHEN memories.last_seen_at IS NULL THEN excluded.last_seen_at
             WHEN excluded.last_seen_at IS NULL THEN memories.last_seen_at
@@ -734,6 +751,7 @@ def _insert_memory_record(
             attrs.get("gen_ai.memory.expires_at"),
             attrs.get("gen_ai.memory.last_seen_at") or raw_event["observed_at"],
             raw_event["attrs_json"],
+            _json_dumps(source.to_json_dict()),
             timestamp,
             timestamp,
         ),
@@ -908,24 +926,45 @@ def normalize_pending_raw_events(
     *,
     limit: int | None = None,
     changed_session_ids: set[str] | None = None,
+    batch_size: int = 500,
+) -> dict[str, int]:
+    if batch_size < 1 or (limit is not None and limit < 0):
+        raise ValueError("batch_size must be positive and limit must be nonnegative")
+    repair_telemetry_provenance(conn)
+    result = {"processed": 0, "failed": 0, "skipped": 0}
+    remaining = limit
+    while remaining is None or remaining > 0:
+        size = batch_size if remaining is None else min(batch_size, remaining)
+        batch = _normalize_pending_batch(conn, limit=size, changed_session_ids=changed_session_ids)
+        for key in result:
+            result[key] += batch[key]
+        count = batch["processed"] + batch["failed"]
+        if count < size:
+            break
+        if remaining is not None:
+            remaining -= count
+    return result
+
+
+def _normalize_pending_batch(
+    conn: sqlite3.Connection, *, limit: int, changed_session_ids: set[str] | None,
 ) -> dict[str, int]:
     previous_row_factory = conn.row_factory
     conn.row_factory = sqlite3.Row
     try:
-        repair_telemetry_provenance(conn)
-        params: list[int] = []
-        limit_sql = ""
-        if limit is not None:
-            limit_sql = " LIMIT ?"
-            params.append(limit)
+        # Reserve the writer before reading the pending set. Per-event savepoints
+        # must not commit independently or allow another normalizer to select
+        # the same events between reads and writes.
+        conn.execute("BEGIN IMMEDIATE")
         rows = conn.execute(
             """
             SELECT *
             FROM raw_events
             WHERE normalized_status = 'pending'
             ORDER BY observed_at, id
-            """ + limit_sql,
-            params,
+            LIMIT ?
+            """,
+            (limit,),
         ).fetchall()
 
         processed = 0
@@ -937,7 +976,7 @@ def normalize_pending_raw_events(
             session_id = ""
             try:
                 conn.execute(f"SAVEPOINT {savepoint}")
-                attrs = _load_json(row["attrs_json"])
+                attrs = with_tool_outcome(row["event_type"], _load_json(row["attrs_json"]))
                 session_id = (
                     row["session_id"]
                     or attrs.get("session.id")
@@ -1000,6 +1039,10 @@ def normalize_pending_raw_events(
             except Exception as exc:
                 conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
                 conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                if isinstance(exc, sqlite3.OperationalError):
+                    # Store failures are not malformed telemetry. Keep events
+                    # pending and preserve the original error for the caller.
+                    raise
                 conn.execute(
                     "UPDATE raw_events SET normalized_status = 'failed', normalization_error = ? WHERE id = ?",
                     (str(exc), row["id"]),
@@ -1017,7 +1060,6 @@ def normalize_pending_raw_events(
             session_ids=processed_session_ids,
             timestamp=timestamp,
         )
-        backfill_tool_call_hashes(conn)
         _refresh_session_statuses(conn, processed_session_ids, timestamp)
         TaskRunReconciler(conn).reconcile(
             session_ids=processed_session_ids,
@@ -1027,5 +1069,8 @@ def normalize_pending_raw_events(
             changed_session_ids.update(processed_session_ids)
         conn.commit()
         return {"processed": processed, "failed": failed, "skipped": 0}
+    except BaseException:
+        conn.rollback()
+        raise
     finally:
         conn.row_factory = previous_row_factory

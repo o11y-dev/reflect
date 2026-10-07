@@ -200,6 +200,58 @@ def _service(tmp_path: Path) -> tuple[ImprovementService, object]:
     return ImprovementService(conn), conn
 
 
+def test_impact_context_tokens_include_cache_and_reasoning(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO execution_units(
+              id, session_id, source, source_confidence, workspace_id,
+              repo_id, agent_id, started_at, ended_at, status, outcome,
+              verification_passed, eligible, boundary_json, created_at, updated_at
+            ) VALUES ('unit-context', 'session-1', 'mcp_task_run', 1,
+                      'workspace-1', 'repo-1', 'agent-1', ?, ?, 'completed',
+                      'success', 1, 1, '{}', ?, ?)
+            """,
+            (NOW, NOW, NOW, NOW),
+        )
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status,
+              raw_attrs_json, created_at, updated_at
+            ) VALUES ('unit-context-step-0', 'session-1', 100,
+                      'llm_call', ?, 'ok', '{}', ?, ?)
+            """,
+            (NOW, NOW, NOW),
+        )
+        conn.execute(
+            """
+            INSERT INTO execution_unit_steps(
+              execution_unit_id, step_id, session_id, created_at
+            ) VALUES ('unit-context', 'unit-context-step-0', 'session-1', ?)
+            """,
+            (NOW,),
+        )
+        conn.execute(
+            """
+            INSERT INTO llm_calls(
+              id, step_id, session_id, input_tokens, output_tokens,
+              cache_read_input_tokens, cache_creation_input_tokens,
+              reasoning_output_tokens, created_at, updated_at
+            ) VALUES ('llm-context', 'unit-context-step-0', 'session-1',
+                      1, 2, 3, 4, 5, ?, ?)
+            """,
+            (NOW, NOW),
+        )
+
+        assert service.measurements._execution_unit_metric_values(
+            "context_outlier_sessions", ["unit-context"]
+        ) == {"unit-context": 15.0}
+    finally:
+        conn.close()
+
+
 def _workflow_contract(
     signature_hash: str,
     *,

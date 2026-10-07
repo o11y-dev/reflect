@@ -172,6 +172,8 @@ def upsert_instruction_memories(
     workspace_root: Path,
     home_root: Path | None = None,
 ) -> dict[str, int]:
+    from reflect.memory.models import MemorySourceMetadata
+
     files = discover_instruction_files(workspace_root, home_root=home_root)
     timestamp = _now()
     inserted = 0
@@ -197,13 +199,17 @@ def upsert_instruction_memories(
             "mtime": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
         }
         memory_id = context_artifact_id(path)
+        source = MemorySourceMetadata.from_path(
+            path, workspace_root=workspace_root, source_kind="filesystem_instruction_scan",
+            content_hash=content_hash, attrs=raw_attrs,
+        )
         existed = conn.execute("SELECT 1 FROM memories WHERE id = ?", (memory_id,)).fetchone() is not None
         conn.execute(
             """
             INSERT INTO memories(
               id, scope, type, content_hash, content_preview_redacted, confidence,
-              sensitivity, source, last_seen_at, raw_attrs_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              sensitivity, source, last_seen_at, raw_attrs_json, source_metadata_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               scope = excluded.scope,
               type = excluded.type,
@@ -214,6 +220,7 @@ def upsert_instruction_memories(
               source = excluded.source,
               last_seen_at = excluded.last_seen_at,
               raw_attrs_json = excluded.raw_attrs_json,
+              source_metadata_json = excluded.source_metadata_json,
               updated_at = excluded.updated_at
             """,
             (
@@ -227,6 +234,7 @@ def upsert_instruction_memories(
                 "filesystem_instruction_scan",
                 raw_attrs["mtime"],
                 json.dumps(raw_attrs, sort_keys=True),
+                json.dumps(source.to_json_dict(), sort_keys=True),
                 timestamp,
                 timestamp,
             ),

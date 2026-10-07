@@ -8,8 +8,8 @@ from typing import Any
 
 from reflect.store.migrate import load_migrations
 from reflect.store.sqlite import (
-    DEFAULT_BUSY_TIMEOUT_MS,
     DEFAULT_WAL_AUTOCHECKPOINT,
+    busy_timeout_ms,
     connect_sqlite_read_only,
 )
 
@@ -50,7 +50,7 @@ def inspect_segment_preparation(
         store_available=False,
     )
     try:
-        conn = connect_sqlite_read_only(db_path)
+        conn = connect_sqlite_read_only(db_path, profile=None)
     except (OSError, sqlite3.DatabaseError):
         return unavailable
     try:
@@ -137,7 +137,7 @@ def inspect_database(conn: sqlite3.Connection) -> dict[str, Any]:
         and pragmas["journal_mode"] == "wal"
         and pragmas["synchronous"] in {1, 2}
         and pragmas["wal_autocheckpoint"] == DEFAULT_WAL_AUTOCHECKPOINT
-        and pragmas["busy_timeout"] == DEFAULT_BUSY_TIMEOUT_MS
+        and pragmas["busy_timeout"] == busy_timeout_ms()
     )
 
     pending = [version for version in expected if version not in applied_set]

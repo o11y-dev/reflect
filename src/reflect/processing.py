@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from reflect.models import AgentStats, TelemetryStats
 from reflect.parsing import _default_sessions_dir, _default_spans_dir
 from reflect.telemetry_facts import extract_subagent_name_from_tool, first_attr
+from reflect.tool_outcomes import tool_failure
 
 if TYPE_CHECKING:
     pass
@@ -120,6 +121,9 @@ def _process_span(
     attrs = span.get("attributes") or {}
 
     event = _extract_event(span)
+    failure = tool_failure(event, attrs)
+    if event == "PostToolUse" and failure is not None:
+        event = "PostToolUseFailure"
     if event:
         events_by_type[event] += 1
 
@@ -221,7 +225,7 @@ def _process_span(
     # (no tool_name present for shell events).
     _DETAIL_EVENTS = {
         "PreToolUse", "PostToolUse", "PostToolUseFailure",
-        "BeforeShellExecution", "BeforeMCPExecution",
+        "BeforeShellExecution", "BeforeMCPExecution", "AfterShellExecution", "AfterMCPExecution",
     }
     if session_id and start_ns and event in _DETAIL_EVENTS:
         dur = 0.0
@@ -231,7 +235,7 @@ def _process_span(
             "t": int(start_ns),
             "tool": tool_name or attrs.get("gen_ai.client.mcp_tool", attrs.get("gen_ai.client.command", "?")),
             "dur": round(dur, 1),
-            "ok": event != "PostToolUseFailure",
+            "ok": failure is None,
             "event": event,
         })
     if session_id and event in ("Stop", "SubagentStop", "SessionEnd") and start_ns:
@@ -315,13 +319,13 @@ def _process_span(
                 "preview": preview,
                 "file_path": _extract_file_path(attrs),
             }
-        elif event in ("PostToolUse", "PostToolUseFailure"):
+        elif event in ("PostToolUse", "PostToolUseFailure", "AfterShellExecution"):
             dur = 0.0
             if start_ns and end_ns:
                 dur = (int(end_ns) - int(start_ns)) / 1e6
             conv_event = {
                 "type": "tool_result", "ts": _ts_ms,
-                "tool_name": tool_name or "", "success": event == "PostToolUse",
+                "tool_name": tool_name or "", "success": failure is None,
                 "duration_ms": round(dur, 1),
             }
         elif event == "SubagentStart":
@@ -336,6 +340,8 @@ def _process_span(
                 "ts": _ts_ms, "tool_name": mcp_tool,
                 "server": _shorten_mcp_server(mcp_server) if mcp_server else "",
             }
+            if event == "AfterMCPExecution":
+                conv_event["success"] = failure is None
         if conv_event is not None:
             session_conversation.setdefault(session_id, []).append(conv_event)
 

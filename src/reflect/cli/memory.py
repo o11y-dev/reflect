@@ -44,7 +44,7 @@ def _open_memory_service(
             db_path,
             refresh_hint=f"Run `reflect memory sync --db-path {db_path}` first.",
         )
-        conn = connect_sqlite_read_only(db_path)
+        conn = connect_sqlite_read_only(db_path, profile=None)
     else:
         conn = connect_sqlite(db_path)
         migrate(conn)

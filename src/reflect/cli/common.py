@@ -22,7 +22,7 @@ def require_snapshot_schema(db_path: Path, *, refresh_hint: str) -> None:
     )
 
     lifecycle = SnapshotLifecycleService(
-        SQLiteSnapshotInspector(db_path),
+        SQLiteSnapshotInspector(db_path, profile=None),
         policy=CommandPreparationPolicy(require_sessions=False),
         refresh_hint=refresh_hint,
     )
