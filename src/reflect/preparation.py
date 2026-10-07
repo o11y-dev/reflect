@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import fcntl
+import os
 import sqlite3
 import threading
 from collections.abc import Callable, Iterable
@@ -23,6 +25,7 @@ class PreparationProfile(StrEnum):
 
 
 class PreparationStage(StrEnum):
+    WAITING_FOR_STORE = "waiting_for_store"
     OPENING_STORE = "opening_store"
     BACKING_UP_STORE = "backing_up_store"
     MIGRATING_SCHEMA = "migrating_schema"
@@ -105,13 +108,15 @@ class SQLiteSnapshotInspector:
         db_path: Path,
         *,
         readiness_probes: Iterable[SnapshotReadinessProbe] = (),
+        profile: PreparationProfile | None = PreparationProfile.SNAPSHOT,
     ):
         self.db_path = db_path.expanduser()
         self.readiness_probes = tuple(readiness_probes)
+        self.profile = profile
 
     def inspect(self) -> SnapshotStatus:
         from reflect.store.migrate import load_migrations
-        from reflect.store.sqlite import connect_sqlite_read_only
+        from reflect.store.sqlite import connect_sqlite_read_only, snapshot_incomplete
 
         if not self.db_path.exists() or self.db_path.stat().st_size == 0:
             return SnapshotStatus(
@@ -120,7 +125,7 @@ class SQLiteSnapshotInspector:
             )
 
         try:
-            conn = connect_sqlite_read_only(self.db_path)
+            conn = connect_sqlite_read_only(self.db_path, profile=None)
         except sqlite3.Error as exc:
             return SnapshotStatus(
                 exists=True,
@@ -158,6 +163,8 @@ class SQLiteSnapshotInspector:
                 if not pending
                 else ()
             )
+            if self.profile is not None and snapshot_incomplete(conn, self.profile.value):
+                stale_reasons += ("An active or interrupted refresh has not published a complete snapshot",)
             return SnapshotStatus(
                 exists=True,
                 has_sessions=has_sessions,
@@ -346,6 +353,32 @@ class PreparationSnapshot:
         payload["stage"] = self.stage.value if self.stage is not None else None
         payload["result"] = self.result.as_dict() if self.result is not None else None
         return payload
+
+
+class PreparationLock:
+    """Serialize refresh pipelines for one database across threads and processes."""
+
+    def __init__(self, db_path: Path) -> None:
+        self.path = Path(f"{db_path.expanduser().resolve()}.refresh.lock")
+        self._fd: int | None = None
+
+    def __enter__(self) -> PreparationLock:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except BaseException:
+            os.close(fd)
+            raise
+        self._fd = fd
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        if self._fd is not None:
+            # Closing releases the OS lock, including after a failed refresh.
+            # Keep the file so queued callers always lock the same inode.
+            os.close(self._fd)
+            self._fd = None
 
 
 class PreparationCoordinator:

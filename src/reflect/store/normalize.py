@@ -926,24 +926,45 @@ def normalize_pending_raw_events(
     *,
     limit: int | None = None,
     changed_session_ids: set[str] | None = None,
+    batch_size: int = 500,
+) -> dict[str, int]:
+    if batch_size < 1 or (limit is not None and limit < 0):
+        raise ValueError("batch_size must be positive and limit must be nonnegative")
+    repair_telemetry_provenance(conn)
+    result = {"processed": 0, "failed": 0, "skipped": 0}
+    remaining = limit
+    while remaining is None or remaining > 0:
+        size = batch_size if remaining is None else min(batch_size, remaining)
+        batch = _normalize_pending_batch(conn, limit=size, changed_session_ids=changed_session_ids)
+        for key in result:
+            result[key] += batch[key]
+        count = batch["processed"] + batch["failed"]
+        if count < size:
+            break
+        if remaining is not None:
+            remaining -= count
+    return result
+
+
+def _normalize_pending_batch(
+    conn: sqlite3.Connection, *, limit: int, changed_session_ids: set[str] | None,
 ) -> dict[str, int]:
     previous_row_factory = conn.row_factory
     conn.row_factory = sqlite3.Row
     try:
-        repair_telemetry_provenance(conn)
-        params: list[int] = []
-        limit_sql = ""
-        if limit is not None:
-            limit_sql = " LIMIT ?"
-            params.append(limit)
+        # Reserve the writer before reading the pending set. Per-event savepoints
+        # must not commit independently or allow another normalizer to select
+        # the same events between reads and writes.
+        conn.execute("BEGIN IMMEDIATE")
         rows = conn.execute(
             """
             SELECT *
             FROM raw_events
             WHERE normalized_status = 'pending'
             ORDER BY observed_at, id
-            """ + limit_sql,
-            params,
+            LIMIT ?
+            """,
+            (limit,),
         ).fetchall()
 
         processed = 0
@@ -1018,6 +1039,10 @@ def normalize_pending_raw_events(
             except Exception as exc:
                 conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
                 conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                if isinstance(exc, sqlite3.OperationalError):
+                    # Store failures are not malformed telemetry. Keep events
+                    # pending and preserve the original error for the caller.
+                    raise
                 conn.execute(
                     "UPDATE raw_events SET normalized_status = 'failed', normalization_error = ? WHERE id = ?",
                     (str(exc), row["id"]),
@@ -1035,7 +1060,6 @@ def normalize_pending_raw_events(
             session_ids=processed_session_ids,
             timestamp=timestamp,
         )
-        backfill_tool_call_hashes(conn)
         _refresh_session_statuses(conn, processed_session_ids, timestamp)
         TaskRunReconciler(conn).reconcile(
             session_ids=processed_session_ids,
@@ -1045,5 +1069,8 @@ def normalize_pending_raw_events(
             changed_session_ids.update(processed_session_ids)
         conn.commit()
         return {"processed": processed, "failed": failed, "skipped": 0}
+    except BaseException:
+        conn.rollback()
+        raise
     finally:
         conn.row_factory = previous_row_factory

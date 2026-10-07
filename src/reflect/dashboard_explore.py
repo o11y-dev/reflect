@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from reflect.dashboard_queries import build_dashboard_payload
+from reflect.store.sqlite import consistent_snapshot
 
 
 def _sql_dashboard_tab_payload(
@@ -42,6 +43,7 @@ def canonical_explore_view(view_name: str) -> str:
     return view_name.strip().lower().replace("-", "_")
 
 
+@consistent_snapshot
 def build_explore_payload(
     db_path: Path,
     view_name: str,
