@@ -83,3 +83,24 @@ def test_native_execution_failure_envelope_reaches_canonical_ledger(tmp_path):
         assert conn.execute("SELECT failure_count FROM sessions").fetchone()[0] == 1
     finally:
         conn.close()
+
+
+@pytest.mark.parametrize('status', ['unknown', 'ok'])
+@pytest.mark.parametrize('reverse', [False, True])
+def test_structured_failure_survives_call_phase_order(tmp_path, status, reverse):
+    events = _spans('future-provider', {}, 'PostToolUse')
+    events[1]['attributes'].update({'error.type': 'tool_result', 'gen_ai.client.status': status})
+    if reverse:
+        events[0]['start_time_ns'], events[1]['start_time_ns'] = events[1]['start_time_ns'], events[0]['start_time_ns']
+    source = tmp_path / 'explicit.jsonl'
+    source.write_text('\n'.join(json.dumps(event) for event in events))
+    conn = connect_sqlite(tmp_path / 'explicit.db')
+    try:
+        migrate(conn)
+        ingest_local_spans_file(conn, file_path=source)
+        assert normalize_pending_raw_events(conn)['failed'] == 0
+        assert conn.execute('SELECT status FROM tool_calls').fetchone()[0] == 'error'
+        assert conn.execute('SELECT failure_count FROM sessions').fetchone()[0] == 1
+        assert conn.execute('SELECT status FROM steps WHERE id = (SELECT step_id FROM tool_calls)').fetchone()[0] == 'error'
+    finally:
+        conn.close()

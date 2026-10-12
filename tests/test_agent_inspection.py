@@ -201,8 +201,14 @@ def test_context_impact_lists_and_explains_persisted_measurements(tmp_path):
         assert listed["count"] == 1
         assert listed["impact_checks"][0]["id"] == "impact-1"
         assert explained["found"] is True
-        assert explained["impact_check"]["verdict"] == "improved"
-        assert explained["comparison"]["snapshot_exact"] is True
+        # This historical fixture has no archetype evidence for either unit.
+        assert explained["impact_check"]["verdict"] == "insufficient_data"
+        assert explained["impact_check"]["recorded_result"]["verdict"] == "improved"
+        assert explained["impact_check"]["delta"] is None
+        assert explained["comparison"]["snapshot_exact"] is False
+        assert explained["comparison"]["invalid_members"]["before-unit"] == [
+            "Archetype is missing or mixed."
+        ]
         assert explained["comparison"]["before_execution_units"][0]["session_id"] == (
             "before-session"
         )

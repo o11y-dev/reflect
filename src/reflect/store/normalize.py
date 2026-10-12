@@ -487,7 +487,8 @@ def _upsert_tool_call(
           tool_name = excluded.tool_name,
           tool_type = COALESCE(excluded.tool_type, tool_calls.tool_type),
           status = CASE
-            WHEN excluded.status = 'error' OR tool_calls.status = 'error' THEN 'error'
+            WHEN excluded.status = 'error' OR tool_calls.status = 'error'
+              OR NULLIF(trim(tool_calls.error_type), '') IS NOT NULL THEN 'error'
             WHEN excluded.status = 'ok' OR tool_calls.status = 'ok' THEN 'ok'
             ELSE excluded.status
           END,
@@ -546,7 +547,7 @@ def _upsert_tool_call(
     )
     row = conn.execute(
         """
-        SELECT id
+        SELECT id, step_id, status
         FROM tool_calls
         WHERE session_id = ? AND logical_call_id = ?
         """,
@@ -554,6 +555,10 @@ def _upsert_tool_call(
     ).fetchone()
     if row is None:
         raise RuntimeError("canonical tool call was not persisted")
+    if row[2] == "error":
+        conn.execute(
+            "UPDATE steps SET status = 'error' WHERE id IN (?, ?)", (row[1], step_id),
+        )
     return str(row[0])
 
 
@@ -863,7 +868,10 @@ def _refresh_session_statuses(conn: sqlite3.Connection, session_ids: set[str], t
         row = conn.execute(
             """
             SELECT
-              COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) AS error_count,
+              (SELECT COUNT(*) FROM tool_calls WHERE session_id = ? AND status = 'error')
+              + COALESCE(SUM(CASE WHEN status = 'error'
+                AND type NOT IN ('tool_call', 'mcp_call', 'shell_command')
+                THEN 1 ELSE 0 END), 0) AS error_count,
               COALESCE(SUM(CASE
                 WHEN lower(COALESCE(json_extract(raw_attrs_json, '$."gen_ai.client.hook.event"'), summary, ''))
                   IN ('stop', 'sessionend', 'session_end', 'subagentstop', 'subagent_stop')
@@ -880,7 +888,7 @@ def _refresh_session_statuses(conn: sqlite3.Connection, session_ids: set[str], t
             FROM steps
             WHERE session_id = ?
             """,
-            (session_id,),
+            (session_id, session_id),
         ).fetchone()
         if not row:
             continue
@@ -1061,7 +1069,16 @@ def _normalize_pending_batch(
             timestamp=timestamp,
         )
         _refresh_session_statuses(conn, processed_session_ids, timestamp)
-        TaskRunReconciler(conn).reconcile(
+        reconciler = TaskRunReconciler(conn)
+        repair_identities = conn.execute(
+            "SELECT 1 FROM maintenance_tasks WHERE task = 'reconcile_task_identities'"
+        ).fetchone()
+        processed_session_ids.update(reconciler.recover_identities(
+            None if repair_identities else processed_session_ids,
+        ))
+        if repair_identities:
+            conn.execute("DELETE FROM maintenance_tasks WHERE task = 'reconcile_task_identities'")
+        reconciler.reconcile(
             session_ids=processed_session_ids,
             commit=False,
         )

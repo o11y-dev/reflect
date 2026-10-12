@@ -8,6 +8,9 @@
 - Guidance comparisons expose cache token mix, observed cache-read share, verified success rate, and cost per verified success to show cost drivers alongside outcome.
 
 ### Fixed
+- Task tracking accepts explicit runtime identity and recovers exact historical task links during refresh, exposing missing and conflicting identity without guessing.
+- Frozen impact cohorts are revalidated before measurement and on reads; invalid comparisons retain their ledger and cannot claim improvement or savings. New comparison ledgers preserve per-task metric evidence.
+- Structured tool errors consistently reach canonical call status and session totals; retained inconsistencies are repaired without replaying usage.
 
 - Dashboard cache publication defers safely when another process starts a refresh, retaining the completed view and retrying on the next read instead of reporting a successful refresh as failed.
 - Concurrent dashboard, CLI, usage, and database-maintenance operations now coordinate per database. Ingestion and normalization commit event batches without repeating global hash repair per batch; interrupted refreshes remain visibly incomplete and rebuild derived data on retry without replaying usage. No-change usage refreshes preserve completed reports. MCP guidance reads one consistent snapshot and remains available when task tracking is busy. SQLite writer waits are configurable with `REFLECT_SQLITE_BUSY_TIMEOUT_MS` (30 seconds by default).

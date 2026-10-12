@@ -136,6 +136,8 @@ def reflect_context(
     task_file: str = "",
     memory_provider: str = "local_sqlite",
     memory_limit: int = 5,
+    runtime_session_id: str = "",
+    runtime_agent: str = "",
 ) -> dict[str, Any]:
     """Call once at task start before implementation to get guidance and selected skills."""
 
@@ -148,6 +150,8 @@ def reflect_context(
             lambda service: service.begin_task(
                 question, task_file=resolved_task, path=resolved_path,
                 memory_provider=memory_provider, memory_limit=memory_limit,
+                runtime_session_id=runtime_session_id or None,
+                runtime_agent=runtime_agent or None,
             ).model_dump(mode="json"),
             timeout_ms=min(busy_timeout_ms(), 1000),
         )
@@ -177,6 +181,8 @@ def reflect_complete(
     outcome: MCPTaskOutcome,
     verification_passed: bool | None = None,
     summary: str = "",
+    runtime_session_id: str = "",
+    runtime_agent: str = "",
 ) -> dict[str, Any]:
     """Call once after validation to record the task outcome and close the Reflect guidance run."""
 
@@ -186,6 +192,8 @@ def reflect_complete(
             outcome=outcome,
             verification_passed=verification_passed,
             summary_redacted=summary,
+            runtime_session_id=runtime_session_id or None,
+            runtime_agent=runtime_agent or None,
         ).model_dump(mode="json")
     )
 

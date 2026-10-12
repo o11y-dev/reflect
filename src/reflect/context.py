@@ -238,6 +238,8 @@ class ReflectContextService:
         path: Path | None = None,
         memory_provider: str = "local_sqlite",
         memory_limit: int = 5,
+        runtime_session_id: str | None = None,
+        runtime_agent: str | None = None,
     ) -> ReflectContextAnswer:
         """Return task guidance and record a privacy-safe MCP guidance run."""
 
@@ -278,6 +280,8 @@ class ReflectContextService:
             workflow_id=answer.workflow_id,
             selected_skills=skill_refs,
             selected_memories=memory_refs,
+            runtime_session_id=runtime_session_id,
+            runtime_agent=runtime_agent,
         )
         return answer.model_copy(
             update={
@@ -298,6 +302,8 @@ class ReflectContextService:
         outcome: MCPTaskOutcome | str,
         verification_passed: bool | None = None,
         summary_redacted: str = "",
+        runtime_session_id: str | None = None,
+        runtime_agent: str | None = None,
     ) -> TaskCompletionAnswer:
         """Record the agent-reported outcome for one MCP guidance run."""
 
@@ -306,6 +312,8 @@ class ReflectContextService:
             outcome=outcome,
             verification_passed=verification_passed,
             summary_redacted=summary_redacted,
+            runtime_session_id=runtime_session_id,
+            runtime_agent=runtime_agent,
         )
         return TaskCompletionAnswer(
             **result.model_dump(mode="python"),
