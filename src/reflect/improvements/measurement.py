@@ -5,9 +5,11 @@ import json
 import sqlite3
 import statistics
 import uuid
+from collections.abc import Iterator
 from typing import Any
 
 from reflect.improvements.contracts import ContractEvaluationService, WorkflowContract
+from reflect.improvements.measurement_validity import MeasurementValidity
 from reflect.improvements.repository import utc_now
 
 _RECOVERY_METRICS = {"tool_failure_rate", "identical_retry_calls"}
@@ -19,6 +21,7 @@ def _public_cohort(raw: str) -> dict[str, Any]:
     cohort.pop("before_execution_unit_ids", None)
     cohort.pop("after_execution_unit_ids", None)
     cohort.pop("fingerprint", None)
+    cohort.pop("execution_unit_snapshots", None)
     return cohort
 
 
@@ -35,6 +38,7 @@ def _cohort_fingerprint(
         "after_values": after_values,
         "measurement_state": cohort.get("measurement_state"),
         "quality": cohort.get("quality"),
+        "invalid_members": cohort.get("invalid_members", {}),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -46,6 +50,7 @@ class MeasurementService:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
         self.contracts = ContractEvaluationService(conn)
+        self.validity = MeasurementValidity(conn)
 
     def measure(self, candidate_id: str, *, skip_unchanged: bool = False) -> dict[str, Any]:
         row = self.conn.execute(
@@ -122,23 +127,20 @@ class MeasurementService:
             after=exposed_at,
             limit=minimum_after,
         )
+        eligibility_cohort = {
+            "repo_id": repo_id, "workspace_id": workspace_id,
+            "task_archetype_id": archetype_id,
+            "before_execution_unit_ids": frozen_before_ids or [
+                item["execution_unit_id"] for item in before_units
+            ],
+            "after_execution_unit_ids": [item["execution_unit_id"] for item in after_units],
+        }
+        invalid_members = self.validity.invalid_members(eligibility_cohort, exposed_at)
         if contract_mode and contract is not None:
-            evaluated = self.contracts.evaluate_units(
-                contract,
-                [*before_units, *after_units],
-            )
-            before = [
-                1.0
-                if evaluated[str(item["execution_unit_id"])].evaluation.followed
-                else 0.0
-                for item in before_units
-            ]
-            after = [
-                1.0
-                if evaluated[str(item["execution_unit_id"])].evaluation.followed
-                else 0.0
-                for item in after_units
-            ]
+            evidence = self._execution_units_with_contract_evidence(contract, [*before_units, *after_units])
+            metric_values = {item["execution_unit_id"]: item["metric_value"] for item in evidence}
+            before = [metric_values[item["execution_unit_id"]] for item in before_units]
+            after = [metric_values[item["execution_unit_id"]] for item in after_units]
         else:
             before_values = self._execution_unit_metric_values(
                 str(metric_name),
@@ -157,6 +159,14 @@ class MeasurementService:
                 after_values[str(item["execution_unit_id"])]
                 for item in after_units
                 if str(item["execution_unit_id"]) in after_values
+            ]
+            metric_values = {**before_values, **after_values}
+            evidence = [
+                {**item, "metric_value": metric_values.get(item["execution_unit_id"]),
+                 "evidence_count": int(item["execution_unit_id"] in metric_values),
+                 "evidence_summaries": [f"{metric_name}: {metric_values[item['execution_unit_id']]:.3g}"]
+                 if item["execution_unit_id"] in metric_values else ["Required execution-unit telemetry is unavailable"]}
+                for item in [*before_units, *after_units]
             ]
             if recovery_mode:
                 before_coverage = len(before) / len(before_units) if before_units else 0.0
@@ -178,6 +188,10 @@ class MeasurementService:
                     "before_signal_coverage": before_coverage,
                     "after_signal_coverage": after_coverage,
                 }
+        if invalid_members:
+            quality = {"state": "not_measurable", "reasons": [
+                "Frozen baseline contains missing or ineligible execution units; no replacements were selected."
+            ]}
         raw_before_value = statistics.mean(before) if before else None
         raw_after_value = statistics.mean(after) if after else None
         sample_ready = (
@@ -195,12 +209,12 @@ class MeasurementService:
         )
         before_value = (
             raw_before_value
-            if not recovery_mode or measurement_state == "measured"
+            if not invalid_members and (not recovery_mode or measurement_state == "measured")
             else None
         )
         after_value = (
             raw_after_value
-            if not recovery_mode or measurement_state == "measured"
+            if not invalid_members and (not recovery_mode or measurement_state == "measured")
             else None
         )
         delta = None if before_value is None or after_value is None else after_value - before_value
@@ -234,12 +248,20 @@ class MeasurementService:
             "minimum_after_execution_units": minimum_after,
             "minimum_before_execution_units": minimum_before,
             "metric_direction": metric_direction,
-            "before_execution_unit_ids": [item["execution_unit_id"] for item in before_units],
+            "before_execution_unit_ids": eligibility_cohort["before_execution_unit_ids"],
             "after_execution_unit_ids": [item["execution_unit_id"] for item in after_units],
             "contract_signature": (
                 contract.signature_hash if contract is not None else None
             ),
             "measurement_state": measurement_state,
+            "exposure_started_at": exposed_at,
+            "invalid_members": invalid_members,
+            "execution_unit_snapshots": {
+                side: [
+                    {**item, "eligible_at_measurement": item["execution_unit_id"] not in invalid_members}
+                    for item in evidence if item["execution_unit_id"] in eligibility_cohort[f"{side}_execution_unit_ids"]
+                ] for side in ("before", "after")
+            },
         }
         if quality is not None:
             cohort["measurement_reasons"] = quality["reasons"]
@@ -342,21 +364,33 @@ class MeasurementService:
             regressed += int(result["verdict"] == "regressed")
         return {"active": len(candidate_ids), "created": created, "regressed": regressed}
 
-    def list(self, *, limit: int = 100) -> list[dict[str, Any]]:
+    def list(
+        self, *, limit: int | None = 100, candidate_id: str | None = None,
+        measurement_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return list(self.iter_results(limit=limit, candidate_id=candidate_id, measurement_id=measurement_id))
+
+    def iter_results(
+        self, *, limit: int | None = None, candidate_id: str | None = None,
+        measurement_id: str | None = None,
+    ) -> Iterator[dict[str, Any]]:
         rows = self.conn.execute(
             """
             SELECT m.id, wv.candidate_id, m.metric_name, m.cohort_json,
                    m.before_value, m.after_value, m.before_count, m.after_count,
-                   m.delta, m.verdict, m.confidence, m.measured_at
+                   m.delta, m.verdict, m.confidence, m.measured_at, i.exposure_started_at
             FROM measurements m
             JOIN interventions i ON i.id = m.intervention_id
             JOIN workflow_versions wv ON wv.id = i.workflow_version_id
+            WHERE (? IS NULL OR wv.candidate_id = ?)
+              AND (? IS NULL OR m.id = ?)
             ORDER BY m.measured_at DESC LIMIT ?
             """,
-            (max(1, min(limit, 500)),),
-        ).fetchall()
-        return [
-            {
+            (candidate_id, candidate_id, measurement_id, measurement_id,
+             -1 if limit is None else max(1, min(limit, 500))),
+        )
+        for row in rows:
+            yield self.validity.apply({
                 "id": row[0],
                 "candidate_id": row[1],
                 "metric_name": row[2],
@@ -369,9 +403,7 @@ class MeasurementService:
                 "verdict": row[9],
                 "confidence": row[10],
                 "measured_at": row[11],
-            }
-            for row in rows
-        ]
+            }, json.loads(row[3]), row[12])
 
     def sessions(self, measurement_id: str) -> dict[str, Any]:
         """Return the bounded execution-unit cohorts in a measurement snapshot."""
@@ -412,54 +444,62 @@ class MeasurementService:
         ]
         if cohort.get("unit") != "execution_units":
             raise ValueError(f"Measurement {measurement_id} does not use execution units")
-        before_execution_units = self._execution_units_by_ids(before_execution_ids)
-        after_execution_units = self._execution_units_by_ids(after_execution_ids)
-        workflow_content = json.loads(str(workflow_content_json or "{}"))
-        contract = WorkflowContract.from_raw(workflow_content.get("workflow_contract"))
-        if contract is not None and str(metric_name) == "workflow_adherence":
-            enriched = self._execution_units_with_contract_evidence(
-                contract,
-                [*before_execution_units, *after_execution_units],
-            )
+        snapshots = cohort.get("execution_unit_snapshots")
+        if snapshots is not None:
+            before_execution_units = snapshots["before"]
+            after_execution_units = snapshots["after"]
         else:
-            units = [*before_execution_units, *after_execution_units]
-            values = self._execution_unit_metric_values(
-                str(metric_name),
-                [str(item["execution_unit_id"]) for item in units],
-            )
-            enriched = [
-                {
-                    **item,
-                    "metric_value": values.get(str(item["execution_unit_id"])),
-                    "evidence_count": int(
-                        str(item["execution_unit_id"]) in values
-                    ),
-                    "evidence_summaries": (
-                        [f"{metric_name}: {values[str(item['execution_unit_id'])]:.3g}"]
-                        if str(item["execution_unit_id"]) in values
-                        else ["Required execution-unit telemetry is unavailable"]
-                    ),
-                }
-                for item in units
+            before_execution_units = self._execution_units_by_ids(before_execution_ids)
+            after_execution_units = self._execution_units_by_ids(after_execution_ids)
+            workflow_content = json.loads(str(workflow_content_json or "{}"))
+            contract = WorkflowContract.from_raw(workflow_content.get("workflow_contract"))
+            if contract is not None and str(metric_name) == "workflow_adherence":
+                enriched = self._execution_units_with_contract_evidence(
+                    contract,
+                    [*before_execution_units, *after_execution_units],
+                )
+            else:
+                units = [*before_execution_units, *after_execution_units]
+                values = self._execution_unit_metric_values(
+                    str(metric_name),
+                    [str(item["execution_unit_id"]) for item in units],
+                )
+                enriched = [
+                    {
+                        **item,
+                        "metric_value": values.get(str(item["execution_unit_id"])),
+                        "evidence_count": int(
+                            str(item["execution_unit_id"]) in values
+                        ),
+                        "evidence_summaries": (
+                            [f"{metric_name}: {values[str(item['execution_unit_id'])]:.3g}"]
+                            if str(item["execution_unit_id"]) in values
+                            else ["Required execution-unit telemetry is unavailable"]
+                        ),
+                    }
+                    for item in units
+                ]
+            by_id = {str(item["execution_unit_id"]): item for item in enriched}
+            before_execution_units = [
+                by_id[str(item["execution_unit_id"])] for item in before_execution_units
             ]
-        by_id = {str(item["execution_unit_id"]): item for item in enriched}
-        before_execution_units = [
-            by_id[str(item["execution_unit_id"])] for item in before_execution_units
-        ]
-        after_execution_units = [
-            by_id[str(item["execution_unit_id"])] for item in after_execution_units
-        ]
+            after_execution_units = [
+                by_id[str(item["execution_unit_id"])] for item in after_execution_units
+            ]
+        invalid = self.validity.invalid_members(cohort, exposed_at)
         return {
             "id": stored_id,
             "candidate_id": candidate_id,
             "metric_name": metric_name,
             "unit": "execution_units",
-            "measurement_state": cohort.get("measurement_state", "collecting"),
-            "measurement_reasons": cohort.get("measurement_reasons", []),
+            "measurement_state": "not_measurable" if invalid else cohort.get("measurement_state", "collecting"),
+            "measurement_reasons": ["Recorded comparison members are no longer eligible."]
+            if invalid else cohort.get("measurement_reasons", []),
+            "invalid_members": invalid,
             "quality": cohort.get("quality", {}),
             "before_count": int(before_count),
             "after_count": int(after_count),
-            "snapshot_exact": True,
+            "snapshot_exact": snapshots is not None,
             "before_execution_units": before_execution_units,
             "after_execution_units": after_execution_units,
         }
@@ -672,33 +712,8 @@ class MeasurementService:
         limit: int,
         newest_first: bool = False,
     ) -> list[dict[str, Any]]:
-        time_clause = "AND tu.started_at < ?" if before else "AND tu.started_at >= ?"
-        order = "DESC" if newest_first else "ASC"
-        rows = self.conn.execute(
-            f"""
-            SELECT tu.id
-            FROM execution_units tu
-            JOIN execution_unit_archetypes tua ON tua.execution_unit_id = tu.id
-            WHERE COALESCE(tu.repo_id, '') = COALESCE(?, '')
-              AND (? IS NULL OR tu.workspace_id = ?)
-              AND (? IS NULL OR tua.task_archetype_id = ?)
-              AND tu.eligible = 1 AND tua.mixed = 0
-              AND lower(COALESCE(tu.status, '')) IN ('completed', 'ok', 'success')
-              {time_clause}
-            ORDER BY tu.started_at {order}, tu.id {order}
-            LIMIT ?
-            """,
-            (
-                repo_id,
-                workspace_id,
-                workspace_id,
-                task_archetype_id,
-                task_archetype_id,
-                before or after,
-                max(1, min(limit, 100)),
-            ),
-        ).fetchall()
-        execution_unit_ids = [str(row[0]) for row in rows]
-        if newest_first:
-            execution_unit_ids.reverse()
+        execution_unit_ids = self.validity.select_ids(
+            {"repo_id": repo_id, "workspace_id": workspace_id, "task_archetype_id": task_archetype_id},
+            before or after, before=bool(before), limit=limit, newest_first=newest_first,
+        )
         return self._execution_units_by_ids(execution_unit_ids)

@@ -65,13 +65,19 @@ def tool_failure(event: str, attrs: dict[str, Any]) -> ToolFailure | None:
     """
     event = str(attrs.get("gen_ai.client.hook.event") or attrs.get("ide.hook.event")
                 or attrs.get("event.name") or event).rsplit(".", 1)[-1].lower()
-    if event not in _RESULT_EVENTS:
-        return None
     status = str(attrs.get("gen_ai.client.status") or attrs.get("status") or "").lower()
     message = _text(attrs.get("gen_ai.client.error.text")) or _text(attrs.get("error.message"))
-    error_type = _text(attrs.get("error.type"))
+    error_type = _text(attrs.get("error.type")).strip()
+    is_tool = event in _RESULT_EVENTS or any(attrs.get(key) for key in (
+        "gen_ai.client.tool_name", "ide.tool_name", "tool.name", "gen_ai.client.mcp_tool",
+        "gen_ai.client.command", "mcp.tool.name",
+    ))
+    if not is_tool:
+        return None
     if status in {"error", "failed", "failure"} or event == "posttoolusefailure" or error_type:
         return ToolFailure(error_type or "tool_error", message or "Tool execution failed")
+    if event not in _RESULT_EVENTS:
+        return None
     if status in {"ok", "success", "succeeded", "complete", "completed", "skipped"}:
         return None
     code = attrs.get("process.exit.code")

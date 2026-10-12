@@ -2102,7 +2102,8 @@ def test_failure_rate_impact_is_not_measurable_with_unknown_status_baseline(tmp_
         conn.close()
 
 
-def test_measurement_keeps_completed_fixed_size_cohort_stable(tmp_path):
+@pytest.mark.parametrize("mutation", ["eligible", "mixed", "missing", "workspace", "time", "status"])
+def test_measurement_keeps_completed_fixed_size_cohort_stable(tmp_path, mutation):
     service, conn = _service(tmp_path)
     project_root = tmp_path / "project"
     (project_root / ".git").mkdir(parents=True)
@@ -2207,6 +2208,41 @@ def test_measurement_keeps_completed_fixed_size_cohort_stable(tmp_path):
         assert "after-newest" not in {
             item["session_id"] for item in second_sessions["after_execution_units"]
         }
+
+        frozen = first["cohort"]["before_execution_unit_ids"]
+        victim = frozen[0]
+        if mutation == "missing":
+            conn.execute("DELETE FROM execution_units WHERE id = ?", (victim,))
+        elif mutation == "mixed":
+            conn.execute("UPDATE execution_unit_archetypes SET mixed = 1 WHERE execution_unit_id = ?", (victim,))
+        else:
+            assignment = {"eligible": "eligible = 0", "workspace": "repo_id = NULL",
+                          "time": "started_at = '2099-01-01'", "status": "status = 'running'"}[mutation]
+            conn.execute(f"UPDATE execution_units SET {assignment} WHERE id = ?", (victim,))
+        conn.commit()
+        conn.execute("PRAGMA query_only = ON")
+        effective = service.measurements.list(measurement_id=first["id"])[0]
+        assert effective["verdict"] == "insufficient_data"
+        assert effective["delta"] is None
+        assert effective["cohort"]["measurement_state"] == "not_measurable"
+        assert victim in effective["cohort"]["invalid_members"]
+        ledger = service.measurements.sessions(first["id"])
+        assert ledger["snapshot_exact"] is True
+        assert ledger["before_execution_units"] == second_sessions["before_execution_units"]
+        assert ledger["measurement_state"] == "not_measurable"
+        conn.execute("PRAGMA query_only = OFF")
+        invalid = service.measurements.measure(candidate.id, skip_unchanged=True)
+        assert invalid["created"] is True
+        assert invalid["cohort"]["before_execution_unit_ids"] == frozen
+        assert invalid["verdict"] == "insufficient_data"
+        assert invalid["before_value"] is None
+        assert invalid["delta"] is None
+        assert service.measurements.measure(candidate.id, skip_unchanged=True)["created"] is False
+        # Legacy ledgers are live reconstructions, not exact metric snapshots.
+        old_cohort = dict(first["cohort"])
+        old_cohort.pop("execution_unit_snapshots")
+        conn.execute("UPDATE measurements SET cohort_json = ? WHERE id = ?", (json.dumps(old_cohort), first["id"]))
+        assert service.measurements.sessions(first["id"])["snapshot_exact"] is False
     finally:
         conn.close()
 

@@ -40,6 +40,7 @@ Always follow this order:
 1. **Start non-trivial repository work with Reflect**
    - After identifying the task and repository path, call the MCP `reflect_context` tool exactly once before implementation or file changes.
    - Pass a concrete task question, set `path` to the repository root or relevant target, and set `task_file` when a written task or specification exists.
+   - When the caller knows its actual runtime session ID, pass `runtime_session_id` and `runtime_agent` to `reflect_context` (or supply them at `reflect_complete` if learned later). Never guess an ID or use the newest session as identity. Missing identity is reported by `reflect_task_status`; ingestion can recover exact task IDs from retained structured MCP calls.
    - Preserve the returned `task_run_id`. Follow a selected skill only when `execution_state` is `follow_allowed` and its constraints and preconditions match.
    - If `execution_state` is `retrieve_full_instructions`, call the supplied `full_instructions_action` before following the skill. Do not treat truncated inline instructions as complete.
    - Treat `registry_lifecycle_state` and installation fields as descriptive state, not execution permission. Installing or applying a skill still requires explicit operator approval.
