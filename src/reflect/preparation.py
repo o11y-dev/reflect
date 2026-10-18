@@ -356,7 +356,7 @@ class PreparationSnapshot:
 
 
 class PreparationLock:
-    """Serialize refresh pipelines for one database across threads and processes."""
+    """Serialize coordinated database writes across threads and processes."""
 
     def __init__(self, db_path: Path) -> None:
         self.path = Path(f"{db_path.expanduser().resolve()}.refresh.lock")

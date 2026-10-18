@@ -27,7 +27,6 @@ from reflect.preparation import (
     SnapshotLifecycleService,
     SQLiteSnapshotInspector,
 )
-from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only
 from reflect.task_runs import MCPTaskOutcome
 
@@ -121,8 +120,6 @@ def _with_service[ResultT](
     else:
         conn = connect_sqlite(db_path, timeout_ms=timeout_ms)
     try:
-        if not read_only:
-            migrate(conn)
         return operation(
             ReflectContextService(conn, initialize_schema=not read_only)
         )

@@ -832,7 +832,7 @@ def _open_improvement_service(
     db_path: Path,
     *,
     read_only: bool = False,
-) -> Iterator[tuple[sqlite3.Connection, ImprovementService]]:
+) -> Iterator[ImprovementService]:
     from reflect.improvements.service import ImprovementService
     from reflect.preparation import PreparationLock
     from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only
@@ -842,7 +842,7 @@ def _open_improvement_service(
         nullcontext() if read_only else PreparationLock(db_path),
         closing(connect(db_path)) as conn,
     ):
-        yield conn, ImprovementService(conn, initialize_schema=not read_only)
+        yield ImprovementService(conn, initialize_schema=not read_only)
 
 
 def _improvement_snapshot_status(db_path: Path) -> SnapshotStatus:
@@ -1242,8 +1242,8 @@ def improve(
             otlp_traces=_demo_otlp_traces() if demo else default_otlp_traces(),
             include_native_sessions=not demo,
         )
-        with _open_improvement_service(db_path, read_only=True) as (conn, service):
-            resolver = ImprovementScopeResolver(conn)
+        with _open_improvement_service(db_path, read_only=True) as service:
+            resolver = ImprovementScopeResolver(service.conn)
             explicit_scope = bool(scope_path is not None or session_id is not None or global_scope)
             if global_scope:
                 scope = resolver.global_period(selected_period or "week")
@@ -1524,7 +1524,7 @@ def workflows_list(
                 "or `reflect workflows add SKILL.md` to create a manual workflow."
             ),
         )
-    with _open_improvement_service(db_path, read_only=True) as (conn, service):
+    with _open_improvement_service(db_path, read_only=True) as service:
         candidates = service.workflows.list(
             behavior_types={behavior_type} if behavior_type else None,
             statuses={status} if status else None,
@@ -1597,7 +1597,7 @@ def workflows_add(
         skill["source_kind"] = "agent_authored"
     if source_workflow_id:
         skill["source_workflow_id"] = source_workflow_id
-    with _open_improvement_service(db_path) as (conn, service):
+    with _open_improvement_service(db_path) as service:
         source_session_ids: list[str] = []
         if source_workflow_id:
             try:
@@ -1638,7 +1638,7 @@ def workflows_show(candidate_id: str, as_json: bool, db_path: Path) -> None:
             f"Run `reflect refresh --db-path {db_path}` to prepare the workflow ledger."
         ),
     )
-    with _open_improvement_service(db_path, read_only=True) as (conn, service):
+    with _open_improvement_service(db_path, read_only=True) as service:
         try:
             candidate = service.workflows.show(candidate_id)
             preview = service.workflows.preview(candidate_id, project_root=Path.cwd())
@@ -1677,7 +1677,7 @@ def workflows_show(candidate_id: str, as_json: bool, db_path: Path) -> None:
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def workflows_apply(candidate_id: str, db_path: Path) -> None:
     """Approve and apply CANDIDATE_ID as a repo-local skill."""
-    with _open_improvement_service(db_path) as (conn, service):
+    with _open_improvement_service(db_path) as service:
         try:
             result = service.workflows.apply(candidate_id, project_root=Path.cwd())
         except (KeyError, RuntimeError, ValueError) as exc:
@@ -1692,7 +1692,7 @@ def workflows_apply(candidate_id: str, db_path: Path) -> None:
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def workflows_rollback(candidate_id: str, db_path: Path) -> None:
     """Roll back the active application of CANDIDATE_ID."""
-    with _open_improvement_service(db_path) as (conn, service):
+    with _open_improvement_service(db_path) as service:
         try:
             result = service.workflows.rollback(candidate_id)
         except (KeyError, RuntimeError, ValueError) as exc:
@@ -1732,7 +1732,7 @@ def loops(
     from reflect.improvements.models import LoopKind, LoopStatus
 
     preparation = _ensure_command_snapshot(db_path, refresh=refresh)
-    with _open_improvement_service(db_path, read_only=True) as (conn, improvement_service):
+    with _open_improvement_service(db_path, read_only=True) as improvement_service:
         records = improvement_service.loops.list(
             kind=LoopKind(kind) if kind else None,
             status=LoopStatus(status) if status else None,
@@ -1800,7 +1800,7 @@ def _require_improvement_snapshot(db_path: Path) -> None:
 def loops_show(loop_id: str, as_json: bool, db_path: Path) -> None:
     """Show one loop's classification and bounded source-session evidence."""
     _require_improvement_snapshot(db_path)
-    with _open_improvement_service(db_path, read_only=True) as (conn, improvement_service):
+    with _open_improvement_service(db_path, read_only=True) as improvement_service:
         try:
             detail = improvement_service.loops.show(loop_id)
         except KeyError as exc:
@@ -1854,7 +1854,7 @@ def loops_build(loop_id: str, agent: str | None, as_json: bool, db_path: Path) -
     import subprocess
 
     _require_improvement_snapshot(db_path)
-    with _open_improvement_service(db_path, read_only=True) as (conn, improvement_service):
+    with _open_improvement_service(db_path, read_only=True) as improvement_service:
         try:
             detail = improvement_service.loops.show(loop_id, limit=50)
             evidence_bundle = improvement_service.loops.evidence_bundle(loop_id)
@@ -1903,7 +1903,7 @@ def loops_build(loop_id: str, agent: str | None, as_json: bool, db_path: Path) -
         "source_loop_id": loop_id,
     }
     session_ids = sorted({item.session_id for item in detail.occurrences})
-    with _open_improvement_service(db_path) as (conn, improvement_service):
+    with _open_improvement_service(db_path) as improvement_service:
         candidate_id = improvement_service.stage_extracted_skills(
             [staged],
             session_ids=session_ids,
@@ -1955,7 +1955,7 @@ def feedback(
             f"Session {session_id} is not available in the local snapshot. "
             "Run this command with --refresh after telemetry ingestion."
         )
-    with _open_improvement_service(db_path) as (conn, service):
+    with _open_improvement_service(db_path) as service:
         try:
             feedback_id = service.repository.record_feedback(
                 session_id,
@@ -2394,7 +2394,7 @@ def skills(
             "reconcile the skill registry."
         ),
     )
-    with _open_improvement_service(db_path, read_only=True) as (conn, improvement_service):
+    with _open_improvement_service(db_path, read_only=True) as improvement_service:
         records = improvement_service.skills.list(
             lifecycle=SkillLifecycleState(lifecycle) if lifecycle else None,
             limit=500,
@@ -2442,7 +2442,7 @@ def skills_sync(
 
     click.echo("Waiting for the local store before syncing skills...", err=True)
     try:
-        with _open_improvement_service(db_path) as (conn, improvement_service):
+        with _open_improvement_service(db_path) as improvement_service:
             roots = list(scan_paths) or _default_skill_scan_paths()
             refresh_result = improvement_service.skills.refresh(scan_paths=roots)
             records = improvement_service.skills.list(
@@ -2607,7 +2607,7 @@ def _discover_skills(
     if not valid_selected:
         raise click.ClickException("No valid workflow candidates were extracted")
 
-    with _open_improvement_service(db_path) as (conn, improvement_service):
+    with _open_improvement_service(db_path) as improvement_service:
         candidate_ids = improvement_service.stage_extracted_skills(
             valid_selected,
             session_ids=sorted(stats.sessions_seen),
@@ -2747,7 +2747,7 @@ def skills_show(skill_id: str, as_json: bool, db_path: Path) -> None:
         db_path,
         refresh_hint=f"Run `reflect skills sync --db-path {db_path}` first.",
     )
-    with _open_improvement_service(db_path, read_only=True) as (conn, improvement_service):
+    with _open_improvement_service(db_path, read_only=True) as improvement_service:
         try:
             detail = improvement_service.skills.show(skill_id)
         except KeyError as exc:
@@ -2783,12 +2783,12 @@ def skills_show(skill_id: str, as_json: bool, db_path: Path) -> None:
 )
 def skills_apply(skill_id: str, project_root: Path, db_path: Path) -> None:
     """Apply a reviewed pending skill version to a Git repository."""
-    with _open_improvement_service(db_path) as (conn, improvement_service):
+    with _open_improvement_service(db_path) as improvement_service:
         try:
             candidate_id = improvement_service.skills.workflow_candidate_for(skill_id)
             result = improvement_service.workflows.apply(candidate_id, project_root=project_root)
             improvement_service.skills.sync_workflow_candidates([candidate_id])
-            conn.commit()
+            improvement_service.conn.commit()
             skill = improvement_service.skills.skill_for_candidate(candidate_id)
         except (KeyError, RuntimeError, ValueError) as exc:
             raise click.ClickException(str(exc)) from exc
@@ -2804,12 +2804,12 @@ def skills_apply(skill_id: str, project_root: Path, db_path: Path) -> None:
 )
 def skills_rollback(skill_id: str, db_path: Path) -> None:
     """Roll back the active installation owned by a Reflect skill version."""
-    with _open_improvement_service(db_path) as (conn, improvement_service):
+    with _open_improvement_service(db_path) as improvement_service:
         try:
             candidate_id = improvement_service.skills.workflow_candidate_for(skill_id)
             result = improvement_service.workflows.rollback(candidate_id)
             improvement_service.skills.sync_workflow_candidates([candidate_id])
-            conn.commit()
+            improvement_service.conn.commit()
         except (KeyError, RuntimeError, ValueError) as exc:
             raise click.ClickException(str(exc)) from exc
     click.echo(f"Rolled back {skill_id}; restored {result['target_path']}")
@@ -3692,7 +3692,6 @@ def doctor_cost(db_path: Path, alias_path: Path | None) -> None:
     from reflect.store.sqlite import connect_sqlite, mark_snapshot
 
     console = Console(force_terminal=True)
-    alias_result = None
     max_attempts = 3
     with PreparationLock(db_path):
         for attempt in range(1, max_attempts + 1):
@@ -3717,11 +3716,6 @@ def doctor_cost(db_path: Path, alias_path: Path | None) -> None:
                 time.sleep(1.5 * attempt)
             finally:
                 conn.close()
-
-    if alias_result is None:
-        raise click.ClickException(
-            "database is locked; stop concurrent writers and retry `reflect doctor cost`"
-        )
 
     click.echo("Run `reflect refresh` to publish the updated costs with all derived views.")
     table = Table(box=box.SIMPLE_HEAVY, expand=True)

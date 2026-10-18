@@ -7,6 +7,10 @@
 - Added a read-only MCP comparison of verified execution units with and without Reflect guidance, scoped to the same repository, task archetype, and model. It reports selected skill outcomes separately from guidance delivery and withholds cost averages when pricing is missing.
 - Guidance comparisons expose cache token mix, observed cache-read share, verified success rate, and cost per verified success to show cost drivers alongside outcome.
 
+### Changed
+
+- Simplified CLI service contexts, removed duplicate MCP migration checks and an unreachable cost-repair fallback, and clarified the shared writer lock's scope.
+
 ### Fixed
 - Memory sync and mutations, workflow/skill changes, feedback, and MCP/dashboard workflow writes now share the refresh lock for their complete database lifetime; read-only inspection remains independent of writer coordination.
 - Skill registry sync waits for concurrent refresh and maintenance operations before opening the store, preventing SQLite lock failures; external writer timeouts report an actionable error and failed initialization closes its connection.

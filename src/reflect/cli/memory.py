@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager, nullcontext
 from pathlib import Path
@@ -37,7 +36,7 @@ def _open_memory_service(
     db_path: Path,
     *,
     read_only: bool = False,
-) -> Iterator[tuple[sqlite3.Connection, MemoryService]]:
+) -> Iterator[MemoryService]:
     from reflect.memory import MemoryService
     from reflect.preparation import PreparationLock
     from reflect.store.migrate import migrate
@@ -53,7 +52,7 @@ def _open_memory_service(
         with closing(conn):
             if not read_only:
                 migrate(conn)
-            yield conn, MemoryService(conn, maintain_search_index=not read_only)
+            yield MemoryService(conn, maintain_search_index=not read_only)
 
 
 def _memory_filters(
@@ -88,7 +87,7 @@ def _memory_filters(
 @click.option("--json", "as_json", is_flag=True, help="Print provider health as JSON.")
 def memory_providers(db_path: Path, as_json: bool) -> None:
     """List memory providers and health."""
-    with _open_memory_service(db_path, read_only=True) as (conn, service):
+    with _open_memory_service(db_path, read_only=True) as service:
         health = service.provider_health()
     if as_json:
         echo_json(health)
@@ -117,7 +116,7 @@ def memory_providers(db_path: Path, as_json: bool) -> None:
 def memory_sync(path: Path | None, db_path: Path, as_json: bool) -> None:
     """Sync local folder instruction memories. PATH defaults to the current directory."""
     target = path or Path.cwd()
-    with _open_memory_service(db_path) as (conn, service):
+    with _open_memory_service(db_path) as service:
         result = service.sync_path(target, home_root=Path.home())
     if as_json:
         echo_json(result)
@@ -172,7 +171,7 @@ def memory_list(
     as_json: bool,
 ) -> None:
     """List memories for PATH. PATH defaults to the current directory."""
-    with _open_memory_service(db_path, read_only=True) as (conn, service):
+    with _open_memory_service(db_path, read_only=True) as service:
         rows = service.list_memories(
             path=path or Path.cwd(),
             all_memories=all_memories,
@@ -243,7 +242,7 @@ def memory_search(
     as_json: bool,
 ) -> None:
     """Search memories, optionally scoped to PATH."""
-    with _open_memory_service(db_path, read_only=True) as (conn, service):
+    with _open_memory_service(db_path, read_only=True) as service:
         rows = service.search(
             query,
             path=path or Path.cwd(),
@@ -276,7 +275,7 @@ def memory_search(
 @click.option("--json", "as_json", is_flag=True, help="Print memory as JSON.")
 def memory_inspect(memory_id: str, db_path: Path, as_json: bool) -> None:
     """Inspect one memory by ID."""
-    with _open_memory_service(db_path, read_only=True) as (conn, service):
+    with _open_memory_service(db_path, read_only=True) as service:
         row = service.inspect(memory_id)
     if row is None:
         raise click.ClickException(f"Memory not found: {memory_id}")
@@ -293,7 +292,7 @@ def memory_inspect(memory_id: str, db_path: Path, as_json: bool) -> None:
 )
 def memory_forget(memory_id: str, db_path: Path) -> None:
     """Delete one local memory by ID."""
-    with _open_memory_service(db_path) as (conn, service):
+    with _open_memory_service(db_path) as service:
         removed = service.forget(memory_id)
     if not removed:
         raise click.ClickException(f"Memory not found: {memory_id}")
@@ -319,7 +318,7 @@ def memory_validate(
     """Validate a memory or promote a candidate."""
     if not memory_id and not candidate_id:
         raise click.ClickException("Pass MEMORY_ID or --candidate CANDIDATE_ID")
-    with _open_memory_service(db_path) as (conn, service):
+    with _open_memory_service(db_path) as service:
         if candidate_id:
             promoted = service.promote_candidate(candidate_id)
             result = service.validate(str(promoted["id"]))
@@ -356,7 +355,7 @@ def memory_candidates(
     as_json: bool,
 ) -> None:
     """List graph-derived memory candidates for PATH."""
-    with _open_memory_service(db_path) as (conn, service):
+    with _open_memory_service(db_path) as service:
         rows = service.candidates(path=path or Path.cwd(), session_id=session_id, limit=limit)
     if as_json:
         echo_json(rows)
