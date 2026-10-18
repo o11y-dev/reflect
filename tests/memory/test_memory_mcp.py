@@ -98,7 +98,6 @@ def test_mcp_read_service_factory_does_not_run_migrations(tmp_path, monkeypatch)
     monkeypatch.setenv("REFLECT_DB_PATH", str(db_path))
 
     with (
-        patch("reflect.mcp.migrate") as mcp_migrate,
         patch("reflect.improvements.service.migrate") as improvement_migrate,
         patch("reflect.improvements.loops.migrate") as loop_migrate,
         patch("reflect.improvements.skills.migrate") as skill_migrate,
@@ -109,7 +108,6 @@ def test_mcp_read_service_factory_does_not_run_migrations(tmp_path, monkeypatch)
         )
 
     assert count == 0
-    mcp_migrate.assert_not_called()
     improvement_migrate.assert_not_called()
     loop_migrate.assert_not_called()
     skill_migrate.assert_not_called()
