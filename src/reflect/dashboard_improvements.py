@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
 from reflect.improvements.models import LoopKind, LoopStatus, SkillLifecycleState
 from reflect.improvements.service import ImprovementService
+from reflect.preparation import PreparationLock
 from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only
 
 
@@ -19,11 +20,11 @@ class DashboardImprovementAdapter:
     @contextmanager
     def _service(self, *, writable: bool = False) -> Iterator[ImprovementService]:
         connect = connect_sqlite if writable else connect_sqlite_read_only
-        conn = connect(self.db_path)
-        try:
+        with (
+            PreparationLock(self.db_path) if writable else nullcontext(),
+            closing(connect(self.db_path)) as conn,
+        ):
             yield ImprovementService(conn, initialize_schema=False)
-        finally:
-            conn.close()
 
     def findings(
         self,

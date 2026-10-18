@@ -22,6 +22,7 @@ from reflect.improvements.models import (
 from reflect.inspection import PatternType, SkillAvailability
 from reflect.preparation import (
     CommandPreparationPolicy,
+    PreparationLock,
     PreparationProfile,
     SnapshotLifecycleService,
     SQLiteSnapshotInspector,
@@ -355,24 +356,26 @@ def reflect_review_change(
     """Prepare an exact workflow approval, application, or rollback for user review."""
 
     resolved_root = Path(project_root).expanduser().resolve() if project_root else None
-    return _with_service(
-        lambda service: service.review_change(
-            action=action,
-            entity_id=entity_id,
-            project_root=resolved_root,
-            revised_content=revised_content,
-            expires_in_minutes=expires_in_minutes,
-        ).model_dump(mode="json")
-    )
+    with PreparationLock(_db_path()):
+        return _with_service(
+            lambda service: service.review_change(
+                action=action,
+                entity_id=entity_id,
+                project_root=resolved_root,
+                revised_content=revised_content,
+                expires_in_minutes=expires_in_minutes,
+            ).model_dump(mode="json")
+        )
 
 
 @mcp.tool(annotations=CHANGE_APPLY_TOOL)
 def reflect_apply_change(approval_token: str) -> dict[str, Any]:
     """Apply only the exact reviewed change after explicit user approval."""
 
-    return _with_service(
-        lambda service: service.apply_change(approval_token).model_dump(mode="json")
-    )
+    with PreparationLock(_db_path()):
+        return _with_service(
+            lambda service: service.apply_change(approval_token).model_dump(mode="json")
+        )
 
 
 @mcp.tool(annotations=READ_ONLY_TOOL)
