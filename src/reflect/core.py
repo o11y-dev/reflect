@@ -839,7 +839,11 @@ def _open_improvement_service(
         if read_only
         else connect_sqlite(db_path)
     )
-    return conn, ImprovementService(conn, initialize_schema=not read_only)
+    try:
+        return conn, ImprovementService(conn, initialize_schema=not read_only)
+    except BaseException:
+        conn.close()
+        raise
 
 
 def _improvement_snapshot_status(db_path: Path) -> SnapshotStatus:
@@ -2465,17 +2469,29 @@ def skills_sync(
 ) -> None:
     """Reconcile skill files, workflow drafts, usage, and measurements."""
     from reflect.improvements.models import SkillLifecycleState
+    from reflect.preparation import PreparationLock
+    from reflect.store.sqlite import is_sqlite_busy
 
-    conn, improvement_service = _open_improvement_service(db_path)
+    click.echo("Waiting for the local store before syncing skills...", err=True)
     try:
-        roots = list(scan_paths) or _default_skill_scan_paths()
-        refresh_result = improvement_service.skills.refresh(scan_paths=roots)
-        records = improvement_service.skills.list(
-            lifecycle=SkillLifecycleState(lifecycle) if lifecycle else None,
-            limit=500,
-        )
-    finally:
-        conn.close()
+        with PreparationLock(db_path):
+            conn, improvement_service = _open_improvement_service(db_path)
+            try:
+                roots = list(scan_paths) or _default_skill_scan_paths()
+                refresh_result = improvement_service.skills.refresh(scan_paths=roots)
+                records = improvement_service.skills.list(
+                    lifecycle=SkillLifecycleState(lifecycle) if lifecycle else None,
+                    limit=500,
+                )
+            finally:
+                conn.close()
+    except sqlite3.OperationalError as exc:
+        if not is_sqlite_busy(exc):
+            raise
+        raise click.ClickException(
+            "Another writer is using the local store. Wait for it to finish, "
+            "then retry `reflect skills sync`."
+        ) from exc
     if as_json:
         echo_json(
             {

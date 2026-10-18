@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 
 from reflect.core import main
@@ -86,7 +88,7 @@ def test_skills_sync_is_explicit_and_read_only_list_does_not_reconcile(tmp_path)
     )
 
     assert synced.exit_code == 0, synced.output
-    payload = json.loads(synced.output)
+    payload = json.loads(synced.stdout)
     assert payload["refresh"]["filesystem_skills"] == 1
     assert payload["skills"][0]["slug"] == "bounded-recovery"
     assert payload["skills"][0]["version_count"] == 1
@@ -130,6 +132,44 @@ def test_skills_sync_is_explicit_and_read_only_list_does_not_reconcile(tmp_path)
     )
     assert resynced.exit_code == 0, resynced.output
     assert json.loads(resynced.stdout)["skills"][0]["version_count"] == 2
+
+
+@pytest.mark.parametrize("initialized", [False, True])
+def test_skills_sync_reports_external_writer_and_recovers(tmp_path, monkeypatch, initialized):
+    from reflect.store import sqlite
+
+    monkeypatch.setenv("REFLECT_SQLITE_BUSY_TIMEOUT_MS", "50")
+    db_path = tmp_path / "reflect.db"
+    root = tmp_path / "skills"
+    root.mkdir()
+    writer = connect_sqlite(db_path)
+    if initialized:
+        migrate(writer)
+    opened = []
+
+    def track_connection(*args, **kwargs):
+        conn = connect_sqlite(*args, **kwargs)
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(sqlite, "connect_sqlite", track_connection)
+    args = ["skills", "sync", "--json", "--path", str(root), "--db-path", str(db_path)]
+    try:
+        writer.execute("BEGIN IMMEDIATE")
+        blocked = CliRunner().invoke(main, args)
+        assert blocked.exit_code == 1
+        assert "Another writer is using the local store" in blocked.stderr
+        assert blocked.stdout == ""
+        # Covers initialization failure as well as failure during reconciliation.
+        assert len(opened) == 1
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            opened[0].execute("SELECT 1")
+        writer.rollback()
+        recovered = CliRunner().invoke(main, args)
+        assert recovered.exit_code == 0, recovered.output
+        assert json.loads(recovered.stdout)["refresh"]["filesystem_skills"] == 0
+    finally:
+        writer.close()
 
 
 def test_loops_list_show_and_build_promote_selected_evidence_to_pending_skill(tmp_path):
