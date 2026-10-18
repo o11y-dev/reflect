@@ -80,3 +80,61 @@ def test_refresh_pipelines_share_process_lock_and_release_after_failure(
             if process.poll() is None:
                 process.kill()
             process.communicate(timeout=5)
+
+
+def test_skills_sync_waits_for_refresh_while_registry_stays_readable(tmp_path):
+    import json
+
+    from click.testing import CliRunner
+
+    from reflect.core import main
+    from reflect.preparation import PreparationLock
+    from reflect.store.migrate import migrate
+    from reflect.store.sqlite import connect_sqlite, mark_snapshot
+
+    db = tmp_path / "reflect.db"
+    conn = connect_sqlite(db)
+    migrate(conn)
+    mark_snapshot(conn, ready=True)
+    root = tmp_path / "skills" / "bounded-recovery"
+    root.mkdir(parents=True)
+    (root / "SKILL.md").write_text(
+        "---\nname: bounded-recovery\ndescription: Verify recovery.\n---\n\n# Recovery\n",
+        encoding="utf-8",
+    )
+    alias = tmp_path / "alias.db"
+    alias.symlink_to(db)
+    process = None
+    try:
+        with PreparationLock(db):
+            conn.execute("BEGIN IMMEDIATE")
+            process = subprocess.Popen(
+                [
+                    sys.executable, "-u", "-c",
+                    "from reflect.core import main; print('started', flush=True); main()",
+                    "skills", "sync", "--json", "--path", str(root.parent),
+                    "--db-path", str(alias),
+                ],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                env={**os.environ, "REFLECT_SQLITE_BUSY_TIMEOUT_MS": "50"},
+                bufsize=0,
+            )
+            assert _readline(process) == b"started"
+            # Wait beyond SQLite's timeout: sync must queue on the shared lock.
+            with pytest.raises(subprocess.TimeoutExpired):
+                process.communicate(timeout=0.3)
+            listed = CliRunner().invoke(main, ["skills", "--json", "--db-path", str(db)])
+            assert listed.exit_code == 0, listed.output
+            assert json.loads(listed.stdout)["refresh"] is None
+            conn.rollback()
+        stdout, stderr = process.communicate(timeout=10)
+        assert process.returncode == 0, stderr.decode()
+        payload = json.loads(stdout)
+        assert payload["refresh"]["filesystem_skills"] == 1
+        assert payload["skills"][0]["slug"] == "bounded-recovery"
+    finally:
+        conn.close()
+        if process is not None:
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=5)

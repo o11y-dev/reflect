@@ -8,6 +8,7 @@
 - Guidance comparisons expose cache token mix, observed cache-read share, verified success rate, and cost per verified success to show cost drivers alongside outcome.
 
 ### Fixed
+- Skill registry sync waits for concurrent refresh and maintenance operations before opening the store, preventing SQLite lock failures; external writer timeouts report an actionable error and failed initialization closes its connection.
 - Task tracking accepts explicit runtime identity and recovers exact historical task links during refresh, exposing missing and conflicting identity without guessing.
 - Frozen impact cohorts are revalidated before measurement and on reads; invalid comparisons retain their ledger and cannot claim improvement or savings. New comparison ledgers preserve per-task metric evidence.
 - Structured tool errors consistently reach canonical call status and session totals; retained inconsistencies are repaired without replaying usage.
