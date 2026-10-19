@@ -1,3 +1,4 @@
+import json
 from unittest.mock import patch
 
 import pytest
@@ -309,7 +310,10 @@ def test_generic_agent_session_routes_to_litellm_when_configured(tmp_path):
 def test_graph_candidate_id_is_stable_when_support_changes(tmp_path):
     conn, service = _service(tmp_path)
 
+    _candidate_workspace(conn, tmp_path)
+
     def add_graph_edge(session_id: str) -> None:
+        conn.execute("INSERT INTO sessions(id, agent_id, workspace_id, started_at, status, created_at, updated_at) VALUES (?, 'candidate-agent', 'candidate-workspace', 'now', 'completed', 'now', 'now')", (session_id,))
         now = "2026-01-01T00:00:00+00:00"
         conn.execute(
             """
@@ -323,7 +327,7 @@ def test_graph_candidate_id_is_stable_when_support_changes(tmp_path):
             """
             INSERT OR IGNORE INTO graph_nodes(
               id, kind, label, session_id, first_seen_at, last_seen_at, attrs_json, created_at, updated_at
-            ) VALUES ('tool:Read', 'Tool', 'Read', NULL, ?, ?, '{}', ?, ?)
+            ) VALUES ('skill:verify', 'Skill', 'verify', NULL, ?, ?, '{}', ?, ?)
             """,
             (now, now, now, now),
         )
@@ -332,7 +336,7 @@ def test_graph_candidate_id_is_stable_when_support_changes(tmp_path):
             INSERT INTO graph_edges(
               id, source_node_id, target_node_id, kind, session_id, weight,
               first_seen_at, last_seen_at, attrs_json, created_at, updated_at
-            ) VALUES (?, ?, 'tool:Read', 'used_tool', ?, 1, ?, ?, '{}', ?, ?)
+            ) VALUES (?, ?, 'skill:verify', 'used_skill', ?, 1, ?, ?, '{}', ?, ?)
             """,
             (f"edge:{session_id}", f"session:{session_id}", session_id, now, now, now, now),
         )
@@ -342,12 +346,12 @@ def test_graph_candidate_id_is_stable_when_support_changes(tmp_path):
         add_graph_edge("sess-a")
         add_graph_edge("sess-b")
         candidates = service.candidates(path=tmp_path)
-        read_candidate = next(item for item in candidates if "Read" in item["content"])
+        read_candidate = next(item for item in candidates if "verify" in item["content"])
         first_id = read_candidate["id"]
 
         add_graph_edge("sess-c")
         candidates = service.candidates(path=tmp_path)
-        read_candidates = [item for item in candidates if "Read" in item["content"]]
+        read_candidates = [item for item in candidates if "verify" in item["content"]]
 
         assert len(read_candidates) == 1
         assert read_candidates[0]["id"] == first_id
@@ -358,6 +362,7 @@ def test_graph_candidate_id_is_stable_when_support_changes(tmp_path):
 
 def test_graph_candidates_promote_to_memory(tmp_path):
     conn, service = _service(tmp_path)
+    _candidate_workspace(conn, tmp_path)
     try:
         now = "2026-01-01T00:00:00+00:00"
         conn.execute(
@@ -367,8 +372,8 @@ def test_graph_candidates_promote_to_memory(tmp_path):
         for session_id in ("sess-a", "sess-b"):
             conn.execute(
                 """
-                INSERT INTO sessions(id, agent_id, started_at, status, created_at, updated_at)
-                VALUES (?, 'a', ?, 'ok', ?, ?)
+                INSERT INTO sessions(id, agent_id, workspace_id, started_at, status, created_at, updated_at)
+                VALUES (?, 'a', 'candidate-workspace', ?, 'ok', ?, ?)
                 """,
                 (session_id, now, now, now),
             )
@@ -383,18 +388,24 @@ def test_graph_candidates_promote_to_memory(tmp_path):
                 """
                 INSERT INTO tool_calls(
                   id, step_id, session_id, tool_name, status, raw_attrs_json, created_at, updated_at
-                ) VALUES (?, ?, ?, 'Read', 'ok', '{}', ?, ?)
+                ) VALUES (?, ?, ?, 'Read', 'ok', ?, ?, ?)
                 """,
-                (f"tool-{session_id}", f"step-{session_id}", session_id, now, now),
+                (f"tool-{session_id}", f"step-{session_id}", session_id, json.dumps({"gen_ai.client.file_path": str(tmp_path / "src" / "service.py")}), now, now),
             )
         conn.commit()
         rebuild_graph(conn)
 
         candidates = service.candidates(path=tmp_path)
-        read_candidate = next(item for item in candidates if "Read" in item["content"])
+        read_candidate = next(item for item in candidates if "folder: src " in item["content"])
         remembered = service.promote_candidate(read_candidate["id"])
 
         assert remembered["type"] == "graph_pattern"
         assert remembered["source"] == "graph_candidate"
     finally:
         conn.close()
+
+
+def _candidate_workspace(conn, root):
+    conn.execute("INSERT INTO agents(id, name, created_at, updated_at) VALUES ('candidate-agent', 'test', 'now', 'now')")
+    conn.execute("INSERT INTO workspaces(id, root_path, path_hash, label, source_key, created_at, updated_at) VALUES ('candidate-workspace', ?, 'candidate-hash', 'test', 'test', 'now', 'now')", (str(root),))
+    conn.commit()
