@@ -98,7 +98,6 @@ def test_mcp_read_service_factory_does_not_run_migrations(tmp_path, monkeypatch)
     monkeypatch.setenv("REFLECT_DB_PATH", str(db_path))
 
     with (
-        patch("reflect.mcp.migrate") as mcp_migrate,
         patch("reflect.improvements.service.migrate") as improvement_migrate,
         patch("reflect.improvements.loops.migrate") as loop_migrate,
         patch("reflect.improvements.skills.migrate") as skill_migrate,
@@ -109,7 +108,6 @@ def test_mcp_read_service_factory_does_not_run_migrations(tmp_path, monkeypatch)
         )
 
     assert count == 0
-    mcp_migrate.assert_not_called()
     improvement_migrate.assert_not_called()
     loop_migrate.assert_not_called()
     skill_migrate.assert_not_called()
@@ -465,7 +463,8 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
             discovered = {tool.name: tool for tool in tools.tools}
             result = await session.call_tool(
                 "reflect_context",
-                {"question": "release gate", "path": str(tmp_path)},
+                {"question": "release gate", "path": str(tmp_path),
+                 "runtime_session_id": "caller-runtime", "runtime_agent": "codex"},
             )
             completed = await session.call_tool(
                 "reflect_complete",
@@ -474,6 +473,8 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
                     "outcome": "success",
                     "verification_passed": True,
                     "summary": "Validated the release gate.",
+                    "runtime_session_id": "caller-runtime",
+                    "runtime_agent": "codex",
                 },
             )
             task_status = await session.call_tool(
@@ -486,6 +487,10 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
                 {"pattern_type": "all", "query": "release"},
             )
             impact = await session.call_tool("reflect_impact", {})
+            efficiency = await session.call_tool(
+                "reflect_guidance_efficiency",
+                {"repo_id": "missing", "task_archetype_id": "review", "model": "model-a"},
+            )
             review = await session.call_tool(
                 "reflect_review_change",
                 {
@@ -508,6 +513,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
                 skills,
                 patterns,
                 impact,
+                efficiency,
                 review,
                 applied,
             )
@@ -521,6 +527,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
         skills,
         patterns,
         impact,
+        efficiency,
         review,
         applied,
     ) = asyncio.run(exercise_server())
@@ -537,6 +544,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
         "reflect_complete",
         "reflect_context",
         "reflect_explain",
+        "reflect_guidance_efficiency",
         "reflect_impact",
         "reflect_improvements",
         "reflect_patterns",
@@ -555,7 +563,9 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
     assert completed.structuredContent["status"] == "completed"
     assert not task_status.isError
     assert task_status.structuredContent["task_run_id"] == result.structuredContent["task_run_id"]
-    assert task_status.structuredContent["link_state"] == "no_runtime_session"
+    assert task_status.structuredContent["link_state"] == "pending_ingestion"
+    assert task_status.structuredContent["runtime_session_id"] == "caller-runtime"
+    assert task_status.structuredContent["runtime_identity_source"] == "explicit_argument"
     assert not skills.isError
     assert skills.structuredContent["count"] == 1
     assert not patterns.isError
@@ -563,6 +573,8 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
     assert patterns.structuredContent["loop_count"] == 0
     assert not impact.isError
     assert impact.structuredContent["count"] == 0
+    assert not efficiency.isError
+    assert efficiency.structuredContent["guided"]["count"] == 0
     assert not review.isError
     assert review.structuredContent["candidate_id"] == candidate_id
     assert review.structuredContent["state"] == "pending"
@@ -597,5 +609,84 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
         assert tuple(
             conn.execute("SELECT status, outcome FROM mcp_task_runs").fetchone()
         ) == ("completed", "success")
+    finally:
+        conn.close()
+
+
+def test_explicit_task_identity_and_late_completion_identity(tmp_path):
+    from reflect.task_runs import MCPTaskRunService
+    from reflect.usage import UsageService
+
+    conn = connect_sqlite(tmp_path / 'identity.db')
+    migrate(conn)
+    service = MCPTaskRunService(conn, usage=UsageService(conn, environ={'CODEX_THREAD_ID': 'server-session'}))
+    args = {'question': 'test', 'workspace_path': tmp_path, 'task_file_path': None,
+            'workflow_id': None, 'selected_skills': [], 'selected_memories': []}
+    try:
+        task = service.start(**args, runtime_session_id='caller-session', runtime_agent='codex')
+        assert service.status(task).runtime_session_id == 'caller-session'
+        assert service.status(task).runtime_identity_source == 'explicit_argument'
+        with pytest.raises(ValueError, match='conflicts'):
+            service.complete(task, outcome='success', runtime_session_id='another-session')
+        assert service.status(task).status == 'started'
+        result = service.complete(task, outcome='success')
+        assert result.linked_to_session is False
+        assert service.status(task).link_state == 'pending_ingestion'
+        service.usage = UsageService(conn, environ={})
+        missing = service.start(**args)
+        service.complete(missing, outcome='success')
+        result = service.complete(missing, outcome='success', runtime_session_id='late-session')
+        assert result.idempotent is True
+        assert service.status(missing).runtime_session_id == 'late-session'
+        assert service.status(missing).runtime_identity_source == 'explicit_argument'
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize('conflicting', [False, True])
+def test_refresh_recovers_exact_task_ids_without_guessing(tmp_path, conflicting):
+    from reflect.store.ingest import ingest_local_spans_file
+    from reflect.store.normalize import normalize_pending_raw_events
+    from reflect.task_runs import MCPTaskRunService
+    from reflect.usage import UsageService
+
+    conn = connect_sqlite(tmp_path / 'recovery.db')
+    migrate(conn)
+    service = MCPTaskRunService(conn, usage=UsageService(conn, environ={}))
+    args = {'question': 'test', 'workspace_path': tmp_path, 'task_file_path': None,
+            'workflow_id': None, 'selected_skills': [], 'selected_memories': []}
+    task = service.start(**args)
+    unrelated = service.start(**args)
+    service.complete(task, outcome='success')
+    service.complete(unrelated, outcome='success')
+    spans = []
+    for session in (['caller', 'other-caller'] if conflicting else ['caller']):
+        spans.append({
+            'name': 'PreToolUse', 'traceId': session, 'spanId': session,
+            'start_time_ns': 1791183100000000000, 'end_time_ns': 1791183101000000000,
+            'attributes': {'gen_ai.client.name': 'codex', 'gen_ai.client.session_id': session,
+                           'gen_ai.client.hook.event': 'PreToolUse',
+                           'gen_ai.client.tool_name': 'mcp__reflect__reflect_complete',
+                           'gen_ai.client.tool.input': json.dumps({'task_run_id': task}),
+                           'gen_ai.client.cwd': str(tmp_path)},
+        })
+    source = tmp_path / 'calls.jsonl'
+    source.write_text('\n'.join(json.dumps(item) for item in spans))
+    try:
+        ingest_local_spans_file(conn, file_path=source)
+        assert normalize_pending_raw_events(conn)['failed'] == 0
+        status = service.status(task)
+        if conflicting:
+            assert status.link_state == 'conflicting_identity'
+            assert status.execution_unit_id is None
+        else:
+            assert status.link_state == 'linked'
+            assert status.runtime_identity_source == 'telemetry_correlation'
+            assert status.runtime_identity_evidence_id
+            unit = status.execution_unit_id
+            normalize_pending_raw_events(conn)
+            assert service.status(task).execution_unit_id == unit
+            assert conn.execute('SELECT count(*) FROM execution_units WHERE mcp_task_run_id = ?', (task,)).fetchone()[0] == 1
+        assert service.status(unrelated).link_state == 'no_runtime_session'
     finally:
         conn.close()

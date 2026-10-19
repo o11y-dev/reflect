@@ -8,6 +8,7 @@ import uuid
 from collections import defaultdict
 from typing import Any
 
+from reflect.improvements.measurement import MeasurementService
 from reflect.improvements.repository import ImprovementRepository, utc_now
 
 
@@ -67,20 +68,21 @@ class TeamBundleService:
                     / len(candidates),
                 }
             )
+        measurement_groups = {}
+        for item in MeasurementService(self.conn).iter_results():
+            key = (item["metric_name"], item["verdict"])
+            group = measurement_groups.setdefault(key, [0, 0.0, 0, 0.0])
+            group[0] += 1
+            if item["delta"] is not None:
+                group[1] += item["delta"]
+                group[2] += 1
+            group[3] += item["confidence"]
         measurements = [
-            {
-                "metric_name": row[0],
-                "verdict": row[1],
-                "measurement_count": row[2],
-                "mean_delta": row[3],
-                "mean_confidence": row[4],
-            }
-            for row in self.conn.execute(
-                """
-                SELECT metric_name, verdict, COUNT(*), AVG(delta), AVG(confidence)
-                FROM measurements GROUP BY metric_name, verdict
-                """
-            ).fetchall()
+            {"metric_name": metric, "verdict": verdict, "measurement_count": count,
+             "mean_delta": delta / delta_count if delta_count else None,
+             "mean_confidence": confidence / count}
+            for (metric, verdict), (count, delta, delta_count, confidence)
+            in sorted(measurement_groups.items())
         ]
         payload = {
             "schema_version": 1,

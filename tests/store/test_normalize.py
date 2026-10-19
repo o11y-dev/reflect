@@ -1,5 +1,8 @@
 import hashlib
 import json
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 import pytest
 
@@ -128,6 +131,106 @@ def test_normalize_pending_raw_events_populates_canonical_tables(tmp_path):
             "[redacted file preview]",
         )
         assert conn.execute("SELECT COUNT(*) FROM mcp_calls").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_concurrent_normalizers_do_not_process_the_same_pending_events(tmp_path, monkeypatch):
+    db = tmp_path / "reflect.db"
+    spans = tmp_path / "spans.jsonl"
+    _write_spans(spans)
+    conn = connect_sqlite(db)
+    migrate(conn)
+    ingest_local_spans_file(conn, file_path=spans)
+    conn.close()
+    entered = Event()
+    release = Event()
+    second_started = Event()
+    original = normalize_mod._insert_agent
+
+    def pause_first_writer(conn, attrs, timestamp):
+        if not entered.is_set():
+            entered.set()
+            assert release.wait(5)
+        return original(conn, attrs, timestamp)
+
+    monkeypatch.setattr(normalize_mod, "_insert_agent", pause_first_writer)
+
+    def run(started=None):
+        conn = connect_sqlite(db)
+        try:
+            if started is not None:
+                started.set()
+            return normalize_pending_raw_events(conn)
+        finally:
+            conn.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(run)
+        try:
+            assert entered.wait(5)
+            second = pool.submit(run, second_started)
+            assert second_started.wait(5)
+        finally:
+            release.set()
+        results = [first.result(timeout=5), second.result(timeout=5)]
+    assert sorted(r["processed"] for r in results) == [0, 3]
+    assert all(r["failed"] == 0 for r in results)
+
+
+def test_normalization_lock_timeout_leaves_events_retryable(tmp_path):
+    db = tmp_path / "reflect.db"
+    spans = tmp_path / "spans.jsonl"
+    _write_spans(spans)
+    conn = connect_sqlite(db)
+    migrate(conn)
+    ingest_local_spans_file(conn, file_path=spans)
+    conn.execute("PRAGMA busy_timeout = 10")
+    writer = connect_sqlite(db)
+    try:
+        writer.execute("BEGIN IMMEDIATE")
+        with pytest.raises(sqlite3.OperationalError, match="locked") as error:
+            normalize_pending_raw_events(conn)
+        assert error.value.__context__ is None  # No second failed-status write.
+        assert not conn.in_transaction
+        assert conn.execute(
+            "SELECT COUNT(*) FROM raw_events WHERE normalized_status = 'pending' "
+            "AND normalization_error IS NULL"
+        ).fetchone()[0] == 3
+        writer.rollback()
+        assert normalize_pending_raw_events(conn) == {"processed": 3, "failed": 0, "skipped": 0}
+    finally:
+        writer.close()
+        conn.close()
+
+
+def test_normalization_store_failure_rolls_back_the_batch(tmp_path, monkeypatch):
+    spans = tmp_path / "spans.jsonl"
+    _write_spans(spans)
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    migrate(conn)
+    ingest_local_spans_file(conn, file_path=spans)
+    original = normalize_mod._insert_agent
+    calls = 0
+
+    def fail_second(conn, attrs, timestamp):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise sqlite3.OperationalError("disk I/O error")
+        return original(conn, attrs, timestamp)
+
+    monkeypatch.setattr(normalize_mod, "_insert_agent", fail_second)
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="disk I/O"):
+            normalize_pending_raw_events(conn)
+        assert not conn.in_transaction
+        assert conn.execute("SELECT COUNT(*) FROM steps").fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM raw_events WHERE normalized_status = 'pending'"
+        ).fetchone()[0] == 3
+        monkeypatch.setattr(normalize_mod, "_insert_agent", original)
+        assert normalize_pending_raw_events(conn)["processed"] == 3
     finally:
         conn.close()
 

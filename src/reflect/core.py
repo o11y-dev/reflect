@@ -39,7 +39,8 @@ import sys
 import time
 import tomllib
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import closing, contextmanager, nullcontext
 from datetime import UTC, datetime
 from importlib import metadata as importlib_metadata
 from importlib import resources as importlib_resources
@@ -826,20 +827,22 @@ def _demo_otlp_traces() -> Path:
     return bundled
 
 
+@contextmanager
 def _open_improvement_service(
     db_path: Path,
     *,
     read_only: bool = False,
-) -> tuple[sqlite3.Connection, ImprovementService]:
+) -> Iterator[ImprovementService]:
     from reflect.improvements.service import ImprovementService
+    from reflect.preparation import PreparationLock
     from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only
 
-    conn = (
-        connect_sqlite_read_only(db_path)
-        if read_only
-        else connect_sqlite(db_path)
-    )
-    return conn, ImprovementService(conn, initialize_schema=not read_only)
+    connect = connect_sqlite_read_only if read_only else connect_sqlite
+    with (
+        nullcontext() if read_only else PreparationLock(db_path),
+        closing(connect(db_path)) as conn,
+    ):
+        yield ImprovementService(conn, initialize_schema=not read_only)
 
 
 def _improvement_snapshot_status(db_path: Path) -> SnapshotStatus:
@@ -880,9 +883,11 @@ def _ensure_command_snapshot(
     keep_processed_raw: bool = False,
     prepare: Callable[[], dict[str, object]] | None = None,
     readiness_probes: tuple[SnapshotReadinessProbe, ...] = (),
+    profile: str = "snapshot",
 ) -> SnapshotPreparationResult:
     from reflect.preparation import (
         CallableSnapshotRefresher,
+        PreparationProfile,
         SnapshotLifecycleService,
         SnapshotUnavailableError,
         SQLiteSnapshotInspector,
@@ -905,6 +910,7 @@ def _ensure_command_snapshot(
         SQLiteSnapshotInspector(
             db_path,
             readiness_probes=readiness_probes,
+            profile=PreparationProfile(profile),
         ),
         refresher=CallableSnapshotRefresher(refresh_operation),
         refresh_hint=(
@@ -916,6 +922,15 @@ def _ensure_command_snapshot(
         return lifecycle.prepare(requested_refresh=refresh)
     except SnapshotUnavailableError as exc:
         raise click.ClickException(str(exc)) from exc
+    except sqlite3.OperationalError as exc:
+        from reflect.store.sqlite import is_sqlite_busy
+
+        if is_sqlite_busy(exc):
+            raise click.ClickException(
+                "The telemetry store is busy with another writer. Let the active "
+                "operation finish, then run `reflect refresh` again."
+            ) from exc
+        raise
 
 
 def _format_usage_duration(duration_ms: int) -> str:
@@ -1121,6 +1136,7 @@ def usage(
     _ensure_command_snapshot(
         db_path,
         refresh=refresh,
+        profile="usage",
         readiness_probes=(
             UsageRollupReadinessProbe(
                 session_ids=(session_id,) if session_id and not global_scope else None
@@ -1139,7 +1155,7 @@ def usage(
         ),
     )
 
-    conn = connect_sqlite_read_only(db_path)
+    conn = connect_sqlite_read_only(db_path, profile="usage")
     try:
         report = UsageService(conn).report(
             session_id=session_id,
@@ -1226,9 +1242,8 @@ def improve(
             otlp_traces=_demo_otlp_traces() if demo else default_otlp_traces(),
             include_native_sessions=not demo,
         )
-        conn, service = _open_improvement_service(db_path, read_only=True)
-        try:
-            resolver = ImprovementScopeResolver(conn)
+        with _open_improvement_service(db_path, read_only=True) as service:
+            resolver = ImprovementScopeResolver(service.conn)
             explicit_scope = bool(scope_path is not None or session_id is not None or global_scope)
             if global_scope:
                 scope = resolver.global_period(selected_period or "week")
@@ -1310,8 +1325,6 @@ def improve(
                 f"[dim]{result.pending_workflows} pending workflow(s). "
                 "Inspect one with: reflect improve <ID>[/dim]"
             )
-        finally:
-            conn.close()
     finally:
         if temporary is not None:
             temporary.cleanup()
@@ -1511,14 +1524,11 @@ def workflows_list(
                 "or `reflect workflows add SKILL.md` to create a manual workflow."
             ),
         )
-    conn, service = _open_improvement_service(db_path, read_only=True)
-    try:
+    with _open_improvement_service(db_path, read_only=True) as service:
         candidates = service.workflows.list(
             behavior_types={behavior_type} if behavior_type else None,
             statuses={status} if status else None,
         )
-    finally:
-        conn.close()
     if as_json:
         echo_json([candidate.model_dump(mode="json") for candidate in candidates])
         return
@@ -1587,8 +1597,7 @@ def workflows_add(
         skill["source_kind"] = "agent_authored"
     if source_workflow_id:
         skill["source_workflow_id"] = source_workflow_id
-    conn, service = _open_improvement_service(db_path)
-    try:
+    with _open_improvement_service(db_path) as service:
         source_session_ids: list[str] = []
         if source_workflow_id:
             try:
@@ -1606,8 +1615,6 @@ def workflows_add(
             session_ids=source_session_ids,
             source_agent=normalized_agent or None,
         )[0]
-    finally:
-        conn.close()
     click.echo(f"Staged {candidate_id} from {skill_file}")
     if normalized_agent:
         click.echo(f"Authorship: agent draft ({normalized_agent})")
@@ -1631,14 +1638,12 @@ def workflows_show(candidate_id: str, as_json: bool, db_path: Path) -> None:
             f"Run `reflect refresh --db-path {db_path}` to prepare the workflow ledger."
         ),
     )
-    conn, service = _open_improvement_service(db_path, read_only=True)
-    try:
-        candidate = service.workflows.show(candidate_id)
-        preview = service.workflows.preview(candidate_id, project_root=Path.cwd())
-    except KeyError as exc:
-        raise click.ClickException(str(exc)) from exc
-    finally:
-        conn.close()
+    with _open_improvement_service(db_path, read_only=True) as service:
+        try:
+            candidate = service.workflows.show(candidate_id)
+            preview = service.workflows.preview(candidate_id, project_root=Path.cwd())
+        except KeyError as exc:
+            raise click.ClickException(str(exc)) from exc
     if as_json:
         payload = candidate.model_dump(mode="json")
         payload["preview"] = preview
@@ -1672,13 +1677,11 @@ def workflows_show(candidate_id: str, as_json: bool, db_path: Path) -> None:
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def workflows_apply(candidate_id: str, db_path: Path) -> None:
     """Approve and apply CANDIDATE_ID as a repo-local skill."""
-    conn, service = _open_improvement_service(db_path)
-    try:
-        result = service.workflows.apply(candidate_id, project_root=Path.cwd())
-    except (KeyError, RuntimeError, ValueError) as exc:
-        raise click.ClickException(str(exc)) from exc
-    finally:
-        conn.close()
+    with _open_improvement_service(db_path) as service:
+        try:
+            result = service.workflows.apply(candidate_id, project_root=Path.cwd())
+        except (KeyError, RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
     action = "Already active" if result.get("idempotent") else "Applied"
     click.echo(f"{action} {candidate_id} at {result['target_path']}")
     click.echo(f"Rollback: reflect workflows rollback {candidate_id}")
@@ -1689,13 +1692,11 @@ def workflows_apply(candidate_id: str, db_path: Path) -> None:
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def workflows_rollback(candidate_id: str, db_path: Path) -> None:
     """Roll back the active application of CANDIDATE_ID."""
-    conn, service = _open_improvement_service(db_path)
-    try:
-        result = service.workflows.rollback(candidate_id)
-    except (KeyError, RuntimeError, ValueError) as exc:
-        raise click.ClickException(str(exc)) from exc
-    finally:
-        conn.close()
+    with _open_improvement_service(db_path) as service:
+        try:
+            result = service.workflows.rollback(candidate_id)
+        except (KeyError, RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
     click.echo(f"Rolled back {candidate_id} at {result['target_path']}")
 
 
@@ -1731,15 +1732,12 @@ def loops(
     from reflect.improvements.models import LoopKind, LoopStatus
 
     preparation = _ensure_command_snapshot(db_path, refresh=refresh)
-    conn, improvement_service = _open_improvement_service(db_path, read_only=True)
-    try:
+    with _open_improvement_service(db_path, read_only=True) as improvement_service:
         records = improvement_service.loops.list(
             kind=LoopKind(kind) if kind else None,
             status=LoopStatus(status) if status else None,
             limit=500,
         )
-    finally:
-        conn.close()
     if as_json:
         echo_json(
             {
@@ -1802,13 +1800,11 @@ def _require_improvement_snapshot(db_path: Path) -> None:
 def loops_show(loop_id: str, as_json: bool, db_path: Path) -> None:
     """Show one loop's classification and bounded source-session evidence."""
     _require_improvement_snapshot(db_path)
-    conn, improvement_service = _open_improvement_service(db_path, read_only=True)
-    try:
-        detail = improvement_service.loops.show(loop_id)
-    except KeyError as exc:
-        raise click.ClickException(str(exc)) from exc
-    finally:
-        conn.close()
+    with _open_improvement_service(db_path, read_only=True) as improvement_service:
+        try:
+            detail = improvement_service.loops.show(loop_id)
+        except KeyError as exc:
+            raise click.ClickException(str(exc)) from exc
     if as_json:
         echo_json(detail.model_dump(mode="json"))
         return
@@ -1858,14 +1854,12 @@ def loops_build(loop_id: str, agent: str | None, as_json: bool, db_path: Path) -
     import subprocess
 
     _require_improvement_snapshot(db_path)
-    conn, improvement_service = _open_improvement_service(db_path, read_only=True)
-    try:
-        detail = improvement_service.loops.show(loop_id, limit=50)
-        evidence_bundle = improvement_service.loops.evidence_bundle(loop_id)
-    except KeyError as exc:
-        raise click.ClickException(str(exc)) from exc
-    finally:
-        conn.close()
+    with _open_improvement_service(db_path, read_only=True) as improvement_service:
+        try:
+            detail = improvement_service.loops.show(loop_id, limit=50)
+            evidence_bundle = improvement_service.loops.evidence_bundle(loop_id)
+        except KeyError as exc:
+            raise click.ClickException(str(exc)) from exc
     agent_bin, agent_flags = _resolve_skills_agent(agent)
     try:
         prompt_template = (
@@ -1909,8 +1903,7 @@ def loops_build(loop_id: str, agent: str | None, as_json: bool, db_path: Path) -
         "source_loop_id": loop_id,
     }
     session_ids = sorted({item.session_id for item in detail.occurrences})
-    conn, improvement_service = _open_improvement_service(db_path)
-    try:
+    with _open_improvement_service(db_path) as improvement_service:
         candidate_id = improvement_service.stage_extracted_skills(
             [staged],
             session_ids=session_ids,
@@ -1918,8 +1911,6 @@ def loops_build(loop_id: str, agent: str | None, as_json: bool, db_path: Path) -
         )[0]
         registered = improvement_service.skills.skill_for_candidate(candidate_id)
         improvement_service.loops.mark_promoted(loop_id, registered.id)
-    finally:
-        conn.close()
     payload = {
         "loop_id": loop_id,
         "skill_id": registered.id,
@@ -1964,19 +1955,17 @@ def feedback(
             f"Session {session_id} is not available in the local snapshot. "
             "Run this command with --refresh after telemetry ingestion."
         )
-    conn, service = _open_improvement_service(db_path)
-    try:
-        feedback_id = service.repository.record_feedback(
-            session_id,
-            outcome.lower(),
-            reason_redacted=reason,
-        )
-    except KeyError as exc:
-        raise click.ClickException(
-            f"{exc}. Re-run with --refresh if this session has not been ingested yet."
-        ) from exc
-    finally:
-        conn.close()
+    with _open_improvement_service(db_path) as service:
+        try:
+            feedback_id = service.repository.record_feedback(
+                session_id,
+                outcome.lower(),
+                reason_redacted=reason,
+            )
+        except KeyError as exc:
+            raise click.ClickException(
+                f"{exc}. Re-run with --refresh if this session has not been ingested yet."
+            ) from exc
     click.echo(f"Recorded {outcome.lower()} feedback for {session_id} ({feedback_id})")
 
 
@@ -2405,14 +2394,11 @@ def skills(
             "reconcile the skill registry."
         ),
     )
-    conn, improvement_service = _open_improvement_service(db_path, read_only=True)
-    try:
+    with _open_improvement_service(db_path, read_only=True) as improvement_service:
         records = improvement_service.skills.list(
             lifecycle=SkillLifecycleState(lifecycle) if lifecycle else None,
             limit=500,
         )
-    finally:
-        conn.close()
     if as_json:
         echo_json(
             {
@@ -2452,17 +2438,24 @@ def skills_sync(
 ) -> None:
     """Reconcile skill files, workflow drafts, usage, and measurements."""
     from reflect.improvements.models import SkillLifecycleState
+    from reflect.store.sqlite import is_sqlite_busy
 
-    conn, improvement_service = _open_improvement_service(db_path)
+    click.echo("Waiting for the local store before syncing skills...", err=True)
     try:
-        roots = list(scan_paths) or _default_skill_scan_paths()
-        refresh_result = improvement_service.skills.refresh(scan_paths=roots)
-        records = improvement_service.skills.list(
-            lifecycle=SkillLifecycleState(lifecycle) if lifecycle else None,
-            limit=500,
-        )
-    finally:
-        conn.close()
+        with _open_improvement_service(db_path) as improvement_service:
+            roots = list(scan_paths) or _default_skill_scan_paths()
+            refresh_result = improvement_service.skills.refresh(scan_paths=roots)
+            records = improvement_service.skills.list(
+                lifecycle=SkillLifecycleState(lifecycle) if lifecycle else None,
+                limit=500,
+            )
+    except sqlite3.OperationalError as exc:
+        if not is_sqlite_busy(exc):
+            raise
+        raise click.ClickException(
+            "Another writer is using the local store. Wait for it to finish, "
+            "then retry `reflect skills sync`."
+        ) from exc
     if as_json:
         echo_json(
             {
@@ -2614,8 +2607,7 @@ def _discover_skills(
     if not valid_selected:
         raise click.ClickException("No valid workflow candidates were extracted")
 
-    conn, improvement_service = _open_improvement_service(db_path)
-    try:
+    with _open_improvement_service(db_path) as improvement_service:
         candidate_ids = improvement_service.stage_extracted_skills(
             valid_selected,
             session_ids=sorted(stats.sessions_seen),
@@ -2625,8 +2617,6 @@ def _discover_skills(
             improvement_service.skills.skill_for_candidate(candidate_id)
             for candidate_id in candidate_ids
         ]
-    finally:
-        conn.close()
 
     if sql_bundle_used:
         console.print("[dim]Included SQL stats + Behavioral Memory Graph evidence in extraction prompt.[/dim]")
@@ -2757,13 +2747,11 @@ def skills_show(skill_id: str, as_json: bool, db_path: Path) -> None:
         db_path,
         refresh_hint=f"Run `reflect skills sync --db-path {db_path}` first.",
     )
-    conn, improvement_service = _open_improvement_service(db_path, read_only=True)
-    try:
-        detail = improvement_service.skills.show(skill_id)
-    except KeyError as exc:
-        raise click.ClickException(str(exc)) from exc
-    finally:
-        conn.close()
+    with _open_improvement_service(db_path, read_only=True) as improvement_service:
+        try:
+            detail = improvement_service.skills.show(skill_id)
+        except KeyError as exc:
+            raise click.ClickException(str(exc)) from exc
     if as_json:
         echo_json(detail.model_dump(mode="json"))
         return
@@ -2795,17 +2783,15 @@ def skills_show(skill_id: str, as_json: bool, db_path: Path) -> None:
 )
 def skills_apply(skill_id: str, project_root: Path, db_path: Path) -> None:
     """Apply a reviewed pending skill version to a Git repository."""
-    conn, improvement_service = _open_improvement_service(db_path)
-    try:
-        candidate_id = improvement_service.skills.workflow_candidate_for(skill_id)
-        result = improvement_service.workflows.apply(candidate_id, project_root=project_root)
-        improvement_service.skills.sync_workflow_candidates([candidate_id])
-        conn.commit()
-        skill = improvement_service.skills.skill_for_candidate(candidate_id)
-    except (KeyError, RuntimeError, ValueError) as exc:
-        raise click.ClickException(str(exc)) from exc
-    finally:
-        conn.close()
+    with _open_improvement_service(db_path) as improvement_service:
+        try:
+            candidate_id = improvement_service.skills.workflow_candidate_for(skill_id)
+            result = improvement_service.workflows.apply(candidate_id, project_root=project_root)
+            improvement_service.skills.sync_workflow_candidates([candidate_id])
+            improvement_service.conn.commit()
+            skill = improvement_service.skills.skill_for_candidate(candidate_id)
+        except (KeyError, RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
     click.echo(f"Applied {skill.slug} to {result['target_path']}")
 
 
@@ -2818,16 +2804,14 @@ def skills_apply(skill_id: str, project_root: Path, db_path: Path) -> None:
 )
 def skills_rollback(skill_id: str, db_path: Path) -> None:
     """Roll back the active installation owned by a Reflect skill version."""
-    conn, improvement_service = _open_improvement_service(db_path)
-    try:
-        candidate_id = improvement_service.skills.workflow_candidate_for(skill_id)
-        result = improvement_service.workflows.rollback(candidate_id)
-        improvement_service.skills.sync_workflow_candidates([candidate_id])
-        conn.commit()
-    except (KeyError, RuntimeError, ValueError) as exc:
-        raise click.ClickException(str(exc)) from exc
-    finally:
-        conn.close()
+    with _open_improvement_service(db_path) as improvement_service:
+        try:
+            candidate_id = improvement_service.skills.workflow_candidate_for(skill_id)
+            result = improvement_service.workflows.rollback(candidate_id)
+            improvement_service.skills.sync_workflow_candidates([candidate_id])
+            improvement_service.conn.commit()
+        except (KeyError, RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
     click.echo(f"Rolled back {skill_id}; restored {result['target_path']}")
 
 
@@ -3701,41 +3685,39 @@ def doctor_cost(db_path: Path, alias_path: Path | None) -> None:
     from rich.console import Console
     from rich.table import Table
 
+    from reflect.preparation import PreparationLock
     from reflect.store.cost_refresh import CostRefreshState
     from reflect.store.migrate import migrate
     from reflect.store.rollups import rebuild_rollups
-    from reflect.store.sqlite import connect_sqlite
+    from reflect.store.sqlite import connect_sqlite, mark_snapshot
 
     console = Console(force_terminal=True)
-    alias_result = None
     max_attempts = 3
-    for attempt in range(1, max_attempts + 1):
-        conn = connect_sqlite(db_path)
-        try:
-            migrate(conn)
-            cost_state = CostRefreshState(conn)
-            cost_inputs = cost_state.inspect(alias_path=alias_path)
-            alias_result = ensure_sql_costs(
-                conn,
-                alias_path=alias_path,
-                refresh_inputs=cost_inputs,
-            )
-            rebuild_rollups(conn)
-            if cost_inputs.requires_full_refresh:
-                cost_state.mark_current(cost_inputs)
-            break
-        except sqlite3.OperationalError as exc:
-            if "database is locked" not in str(exc).lower() or attempt >= max_attempts:
-                raise click.ClickException(str(exc)) from exc
-            time.sleep(1.5 * attempt)
-        finally:
-            conn.close()
+    with PreparationLock(db_path):
+        for attempt in range(1, max_attempts + 1):
+            conn = connect_sqlite(db_path)
+            try:
+                migrate(conn)
+                mark_snapshot(conn, ready=False)
+                cost_state = CostRefreshState(conn)
+                cost_inputs = cost_state.inspect(alias_path=alias_path)
+                alias_result = ensure_sql_costs(
+                    conn,
+                    alias_path=alias_path,
+                    refresh_inputs=cost_inputs,
+                )
+                rebuild_rollups(conn)
+                if cost_inputs.requires_full_refresh:
+                    cost_state.mark_current(cost_inputs)
+                break
+            except sqlite3.OperationalError as exc:
+                if "database is locked" not in str(exc).lower() or attempt >= max_attempts:
+                    raise click.ClickException(str(exc)) from exc
+                time.sleep(1.5 * attempt)
+            finally:
+                conn.close()
 
-    if alias_result is None:
-        raise click.ClickException(
-            "database is locked; stop concurrent writers and retry `reflect doctor cost`"
-        )
-
+    click.echo("Run `reflect refresh` to publish the updated costs with all derived views.")
     table = Table(box=box.SIMPLE_HEAVY, expand=True)
     table.add_column("Check", style="bold cyan")
     table.add_column("Result", overflow="fold")

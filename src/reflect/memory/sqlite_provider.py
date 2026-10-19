@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from reflect.improvements.scope import ImprovementScopeResolver
 from reflect.memory.models import (
     MemoryItem,
     MemoryProviderHealth,
@@ -38,23 +39,30 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     return payload
 
 
-def _path_scope_clause(path: str) -> tuple[str, list[str]]:
+def _path_scope_clause(conn: sqlite3.Connection, path: str) -> tuple[str, list[object]]:
     if not path:
         return "", []
-    resolved = str(Path(path).expanduser().resolve())
-    like = f"{resolved.rstrip('/')}/%"
+    requested = Path(path).expanduser().resolve()
+    resolved = str(requested)
+    roots = [str(root) for root in (requested, *requested.parents)]
+    prefix = f"{resolved.rstrip('/')}/"
+    scope = ImprovementScopeResolver(conn).path(requested)
     return (
-        """
+        f"""
         AND (
-          json_extract(source_metadata_json, '$.workspace_root') = ?
+          (m.source = 'graph_candidate'
+            AND json_extract(source_metadata_json, '$.scope_kind') = ?
+            AND json_extract(source_metadata_json, '$.scope_id') = ?)
+          OR (m.source <> 'graph_candidate' AND (
+          m.scope = 'user'
+          OR json_extract(source_metadata_json, '$.workspace_root') IN ({','.join('?' for _ in roots)})
           OR json_extract(source_metadata_json, '$.path') = ?
-          OR json_extract(source_metadata_json, '$.path') LIKE ?
-          OR json_extract(raw_attrs_json, '$.workspace_root') = ?
-          OR json_extract(raw_attrs_json, '$.path') = ?
-          OR json_extract(raw_attrs_json, '$.path') LIKE ?
+          OR substr(json_extract(source_metadata_json, '$.path'), 1, ?) = ?
+          ))
         )
         """,
-        [resolved, resolved, like, resolved, resolved, like],
+        ["repo" if scope.repo_id else "workspace", scope.repo_id or scope.workspace_id,
+         *roots, resolved, len(prefix), prefix],
     )
 
 
@@ -65,7 +73,7 @@ def _filter_clause(filters: dict | None) -> tuple[str, list[str]]:
     for column in ("type", "scope", "source", "provider", "validation_status"):
         value = filters.get(column)
         if value:
-            clauses.append(f"{column} = ?")
+            clauses.append(f"m.{column} = ?")
             params.append(str(value))
     if filters.get("stale"):
         clauses.append("COALESCE(stale_reason, '') <> ''")
@@ -193,12 +201,12 @@ class LocalSQLiteMemoryProvider:
         previous = self.conn.row_factory
         self.conn.row_factory = sqlite3.Row
         try:
-            path_clause, path_params = _path_scope_clause(path)
+            path_clause, path_params = _path_scope_clause(self.conn, path)
             filter_clause, filter_params = _filter_clause(filters)
             rows = self.conn.execute(
                 f"""
-                SELECT *
-                FROM memories
+                SELECT m.*
+                FROM memories m
                 WHERE 1 = 1
                   {path_clause}
                   {filter_clause}
@@ -224,8 +232,10 @@ class LocalSQLiteMemoryProvider:
         previous = self.conn.row_factory
         self.conn.row_factory = sqlite3.Row
         try:
-            path_clause, path_params = _path_scope_clause(path)
+            path_clause, path_params = _path_scope_clause(self.conn, path)
             filter_clause, filter_params = _filter_clause(filters)
+            if not (filters or {}).get("validation_status"):
+                filter_clause += " AND m.validation_status <> 'needs_review'"
             rows = None
             if self.maintain_search_index:
                 try:
@@ -293,6 +303,11 @@ class LocalSQLiteMemoryProvider:
         memory = self.inspect(memory_id)
         if not memory:
             return MemoryValidationResult(memory_id, "missing", error="Memory not found")
+        if memory.get("stale_reason") == "ambiguous_candidate_scope":
+            return MemoryValidationResult(
+                memory_id, "needs_review", stale_reason="ambiguous_candidate_scope",
+                error="Regenerate and review scoped evidence before reusing this memory",
+            )
         source_metadata = memory.get("source_metadata") or {}
         raw_attrs = memory.get("raw_attrs") or {}
         path = str(source_metadata.get("path") or raw_attrs.get("path") or "")

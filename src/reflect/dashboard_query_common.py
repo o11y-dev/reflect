@@ -199,6 +199,7 @@ def sql_insight_payload(
     reads_per_prompt = (file_reads / prompt_count) if prompt_count else 0.0
     mcp_per_prompt = (mcp_calls / prompt_count) if prompt_count else 0.0
     cache_reuse_ratio = (cache_read_tokens / input_tokens) if input_tokens else 0.0
+    observed_input_tokens = input_tokens + cache_creation_tokens + cache_read_tokens
     economy = {
         "total_tokens": total_tokens,
         "avg_input_per_prompt": (input_tokens / prompt_count) if prompt_count else 0,
@@ -208,7 +209,10 @@ def sql_insight_payload(
         "reads_per_prompt": reads_per_prompt,
         "mcp_per_prompt": mcp_per_prompt,
         "cache_reuse_ratio": cache_reuse_ratio,
-        "cache_hit_pct": 100 * min(cache_reuse_ratio, 1.0),
+        # A token share is observable here; a provider cache hit rate is not.
+        "cache_read_share_pct": (
+            100 * cache_read_tokens / observed_input_tokens if observed_input_tokens else 0.0
+        ),
         "heavy_model_share": 0,
     }
     strengths = [

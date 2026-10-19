@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
 import click
 
 from reflect.cli.common import REFLECT_HOME, echo_json, require_snapshot_schema
-from reflect.preparation_pipeline import ensure_sql_costs
+from reflect.preparation import PreparationLock
+from reflect.preparation_pipeline import prepare_sql_report_db
 
 DEFAULT_DB_PATH = REFLECT_HOME / "state" / "reflect.db"
 
@@ -22,37 +24,23 @@ def _ingest_into_db(
     otlp_traces: Path | None = None,
     spans_file: Path | None = None,
 ) -> dict[str, int]:
-    from reflect.store.cost_refresh import CostRefreshState
     from reflect.store.ingest import ingest_local_spans_file, ingest_otlp_traces_file
     from reflect.store.migrate import migrate
-    from reflect.store.normalize import backfill_mcp_calls, normalize_pending_raw_events
-    from reflect.store.rollups import rebuild_rollups
-    from reflect.store.sqlite import connect_sqlite
+    from reflect.store.sqlite import connect_sqlite, mark_snapshot
 
     if (otlp_traces is None) == (spans_file is None):
         raise click.ClickException("Pass exactly one of --otlp or --spans-file")
 
-    conn = connect_sqlite(db_path)
-    try:
-        applied = migrate(conn)
+    with PreparationLock(db_path), closing(connect_sqlite(db_path)) as conn:
+        migrate(conn)
+        mark_snapshot(conn, ready=False)
         if otlp_traces is not None:
             result = ingest_otlp_traces_file(conn, file_path=otlp_traces)
         else:
             result = ingest_local_spans_file(conn, file_path=spans_file)
-        changed_session_ids: set[str] = set()
-        normalize_pending_raw_events(conn, changed_session_ids=changed_session_ids)
-        backfill_mcp_calls(
-            conn,
-            session_ids=None if 14 in applied else changed_session_ids,
-        )
-        cost_state = CostRefreshState(conn)
-        cost_inputs = cost_state.inspect(session_ids=changed_session_ids)
-        ensure_sql_costs(conn, refresh_inputs=cost_inputs)
-        rebuild_rollups(conn)
-        if cost_inputs.requires_full_refresh:
-            cost_state.mark_current(cost_inputs)
-    finally:
-        conn.close()
+    # Reuse the same publication path as every normal refresh, including graph
+    # and workflow state. A failure leaves the durable incomplete marker intact.
+    prepare_sql_report_db(db_path, otlp_traces=None)
     return result
 
 
@@ -87,11 +75,11 @@ def db_normalize(db_path: Path, limit: int | None) -> None:
     """Normalize pending raw_events into canonical SQLite tables."""
     from reflect.store.migrate import migrate
     from reflect.store.normalize import backfill_mcp_calls, normalize_pending_raw_events
-    from reflect.store.sqlite import connect_sqlite
+    from reflect.store.sqlite import connect_sqlite, mark_snapshot
 
-    conn = connect_sqlite(db_path)
-    try:
+    with PreparationLock(db_path), closing(connect_sqlite(db_path)) as conn:
         applied = migrate(conn)
+        mark_snapshot(conn, ready=False)
         changed_session_ids: set[str] = set()
         result = normalize_pending_raw_events(
             conn,
@@ -102,12 +90,12 @@ def db_normalize(db_path: Path, limit: int | None) -> None:
             conn,
             session_ids=None if 14 in applied else changed_session_ids,
         )
-    finally:
-        conn.close()
     click.echo(
         "Normalized raw_events "
         f"(processed={result['processed']}, failed={result['failed']}, skipped={result['skipped']})"
     )
+
+    click.echo("Run `reflect refresh` to publish a complete snapshot.")
 
 
 @db.command("rebuild-graph")
@@ -116,15 +104,15 @@ def db_rebuild_graph(db_path: Path) -> None:
     """Rebuild graph_nodes and graph_edges from canonical SQLite tables."""
     from reflect.store.graph_normalize import rebuild_graph
     from reflect.store.migrate import migrate
-    from reflect.store.sqlite import connect_sqlite
+    from reflect.store.sqlite import connect_sqlite, mark_snapshot
 
-    conn = connect_sqlite(db_path)
-    try:
+    with PreparationLock(db_path), closing(connect_sqlite(db_path)) as conn:
         migrate(conn)
+        mark_snapshot(conn, ready=False)
         result = rebuild_graph(conn)
-    finally:
-        conn.close()
     click.echo(f"Rebuilt graph (nodes={result['nodes']}, edges={result['edges']})")
+
+    click.echo("Run `reflect refresh` to publish a complete snapshot.")
 
 
 @db.command("rebuild-rollups")
@@ -133,18 +121,18 @@ def db_rebuild_rollups(db_path: Path) -> None:
     """Rebuild aggregate rollup tables from canonical SQLite tables."""
     from reflect.store.migrate import migrate
     from reflect.store.rollups import rebuild_rollups
-    from reflect.store.sqlite import connect_sqlite
+    from reflect.store.sqlite import connect_sqlite, mark_snapshot
 
-    conn = connect_sqlite(db_path)
-    try:
+    with PreparationLock(db_path), closing(connect_sqlite(db_path)) as conn:
         migrate(conn)
+        mark_snapshot(conn, ready=False)
         result = rebuild_rollups(conn)
-    finally:
-        conn.close()
     click.echo(
         "Rebuilt rollups "
         f"(sessions={result['session_rollups']}, days={result['daily_rollups']}, tools={result['tool_rollups']})"
     )
+
+    click.echo("Run `reflect refresh` to publish a complete snapshot.")
 
 
 @db.command("migrate")
@@ -154,11 +142,8 @@ def db_migrate(db_path: Path) -> None:
     from reflect.store.migrate import migrate
     from reflect.store.sqlite import connect_sqlite
 
-    conn = connect_sqlite(db_path)
-    try:
+    with PreparationLock(db_path), closing(connect_sqlite(db_path)) as conn:
         applied = migrate(conn)
-    finally:
-        conn.close()
 
     if not applied:
         click.echo(f"No pending migrations for {db_path}")
@@ -261,6 +246,7 @@ def db_prune_sessions(
     from reflect.store.retention import SessionPruner, SessionRetentionPolicy
     from reflect.store.sqlite import (
         SQLiteBackupProgress,
+        advance_snapshot_revision,
         backup_sqlite,
         connect_sqlite,
         connect_sqlite_read_only,
@@ -298,78 +284,80 @@ def db_prune_sessions(
                 PreparationStage.OPENING_STORE,
                 "Opening the local telemetry store...",
             )
-            conn = connect_sqlite(db_path)
-            applied_backup_path: Path | None = None
-            try:
-                conn.execute("BEGIN IMMEDIATE")
-                if backup:
-                    stamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%S%fZ")
-                    applied_backup_path = db_path.with_name(
-                        f"{db_path.name}.backup-{stamp}"
-                    )
-                    report_preparation_progress(
-                        progress,
-                        PreparationStage.BACKING_UP_STORE,
-                        "Backing up the local telemetry store...",
-                    )
-                    last_backup_percent = -5
-
-                    def update_backup(snapshot: SQLiteBackupProgress) -> None:
-                        nonlocal last_backup_percent
-                        percent = snapshot.percent_complete
-                        if percent < 100 and percent < last_backup_percent + 5:
-                            return
-                        last_backup_percent = percent
+            with PreparationLock(db_path):
+                conn = connect_sqlite(db_path)
+                applied_backup_path: Path | None = None
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    if backup:
+                        stamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%S%fZ")
+                        applied_backup_path = db_path.with_name(
+                            f"{db_path.name}.backup-{stamp}"
+                        )
                         report_preparation_progress(
                             progress,
                             PreparationStage.BACKING_UP_STORE,
-                            f"Backing up the local telemetry store... {percent}% "
-                            f"({snapshot.completed_pages:,}/{snapshot.total_pages:,} pages)",
+                            "Backing up the local telemetry store...",
                         )
+                        last_backup_percent = -5
 
-                    backup_sqlite(
-                        db_path,
-                        applied_backup_path,
-                        progress=update_backup,
-                    )
-                report_preparation_progress(
-                    progress,
-                    PreparationStage.MIGRATING_SCHEMA,
-                    "Checking database migrations...",
-                )
-                migrate(conn, commit=False)
-                report_preparation_progress(
-                    progress,
-                    PreparationStage.PRUNING_SESSIONS,
-                    "Pruning eligible sessions and updating affected derived data...",
-                )
-                applied_result = SessionPruner(
-                    conn,
-                    SessionRetentionPolicy(
-                        older_than_days=older_than_days,
-                        include_valid_starts=all_inactive_sessions,
-                    ),
-                ).run(apply=True)
-                conn.commit()
-                if vacuum and applied_result.pruned_session_ids:
+                        def update_backup(snapshot: SQLiteBackupProgress) -> None:
+                            nonlocal last_backup_percent
+                            percent = snapshot.percent_complete
+                            if percent < 100 and percent < last_backup_percent + 5:
+                                return
+                            last_backup_percent = percent
+                            report_preparation_progress(
+                                progress,
+                                PreparationStage.BACKING_UP_STORE,
+                                f"Backing up the local telemetry store... {percent}% "
+                                f"({snapshot.completed_pages:,}/{snapshot.total_pages:,} pages)",
+                            )
+
+                        backup_sqlite(
+                            db_path,
+                            applied_backup_path,
+                            progress=update_backup,
+                        )
                     report_preparation_progress(
                         progress,
-                        PreparationStage.VACUUMING_STORE,
-                        "Vacuuming the local telemetry store...",
+                        PreparationStage.MIGRATING_SCHEMA,
+                        "Checking database migrations...",
                     )
-                    conn.execute("VACUUM")
-                report_preparation_progress(
-                    progress,
-                    PreparationStage.COMPLETE,
-                    "Session pruning complete.",
-                )
-                return applied_result, applied_backup_path
-            except Exception:
-                if conn.in_transaction:
-                    conn.rollback()
-                raise
-            finally:
-                conn.close()
+                    migrate(conn, commit=False)
+                    report_preparation_progress(
+                        progress,
+                        PreparationStage.PRUNING_SESSIONS,
+                        "Pruning eligible sessions and updating affected derived data...",
+                    )
+                    applied_result = SessionPruner(
+                        conn,
+                        SessionRetentionPolicy(
+                            older_than_days=older_than_days,
+                            include_valid_starts=all_inactive_sessions,
+                        ),
+                    ).run(apply=True)
+                    advance_snapshot_revision(conn)
+                    conn.commit()
+                    if vacuum and applied_result.pruned_session_ids:
+                        report_preparation_progress(
+                            progress,
+                            PreparationStage.VACUUMING_STORE,
+                            "Vacuuming the local telemetry store...",
+                        )
+                        conn.execute("VACUUM")
+                    report_preparation_progress(
+                        progress,
+                        PreparationStage.COMPLETE,
+                        "Session pruning complete.",
+                    )
+                    return applied_result, applied_backup_path
+                except Exception:
+                    if conn.in_transaction:
+                        conn.rollback()
+                    raise
+                finally:
+                    conn.close()
 
         result, backup_path = TerminalPreparationProgress().run(
             apply_pruning,

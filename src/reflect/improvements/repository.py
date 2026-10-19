@@ -1138,13 +1138,11 @@ class ImprovementRepository:
         active = int(
             self.conn.execute("SELECT COUNT(*) FROM interventions WHERE status = 'active'").fetchone()[0]
         )
-        measured = self.conn.execute(
-            """
-            SELECT SUM(CASE WHEN verdict = 'improved' THEN 1 ELSE 0 END), COUNT(*)
-            FROM measurements WHERE verdict <> 'insufficient_data'
-            """
-        ).fetchone()
-        rate = None if not measured or not measured[1] else float(measured[0] or 0) / int(measured[1])
+        from reflect.improvements.measurement import MeasurementService
+
+        measured = Counter(item["verdict"] for item in MeasurementService(self.conn).iter_results()
+                           if item["verdict"] != "insufficient_data")
+        rate = measured["improved"] / measured.total() if measured.total() else None
         return ImprovementSummary(
             generated_at=utc_now(),
             observations=observations,
@@ -1603,17 +1601,10 @@ class ImprovementRepository:
                 else WorkflowInstallationState.REMOVED
             )
 
-        measurement = self.conn.execute(
-            """
-            SELECT m.verdict
-            FROM measurements m
-            JOIN interventions i ON i.id = m.intervention_id
-            JOIN workflow_versions wv ON wv.id = i.workflow_version_id
-            WHERE wv.candidate_id = ?
-            ORDER BY m.measured_at DESC LIMIT 1
-            """,
-            (candidate_id,),
-        ).fetchone()
+        from reflect.improvements.measurement import MeasurementService
+
+        measurements = MeasurementService(self.conn).list(limit=1, candidate_id=candidate_id)
+        measurement = measurements[0] if measurements else None
         measurement_state = WorkflowMeasurementState.NOT_STARTED
         if deployment is WorkflowDeploymentState.ACTIVE:
             measurement_state = WorkflowMeasurementState.COLLECTING
@@ -1622,7 +1613,7 @@ class ImprovementRepository:
                 "improved": WorkflowMeasurementState.IMPROVED,
                 "unchanged": WorkflowMeasurementState.NO_EFFECT,
                 "regressed": WorkflowMeasurementState.REGRESSED,
-            }.get(str(measurement[0]), WorkflowMeasurementState.COLLECTING)
+            }.get(measurement["verdict"], WorkflowMeasurementState.COLLECTING)
 
         display = (
             review.value

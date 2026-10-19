@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+from collections.abc import Iterator
+from contextlib import closing, contextmanager, nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -30,12 +31,14 @@ def memory() -> None:
     """Evidence-backed local and provider memory commands."""
 
 
+@contextmanager
 def _open_memory_service(
     db_path: Path,
     *,
     read_only: bool = False,
-) -> tuple[sqlite3.Connection, MemoryService]:
+) -> Iterator[MemoryService]:
     from reflect.memory import MemoryService
+    from reflect.preparation import PreparationLock
     from reflect.store.migrate import migrate
     from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only
 
@@ -44,11 +47,12 @@ def _open_memory_service(
             db_path,
             refresh_hint=f"Run `reflect memory sync --db-path {db_path}` first.",
         )
-        conn = connect_sqlite_read_only(db_path)
-    else:
-        conn = connect_sqlite(db_path)
-        migrate(conn)
-    return conn, MemoryService(conn, maintain_search_index=not read_only)
+    with (nullcontext() if read_only else PreparationLock(db_path)):
+        conn = connect_sqlite_read_only(db_path, profile=None) if read_only else connect_sqlite(db_path)
+        with closing(conn):
+            if not read_only:
+                migrate(conn)
+            yield MemoryService(conn, maintain_search_index=not read_only)
 
 
 def _memory_filters(
@@ -83,11 +87,8 @@ def _memory_filters(
 @click.option("--json", "as_json", is_flag=True, help="Print provider health as JSON.")
 def memory_providers(db_path: Path, as_json: bool) -> None:
     """List memory providers and health."""
-    conn, service = _open_memory_service(db_path, read_only=True)
-    try:
+    with _open_memory_service(db_path, read_only=True) as service:
         health = service.provider_health()
-    finally:
-        conn.close()
     if as_json:
         echo_json(health)
         return
@@ -115,11 +116,8 @@ def memory_providers(db_path: Path, as_json: bool) -> None:
 def memory_sync(path: Path | None, db_path: Path, as_json: bool) -> None:
     """Sync local folder instruction memories. PATH defaults to the current directory."""
     target = path or Path.cwd()
-    conn, service = _open_memory_service(db_path)
-    try:
+    with _open_memory_service(db_path) as service:
         result = service.sync_path(target, home_root=Path.home())
-    finally:
-        conn.close()
     if as_json:
         echo_json(result)
         return
@@ -173,8 +171,7 @@ def memory_list(
     as_json: bool,
 ) -> None:
     """List memories for PATH. PATH defaults to the current directory."""
-    conn, service = _open_memory_service(db_path, read_only=True)
-    try:
+    with _open_memory_service(db_path, read_only=True) as service:
         rows = service.list_memories(
             path=path or Path.cwd(),
             all_memories=all_memories,
@@ -189,8 +186,6 @@ def memory_list(
             ),
             limit=limit,
         )
-    finally:
-        conn.close()
     if as_json:
         echo_json(rows)
         return
@@ -247,8 +242,7 @@ def memory_search(
     as_json: bool,
 ) -> None:
     """Search memories, optionally scoped to PATH."""
-    conn, service = _open_memory_service(db_path, read_only=True)
-    try:
+    with _open_memory_service(db_path, read_only=True) as service:
         rows = service.search(
             query,
             path=path or Path.cwd(),
@@ -256,8 +250,6 @@ def memory_search(
             provider=provider,
             limit=limit,
         )
-    finally:
-        conn.close()
     if as_json:
         echo_json(rows)
         return
@@ -283,11 +275,8 @@ def memory_search(
 @click.option("--json", "as_json", is_flag=True, help="Print memory as JSON.")
 def memory_inspect(memory_id: str, db_path: Path, as_json: bool) -> None:
     """Inspect one memory by ID."""
-    conn, service = _open_memory_service(db_path, read_only=True)
-    try:
+    with _open_memory_service(db_path, read_only=True) as service:
         row = service.inspect(memory_id)
-    finally:
-        conn.close()
     if row is None:
         raise click.ClickException(f"Memory not found: {memory_id}")
     if as_json:
@@ -303,11 +292,8 @@ def memory_inspect(memory_id: str, db_path: Path, as_json: bool) -> None:
 )
 def memory_forget(memory_id: str, db_path: Path) -> None:
     """Delete one local memory by ID."""
-    conn, service = _open_memory_service(db_path)
-    try:
+    with _open_memory_service(db_path) as service:
         removed = service.forget(memory_id)
-    finally:
-        conn.close()
     if not removed:
         raise click.ClickException(f"Memory not found: {memory_id}")
     click.echo(f"Forgot memory {memory_id}")
@@ -332,15 +318,12 @@ def memory_validate(
     """Validate a memory or promote a candidate."""
     if not memory_id and not candidate_id:
         raise click.ClickException("Pass MEMORY_ID or --candidate CANDIDATE_ID")
-    conn, service = _open_memory_service(db_path)
-    try:
+    with _open_memory_service(db_path) as service:
         if candidate_id:
             promoted = service.promote_candidate(candidate_id)
             result = service.validate(str(promoted["id"]))
         else:
             result = service.validate(str(memory_id))
-    finally:
-        conn.close()
     if as_json:
         echo_json(result)
         return
@@ -356,7 +339,7 @@ def memory_validate(
     "--session",
     "session_id",
     default="",
-    help="Limit candidates to one session ID.",
+    help="Show patterns observed in this session, with support counted within its repository/workspace.",
     shell_complete=complete_session_id,
 )
 @click.option(
@@ -372,11 +355,8 @@ def memory_candidates(
     as_json: bool,
 ) -> None:
     """List graph-derived memory candidates for PATH."""
-    conn, service = _open_memory_service(db_path)
-    try:
+    with _open_memory_service(db_path) as service:
         rows = service.candidates(path=path or Path.cwd(), session_id=session_id, limit=limit)
-    finally:
-        conn.close()
     if as_json:
         echo_json(rows)
         return
