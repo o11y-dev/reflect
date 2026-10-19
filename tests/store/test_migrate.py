@@ -74,7 +74,7 @@ def test_tool_outcome_migration_repairs_retained_results_without_usage_replay(tm
         rebuild_rollups(conn)
         conn.commit()
         before_tokens = conn.execute("SELECT SUM(input_tokens) FROM sessions").fetchone()[0]
-        assert migrate(conn) == [33, 34, 35]
+        assert migrate(conn) == [33, 34, 35, 37]
         assert conn.execute("SELECT status, failure_count FROM sessions WHERE id='bad'").fetchone() == ("error", 1)
         assert conn.execute("SELECT failure_count FROM sessions WHERE id='quoted'").fetchone()[0] == 0
         assert conn.execute("SELECT status, error_type, error_message_redacted FROM tool_calls WHERE session_id='bad'").fetchone() == ("error", "tool_error", "Disconnected")
@@ -95,7 +95,7 @@ def test_migrate_applies_initial_schema(tmp_path):
     try:
         applied = migrate(conn)
         assert applied == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37
         ]
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "raw_events" in tables
@@ -284,7 +284,7 @@ def test_token_provenance_migration_repairs_lifecycle_llm_calls(tmp_path):
         )
         conn.commit()
 
-        assert migrate(conn) == [32, 33, 34, 35]
+        assert migrate(conn) == [32, 33, 34, 35, 37]
         provenance = dict(conn.execute("SELECT id, token_provenance FROM sessions"))
         assert provenance == {
             "estimated": "estimated_cursor_transcript",
@@ -310,7 +310,7 @@ def test_migrate_is_idempotent(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
         assert migrate(conn) == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37
         ]
         assert migrate(conn) == []
     finally:
@@ -330,7 +330,7 @@ def test_relational_source_cursor_migration_preserves_existing_checkpoints(tmp_p
         )
         conn.commit()
 
-        assert migrate(conn) == [31, 32, 33, 34, 35]
+        assert migrate(conn) == [31, 32, 33, 34, 35, 37]
         row = conn.execute(
             """
             SELECT size_bytes, modified_ns, record_cursor_time, record_cursor_id
@@ -385,7 +385,7 @@ def test_context_artifact_migration_backfills_exposures_without_replaying_sessio
         )
         conn.commit()
 
-        assert migrate(conn) == [26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+        assert migrate(conn) == [26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37]
 
         assert tuple(conn.execute(
             "SELECT memory_id, session_id FROM memory_exposures"
@@ -448,8 +448,9 @@ def test_migrate_serializes_concurrent_background_requests(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: run_migration(), range(2)))
 
-    assert sorted(len(result) for result in results) == [0, 35]
-    assert sorted(version for result in results for version in result) == list(range(1, 36))
+    versions = [migration.version for migration in load_migrations()]
+    assert sorted(len(result) for result in results) == [0, len(versions)]
+    assert sorted(version for result in results for version in result) == versions
 
 
 def test_migrate_uses_read_only_fast_path_when_schema_is_current(tmp_path):
@@ -473,11 +474,11 @@ def test_migrate_can_preserve_a_caller_owned_transaction(tmp_path):
         _apply_migrations_through(conn, 21)
         conn.execute("BEGIN IMMEDIATE")
 
-        assert migrate(conn, commit=False) == [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+        assert migrate(conn, commit=False) == [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37]
         assert conn.in_transaction is True
         assert conn.execute(
             "SELECT MAX(version) FROM schema_migrations"
-        ).fetchone()[0] == 35
+        ).fetchone()[0] == 37
 
         conn.rollback()
         assert conn.execute(
@@ -614,7 +615,7 @@ def test_logical_tool_call_migration_merges_invocation_and_result(tmp_path):
             )
         conn.commit()
 
-        assert migrate(conn) == [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+        assert migrate(conn) == [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37]
         row = conn.execute(
             """
             SELECT logical_call_id, tool_name, status, duration_ms,
@@ -672,7 +673,7 @@ def test_mcp_identity_migration_merges_invocation_and_result(tmp_path):
             )
         conn.commit()
 
-        assert migrate(conn) == [27, 28, 29, 30, 31, 32, 33, 34, 35]
+        assert migrate(conn) == [27, 28, 29, 30, 31, 32, 33, 34, 35, 37]
         assert tuple(
             conn.execute(
                 """
@@ -753,7 +754,7 @@ def test_database_doctor_reports_pending_migrations(tmp_path):
     assert status["ok"] is False
     assert status["applied_migrations"] == []
     assert status["pending_migrations"] == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37
     ]
 
 
@@ -783,7 +784,7 @@ def test_migrate_adds_task_reconciliation_state_without_losing_phase_one_runs(tm
         )
         conn.commit()
 
-        assert migrate(conn) == [17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+        assert migrate(conn) == [17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37]
         row = conn.execute(
             """
             SELECT id, session_linked_at, session_outcome_recorded,
@@ -825,7 +826,7 @@ def test_migrate_adds_change_reviews_without_changing_phase_two_task_runs(tmp_pa
         )
         conn.commit()
 
-        assert migrate(conn) == [18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+        assert migrate(conn) == [18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37]
         assert tuple(
             conn.execute(
                 """
@@ -948,7 +949,7 @@ def test_migrate_reingests_codex_desktop_logs_and_removes_noisy_trace_session(tm
         )
         conn.commit()
 
-        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37]
         assert conn.execute(
             "SELECT COUNT(*) FROM source_ingestion_state"
         ).fetchone()[0] == 0
@@ -1000,7 +1001,7 @@ def test_retention_migration_keeps_unrecoverable_epoch_start(tmp_path):
         )
         conn.commit()
 
-        assert migrate(conn) == [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+        assert migrate(conn) == [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37]
         assert conn.execute(
             "SELECT started_at FROM sessions WHERE id = 'session-epoch'"
         ).fetchone()[0] == "1970-01-01T00:00:00+00:00"
@@ -1163,7 +1164,7 @@ def test_canonical_workflow_migration_removes_legacy_session_ledger_rebuild(tmp_
             (observation_id,),
         ).fetchone()[0] == 20
 
-        assert migrate(conn) == [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35]
+        assert migrate(conn) == [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37]
         assert conn.execute(
             """
             SELECT value FROM store_metadata
@@ -1192,7 +1193,7 @@ def test_evidence_integrity_migration_repairs_merged_failure_metadata(tmp_path):
         conn.execute("INSERT INTO steps(id, session_id, seq, type, started_at, status, created_at, updated_at) VALUES ('step2', 's', 2, 'tool_call', '2026-01-01', 'unknown', 'now', 'now')")
         conn.execute("INSERT INTO tool_calls(id, step_id, session_id, tool_name, status, created_at, updated_at) VALUES ('call2', 'step2', 's', 'exec', 'error', 'now', 'now')")
         conn.commit()
-        assert migrate(conn) == [35]
+        assert migrate(conn) == [35, 37]
         assert conn.execute('SELECT status FROM tool_calls').fetchone()[0] == 'error'
         assert conn.execute('SELECT status FROM steps').fetchone()[0] == 'error'
         assert conn.execute("SELECT COUNT(*) FROM steps WHERE status <> 'error'").fetchone()[0] == 0

@@ -339,7 +339,7 @@ def memory_validate(
     "--session",
     "session_id",
     default="",
-    help="Limit candidates to one session ID.",
+    help="Show patterns observed in this session, with support counted within its repository/workspace.",
     shell_complete=complete_session_id,
 )
 @click.option(

@@ -12,6 +12,7 @@
 - Simplified CLI service contexts, removed duplicate MCP migration checks and an unreachable cost-repair fallback, and clarified the shared writer lock's scope.
 
 ### Fixed
+- Graph-derived memories are scoped before ranking and retain repository/workspace identity through promotion and retrieval. Candidates focus on folders, skills, and task contracts; legacy candidates are invalidated and ambiguous promoted memories are held for review.
 - Memory sync and mutations, workflow/skill changes, feedback, and MCP/dashboard workflow writes now share the refresh lock for their complete database lifetime; read-only inspection remains independent of writer coordination.
 - Skill registry sync waits for concurrent refresh and maintenance operations before opening the store, preventing SQLite lock failures; external writer timeouts report an actionable error and failed initialization closes its connection.
 - Task tracking accepts explicit runtime identity and recovers exact historical task links during refresh, exposing missing and conflicting identity without guessing.
