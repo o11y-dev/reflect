@@ -28,7 +28,13 @@ from reflect.parsing import (
     _load_otlp_traces,
 )
 from reflect.raw_segments import closed_segment_paths, readable_segment_paths
-from reflect.store.provenance import apply_origin_kind, classify_origin_kind, stable_hash_attrs
+from reflect.store.provenance import (
+    apply_origin_kind,
+    classify_origin_kind,
+    stable_hash_attrs,
+    telemetry_session_id,
+    unassigned_codex_classification,
+)
 
 CHECKPOINT_HASH_WINDOW_BYTES = 64 * 1024
 JSONL_SCAN_CHUNK_BYTES = 64 * 1024
@@ -336,17 +342,6 @@ def _event_hash(span: dict) -> str:
     return hashlib.sha256(canon.encode()).hexdigest()
 
 
-def _session_id(attrs: dict) -> str | None:
-    return (
-        attrs.get("session.id")
-        or attrs.get("gen_ai.session.id")
-        or attrs.get("gen_ai.client.session_id")
-        or attrs.get("conversation.id")
-        or attrs.get("session_id")
-        or None
-    )
-
-
 def _insert_raw_span(
     db_conn,
     *,
@@ -358,12 +353,15 @@ def _insert_raw_span(
     attrs = span.get("attributes", {}) or {}
     origin_kind = classify_origin_kind(source_type, attrs)
     attrs = apply_origin_kind(attrs, origin_kind)
+    classification = unassigned_codex_classification(attrs)
+    if classification:
+        attrs["reflect.telemetry.classification"] = classification
     runtime_internal = attrs.get("reflect.telemetry.classification") == "runtime_internal"
     if runtime_internal:
         return False
     observed_at = _iso8601_from_ns(int(span.get("start_time_ns", 0) or 0))
     received_at = _iso8601_from_ns(int(span.get("end_time_ns", 0) or 0))
-    session_id = _session_id(attrs)
+    session_id = telemetry_session_id(attrs)
     if session_id:
         tombstone = db_conn.execute(
             """
@@ -414,7 +412,7 @@ def _insert_raw_span(
             origin_kind,
             json.dumps(attrs, sort_keys=True),
             json.dumps(span.get("body", {}) or {}, sort_keys=True),
-            "pending",
+            "ignored" if classification else "pending",
             None,
             content_hash,
             created_at,
@@ -430,7 +428,7 @@ def _session_owned_by_other_source(
     source: str,
     source_type: str,
 ) -> bool:
-    session_id = _session_id(span.get("attributes", {}) or {})
+    session_id = telemetry_session_id(span.get("attributes", {}) or {})
     if not session_id:
         return False
     row = db_conn.execute(

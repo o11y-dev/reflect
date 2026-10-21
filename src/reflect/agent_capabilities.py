@@ -68,6 +68,7 @@ class AgentCapability:
     skill_cli_flags: tuple[str, ...] = ()
     mcp: MCPClientCapability | None = None
     native_otel: tuple[NativeOTelCapability, ...] = ()
+    otel_service_names: tuple[str, ...] = ()
 
     def home(self) -> Path:
         for env_name in self.env_names:
@@ -216,6 +217,9 @@ AGENT_CAPABILITIES: tuple[AgentCapability, ...] = (
         key="codex",
         display_name="OpenAI Codex CLI",
         aliases=("codex-cli", "openai-codex"),
+        otel_service_names=(
+            "codex_cli_rs", "codex-app-server", "codex-exec-server", "codex_exec", "Codex Desktop",
+        ),
         home_parts=(".codex",),
         env_names=("CODEX_HOME",),
         local_skill_path=".agents/skills/",
@@ -336,7 +340,7 @@ def _identity_token(name: object) -> str:
 _BY_KEY = {
     _identity_token(name): capability
     for capability in AGENT_CAPABILITIES
-    for name in capability.setup_names
+    for name in (*capability.setup_names, *capability.otel_service_names)
 }
 
 

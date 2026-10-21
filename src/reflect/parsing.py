@@ -22,7 +22,11 @@ from reflect.opencode_store import (
 )
 from reflect.raw_segments import readable_segment_paths
 from reflect.store.mcp import DEFAULT_MCP_CLASSIFIER
-from reflect.store.provenance import is_codex_otel_service
+from reflect.store.provenance import (
+    is_codex_otel_service,
+    telemetry_session_id,
+    unassigned_codex_classification,
+)
 from reflect.utils import (
     _flatten_text_content,
     _json_dumps,
@@ -172,18 +176,7 @@ def _is_codex_runtime_internal_span(span: dict) -> bool:
     spans at the source boundary so bounded raw segments can be checkpointed and
     rotated without materializing runtime noise in canonical SQLite evidence.
     """
-    attrs = span.get("attributes") or {}
-    service = str(attrs.get("service.name") or "").lower()
-    if not is_codex_otel_service(service):
-        return False
-    useful_keys = {
-        "gen_ai.client.hook.event",
-        "gen_ai.client.session_id",
-        "session.id",
-        "conversation.id",
-        "event.name",
-    }
-    return not any(attrs.get(key) for key in useful_keys)
+    return unassigned_codex_classification(span.get("attributes") or {}) == "runtime_internal"
 
 
 def _load_otlp_logs(
@@ -1695,12 +1688,7 @@ def _shorten_mcp_server(server: str) -> str:
 
 
 def _extract_session_id(attrs: dict) -> str:
-    return (
-        attrs.get("gen_ai.client.session_id")
-        or attrs.get("session.id")
-        or attrs.get("ide.session_id")
-        or ""
-    )
+    return telemetry_session_id(attrs) or ""
 
 
 def _extract_model_name(attrs: dict) -> str:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -55,6 +56,7 @@ def _migration_statements(sql: str) -> list[str]:
 def migrate(conn: sqlite3.Connection, *, commit: bool = True) -> list[int]:
     """Apply pending migrations, optionally inside a caller-owned transaction."""
     from reflect.improvements.workflow_identity import workflow_identity_from_json
+    from reflect.store.provenance import telemetry_agent_name, unassigned_codex_classification
     from reflect.tool_outcomes import tool_failure
     from reflect.utils import _json_dumps, _json_loads
 
@@ -69,6 +71,19 @@ def migrate(conn: sqlite3.Connection, *, commit: bool = True) -> list[int]:
         return _json_dumps({"type": failure.error_type, "message": failure.message}) if failure else None
 
     conn.create_function("reflect_tool_failure", 2, failure_json, deterministic=True)
+    conn.create_function(
+        "reflect_agent_name", 1,
+        lambda name: telemetry_agent_name({"gen_ai.client.name": name}), deterministic=True,
+    )
+    conn.create_function(
+        "reflect_unassigned_codex", 1,
+        lambda attrs: unassigned_codex_classification(_json_loads(attrs)), deterministic=True,
+    )
+    conn.create_function(
+        "reflect_stable_id", 2,
+        lambda prefix, value: f"{prefix}_{hashlib.sha1(str(value or '').encode()).hexdigest()}",
+        deterministic=True,
+    )
 
     conn.create_function(
         "reflect_workflow_contract_signature",

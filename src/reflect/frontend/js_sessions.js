@@ -1795,6 +1795,13 @@ class SessionConversationPlayhead {
       { kicker: 'Errors', value: fmt(summary.errors || 0), sub: `${fmt(summary.warnings || 0)} warnings in trace` },
       { kicker: 'Trace window', value: fmtDur(traceWindowMs), sub: `${fmt(summary.services || 0)} services correlated` },
     ];
+    if ((summary.service_names || []).length) {
+      summaryCards.push({
+        kicker: 'Capture sources',
+        value: fmt(summary.service_names.length),
+        sub: summary.service_names.map(escHtml).join(', '),
+      });
+    }
     if ((summary.hook_schema_versions || []).length || (summary.telemetry_sources || []).length) {
       const schemas = (summary.hook_schema_versions || []).map(version => `v${version}`).join(', ');
       const adapters = (summary.provider_adapters || []).join(', ');

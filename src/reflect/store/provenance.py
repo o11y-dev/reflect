@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from reflect.agent_capabilities import AGENT_CAPABILITIES, normalize_agent_key
+
 ORIGIN_NATIVE_OTLP_LOG = "native_otlp_log"
 ORIGIN_NATIVE_OTLP_TRACE = "native_otlp_trace"
 ORIGIN_HOOK_OTLP_LOG = "hook_otlp_log"
@@ -22,7 +24,11 @@ NATIVE_OTLP_ORIGINS = {ORIGIN_NATIVE_OTLP_LOG, ORIGIN_NATIVE_OTLP_TRACE}
 HOOK_OTLP_ORIGINS = {ORIGIN_HOOK_OTLP_LOG, ORIGIN_HOOK_OTLP_TRACE}
 HOOK_ORIGINS = HOOK_OTLP_ORIGINS | {ORIGIN_HOOK_JSONL}
 
-CODEX_OTLP_SERVICES = frozenset({"codex_cli_rs", "codex-app-server", "codex desktop"})
+CODEX_OTLP_SERVICES = frozenset(
+    service.lower()
+    for agent in AGENT_CAPABILITIES if agent.key == "codex"
+    for service in agent.otel_service_names
+)
 _NATIVE_LOG_SERVICES = {"claude-code", "gemini-cli"} | set(CODEX_OTLP_SERVICES)
 
 _ORIGIN_LABELS = {
@@ -53,6 +59,45 @@ def normalize_origin_kind(value: object) -> str | None:
 
 def is_codex_otel_service(value: object) -> bool:
     return str(value or "").strip().lower() in CODEX_OTLP_SERVICES
+
+
+def telemetry_agent_name(attrs: dict[str, Any]) -> str:
+    """Map Codex transport identities to the product, without rewriting raw attributes."""
+    name = str(
+        attrs.get("gen_ai.client.name") or attrs.get("ide.name")
+        or attrs.get("agent.name") or attrs.get("service.name") or "unknown"
+    )
+    return "codex" if normalize_agent_key(name) == "codex" else name
+
+
+def telemetry_session_id(attrs: dict[str, Any]) -> str | None:
+    for key in (
+        "session.id", "gen_ai.session.id", "gen_ai.client.session_id",
+        "gen_ai.conversation.id", "conversation.id", "session_id", "ide.session_id",
+    ):
+        if value := str(attrs.get(key) or "").strip():
+            return value
+    return None
+
+
+def unassigned_codex_classification(attrs: dict[str, Any]) -> str | None:
+    """Keep unlinked Codex evidence out of file-derived synthetic work sessions."""
+    if telemetry_session_id(attrs):
+        return None
+    if telemetry_agent_name(attrs) != "codex":
+        return None
+    # A sessionless hook or semantic record is evidence we cannot yet attribute,
+    # not proof of a conversation or permission to attach it to a nearby one.
+    semantic_keys = (
+        "gen_ai.client.hook.event", "ide.hook.event", "event.name",
+        "gen_ai.operation.name", "gen_ai.client.tool_name", "gen_ai.client.mcp_tool",
+        "gen_ai.request.model", "gen_ai.response.model", "gen_ai.client.prompt",
+    )
+    if any(attrs.get(key) for key in semantic_keys) or any(
+        key.startswith("gen_ai.usage.") for key in attrs
+    ):
+        return "unattributed_session"
+    return "runtime_internal" if is_codex_otel_service(attrs.get("service.name")) else "unattributed_session"
 
 
 def has_hook_semantics(attrs: dict[str, Any]) -> bool:

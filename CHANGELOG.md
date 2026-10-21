@@ -13,6 +13,7 @@
 
 ### Fixed
 - Memory searches preserve caller-owned read transactions and fall back to canonical records when the search index is empty, keeping guidance available during concurrent refreshes.
+- Codex sessions, filters, and usage now share one agent identity across CLI, app, and execution services. Session details retain capture-source names; sessionless runtime and hook evidence no longer create synthetic conversations, and retained unattributed evidence is preserved during migration.
 - Graph-derived memories are scoped before ranking and retain repository/workspace identity through promotion and retrieval. Candidates focus on folders, skills, and task contracts; legacy candidates are invalidated and ambiguous promoted memories are held for review.
 - Memory sync and mutations, workflow/skill changes, feedback, and MCP/dashboard workflow writes now share the refresh lock for their complete database lifetime; read-only inspection remains independent of writer coordination.
 - Skill registry sync waits for concurrent refresh and maintenance operations before opening the store, preventing SQLite lock failures; external writer timeouts report an actionable error and failed initialization closes its connection.

@@ -9,6 +9,11 @@ from reflect.store.normalize import refresh_all_session_statuses, refresh_sessio
 
 CODEX_DESKTOP_ROLLUP_REBUILD_TASK = "rebuild_rollups_after_codex_desktop_otel"
 TOOL_OUTCOME_ROLLUP_REBUILD_TASK = "rebuild_rollups_after_tool_outcomes"
+AGENT_IDENTITY_ROLLUP_REBUILD_TASK = "rebuild_rollups_after_agent_identity"
+_ROLLUP_REBUILD_TASKS = (
+    CODEX_DESKTOP_ROLLUP_REBUILD_TASK, TOOL_OUTCOME_ROLLUP_REBUILD_TASK,
+    AGENT_IDENTITY_ROLLUP_REBUILD_TASK,
+)
 
 
 def _now() -> str:
@@ -19,8 +24,8 @@ def rollup_rebuild_pending(conn: sqlite3.Connection) -> bool:
     try:
         return (
             conn.execute(
-                "SELECT 1 FROM maintenance_tasks WHERE task IN (?, ?)",
-                (CODEX_DESKTOP_ROLLUP_REBUILD_TASK, TOOL_OUTCOME_ROLLUP_REBUILD_TASK),
+                "SELECT 1 FROM maintenance_tasks WHERE task IN (?, ?, ?)",
+                _ROLLUP_REBUILD_TASKS,
             ).fetchone()
             is not None
         )
@@ -362,8 +367,8 @@ def rebuild_rollups(
 
     if rollup_rebuild_pending(conn):
         conn.execute(
-            "DELETE FROM maintenance_tasks WHERE task IN (?, ?)",
-            (CODEX_DESKTOP_ROLLUP_REBUILD_TASK, TOOL_OUTCOME_ROLLUP_REBUILD_TASK),
+            "DELETE FROM maintenance_tasks WHERE task IN (?, ?, ?)",
+            _ROLLUP_REBUILD_TASKS,
         )
     if commit:
         conn.commit()

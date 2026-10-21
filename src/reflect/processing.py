@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from reflect.models import AgentStats, TelemetryStats
 from reflect.parsing import _default_sessions_dir, _default_spans_dir
+from reflect.store.provenance import telemetry_agent_name, unassigned_codex_classification
 from reflect.telemetry_facts import extract_subagent_name_from_tool, first_attr
 from reflect.tool_outcomes import tool_failure
 
@@ -119,6 +120,8 @@ def _process_span(
     )
 
     attrs = span.get("attributes") or {}
+    if unassigned_codex_classification(attrs):
+        return
 
     event = _extract_event(span)
     failure = tool_failure(event, attrs)
@@ -346,7 +349,7 @@ def _process_span(
             session_conversation.setdefault(session_id, []).append(conv_event)
 
     # Per-agent (IDE) stats
-    agent_name = first_attr(attrs, "gen_ai.client.name", "ide.name", "service.name") or "unknown"
+    agent_name = telemetry_agent_name(attrs)
     if agent_name not in agents:
         agents[agent_name] = AgentStats(name=agent_name)
     ag = agents[agent_name]

@@ -8,7 +8,13 @@ from typing import Any
 
 from reflect.store.hook_facts import backfill_hook_facts
 from reflect.store.mcp import DEFAULT_MCP_CLASSIFIER, MCPCallBackfill
-from reflect.store.provenance import apply_origin_kind, classify_origin_kind
+from reflect.store.provenance import (
+    apply_origin_kind,
+    classify_origin_kind,
+    telemetry_agent_name,
+    telemetry_session_id,
+    unassigned_codex_classification,
+)
 from reflect.store.workspaces import backfill_session_context
 from reflect.task_runs import TaskRunReconciler
 from reflect.tool_outcomes import with_tool_outcome
@@ -162,16 +168,6 @@ def backfill_mcp_calls(
     )
 
 
-def _agent_name(attrs: dict[str, Any]) -> str:
-    return str(
-        attrs.get("gen_ai.client.name")
-        or attrs.get("ide.name")
-        or attrs.get("agent.name")
-        or attrs.get("service.name")
-        or "unknown"
-    )
-
-
 _TOKEN_ATTRIBUTE_KEYS = (
     "gen_ai.usage.input_tokens",
     "gen_ai.usage.output_tokens",
@@ -264,7 +260,7 @@ def _next_step_seq(conn: sqlite3.Connection, session_id: str) -> int:
 
 
 def _insert_agent(conn: sqlite3.Connection, attrs: dict[str, Any], timestamp: str) -> str:
-    name = _agent_name(attrs)
+    name = telemetry_agent_name(attrs)
     agent_id = _stable_id("agent", name)
     conn.execute(
         """
@@ -946,7 +942,7 @@ def normalize_pending_raw_events(
         batch = _normalize_pending_batch(conn, limit=size, changed_session_ids=changed_session_ids)
         for key in result:
             result[key] += batch[key]
-        count = batch["processed"] + batch["failed"]
+        count = batch["processed"] + batch["failed"] + batch["skipped"]
         if count < size:
             break
         if remaining is not None:
@@ -977,6 +973,7 @@ def _normalize_pending_batch(
 
         processed = 0
         failed = 0
+        skipped = 0
         processed_session_ids: set[str] = set()
         timestamp = _now()
         for index, row in enumerate(rows):
@@ -985,12 +982,18 @@ def _normalize_pending_batch(
             try:
                 conn.execute(f"SAVEPOINT {savepoint}")
                 attrs = with_tool_outcome(row["event_type"], _load_json(row["attrs_json"]))
-                session_id = (
-                    row["session_id"]
-                    or attrs.get("session.id")
-                    or attrs.get("gen_ai.client.session_id")
-                    or attrs.get("conversation.id")
-                )
+                classification = unassigned_codex_classification(attrs)
+                if not row["session_id"] and classification:
+                    attrs["reflect.telemetry.classification"] = classification
+                    conn.execute(
+                        "UPDATE raw_events SET normalized_status = 'ignored', "
+                        "normalization_error = NULL, attrs_json = ? WHERE id = ?",
+                        (json.dumps(attrs, sort_keys=True), row["id"]),
+                    )
+                    conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                    skipped += 1
+                    continue
+                session_id = row["session_id"] or telemetry_session_id(attrs)
                 if not session_id:
                     session_id = _stable_id("session", row["source_id"])
                 session_id = str(session_id)
@@ -1085,7 +1088,7 @@ def _normalize_pending_batch(
         if changed_session_ids is not None:
             changed_session_ids.update(processed_session_ids)
         conn.commit()
-        return {"processed": processed, "failed": failed, "skipped": 0}
+        return {"processed": processed, "failed": failed, "skipped": skipped}
     except BaseException:
         conn.rollback()
         raise
