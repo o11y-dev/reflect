@@ -13,6 +13,7 @@ from reflect.dashboard_query_common import (
     sql_session_first_prompts,
 )
 from reflect.graph import _compute_weekly_trends
+from reflect.store.sqlite import consistent_snapshot
 from reflect.utils import _safe_ratio
 
 
@@ -543,6 +544,7 @@ def _cohort_agent_comparison(
 
 
 
+@consistent_snapshot
 def build_dashboard_payload(
     db_path: Path,
     *,

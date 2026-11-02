@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from itertools import chain
+from itertools import chain, islice
 from pathlib import Path
 
 from reflect.opencode_store import OpenCodeSessionStore
@@ -479,27 +479,30 @@ def _ingest_spans(
     inserted = 0
     skipped = 0
     created_at = datetime.now(tz=UTC).isoformat()
-    for span in spans:
-        if respect_session_ownership and _session_owned_by_other_source(
-            db_conn,
-            span=span,
-            source=source,
-            source_type=source_type,
-        ):
-            skipped += 1
-            continue
-        if _insert_raw_span(
-            db_conn,
-            span=span,
-            source=source,
-            source_type=source_type,
-            created_at=created_at,
-        ):
-            inserted += 1
-        else:
-            skipped += 1
-
-    db_conn.commit()
+    spans = iter(spans)
+    while batch := list(islice(spans, 500)):
+        # Parse outside the transaction. Checkpoints advance only after the file
+        # completes; stable event IDs make replay of committed batches safe.
+        try:
+            if not db_conn.in_transaction:
+                db_conn.execute("BEGIN IMMEDIATE")
+            for span in batch:
+                if respect_session_ownership and _session_owned_by_other_source(
+                    db_conn, span=span, source=source, source_type=source_type,
+                ):
+                    skipped += 1
+                    continue
+                if _insert_raw_span(
+                    db_conn, span=span, source=source, source_type=source_type,
+                    created_at=created_at,
+                ):
+                    inserted += 1
+                else:
+                    skipped += 1
+            db_conn.commit()
+        except BaseException:
+            db_conn.rollback()
+            raise
     return {"inserted": inserted, "skipped": skipped}
 
 

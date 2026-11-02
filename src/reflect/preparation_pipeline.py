@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -24,7 +25,7 @@ def prepare_usage_db(
     keep_processed_raw: bool = False,
 ) -> dict[str, object]:
     """Refresh usage facts without rebuilding graph or improvement state."""
-    from reflect.preparation import PreparationStage, report_preparation_progress
+    from reflect.preparation import PreparationLock, PreparationStage, report_preparation_progress
     from reflect.store.cursor_usage import (
         apply_cursor_transcript_usage_estimates,
         repair_misattributed_cursor_transcript_usage,
@@ -40,22 +41,29 @@ def prepare_usage_db(
     from reflect.store.migrate import migrate
     from reflect.store.normalize import backfill_mcp_calls, normalize_pending_raw_events
     from reflect.store.rollups import rebuild_rollups, refresh_rollups, rollup_rebuild_pending
-    from reflect.store.sqlite import connect_sqlite
+    from reflect.store.sqlite import connect_sqlite, mark_snapshot, snapshot_incomplete
     from reflect.store.workspaces import backfill_session_context
 
     report_preparation_progress(
         progress,
-        PreparationStage.OPENING_STORE,
-        "Opening the local telemetry store...",
+        PreparationStage.WAITING_FOR_STORE,
+        "Waiting for any active refresh of this store...",
     )
-    conn = connect_sqlite(db_path)
-    try:
+    with PreparationLock(db_path), closing(connect_sqlite(db_path)) as conn:
+        report_preparation_progress(
+            progress,
+            PreparationStage.OPENING_STORE,
+            "Opening the local telemetry store...",
+        )
         report_preparation_progress(
             progress,
             PreparationStage.MIGRATING_SCHEMA,
             "Checking database migrations...",
         )
         applied = migrate(conn)
+        recovering = snapshot_incomplete(conn, "usage")
+        report_was_ready = not snapshot_incomplete(conn)
+        mark_snapshot(conn, ready=False)
         segment_batches: list[SegmentBatchIngestion] = []
         if otlp_traces is not None:
             report_preparation_progress(
@@ -156,12 +164,14 @@ def prepare_usage_db(
 
         cost_state = CostRefreshState(conn)
         cost_inputs = cost_state.inspect(session_ids=changed_session_ids) if session_count else None
-        if (
-            rollup_rebuild_pending(conn)
+        rebuild_usage = (
+            recovering
+            or rollup_rebuild_pending(conn)
             or session_count != rollup_count
             or cursor_result.get("updated")
             or (cost_inputs is not None and cost_inputs.requires_full_refresh)
-        ):
+        )
+        if rebuild_usage:
             report_preparation_progress(
                 progress,
                 PreparationStage.REFRESHING_ROLLUPS,
@@ -203,13 +213,21 @@ def prepare_usage_db(
             PreparationStage.COMPLETE,
             "Usage refresh complete.",
         )
+        if not conn.execute(
+            "SELECT 1 FROM raw_events WHERE normalized_status = 'pending' LIMIT 1"
+        ).fetchone():
+            # A successful no-change usage refresh preserves the prior report.
+            # Changed or interrupted runs still require full report derivation.
+            report_unchanged = (
+                report_was_ready and not applied and not rebuild_usage
+                and not changed_session_ids and not context_result["sessions_updated"]
+            )
+            mark_snapshot(conn, ready=True, profile="snapshot" if report_unchanged else "usage")
         return {
             "refreshed": True,
             "changed_sessions": len(changed_session_ids),
             "raw_cleanup": raw_cleanup_result,
         }
-    finally:
-        conn.close()
 
 
 def ensure_sql_costs(
@@ -263,7 +281,7 @@ def prepare_sql_report_db(
     defer_otlp_replay: bool = False,
     keep_processed_raw: bool = False,
 ) -> dict[str, object]:
-    from reflect.preparation import PreparationStage, report_preparation_progress
+    from reflect.preparation import PreparationLock, PreparationStage, report_preparation_progress
     from reflect.store.cost_refresh import CostRefreshState
     from reflect.store.cursor_usage import (
         apply_cursor_transcript_usage_estimates,
@@ -288,22 +306,28 @@ def prepare_sql_report_db(
     )
     from reflect.store.refresh_plan import RefreshMode, plan_derived_refresh
     from reflect.store.rollups import rebuild_rollups, refresh_rollups, rollup_rebuild_pending
-    from reflect.store.sqlite import connect_sqlite
+    from reflect.store.sqlite import connect_sqlite, mark_snapshot, snapshot_incomplete
     from reflect.store.workspaces import backfill_session_context
 
     report_preparation_progress(
         progress,
-        PreparationStage.OPENING_STORE,
-        "Opening the local telemetry store...",
+        PreparationStage.WAITING_FOR_STORE,
+        "Waiting for any active refresh of this store...",
     )
-    conn = connect_sqlite(db_path)
-    try:
+    with PreparationLock(db_path), closing(connect_sqlite(db_path)) as conn:
+        report_preparation_progress(
+            progress,
+            PreparationStage.OPENING_STORE,
+            "Opening the local telemetry store...",
+        )
         report_preparation_progress(
             progress,
             PreparationStage.MIGRATING_SCHEMA,
             "Checking database migrations...",
         )
         applied = migrate(conn)
+        recovering = snapshot_incomplete(conn)
+        mark_snapshot(conn, ready=False)
         ingest_result = {"inserted": 0, "skipped": 0}
         ingest_sources: dict[str, dict[str, object]] = {}
         segment_batches: list[SegmentBatchIngestion] = []
@@ -467,6 +491,10 @@ def prepare_sql_report_db(
         )
         reconciled_legacy_data = rollup_rebuild_pending(conn)
         all_session_ids = {str(row[0]) for row in conn.execute("SELECT id FROM sessions")}
+        if recovering:
+            # A prior process may have committed normalization before its derived
+            # work. Reconcile every session even when no raw events remain pending.
+            changed_session_ids.update(all_session_ids)
         rollup_session_ids = {
             str(row[0]) for row in conn.execute("SELECT session_id FROM session_rollups")
         }
@@ -495,7 +523,7 @@ def prepare_sql_report_db(
                 else ""
             ),
             force_full_rollup_reason=(
-                "Codex Desktop telemetry migration requires reconciliation"
+                "Telemetry migration requires reconciliation"
                 if reconciled_legacy_data
                 else ""
             ),
@@ -593,8 +621,10 @@ def prepare_sql_report_db(
             (refresh_completed_at, refresh_completed_at),
         )
         conn.commit()
-    finally:
-        conn.close()
+        if not conn.execute(
+            "SELECT 1 FROM raw_events WHERE normalized_status = 'pending' LIMIT 1"
+        ).fetchone():
+            mark_snapshot(conn, ready=True)
     deferred_replays = [
         source
         for source_result in ingest_sources.values()

@@ -50,6 +50,7 @@ class MCPTaskRunLinkState(StrEnum):
     SESSION_AVAILABLE = "session_available"
     READY_TO_RECONCILE = "ready_to_reconcile"
     LINKED = "linked"
+    CONFLICTING_IDENTITY = "conflicting_identity"
 
 
 class MCPTaskRunStatus(ReflectModel):
@@ -69,6 +70,9 @@ class MCPTaskRunStatus(ReflectModel):
     task_contract_hash: str | None = None
     runtime_session_id: str | None = None
     runtime_agent: str | None = None
+    runtime_identity_source: str | None = None
+    runtime_identity_evidence_id: str | None = None
+    runtime_identity_conflict: str | None = None
     execution_unit_id: str | None = None
     milestone_count: int = Field(default=0, ge=0)
     link_state: MCPTaskRunLinkState
@@ -129,14 +133,19 @@ class MCPTaskRunService:
         workflow_id: str | None,
         selected_skills: list[MCPSelectedSkillRef],
         selected_memories: list[MCPSelectedMemoryRef],
+        runtime_session_id: str | None = None,
+        runtime_agent: str | None = None,
     ) -> str:
         session_hint = self.usage.runtime_session_hint()
+        explicit_id = (runtime_session_id or "").strip() or None
+        session_id = explicit_id or (session_hint.session_id if session_hint else None)
+        agent = runtime_agent if explicit_id else (session_hint.agent if session_hint else None)
         task_run_id = f"mcp_task_{uuid.uuid4().hex}"
         now = utc_now()
         contract = self._register_task_contract(
             task_file_path,
             workspace_path=workspace_path,
-            owner=session_hint.agent if session_hint else None,
+            owner=agent,
             now=now,
         )
         self.conn.execute(
@@ -145,13 +154,13 @@ class MCPTaskRunService:
               id, runtime_session_id, runtime_agent, workspace_path, task_file_path,
               task_contract_id, task_contract_hash, question_hash, workflow_id,
               selected_skills_json, selected_memories_json, status,
-              started_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'started', ?, ?, ?)
+              started_at, created_at, updated_at, runtime_identity_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'started', ?, ?, ?, ?)
             """,
             (
                 task_run_id,
-                session_hint.session_id if session_hint else None,
-                session_hint.agent if session_hint else None,
+                session_id,
+                agent,
                 str(workspace_path),
                 str(task_file_path) if task_file_path else None,
                 contract.artifact_id if contract else None,
@@ -169,12 +178,13 @@ class MCPTaskRunService:
                 now,
                 now,
                 now,
+                "explicit_argument" if explicit_id else "environment" if session_id else None,
             ),
         )
-        if session_hint:
+        if session_id:
             self.execution_units.sync_task_run(
                 task_run_id,
-                session_hint.session_id,
+                session_id,
                 now=now,
             )
         self.conn.commit()
@@ -222,6 +232,8 @@ class MCPTaskRunService:
         outcome: MCPTaskOutcome | str,
         verification_passed: bool | None = None,
         summary_redacted: str = "",
+        runtime_session_id: str | None = None,
+        runtime_agent: str | None = None,
     ) -> MCPTaskRunResult:
         try:
             normalized_outcome = MCPTaskOutcome(outcome)
@@ -238,6 +250,15 @@ class MCPTaskRunService:
         ).fetchone()
         if row is None:
             raise KeyError(f"MCP task run not found: {task_run_id}")
+        explicit_id = (runtime_session_id or "").strip() or None
+        if explicit_id:
+            identity = self.conn.execute(
+                "SELECT runtime_agent FROM mcp_task_runs WHERE id = ?", (task_run_id,),
+            ).fetchone()
+            if (row[0] and row[0] != explicit_id) or (
+                identity[0] and runtime_agent and identity[0] != runtime_agent
+            ):
+                raise ValueError("Runtime identity conflicts with the task's recorded identity")
         existing_verification = None if row[4] is None else bool(row[4])
         if str(row[2]) == "completed":
             if (
@@ -245,6 +266,7 @@ class MCPTaskRunService:
                 and existing_verification == verification_passed
                 and str(row[5] or "") == summary
             ):
+                self._complete_identity(task_run_id, explicit_id, runtime_agent)
                 self.reconciler.reconcile(task_run_ids={task_run_id}, commit=False)
                 self.conn.commit()
                 return self._result(task_run_id, idempotent=True)
@@ -253,6 +275,7 @@ class MCPTaskRunService:
             )
 
         now = utc_now()
+        self._complete_identity(task_run_id, explicit_id, runtime_agent)
         self.conn.execute(
             """
             UPDATE mcp_task_runs
@@ -280,6 +303,16 @@ class MCPTaskRunService:
             linked_to_session=bool(reconciliation.linked),
         )
 
+    def _complete_identity(self, task_run_id: str, session_id: str | None, agent: str | None) -> None:
+        if session_id:
+            self.conn.execute(
+                """UPDATE mcp_task_runs SET runtime_session_id = ?,
+                   runtime_agent = COALESCE(runtime_agent, ?),
+                   runtime_identity_source = CASE WHEN runtime_session_id IS NULL
+                     THEN 'explicit_argument' ELSE runtime_identity_source END
+                   WHERE id = ?""", (session_id, agent, task_run_id),
+            )
+
     def status(self, task_run_id: str) -> MCPTaskRunStatus:
         """Return a read-only, privacy-safe lifecycle snapshot."""
 
@@ -298,7 +331,8 @@ class MCPTaskRunService:
                      WHERE ie.entity_type = 'mcp_task_run'
                        AND ie.entity_id = mcp_task_runs.id
                        AND ie.event_type = 'workflow_milestone'
-                   ) AS milestone_count
+                   ) AS milestone_count,
+                   runtime_identity_source, runtime_identity_evidence_id, runtime_identity_conflict
             FROM mcp_task_runs WHERE id = ?
             """,
             (task_run_id,),
@@ -315,7 +349,9 @@ class MCPTaskRunService:
                 (runtime_session_id,),
             ).fetchone()
         )
-        if row[15]:
+        if row[25]:
+            link_state = MCPTaskRunLinkState.CONFLICTING_IDENTITY
+        elif row[15]:
             link_state = MCPTaskRunLinkState.LINKED
         elif session_exists and str(row[8]) == "completed":
             link_state = MCPTaskRunLinkState.READY_TO_RECONCILE
@@ -329,6 +365,9 @@ class MCPTaskRunService:
             task_run_id=str(row[0]),
             runtime_session_id=runtime_session_id,
             runtime_agent=str(row[2]) if row[2] else None,
+            runtime_identity_source=row[23],
+            runtime_identity_evidence_id=row[24],
+            runtime_identity_conflict=row[25],
             execution_unit_id=str(row[19]) if row[19] else None,
             task_contract_id=str(row[20]) if row[20] else None,
             task_contract_hash=str(row[21]) if row[21] else None,
@@ -361,7 +400,7 @@ class MCPTaskRunService:
         row = self.conn.execute(
             """
             SELECT runtime_session_id, status, outcome, verification_passed,
-                   completed_at, session_linked_at, execution_unit_id
+                   completed_at, session_linked_at, execution_unit_id, runtime_identity_conflict
             FROM mcp_task_runs WHERE id = ?
             """,
             (task_run_id,),
@@ -371,6 +410,8 @@ class MCPTaskRunService:
         session_id = str(row[0] or "")
         if linked_to_session is None:
             linked_to_session = bool(row[5])
+        if row[7]:
+            linked_to_session = False
         return MCPTaskRunResult(
             task_run_id=task_run_id,
             status=str(row[1]),
@@ -396,6 +437,83 @@ class TaskRunReconciler:
         self.conn = conn
         self.execution_units = execution_units or ExecutionUnitRepository(conn)
 
+    def recover_identities(self, session_ids: set[str] | None = None) -> set[str]:
+        """Recover only exact task IDs in structured Reflect calls, never temporal guesses."""
+        from reflect.store.mcp import DEFAULT_MCP_CLASSIFIER
+
+        if session_ids == set():
+            return set()
+        scope = ""
+        params = sorted(session_ids or ())
+        if session_ids is not None:
+            scope = f"AND tc.session_id IN ({','.join('?' for _ in params)})"
+        rows = self.conn.execute(
+            f"""SELECT tc.id, tc.session_id, tc.tool_name, tc.input_preview_redacted,
+                       tc.output_preview_redacted, a.name, w.root_path
+                FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id
+                LEFT JOIN agents a ON a.id = s.agent_id
+                LEFT JOIN workspaces w ON w.id = s.workspace_id
+                WHERE (tc.tool_name LIKE '%reflect_complete'
+                    OR tc.tool_name LIKE '%reflect_context') {scope}""", params,
+        )
+        candidates: dict[str, dict[str, tuple[str, str | None, str | None]]] = {}
+        for evidence_id, session_id, tool, inputs, outputs, agent, workspace in rows:
+            # These are encoded MCP identities, not arbitrary names containing a substring.
+            suffix = DEFAULT_MCP_CLASSIFIER.identify({"gen_ai.client.tool_name": tool}).tool_name
+            if suffix is None:
+                suffix = tool.removeprefix("reflect-")
+            if suffix not in {"reflect_complete", "reflect_context"}:
+                continue
+            raw = inputs if suffix == "reflect_complete" else outputs
+            try:
+                payload = json.loads(raw or "null")
+            except (ValueError, TypeError):
+                continue
+            if isinstance(payload, dict) and isinstance(payload.get("structuredContent"), dict):
+                payload = payload["structuredContent"]
+            task_id = payload.get("task_run_id") if isinstance(payload, dict) else None
+            if isinstance(task_id, str) and task_id.startswith("mcp_task_"):
+                candidates.setdefault(task_id, {})[session_id] = (evidence_id, agent, workspace)
+        recovered = set()
+        for task_id, matches in candidates.items():
+            run = self.conn.execute(
+                """SELECT runtime_session_id, runtime_agent, workspace_path,
+                          runtime_identity_conflict FROM mcp_task_runs WHERE id = ?""", (task_id,),
+            ).fetchone()
+            if run is None or run[3]:
+                continue
+            session_id = next(iter(matches))
+            evidence_id, agent, workspace = matches[session_id]
+            conflict = None
+            if len(matches) != 1 or (run[0] and run[0] != session_id):
+                conflict = "Exact task ID occurs in conflicting runtime sessions."
+            elif run[1] and agent and run[1] != agent:
+                conflict = "Telemetry agent conflicts with the recorded runtime agent."
+            elif workspace and run[2] and not (
+                Path(run[2]).is_relative_to(Path(workspace))
+                or Path(workspace).is_relative_to(Path(run[2]))
+            ):
+                conflict = "Telemetry workspace conflicts with the task workspace."
+            if conflict:
+                self.conn.execute(
+                    "UPDATE mcp_task_runs SET runtime_identity_conflict = ? WHERE id = ?",
+                    (conflict, task_id),
+                )
+                self.conn.execute(
+                    "UPDATE execution_units SET eligible = 0 WHERE mcp_task_run_id = ?", (task_id,),
+                )
+                if run[0]:
+                    recovered.add(run[0])
+            elif not run[0]:
+                self.conn.execute(
+                    """UPDATE mcp_task_runs SET runtime_session_id = ?, runtime_agent = ?,
+                       runtime_identity_source = 'telemetry_correlation',
+                       runtime_identity_evidence_id = ?, updated_at = ? WHERE id = ?""",
+                    (session_id, agent, evidence_id, utc_now(), task_id),
+                )
+                recovered.add(session_id)
+        return recovered
+
     def reconcile(
         self,
         *,
@@ -410,7 +528,7 @@ class TaskRunReconciler:
         if task_run_ids is not None and not normalized_runs:
             return TaskRunReconciliationResult()
 
-        clauses = ["tr.status = 'completed'"]
+        clauses = ["tr.status = 'completed'", "tr.runtime_identity_conflict IS NULL"]
         params: list[str] = []
         if session_ids is not None:
             placeholders = ",".join("?" for _ in normalized_sessions)

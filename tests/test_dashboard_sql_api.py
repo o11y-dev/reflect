@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from reflect.dashboard_query_common import session_card_from_row
@@ -637,7 +638,8 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path):
     assert tabs["costs"]["total_cache_creation_tokens"] == 10
     assert tabs["costs"]["total_cache_read_tokens"] == 90
     assert observations["token_economy"]["total_tokens"] == 250
-    assert observations["token_economy"]["cache_hit_pct"] == 75
+    assert observations["token_economy"]["cache_read_share_pct"] == pytest.approx(90 / 220 * 100)
+    assert "cache_hit_pct" not in observations["token_economy"]
     graph = client.get("/api/explore/graph").json()
     assert graph["graph_dep"]["nodes"]
     assert {node["type"] for node in graph["graph_dep"]["nodes"]} >= {

@@ -360,6 +360,7 @@ class ExecutionUnitService:
             FROM mcp_task_runs
             {scope_join}
             WHERE runtime_session_id IS NOT NULL
+              AND runtime_identity_conflict IS NULL
             ORDER BY runtime_session_id, started_at, id
             """
         ).fetchall()

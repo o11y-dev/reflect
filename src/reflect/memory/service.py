@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from reflect.context_artifacts import context_artifact_id
+from reflect.improvements.models import ImprovementScope
+from reflect.improvements.scope import ImprovementScopeResolver, session_scope_predicate
 from reflect.memory.models import MemoryItem, MemorySourceMetadata, utc_now
 from reflect.memory.registry import MemoryProviderRegistry
 from reflect.memory.sqlite_provider import LocalSQLiteMemoryProvider
@@ -134,13 +136,18 @@ class MemoryService:
                 filters={"validated": True},
                 limit=50,
             )
-            if str((row.get("source_metadata") or {}).get("source_kind") or "")
-            == "filesystem_instruction_scan"
-            and str(row.get("scope") or "") != "user"
+            if _project_instruction_applies(row, path)
         ]
         merged: list[dict[str, Any]] = []
         seen: set[str] = set()
         for row in [*applicable, *matches]:
+            source = row.get("source_metadata") or {}
+            if (
+                source.get("source_kind") == "filesystem_instruction_scan"
+                and row.get("scope") in {"project", "project_local"}
+                and not _project_instruction_applies(row, path)
+            ):
+                continue
             memory_id = str(row.get("id") or row.get("memory_id") or "")
             if not memory_id or memory_id in seen:
                 continue
@@ -226,17 +233,32 @@ class MemoryService:
         return self.local.validate(memory_id).__dict__
 
     def candidates(self, *, path: Path | None = None, session_id: str = "", limit: int = 50) -> list[dict]:
-        self._generate_candidates(path=path, session_id=session_id, limit=limit)
+        scope = ImprovementScopeResolver(self.conn).path(path)
+        if not scope.matched:
+            return []
+        predicate, params = session_scope_predicate(scope)
+        if session_id and not self.conn.execute(
+            f"SELECT 1 FROM sessions s WHERE s.id = ? AND {predicate}",
+            [session_id, *params],
+        ).fetchone():
+            return []
+        limit = max(1, min(limit, 100))
+        self._generate_candidates(scope=scope, session_id=session_id, limit=limit)
         rows = self.conn.execute(
             """
             SELECT id, scope, type, content_preview_redacted, confidence,
-                   source_metadata_json, evidence_json, status, promoted_memory_id
+                   source_metadata_json, evidence_json, status, promoted_memory_id,
+                   scope_kind, scope_id
             FROM memory_candidates
-            WHERE status = 'candidate'
-            ORDER BY confidence DESC, updated_at DESC
+            WHERE status = 'candidate' AND scope_kind = ? AND scope_id = ?
+              AND (? = '' OR EXISTS (
+                SELECT 1 FROM json_each(evidence_json, '$.session_ids') WHERE value = ?
+              ))
+            ORDER BY confidence DESC, updated_at DESC, id
             LIMIT ?
             """,
-            (limit,),
+            ("repo" if scope.repo_id else "workspace", scope.repo_id or scope.workspace_id,
+             session_id, session_id, limit),
         ).fetchall()
         candidates: list[dict] = []
         for row in rows:
@@ -251,6 +273,8 @@ class MemoryService:
                     "evidence": _loads(row[6]),
                     "status": row[7],
                     "promoted_memory_id": row[8] or "",
+                    "scope_kind": row[9],
+                    "scope_id": row[10],
                 }
             )
         return candidates
@@ -259,7 +283,7 @@ class MemoryService:
         row = self.conn.execute(
             """
             SELECT id, scope, type, content_preview_redacted, confidence,
-                   source_metadata_json, evidence_json
+                   source_metadata_json, evidence_json, status, promoted_memory_id
             FROM memory_candidates
             WHERE id = ?
             """,
@@ -267,6 +291,13 @@ class MemoryService:
         ).fetchone()
         if not row:
             raise KeyError(f"Memory candidate not found: {candidate_id}")
+        if row[7] == "invalidated":
+            raise ValueError("Candidate scope is unverified; regenerate candidates for the repository")
+        if row[7] == "promoted":
+            remembered = self.local.inspect(str(row[8]))
+            if remembered is None:
+                raise ValueError("Promoted memory no longer exists")
+            return remembered
         source_payload = _loads(row[5])
         source = MemorySourceMetadata(
             source_kind=str(source_payload.get("source_kind") or "graph_candidate"),
@@ -274,6 +305,7 @@ class MemoryService:
             path=str(source_payload.get("path") or ""),
             workspace_root=str(source_payload.get("workspace_root") or ""),
             session_id=str(source_payload.get("session_id") or ""),
+            repo_id=str(source_payload.get("repo_id") or ""),
             attrs=source_payload,
         )
         remembered = self.remember(
@@ -313,43 +345,48 @@ class MemoryService:
             return "memorypalace"
         return "local_sqlite"
 
-    def _generate_candidates(self, *, path: Path | None, session_id: str, limit: int) -> None:
+    def _generate_candidates(self, *, scope: ImprovementScope, session_id: str, limit: int) -> None:
         timestamp = utc_now()
-        session_clause = "AND ge.session_id = ?" if session_id else ""
-        params: list[object] = [session_id] if session_id else []
+        predicate, scope_params = session_scope_predicate(scope)
         rows = self.conn.execute(
             f"""
             SELECT
               ge.kind,
               tn.kind,
               tn.label,
+              CASE WHEN ge.kind = 'addressed_spec' THEN tn.id ELSE tn.label END AS target_identity,
               COUNT(*) AS occurrences,
               COUNT(DISTINCT ge.session_id) AS session_support,
               GROUP_CONCAT(DISTINCT ge.session_id) AS session_ids
             FROM graph_edges ge
+            JOIN sessions s ON s.id = ge.session_id
             JOIN graph_nodes tn ON tn.id = ge.target_node_id
-            WHERE ge.kind IN ('used_tool', 'used_skill', 'spawned_subagent', 'achieved_outcome', 'touched_folder', 'addressed_spec')
-              AND ge.session_id IS NOT NULL
-              {session_clause}
-            GROUP BY ge.kind, tn.kind, tn.label
+            WHERE ge.kind IN ('used_skill', 'touched_folder', 'addressed_spec')
+              AND {predicate}
+              AND NULLIF(trim(tn.label), '') IS NOT NULL
+              AND (ge.kind <> 'touched_folder' OR (tn.label NOT LIKE '/%' AND tn.label NOT IN ('.', '/')))
+            GROUP BY ge.kind, tn.kind, tn.label, target_identity
             HAVING COUNT(DISTINCT ge.session_id) >= CASE WHEN ? <> '' THEN 1 ELSE 2 END
-            ORDER BY session_support DESC, occurrences DESC
+              AND (? = '' OR SUM(ge.session_id = ?) > 0)
+            ORDER BY session_support DESC, occurrences DESC, target_identity
             LIMIT ?
             """,
-            [*params, session_id, limit],
+            [*scope_params, session_id, session_id, session_id, limit],
         ).fetchall()
-        workspace = str((path or Path.cwd()).expanduser().resolve())
+        scope_kind = "repo" if scope.repo_id else "workspace"
+        scope_id = scope.repo_id or scope.workspace_id
         for row in rows:
-            edge_kind, node_kind, label, occurrences, support, session_ids_csv = row
-            content = (
-                f"Recurring Reflect graph pattern: {edge_kind} -> {node_kind} {label} "
-                f"across {support} session(s)."
-            )
+            edge_kind, node_kind, label, target_identity, occurrences, support, session_ids_csv = row
+            observation = {"touched_folder": "Work touched folder", "used_skill": "Skill observed",
+                           "addressed_spec": "Task contract addressed"}[edge_kind]
+            content = f"{observation}: {label} in {support} session(s) in this {scope_kind}."
             identity = json.dumps(
                 {
                     "edge_kind": edge_kind,
                     "target_kind": node_kind,
-                    "target_label": label,
+                    "target_identity": target_identity,
+                    "scope_kind": scope_kind,
+                    "scope_id": scope_id,
                 },
                 sort_keys=True,
             )
@@ -357,7 +394,9 @@ class MemoryService:
             source_metadata = {
                 "source_kind": "graph_candidate",
                 "source_ref": candidate_id,
-                "workspace_root": workspace,
+                "scope_kind": scope_kind,
+                "scope_id": scope_id,
+                "repo_id": scope.repo_id or "",
             }
             evidence = {
                 "edge_kind": edge_kind,
@@ -371,9 +410,11 @@ class MemoryService:
                 """
                 INSERT INTO memory_candidates(
                   id, scope, type, content_preview_redacted, confidence,
-                  source_metadata_json, evidence_json, status, created_at, updated_at
-                ) VALUES (?, 'project', 'graph_pattern', ?, ?, ?, ?, 'candidate', ?, ?)
+                  source_metadata_json, evidence_json, status, created_at, updated_at,
+                  scope_kind, scope_id
+                ) VALUES (?, 'project', 'graph_pattern', ?, ?, ?, ?, 'candidate', ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
+                  content_preview_redacted = excluded.content_preview_redacted,
                   confidence = excluded.confidence,
                   evidence_json = excluded.evidence_json,
                   updated_at = excluded.updated_at
@@ -386,9 +427,27 @@ class MemoryService:
                     json.dumps(evidence, sort_keys=True),
                     timestamp,
                     timestamp,
+                    scope_kind,
+                    scope_id,
                 ),
             )
         self.conn.commit()
+
+
+def _project_instruction_applies(row: dict[str, Any], requested_path: Path) -> bool:
+    """Only inherit project instructions down their source directory tree."""
+    source = row.get("source_metadata") or {}
+    if (
+        source.get("source_kind") != "filesystem_instruction_scan"
+        or row.get("scope") not in {"project", "project_local"}
+        or not source.get("path")
+    ):
+        return False
+    source_path = Path(source["path"]).expanduser().resolve()
+    root = source_path.parent
+    if source_path.name == "copilot-instructions.md" and root.name == ".github":
+        root = root.parent
+    return requested_path.expanduser().resolve().is_relative_to(root)
 
 
 def _redacted_preview(path: Path, text: str, *, max_chars: int = 360) -> str:

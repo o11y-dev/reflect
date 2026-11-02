@@ -245,7 +245,17 @@ managed services:
 REFLECT_OTLP_MAX_BYTES=4294967296           # combined raw traces + logs
 REFLECT_OTLP_SEGMENT_BYTES=268435456        # one active segment
 REFLECT_REFRESH_INTERVAL_SECONDS=300        # refresh-enabled report server
+REFLECT_SQLITE_BUSY_TIMEOUT_MS=30000         # writer wait; 0 means no wait
 ```
+
+Refresh and maintenance commands coordinate across processes. Imports commit in
+batches, and a failed refresh remains incomplete until `reflect refresh` repairs
+it. The dashboard can retain its last completed cached view; requests needing an
+incomplete snapshot return a retryable response. MCP context caps each SQLite
+writer wait at one second, then returns available memory/guidance with an explicit
+tracking limitation. Guidance queries share one read transaction, and no-change
+usage refreshes preserve completed reports. Increasing the SQLite timeout permits longer waits; it does
+not increase the number of simultaneous writers.
 
 `tool_calls` stores one logical invocation. `mcp_calls` is a one-to-one metadata
 extension for MCP server, tool, transport, and protocol identity, not a second
@@ -307,6 +317,16 @@ does not invent a new procedure.
 - `reflect_complete` — close the task after validation
 - `reflect_improvements`, `reflect_patterns`, `reflect_skills`, and
   `reflect_impact` — bounded read-only evidence
+- `reflect_guidance_efficiency` — descriptive cost and model-request comparison for
+  verified task executions in one repository, archetype, and exact model.
+  Guidance delivery and reported selected skill outcomes are separate. An
+  outcome report does not prove the skill was followed. Guided tasks remain
+  in the cohort even without a selected skill outcome. Tasks with
+  missing model identity or task-level model usage are excluded; this
+  comparison does not prove causation. The response includes cache token mix,
+  observed cache-read share, verified success rate, and cost per verified
+  success when every model call has pricing. Impact remains the surface for
+  installed workflow adherence and before/after results.
 - `reflect_explain` and `reflect_usage` — provenance and exact usage
 - `reflect_review_change` — return an exact diff, target, risks, and rollback
 - `reflect_apply_change` — consume only the explicitly approved exact review

@@ -134,6 +134,41 @@ class TestHelp:
                 "SELECT COUNT(*) FROM sessions WHERE id = 'sess-refresh-spans'"
             ).fetchone()[0] == 1
 
+    def test_refresh_reports_lock_contention_without_a_traceback(self, runner, tmp_path, monkeypatch):
+        from reflect.store.ingest import ingest_local_spans_file
+        from reflect.store.migrate import migrate
+        from reflect.store.sqlite import connect_sqlite
+
+        db_path = tmp_path / "reflect.db"
+        spans = tmp_path / "pending.jsonl"
+        spans.write_text(json.dumps({
+            "name": "Stop", "spanId": "pending-span",
+            "start_time_ns": 100, "end_time_ns": 200,
+            "attributes": {"gen_ai.client.session_id": "pending-session"},
+        }) + "\n")
+        empty_spans = tmp_path / "empty-spans"
+        empty_spans.mkdir()
+        monkeypatch.setattr(core, "default_otlp_traces", lambda: None)
+        monkeypatch.setattr("reflect.store.sqlite.DEFAULT_BUSY_TIMEOUT_MS", 10)
+        writer = connect_sqlite(db_path)
+        try:
+            migrate(writer)
+            ingest_local_spans_file(writer, file_path=spans)
+            writer.execute("BEGIN IMMEDIATE")
+            result = runner.invoke(main, [
+                "refresh", "--no-native-sessions", "--db-path", str(db_path),
+                "--spans-dir", str(empty_spans),
+            ])
+            assert result.exit_code == 1
+            assert "busy with another writer" in result.output
+            assert "Traceback" not in result.output
+            assert writer.execute(
+                "SELECT normalized_status FROM raw_events"
+            ).fetchone()[0] == "pending"
+        finally:
+            writer.rollback()
+            writer.close()
+
     def test_db_doctor_help(self, runner):
         result = runner.invoke(main, ["db", "doctor", "--help"])
         assert result.exit_code == 0

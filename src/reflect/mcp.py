@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -21,10 +22,11 @@ from reflect.improvements.models import (
 from reflect.inspection import PatternType, SkillAvailability
 from reflect.preparation import (
     CommandPreparationPolicy,
+    PreparationLock,
+    PreparationProfile,
     SnapshotLifecycleService,
     SQLiteSnapshotInspector,
 )
-from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only
 from reflect.task_runs import MCPTaskOutcome
 
@@ -104,20 +106,20 @@ def _with_service[ResultT](
     *,
     read_only: bool = False,
     require_sessions: bool = False,
+    timeout_ms: int | None = None,
+    profile: PreparationProfile = PreparationProfile.SNAPSHOT,
 ) -> ResultT:
     db_path = _db_path()
     if read_only:
         SnapshotLifecycleService(
-            SQLiteSnapshotInspector(db_path),
+            SQLiteSnapshotInspector(db_path, profile=profile),
             policy=CommandPreparationPolicy(require_sessions=require_sessions),
             refresh_hint="Run `reflect refresh` before using this read-only tool.",
         ).prepare(requested_refresh=None)
-        conn = connect_sqlite_read_only(db_path)
+        conn = connect_sqlite_read_only(db_path, profile=profile.value)
     else:
-        conn = connect_sqlite(db_path)
+        conn = connect_sqlite(db_path, timeout_ms=timeout_ms)
     try:
-        if not read_only:
-            migrate(conn)
         return operation(
             ReflectContextService(conn, initialize_schema=not read_only)
         )
@@ -132,20 +134,43 @@ def reflect_context(
     task_file: str = "",
     memory_provider: str = "local_sqlite",
     memory_limit: int = 5,
+    runtime_session_id: str = "",
+    runtime_agent: str = "",
 ) -> dict[str, Any]:
     """Call once at task start before implementation to get guidance and selected skills."""
 
     resolved_path = Path(path).expanduser().resolve() if path else Path.cwd()
     resolved_task = Path(task_file).expanduser().resolve() if task_file else None
-    return _with_service(
-        lambda service: service.begin_task(
-            question,
-            task_file=resolved_task,
-            path=resolved_path,
-            memory_provider=memory_provider,
-            memory_limit=memory_limit,
-        ).model_dump(mode="json")
-    )
+    from reflect.store.sqlite import busy_timeout_ms, is_sqlite_busy
+
+    try:
+        return _with_service(
+            lambda service: service.begin_task(
+                question, task_file=resolved_task, path=resolved_path,
+                memory_provider=memory_provider, memory_limit=memory_limit,
+                runtime_session_id=runtime_session_id or None,
+                runtime_agent=runtime_agent or None,
+            ).model_dump(mode="json"),
+            timeout_ms=min(busy_timeout_ms(), 1000),
+        )
+    except sqlite3.OperationalError as exc:
+        if not is_sqlite_busy(exc):
+            raise
+        # Do not let optional tracking take down guidance. A separate read-only
+        # connection discards any failed write transaction and cannot migrate.
+        conn = connect_sqlite_read_only(_db_path(), profile=None)
+        try:
+            answer = ReflectContextService(conn, initialize_schema=False).ask(
+                question, task_file=resolved_task, path=resolved_path,
+                memory_provider=memory_provider, memory_limit=memory_limit,
+            )
+            answer.limitations.append(
+                "Task tracking was not recorded because the local store is busy. "
+                "Guidance is available; no reflect_complete call is required for this response."
+            )
+            return answer.model_dump(mode="json")
+        finally:
+            conn.close()
 
 
 @mcp.tool(annotations=TASK_COMPLETE_TOOL)
@@ -154,6 +179,8 @@ def reflect_complete(
     outcome: MCPTaskOutcome,
     verification_passed: bool | None = None,
     summary: str = "",
+    runtime_session_id: str = "",
+    runtime_agent: str = "",
 ) -> dict[str, Any]:
     """Call once after validation to record the task outcome and close the Reflect guidance run."""
 
@@ -163,6 +190,8 @@ def reflect_complete(
             outcome=outcome,
             verification_passed=verification_passed,
             summary_redacted=summary,
+            runtime_session_id=runtime_session_id or None,
+            runtime_agent=runtime_agent or None,
         ).model_dump(mode="json")
     )
 
@@ -287,6 +316,23 @@ def reflect_impact(
 
 
 @mcp.tool(annotations=READ_ONLY_TOOL)
+def reflect_guidance_efficiency(
+    repo_id: str, task_archetype_id: str, model: str, limit: int = 100
+) -> dict[str, Any]:
+    """Compare verified tasks for one repository, task archetype and exact model."""
+
+    return _with_service(
+        lambda service: service.guidance_efficiency(
+            repo_id=repo_id,
+            task_archetype_id=task_archetype_id,
+            model=model,
+            limit=limit,
+        ),
+        read_only=True,
+    )
+
+
+@mcp.tool(annotations=READ_ONLY_TOOL)
 def reflect_task_status(task_run_id: str) -> dict[str, Any]:
     """Inspect task completion and late-ingestion linkage without changing either."""
 
@@ -307,24 +353,26 @@ def reflect_review_change(
     """Prepare an exact workflow approval, application, or rollback for user review."""
 
     resolved_root = Path(project_root).expanduser().resolve() if project_root else None
-    return _with_service(
-        lambda service: service.review_change(
-            action=action,
-            entity_id=entity_id,
-            project_root=resolved_root,
-            revised_content=revised_content,
-            expires_in_minutes=expires_in_minutes,
-        ).model_dump(mode="json")
-    )
+    with PreparationLock(_db_path()):
+        return _with_service(
+            lambda service: service.review_change(
+                action=action,
+                entity_id=entity_id,
+                project_root=resolved_root,
+                revised_content=revised_content,
+                expires_in_minutes=expires_in_minutes,
+            ).model_dump(mode="json")
+        )
 
 
 @mcp.tool(annotations=CHANGE_APPLY_TOOL)
 def reflect_apply_change(approval_token: str) -> dict[str, Any]:
     """Apply only the exact reviewed change after explicit user approval."""
 
-    return _with_service(
-        lambda service: service.apply_change(approval_token).model_dump(mode="json")
-    )
+    with PreparationLock(_db_path()):
+        return _with_service(
+            lambda service: service.apply_change(approval_token).model_dump(mode="json")
+        )
 
 
 @mcp.tool(annotations=READ_ONLY_TOOL)
@@ -355,6 +403,7 @@ def reflect_usage(
         ),
         read_only=True,
         require_sessions=True,
+        profile=PreparationProfile.USAGE,
     )
 
 

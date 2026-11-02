@@ -617,20 +617,29 @@ class SkillRegistryService:
                 for item in usage_rows
             ],
             measurements=[
-                SkillMeasurementRecord(
-                    id=str(item[0]),
-                    skill_id=str(item[1]),
-                    skill_version_id=item[2],
-                    metric_name=str(item[3]),
-                    before_value=item[4],
-                    after_value=item[5],
-                    verdict=str(item[6]),
-                    confidence=float(item[7]),
-                    measured_at=str(item[8]),
-                    details=_loads(item[9], {}),
-                )
+                self._measurement_record(item)
                 for item in measurement_rows
             ],
+        )
+
+    def _measurement_record(self, row: tuple) -> SkillMeasurementRecord:
+        from reflect.improvements.measurement import MeasurementService
+
+        details = _loads(row[9], {})
+        source_id = details.get("source_measurement_id")
+        current = MeasurementService(self.conn).list(measurement_id=source_id, limit=1) if source_id else []
+        values = current[0] if current else {
+            "before_value": row[4], "after_value": row[5], "verdict": row[6], "confidence": row[7],
+        }
+        if current:
+            details = {**details, "cohort": values["cohort"], "delta": values["delta"]}
+            if "recorded_result" in values:
+                details["recorded_result"] = values["recorded_result"]
+        return SkillMeasurementRecord(
+            id=row[0], skill_id=row[1], skill_version_id=row[2], metric_name=row[3],
+            before_value=values["before_value"], after_value=values["after_value"],
+            verdict=values["verdict"], confidence=values["confidence"],
+            measured_at=row[8], details=details,
         )
 
     def workflow_candidate_for(self, skill_id_or_slug: str) -> str:
