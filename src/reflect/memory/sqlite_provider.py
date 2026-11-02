@@ -227,8 +227,14 @@ class LocalSQLiteMemoryProvider:
         filters: dict | None = None,
         limit: int = 20,
     ) -> list[MemorySearchResult]:
-        if self.maintain_search_index:
-            self.rebuild_fts_if_empty()
+        use_fts = self.maintain_search_index
+        if use_fts:
+            if self.conn.in_transaction:
+                # Guidance pins a read snapshot. Lazy index maintenance must
+                # neither upgrade it to a writer nor commit the caller's reads.
+                use_fts = self.conn.execute("SELECT 1 FROM memory_fts LIMIT 1").fetchone() is not None
+            else:
+                self.rebuild_fts_if_empty()
         previous = self.conn.row_factory
         self.conn.row_factory = sqlite3.Row
         try:
@@ -237,7 +243,7 @@ class LocalSQLiteMemoryProvider:
             if not (filters or {}).get("validation_status"):
                 filter_clause += " AND m.validation_status <> 'needs_review'"
             rows = None
-            if self.maintain_search_index:
+            if use_fts:
                 try:
                     rows = self.conn.execute(
                         f"""

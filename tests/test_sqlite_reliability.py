@@ -188,13 +188,17 @@ def test_no_change_usage_refresh_preserves_completed_report(tmp_path):
 
 
 @pytest.mark.parametrize("method", ["ask", "begin_task"])
-def test_guidance_pins_readiness_and_queries_while_another_connection_refreshes(tmp_path, monkeypatch, method):
+@pytest.mark.parametrize("initialize_schema", [False, True])
+def test_guidance_pins_readiness_and_queries_while_another_connection_refreshes(
+    tmp_path, monkeypatch, method, initialize_schema,
+):
     db = tmp_path / "reflect.db"
     seed_memory(db, tmp_path)
     writer, reader = connect_sqlite(db), connect_sqlite(db)
     try:
+        writer.execute("DELETE FROM memory_fts")
         mark_snapshot(writer, ready=True)
-        service = ReflectContextService(reader, initialize_schema=False)
+        service = ReflectContextService(reader, initialize_schema=initialize_schema)
         original = service.improvements.ask
 
         def refresh_during_query(*args, **kwargs):
@@ -213,6 +217,17 @@ def test_guidance_pins_readiness_and_queries_while_another_connection_refreshes(
     finally:
         reader.close()
         writer.close()
+
+
+def test_memory_search_with_empty_index_preserves_caller_transaction(tmp_path):
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    try:
+        migrate(conn)
+        conn.execute("BEGIN")
+        assert MemoryService(conn).search("release gate", path=tmp_path) == []
+        assert conn.in_transaction
+    finally:
+        conn.close()
 
 
 def test_backlog_does_not_repeat_global_hash_repair_per_normalization_batch(tmp_path, monkeypatch):
