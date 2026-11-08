@@ -350,8 +350,8 @@ def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(p
     assert "/api/findings/${encodeURIComponent(observationId)}/evidence" in text
     assert "This observation has no workflow session ledger." not in text
     assert "Source Evidence" in text
-    assert "Related Sessions" in text
-    assert "Observed Uses" in text
+    assert "Captured References" in text
+    assert "References · All Time" in text
     assert "After Activation" in text
     assert "Review Agent Draft & Diff" in text
     assert "Review Blueprint & Diff" in text
@@ -384,7 +384,6 @@ def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(p
     assert 'class="review-kpi-strip"' in text
     assert 'class="review-grid"' in text
     assert 'class="ledger-action-spacer"' in text
-    assert "Show ${fmt(items.length - initial)} More ${taskLevel ? 'Tasks' : 'Sessions'}" in text
     assert "/api/workflows/${encodeURIComponent(candidateId)}/evidence" in text
     assert "function sessionInspectionUrl(session)" in text
     assert "data-related-session-link" in text
@@ -487,7 +486,6 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "workflow_adherence:{goal:'Preserve the Proven Procedure'" in text
     assert "minimum_after_execution_units" in text
     assert "const evidenceId = session.execution_unit_id || session.session_id" in text
-    assert "linked ${taskLevel ? 'execution units' : 'sessions'}" in text
     assert "function impactTrendPresentation(item, previous, metric)" in text
     assert "function impactMeasurementState(item)" in text
     assert "measurementState === 'not_measurable'" in text

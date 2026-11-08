@@ -798,9 +798,9 @@ class ReflectContextService:
         source_execution_units = self.agent_inspection.skill_source_execution_units(
             version.id
         )
-        usage_sessions = [
+        usage_occurrences = [
             item
-            for item in detail.usage_sessions
+            for item in detail.usage_occurrences
             if version_row is None or item.skill_version_id == version.id
         ]
         measurements = [
@@ -820,8 +820,8 @@ class ReflectContextService:
                 "source_execution_units": [
                     item.model_dump(mode="json") for item in source_execution_units
                 ],
-                "usage_sessions": [
-                    item.model_dump(mode="json") for item in usage_sessions[:50]
+                "usage_occurrences": [
+                    item.model_dump(mode="json") for item in usage_occurrences[:50]
                 ],
                 "measurements": [
                     item.model_dump(mode="json") for item in measurements[:50]

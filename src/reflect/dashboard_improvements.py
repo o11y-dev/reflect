@@ -199,7 +199,7 @@ class DashboardImprovementAdapter:
         detail = record.model_dump(mode="json")
         detail["analysis_state"] = "pending" if pending else "ready"
         if pending:
-            for usage in detail["usage_sessions"]:
+            for usage in detail["usage_occurrences"]:
                 usage["outcome"] = None
             for measurement in detail["measurements"]:
                 measurement["recorded_result"] = {

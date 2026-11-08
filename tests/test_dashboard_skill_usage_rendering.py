@@ -58,3 +58,23 @@ container.isConnected=false;pending[2](response(333));await third;
 assert.ok(container.innerHTML.includes('222 references'));
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """)
+
+
+def test_skill_usage_graph_preserves_all_time_and_scoped_filters():
+    _run("""
+(async()=>{
+const urls=[];
+context.fetch=async url=>{urls.push(url);return {ok:true,json:async()=>({records:[],counts:{},scope:{days:null}})};};
+const container={isConnected:true,innerHTML:'',querySelectorAll:()=>[],querySelector:()=>null};
+context.window.location.search='?range=all&agents=codex&repo=repo-one';
+await context.loadSkillUsageGraph('skill',container);
+let query=new URL(urls.at(-1),'http://localhost').searchParams;
+assert.equal(query.get('days'),'all');
+assert.equal(query.get('agents'),'codex');assert.equal(query.get('repo'),'repo-one');
+assert.match(container.innerHTML,/All time/);
+context.window.location.search='?range=30d';
+await context.loadSkillUsageGraph('skill',container,{offset:20});
+query=new URL(urls.at(-1),'http://localhost').searchParams;
+assert.equal(query.get('days'),'30');assert.equal(query.get('offset'),'20');
+})().catch(error=>{console.error(error);process.exitCode=1;});
+""")

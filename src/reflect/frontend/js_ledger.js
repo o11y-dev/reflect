@@ -406,7 +406,7 @@ function sessionInspectionUrl(session){
   return `${url.pathname}?${url.searchParams.toString()}${url.hash}`;
 }
 
-function renderWorkflowSessionLedger(sessions, {empty, total, initial = 5} = {}){
+function renderWorkflowSessionLedger(sessions, {empty, total, initial = 5, occurrences = false} = {}){
   const items = sessions || [];
   if (!items.length) return `<div class="session-ledger-empty">${escHtml(empty || 'No linked sessions yet.')}</div>`;
   const taskLevel = items.some(item => item.execution_unit_id);
@@ -438,10 +438,10 @@ function renderWorkflowSessionLedger(sessions, {empty, total, initial = 5} = {})
   const remainingRows = items.slice(initial).map(renderRow).join('');
   const count = Number(total || items.length);
   const more = remainingRows
-    ? `<details class="session-more"><summary>Show ${fmt(items.length - initial)} More ${taskLevel ? 'Tasks' : 'Sessions'}</summary><div class="session-ledger">${remainingRows}</div></details>`
+    ? `<details class="session-more"><summary>Show ${fmt(items.length - initial)} More ${occurrences ? 'References' : taskLevel ? 'Tasks' : 'Sessions'}</summary><div class="session-ledger">${remainingRows}</div></details>`
     : '';
   const countNote = count > items.length
-    ? `<div class="ledger-status">Showing ${fmt(items.length)} bounded examples from ${fmt(count)} linked ${taskLevel ? 'execution units' : 'sessions'}.</div>`
+    ? `<div class="ledger-status">Showing ${fmt(items.length)} bounded examples from ${fmt(count)} ${occurrences ? 'captured references' : taskLevel ? 'linked execution units' : 'linked sessions'}.</div>`
     : '';
   return `<div class="session-ledger">${visibleRows}</div>${more}${countNote}`;
 }
@@ -665,7 +665,7 @@ async function showSkillReview(skillId){
     const installations = detail.installations || [];
     const measurements = analysisUnavailable ? [] : detail.measurements || [];
     const evidence = analysisUnavailable ? [] : detail.evidence || [];
-    const usageSessions = analysisUnavailable ? [] : detail.usage_sessions || [];
+    const usageOccurrences = analysisUnavailable ? [] : detail.usage_occurrences || [];
     const analysisCount = value => analysisUnavailable || value == null ? '—' : fmt(Number(value));
     const pendingAnalysis = '<div class="session-ledger-empty">Analysis is updating. These results are not available yet.</div>';
     const availability = skillAvailabilityPresentation(skill, installations);
@@ -706,7 +706,7 @@ async function showSkillReview(skillId){
       <div class="session-ledger-main"><div class="session-ledger-title">Source Session</div><div class="session-ledger-id" title="${escHtml(item.entity_id)}" translate="no">${escHtml(compactLedgerId(item.entity_id))}</div><div class="session-ledger-meta"><span>${escHtml(humanizeLedgerLabel(item.relationship || 'source evidence'))}</span><span>${Math.round(Number(item.confidence || 0) * 100)}% confidence</span></div></div>
       <div class="session-ledger-side"><a class="ledger-button" href="${escHtml(sessionInspectionUrl({session_id:item.entity_id}))}">Open Session</a></div>
     </article>`).join('');
-    const usageSessionRows = analysisUnavailable ? pendingAnalysis : renderWorkflowSessionLedger(usageSessions.map(item => ({
+    const usageOccurrenceRows = analysisUnavailable ? pendingAnalysis : renderWorkflowSessionLedger(usageOccurrences.map(item => ({
       session_id:item.session_id,
       title:item.title,
       agent:item.agent,
@@ -715,11 +715,12 @@ async function showSkillReview(skillId){
       workspace:item.workspace,
       exposure_state:item.state,
       evidence_count:1,
-      evidence_summaries:[`Skill use observed ${fmtWorkflowDate(item.observed_at)}${!recordedEvidence && item.outcome ? ` · outcome ${humanizeLedgerLabel(item.outcome)}` : ''}`],
+      evidence_summaries:[`Reference captured ${fmtWorkflowDate(item.observed_at)}${!recordedEvidence && item.outcome ? ` · outcome ${humanizeLedgerLabel(item.outcome)}` : ''}`],
     })), {
-      empty:recordedEvidence ? 'No stored use references are linked.' : analysisStale ? 'No telemetry-observed use sessions in the last published analysis.' : 'No telemetry-observed use sessions are linked yet.',
-      total:Number(skill.usage_count || usageSessions.length),
+      empty:recordedEvidence ? 'No stored use references are linked.' : analysisStale ? 'No captured references in the last published analysis.' : 'No captured references are linked yet.',
+      total:Number(skill.usage_count || usageOccurrences.length),
       initial:5,
+      occurrences:true,
     });
     presentLedgerRead(request, {
       title:humanizeLedgerLabel(skill.name || skill.slug || 'Skill'),
@@ -729,7 +730,7 @@ async function showSkillReview(skillId){
           <div class="review-kpi"><div class="review-kpi-label">Versions</div><div class="review-kpi-value signal">${fmt(Number(skill.version_count || versions.length))}</div></div>
           <div class="review-kpi"><div class="review-kpi-label">Evidence Links</div><div class="review-kpi-value">${analysisCount(skill.evidence_count)}</div></div>
           <div class="review-kpi"><div class="review-kpi-label">Availability</div><div class="review-kpi-value">${escHtml(availability.label)}</div></div>
-          <div class="review-kpi"><div class="review-kpi-label">Observed Uses</div><div class="review-kpi-value">${analysisCount(skill.usage_count)}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">Captured References · All Time</div><div class="review-kpi-value">${analysisCount(skill.usage_count)}</div></div>
         </div>
         <section class="review-panel skill-usage-section"><div class="review-panel-head"><h3 class="review-panel-title">Where used</h3></div><div class="skill-usage-graph" data-skill-usage-graph><div class="session-ledger-empty" role="status">Loading captured usage…</div></div></section>
         ${versions[0]?.workflow?.procedure ? renderProcedureEvidence(versions[0].workflow) : ''}
@@ -740,11 +741,11 @@ async function showSkillReview(skillId){
           </main>
           <aside class="review-stack">
             <section class="review-panel">
-              <div class="review-panel-head"><h3 class="review-panel-title">Related Sessions</h3><span class="ledger-pill signal">${analysisCount(skill.usage_count)} observed uses</span></div>
-              <p class="review-panel-copy">Observed uses show sessions where telemetry linked this skill. Source evidence separately shows sessions that produced a Reflect-generated version.</p>
-              <div class="review-eyebrow" style="margin:16px 0 8px">Observed Uses</div>
-              ${usageSessionRows}
-              <div class="review-eyebrow" style="margin:18px 0 8px">Source Evidence</div>
+              <div class="review-panel-head"><h3 class="review-panel-title">Captured References</h3><span class="ledger-pill signal">${analysisCount(skill.usage_count)} references</span></div>
+              <p class="review-panel-copy">All-time registry history. Each row is one captured reference; several can link to the same session. The graph above follows your selected date, agent, and repository filters.</p>
+              <h4>References</h4>
+              ${usageOccurrenceRows}
+              <h4>Source Evidence</h4>
               <div class="session-ledger">${analysisUnavailable ? pendingAnalysis : evidenceRows || `<div class="session-ledger-empty">${recordedEvidence ? 'No stored source session references are linked.' : analysisStale ? 'No source sessions in the last published analysis.' : 'This imported skill was not generated from Reflect source sessions.'}</div>`}</div>
               ${sessionEvidence.length > 20 ? `<div class="ledger-status">Showing 20 of ${fmt(sessionEvidence.length)} source sessions.</div>` : ''}
             </section>
@@ -992,7 +993,6 @@ async function showImpactSessions(measurementId){
     request.pending = ['pending','stale'].includes(ledger.analysis_state) || ['stale','recorded'].includes(ledger.publication?.state);
     const metric = impactMetricPresentation(ledger.metric_name);
     const recordedEvidence = ledger.evidence_state === 'recorded';
-    const unit = 'task';
     const unitPlural = 'tasks';
     const cohortCopy = `These are the stored execution-unit cohorts behind this impact snapshot.${ledger.measured_at ? ` Measured ${fmtWorkflowDate(ledger.measured_at)}.` : recordedEvidence ? ' Measurement time is unavailable.' : ''}`;
     const count = value => value == null ? '—' : fmt(Number(value));
@@ -1007,12 +1007,12 @@ async function showImpactSessions(measurementId){
         : `${recordedEvidence ? 'Recorded: ' : ''}${formatImpactSessionValue(ledger.metric_name, item.metric_value, item)}`,
     }));
     const beforeSessions = renderWorkflowSessionLedger(prepare(ledger.before_execution_units, 'baseline'), {
-      empty:recordedEvidence ? 'No baseline references are stored in this snapshot.' : `No baseline ${unitPlural} remain available for this snapshot.`,
+      empty:recordedEvidence ? 'No baseline references are stored in this snapshot.' : 'No eligible baseline tasks are selected in this snapshot. Candidate counts and exclusions are shown above.',
       total:ledger.before_count,
       initial:5,
     });
     const afterSessions = renderWorkflowSessionLedger(prepare(ledger.after_execution_units, 'after activation'), {
-      empty:recordedEvidence ? 'No post-application references are stored in this snapshot.' : `No post-application ${unitPlural} have been collected yet.`,
+      empty:recordedEvidence ? 'No post-application references are stored in this snapshot.' : 'No eligible post-application tasks are selected in this snapshot. Candidate counts and exclusions are shown above.',
       total:ledger.after_count,
       initial:5,
     });
@@ -1024,11 +1024,13 @@ async function showImpactSessions(measurementId){
           <section class="review-panel">
             <div class="review-panel-head"><h3 class="review-panel-title">Before Activation</h3><span class="ledger-pill">${count(ledger.before_count)} ${unitPlural}</span></div>
             <p class="review-panel-copy">Baseline ${unitPlural} used to establish the earlier behavior.</p>
+            ${impactCohortDetails({cohort:ledger,before_count:ledger.before_count}, 'before')}
             ${beforeSessions}
           </section>
           <section class="review-panel">
             <div class="review-panel-head"><h3 class="review-panel-title">After Activation</h3><span class="ledger-pill signal">${count(ledger.after_count)} ${unitPlural}</span></div>
             <p class="review-panel-copy">${recordedEvidence ? 'Stored post-application references. Current comparability and impact validation are pending.' : `Comparable ${unitPlural} available after the workflow was applied.`}</p>
+            ${impactCohortDetails({cohort:ledger,after_count:ledger.after_count}, 'after')}
             ${afterSessions}
           </section>
         </div>`,
@@ -1131,6 +1133,9 @@ const exploreViewStates = new Map([['usage', 'ready']]);
 const exploreViewScopes = new Map();
 let explorePublication = 0;
 document.addEventListener('reflect-snapshot-published', event => {
+  // The first publication fills missing navigation through the existing URL-
+  // preserving reload. Later publications retain independent section data.
+  if (D._unpublishedNavigation) return;
   explorePublication += 1;
   if (currentParams().get('tab') === 'explore') {
     event.preventDefault();
@@ -1277,7 +1282,7 @@ async function loadExploreView(viewName){
             for (const name of names) retainedTabs[name] = D.sqlite.tabs[name];
           }
         }
-        Object.assign(D, payload, {sessions:D.sessions, _unpublishedNavigation:false, publication:payload.publication || null});
+        Object.assign(D, payload, {sessions:D.sessions, _unpublishedNavigation:D._unpublishedNavigation, publication:payload.publication || null});
         Object.assign(D.sqlite.tabs, retainedTabs);
       } else if (viewName === 'tools') {
         ['tools','mcp'].forEach(name => D.sqlite.tabs[name] = payload);

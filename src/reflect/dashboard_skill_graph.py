@@ -26,7 +26,7 @@ class SkillGraphEdge(BaseModel):
 
 
 def build_skill_usage_graph(
-    conn: sqlite3.Connection, skill_id: str, *, days: int = 7,
+    conn: sqlite3.Connection, skill_id: str, *, days: int | None = 7,
     repo_id: str | None = None, agents: set[str] | None = None,
     version: str | None = None, offset: int = 0, limit: int = 20,
     execution_unit_id: str | None = None, session_id: str | None = None,
@@ -34,12 +34,13 @@ def build_skill_usage_graph(
     now: datetime | None = None,
 ) -> dict:
     """Read one consistent filtered population; pagination never changes counts."""
-    if not 1 <= days <= 3650 or offset < 0 or evidence_offset < 0 or not 1 <= limit <= 20:
-        raise ValueError("days must be 1..3650, offset nonnegative, and limit 1..20")
+    if (days is not None and not 1 <= days <= 3650) or offset < 0 or evidence_offset < 0 or not 1 <= limit <= 20:
+        raise ValueError("days must be 1..3650 or all, offset nonnegative, and limit 1..20")
     now = now or datetime.now(UTC)
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
-    date_from, date_to = (now - timedelta(days=days)).isoformat(), now.isoformat()
+    date_from = (now - timedelta(days=days)).isoformat() if days is not None else None
+    date_to = now.isoformat()
     conn.execute("SAVEPOINT skill_usage_graph_read")
     try:
         resolved_id = SkillRegistryService(conn, initialize_schema=False).resolve_id(skill_id)
@@ -49,8 +50,11 @@ def build_skill_usage_graph(
         versions = [{"id": row[0], "label": f"Version {row[1]}"} for row in conn.execute(
             "SELECT id,version FROM skill_versions WHERE skill_id=? ORDER BY version DESC", (skill_id,))]
         completed = conn.execute("SELECT value FROM store_metadata WHERE key='last_successful_refresh'").fetchone()
-        clauses = ["u.skill_id=?", "julianday(u.observed_at)>=julianday(?)", "julianday(u.observed_at)<julianday(?)"]
-        params: list = [skill_id, date_from, date_to]
+        clauses = ["u.skill_id=?", "julianday(u.observed_at)<julianday(?)"]
+        params: list = [skill_id, date_to]
+        if date_from is not None:
+            clauses.append("julianday(u.observed_at)>=julianday(?)")
+            params.append(date_from)
         if repo_id:
             clauses.append("s.repo_id=?")
             params.append(repo_id)

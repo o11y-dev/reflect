@@ -831,7 +831,7 @@ function buildImprovementSurfaces(){
             <dl class="tile-metric-grid">
               <div class="tile-metric signal"><dt>Current Version</dt><dd>${fmt(Number(item.current_version || 0))}</dd></div>
               <div class="tile-metric"><dt>Installations</dt><dd>${fmt(Number(item.installation_count || 0))}</dd></div>
-              <div class="tile-metric"><dt>Observed Uses</dt><dd>${analysisCount(item.usage_count)}</dd></div>
+              <div class="tile-metric"><dt>References · All Time</dt><dd>${analysisCount(item.usage_count)}</dd></div>
               <div class="tile-metric"><dt>Impact Checks</dt><dd>${analysisCount(item.measurement_count)}</dd></div>
             </dl>
             <div class="tile-card-meta"><span class="ledger-pill">${escHtml(availability.detail)}</span><span class="ledger-pill">${analysisCount(item.evidence_count)} evidence links</span><span class="ledger-pill">${fmt(Number(item.version_count || item.current_version || 0))} versions</span>${recordedEvidence ? '<span class="ledger-pill">Recorded references · validation pending</span>' : ''}</div>

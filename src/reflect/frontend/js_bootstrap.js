@@ -377,6 +377,12 @@ async function loadDashboardData(){
           if (pending?.state !== 'preparing' && !(pending?.state === 'busy' && pending.reason === 'reading')) {
             throw new Error('report-fetch-failed');
           }
+          // These sections own independent reads; a cold session snapshot must
+          // not prevent their navigation and evidence from initializing.
+          if (pending.reason !== 'reading' && ['inbox','skills','workflows','impact'].includes(params.get('tab')) && reportSupportsServerFiltering()) {
+            return {sql_backed:true, _unpublishedNavigation:true, snapshot_completed_at:null,
+              sessions:[], sqlite:{tabs:{}}};
+          }
           // A session link can navigate the completed card cache while its
           // richer details refresh. Never reuse global totals as scoped data.
           const sessionId = params.get('session');

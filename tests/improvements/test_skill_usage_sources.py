@@ -49,9 +49,9 @@ def test_occurrences_keep_each_execution_unknown_versions_and_noop(usage):
     add_read(conn,path,2)
     assert registry.sync_usage() == 2
     detail = registry.show(skill.id)
-    assert {item.execution_unit_id for item in detail.usage_sessions} == {"execution-codex-1","execution-codex-2"}
-    assert all(item.skill_version_id is None for item in detail.usage_sessions)
-    assert all(item.evidence["relationship"] == "loaded" for item in detail.usage_sessions)
+    assert {item.execution_unit_id for item in detail.usage_occurrences} == {"execution-codex-1","execution-codex-2"}
+    assert all(item.skill_version_id is None for item in detail.usage_occurrences)
+    assert all(item.evidence["relationship"] == "loaded" for item in detail.usage_occurrences)
     before = conn.execute("SELECT id,updated_at FROM skill_usage ORDER BY id").fetchall()
     registry.sync_usage()
     assert conn.execute("SELECT id,updated_at FROM skill_usage ORDER BY id").fetchall() == before
@@ -62,7 +62,7 @@ def test_captured_hash_and_missing_membership(usage):
     digest = conn.execute("SELECT content_hash FROM skill_versions WHERE id=?", (skill.current_version_id,)).fetchone()[0]
     add_read(conn,path,1,owner=False,attrs={"gen_ai.client.file_path":str(path),"skill.content_hash":digest})
     registry.sync_usage()
-    item=registry.show(skill.id).usage_sessions[0]
+    item=registry.show(skill.id).usage_occurrences[0]
     assert item.execution_unit_id is None
     assert item.skill_version_id == skill.current_version_id
     assert conn.execute("SELECT COUNT(*) FROM execution_units").fetchone()[0] == 0
@@ -76,14 +76,14 @@ def test_reports_do_not_overwrite_observations(usage):
         [MCPSelectedSkillRef(skill_id=skill.id,slug=skill.slug,version_id=skill.current_version_id)],
         task_run_id="report", outcome=MCPTaskOutcome.SUCCESS,verification_passed=True,now=NOW)
     registry.sync_usage()
-    rows=registry.show(skill.id).usage_sessions
+    rows=registry.show(skill.id).usage_occurrences
     assert len(rows) == 2
     assert {row.state for row in rows} == {"observed","reported"}
     assert next(row for row in rows if row.state=="observed").skill_version_id is None
     TaskRunReconciler(conn)._record_skill_outcomes("s-codex", execution,
         [MCPSelectedSkillRef(skill_id=skill.id,slug=skill.slug,version_id="")], task_run_id="report",
         outcome=MCPTaskOutcome.SUCCESS,verification_passed=None,now=NOW)
-    rows=registry.show(skill.id).usage_sessions
+    rows=registry.show(skill.id).usage_occurrences
     assert len(rows) == 2  # Correcting a report does not create a new source.
     assert next(row for row in rows if row.state=="reported").skill_version_id is None
 
@@ -98,7 +98,7 @@ def test_harness_shapes(usage,agent,attrs,tool_name,status,relationship):
     attrs=json.loads(json.dumps(attrs).replace("PATH",str(path)))
     add_read(conn,path,1,agent=agent,attrs=attrs,tool_name=tool_name,status=status)
     registry.sync_usage()
-    assert registry.show(skill.id).usage_sessions[0].evidence["relationship"] == relationship
+    assert registry.show(skill.id).usage_occurrences[0].evidence["relationship"] == relationship
 
 
 def test_correction_retraction_and_source_scope(usage):
@@ -109,10 +109,10 @@ def test_correction_retraction_and_source_scope(usage):
     conn.execute("UPDATE tool_calls SET raw_attrs_json='{}' WHERE step_id=?", (step,))
     conn.execute("UPDATE steps SET raw_attrs_json='{}' WHERE id=?", (step,))
     registry.sync_usage(step_ids={step})
-    assert [item.evidence["step_id"] for item in registry.show(skill.id).usage_sessions] == [other]
+    assert [item.evidence["step_id"] for item in registry.show(skill.id).usage_occurrences] == [other]
     conn.execute("DELETE FROM steps WHERE id=?", (other,))
     registry.sync_usage(step_ids={other})
-    assert registry.show(skill.id).usage_sessions == []
+    assert registry.show(skill.id).usage_occurrences == []
 
 
 def test_graph_counts_pagination_unknown_version_and_pending(usage):
@@ -164,7 +164,7 @@ def test_name_mentions_and_hook_attempts_do_not_gain_the_current_version(usage):
     path.write_text(path.read_text()+"\nAn updated procedure.\n")
     registry.sync_paths([path])
     registry.sync_usage()
-    rows=registry.show(skill.id).usage_sessions
+    rows=registry.show(skill.id).usage_occurrences
     assert {row.evidence["relationship"] for row in rows} == {"mentioned","load_attempted"}
     assert all(row.skill_version_id is None for row in rows)
 
@@ -210,3 +210,16 @@ def test_measurement_version_requires_the_captured_applied_hash(usage):
     conn.execute("UPDATE interventions SET applied_hash='unretained-content' WHERE id='applied'")
     registry.sync_measurements()
     assert registry.show(skill.id).measurements[0].skill_version_id is None
+
+
+def test_detail_contract_names_occurrences_and_keeps_repeated_session_evidence(usage):
+    conn, registry, skill, path = usage
+    add_read(conn, path, 1)
+    add_read(conn, path, 2)
+    registry.sync_usage()
+    payload = registry.show(skill.id).model_dump(mode='json')
+    assert 'usage_sessions' not in payload
+    assert payload['skill']['usage_count'] == 2
+    assert len(payload['usage_occurrences']) == 2
+    assert {item['session_id'] for item in payload['usage_occurrences']} == {'s-codex'}
+    assert len({item['usage_id'] for item in payload['usage_occurrences']}) == 2

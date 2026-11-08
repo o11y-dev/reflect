@@ -665,7 +665,7 @@ class SessionConversationPlayhead {
       updateUrlParams(urlParams => urlParams.delete('session'));
     }
     if (!filtered.length) {
-      listEl.innerHTML = '<div class="sb-empty" style="height:auto;padding:24px 12px"><div class="sb-empty-icon" aria-hidden="true">&#128269;</div><div>No sessions match this filter</div></div>';
+      listEl.innerHTML = `<div class="sb-empty" style="height:auto;padding:24px 12px"><div class="sb-empty-icon" aria-hidden="true">&#128269;</div><div>${D._unpublishedNavigation ? 'Session navigation is updating. Other sections remain available.' : 'No sessions match this filter'}</div></div>`;
       renderSessionDetail(selectedIdx === null ? null : sessions[selectedIdx]);
       return;
     }
@@ -1348,7 +1348,7 @@ class SessionConversationPlayhead {
       ['Observed idle', value(m.idle_total_ms, fmtDur)],
       ['Model switches', value(m.model_switches)],
     ];
-    return `<section class="tool-inventory-section"><h4>Observed measurements</h4><div class="sb-detail-stats">${facts.map(([label,v])=>`<span>${escHtml(label)}: <strong>${escHtml(String(v))}</strong></span>`).join('')}</div><p class="inbox-copy">Session lifetime · pricing ${escHtml(c.cost_status || 'unavailable')} (${fmt(c.complete_priced_usage ?? c.priced_usage ?? 0)}/${fmt(c.observed_usage || 0)} fully priced usage records). Turn usage ${fmt(c.eligible_usage_turns || 0)}/${fmt(m.completed_turns || 0)}. Missing evidence stays unavailable.</p>${session.derived_state && session.derived_state !== 'ready' ? '<p class="inbox-copy">Task assessment is pending analysis.</p>' : !(session.assessments || []).length ? '<p class="inbox-copy">Task outcome: unknown. No validated acceptance evidence.</p>' : ''}${(session.assessments || []).length ? '<h4>Recent execution assessments · up to 20</h4>' : ''}${(session.assessments || []).map(a=>`<p class="inbox-copy">Outcome: ${escHtml(a.outcome || 'unknown')} · verification: ${a.verification_passed === 1 ? 'passed' : a.verification_passed === 0 ? 'failed or invalidated' : 'unknown'}</p>`).join('')}${(session.insights || []).slice(0,3).map(i=>`<article><strong>${escHtml(i.title)}</strong><p>${escHtml(i.summary)}</p><small>${escHtml(String(i.metric_value))} ${escHtml(i.metric_unit)} · session lifetime</small></article>`).join('')}</section>`;
+    return `<section class="tool-inventory-section"><h4>Observed measurements</h4><div class="sb-detail-stats">${facts.map(([label,v])=>`<span>${escHtml(label)}: <strong>${escHtml(String(v))}</strong></span>`).join('')}</div><p class="inbox-copy">Session lifetime · pricing ${escHtml(c.cost_status || 'unavailable')} (${fmt(c.complete_priced_usage ?? c.priced_usage ?? 0)}/${fmt(c.observed_usage || 0)} fully priced usage records). Turn usage ${fmt(c.eligible_usage_turns || 0)}/${fmt(m.completed_turns || 0)}. Missing evidence stays unavailable.</p>${session.derived_state && session.derived_state !== 'ready' ? '<p class="inbox-copy">Task assessment is pending analysis.</p>' : !(session.assessments || []).length ? '<p class="inbox-copy">Task outcome: unknown. No validated acceptance evidence.</p>' : ''}${(session.insights || []).slice(0,3).map(i=>`<article><strong>${escHtml(i.title)}</strong><p>${escHtml(i.summary)}</p><small>${escHtml(String(i.metric_value))} ${escHtml(i.metric_unit)} · session lifetime</small></article>`).join('')}${(session.assessments || []).length ? `<details class="advanced-review"><summary>Recent execution assessments · up to 20</summary>${session.assessments.slice(0,20).map(a=>`<p class="inbox-copy">Outcome: ${escHtml(a.outcome || 'unknown')} · verification: ${a.verification_passed === 1 ? 'passed' : a.verification_passed === 0 ? 'failed or invalidated' : 'unknown'}</p>`).join('')}</details>` : ''}</section>`;
   }
 
   function renderGitActivity(session){
@@ -2116,6 +2116,7 @@ class SessionConversationPlayhead {
   }
 
   document.addEventListener('reflect-snapshot-published', event => {
+    if (D._unpublishedNavigation) return;
     if (!dashboardDocumentActive) return;
     if (!document.getElementById('tab-sessions')?.classList.contains('active') || selectedIdx === null) return;
     event.preventDefault();

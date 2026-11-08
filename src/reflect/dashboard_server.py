@@ -281,7 +281,7 @@ def _retain_skill_analysis(current: dict, retained: dict | None) -> dict:
                 **{field: retained["skill"][field] for field in counts},
                 "analysis_state": "stale", "evidence_state": "published",
             },
-            **{field: retained[field] for field in ("evidence", "usage_sessions", "measurements")},
+            **{field: retained[field] for field in ("evidence", "usage_occurrences", "measurements")},
         }
     else:
         return current
@@ -999,7 +999,7 @@ def build_dashboard_app(
         params = request.query_params
         try:
             return read_response(request, improvement_adapter.skill_usage_graph(
-                skill_id, days=int(params.get("days", "7")), repo_id=params.get("repo"),
+                skill_id, days=None if params.get("days") == "all" else int(params.get("days", "7")), repo_id=params.get("repo"),
                 agents={name.strip() for name in params.get("agents", "").split(",") if name.strip()} or None,
                 version=params.get("version"), offset=int(params.get("offset", "0")),
                 limit=int(params.get("limit", "20")), execution_unit_id=params.get("execution"),

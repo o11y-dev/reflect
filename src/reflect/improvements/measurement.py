@@ -592,6 +592,8 @@ class MeasurementService:
             "quality": cohort.get("quality", {}),
             "policy_version": cohort.get("policy_version", 1),
             "baseline_state": cohort.get("baseline_state"),
+            "minimum_before_execution_units": cohort.get("minimum_before_execution_units"),
+            "minimum_after_execution_units": cohort.get("minimum_after_execution_units"),
             "eligibility": cohort.get("eligibility"),
             "exposure": cohort.get("exposure"),
             "before_count": int(before_count),

@@ -288,7 +288,7 @@ def test_retained_skill_analysis_preserves_live_packages_and_new_skills_after_re
     assert retained_detail["skill"] == existing
     assert retained_detail["versions"][0]["content_markdown"] == "Current package content"
     assert retained_detail["installations"][0]["id"] == "new-installation"
-    for field in ("evidence", "usage_sessions", "measurements"):
+    for field in ("evidence", "usage_occurrences", "measurements"):
         assert retained_detail[field] == detail[field]
     assert retained_detail["analysis_state"] == retained_detail["publication"]["state"] == "stale"
     assert restarted.get(f"/api/skills/{new['id']}").json()["analysis_state"] == "pending"

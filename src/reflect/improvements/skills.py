@@ -17,7 +17,7 @@ from reflect.improvements.models import (
     SkillMeasurementRecord,
     SkillOrigin,
     SkillRecord,
-    SkillUsageSessionRecord,
+    SkillUsageOccurrenceRecord,
     SkillVersionRecord,
     SkillVersionStatus,
     WorkflowCandidateRecord,
@@ -578,8 +578,8 @@ class SkillRegistryService:
                 }
                 for item in evidence_rows
             ],
-            usage_sessions=[
-                SkillUsageSessionRecord(
+            usage_occurrences=[
+                SkillUsageOccurrenceRecord(
                     session_id=str(item[0]),
                     skill_version_id=item[1],
                     state=str(item[2]),
@@ -821,6 +821,7 @@ class SkillRegistryService:
               current_version_id, first_seen_at, last_seen_at, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
+              slug = CASE WHEN excluded.description <> '' THEN excluded.slug ELSE skills.slug END,
               name = CASE WHEN excluded.description <> '' THEN excluded.name ELSE skills.name END,
               description = CASE WHEN excluded.description <> '' THEN excluded.description ELSE skills.description END,
               origin = CASE

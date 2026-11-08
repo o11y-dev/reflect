@@ -132,7 +132,7 @@ vm.runInContext(input.loader, context);
     )
 
 
-@pytest.mark.parametrize("case", ["preparing", "reading", "busy_reading", "hung_fetch", "hung_body"])
+@pytest.mark.parametrize("case", ["preparing", "reading", "busy_reading", "skills_reading", "hung_fetch", "hung_body"])
 def test_filtered_bootstrap_retries_quick_pending_responses_with_per_request_deadlines(case):
     node = shutil.which("node")
     if node is None:
@@ -143,10 +143,11 @@ def test_filtered_bootstrap_retries_quick_pending_responses_with_per_request_dea
     script = r"""
 const assert=require('node:assert/strict'),vm=require('node:vm');
 const input=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
-const reading=['reading','busy_reading'].includes(input.case);
+const reading=['reading','busy_reading','skills_reading'].includes(input.case);
+const tab=input.case==='skills_reading' ? 'skills' : 'sessions';
 const timers=new Map(),signals=[],calls=[],messages=[],errors=[];
 let now=0,nextTimer=0,reads=0,hidden=false;
-const query='/api/data?tab=sessions&q=long-lived&range=7d';
+const query='/api/data?tab='+tab+'&q=long-lived&range=7d';
 function advance(ms){now+=ms;for(const [id,timer] of [...timers])if(timer.at<=now){timers.delete(id);timer.fn();}}
 const response=(status,body)=>({status,ok:status===200,json:async()=>body});
 const hung=signal=>new Promise((_resolve,reject)=>{
@@ -154,7 +155,7 @@ const hung=signal=>new Promise((_resolve,reject)=>{
   setImmediate(()=>advance(30001));
 });
 const context={URLSearchParams,AbortController,dashboardDocumentActive:true,
-  window:{location:{search:'?report=/api/data&tab=sessions&q=long-lived&range=7d'},
+  window:{location:{search:'?report=/api/data&tab='+tab+'&q=long-lived&range=7d'},
     setTimeout:(fn,ms)=>{const id=++nextTimer;timers.set(id,{at:now+ms,fn});
       if(ms===2000)setImmediate(()=>advance(ms));return id;},
     clearTimeout:id=>timers.delete(id)},
@@ -206,7 +207,7 @@ def test_session_link_can_navigate_completed_cache_without_claiming_scoped_total
     script = r"""
 const assert = require('node:assert/strict'), vm = require('node:vm');
 const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
-const params = new URLSearchParams('report=/api/data&tab=impact&session=selected');
+const params = new URLSearchParams('report=/api/data&tab=sessions&session=selected');
 if (input.case === 'filtered') params.set('agents', 'codex');
 if (input.case.startsWith('explore')) params.set('tab', 'explore');
 if (input.case === 'explore_filtered') params.set('agents', 'cursor');
@@ -326,7 +327,8 @@ assert.equal(notices.at(-1).kicker,'Telemetry ready');
                    text=True, capture_output=True, check=True)
 
 
-def test_complete_bootstrap_opens_captured_session_before_first_published_report():
+@pytest.mark.parametrize("initial_tab", ["session_detail", "skills", "skills_empty", "workflows", "impact", "inbox"])
+def test_complete_bootstrap_opens_captured_session_before_first_published_report(initial_tab):
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node is required for complete dashboard initialization")
@@ -339,7 +341,9 @@ def test_complete_bootstrap_opens_captured_session_before_first_published_report
     bundle = bundle[:bundle.rindex("initApp().catch(")] + "globalThis.appReady = initApp();"
     script = r"""
 const assert = require('node:assert/strict'), vm = require('node:vm');
-const bundle = JSON.parse(require('node:fs').readFileSync(0,'utf8'));
+const input = JSON.parse(require('node:fs').readFileSync(0,'utf8'));
+const bundle = input.bundle, independent = input.initial_tab !== 'session_detail';
+const empty = input.initial_tab === 'skills_empty', initialTab = empty ? 'skills' : input.initial_tab;
 const elements = new Map(), listeners = new Map(), requests = [];
 class Element {
   constructor(id='') {
@@ -358,7 +362,7 @@ class Element {
   setAttribute(name,value){this.attributes[name]=value;}
   appendChild(child){child.parentElement=this;this.children.push(child);}
   prepend(child){child.parentElement=this;this.children.unshift(child);}
-  addEventListener(){}
+  addEventListener(name,fn){(this.listeners ||= {})[name]=fn;}
   querySelector(selector){return this.children.find(child=>selector === '.'+child.className) || null;}
   querySelectorAll(){return [];}
   getBoundingClientRect(){return {left:0,width:100,top:0,bottom:100,height:100};}
@@ -375,6 +379,10 @@ for(const view of ['usage','tools','graph','context']) {
 const location={href:'http://localhost:4000/?report=/api/data&session=first&tab=explore&view=usage',
   search:'?report=/api/data&session=first&tab=explore&view=usage',hostname:'localhost',
   origin:'http://localhost:4000',pathname:'/',reload:()=>{throw new Error('unexpected reload');}};
+if(independent){
+ const url=new URL(location.href);url.search='?report=/api/data'+(empty ? '' : '&session=first')+'&tab='+initialTab+'&range=all&agents=codex&q=needle&model=model-a&status=completed&sort=cost';
+ location.href=url.href;location.search=url.search;
+}
 const response=(status,body)=>({status,ok:status===200,json:async()=>body});
 const captured={session:{id:'first',agent:'codex'},derived_state:'preparing',
   conversation:[{type:'response',preview:'Captured activity before first publication',ts:1}],
@@ -392,6 +400,7 @@ const context={URL,URLSearchParams,AbortController,console,navigator:{language:'
     history:{replaceState:(_,__,url)=>{const parsed=new URL(url,location.href);location.href=parsed.href;location.search=parsed.search;}}},
   requestAnimationFrame:fn=>fn(),
   fetch:async url=>{const path=new URL(url,location.href).pathname;requests.push(path);
+    if(independent && ['/api/skills','/api/workflows','/api/impact','/api/findings','/api/loops'].includes(path))return response(200,{skills:[],workflows:[],impact_checks:[],findings:[],loops:[]});
     if(path==='/api/session/first')return response(200,captured);
     if(path==='/api/status')return response(200,{preparation:{state:'running',stage:'refreshing_improvements'}});
     return response(503,{state:'preparing'});}};
@@ -400,6 +409,24 @@ vm.createContext(context);vm.runInContext(bundle,context);
   await context.appReady;await new Promise(resolve=>setImmediate(resolve));
   const data=vm.runInContext('D',context);
   assert.equal(data._unpublishedNavigation,true);
+  if(independent){
+    const params=new URLSearchParams(location.search);
+    assert.equal(params.get('tab'),initialTab);
+    for(const [key,value] of Object.entries({session:empty ? null : 'first',range:'all',agents:'codex',q:'needle',model:'model-a',status:'completed',sort:'cost'}))assert.equal(params.get(key),value);
+    assert.equal(requests.filter(path=>path==='/api/data').length,1);
+    assert.ok(element('button-'+initialTab).classList.contains('active'));
+    assert.ok(requests.includes('/api/skills'));
+    element('button-impact').listeners.click();
+    assert.equal(new URLSearchParams(location.search).get('tab'),'impact');
+    const event=new context.CustomEvent('reflect-snapshot-published',{cancelable:true,detail:{completion:'2026-11-09T12:00:00Z'}});
+    assert.equal(context.document.dispatchEvent(event),true,'first publication must recover missing session navigation through normal reload');
+    assert.equal(new URLSearchParams(location.search).get('session'),empty ? null : 'first');
+    if(empty){assert.match(element('sb-list').innerHTML,/Session navigation is updating/);assert.ok(!element('sb-list').innerHTML.includes('No sessions match'));}
+    element('button-sessions').listeners.click();
+    const sessionEvent=new context.CustomEvent('reflect-snapshot-published',{cancelable:true,detail:{completion:'2026-11-09T12:00:01Z'}});
+    assert.equal(context.document.dispatchEvent(sessionEvent),true,'unpublished selected session also permits first publication recovery');
+    return;
+  }
   assert.ok(!data._navigationFromCache,'no completed report exists to call cached');
   assert.equal(data.sessions.length,1);assert.equal(data.sessions[0].agent,'codex');
   assert.equal(data.sessions[0]._activityLoaded,true);assert.equal(data.sessions[0]._fullLoaded,false);
@@ -420,8 +447,9 @@ vm.createContext(context);vm.runInContext(bundle,context);
   assert.equal(element('tab-inbox').classList.contains('evidence-unavailable'),false);
   assert.equal(element('tab-skills').classList.contains('evidence-unavailable'),false);
   assert.match(element('finding-ledger').innerHTML,/Findings are updating/);
-})().catch(error=>{console.error(error);process.exitCode=1;});
+})().then(()=>process.stdout.write('bootstrap-contract-ok\n')).catch(error=>{console.error(error);process.exitCode=1;});
 """
-    result = subprocess.run([node, "-e", script], input=json.dumps(bundle),
+    result = subprocess.run([node, "-e", script], input=json.dumps({"bundle": bundle, "initial_tab": initial_tab}),
                             text=True, capture_output=True, timeout=10)
     assert result.returncode == 0, result.stderr or result.stdout
+    assert "bootstrap-contract-ok" in result.stdout

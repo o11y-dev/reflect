@@ -24,7 +24,7 @@ const element=id=>{
   return elements.get(id);
 };
 const escape=value=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
-const context={D:{},document:{getElementById:element},escHtml:escape,fmtDur:value=>value+'ms',
+const context={D:{},fmtWorkflowDate:value=>new Date(value).toLocaleString(),document:{getElementById:element},escHtml:escape,fmtDur:value=>value+'ms',
   activateTab:(tab,options)=>actions.push({tab,...options}),requestAnimationFrame:fn=>fn(),
   Chart:{getChart:canvas=>({resize:()=>resized.push(canvas.id)})},
   sessionInspectionUrl:row=>'/?tab=sessions&session='+encodeURIComponent(row.session_id)+'&evidence='+encodeURIComponent(row.evidence_focus_id),
@@ -61,7 +61,9 @@ const html=all();
 for(const code of ['M1','M2','M3','M4','M5','M6']) assert.ok(html.includes('>'+code+'</span>'));
 assert.match(element('measurement-summary').innerHTML,/12\.34/);
 assert.ok(!html.includes('999999'),'sidebar cards cannot supply aggregates');
-assert.match(element('measurement-scope').textContent,/Selected session.*2026-11-01 — 2026-11-08/);
+assert.match(element('measurement-scope').textContent,/Selected session/);
+assert.ok(element('measurement-scope').textContent.includes(context.fmtWorkflowDate(context.D.measurements.scope.date_from)));
+assert.match(element('measurement-scope').textContent,/local time/);
 for(const text of ['Uncached input','Cache read','Cache write','Output','10 / 10 records',
   'fully priced','not a provider cache hit rate','not verified task success','3 eligible completed turns']) assert.ok(html.includes(text),text);
 assert.match(element('measurement-time').innerHTML,/Observed session span/);

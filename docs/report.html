@@ -3164,7 +3164,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <!-- ════════════════════ WORKFLOWS ════════════════════ -->
 <div class="tab-panel" id="tab-workflows" role="tabpanel" aria-labelledby="tab-button-workflows" hidden>
   <div class="product-hero">
-    <div><h2>Workflows</h2><p>Review explicit intervention contracts, apply approved procedures, and monitor their bounded validation windows.</p></div>
+    <div><h2>Workflows</h2><p>Review recurring ways of working, apply a procedure, and check whether comparable future tasks improve.</p></div>
     <div class="product-count" id="workflow-total-count">0<small>workflow contracts</small></div>
   </div>
   <section class="panel product-section" id="workflow-candidates-section">
@@ -3189,7 +3189,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   </div>
   <section class="panel product-section" id="skill-registry-section">
     <div class="product-section-head">
-      <div><h3 class="product-section-title">Available Procedures</h3><p class="product-section-copy">Registry presence, review approval, installation, exposure, and measured impact remain separate so Reflect never presents telemetry history as executable guidance.</p></div>
+      <div><h3 class="product-section-title">Available Procedures</h3><p class="product-section-copy">See what is installed, where skills were referenced, and which have evidence of better outcomes. A recorded reference alone does not prove a skill was followed.</p></div>
     </div>
     <div class="workflow-toolbar" aria-label="Skill filters">
       <div class="workflow-filter-field skill-search-field"><label for="skill-search">Search skills</label><input id="skill-search" type="search" placeholder="Name, purpose, agent, state, or installation…" autocomplete="off" spellcheck="false" aria-controls="skill-registry"/></div>
@@ -3830,6 +3830,12 @@ async function loadDashboardData(){
           if (pending?.state !== 'preparing' && !(pending?.state === 'busy' && pending.reason === 'reading')) {
             throw new Error('report-fetch-failed');
           }
+          // These sections own independent reads; a cold session snapshot must
+          // not prevent their navigation and evidence from initializing.
+          if (pending.reason !== 'reading' && ['inbox','skills','workflows','impact'].includes(params.get('tab')) && reportSupportsServerFiltering()) {
+            return {sql_backed:true, _unpublishedNavigation:true, snapshot_completed_at:null,
+              sessions:[], sqlite:{tabs:{}}};
+          }
           // A session link can navigate the completed card cache while its
           // richer details refresh. Never reuse global totals as scoped data.
           const sessionId = params.get('session');
@@ -4424,7 +4430,7 @@ function sessionInspectionUrl(session){
   return `${url.pathname}?${url.searchParams.toString()}${url.hash}`;
 }
 
-function renderWorkflowSessionLedger(sessions, {empty, total, initial = 5} = {}){
+function renderWorkflowSessionLedger(sessions, {empty, total, initial = 5, occurrences = false} = {}){
   const items = sessions || [];
   if (!items.length) return `<div class="session-ledger-empty">${escHtml(empty || 'No linked sessions yet.')}</div>`;
   const taskLevel = items.some(item => item.execution_unit_id);
@@ -4456,10 +4462,10 @@ function renderWorkflowSessionLedger(sessions, {empty, total, initial = 5} = {})
   const remainingRows = items.slice(initial).map(renderRow).join('');
   const count = Number(total || items.length);
   const more = remainingRows
-    ? `<details class="session-more"><summary>Show ${fmt(items.length - initial)} More ${taskLevel ? 'Tasks' : 'Sessions'}</summary><div class="session-ledger">${remainingRows}</div></details>`
+    ? `<details class="session-more"><summary>Show ${fmt(items.length - initial)} More ${occurrences ? 'References' : taskLevel ? 'Tasks' : 'Sessions'}</summary><div class="session-ledger">${remainingRows}</div></details>`
     : '';
   const countNote = count > items.length
-    ? `<div class="ledger-status">Showing ${fmt(items.length)} bounded examples from ${fmt(count)} linked ${taskLevel ? 'execution units' : 'sessions'}.</div>`
+    ? `<div class="ledger-status">Showing ${fmt(items.length)} bounded examples from ${fmt(count)} ${occurrences ? 'captured references' : taskLevel ? 'linked execution units' : 'linked sessions'}.</div>`
     : '';
   return `<div class="session-ledger">${visibleRows}</div>${more}${countNote}`;
 }
@@ -4683,7 +4689,7 @@ async function showSkillReview(skillId){
     const installations = detail.installations || [];
     const measurements = analysisUnavailable ? [] : detail.measurements || [];
     const evidence = analysisUnavailable ? [] : detail.evidence || [];
-    const usageSessions = analysisUnavailable ? [] : detail.usage_sessions || [];
+    const usageOccurrences = analysisUnavailable ? [] : detail.usage_occurrences || [];
     const analysisCount = value => analysisUnavailable || value == null ? '—' : fmt(Number(value));
     const pendingAnalysis = '<div class="session-ledger-empty">Analysis is updating. These results are not available yet.</div>';
     const availability = skillAvailabilityPresentation(skill, installations);
@@ -4724,7 +4730,7 @@ async function showSkillReview(skillId){
       <div class="session-ledger-main"><div class="session-ledger-title">Source Session</div><div class="session-ledger-id" title="${escHtml(item.entity_id)}" translate="no">${escHtml(compactLedgerId(item.entity_id))}</div><div class="session-ledger-meta"><span>${escHtml(humanizeLedgerLabel(item.relationship || 'source evidence'))}</span><span>${Math.round(Number(item.confidence || 0) * 100)}% confidence</span></div></div>
       <div class="session-ledger-side"><a class="ledger-button" href="${escHtml(sessionInspectionUrl({session_id:item.entity_id}))}">Open Session</a></div>
     </article>`).join('');
-    const usageSessionRows = analysisUnavailable ? pendingAnalysis : renderWorkflowSessionLedger(usageSessions.map(item => ({
+    const usageOccurrenceRows = analysisUnavailable ? pendingAnalysis : renderWorkflowSessionLedger(usageOccurrences.map(item => ({
       session_id:item.session_id,
       title:item.title,
       agent:item.agent,
@@ -4733,11 +4739,12 @@ async function showSkillReview(skillId){
       workspace:item.workspace,
       exposure_state:item.state,
       evidence_count:1,
-      evidence_summaries:[`Skill use observed ${fmtWorkflowDate(item.observed_at)}${!recordedEvidence && item.outcome ? ` · outcome ${humanizeLedgerLabel(item.outcome)}` : ''}`],
+      evidence_summaries:[`Reference captured ${fmtWorkflowDate(item.observed_at)}${!recordedEvidence && item.outcome ? ` · outcome ${humanizeLedgerLabel(item.outcome)}` : ''}`],
     })), {
-      empty:recordedEvidence ? 'No stored use references are linked.' : analysisStale ? 'No telemetry-observed use sessions in the last published analysis.' : 'No telemetry-observed use sessions are linked yet.',
-      total:Number(skill.usage_count || usageSessions.length),
+      empty:recordedEvidence ? 'No stored use references are linked.' : analysisStale ? 'No captured references in the last published analysis.' : 'No captured references are linked yet.',
+      total:Number(skill.usage_count || usageOccurrences.length),
       initial:5,
+      occurrences:true,
     });
     presentLedgerRead(request, {
       title:humanizeLedgerLabel(skill.name || skill.slug || 'Skill'),
@@ -4747,7 +4754,7 @@ async function showSkillReview(skillId){
           <div class="review-kpi"><div class="review-kpi-label">Versions</div><div class="review-kpi-value signal">${fmt(Number(skill.version_count || versions.length))}</div></div>
           <div class="review-kpi"><div class="review-kpi-label">Evidence Links</div><div class="review-kpi-value">${analysisCount(skill.evidence_count)}</div></div>
           <div class="review-kpi"><div class="review-kpi-label">Availability</div><div class="review-kpi-value">${escHtml(availability.label)}</div></div>
-          <div class="review-kpi"><div class="review-kpi-label">Observed Uses</div><div class="review-kpi-value">${analysisCount(skill.usage_count)}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">Captured References · All Time</div><div class="review-kpi-value">${analysisCount(skill.usage_count)}</div></div>
         </div>
         <section class="review-panel skill-usage-section"><div class="review-panel-head"><h3 class="review-panel-title">Where used</h3></div><div class="skill-usage-graph" data-skill-usage-graph><div class="session-ledger-empty" role="status">Loading captured usage…</div></div></section>
         ${versions[0]?.workflow?.procedure ? renderProcedureEvidence(versions[0].workflow) : ''}
@@ -4758,11 +4765,11 @@ async function showSkillReview(skillId){
           </main>
           <aside class="review-stack">
             <section class="review-panel">
-              <div class="review-panel-head"><h3 class="review-panel-title">Related Sessions</h3><span class="ledger-pill signal">${analysisCount(skill.usage_count)} observed uses</span></div>
-              <p class="review-panel-copy">Observed uses show sessions where telemetry linked this skill. Source evidence separately shows sessions that produced a Reflect-generated version.</p>
-              <div class="review-eyebrow" style="margin:16px 0 8px">Observed Uses</div>
-              ${usageSessionRows}
-              <div class="review-eyebrow" style="margin:18px 0 8px">Source Evidence</div>
+              <div class="review-panel-head"><h3 class="review-panel-title">Captured References</h3><span class="ledger-pill signal">${analysisCount(skill.usage_count)} references</span></div>
+              <p class="review-panel-copy">All-time registry history. Each row is one captured reference; several can link to the same session. The graph above follows your selected date, agent, and repository filters.</p>
+              <h4>References</h4>
+              ${usageOccurrenceRows}
+              <h4>Source Evidence</h4>
               <div class="session-ledger">${analysisUnavailable ? pendingAnalysis : evidenceRows || `<div class="session-ledger-empty">${recordedEvidence ? 'No stored source session references are linked.' : analysisStale ? 'No source sessions in the last published analysis.' : 'This imported skill was not generated from Reflect source sessions.'}</div>`}</div>
               ${sessionEvidence.length > 20 ? `<div class="ledger-status">Showing 20 of ${fmt(sessionEvidence.length)} source sessions.</div>` : ''}
             </section>
@@ -5010,7 +5017,6 @@ async function showImpactSessions(measurementId){
     request.pending = ['pending','stale'].includes(ledger.analysis_state) || ['stale','recorded'].includes(ledger.publication?.state);
     const metric = impactMetricPresentation(ledger.metric_name);
     const recordedEvidence = ledger.evidence_state === 'recorded';
-    const unit = 'task';
     const unitPlural = 'tasks';
     const cohortCopy = `These are the stored execution-unit cohorts behind this impact snapshot.${ledger.measured_at ? ` Measured ${fmtWorkflowDate(ledger.measured_at)}.` : recordedEvidence ? ' Measurement time is unavailable.' : ''}`;
     const count = value => value == null ? '—' : fmt(Number(value));
@@ -5025,12 +5031,12 @@ async function showImpactSessions(measurementId){
         : `${recordedEvidence ? 'Recorded: ' : ''}${formatImpactSessionValue(ledger.metric_name, item.metric_value, item)}`,
     }));
     const beforeSessions = renderWorkflowSessionLedger(prepare(ledger.before_execution_units, 'baseline'), {
-      empty:recordedEvidence ? 'No baseline references are stored in this snapshot.' : `No baseline ${unitPlural} remain available for this snapshot.`,
+      empty:recordedEvidence ? 'No baseline references are stored in this snapshot.' : 'No eligible baseline tasks are selected in this snapshot. Candidate counts and exclusions are shown above.',
       total:ledger.before_count,
       initial:5,
     });
     const afterSessions = renderWorkflowSessionLedger(prepare(ledger.after_execution_units, 'after activation'), {
-      empty:recordedEvidence ? 'No post-application references are stored in this snapshot.' : `No post-application ${unitPlural} have been collected yet.`,
+      empty:recordedEvidence ? 'No post-application references are stored in this snapshot.' : 'No eligible post-application tasks are selected in this snapshot. Candidate counts and exclusions are shown above.',
       total:ledger.after_count,
       initial:5,
     });
@@ -5042,11 +5048,13 @@ async function showImpactSessions(measurementId){
           <section class="review-panel">
             <div class="review-panel-head"><h3 class="review-panel-title">Before Activation</h3><span class="ledger-pill">${count(ledger.before_count)} ${unitPlural}</span></div>
             <p class="review-panel-copy">Baseline ${unitPlural} used to establish the earlier behavior.</p>
+            ${impactCohortDetails({cohort:ledger,before_count:ledger.before_count}, 'before')}
             ${beforeSessions}
           </section>
           <section class="review-panel">
             <div class="review-panel-head"><h3 class="review-panel-title">After Activation</h3><span class="ledger-pill signal">${count(ledger.after_count)} ${unitPlural}</span></div>
             <p class="review-panel-copy">${recordedEvidence ? 'Stored post-application references. Current comparability and impact validation are pending.' : `Comparable ${unitPlural} available after the workflow was applied.`}</p>
+            ${impactCohortDetails({cohort:ledger,after_count:ledger.after_count}, 'after')}
             ${afterSessions}
           </section>
         </div>`,
@@ -5149,6 +5157,9 @@ const exploreViewStates = new Map([['usage', 'ready']]);
 const exploreViewScopes = new Map();
 let explorePublication = 0;
 document.addEventListener('reflect-snapshot-published', event => {
+  // The first publication fills missing navigation through the existing URL-
+  // preserving reload. Later publications retain independent section data.
+  if (D._unpublishedNavigation) return;
   explorePublication += 1;
   if (currentParams().get('tab') === 'explore') {
     event.preventDefault();
@@ -5295,7 +5306,7 @@ async function loadExploreView(viewName){
             for (const name of names) retainedTabs[name] = D.sqlite.tabs[name];
           }
         }
-        Object.assign(D, payload, {sessions:D.sessions, _unpublishedNavigation:false, publication:payload.publication || null});
+        Object.assign(D, payload, {sessions:D.sessions, _unpublishedNavigation:D._unpublishedNavigation, publication:payload.publication || null});
         Object.assign(D.sqlite.tabs, retainedTabs);
       } else if (viewName === 'tools') {
         ['tools','mcp'].forEach(name => D.sqlite.tabs[name] = payload);
@@ -5385,7 +5396,10 @@ function skillUsageGraphMarkup(payload) {
     return `<tr><td>${esc(record.title || record.id)}<br><span class="skill-source-ref">${record.execution_unit_id ? 'Execution' : 'Execution unknown'} · ${esc(record.agent || 'Agent unknown')}</span><br><a href="${esc(link)}" data-related-session-link>Open session</a></td><td>${esc(record.repository || 'Repository unknown')}</td><td><ul>${sources}</ul><button type="button" class="ledger-button" data-skill-graph-expand="${esc(record.id)}">Inspect ${count(record.occurrence_count)} references</button></td></tr>`;
   }).join('');
   const versionOptions=[{id:'',label:'All versions'},{id:'unknown',label:'Version unknown'},...(payload.versions || [])].map(item=>`<option value="${esc(item.id)}" ${item.id === (payload.scope?.version || '') ? 'selected' : ''}>${esc(item.label)}</option>`).join('');
+  const scope=payload.scope || {};
+  const scopeLabel=scope.days === null ? 'All time' : scope.days ? `Last ${scope.days} days` : 'Selected range';
   return `<div class="skill-usage-summary"><span>${count(counts.executions)} executions</span><span>${count(counts.sessions)} sessions</span><span>${count(counts.occurrences)} references</span><label>Version <select data-skill-graph-version>${versionOptions}</select></label></div>
+    <p class="review-panel-copy">${esc(scopeLabel)} · ${esc(scope.agents?.length ? scope.agents.join(', ') : 'All agents')} · ${scope.repo_id ? 'Selected repository' : 'All repositories'}</p>
     <p class="review-panel-copy">${recorded ? 'Recorded evidence; current analysis is updating. ' : ''}Invoked, loaded, reported, and inferred references are distinct. A reference does not prove the procedure was followed or caused an outcome.</p>
     ${(payload.records || []).length ? `<div class="skill-usage-canvas"><svg viewBox="0 0 880 ${height}" aria-label="Where this skill was referenced" role="img">${paths}${boxes}</svg></div><details class="skill-usage-table" open><summary>Evidence table</summary><table><thead><tr><th>Execution / session</th><th>Repository</th><th>Captured references</th></tr></thead><tbody>${records}</tbody></table></details>` : `<div class="session-ledger-empty">${recorded ? 'No recorded references in this range; analysis is pending.' : 'No captured skill references in this range.'}</div>`}
     <div class="ledger-actions"><button type="button" class="ledger-button" data-skill-graph-reset>All uses in this scope</button>${payload.pagination?.next_offset != null ? `<button type="button" class="ledger-button" data-skill-graph-next="${payload.pagination.next_offset}">Next executions</button>` : ''}${payload.pagination?.next_evidence_offset != null ? `<button type="button" class="ledger-button" data-skill-evidence-next="${payload.pagination.next_evidence_offset}">Next references</button>` : ''}</div>`;
@@ -5403,7 +5417,7 @@ async function loadSkillUsageGraph(skillId, container, filters = {}) {
   const timeout=window.setTimeout(()=>controller.abort(),10000);
   const params=typeof currentParams === 'function' ? currentParams() : new URLSearchParams(window.location.search);
   const range=params.get('range') || '7d';
-  const query=new URLSearchParams({days:range === '24h' ? '1' : /^\d+d$/.test(range) ? range.slice(0,-1) : '7'});
+  const query=new URLSearchParams({days:range === 'all' ? 'all' : range === '24h' ? '1' : /^\d+d$/.test(range) ? range.slice(0,-1) : '7'});
   if (params.get('agents')) query.set('agents',params.get('agents'));
   if (params.get('repo')) query.set('repo',params.get('repo'));
   Object.entries(filters).forEach(([key,value])=>{if(value != null && value !== '') query.set(key,String(value));});
@@ -6226,7 +6240,7 @@ class SessionConversationPlayhead {
       updateUrlParams(urlParams => urlParams.delete('session'));
     }
     if (!filtered.length) {
-      listEl.innerHTML = '<div class="sb-empty" style="height:auto;padding:24px 12px"><div class="sb-empty-icon" aria-hidden="true">&#128269;</div><div>No sessions match this filter</div></div>';
+      listEl.innerHTML = `<div class="sb-empty" style="height:auto;padding:24px 12px"><div class="sb-empty-icon" aria-hidden="true">&#128269;</div><div>${D._unpublishedNavigation ? 'Session navigation is updating. Other sections remain available.' : 'No sessions match this filter'}</div></div>`;
       renderSessionDetail(selectedIdx === null ? null : sessions[selectedIdx]);
       return;
     }
@@ -6909,7 +6923,7 @@ class SessionConversationPlayhead {
       ['Observed idle', value(m.idle_total_ms, fmtDur)],
       ['Model switches', value(m.model_switches)],
     ];
-    return `<section class="tool-inventory-section"><h4>Observed measurements</h4><div class="sb-detail-stats">${facts.map(([label,v])=>`<span>${escHtml(label)}: <strong>${escHtml(String(v))}</strong></span>`).join('')}</div><p class="inbox-copy">Session lifetime · pricing ${escHtml(c.cost_status || 'unavailable')} (${fmt(c.complete_priced_usage ?? c.priced_usage ?? 0)}/${fmt(c.observed_usage || 0)} fully priced usage records). Turn usage ${fmt(c.eligible_usage_turns || 0)}/${fmt(m.completed_turns || 0)}. Missing evidence stays unavailable.</p>${session.derived_state && session.derived_state !== 'ready' ? '<p class="inbox-copy">Task assessment is pending analysis.</p>' : !(session.assessments || []).length ? '<p class="inbox-copy">Task outcome: unknown. No validated acceptance evidence.</p>' : ''}${(session.assessments || []).length ? '<h4>Recent execution assessments · up to 20</h4>' : ''}${(session.assessments || []).map(a=>`<p class="inbox-copy">Outcome: ${escHtml(a.outcome || 'unknown')} · verification: ${a.verification_passed === 1 ? 'passed' : a.verification_passed === 0 ? 'failed or invalidated' : 'unknown'}</p>`).join('')}${(session.insights || []).slice(0,3).map(i=>`<article><strong>${escHtml(i.title)}</strong><p>${escHtml(i.summary)}</p><small>${escHtml(String(i.metric_value))} ${escHtml(i.metric_unit)} · session lifetime</small></article>`).join('')}</section>`;
+    return `<section class="tool-inventory-section"><h4>Observed measurements</h4><div class="sb-detail-stats">${facts.map(([label,v])=>`<span>${escHtml(label)}: <strong>${escHtml(String(v))}</strong></span>`).join('')}</div><p class="inbox-copy">Session lifetime · pricing ${escHtml(c.cost_status || 'unavailable')} (${fmt(c.complete_priced_usage ?? c.priced_usage ?? 0)}/${fmt(c.observed_usage || 0)} fully priced usage records). Turn usage ${fmt(c.eligible_usage_turns || 0)}/${fmt(m.completed_turns || 0)}. Missing evidence stays unavailable.</p>${session.derived_state && session.derived_state !== 'ready' ? '<p class="inbox-copy">Task assessment is pending analysis.</p>' : !(session.assessments || []).length ? '<p class="inbox-copy">Task outcome: unknown. No validated acceptance evidence.</p>' : ''}${(session.insights || []).slice(0,3).map(i=>`<article><strong>${escHtml(i.title)}</strong><p>${escHtml(i.summary)}</p><small>${escHtml(String(i.metric_value))} ${escHtml(i.metric_unit)} · session lifetime</small></article>`).join('')}${(session.assessments || []).length ? `<details class="advanced-review"><summary>Recent execution assessments · up to 20</summary>${session.assessments.slice(0,20).map(a=>`<p class="inbox-copy">Outcome: ${escHtml(a.outcome || 'unknown')} · verification: ${a.verification_passed === 1 ? 'passed' : a.verification_passed === 0 ? 'failed or invalidated' : 'unknown'}</p>`).join('')}</details>` : ''}</section>`;
   }
 
   function renderGitActivity(session){
@@ -7677,6 +7691,7 @@ class SessionConversationPlayhead {
   }
 
   document.addEventListener('reflect-snapshot-published', event => {
+    if (D._unpublishedNavigation) return;
     if (!dashboardDocumentActive) return;
     if (!document.getElementById('tab-sessions')?.classList.contains('active') || selectedIdx === null) return;
     event.preventDefault();
@@ -8534,7 +8549,7 @@ function buildImprovementSurfaces(){
             <dl class="tile-metric-grid">
               <div class="tile-metric signal"><dt>Current Version</dt><dd>${fmt(Number(item.current_version || 0))}</dd></div>
               <div class="tile-metric"><dt>Installations</dt><dd>${fmt(Number(item.installation_count || 0))}</dd></div>
-              <div class="tile-metric"><dt>Observed Uses</dt><dd>${analysisCount(item.usage_count)}</dd></div>
+              <div class="tile-metric"><dt>References · All Time</dt><dd>${analysisCount(item.usage_count)}</dd></div>
               <div class="tile-metric"><dt>Impact Checks</dt><dd>${analysisCount(item.measurement_count)}</dd></div>
             </dl>
             <div class="tile-card-meta"><span class="ledger-pill">${escHtml(availability.detail)}</span><span class="ledger-pill">${analysisCount(item.evidence_count)} evidence links</span><span class="ledger-pill">${fmt(Number(item.version_count || item.current_version || 0))} versions</span>${recordedEvidence ? '<span class="ledger-pill">Recorded references · validation pending</span>' : ''}</div>
@@ -8743,7 +8758,7 @@ function renderMeasurementCoverage(){
   const completedTurns = m.completed_turns === 0 && !known(c.observed_prompt_turns) ? null : m.completed_turns;
   const scope = data.scope || {};
   const scopeEl = document.getElementById('measurement-scope');
-  if (scopeEl) scopeEl.textContent = `${D.focused_session_id ? 'Selected session · ' : ''}${scope.kind === 'event_window' ? 'Selected event window' : 'Captured session lifetimes'}${scope.date_from || scope.date_to ? ` · ${String(scope.date_from || 'First event').slice(0,10)} — ${String(scope.date_to || 'Latest event').slice(0,10)}` : ''}. Coverage travels with every measurement.`;
+  if (scopeEl) scopeEl.textContent = `${D.focused_session_id ? 'Selected session · ' : ''}${scope.kind === 'event_window' ? 'Selected event window' : 'Captured session lifetimes'}${scope.date_from || scope.date_to ? ` · ${scope.date_from ? fmtWorkflowDate(scope.date_from) : 'First event'} — ${scope.date_to ? fmtWorkflowDate(scope.date_to) : 'Latest event'} (local time)` : ''}. Coverage travels with every measurement.`;
   el.innerHTML = `
     <article class="usage-widget usage-headline usage-cost"><div class="usage-widget-head"><h3><span class="usage-code">M1</span> ${escHtml(costLabel)}</h3><span class="usage-unit">USD</span></div><div class="usage-big">${number(cost,amount,'USD')}</div><div class="usage-coverage"><span>${known(observed) && observed>0 ? `${decimal(fullyPriced)} / ${decimal(observed)} fully priced` : 'Pricing coverage unknown'}</span><b>${percent(observed>0 && known(fullyPriced) ? fullyPriced/observed : null)}</b></div>${ratioBar(fullyPriced,observed,'Fully priced usage coverage')}<p class="usage-copy">${c.cost_status === 'complete' ? 'All observed usage records are fully priced.' : costKnown ? 'Unpriced usage is excluded from this subtotal.' : 'Model or pricing evidence is missing.'} Estimates are not provider invoices.</p></article>
     <article class="usage-widget usage-headline"><div class="usage-widget-head"><h3><span class="usage-code">M2</span> Captured tokens</h3><span class="usage-unit">${tokenComplete ? 'Complete buckets' : 'Known buckets'}</span></div><div class="usage-big">${number(tokenTotal,compact,'tokens')}</div><dl class="usage-token-buckets">${tokenBuckets.map(item=>`<div title="${escHtml(item.label)} · ${escHtml(decimal(item.records))} of ${escHtml(decimal(observed))} records"><dt><b>${item.code}</b> ${escHtml(item.label)}</dt><dd>${number(item.value,compact,'tokens')}</dd><small>${decimal(item.records)} / ${decimal(observed)} records</small></div>`).join('')}</dl><div class="usage-inline-metric"><span>Cache-read share</span>${number(m.cache_read_ratio,percent)}</div>${ratioBar(m.cache_read_ratio,1,'Cache-read token share')}<p class="usage-copy">R / (U + R + W), from ${decimal(c.complete_input_usage)} complete-input records. A token share, not a provider cache hit rate.</p></article>

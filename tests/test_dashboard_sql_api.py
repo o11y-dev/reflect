@@ -736,7 +736,7 @@ def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
     skill_detail = client.get(f"/api/skills/{skill_id}")
     assert skill_detail.status_code == 200
     assert skill_detail.json()["versions"][0]["status"] == "pending"
-    assert skill_detail.json()["usage_sessions"] == []
+    assert skill_detail.json()["usage_occurrences"] == []
     assert measurements.status_code == 200
     assert measurements.json() == {"impact_checks": []}
     assert missing_measurement_sessions.status_code == 404

@@ -224,6 +224,21 @@ assert.match(statuses.usage.textContent, /prepar|refresh/i);
 """)
 
 
+def test_usage_hydration_preserves_missing_navigation_until_first_publication():
+    _run_explore_contract(r"""
+context.D.sessions=[];context.D._unpublishedNavigation=true;
+context.fetch=async()=>response(200,payload('A','usage'));
+await context.hydrateExploreView('usage');
+assert.equal(context.D.sessions.length,0,'Usage does not supply session navigation');
+assert.equal(context.D._unpublishedNavigation,true);
+assert.equal(renders.at(-1),'usage');
+assert.equal(panels.usage.children[1].hidden,false);
+const event={detail:{profile:'snapshot'},preventDefault(){this.defaultPrevented=true;}};
+listeners.get('reflect-snapshot-published')(event);
+assert.ok(!event.defaultPrevented,'first publication must recover missing navigation');
+""")
+
+
 def test_publication_invalidates_prior_scope_and_discards_late_old_payload():
     _run_explore_contract(r"""
 let resolveOld, calls=0;

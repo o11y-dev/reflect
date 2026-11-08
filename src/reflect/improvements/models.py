@@ -426,7 +426,7 @@ class SkillMeasurementRecord(ReflectModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
-class SkillUsageSessionRecord(ReflectModel):
+class SkillUsageOccurrenceRecord(ReflectModel):
     usage_id: str = ""
     execution_unit_id: str | None = None
     source_kind: str = "legacy"
@@ -450,7 +450,7 @@ class SkillDetail(ReflectModel):
     versions: list[SkillVersionRecord] = Field(default_factory=list)
     installations: list[SkillInstallationRecord] = Field(default_factory=list)
     evidence: list[dict[str, Any]] = Field(default_factory=list)
-    usage_sessions: list[SkillUsageSessionRecord] = Field(default_factory=list)
+    usage_occurrences: list[SkillUsageOccurrenceRecord] = Field(default_factory=list)
     measurements: list[SkillMeasurementRecord] = Field(default_factory=list)
 
 

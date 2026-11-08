@@ -11,7 +11,7 @@ from reflect.preparation import PreparationCoordinator
 from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only, mark_snapshot
 
 DERIVED_COUNTS = {"evidence_count", "usage_count", "measurement_count"}
-DERIVED_DETAILS = {"evidence", "usage_sessions", "measurements"}
+DERIVED_DETAILS = {"evidence", "usage_occurrences", "measurements"}
 
 
 @pytest.fixture
@@ -92,7 +92,7 @@ def test_pending_skills_browse_durable_records_during_normalization_and_analysis
     assert "Run the focused test" in detail["versions"][0]["content_markdown"]
     assert detail["installations"][0]["status"] == "active"
     assert all(len(detail[field]) == 1 for field in DERIVED_DETAILS)
-    assert detail["usage_sessions"][0]["outcome"] is None
+    assert detail["usage_occurrences"][0]["outcome"] is None
     measurement = detail["measurements"][0]
     assert measurement["verdict"] == "validation_pending"
     assert measurement["before_value"] is None
@@ -115,7 +115,7 @@ def test_ready_skills_preserve_registry_content(db):
     assert listed["skills"] == expected_list
     assert detail == {**expected_detail, "analysis_state": "ready"}
     assert all(detail["skill"][field] == 1 for field in DERIVED_COUNTS)
-    assert detail["usage_sessions"][0]["outcome"] == "success"
+    assert detail["usage_occurrences"][0]["outcome"] == "success"
     assert detail["measurements"][0]["verdict"] == "improved"
 
 

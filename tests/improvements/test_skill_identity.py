@@ -88,7 +88,7 @@ def test_migration_preserves_unambiguous_installation_identity_and_history(tmp_p
     registry.sync_paths([path])
     assert len(registry.list()) == 1
     assert registry.show('verify-first').skill.id == 'legacy-id'
-    assert registry.show('legacy-id').usage_sessions[0].skill_version_id == 'legacy-version'
+    assert registry.show('legacy-id').usage_occurrences[0].skill_version_id == 'legacy-version'
     assert conn.execute('PRAGMA foreign_key_check').fetchall() == []
     conn.close()
 
@@ -104,11 +104,11 @@ def test_migration_keeps_merged_history_unattributed_to_new_origins(tmp_path):
     rows = conn.execute('SELECT id,identity_key FROM skills').fetchall()
     assert len(rows) == 3
     assert dict(rows)['legacy-id'] == 'legacy:legacy-id'
-    history = registry.show('legacy-id').usage_sessions
+    history = registry.show('legacy-id').usage_occurrences
     assert len(history) == 1 and history[0].skill_version_id == 'legacy-version'
     owners = {row[0] for row in conn.execute('SELECT skill_id FROM skill_installations')}
     assert len(owners) == 2 and 'legacy-id' not in owners
-    assert all(registry.show(owner).usage_sessions == [] for owner in owners)
+    assert all(registry.show(owner).usage_occurrences == [] for owner in owners)
     assert conn.execute('PRAGMA foreign_key_check').fetchall() == []
     assert migrate(conn) == []
     conn.close()
@@ -177,7 +177,7 @@ def test_migration_retains_canonical_generated_identity(tmp_path):
     registry.sync_workflow_candidates([candidate])
     assert len(registry.list()) == 1
     assert registry.skill_for_candidate(candidate).id == 'legacy-id'
-    assert registry.show('legacy-id').usage_sessions[0].skill_version_id == 'legacy-version'
+    assert registry.show('legacy-id').usage_occurrences[0].skill_version_id == 'legacy-version'
     assert conn.execute('PRAGMA foreign_key_check').fetchall() == []
     conn.close()
 
@@ -230,9 +230,9 @@ def test_registry_refresh_preserves_historical_usage_without_replayable_steps(tm
     migrate(conn)
     registry = SkillRegistryService(conn)
     registry.refresh(scan_paths=paths)
-    assert len(registry.show('legacy-id').usage_sessions) == 1
+    assert len(registry.show('legacy-id').usage_occurrences) == 1
     registry.refresh(scan_paths=paths)
-    assert len(registry.show('legacy-id').usage_sessions) == 1
+    assert len(registry.show('legacy-id').usage_occurrences) == 1
     conn.close()
 
 
@@ -270,4 +270,31 @@ def test_usage_graph_api_rejects_ambiguous_name_and_accepts_exact_ids(tmp_path):
         response = client.get(f'/api/skills/{skill.id}/usage-graph')
         assert response.status_code == 200
         assert response.json()['skill_id'] == skill.id
+    conn.close()
+
+
+def test_stable_path_rename_updates_current_name_and_keeps_history(tmp_path):
+    conn = connect_sqlite(tmp_path / 'rename.db')
+    registry = SkillRegistryService(conn)
+    path = _skill(tmp_path / 'one')
+    registry.sync_paths([path])
+    original = registry.show('verify-first')
+    path.write_text(path.read_text().replace('name: verify-first', 'name: after-name'))
+    registry.sync_paths([path])
+    renamed = registry.show('after-name')
+    assert renamed.skill.id == original.skill.id
+    assert renamed.skill.slug == renamed.skill.name == 'after-name'
+    assert renamed.skill.version_count == 2
+    assert {item.id for item in original.versions} < {item.id for item in renamed.versions}
+    assert renamed.installations[0].id == original.installations[0].id
+    with pytest.raises(KeyError):
+        registry.resolve_id('verify-first')
+    projector = SkillUsageProjector(conn)
+    assert [item.skill_id for item in projector.occurrences({'skill.name': 'after-name'}, 'Skill', 'ok', '')] == [original.skill.id]
+    assert projector.occurrences({'skill.name': 'verify-first'}, 'Skill', 'ok', '') == []
+    other = _skill(tmp_path / 'two')
+    other.write_text(other.read_text().replace('name: verify-first', 'name: after-name'))
+    registry.sync_paths([other])
+    with pytest.raises(ValueError, match='Ambiguous'):
+        registry.resolve_id('after-name')
     conn.close()

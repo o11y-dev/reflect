@@ -32,8 +32,10 @@
 - Memory searches preserve caller-owned read transactions and fall back to canonical records when the search index is empty, keeping guidance available during concurrent refreshes.
 
 - Preserve captured agent lifecycle usage and reconcile repeated request observations; cumulative usage with unknown intervals stays in lifetime totals without being assigned to an arbitrary day. Running tool envelopes remain incomplete until a terminal result.
-- Verification recovery matches both workspace and check scope, and edits overlapping or following a check invalidate its result. Pending evidence cannot support a new skill draft.
+- Verification recovery matches both workspace and check scope, and edits overlapping or following a check invalidate its result. Pending evidence cannot support a new skill draft; renamed installed skills retain identity and resolve by their new slug.
 - Canonical refresh saves Git activity before acknowledging changed sessions; memory and context appends use the existing complete graph repair. A one-time migration repairs retained projections and reassesses affected evidence.
+- Cold Skills, Workflows, Impact and Inbox links initialize independently while the main snapshot prepares; first publication restores missing session navigation without losing URL selections.
+- Skill graphs honor All time, occurrence lists label captured references rather than distinct sessions, and Impact drill-downs explain excluded candidates. Session insights precede a collapsed assessment audit; Usage dates follow the dashboard’s local time.
 
 - Skill identities distinguish independent installation sources and generated workflow contracts. Ambiguous name lookups require an exact ID; migration preserves historical evidence, and installation replay uses captured applied hashes instead of assigning the latest version.
 - Procedure contracts enforce the same operation and artifact signature during discovery, comparison, and outcome assessment; different exact test selectors cannot satisfy one another's contract.
