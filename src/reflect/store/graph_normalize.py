@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
+from reflect.store.graph_ontology import NODE_KINDS, graph_id, tool_call_node, validate_graph
+from reflect.store.graph_sources import GraphSourceWriter, copy_graph_sources
 from reflect.store.hook_facts import HookFactRepository
 from reflect.telemetry_facts import (
     extract_skill_name_from_path,
@@ -22,10 +23,7 @@ def _now() -> str:
     return datetime.now(tz=UTC).isoformat()
 
 
-def _stable_id(prefix: str, *parts: object) -> str:
-    payload = ":".join(str(part or "") for part in parts)
-    return f"{prefix}_{hashlib.sha1(payload.encode()).hexdigest()}"
-
+_stable_id = graph_id
 
 def _load_json_dict(value: object) -> dict:
     if not isinstance(value, str) or not value.strip():
@@ -253,15 +251,12 @@ def _outcomes_for_tool(tool_name: str, text: str, status: str) -> list[dict]:
                 "confidence": confidence,
                 "status": status,
                 "evidence": evidence[:220],
+                "evidence_class": "inferred",
             }
         )
 
-    if re.search(r"\b(gh\s+pr\s+create|create_pull_request|pull request|opened pr|pr #\d+)\b", haystack):
-        add("pr_opened", 0.75, text)
-    if re.search(r"\b(git\s+commit|committed|commit made)\b", haystack):
-        add("commit_made", 0.75, text)
-    if re.search(r"\b(pytest|npm test|cargo test|go test|test session starts|tests? passed|\d+\s+passed)\b", haystack):
-        add("tests_passed" if status != "error" and "failed" not in haystack else "tests_failed", 0.7, text)
+    # Git mutations are derived from paired operations in git_activity. A text
+    # mention here must not create a competing factual outcome.
     if re.search(r"\b(reflect\s+report|report generated|wrote reports?/|reports?/[^ ]+\.html)\b", haystack):
         add("report_generated", 0.75, text)
     if re.search(r"\b(jira_update_issue|update_issue|issue updated|gh\s+issue\s+(edit|comment))\b", haystack):
@@ -281,6 +276,8 @@ def _insert_node(
     identity_key: str = "",
     timestamp: str,
 ) -> tuple[str, bool]:
+    if kind not in NODE_KINDS:
+        raise ValueError(f"Unknown graph node kind: {kind}")
     node_id = (
         _stable_id("node", kind, identity_key)
         if identity_key
@@ -322,29 +319,18 @@ def _insert_edge(
     timestamp: str,
 ) -> tuple[str, bool]:
     edge_id = _stable_id("edge", kind, source_node_id, target_node_id, session_id or "")
-    first_in_rebuild = conn.execute(
-        "INSERT OR IGNORE INTO reflect_graph_seen_edges(edge_id) VALUES (?)",
-        (edge_id,),
-    ).rowcount != 0
-    if not first_in_rebuild:
-        conn.execute(
-            """
-            UPDATE graph_edges
-            SET weight = weight + 1,
-                last_seen_at = COALESCE(?, last_seen_at),
-                attrs_json = ?,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (last_seen_at, json.dumps(attrs or {}, sort_keys=True), timestamp, edge_id),
-        )
-        return edge_id, False
     cursor = conn.execute(
         """
-        INSERT OR IGNORE INTO graph_edges(
+        INSERT INTO reflect_graph_seen_edges(
           id, source_node_id, target_node_id, kind, session_id, weight,
           first_seen_at, last_seen_at, attrs_json, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          weight = reflect_graph_seen_edges.weight + 1,
+          last_seen_at = COALESCE(excluded.last_seen_at, reflect_graph_seen_edges.last_seen_at),
+          attrs_json = excluded.attrs_json,
+          updated_at = excluded.updated_at
+        RETURNING weight
         """,
         (
             edge_id,
@@ -360,7 +346,7 @@ def _insert_edge(
             timestamp,
         ),
     )
-    return edge_id, cursor.rowcount != 0
+    return edge_id, cursor.fetchone()[0] == 1
 
 
 def _refresh_node(
@@ -380,6 +366,8 @@ def _refresh_node(
             last_seen_at = COALESCE(?, last_seen_at),
             updated_at = ?
         WHERE id = ?
+          AND (attrs_json, first_seen_at, last_seen_at) IS NOT
+              (?, COALESCE(first_seen_at, ?), COALESCE(?, last_seen_at))
         """,
         (
             json.dumps(attrs or {}, sort_keys=True),
@@ -387,15 +375,105 @@ def _refresh_node(
             last_seen_at,
             timestamp,
             node_id,
+            json.dumps(attrs or {}, sort_keys=True),
+            first_seen_at,
+            last_seen_at,
         ),
     )
+
+
+def _copy_changed_graph_rows(conn: sqlite3.Connection, source: str, target: str, *, edges: bool) -> None:
+    """Apply one derived batch, preserving persistence timestamps on no-ops."""
+    fields = (
+        "source_node_id,target_node_id,kind,session_id,weight,first_seen_at,last_seen_at,attrs_json"
+        if edges else "kind,label,session_id,first_seen_at,last_seen_at,attrs_json,identity_key"
+    ).split(",")
+    columns = ",".join(("id", *fields, "created_at", "updated_at"))
+    assignments = ",".join(f"{field}=excluded.{field}" for field in (*fields, "updated_at"))
+    current = target.rsplit(".", 1)[-1]
+    conn.execute(f"""
+        INSERT INTO {target}({columns}) SELECT {columns} FROM {source} WHERE 1
+        ON CONFLICT(id) DO UPDATE SET {assignments}
+        WHERE ({','.join(f'{current}.{field}' for field in fields)})
+          IS NOT ({','.join(f'excluded.{field}' for field in fields)})
+    """)
+
+
+def _create_graph_stage(conn: sqlite3.Connection) -> None:
+    conn.execute("CREATE TEMP TABLE graph_edge_sources AS SELECT * FROM main.graph_edge_sources WHERE 0")
+    conn.execute("CREATE UNIQUE INDEX temp.reflect_stage_graph_sources ON graph_edge_sources(edge_id,source_kind,source_id)")
+    for table in ("graph_nodes", "graph_edges"):
+        conn.execute(f"CREATE TEMP TABLE {table} AS SELECT * FROM main.{table} WHERE 0")
+        conn.execute(f"CREATE UNIQUE INDEX temp.reflect_stage_{table}_id ON {table}(id)")
+    conn.execute("CREATE UNIQUE INDEX temp.reflect_stage_nodes_identity ON graph_nodes(kind,identity_key) WHERE identity_key<>''")
+    conn.execute("CREATE UNIQUE INDEX temp.reflect_stage_nodes_label ON graph_nodes(kind,label,COALESCE(session_id,''),identity_key)")
+
+
+def _preserve_execution_graph(conn: sqlite3.Connection, session_ids: list[str] | None = None) -> None:
+    scope = "" if session_ids is None else " AND session_id IN (SELECT session_id FROM reflect_changed_sessions)"
+    conn.execute(f"""INSERT OR IGNORE INTO temp.graph_nodes SELECT * FROM main.graph_nodes
+        WHERE (kind='Execution' {scope}) OR id IN (
+            SELECT target_node_id FROM main.graph_edges WHERE kind='checked_by' {scope})""")
+    conn.execute(f"""INSERT OR IGNORE INTO temp.graph_edges SELECT * FROM main.graph_edges
+        WHERE kind IN ('has_execution','checked_by') {scope}""")
+
+
+def _drop_graph_stage(conn: sqlite3.Connection) -> None:
+    conn.execute("DROP TABLE temp.graph_edge_sources")
+    conn.execute("DROP TABLE temp.graph_edges")
+    conn.execute("DROP TABLE temp.graph_nodes")
 
 
 def rebuild_graph(
     conn: sqlite3.Connection,
     *,
-    reset: bool = True,
     commit: bool = True,
+) -> dict[str, int]:
+    """Derive the complete graph once, then write only changed persistent rows."""
+    if not commit and not conn.in_transaction:
+        conn.execute("BEGIN")
+    previous_temp_cache = int(conn.execute("PRAGMA temp.cache_size").fetchone()[0])
+    conn.execute("SAVEPOINT reflect_graph_rebuild")
+    try:
+        # Give the default TEMP cache a 32 MiB target for hashed identities.
+        # Preserve explicit caller settings and the existing storage mode.
+        if previous_temp_cache == 0:
+            conn.execute("PRAGMA temp.cache_size = -32768")
+        _create_graph_stage(conn)
+        _preserve_execution_graph(conn)
+        result = _derive_graph(conn, commit=False)
+        conn.execute("DELETE FROM main.graph_edges WHERE id NOT IN (SELECT id FROM temp.graph_edges)")
+        conn.execute("DELETE FROM main.graph_nodes WHERE id NOT IN (SELECT id FROM temp.graph_nodes)")
+        _copy_changed_graph_rows(conn, "temp.graph_nodes", "main.graph_nodes", edges=False)
+        _copy_changed_graph_rows(conn, "temp.graph_edges", "main.graph_edges", edges=True)
+        copy_graph_sources(conn, scoped=False)
+        _drop_graph_stage(conn)
+        conn.execute("RELEASE SAVEPOINT reflect_graph_rebuild")
+    except BaseException:
+        conn.execute("ROLLBACK TO SAVEPOINT reflect_graph_rebuild")
+        conn.execute("RELEASE SAVEPOINT reflect_graph_rebuild")
+        raise
+    finally:
+        if previous_temp_cache == 0:
+            conn.execute("PRAGMA temp.cache_size = 0")
+    if commit:
+        conn.commit()
+    return result
+
+
+def _finish_graph(conn: sqlite3.Connection, nodes: int, edges: int, *, commit: bool) -> dict[str, int]:
+    validate_graph(conn, edges_table="reflect_graph_seen_edges")
+    _copy_changed_graph_rows(conn, "temp.reflect_graph_seen_edges", "graph_edges", edges=True)
+    if commit:
+        conn.commit()
+    return {"nodes": nodes, "edges": edges}
+
+
+def _derive_graph(
+    conn: sqlite3.Connection,
+    *,
+    commit: bool = True,
+    source_only: bool = False,
 ) -> dict[str, int]:
     previous_row_factory = conn.row_factory
     conn.row_factory = sqlite3.Row
@@ -403,26 +481,14 @@ def rebuild_graph(
         timestamp = _now()
         nodes = 0
         edges = 0
+        writer = GraphSourceWriter(conn, _insert_edge)
 
-        if reset:
-            conn.execute("DELETE FROM graph_edges")
-            conn.execute("DELETE FROM graph_nodes")
-        conn.execute(
-            "CREATE TEMP TABLE IF NOT EXISTS reflect_graph_seen_edges(edge_id TEXT PRIMARY KEY)"
-        )
-        conn.execute("DELETE FROM reflect_graph_seen_edges")
-
-        conn.execute(
-            """
-            DELETE FROM graph_edges
-            WHERE source_node_id IN (SELECT id FROM graph_nodes WHERE kind = 'Folder' AND (label LIKE '{%' OR label LIKE '[%'))
-               OR target_node_id IN (SELECT id FROM graph_nodes WHERE kind = 'Folder' AND (label LIKE '{%' OR label LIKE '[%'))
-            """
-        )
-        conn.execute("DELETE FROM graph_nodes WHERE kind = 'Folder' AND (label LIKE '{%' OR label LIKE '[%')")
+        conn.execute("CREATE TEMP TABLE reflect_graph_seen_edges AS SELECT * FROM graph_edges WHERE 0")
+        conn.execute("CREATE UNIQUE INDEX temp.reflect_graph_seen_edges_id ON reflect_graph_seen_edges(id)")
 
         session_contexts: dict[str, dict[str, str]] = {}
         for session in conn.execute("SELECT * FROM sessions ORDER BY started_at, id"):
+            writer.source()
             session_id = str(session["id"])
             workspace_id = str(session["workspace_id"] or "")
             repo_id = str(session["repo_id"] or "")
@@ -467,7 +533,7 @@ def rebuild_graph(
                     timestamp=timestamp,
                 )
                 nodes += int(inserted)
-                _, inserted = _insert_edge(
+                _, inserted = writer.edge(
                     conn,
                     source_node_id=session_node,
                     target_node_id=workspace_node,
@@ -487,7 +553,7 @@ def rebuild_graph(
 
             if parent_session_id:
                 parent = conn.execute(
-                    "SELECT * FROM sessions WHERE id = ?",
+                    "SELECT * FROM main.sessions WHERE id = ?",
                     (parent_session_id,),
                 ).fetchone()
                 if parent:
@@ -499,16 +565,16 @@ def rebuild_graph(
                         attrs={
                             "status": parent["status"],
                             "agent_id": parent["agent_id"],
-                            "workspace_id": parent["workspace_id"],
-                            "repo_id": parent["repo_id"],
-                            "parent_session_id": parent["parent_session_id"],
+                            "workspace_id": str(parent["workspace_id"] or ""),
+                            "repo_id": str(parent["repo_id"] or ""),
+                            "parent_session_id": str(parent["parent_session_id"] or ""),
                         },
                         first_seen_at=parent["started_at"],
                         last_seen_at=parent["ended_at"],
                         timestamp=timestamp,
                     )
                     nodes += int(inserted)
-                    _, inserted = _insert_edge(
+                    _, inserted = writer.edge(
                         conn,
                         source_node_id=parent_node,
                         target_node_id=session_node,
@@ -532,7 +598,7 @@ def rebuild_graph(
                         timestamp=timestamp,
                     )
                     nodes += int(inserted)
-                    _, inserted = _insert_edge(
+                    _, inserted = writer.edge(
                         conn,
                         source_node_id=agent_node,
                         target_node_id=session_node,
@@ -560,7 +626,7 @@ def rebuild_graph(
                         timestamp=timestamp,
                     )
                     nodes += int(inserted)
-                    _, inserted = _insert_edge(
+                    _, inserted = writer.edge(
                         conn,
                         source_node_id=session_node,
                         target_node_id=repo_node,
@@ -572,36 +638,16 @@ def rebuild_graph(
                     )
                     edges += int(inserted)
 
-            hook_facts = HookFactRepository(conn).load_session(str(session["id"]))
-            agent_types_by_id = hook_facts.agent_types_by_id()
+            # The append guard admits only independent new source facts.
+            # Delegation/context changes use the session repair path below.
+            hook_facts = None if source_only else HookFactRepository(conn).load_agent_events(str(session["id"]))
+            agent_types_by_id = hook_facts.agent_types_by_id() if hook_facts else {}
             for step in conn.execute(
-                "SELECT * FROM steps WHERE session_id = ? ORDER BY seq",
+                "SELECT id, seq, summary, started_at, ended_at, raw_attrs_json FROM steps WHERE session_id = ? ORDER BY seq, id",
                 (session["id"],),
             ):
+                writer.source("step", step["id"], f"0:{session['started_at']}:{session['id']}:{step['seq']:020d}:{step['id']}")
                 step_attrs = _load_json_dict(step["raw_attrs_json"])
-                step_node, inserted = _insert_node(
-                    conn,
-                    kind="Step",
-                    label=f"{step['seq']}:{step['type']}",
-                    session_id=session["id"],
-                    attrs={"step_id": step["id"], "type": step["type"], "status": step["status"]},
-                    first_seen_at=step["started_at"],
-                    last_seen_at=step["ended_at"],
-                    timestamp=timestamp,
-                )
-                nodes += int(inserted)
-                _, inserted = _insert_edge(
-                    conn,
-                    source_node_id=session_node,
-                    target_node_id=step_node,
-                    kind="has_step",
-                    session_id=session["id"],
-                    first_seen_at=step["started_at"],
-                    last_seen_at=step["ended_at"],
-                    timestamp=timestamp,
-                )
-                edges += int(inserted)
-
                 prompt_text = str(first_attr(step_attrs, "gen_ai.client.prompt", "gen_ai.client.prompt.text", "prompt") or "")
                 file_path = str(
                     first_attr(
@@ -625,11 +671,11 @@ def rebuild_graph(
                         conn,
                         kind="Skill",
                         label=skill_name,
-                        attrs={"source": "step_text_or_path", "confidence": "medium"},
+                        attrs={"evidence_class": "context"},
                         timestamp=timestamp,
                     )
                     nodes += int(inserted)
-                    _, inserted = _insert_edge(
+                    _, inserted = writer.edge(
                         conn,
                         source_node_id=session_node,
                         target_node_id=skill_node,
@@ -642,7 +688,7 @@ def rebuild_graph(
                     )
                     edges += int(inserted)
 
-                agent_event = hook_facts.agent_event_for_step(step["id"]) or {}
+                agent_event = (hook_facts.agent_event_for_step(step["id"]) if hook_facts else None) or {}
                 event = str(
                     agent_event.get("event_name")
                     or first_attr(step_attrs, "gen_ai.client.hook.event", "ide.hook.event")
@@ -690,7 +736,7 @@ def rebuild_graph(
                         timestamp=timestamp,
                     )
                     nodes += int(inserted)
-                    _, inserted = _insert_edge(
+                    _, inserted = writer.edge(
                         conn,
                         source_node_id=session_node,
                         target_node_id=subagent_node,
@@ -721,7 +767,7 @@ def rebuild_graph(
                             timestamp=timestamp,
                         )
                         nodes += int(inserted)
-                        _, inserted = _insert_edge(
+                        _, inserted = writer.edge(
                             conn,
                             source_node_id=parent_node,
                             target_node_id=subagent_node,
@@ -744,7 +790,7 @@ def rebuild_graph(
                         timestamp=timestamp,
                     )
                     nodes += int(inserted)
-                    _, inserted = _insert_edge(
+                    _, inserted = writer.edge(
                         conn,
                         source_node_id=session_node,
                         target_node_id=subagent_node,
@@ -758,6 +804,7 @@ def rebuild_graph(
                     edges += int(inserted)
 
         for tool in conn.execute("SELECT * FROM tool_calls ORDER BY created_at, id"):
+            writer.source("tool_call", tool["id"], f"1:{tool['created_at']}:{tool['id']}")
             session_node, _ = _insert_node(
                 conn,
                 kind="Session",
@@ -773,7 +820,7 @@ def rebuild_graph(
                 timestamp=timestamp,
             )
             nodes += int(inserted)
-            _, inserted = _insert_edge(
+            _, inserted = writer.edge(
                 conn,
                 source_node_id=session_node,
                 target_node_id=tool_node,
@@ -787,52 +834,26 @@ def rebuild_graph(
             tool_attrs = _load_json_dict(tool["raw_attrs_json"])
             preview = tool["input_preview_redacted"] or ""
             output_preview = tool["output_preview_redacted"] or ""
-            call_node, inserted = _insert_node(
-                conn,
-                kind="ToolCall",
-                label=f"{tool['tool_name']}:{_short_id(tool['id'])}",
-                session_id=tool["session_id"],
-                attrs={
-                    "tool_call_id": tool["id"],
-                    "step_id": tool["step_id"],
-                    "tool_name": tool["tool_name"],
-                    "tool_type": tool["tool_type"],
-                    "status": tool["status"],
-                    "duration_ms": tool["duration_ms"],
-                    "input_hash": tool["input_hash"],
-                    "output_hash": tool["output_hash"],
-                    "error_type": tool["error_type"],
-                    "error_message": tool["error_message_redacted"],
-                },
-                first_seen_at=tool["created_at"],
-                last_seen_at=tool["updated_at"],
-                timestamp=timestamp,
-            )
-            nodes += int(inserted)
-            _, inserted = _insert_edge(
-                conn,
-                source_node_id=session_node,
-                target_node_id=call_node,
-                kind="executed_tool_call",
-                session_id=tool["session_id"],
-                attrs={"status": tool["status"]},
-                first_seen_at=tool["created_at"],
-                last_seen_at=tool["updated_at"],
-                timestamp=timestamp,
-            )
-            edges += int(inserted)
-            _, inserted = _insert_edge(
-                conn,
-                source_node_id=call_node,
-                target_node_id=tool_node,
-                kind="instance_of_tool",
-                session_id=tool["session_id"],
-                attrs={"status": tool["status"]},
-                first_seen_at=tool["created_at"],
-                last_seen_at=tool["updated_at"],
-                timestamp=timestamp,
-            )
-            edges += int(inserted)
+            # Ordinary call topology is projected on demand from canonical rows.
+            # Keep a call node only when semantic evidence needs it as an endpoint.
+            call = tool_call_node(tool)
+            call_node = call["id"]
+            call_materialized = False
+
+            def materialize_call(call=call) -> int:
+                nonlocal call_materialized
+                if call_materialized:
+                    return 0
+                call_materialized = True
+                _, created = _insert_node(
+                    conn, kind="ToolCall", label=call["label"], session_id=call["session_id"],
+                    identity_key=call["identity_key"], attrs=call["attrs"],
+                    first_seen_at=call["first_seen_at"], last_seen_at=call["last_seen_at"], timestamp=timestamp,
+                )
+                if not created:
+                    _refresh_node(conn, node_id=call["id"], attrs=call["attrs"],
+                                  first_seen_at=call["first_seen_at"], last_seen_at=call["last_seen_at"], timestamp=timestamp)
+                return int(created)
 
             skill_names = set(extract_skill_names_from_text(preview))
             if str(tool["tool_name"]).lower() == "skill":
@@ -850,6 +871,7 @@ def rebuild_graph(
                     "path",
                 )
             for path in _path_candidates(explicit_path, preview=preview):
+                nodes += materialize_call()
                 path_skill = extract_skill_name_from_path(path)
                 if path_skill:
                     skill_names.add(path_skill)
@@ -885,7 +907,7 @@ def rebuild_graph(
                     timestamp=timestamp,
                 )
                 nodes += int(inserted)
-                _, inserted = _insert_edge(
+                _, inserted = writer.edge(
                     conn,
                     source_node_id=call_node,
                     target_node_id=path_node,
@@ -924,7 +946,7 @@ def rebuild_graph(
                         timestamp=timestamp,
                     )
                     nodes += int(inserted)
-                    _, inserted = _insert_edge(
+                    _, inserted = writer.edge(
                         conn,
                         source_node_id=session_node,
                         target_node_id=folder_node,
@@ -936,7 +958,7 @@ def rebuild_graph(
                         timestamp=timestamp,
                     )
                     edges += int(inserted)
-                    _, inserted = _insert_edge(
+                    _, inserted = writer.edge(
                         conn,
                         source_node_id=call_node,
                         target_node_id=folder_node,
@@ -948,7 +970,7 @@ def rebuild_graph(
                         timestamp=timestamp,
                     )
                     edges += int(inserted)
-                    _, inserted = _insert_edge(
+                    _, inserted = writer.edge(
                         conn,
                         source_node_id=folder_node,
                         target_node_id=path_node,
@@ -962,15 +984,16 @@ def rebuild_graph(
                     edges += int(inserted)
 
             for skill_name in sorted(skill_names):
+                nodes += materialize_call()
                 skill_node, inserted = _insert_node(
                     conn,
                     kind="Skill",
                     label=skill_name,
-                    attrs={"source": "tool_call", "confidence": "medium"},
+                    attrs={"evidence_class": "context"},
                     timestamp=timestamp,
                 )
                 nodes += int(inserted)
-                _, inserted = _insert_edge(
+                _, inserted = writer.edge(
                     conn,
                     source_node_id=session_node,
                     target_node_id=skill_node,
@@ -982,7 +1005,7 @@ def rebuild_graph(
                     timestamp=timestamp,
                 )
                 edges += int(inserted)
-                _, inserted = _insert_edge(
+                _, inserted = writer.edge(
                     conn,
                     source_node_id=skill_node,
                     target_node_id=call_node,
@@ -997,6 +1020,7 @@ def rebuild_graph(
 
             subagent_name = extract_subagent_name_from_tool(str(tool["tool_name"]), tool_attrs, preview)
             if subagent_name:
+                nodes += materialize_call()
                 subagent_node, inserted = _insert_node(
                     conn,
                     kind="Subagent",
@@ -1006,7 +1030,7 @@ def rebuild_graph(
                     timestamp=timestamp,
                 )
                 nodes += int(inserted)
-                _, inserted = _insert_edge(
+                _, inserted = writer.edge(
                     conn,
                     source_node_id=session_node,
                     target_node_id=subagent_node,
@@ -1018,7 +1042,7 @@ def rebuild_graph(
                     timestamp=timestamp,
                 )
                 edges += int(inserted)
-                _, inserted = _insert_edge(
+                _, inserted = writer.edge(
                     conn,
                     source_node_id=subagent_node,
                     target_node_id=call_node,
@@ -1033,6 +1057,7 @@ def rebuild_graph(
 
             outcome_text = "\n".join(str(part or "") for part in (tool["tool_name"], preview, output_preview, tool["error_message_redacted"]))
             for outcome in _outcomes_for_tool(str(tool["tool_name"]), outcome_text, str(tool["status"])):
+                nodes += materialize_call()
                 outcome_node, inserted = _insert_node(
                     conn,
                     kind="Outcome",
@@ -1044,11 +1069,11 @@ def rebuild_graph(
                     timestamp=timestamp,
                 )
                 nodes += int(inserted)
-                _, inserted = _insert_edge(
+                _, inserted = writer.edge(
                     conn,
                     source_node_id=session_node,
                     target_node_id=outcome_node,
-                    kind="achieved_outcome",
+                    kind="suggests_outcome",
                     session_id=tool["session_id"],
                     attrs={"tool_call_id": tool["id"], "confidence": outcome["confidence"]},
                     first_seen_at=tool["created_at"],
@@ -1056,11 +1081,11 @@ def rebuild_graph(
                     timestamp=timestamp,
                 )
                 edges += int(inserted)
-                _, inserted = _insert_edge(
+                _, inserted = writer.edge(
                     conn,
                     source_node_id=call_node,
                     target_node_id=outcome_node,
-                    kind="produced_outcome",
+                    kind="suggests_outcome",
                     session_id=tool["session_id"],
                     attrs={"confidence": outcome["confidence"]},
                     first_seen_at=tool["created_at"],
@@ -1069,6 +1094,51 @@ def rebuild_graph(
                 )
                 edges += int(inserted)
 
+        for mcp in conn.execute(
+            """
+            SELECT
+              mc.*,
+              mc.tool_call_id AS id,
+              tc.session_id,
+              tc.status,
+              tc.duration_ms
+            FROM mcp_calls AS mc
+            JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
+            WHERE mc.server_name IS NOT NULL
+            ORDER BY mc.created_at, mc.tool_call_id
+            """
+        ):
+            writer.source("tool_call", mcp["id"], f"1:{mcp['created_at']}:{mcp['id']}")
+            session_node, _ = _insert_node(
+                conn,
+                kind="Session",
+                label=mcp["session_id"],
+                session_id=mcp["session_id"],
+                timestamp=timestamp,
+            )
+            mcp_node, inserted = _insert_node(
+                conn,
+                kind="MCPServer",
+                label=mcp["server_name"],
+                attrs={"transport": mcp["transport"]},
+                timestamp=timestamp,
+            )
+            nodes += int(inserted)
+            _, inserted = writer.edge(
+                conn,
+                source_node_id=session_node,
+                target_node_id=mcp_node,
+                kind="used_mcp",
+                session_id=mcp["session_id"],
+                attrs={"tool_name": mcp["tool_name"], "status": mcp["status"]},
+                timestamp=timestamp,
+            )
+            edges += int(inserted)
+
+        if source_only:
+            return _finish_graph(conn, nodes, edges, commit=commit)
+
+        writer.source()
         for repo in conn.execute("SELECT * FROM repos ORDER BY full_name"):
             repo_node, inserted = _insert_node(
                 conn,
@@ -1101,7 +1171,7 @@ def rebuild_graph(
                     timestamp=timestamp,
                 )
                 nodes += int(inserted)
-                _, inserted = _insert_edge(
+                _, inserted = writer.edge(
                     conn,
                     source_node_id=repo_node,
                     target_node_id=file_node,
@@ -1155,7 +1225,7 @@ def rebuild_graph(
                         timestamp=timestamp,
                     )
                     nodes += int(inserted)
-                    _, inserted = _insert_edge(
+                    _, inserted = writer.edge(
                         conn,
                         source_node_id=repo_node,
                         target_node_id=spec_node,
@@ -1176,7 +1246,7 @@ def rebuild_graph(
                     timestamp=timestamp,
                 )
                 nodes += int(inserted)
-                _, inserted = _insert_edge(
+                _, inserted = writer.edge(
                     conn,
                     source_node_id=spec_node,
                     target_node_id=path_node,
@@ -1205,7 +1275,7 @@ def rebuild_graph(
                     session_id=evidence["session_id"],
                     timestamp=timestamp,
                 )
-                _, inserted = _insert_edge(
+                _, inserted = writer.edge(
                     conn,
                     source_node_id=session_node,
                     target_node_id=spec_node,
@@ -1217,46 +1287,6 @@ def rebuild_graph(
                     timestamp=timestamp,
                 )
                 edges += int(inserted)
-
-        for mcp in conn.execute(
-            """
-            SELECT
-              mc.*,
-              mc.tool_call_id AS id,
-              tc.session_id,
-              tc.status,
-              tc.duration_ms
-            FROM mcp_calls AS mc
-            JOIN tool_calls AS tc ON tc.id = mc.tool_call_id
-            WHERE mc.server_name IS NOT NULL
-            ORDER BY mc.created_at, mc.tool_call_id
-            """
-        ):
-            session_node, _ = _insert_node(
-                conn,
-                kind="Session",
-                label=mcp["session_id"],
-                session_id=mcp["session_id"],
-                timestamp=timestamp,
-            )
-            mcp_node, inserted = _insert_node(
-                conn,
-                kind="MCPServer",
-                label=mcp["server_name"],
-                attrs={"transport": mcp["transport"]},
-                timestamp=timestamp,
-            )
-            nodes += int(inserted)
-            _, inserted = _insert_edge(
-                conn,
-                source_node_id=session_node,
-                target_node_id=mcp_node,
-                kind="used_mcp",
-                session_id=mcp["session_id"],
-                attrs={"tool_name": mcp["tool_name"], "status": mcp["status"]},
-                timestamp=timestamp,
-            )
-            edges += int(inserted)
 
         for memory in conn.execute("SELECT * FROM memories WHERE type <> 'cursor_plan' ORDER BY created_at, id"):
             memory_attrs = _load_json_dict(memory["raw_attrs_json"])
@@ -1294,7 +1324,7 @@ def rebuild_graph(
                 )
                 nodes += int(inserted)
                 path_node_id = path_node
-                _, inserted = _insert_edge(
+                _, inserted = writer.edge(
                     conn,
                     source_node_id=memory_node,
                     target_node_id=path_node,
@@ -1322,7 +1352,7 @@ def rebuild_graph(
                         timestamp=timestamp,
                     )
                     nodes += int(inserted)
-                    _, inserted = _insert_edge(
+                    _, inserted = writer.edge(
                         conn,
                         source_node_id=repo_node,
                         target_node_id=memory_node,
@@ -1335,7 +1365,7 @@ def rebuild_graph(
                     )
                     edges += int(inserted)
                     if path_node_id:
-                        _, inserted = _insert_edge(
+                        _, inserted = writer.edge(
                             conn,
                             source_node_id=repo_node,
                             target_node_id=path_node_id,
@@ -1355,7 +1385,7 @@ def rebuild_graph(
                     session_id=exposure["session_id"],
                     timestamp=timestamp,
                 )
-                _, inserted = _insert_edge(
+                _, inserted = writer.edge(
                     conn,
                     source_node_id=session_node,
                     target_node_id=memory_node,
@@ -1416,7 +1446,7 @@ def rebuild_graph(
                 )
                 nodes += int(inserted)
                 path_node_id = path_node
-                _, inserted = _insert_edge(
+                _, inserted = writer.edge(
                     conn,
                     source_node_id=spec_node,
                     target_node_id=path_node,
@@ -1444,7 +1474,7 @@ def rebuild_graph(
                         timestamp=timestamp,
                     )
                     nodes += int(inserted)
-                    _, inserted = _insert_edge(
+                    _, inserted = writer.edge(
                         conn,
                         source_node_id=repo_node,
                         target_node_id=spec_node,
@@ -1457,7 +1487,7 @@ def rebuild_graph(
                     )
                     edges += int(inserted)
                     if path_node_id:
-                        _, inserted = _insert_edge(
+                        _, inserted = writer.edge(
                             conn,
                             source_node_id=repo_node,
                             target_node_id=path_node_id,
@@ -1477,7 +1507,7 @@ def rebuild_graph(
                     session_id=exposure["session_id"],
                     timestamp=timestamp,
                 )
-                _, inserted = _insert_edge(
+                _, inserted = writer.edge(
                     conn,
                     source_node_id=session_node,
                     target_node_id=spec_node,
@@ -1490,9 +1520,7 @@ def rebuild_graph(
                 )
                 edges += int(inserted)
 
-        if commit:
-            conn.commit()
-        return {"nodes": nodes, "edges": edges}
+        return _finish_graph(conn, nodes, edges, commit=commit)
     finally:
         conn.execute("DROP TABLE IF EXISTS temp.reflect_graph_seen_edges")
         conn.row_factory = previous_row_factory
@@ -1501,8 +1529,16 @@ def rebuild_graph(
 def refresh_graph(
     conn: sqlite3.Connection,
     session_ids: set[str],
+    *,
+    changed_step_ids: set[str] | None = None,
+    changed_tool_ids: set[str] | None = None,
 ) -> dict[str, int]:
     """Reuse the graph builder with high-volume canonical tables scoped to changed sessions."""
+    if changed_step_ids is not None:
+        from reflect.store.graph_delta import try_append_graph
+        appended = try_append_graph(conn, session_ids, changed_step_ids, changed_tool_ids)
+        if appended is not None:
+            return appended
     scoped_ids = sorted(str(session_id) for session_id in session_ids if session_id)
     if not scoped_ids:
         return {"nodes": 0, "edges": 0, "refreshed_sessions": 0}
@@ -1510,12 +1546,29 @@ def refresh_graph(
     placeholders = ", ".join("?" for _ in scoped_ids)
     descendants = conn.execute(
         f"""
-        WITH RECURSIVE child_sessions(id) AS (
-          SELECT id FROM main.sessions WHERE parent_session_id IN ({placeholders})
+        WITH RECURSIVE relationships(parent_id, child_id) AS (
+          SELECT parent_session_id, id FROM main.sessions WHERE parent_session_id IS NOT NULL
           UNION
-          SELECT sessions.id
-          FROM main.sessions sessions
-          JOIN child_sessions parent ON sessions.parent_session_id = parent.id
+          SELECT parent.session_id, child.session_id FROM main.graph_edges edge
+          JOIN main.graph_nodes parent ON parent.id=edge.source_node_id
+          JOIN main.graph_nodes child ON child.id=edge.target_node_id
+          WHERE edge.kind='spawned_session'
+          UNION
+          SELECT exposure.session_id, memory.session_id
+          FROM main.memory_exposures exposure
+          JOIN main.memories memory ON memory.id=exposure.memory_id
+          WHERE COALESCE(memory.session_id,'')<>''
+          UNION
+          SELECT edge.session_id, memory.session_id
+          FROM main.graph_edges edge
+          JOIN main.graph_nodes memory ON memory.id=edge.target_node_id
+          WHERE edge.kind IN ('recorded_memory','planned_spec')
+            AND COALESCE(memory.session_id,'')<>''
+        ), child_sessions(id) AS (
+          SELECT child_id FROM relationships WHERE parent_id IN ({placeholders})
+          UNION
+          SELECT relationships.child_id FROM relationships
+          JOIN child_sessions parent ON relationships.parent_id = parent.id
         )
         SELECT id FROM child_sessions
         """,
@@ -1523,6 +1576,8 @@ def refresh_graph(
     ).fetchall()
     scoped_ids = sorted({*scoped_ids, *(str(row[0]) for row in descendants)})
 
+    previous_temp_cache = int(conn.execute("PRAGMA temp.cache_size").fetchone()[0])
+    conn.execute("SAVEPOINT reflect_graph_refresh")
     conn.execute(
         "CREATE TEMP TABLE IF NOT EXISTS reflect_changed_sessions(session_id TEXT PRIMARY KEY)"
     )
@@ -1530,25 +1585,6 @@ def refresh_graph(
     conn.executemany(
         "INSERT INTO reflect_changed_sessions(session_id) VALUES (?)",
         ((session_id,) for session_id in scoped_ids),
-    )
-    placeholders = ", ".join("?" for _ in scoped_ids)
-    conn.execute(
-        f"DELETE FROM graph_edges WHERE session_id IN ({placeholders})",
-        scoped_ids,
-    )
-    conn.execute(
-        f"DELETE FROM graph_nodes WHERE session_id IN ({placeholders})",
-        scoped_ids,
-    )
-    conn.execute(
-        """
-        DELETE FROM graph_nodes
-        WHERE kind IN ('Workspace', 'Folder', 'Path')
-          AND NOT EXISTS (
-            SELECT 1 FROM graph_edges
-            WHERE source_node_id = graph_nodes.id OR target_node_id = graph_nodes.id
-          )
-        """
     )
     scoped_tables = {
         "sessions": "id",
@@ -1558,14 +1594,42 @@ def refresh_graph(
         "evidence": "session_id",
     }
     try:
+        if previous_temp_cache == 0:
+            conn.execute("PRAGMA temp.cache_size = -32768")
+        _create_graph_stage(conn)
+        _preserve_execution_graph(conn, scoped_ids)
+        conn.execute("""CREATE TEMP TABLE reflect_graph_shared_candidates AS
+            SELECT node.id FROM main.graph_nodes node
+            WHERE node.session_id IS NULL AND EXISTS (
+                SELECT 1 FROM main.graph_edges edge
+                WHERE (edge.source_node_id=node.id OR edge.target_node_id=node.id)
+                  AND edge.session_id IN (SELECT session_id FROM reflect_changed_sessions)
+            )""")
+        # Preserve existing first-writer metadata for shared nodes still owned
+        # by other histories, plus complete parent/exposure Session references.
+        conn.execute("""
+            INSERT OR IGNORE INTO temp.graph_nodes SELECT node.* FROM main.graph_nodes node
+            WHERE (node.session_id IS NULL AND (
+                node.kind NOT IN ('Workspace','Folder','Path') OR EXISTS (
+                    SELECT 1 FROM main.graph_edges edge
+                    WHERE (edge.source_node_id=node.id OR edge.target_node_id=node.id)
+                      AND (edge.session_id IS NULL OR edge.session_id NOT IN
+                          (SELECT session_id FROM reflect_changed_sessions))
+                )
+            )) OR (node.kind='Session' AND node.session_id NOT IN
+                (SELECT session_id FROM reflect_changed_sessions))
+        """)
         for table, session_column in scoped_tables.items():
+            # Ownerless context artifacts can be exposed to any selected
+            # session. Session-owned artifacts are covered by scope closure.
+            ownerless = f"OR COALESCE(source.{session_column},'')=''" if table == "memories" else ""
             conn.execute(
                 f"""
                 CREATE TEMP VIEW {table} AS
                 SELECT source.*
                 FROM main.{table} source
-                JOIN reflect_changed_sessions changed
-                  ON changed.session_id = source.{session_column}
+                WHERE source.{session_column} IN
+                    (SELECT session_id FROM reflect_changed_sessions) {ownerless}
                 """
             )
         conn.execute(
@@ -1583,12 +1647,41 @@ def refresh_graph(
               ON changed.session_id = tc.session_id
             """
         )
-        result = rebuild_graph(conn, reset=False)
+        result = _derive_graph(conn, commit=False)
+        conn.execute("""DELETE FROM main.graph_edges
+            WHERE (session_id IN (SELECT session_id FROM reflect_changed_sessions)
+              OR source_node_id IN (SELECT id FROM main.graph_nodes WHERE session_id IN
+                    (SELECT session_id FROM reflect_changed_sessions))
+              OR target_node_id IN (SELECT id FROM main.graph_nodes WHERE session_id IN
+                    (SELECT session_id FROM reflect_changed_sessions)))
+              AND id NOT IN (SELECT id FROM temp.graph_edges)""")
+        conn.execute("""DELETE FROM main.graph_nodes
+            WHERE session_id IN (SELECT session_id FROM reflect_changed_sessions)
+              AND id NOT IN (SELECT id FROM temp.graph_nodes)""")
+        _copy_changed_graph_rows(conn, "temp.graph_nodes", "main.graph_nodes", edges=False)
+        _copy_changed_graph_rows(conn, "temp.graph_edges", "main.graph_edges", edges=True)
+        copy_graph_sources(conn, scoped=True)
+        conn.execute("""DELETE FROM main.graph_nodes
+            WHERE session_id IS NULL AND kind IN ('Workspace','Folder','Path','Tool','Agent','MCPServer','Skill')
+              AND id IN (SELECT id FROM reflect_graph_shared_candidates)
+              AND NOT EXISTS (SELECT 1 FROM main.graph_edges
+                WHERE source_node_id=graph_nodes.id OR target_node_id=graph_nodes.id)""")
+        _drop_graph_stage(conn)
+        conn.execute("RELEASE SAVEPOINT reflect_graph_refresh")
+        conn.commit()
         return {
             **result,
             "refreshed_sessions": len(scoped_ids),
         }
+    except BaseException:
+        conn.execute("ROLLBACK TO SAVEPOINT reflect_graph_refresh")
+        conn.execute("RELEASE SAVEPOINT reflect_graph_refresh")
+        raise
     finally:
+        if previous_temp_cache == 0:
+            conn.execute("PRAGMA temp.cache_size = 0")
         for table in reversed(scoped_tables):
             conn.execute(f"DROP VIEW IF EXISTS temp.{table}")
+        conn.execute("DROP VIEW IF EXISTS temp.mcp_calls")
+        conn.execute("DROP TABLE IF EXISTS temp.reflect_graph_shared_candidates")
         conn.execute("DROP TABLE IF EXISTS reflect_changed_sessions")

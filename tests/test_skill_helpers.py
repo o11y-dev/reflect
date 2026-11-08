@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections import Counter
+from unittest.mock import patch
 
 from reflect.models import TelemetryStats
 from reflect.skill_extraction import (
@@ -618,7 +619,11 @@ class TestBuildSkillEvidenceBundleFromSql:
         )
         conn.commit()
 
-        bundle = _build_skill_evidence_bundle_from_sql(conn, session_ids={"sess-a", "sess-b"})
+        procedure_bundle = {"schema_version": 1, "selection": {}, "procedures": []}
+        with patch("reflect.improvements.procedures.ProcedureEvidenceRepository.bundle", return_value=procedure_bundle) as procedures:
+            bundle = _build_skill_evidence_bundle_from_sql(conn, session_ids={"sess-a", "sess-b"})
+        procedures.assert_called_once_with(session_ids={"sess-a", "sess-b"})
+        assert bundle["procedure_evidence"] == procedure_bundle
 
         assert bundle is not None
         assert bundle["selection_policy"]["evidence_source"] == "sql"

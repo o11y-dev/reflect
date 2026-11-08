@@ -5,8 +5,10 @@ import re
 import sqlite3
 from collections.abc import Iterable
 from pathlib import Path
+from time import perf_counter
 
 from reflect.execution_units import ExecutionUnitService
+from reflect.improvements.analysis_scope import AnalysisScope
 from reflect.improvements.archetypes import TaskArchetypeService, WorkflowAdherenceService
 from reflect.improvements.base import BaseImprovementRule, RuleRegistry
 from reflect.improvements.contracts import WorkflowContract
@@ -30,9 +32,12 @@ from reflect.improvements.models import (
 from reflect.improvements.repository import ImprovementRepository, utc_now
 from reflect.improvements.rules import DEFAULT_RULE_REGISTRY
 from reflect.improvements.scope import ImprovementScopeResolver
+from reflect.improvements.session_insights import SessionInsightRule, session_inputs
 from reflect.improvements.skills import SkillRegistryService
 from reflect.improvements.workflows import WorkflowService
 from reflect.store.migrate import migrate
+from reflect.utils import _json_dumps
+from reflect.views.measurements import build_measurements
 
 
 class ImprovementService:
@@ -63,25 +68,111 @@ class ImprovementService:
         self.execution_units = ExecutionUnitService(conn)
         self.archetypes = TaskArchetypeService(conn)
         self.adherence = WorkflowAdherenceService(conn)
+        self.timings: dict[str, float] = {}
 
-    def refresh(self) -> dict[str, int]:
+    def refresh(
+        self, *, session_ids: set[str] | None = None,
+        analysis_session_ids: set[str] | None = None,
+        measure: bool = True,
+        dependencies_expanded: bool = False,
+        step_scope: dict[str, set[str] | None] | None = None,
+        reassess_unit_ids: dict[str, set[str]] | None = None,
+    ) -> dict[str, int]:
+        """Refresh evidence and evaluate a complete selected analysis cohort.
+
+        Each scope uses None for full and an empty set for no work. Repository
+        detectors need the complete selected cohort, not just changed sessions.
+        Findings outside the successfully evaluated cohort are retained. A
+        caller owning pending-work acknowledgements can defer measurement until
+        its completed evidence checkpoint commits.
+        """
+        self.timings.clear()
+        phase_started = perf_counter()
         now = utc_now()
-        detected = 0
         resolved = self.repository.retire_rule(
             "retry_loop_without_state_change",
             now=now,
         )
-        candidates = 0
-        workflow_evidence = self.prepare_workflow_evidence()
+        affected = (
+            self.execution_units.affected_session_ids(session_ids, step_scope=step_scope)
+            if session_ids is not None and not dependencies_expanded else session_ids
+        )
+        workflow_evidence = self.prepare_workflow_evidence(
+            session_ids=affected, assess_contracts=False, step_scope=step_scope,
+            reassess_unit_ids=reassess_unit_ids if dependencies_expanded else None,
+        )
+        self.timings["evidence"] = perf_counter() - phase_started
+        phase_started = perf_counter()
+        # Artifact drift and approval/revocation can invalidate historical
+        # outcomes even when no telemetry arrived in the analysis window.
+        integrity_result = self.workflows.refresh_integrity()
+        contract_inputs = self._contract_inputs_fingerprint()
+        previous = self.conn.execute(
+            "SELECT value FROM store_metadata WHERE key='assessed_contract_inputs_v1'"
+        ).fetchone()
+        contracts_changed = previous is None or previous[0] != contract_inputs
+        # Only rederived evidence can change an unchanged contract assessment.
+        # Complete repository peers remain detector context, not new work.
+        self.execution_units.assess_contracts(
+            session_ids=None if contracts_changed else affected,
+            execution_unit_ids=None if contracts_changed else self.execution_units.changed_unit_ids,
+        )
+        from reflect.store.graph_execution import refresh_execution_graph
+        refresh_execution_graph(
+            self.conn, None if contracts_changed else affected, commit=False,
+            execution_unit_ids=None if contracts_changed else self.execution_units.changed_unit_ids,
+        )
         self.repository.sync_rule_definitions(
             (rule.definition for rule in self.rules),
             now=now,
         )
         self._backfill_workflow_metadata()
+        self.timings["contracts"] = perf_counter() - phase_started
+        with AnalysisScope(self.conn, analysis_session_ids) as analysis_scope:
+            return self._refresh_findings(
+                now, resolved, workflow_evidence, analysis_scope,
+                integrity_result, contract_inputs, contracts_changed, measure,
+                self.execution_units.rederived_session_ids, step_scope,
+            )
+
+    def _contract_inputs_fingerprint(self) -> str:
+        """Small configuration tables, never event history or derived timestamps."""
+        payload = [
+            [tuple(row) for row in self.conn.execute(query)]
+            for query in (
+                """SELECT wv.id, wv.status, wv.content_hash, wv.content_json,
+                          wc.task_archetype_id, o.repo_id
+                   FROM workflow_versions wv
+                   JOIN workflow_candidates wc ON wc.id=wv.candidate_id
+                   JOIN observations o ON o.id=wc.observation_id ORDER BY wv.id""",
+                """SELECT id, workflow_version_id, status, exposure_started_at
+                   FROM interventions ORDER BY id""",
+                """SELECT id, skill_version_id, status, target_kind, target_ref
+                   FROM skill_installations ORDER BY id""",
+            )
+        ]
+        return hashlib.sha256(_json_dumps(payload).encode()).hexdigest()
+
+    def _refresh_findings(
+        self, now: str, resolved: int, workflow_evidence: dict[str, int],
+        analysis_scope: AnalysisScope,
+        integrity_result: dict[str, int], contract_inputs: str, contracts_changed: bool,
+        measure: bool,
+        evidence_session_ids: set[str] | None,
+        step_scope: dict[str, set[str] | None] | None,
+    ) -> dict[str, int]:
+        detected = candidates = 0
+        evaluated_rules = self.rules if analysis_scope.session_ids != set() else ()
         try:
-            for rule in self.rules:
+            phase_started = perf_counter()
+            # All seven session rules share one bounded canonical projection.
+            session_rules = [rule for rule in evaluated_rules if isinstance(rule, SessionInsightRule)]
+            premium = next((rule.definition.detector_config["premium_model_patterns"] for rule in session_rules if rule.name == "premium_model"), ["opus", "fable"])
+            insight_inputs = session_inputs(build_measurements(self.conn, session_ids=analysis_scope.session_ids, include_turns=True), premium_patterns=tuple(premium)) if session_rules else {}
+            for rule in evaluated_rules:
                 seen_ids: set[str] = set()
-                for draft in rule.evaluate(self.conn):
+                drafts = rule.detect_inputs(insight_inputs) if isinstance(rule, SessionInsightRule) else rule.evaluate(self.conn, scope=analysis_scope)
+                for draft in drafts:
                     observation_id = self.repository.upsert_observation(draft, now=now)
                     seen_ids.add(observation_id)
                     detected += 1
@@ -107,22 +198,56 @@ class ImprovementService:
                         )
                     if self.conn.total_changes > before:
                         candidates += 1
-                resolved += self.repository.resolve_missing(rule.definition, seen_ids, now=now)
-            integrity_result = self.workflows.refresh_integrity()
-            adherence_result = self.adherence.refresh()
-            measurement_result = self.measurements.measure_active()
-            loop_result = self.loops.refresh(commit=False)
-            skill_result = self.skills.refresh(commit=False)
+                resolved += self.repository.resolve_missing(rule.definition, seen_ids, now=now, scope=analysis_scope)
+            self.timings["detectors"] = perf_counter() - phase_started
+            phase_started = perf_counter()
+            adherence_result = self.adherence.refresh(
+                scope=None if contracts_changed else analysis_scope,
+                execution_unit_ids=None if contracts_changed else self.execution_units.changed_unit_ids,
+            )
+            self.timings["adherence"] = perf_counter() - phase_started
+            phase_started = perf_counter()
+            measurement_result = self.measurements.measure_active() if measure else {"created": 0, "regressed": 0}
+            self.timings["measurements"] = perf_counter() - phase_started
+            phase_started = perf_counter()
+            loop_result = self.loops.refresh(commit=False, scope=analysis_scope)
+            self.timings["loops"] = perf_counter() - phase_started
+            phase_started = perf_counter()
+            precise_usage = (
+                evidence_session_ids is not None and step_scope is not None
+                and all(step_scope.get(sid) is not None for sid in evidence_session_ids)
+            )
+            usage_steps = None
+            if precise_usage:
+                usage_steps = set().union(*(step_scope[sid] for sid in evidence_session_ids))
+                usage_steps.update(self.execution_units.changed_membership_step_ids)
+            skill_result = self.skills.refresh(
+                commit=False, scope=analysis_scope,
+                usage_scope=AnalysisScope(session_ids=evidence_session_ids),
+                usage_step_ids=usage_steps,
+            )
+            self.timings["skills"] = perf_counter() - phase_started
+            if contracts_changed:
+                self.conn.execute(
+                    """INSERT INTO store_metadata(key,value,updated_at)
+                       VALUES ('assessed_contract_inputs_v1',?,?)
+                       ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
+                    (contract_inputs, now),
+                )
             self.conn.commit()
         except Exception:
             self.conn.rollback()
             raise
+        phase_started = perf_counter()
         candidates = len(self.workflows.list(statuses={"pending"}, limit=500))
+        self.timings["candidate_summary"] = perf_counter() - phase_started
         return {
             "detected": detected,
             "resolved": resolved,
+            "contracts_changed": int(contracts_changed),
             "candidates": candidates,
             "execution_units": workflow_evidence["execution_units"],
+            "reassessed_execution_units": workflow_evidence["reassessed_execution_units"],
             "classified_execution_units": workflow_evidence["classified_execution_units"],
             "excluded_execution_units": workflow_evidence["excluded_execution_units"],
             "workflow_exposures": adherence_result["exposures"],
@@ -137,6 +262,9 @@ class ImprovementService:
         self,
         *,
         session_ids: Iterable[str] | None = None,
+        assess_contracts: bool = True,
+        step_scope: dict[str, set[str] | None] | None = None,
+        reassess_unit_ids: dict[str, set[str]] | None = None,
     ) -> dict[str, int]:
         """Refresh bounded execution and archetype evidence without running detectors."""
 
@@ -145,10 +273,22 @@ class ImprovementService:
             if session_ids is None
             else {str(item) for item in session_ids if item}
         )
-        execution_units = self.execution_units.refresh(session_ids=scoped_ids)
-        archetypes = self.archetypes.refresh(session_ids=scoped_ids)
+        phase_started = perf_counter()
+        execution_units = self.execution_units.refresh(
+            session_ids=scoped_ids, step_scope=step_scope, reassess_unit_ids=reassess_unit_ids,
+        )
+        self.timings["execution_derivation"] = perf_counter() - phase_started
+        phase_started = perf_counter()
+        archetypes = self.archetypes.refresh(
+            session_ids=self.execution_units.rederived_session_ids,
+            execution_unit_ids=self.execution_units.changed_unit_ids - self.execution_units.reassessed_unit_ids,
+        )
+        self.timings["archetypes"] = perf_counter() - phase_started
+        if assess_contracts:
+            self.execution_units.assess_contracts(session_ids=scoped_ids)
         return {
             "execution_units": execution_units["execution_units"],
+            "reassessed_execution_units": len(self.execution_units.reassessed_unit_ids),
             "assigned_steps": execution_units["assigned_steps"],
             "classified_execution_units": archetypes["classified_execution_units"],
             "excluded_execution_units": archetypes["excluded_execution_units"],
@@ -679,11 +819,84 @@ class ImprovementService:
         *,
         session_ids: list[str],
         source_agent: str | None = None,
+        evidence_bundle: dict | None = None,
     ) -> list[str]:
+        from reflect.improvements.procedures import procedure_contract
+        from reflect.improvements.workflow_identity import WorkflowIdentity
+        from reflect.skill_extraction import _validate_skill_draft_evidence
+
+        instruction_fields = (
+            "schema_version", "slug", "behavior_type", "suggested_artifact", "description",
+            "source_markdown", "steps", "preconditions", "checkpoints", "verification",
+            "abstain_when", "workflow_contract",
+        )
+
+        def artifact_identity(title: str, content: dict) -> WorkflowIdentity:
+            # Review identities describe authored instructions, independently of
+            # fresh evidence counts or duplicate-suggestion metadata.
+            return WorkflowIdentity.from_content(title, {
+                key: content[key] for key in instruction_fields if key in content
+            })
+
+        if not skill_defs:
+            return []
+        # Validate the entire response before persisting any draft or rule row.
+        prepared = []
+        for skill in skill_defs:
+            evidence, procedure = _validate_skill_draft_evidence(
+                self.conn, skill, session_ids=session_ids, evidence_bundle=evidence_bundle,
+            )
+            behavior_type = str(skill.get("behavior_type") or "proven_pattern")
+            if behavior_type not in {"loop", "recovery", "verification", "exploration", "proven_pattern"}:
+                raise ValueError(f"Unsupported workflow behavior type: {behavior_type}")
+            content = {
+                "schema_version": 1,
+                "slug": str(skill.get("name") or "").strip(),
+                "behavior_type": behavior_type,
+                "suggested_artifact": "skill",
+                "description": str(skill.get("description") or "").strip(),
+                "source_markdown": str(skill.get("content") or "").strip(),
+                "evidence": evidence,
+            }
+            for key in ("steps", "preconditions", "checkpoints", "verification", "abstain_when"):
+                values = skill.get(key) or []
+                if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+                    raise ValueError(f"Skill {key} must be a list of instructions")
+                content[key] = list(values)
+            if procedure:
+                content["procedure"] = procedure
+                content["workflow_contract"] = procedure_contract(procedure).model_dump(mode="json")
+                # Keep the exact applicability guard in reviewed instructions.
+                content["abstain_when"].append(
+                    "The task differs from the observed procedure scope: "
+                    + ", ".join(f"{key}={procedure.get(key)}" for key in
+                                ("repo_id", "workspace_id", "task_archetype_id")) + "."
+                )
+            title = f"Workflow: {content['slug']}"
+            identity = artifact_identity(title, content)
+            matches = []
+            exact = None
+            for candidate in self.repository.list_candidates_by_contract(identity.contract_signature):
+                same_artifact = artifact_identity(candidate.title, candidate.content).revision_hash == identity.revision_hash
+                if same_artifact and (exact is None or candidate.status.value == "approved"):
+                    exact = candidate
+                elif not same_artifact and procedure:
+                    matches.append({"id": candidate.id, "title": candidate.title,
+                                    "status": candidate.status.value,
+                                    "reason": "Same scoped procedure; review as a duplicate or update suggestion."})
+            content["existing_workflow_matches"] = sorted(matches, key=lambda item: item["id"])
+            fingerprint = f"{identity.contract_signature}:{identity.revision_hash}"
+            if exact is not None:
+                # Reuse pending drafts created by earlier fingerprints. Exact
+                # approved/installed artifacts are returned without any writes.
+                observation = self.repository.get_observation(exact.observation_id)
+                fingerprint = observation.fingerprint
+            prepared.append((skill, content, fingerprint, exact))
+        if all(exact is not None and exact.status.value == "approved" for _, _, _, exact in prepared):
+            return [exact.id for _, _, _, exact in prepared]
+
         rule = RuleDefinition(
-            id="discovered_reusable_workflow",
-            version=1,
-            category="workflow",
+            id="discovered_reusable_workflow", version=1, category="workflow",
             title="Discovered reusable workflow",
             description="Stages agent-extracted reusable behavior for explicit human review.",
             required_signals=["reviewed_session_evidence"],
@@ -691,87 +904,67 @@ class ImprovementService:
         now = utc_now()
         self.repository.sync_rule_definitions((rule,), now=now)
         candidate_ids: list[str] = []
-        support = max(1, len(session_ids))
-        confidence = min(0.85, 0.5 + support * 0.03)
-        valid_session_ids = [
-            session_id
-            for session_id in session_ids[:20]
-            if self.conn.execute("SELECT 1 FROM sessions WHERE id = ?", (session_id,)).fetchone()
-        ]
-        for skill in skill_defs:
-            slug = str(skill.get("name") or "").strip()
-            description = str(skill.get("description") or "").strip()
-            source_markdown = str(skill.get("content") or "").strip()
-            behavior_type = str(skill.get("behavior_type") or "proven_pattern")
-            if behavior_type not in {"loop", "recovery", "verification", "exploration", "proven_pattern"}:
-                raise ValueError(f"Unsupported workflow behavior type: {behavior_type}")
-            source_kind = str(
-                skill.get("source_kind") or WorkflowSourceKind.AGENT_AUTHORED.value
+        staged_ids: list[str] = []
+        for skill, content, fingerprint, exact in prepared:
+            if exact is not None and exact.status.value == "approved":
+                candidate_ids.append(exact.id)
+                continue
+            evidence = content["evidence"]
+            support = evidence["checked_execution_count"]
+            sessions = evidence["session_ids"]
+            confidence = min(0.85, 0.5 + support * 0.03) if support else 0.0
+            refs = [EvidenceRef(
+                entity_type="execution_unit", entity_id=example["execution_unit_id"],
+                session_id=example["session_id"],
+                polarity="supporting" if example.get("verification") == "passed" and not example.get("signals_truncated") else "counterexample",
+                summary_redacted=f"Candidate-cited procedure example; checks {example.get('verification', 'unknown')}; outcome {example.get('outcome', 'unknown')}.",
+                confidence=0.8,
+            ) for example in evidence.get("examples", [])]
+            if not refs:
+                refs = [EvidenceRef(
+                    entity_type="session", entity_id=sid,
+                    session_id=sid if self.conn.execute("SELECT 1 FROM sessions WHERE id=?", (sid,)).fetchone() else None,
+                    polarity="context",
+                    summary_redacted="Cited session context for an unverified draft; no checked execution support.",
+                    confidence=0.0,
+                ) for sid in sessions]
+            procedure = content.get("procedure") or {}
+            scope_type = "repo" if procedure.get("repo_id") else "user"
+            scope_id = str(procedure.get("repo_id") or "local")
+            summary = (
+                f"Draft cites {support} executions with observed checks among "
+                f"{evidence['denominator_execution_count']} cited executions; outcomes remain separate."
+                if support else "Unverified instruction draft; no checked execution support is claimed."
             )
-            source_workflow_id = str(skill.get("source_workflow_id") or "").strip()
-            source_loop_id = str(skill.get("source_loop_id") or "").strip()
             draft = ObservationDraft(
-                rule_id=rule.id,
-                rule_version=rule.version,
-                scope_type="user",
-                scope_id="local",
-                fingerprint=(
-                    f"{slug}:{hashlib.sha256(source_markdown.encode('utf-8')).hexdigest()[:16]}"
-                ),
-                category="workflow",
-                title=f"Reusable workflow candidate: {slug}",
-                summary=f"Session evidence produced a reusable {slug} workflow for operator review.",
-                metric_name="workflow_support_execution_units",
-                metric_value=float(support),
-                metric_unit="execution_units",
-                metric_direction="higher_is_better",
-                impact_score=min(75.0, 25.0 + support * 5.0),
+                rule_id=rule.id, rule_version=rule.version,
+                scope_type=scope_type, scope_id=scope_id, repo_id=procedure.get("repo_id"),
+                fingerprint=fingerprint, category="workflow",
+                title=f"Reusable workflow candidate: {content['slug']}", summary=summary,
+                metric_name="workflow_support_execution_units", metric_value=float(support),
+                metric_unit="execution_units", metric_direction="higher_is_better",
+                impact_score=min(75.0, support * 5.0),
                 severity=Severity.MEDIUM if support >= 3 else Severity.LOW,
-                confidence=confidence,
-                occurrence_count=support,
-                affected_session_count=support,
-                evidence=[
-                    EvidenceRef(
-                        entity_type="session",
-                        entity_id=session_id,
-                        session_id=session_id,
-                        summary_redacted="Session included in the bounded workflow extraction evidence packet",
-                        confidence=0.7,
-                    )
-                    for session_id in valid_session_ids
-                ],
+                confidence=confidence, occurrence_count=len(evidence["execution_ids"]),
+                affected_session_count=len(sessions), evidence=refs,
             )
             observation_id = self.repository.upsert_observation(draft, now=now)
-            content = {
-                "schema_version": 1,
-                "slug": slug,
-                "behavior_type": behavior_type,
-                "suggested_artifact": "skill",
-                "description": description,
-                "steps": [],
-                "source_markdown": source_markdown,
-                "source": {
-                    "rule_id": rule.id,
-                    "observation_id": observation_id,
-                    "kind": source_kind,
-                    **({"agent": source_agent} if source_agent else {}),
-                    **({"workflow_id": source_workflow_id} if source_workflow_id else {}),
-                    **({"loop_id": source_loop_id} if source_loop_id else {}),
-                },
+            content["source"] = {
+                "rule_id": rule.id, "observation_id": observation_id,
+                "kind": str(skill.get("source_kind") or WorkflowSourceKind.AGENT_AUTHORED.value),
+                **({"agent": source_agent} if source_agent else {}),
+                **({"workflow_id": str(skill["source_workflow_id"])} if skill.get("source_workflow_id") else {}),
+                **({"loop_id": str(skill["source_loop_id"])} if skill.get("source_loop_id") else {}),
             }
-            candidate_ids.append(
-                self.repository.stage_candidate(
-                    observation_id,
-                    title=f"Workflow: {slug}",
-                    hypothesis=f"Reviewing and applying {slug} will make the observed behavior reusable.",
-                    content=content,
-                    confidence=confidence,
-                    target_metric="workflow_adherence",
-                    now=now,
-                )
-            )
+            candidate_ids.append(self.repository.stage_candidate(
+                observation_id, title=f"Workflow: {content['slug']}",
+                hypothesis=("Review this instruction draft before use; outcome improvement remains unmeasured. " + summary),
+                content=content, confidence=confidence, target_metric="workflow_adherence",
+                scope=f"{scope_type}:{scope_id}", now=now,
+            ))
+            staged_ids.append(candidate_ids[-1])
         self.conn.commit()
-        self.skills.sync_workflow_candidates(candidate_ids)
+        self.skills.sync_workflow_candidates(staged_ids)
         self.conn.commit()
         return candidate_ids
 

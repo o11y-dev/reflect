@@ -32,7 +32,7 @@ dependencies = [
     "opentelemetry-proto>=1.20",
     "pydantic>=2.0",
     "mcp>=1.28,<2",
-    "opentelemetry-hooks>=0.14,<0.15",
+    "opentelemetry-hooks>=0.14,<0.16",
 ]
 
 [project.urls]

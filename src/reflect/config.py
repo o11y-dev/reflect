@@ -7,6 +7,18 @@ from pathlib import Path
 from reflect.utils import _json_loads, logger
 
 
+def analysis_window_days() -> int:
+    """Automatic expensive analysis is bounded; captured history is retained."""
+    raw = os.environ.get("REFLECT_ANALYSIS_WINDOW_DAYS", "7")
+    try:
+        days = int(raw)
+    except ValueError as exc:
+        raise ValueError("REFLECT_ANALYSIS_WINDOW_DAYS must be a positive integer") from exc
+    if days <= 0:
+        raise ValueError("REFLECT_ANALYSIS_WINDOW_DAYS must be a positive integer")
+    return days
+
+
 @dataclass(frozen=True)
 class ReflectConfig:
     """Centralized filesystem configuration for reflect runtime settings."""

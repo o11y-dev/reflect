@@ -190,6 +190,12 @@ def db_doctor(db_path: Path) -> None:
         f"wal_autocheckpoint={pragmas['wal_autocheckpoint']}, "
         f"busy_timeout={pragmas['busy_timeout']}"
     )
+    inbox = status.get("task_inbox")
+    if inbox:
+        click.echo(f"Task inbox: {inbox['pending_count']} pending event(s); "
+                   f"oldest age={inbox['oldest_pending_age_seconds']} seconds")
+        for error in inbox["projection_errors"]:
+            click.echo(f"Task projection error ({error['task_run_id']}): {error['error']}")
     if status["ok"]:
         click.echo("SQLite store health: ok")
         return

@@ -119,6 +119,41 @@ class TestLoadPricingTable:
 
 
 class TestCalculateCost:
+    def test_unknown_cache_write_variant_preserves_tokens_and_known_cost(self):
+        table = PricingTable({"model": ModelPricing("model", 0.1, 0.2, 0.3, 0.4)}, "cache", 0)
+        value = calculate_cost(
+            {"input": 10, "output": 20, "cache_creation": 100, "cache_read": 5},
+            "model", table, unknown_rate_buckets=frozenset({"cache_creation"}),
+        )
+        assert value.total_cost_usd == 7.0
+        assert value.cache_creation_tokens == 100
+        assert value.resolution.source == "partial"
+        assert value.missing_price_buckets == ("cache_creation",)
+
+    def test_missing_cache_price_is_partial_not_free(self):
+        table = PricingTable({"model": ModelPricing("model", input_cost_per_token=0.1)}, "cache", 0)
+        value = calculate_cost({"input": 10, "cache_read": 100}, "model", table)
+        assert value.total_cost_usd == 1.0
+        assert value.resolution.source == "partial"
+        assert value.missing_price_buckets == ("cache_read",)
+
+    def test_explicit_zero_price_is_distinct_from_missing_price(self):
+        from reflect.pricing import _coerce_model_pricing
+
+        model = _coerce_model_pricing("model", {"input_cost_per_token": 0, "cache_read_input_token_cost": 0, "cache_read_cost_per_token": 0.5})
+        assert model.cache_read_cost_per_token == 0
+        assert model.output_cost_per_token is None
+        value = calculate_cost({"input": 10, "cache_read": 100}, "model", PricingTable({"model": model}, "cache", 0))
+        assert value.total_cost_usd == 0
+        assert value.resolution.source == "cache"
+        assert value.missing_price_buckets == ()
+
+    def test_no_applicable_rate_stays_missing(self):
+        table = PricingTable({"model": ModelPricing("model", output_cost_per_token=1.0)}, "cache", 0)
+        value = calculate_cost({"input": 10}, "model", table)
+        assert value.resolution.source == "missing"
+        assert value.missing_price_buckets == ("input",)
+
     def test_calculates_cost_using_resolution(self):
         table = PricingTable(
             prices={

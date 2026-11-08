@@ -57,6 +57,7 @@ def migrate(conn: sqlite3.Connection, *, commit: bool = True) -> list[int]:
     """Apply pending migrations, optionally inside a caller-owned transaction."""
     from reflect.improvements.workflow_identity import workflow_identity_from_json
     from reflect.store.provenance import telemetry_agent_name, unassigned_codex_classification
+    from reflect.telemetry_facts import TURN_TERMINAL_KEYS, event_time, observed_turn_terminal
     from reflect.tool_outcomes import tool_failure
     from reflect.utils import _json_dumps, _json_loads
 
@@ -71,6 +72,16 @@ def migrate(conn: sqlite3.Connection, *, commit: bool = True) -> list[int]:
         return _json_dumps({"type": failure.error_type, "message": failure.message}) if failure else None
 
     conn.create_function("reflect_tool_failure", 2, failure_json, deterministic=True)
+    conn.create_function(
+        "reflect_observed_turn_terminal", 1,
+        lambda values: int(observed_turn_terminal(dict(zip(TURN_TERMINAL_KEYS, _json_loads(values), strict=True)))),
+        deterministic=True,
+    )
+    conn.create_function(
+        "reflect_event_time", 1,
+        lambda value: at.isoformat(timespec="microseconds") if (at := event_time(value)) else None,
+        deterministic=True,
+    )
     conn.create_function(
         "reflect_agent_name", 1,
         lambda name: telemetry_agent_name({"gen_ai.client.name": name}), deterministic=True,

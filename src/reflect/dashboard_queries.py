@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from reflect.dashboard_query_common import (
@@ -13,8 +13,10 @@ from reflect.dashboard_query_common import (
     sql_session_first_prompts,
 )
 from reflect.graph import _compute_weekly_trends
+from reflect.store.pending_refresh import analysis_coverage, derived_analysis_state
 from reflect.store.sqlite import consistent_snapshot
-from reflect.utils import _safe_ratio
+from reflect.utils import _json_loads, _safe_ratio
+from reflect.views.measurements import MeasurementView
 
 
 def _comparison_delta(primary: float | int, baseline: float | int) -> dict:
@@ -162,6 +164,7 @@ def _sql_dashboard_metrics(
     include_heavy: bool = True,
     include_base: bool = True,
     base_tab_names: set[str] | None = None,
+    measurement: MeasurementView | None = None,
 ) -> dict[str, object]:
     from reflect.store.sqlite import connect_sqlite_read_only
     from reflect.views import (
@@ -173,14 +176,16 @@ def _sql_dashboard_metrics(
     scoped = session_ids is not None
     scoped_ids = sorted(session_ids or [])
 
-    conn = connect_sqlite_read_only(db_path)
+    conn = connect_sqlite_read_only(db_path, profile="usage")
     try:
         selected_session_ids = set(scoped_ids) if scoped else None
         if not include_base:
             tab_views = empty_sql_lazy_tabs()
             source_provenance = []
         elif include_heavy:
-            tab_views = build_report_tabs(conn, session_ids=selected_session_ids).model_dump()
+            tab_views = build_report_tabs(
+                conn, session_ids=selected_session_ids, measurement=measurement,
+            ).model_dump()
             source_provenance = list_source_provenance(
                 conn,
                 session_ids=selected_session_ids,
@@ -197,6 +202,7 @@ def _sql_dashboard_metrics(
                     conn,
                     tab_name,
                     session_ids=selected_session_ids,
+                    measurement=measurement,
                 )
                 if tab_name == "usage_tools":
                     tab_views["agents"] = {
@@ -248,6 +254,10 @@ def _sql_dashboard_metrics(
         "mcp_server_after": mcp_view["mcp_server_after"],
         "mcp_server_status_known": mcp_view["mcp_server_status_known"],
         "skills_by_count": tools_view["skills_by_count"],
+        "skill_reports_by_count": tools_view.get("skill_reports_by_count", {}),
+        "skill_mentions_by_count": tools_view.get("skill_mentions_by_count", {}),
+        "skill_attempts_by_count": tools_view.get("skill_attempts_by_count", {}),
+        "subagent_mentions_by_count": tools_view.get("subagent_mentions_by_count", {}),
         "subagent_types_by_count": tools_view["subagent_types_by_count"],
         "subagent_stops_by_type": tools_view["subagent_stops_by_type"],
         "subagent_launches": tools_view["subagent_launches"],
@@ -545,6 +555,55 @@ def _cohort_agent_comparison(
 
 
 @consistent_snapshot
+def finalize_dashboard_analysis(
+    db_path: Path, payload: dict[str, object], *,
+    usage_completed_at: str, publication_revision: tuple[tuple[str, ...], ...],
+) -> dict[str, object]:
+    """Attach completed analysis to this run's immutable default usage scope."""
+    from reflect.improvements.session_insights import read_session_insights
+    from reflect.store.sqlite import SnapshotNotReadyError, connect_sqlite_read_only
+
+    conn = connect_sqlite_read_only(db_path)
+    try:
+        revision = tuple(tuple(row) for row in conn.execute(
+            "SELECT key,value,updated_at FROM store_metadata "
+            "WHERE key IN ('prepared_usage','prepared_snapshot') ORDER BY key"
+        ))
+        metadata = dict(conn.execute(
+            "SELECT key,value FROM store_metadata WHERE key IN "
+            "('last_successful_usage_refresh','last_successful_refresh','analysis_window_v1')"
+        ))
+        if (revision != publication_revision or not usage_completed_at
+                or len(revision) != 2 or any(row[1] != "ready" for row in revision)
+                or metadata.get("last_successful_usage_refresh") != usage_completed_at
+                or payload.get("snapshot_completed_at") != usage_completed_at):
+            raise SnapshotNotReadyError("The usage publication changed before analysis completed.")
+        # This canonical projection contains the full scope, including zero-usage
+        # sessions; navigation cards are paginated and cannot supply these IDs.
+        measurements = payload.get("measurements")
+        sessions = measurements.get("sessions") if isinstance(measurements, dict) else None
+        if not isinstance(sessions, dict):
+            raise SnapshotNotReadyError("The usage publication has no canonical session scope.")
+        session_ids = set(sessions)
+        coverage = analysis_coverage(conn, session_ids)
+        state = derived_analysis_state(coverage, snapshot_ready=True)
+        try:
+            window = _json_loads(metadata["analysis_window_v1"]) if metadata.get("analysis_window_v1") else None
+        except (TypeError, ValueError):
+            window = None
+        return {
+            **payload,
+            "analysis_state": state,
+            "analysis_completed_at": metadata.get("last_successful_refresh"),
+            "analysis_window": window,
+            "analysis_coverage": coverage,
+            "insights": read_session_insights(conn, session_ids=session_ids) if state == "ready" else {},
+        }
+    finally:
+        conn.close()
+
+
+@consistent_snapshot(profile="usage")
 def build_dashboard_payload(
     db_path: Path,
     *,
@@ -561,112 +620,107 @@ def build_dashboard_payload(
     include_comparison: bool = True,
     base_tab_names: set[str] | None = None,
 ) -> dict[str, object]:
-    has_scope_filter = bool(
-        q or session_id or agents or model != "all" or status != "all" or range_name != "all"
+    from reflect.improvements.session_insights import read_session_insights
+    from reflect.session_rules import DEFAULT_SESSION_RULE_SCORER, context_from_summary
+    from reflect.store.git_activity import git_activity
+    from reflect.store.sqlite import connect_sqlite_read_only, snapshot_incomplete
+    from reflect.views.measurements import build_measurements
+    from reflect.views.sessions import aggregate_session_scope, list_sessions, select_session_scope
+
+    days = 1 if range_name == "24h" else (
+        int(range_name[:-1]) if range_name.endswith("d") and range_name[:-1].isdigit() else None
     )
-    sqlite_payload = _sql_report_payload(
-        db_path,
-        limit=500,
-        offset=0,
-        include_tabs=not (lazy_heavy_tabs or lazy_all_tabs),
-    )
-    overview = sqlite_payload["overview"]
-    sessions_page = sqlite_payload["sessions"]
+    now = datetime.now(tz=UTC)
+    date_from = (now - timedelta(days=days)).isoformat() if days else None
+    date_to = now.isoformat() if days else None
+    conn = connect_sqlite_read_only(db_path, profile="usage")
+    try:
+        all_sessions = select_session_scope(conn, q=q, model=model, status=status,
+            date_from=date_from, date_to=date_to)
+        for row in all_sessions:
+            breakdown = DEFAULT_SESSION_RULE_SCORER.breakdown(context_from_summary(row))
+            row["quality_score"] = DEFAULT_SESSION_RULE_SCORER.score_from_breakdown(breakdown)
+            row["quality_available"] = DEFAULT_SESSION_RULE_SCORER.coverage_from_breakdown(breakdown) >= 50
+        nav_sessions = [row for row in all_sessions if not agents or row["agent"] in agents]
+        scoped_sessions = [row for row in nav_sessions if not session_id or row["id"] == session_id]
+        scoped_session_ids = {row["id"] for row in scoped_sessions}
+        coverage = analysis_coverage(conn, scoped_session_ids)
+        analysis_state = derived_analysis_state(coverage, snapshot_ready=not snapshot_incomplete(conn))
+        analysis_ready = analysis_state == "ready"
+        if not analysis_ready:
+            lazy_heavy_tabs = True
+            include_comparison = False
+            base_tab_names = (base_tab_names if base_tab_names is not None else {"activity", "models", "costs", "usage_tools", "mcp"}) & {
+                "activity", "models", "costs", "usage_tools", "mcp",
+            }
+        page = list_sessions(conn, session_ids={row["id"] for row in nav_sessions}, limit=limit, offset=offset)
+        sessions_page = page.model_dump()
+        scoped_overview = aggregate_session_scope(conn, scoped_session_ids)
+        period_activity = None
+        if date_from and date_to:
+            from reflect.usage import UsageService
+            period_activity = UsageService(conn).activity_totals(
+                session_ids=scoped_session_ids, date_from=date_from, date_to=date_to)
+            scoped_overview.update(prompt_count=period_activity.prompts,
+                tool_call_count=period_activity.tool_calls, failure_count=period_activity.failures)
+        measurement_view = build_measurements(conn, session_ids=scoped_session_ids,
+            date_from=date_from, date_to=date_to)
+        measurement = measurement_view.model_dump()
+        git_operations = git_activity(conn, session_ids=scoped_session_ids, date_from=date_from, date_to=date_to)
+        insights = read_session_insights(conn, session_ids=scoped_session_ids) if analysis_ready else {}
+        publication = conn.execute(
+            "SELECT value FROM store_metadata WHERE key IN ('last_successful_usage_refresh', 'last_successful_refresh') "
+            "ORDER BY value DESC LIMIT 1"
+        ).fetchone()
+        snapshot_completed_at = str(publication[0]) if publication else None
+        analysis_publication = conn.execute(
+            "SELECT value FROM store_metadata WHERE key = 'last_successful_refresh'"
+        ).fetchone()
+        analysis_completed_at = str(analysis_publication[0]) if analysis_publication else None
+        window = conn.execute(
+            "SELECT value FROM store_metadata WHERE key = 'analysis_window_v1'"
+        ).fetchone()
+        try:
+            analysis_window = _json_loads(window[0]) if window else None
+        except (TypeError, ValueError):
+            analysis_window = None
+    finally:
+        conn.close()
     session_rows = sessions_page["rows"]
-    first_prompts = (
-        {}
-        if lazy_heavy_tabs or lazy_all_tabs
-        else sql_session_first_prompts(
-            db_path,
-            {str(row["session_id"]) for row in session_rows},
-        )
-    )
-    sessions = [
-        session_card_from_row(
-            dict(row),
-            first_prompt=first_prompts.get(str(row["session_id"]), ""),
-        )
-        for row in session_rows
-    ]
-    all_sessions = sessions[:]
-    nav_sessions = _filter_sql_session_rows(
-        sessions,
-        q=q,
-        agents=agents,
-        model=model,
-        status=status,
-        range_name=range_name,
-    )
-    scoped_sessions = (
-        _filter_sql_session_rows(nav_sessions, session_id=session_id)
-        if session_id
-        else nav_sessions
-    )
-    nav_session_rows = [
-        {
-            "session_id": session["id"],
-            "agent": session["agent"],
-            "status": session["status"],
-            "title": session["title"],
-            "first_prompt": session["first_prompt"],
-            "started_at": session["started_at"],
-            "ended_at": session["ended_at"],
-            "duration_ms": session["duration_ms"],
-            "prompt_count": session["prompt_count"],
-            "tool_call_count": session["tool_calls"],
-            "failure_count": session["failure_count"],
-            "input_tokens": session["input_tokens"],
-            "output_tokens": session["output_tokens"],
-            "cache_creation_tokens": session["cache_creation_tokens"],
-            "cache_read_tokens": session["cache_read_tokens"],
-            "estimated_cost_usd": session["total_cost_usd"],
-            "total_tokens": session["total_tokens"],
-            "quality_score": session["quality_score"],
-            "quality_available": session["quality_available"],
-            "quality_coverage_pct": session["quality_coverage_pct"],
-            "token_provenance": session["token_provenance"],
-        }
-        for session in nav_sessions
-    ]
-    sessions_page = {
-        **sessions_page,
-        "rows": nav_session_rows[offset : offset + limit],
-        "total": len(nav_sessions),
-        "limit": limit,
-        "offset": offset,
-    }
-    sessions = nav_sessions[offset : offset + limit]
-    scoped_overview = {
-        **overview,
-        "session_count": len(scoped_sessions),
-        "prompt_count": sum(int(row["prompt_count"] or 0) for row in scoped_sessions),
-        "tool_call_count": sum(int(row["tool_calls"] or 0) for row in scoped_sessions),
-        "failure_count": sum(int(row["failure_count"] or 0) for row in scoped_sessions),
-        "input_tokens": sum(int(row["input_tokens"] or 0) for row in scoped_sessions),
-        "output_tokens": sum(int(row["output_tokens"] or 0) for row in scoped_sessions),
-        "estimated_cost_usd": sum(
-            float(row["total_cost_usd"] or 0) for row in scoped_sessions
-        ),
-    }
-    sqlite_payload["overview"] = scoped_overview
-    sqlite_payload["sessions"] = sessions_page
-    first_event_ts = ""
-    if scoped_sessions:
-        first_event_ts = min(row["started_at"] for row in scoped_sessions if row.get("started_at"))
-    prompt_count = sum(row["prompt_count"] for row in scoped_sessions)
-    scoped_session_ids = {str(row["id"]) for row in scoped_sessions}
+    first_prompts = {} if lazy_heavy_tabs or lazy_all_tabs else sql_session_first_prompts(
+        db_path, {str(row["session_id"]) for row in session_rows})
+    sessions = [session_card_from_row(dict(row), first_prompt=first_prompts.get(str(row["session_id"]), ""),
+        measurement=measurement["sessions"].get(str(row["session_id"])),
+        cost_scope=measurement["scope"]["kind"] if str(row["session_id"]) in measurement["sessions"] else "session_lifetime") for row in session_rows]
+    # The overview is computed before navigation pagination. Usage is event-scoped.
+    scoped_overview.update(input_tokens=measurement["totals"]["input_tokens"],
+        output_tokens=measurement["totals"]["output_tokens"],
+        estimated_cost_usd=measurement["totals"]["estimated_cost_usd"])
+    sqlite_payload = {"db_path": str(db_path), "overview": scoped_overview,
+        "sessions": sessions_page, "tabs": empty_sql_lazy_tabs()}
+    first_event_ts = min((row["started_at"] for row in scoped_sessions if row.get("started_at")), default="")
+    prompt_count = scoped_overview["prompt_count"]
     metrics = _sql_dashboard_metrics(
         db_path,
-        session_ids=scoped_session_ids if has_scope_filter else None,
+        session_ids=scoped_session_ids,
         include_heavy=not (lazy_heavy_tabs or lazy_all_tabs),
         include_base=not lazy_all_tabs,
         base_tab_names=base_tab_names,
+        measurement=measurement_view,
     )
+    if period_activity is not None:
+        metrics["mcp_calls"] = period_activity.mcp_calls
+        metrics["subagent_launches"] = period_activity.subagent_launches
+        metrics["subagent_total_starts"] = period_activity.subagent_launches
     scoped_overview["source_provenance"] = metrics["source_provenance"]
-    cost_breakdown = metrics["cost_breakdown"]
-    total_cost_usd = float(
-        scoped_overview["estimated_cost_usd"] or cost_breakdown["total_cost_usd"] or 0
-    )
+    cost_breakdown = measurement["cost_breakdown"]
+    metrics["cost_breakdown"] = cost_breakdown
+    metrics["model_costs"] = {row["model"] or "unknown": row["cost_usd"] for row in measurement["model_mix"]}
+    metrics["model_costs_usd"] = metrics["model_costs"]
+    metrics["agent_cost_over_time"] = measurement["agent_cost_over_time"]
+    metrics["total_cache_creation_tokens"] = measurement["totals"]["cache_creation_tokens"]
+    metrics["total_cache_read_tokens"] = measurement["totals"]["cache_read_tokens"]
+    total_cost_usd = float(measurement["totals"]["estimated_cost_usd"])
     failure_rate_pct = (
         round(
             100 * scoped_overview["failure_count"] / scoped_overview["tool_call_count"],
@@ -700,6 +754,7 @@ def build_dashboard_payload(
             "mcp_servers_by_count": metrics["mcp_servers_by_count"],
             "subagent_launches": metrics["subagent_launches"],
             "subagent_types_by_count": metrics["subagent_types_by_count"],
+            "subagent_mentions_by_count": metrics["subagent_mentions_by_count"],
             "file_edits": metrics["file_edits"],
             "shell_executions": metrics["shell_executions"],
             "unique_commands": metrics["unique_commands"],
@@ -749,7 +804,11 @@ def build_dashboard_payload(
             "tools_by_count": metrics["tools_by_count"],
             "tool_percentiles": metrics["tool_percentiles"],
             "skills_by_count": metrics["skills_by_count"],
+            "skill_reports_by_count": metrics["skill_reports_by_count"],
+            "skill_mentions_by_count": metrics["skill_mentions_by_count"],
+            "skill_attempts_by_count": metrics["skill_attempts_by_count"],
             "subagent_types_by_count": metrics["subagent_types_by_count"],
+            "subagent_mentions_by_count": metrics["subagent_mentions_by_count"],
             "subagent_stops_by_type": metrics["subagent_stops_by_type"],
             "subagent_launches": metrics["subagent_launches"],
             "subagent_total_starts": metrics["subagent_total_starts"],
@@ -779,7 +838,6 @@ def build_dashboard_payload(
             "graph_dep": metrics["graph_dep"],
             "graph_session_timeline": metrics["graph_session_timeline"],
             "graph_semantic": metrics["graph_semantic"],
-            "graph_latency_histograms": {},
         },
         "specs": metrics["specs"],
         "memory": metrics["memory"],
@@ -805,7 +863,7 @@ def build_dashboard_payload(
             q=q,
             model=model,
             status=status,
-            range_name=range_name,
+            range_name="all",
         )
     sqlite_payload["tabs"]["cohort_comparison"] = {
         "comparison": comparison_payload,
@@ -813,6 +871,20 @@ def build_dashboard_payload(
     }
     payload = {
         "sql_backed": True,
+        "snapshot_completed_at": snapshot_completed_at,
+        "analysis_state": analysis_state,
+        "analysis_completed_at": analysis_completed_at,
+        "analysis_window": analysis_window,
+        "analysis_coverage": coverage,
+        "inventory_scope": "matching_session_lifetimes",
+        "inventory_scope_label": (
+            "Costs, tokens, and KPI totals use the selected period. Activity charts and tool inventories cover matching sessions in full."
+            if days else ""
+        ),
+        "range": range_name,
+        "measurements": measurement,
+        "git_activity": git_operations,
+        "insights": insights,
         "sqlite": sqlite_payload,
         "sessions": sessions,
         "quality_rules": quality_rules_payload(),

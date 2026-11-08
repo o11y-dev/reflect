@@ -15,6 +15,13 @@ DASHBOARD_HTML_FILES = (
 PUBLIC_HTML_FILES = (*DASHBOARD_HTML_FILES, REPO_ROOT / "docs/index.html")
 
 
+@pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
+def test_dashboard_does_not_send_local_report_navigation_to_analytics(path: Path):
+    text = path.read_text(encoding="utf-8")
+    for tracking_marker in ("googletagmanager.com", "google-analytics.com", "gtag(", "dataLayer"):
+        assert tracking_marker not in text
+
+
 @pytest.mark.parametrize("path", PUBLIC_HTML_FILES)
 def test_public_metadata_matches_supported_operating_systems(path: Path):
     text = path.read_text(encoding="utf-8")
@@ -90,6 +97,9 @@ def test_dashboard_html_shows_branded_loader_during_report_fetch(path: Path):
     assert "function hideReportLoader()" in text
     assert "showReportLoader();" in text
     assert "hideReportLoader();" in text
+    assert "loader.hidden = true" in text
+    assert ".report-loader[hidden]" in text
+    assert "AbortController" in text
     assert "animation:loader-float" in text
     assert "animation:loader-spin" not in text
     assert "filter:drop-shadow(0 0 28px rgba(242,138,26,.34))" in text
@@ -117,8 +127,10 @@ def test_dashboard_html_surfaces_background_refresh_progress(path: Path):
     assert "updating_canonical_state: 4" in text
     assert "refreshing_improvements: 5" in text
     assert "preparation.message || 'Refreshing local telemetry…'" in text
-    assert "'Refresh complete. Loading the new snapshot…'" in text
-    assert "`Step ${phase || 1} of 5${elapsed ? ` · ${elapsed}` : ''}`" in text
+    assert "'Refresh complete. Updating displayed results…'" in text
+    assert "`Step ${phase || 1} of 5`" in text
+    assert "Usage available · analysis pending" in text
+    assert "preparation.usage_completed_at" in text
     assert "animation:preparation-sweep" in text
     assert "@media(prefers-reduced-motion:reduce)" in text
     assert "window.location.reload()" in text
@@ -221,7 +233,7 @@ def test_dashboard_html_builds_agent_filters_from_data_without_allowlist(path: P
     assert "D.session_list_total || sessions.length || 0" in text
     assert "fetch(reportUrlWithCurrentFilters()" in text
     assert "['q','agents','agent','model','status','range','session','tab','view']" in text
-    assert "scheduleDashboardReload();" in text
+    assert "if (scheduleDashboardReload()) return;" in text
     assert "urlParams.delete('session');" in text
     assert "selectedIdx = filtered[0]._idx;" in text
     assert "pill.innerHTML =" in text
@@ -288,9 +300,9 @@ def test_dashboard_session_detail_restructures_quality_and_telemetry_as_product_
     assert "item.available === false ? 'N/A'" in text
     assert "breakdown.filter(item => item.available !== false)" in text
     assert "No score" in text
-    assert "Quality Rules" in text
+    assert "Heuristic Rules" in text
+    assert "Heuristic workflow score · task success is assessed separately" in text
     assert "SQL summary heuristic" not in text
-    assert "Session summary" not in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
@@ -329,7 +341,7 @@ def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(p
     text = path.read_text(encoding="utf-8")
 
     assert 'id="rule-registry"' in text
-    assert "fetch('/api/rules'" in text
+    assert "'/api/rules'" in text
     assert "BaseImprovementRule" in text
     assert "RuleRegistry" in text
     assert "DEFAULT_RULE_REGISTRY" in text
@@ -431,9 +443,9 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert 'id="obs-hero-grid"' not in text
     assert 'id="obs-signals"' not in text
     assert 'id="obs-next-moves"' not in text
-    assert "fetch('/api/findings'" in text
-    assert "fetch('/api/workflows'" in text
-    assert "fetch('/api/loops'" in text
+    assert "'/api/findings'" in text
+    assert "'/api/workflows'" in text
+    assert "'/api/loops'" in text
     assert "function sortObservedLoops(items)" in text
     assert "const kindRank = {agent_native:0, stalled:1, productive:2}" in text
     assert 'data-inbox-view="findings"' in text
@@ -445,8 +457,8 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "Open Linked Workflow" in text
     assert "Review & Build Instructions" in text
     assert "Reflect monitors comparable future task executions in Impact" in text
-    assert "fetch('/api/skills?limit=500'" in text
-    assert "fetch('/api/impact'" in text
+    assert "'/api/skills?limit=500'" in text
+    assert "'/api/impact'" in text
     assert "new URL(`/api/explore/${encodeURIComponent(viewName)}`" in text
     assert "Loading command and tool patterns..." in text
     assert "mcpTab.mcp_server_status_known || {}" in text
@@ -454,8 +466,8 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert '<th style="text-align:right">Outcome</th>' in text
     assert "const exploreViewStates = new Map([['usage', 'ready']])" in text
     assert "panel.setAttribute('aria-busy', loading ? 'true' : 'false')" in text
-    assert "Check the local report server, then reopen this view." in text
-    for view in ("tools", "graph", "context"):
+    assert "This view is refreshing. Retry after telemetry refresh completes." in text
+    for view in ("usage", "tools", "graph", "context"):
         assert f'id="{view}-view-status" role="status" aria-live="polite"' in text
     assert "/api/improvements" not in text
     assert "/api/measurements" not in text
@@ -467,11 +479,11 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert 'data-ledger-action="review-impact-sessions"' in text
     assert "View Compared Tasks" in text
     assert "function formatImpactSessionValue(metricName, value, item = {})" in text
-    assert "evidence_label:formatImpactSessionValue(ledger.metric_name, item.metric_value, item)" in text
+    assert "formatImpactSessionValue(ledger.metric_name, item.metric_value, item)" in text
     assert "evidence_count:0" not in text
     assert "No unverified change" in text
     assert "Procedure followed" in text
-    assert "Post-application ${unit} collection progress" in text
+    assert "Selected post-activation tasks with metric coverage" in text
     assert "workflow_adherence:{goal:'Preserve the Proven Procedure'" in text
     assert "minimum_after_execution_units" in text
     assert "const evidenceId = session.execution_unit_id || session.session_id" in text
@@ -480,12 +492,15 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "function impactMeasurementState(item)" in text
     assert "measurementState === 'not_measurable'" in text
     assert "item.cohort?.measurement_reasons" in text
-    assert "followed ${units} collected" in text
+    assert "Post-activation comparison sample:" in text
+    assert "Historical Baseline Unavailable" in text
+    assert "Guidance exposure: unknown" in text
+    assert "Observed cohort differences do not establish that the workflow caused the change." in text
     assert "metric?.direction || 'lower_is_better'" in text
     assert "direction:'higher_is_better'" in text
     assert "Needs Attention vs Baseline" in text
     assert "Improving${amount} since last check" in text
-    assert "moving in the right direction, but not enough yet" in text
+    assert "The observed value improved${trendAmount} since the previous check." in text
     assert "regressedButImproving ? 'Review Progress'" in text
     assert 'data-trend="${escHtml(trend?.kind || \'unknown\')}"' in text
     assert "function impactProgressGraph(history, metric)" in text
@@ -523,7 +538,7 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "? 'not captured'" in text
     assert ": fmtTokenShort(sessionTokenTotal(session))" in text
     assert "['Evidence Coverage', `${coverage.toFixed(0)}%`]" in text
-    assert "fmtWorkflowDate(D.first_event_ts)" in text
+    assert "fmtWorkflowDate(headerScope?.kind === 'event_window' ? headerScope.date_from : D.first_event_ts)" in text
     assert "linked sessions</div>" in text
     assert "comparable tasks · ${evidenceReady ? 'task-bounded evidence' : 'unvalidated draft'}" in text
     assert "create:'New file'" in text
@@ -565,7 +580,7 @@ def test_dashboard_workflows_and_skills_use_responsive_tiles(path: Path):
     assert 'id="skill-filter-summary" aria-live="polite"' in text
     assert "function skillMatchesSearch(skill, query)" in text
     assert "params.set('skill_q', query.trim())" in text
-    assert "fetch('/api/skills?limit=500'" in text
+    assert "'/api/skills?limit=500'" in text
     assert ".workflow-tile-grid{grid-template-columns:repeat(auto-fit" in text
     assert ".skill-tile-grid{grid-template-columns:repeat(auto-fit" in text
     assert "function renderWorkflowSteps(steps, {limit = 0, compact = false} = {})" in text
@@ -774,9 +789,11 @@ def test_dashboard_supplementary_data_cannot_block_initial_render(path: Path):
     text = path.read_text(encoding="utf-8")
 
     assert "const controller = new AbortController();" in text
-    assert "window.setTimeout(() => controller.abort(), 3000)" in text
-    assert "signal: controller.signal" in text
+    assert "window.setTimeout(() => controller.abort(), 5000)" in text
+    assert "signal:controller.signal" in text
     assert "window.clearTimeout(timeout);" in text
+    assert "loadImprovementData(partial => {" in text
+    assert "await loadImprovementData();" not in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)

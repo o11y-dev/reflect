@@ -51,6 +51,38 @@ def test_preparation_coordinator_rejects_duplicate_running_start():
     assert worker.wait(timeout=2) is True
 
 
+def test_publication_stage_and_callback_failure_are_visible():
+    entered, release = threading.Event(), threading.Event()
+
+    def publish(_result):
+        entered.set()
+        assert release.wait(2)
+        raise RuntimeError("cannot publish dashboard")
+
+    worker = PreparationCoordinator(lambda _progress: {})
+    worker.add_completion_callback(publish)
+    assert worker.start()
+    assert entered.wait(1)
+    assert worker.snapshot().stage is PreparationStage.PUBLISHING_SNAPSHOT
+    assert worker.snapshot().state is PreparationState.RUNNING
+    release.set()
+    assert worker.wait(2)
+    assert worker.snapshot().state is PreparationState.FAILED
+    assert worker.snapshot().error == "cannot publish dashboard"
+    assert worker.snapshot().finished_at
+
+
+def test_worker_exit_cannot_leave_preparation_running():
+    def exit_worker(_progress):
+        raise SystemExit()
+
+    worker = PreparationCoordinator(exit_worker)
+    assert worker.start()
+    assert worker.wait(2)
+    assert worker.snapshot().state is PreparationState.FAILED
+    assert worker.snapshot().error == "SystemExit"
+
+
 def test_preparation_coordinator_exposes_failures():
     def fail(_progress):
         raise RuntimeError("preparation failed")

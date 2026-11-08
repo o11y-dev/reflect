@@ -74,6 +74,7 @@ from reflect.agent_capabilities import (
 from reflect.cli.common import REFLECT_HOME, echo_json, require_snapshot_schema
 from reflect.cli.database import db as database_commands
 from reflect.cli.database import ingest as ingest_command
+from reflect.cli.impact import impact as impact_command
 from reflect.cli.memory import memory as memory_commands
 from reflect.cli.schema import schema as schema_commands
 from reflect.hook_runtime import HookMigrationError, HookPipxMigrator, HookRuntime
@@ -761,6 +762,7 @@ def main(
 
 main.add_command(database_commands)
 main.add_command(ingest_command)
+main.add_command(impact_command)
 main.add_command(memory_commands)
 main.add_command(schema_commands)
 
@@ -832,15 +834,15 @@ def _open_improvement_service(
     db_path: Path,
     *,
     read_only: bool = False,
+    profile: str | None = "snapshot",
 ) -> Iterator[ImprovementService]:
     from reflect.improvements.service import ImprovementService
     from reflect.preparation import PreparationLock
     from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only
 
-    connect = connect_sqlite_read_only if read_only else connect_sqlite
     with (
         nullcontext() if read_only else PreparationLock(db_path),
-        closing(connect(db_path)) as conn,
+        closing(connect_sqlite_read_only(db_path, profile=profile) if read_only else connect_sqlite(db_path)) as conn,
     ):
         yield ImprovementService(conn, initialize_schema=not read_only)
 
@@ -858,6 +860,8 @@ def _prepare_sql_snapshot_with_progress(
     include_native_sessions: bool,
     spans_dir: Path | None = None,
     keep_processed_raw: bool = False,
+    analysis_days: int | None = None,
+    analysis_session_ids: set[str] | None = None,
 ) -> dict[str, object]:
     from reflect.cli.progress import TerminalPreparationProgress
 
@@ -869,6 +873,8 @@ def _prepare_sql_snapshot_with_progress(
             spans_dir=spans_dir,
             progress=progress,
             keep_processed_raw=keep_processed_raw,
+            analysis_days=analysis_days,
+            analysis_session_ids=analysis_session_ids,
         )
     )
 
@@ -885,6 +891,7 @@ def _ensure_command_snapshot(
     readiness_probes: tuple[SnapshotReadinessProbe, ...] = (),
     profile: str = "snapshot",
 ) -> SnapshotPreparationResult:
+    from reflect.config import analysis_window_days
     from reflect.preparation import (
         CallableSnapshotRefresher,
         PreparationProfile,
@@ -904,6 +911,7 @@ def _ensure_command_snapshot(
             include_native_sessions=include_native_sessions,
             spans_dir=spans_dir,
             keep_processed_raw=keep_processed_raw,
+            analysis_days=analysis_window_days(),
         )
     )
     lifecycle = SnapshotLifecycleService(
@@ -946,6 +954,8 @@ def _format_usage_duration(duration_ms: int) -> str:
 
 def _render_usage_report(console: Console, report) -> None:
     totals = report.totals
+    coverage = report.measurements.coverage
+    metrics = report.measurements.metrics
     if report.session is not None:
         title = f"Usage · {report.session.agent} · {report.session.id}"
         context = report.session.workspace or report.session.repository or report.session.title or "Local session"
@@ -962,7 +972,8 @@ def _render_usage_report(console: Console, report) -> None:
     summary.add_row("LLM calls", f"{totals.llm_calls:,}", "Tool calls", f"{totals.tool_calls:,}")
     summary.add_row("MCP calls", f"{totals.mcp_calls:,}", "Subagents", f"{totals.subagent_launches:,}")
     summary.add_row("Failures", f"{totals.failures:,}", "Recovered", f"{totals.recovered_failures:,}")
-    summary.add_row("Duration", _format_usage_duration(totals.duration_ms), "Estimated cost", f"${totals.estimated_cost_usd:,.2f}")
+    cost = "Unavailable" if coverage.get("cost_status") == "unavailable" else f"${totals.estimated_cost_usd:,.2f}"
+    summary.add_row("Duration", _format_usage_duration(totals.duration_ms), "Observed estimated cost", cost)
     console.print(Panel(summary, title=title, subtitle=context, border_style="orange3"))
 
     tokens = Table(title="Tokens", border_style="grey37")
@@ -979,6 +990,32 @@ def _render_usage_report(console: Console, report) -> None:
         f"{totals.reasoning_tokens:,}",
     )
     console.print(tokens)
+    console.print(
+        f"[dim]Pricing: {coverage.get('cost_status', 'unavailable')} · "
+        f"{coverage.get('complete_priced_usage', coverage.get('priced_usage', 0))}/"
+        f"{coverage.get('observed_usage', 0)} usage records fully priced. "
+        "Reasoning tokens are a subset of output.[/dim]"
+    )
+    measured = Table(title="Observed measurements", border_style="grey37")
+    measured.add_column("Metric")
+    measured.add_column("Value", justify="right")
+    for label, key in (("Completed turns", "completed_turns"), ("Mean input tokens per eligible turn", "mean_input_tokens"),
+                       ("Maximum tool calls per eligible turn", "max_tool_calls_per_turn"), ("Model switches", "model_switches")):
+        value = metrics.get(key)
+        measured.add_row(label, "Unavailable" if value is None else f"{value:,.2f}" if isinstance(value, float) else f"{value:,}")
+    ratio = metrics.get("cache_read_ratio")
+    measured.add_row("Cache-read ratio", "Unavailable" if ratio is None else f"{ratio:.1%}")
+    idle = metrics.get("idle_total_ms")
+    measured.add_row("Observed idle", "Unavailable" if idle is None else _format_usage_duration(int(idle)))
+    console.print(measured)
+    git = report.git_activity
+    console.print(
+        "Captured Git activity: "
+        f"{git.get('total_operations', 0)} operations · "
+        f"{git.get('distinct_commits', 0)} distinct commits · "
+        f"{git.get('created_pull_requests', 0)} PRs / {git.get('created_merge_requests', 0)} MRs created · "
+        f"{git.get('merged_pull_requests', 0)} PRs / {git.get('merged_merge_requests', 0)} MRs merged."
+    )
     provenance = report.token_provenance
     console.print(
         "[dim]Token provenance: "
@@ -1033,6 +1070,11 @@ def _prepare_usage_db_with_progress(
 
 
 @main.command("refresh")
+@click.option("--analysis-days", type=click.IntRange(min=1), default=None,
+              help="Analyse recent activity (default: 7 days or REFLECT_ANALYSIS_WINDOW_DAYS).")
+@click.option("--all-history", is_flag=True, help="Explicitly analyse all retained history.")
+@click.option("--session", "analysis_sessions", multiple=True,
+              help="Explicitly refresh analysis for a retained session; repeat for multiple sessions.")
 @click.option(
     "--otlp-traces",
     type=click.Path(path_type=Path),
@@ -1063,6 +1105,9 @@ def _prepare_usage_db_with_progress(
     help="SQLite telemetry store.",
 )
 def refresh_snapshot(
+    analysis_days: int | None,
+    all_history: bool,
+    analysis_sessions: tuple[str, ...],
     otlp_traces: Path | None,
     native_sessions: bool,
     spans_dir: Path | None,
@@ -1073,6 +1118,11 @@ def refresh_snapshot(
     """Explicitly ingest telemetry and rebuild the prepared local snapshot."""
     if spans_dir is not None and not spans_dir.is_dir():
         raise click.ClickException(f"Hook spans directory not found: {spans_dir}")
+    if all_history and (analysis_days is not None or analysis_sessions):
+        raise click.UsageError("--all-history cannot be combined with --analysis-days or --session")
+    from reflect.config import analysis_window_days
+
+    selected_days = None if all_history else analysis_days or analysis_window_days()
     result = _ensure_command_snapshot(
         db_path,
         refresh=True,
@@ -1080,6 +1130,15 @@ def refresh_snapshot(
         include_native_sessions=native_sessions,
         spans_dir=spans_dir or _default_spans_dir(),
         keep_processed_raw=keep_processed_raw,
+        prepare=lambda: _prepare_sql_snapshot_with_progress(
+            db_path,
+            otlp_traces=otlp_traces or default_otlp_traces(),
+            include_native_sessions=native_sessions,
+            spans_dir=spans_dir or _default_spans_dir(),
+            keep_processed_raw=keep_processed_raw,
+            analysis_days=selected_days,
+            analysis_session_ids=set(analysis_sessions) if analysis_sessions else None,
+        ),
     )
     payload = result.refresh_result or {}
     if as_json:
@@ -1273,6 +1332,8 @@ def improve(
             if observation_id:
                 _render_improvement_detail(console, result, ledger=ledger)
                 return
+            for limitation in result.limitations:
+                console.print(f"[yellow]{limitation}[/yellow]")
             if not result.observations:
                 label = result.resolved_scope.label if result.resolved_scope else "the selected scope"
                 console.print(
@@ -1888,6 +1949,9 @@ def loops_build(loop_id: str, agent: str | None, as_json: bool, db_path: Path) -
         extracted = _load_extracted_skills(result.stdout)
     except _json.JSONDecodeError as exc:
         raise click.ClickException(f"Could not parse agent output as JSON: {exc}") from exc
+    if not extracted:
+        click.echo("No reusable skill draft is supported by this loop evidence. Nothing was staged.")
+        return
     if len(extracted) != 1:
         raise click.ClickException("Loop build must return exactly one skill draft")
     skill = extracted[0]
@@ -2386,6 +2450,7 @@ def skills(
     if ctx.invoked_subcommand:
         return
     from reflect.improvements.models import SkillLifecycleState
+    from reflect.store.sqlite import snapshot_incomplete
 
     require_snapshot_schema(
         db_path,
@@ -2394,7 +2459,8 @@ def skills(
             "reconcile the skill registry."
         ),
     )
-    with _open_improvement_service(db_path, read_only=True) as improvement_service:
+    with _open_improvement_service(db_path, read_only=True, profile=None) as improvement_service:
+        pending = snapshot_incomplete(improvement_service.conn)
         records = improvement_service.skills.list(
             lifecycle=SkillLifecycleState(lifecycle) if lifecycle else None,
             limit=500,
@@ -2403,10 +2469,15 @@ def skills(
         echo_json(
             {
                 "refresh": None,
+                "analysis_state": "pending" if pending else "ready",
+                "analysis_pending": pending,
+                "evidence_state": "recorded" if pending else "current",
                 "skills": [item.model_dump(mode="json") for item in records],
             }
         )
         return
+    if pending:
+        click.echo("Recorded evidence; current analysis and impact validation is pending.")
     _print_skill_registry(records)
 
 
@@ -2595,6 +2666,9 @@ def _discover_skills(
         )
         raise SystemExit(1) from exc
 
+    if not skill_defs:
+        console.print("No reusable skill candidates are supported by the evidence. Nothing was staged.")
+        return
     selected = _select_skills(skill_defs, console, yes=yes)
     valid_selected: list[dict] = []
     for skill in selected:
@@ -2608,11 +2682,15 @@ def _discover_skills(
         raise click.ClickException("No valid workflow candidates were extracted")
 
     with _open_improvement_service(db_path) as improvement_service:
-        candidate_ids = improvement_service.stage_extracted_skills(
-            valid_selected,
-            session_ids=sorted(stats.sessions_seen),
-            source_agent=agent_bin,
-        )
+        try:
+            candidate_ids = improvement_service.stage_extracted_skills(
+                valid_selected,
+                session_ids=sorted(stats.sessions_seen),
+                source_agent=agent_bin,
+                evidence_bundle=bundle,
+            )
+        except ValueError as exc:
+            raise click.ClickException(f"Invalid draft evidence: {exc}") from exc
         registered_skills = [
             improvement_service.skills.skill_for_candidate(candidate_id)
             for candidate_id in candidate_ids
@@ -2622,7 +2700,7 @@ def _discover_skills(
         console.print("[dim]Included SQL stats + Behavioral Memory Graph evidence in extraction prompt.[/dim]")
     elif graph_evidence_attached:
         console.print("[dim]Included SQL Behavioral Memory Graph evidence in extraction prompt.[/dim]")
-    console.print(f"\n[bold green]{len(registered_skills)} skill draft(s) staged in Skills v2.[/bold green]")
+    console.print(f"\n[bold green]{len(registered_skills)} skill candidate(s) available in Skills v2.[/bold green]")
     for skill in registered_skills:
         console.print(f"  [cyan]{skill.id}[/cyan]  {skill.slug}  reflect skills show {skill.id}")
     console.print("[dim]Nothing was installed. Apply a reviewed draft with reflect skills apply <ID>.[/dim]")
@@ -2743,18 +2821,25 @@ def skills_discover(
 )
 def skills_show(skill_id: str, as_json: bool, db_path: Path) -> None:
     """Show a skill's versions, evidence, installations, and usage summary."""
+    from reflect.store.sqlite import snapshot_incomplete
+
     require_snapshot_schema(
         db_path,
         refresh_hint=f"Run `reflect skills sync --db-path {db_path}` first.",
     )
-    with _open_improvement_service(db_path, read_only=True) as improvement_service:
+    with _open_improvement_service(db_path, read_only=True, profile=None) as improvement_service:
+        pending = snapshot_incomplete(improvement_service.conn)
         try:
-            detail = improvement_service.skills.show(skill_id)
+            detail = improvement_service.skills.show(skill_id, recorded_only=pending)
         except KeyError as exc:
             raise click.ClickException(str(exc)) from exc
     if as_json:
-        echo_json(detail.model_dump(mode="json"))
+        echo_json({**detail.model_dump(mode="json"),
+                   "analysis_state": "pending" if pending else "ready",
+                   "analysis_pending": pending, "evidence_state": "recorded" if pending else "current"})
         return
+    if pending:
+        click.echo("Recorded evidence; current analysis and impact validation is pending.")
     skill = detail.skill
     click.echo(f"{skill.slug} ({skill.id})")
     click.echo(f"State: {skill.lifecycle_state.value} · Origin: {skill.origin.value}")

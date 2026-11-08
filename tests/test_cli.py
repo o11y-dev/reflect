@@ -332,7 +332,7 @@ class TestHelp:
         assert tokens[1] == 456
         assert tokens[2] > 0
 
-    def test_reprice_uses_cursor_parent_hook_model_for_native_subagent_tokens(self, tmp_path):
+    def test_reprice_does_not_borrow_cursor_parent_model_for_native_subagent_tokens(self, tmp_path):
         from reflect.store.migrate import migrate
         from reflect.store.sqlite import connect_sqlite
 
@@ -395,7 +395,7 @@ class TestHelp:
 
         assert child[0] == 1000
         assert child[1] == 500
-        assert child[2] > 0
+        assert child[2] == 0
 
     def test_reprice_can_scope_updates_to_changed_sessions(self, tmp_path):
         from reflect.store.migrate import migrate
@@ -625,6 +625,13 @@ class TestBrowserMode:
 
 
 class TestBrowserReportCommandSurface:
+    @staticmethod
+    def _prepare_report(**kwargs):
+        coordinator = kwargs["preparation_scheduler"].coordinator
+        assert coordinator.start()
+        assert coordinator.wait(timeout=10)
+        assert coordinator.snapshot().state == "complete", coordinator.snapshot().error
+
     def test_report_subcommand_is_removed(self, runner):
         result = runner.invoke(main, ["report", "--help"])
         assert result.exit_code != 0
@@ -639,13 +646,11 @@ class TestBrowserReportCommandSurface:
                 "--db-path", str(db_path),
             ])
         assert result.exit_code == 0
-        assert "REFLECT" in result.output
+        assert "Preparing the first report in the background" in result.output
         assert mock_server.call_args.kwargs["db_path"] == db_path
-        conn = sqlite3.connect(db_path)
-        try:
-            assert conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0] > 0
-        finally:
-            conn.close()
+        assert not db_path.exists()
+        assert mock_server.call_args.kwargs["preparation_scheduler"].run_immediately
+        self._prepare_report(**mock_server.call_args.kwargs)
 
     def test_existing_snapshot_refreshes_in_background(self, runner, otlp_file, tmp_path):
         db_path = tmp_path / "reflect.db"
@@ -690,6 +695,26 @@ class TestBrowserReportCommandSurface:
         mock_prepare.assert_not_called()
         assert mock_server.call_args.kwargs["preparation_scheduler"] is None
 
+    @pytest.mark.parametrize("incomplete", [False, True])
+    def test_unprepared_report_requires_refresh(self, tmp_path, incomplete):
+        import click
+
+        from reflect.store.migrate import migrate
+        from reflect.store.sqlite import connect_sqlite, mark_snapshot
+
+        db_path = tmp_path / "reflect.db"
+        if incomplete:
+            conn = connect_sqlite(db_path)
+            migrate(conn)
+            mark_snapshot(conn, ready=False)
+            conn.close()
+        with patch("reflect.report_server.start_publish_server") as server, \
+             patch("reflect.report_server.prepare_sql_report_db") as prepare, \
+             pytest.raises(click.ClickException, match="Enable refresh"):
+            core.run_browser_report(otlp_traces=None, demo=False, db_path=db_path, refresh=False)
+        server.assert_not_called()
+        prepare.assert_not_called()
+
     def test_foreground_report_ingests_inferred_otlp_logs(self, runner, tmp_path):
         otlp_file = tmp_path / "otel-traces.json"
         otlp_file.write_text(json.dumps({"resourceSpans": []}) + "\n", encoding="utf-8")
@@ -715,7 +740,7 @@ class TestBrowserReportCommandSurface:
             }],
         }) + "\n", encoding="utf-8")
 
-        with patch("reflect.report_server.start_publish_server"):
+        with patch("reflect.report_server.start_publish_server", side_effect=self._prepare_report):
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "--foreground",
@@ -724,9 +749,7 @@ class TestBrowserReportCommandSurface:
             ])
 
         assert result.exit_code == 0
-        assert "REFLECT" in result.output
-        assert "Inserted" in result.output
-        assert "Normalized" in result.output
+        assert "Preparing the first report in the background" in result.output
         conn = sqlite3.connect(db_path)
         try:
             row = conn.execute(
@@ -741,7 +764,7 @@ class TestBrowserReportCommandSurface:
         finally:
             conn.close()
 
-    def test_report_summary_breaks_native_sessions_down_by_agent(self, runner, tmp_path):
+    def test_background_report_ingests_native_sessions(self, runner, tmp_path):
         otlp_file = tmp_path / "otel-traces.json"
         otlp_file.write_text(json.dumps({"resourceSpans": []}) + "\n", encoding="utf-8")
         cursor_file = tmp_path / "cursor-native-session.jsonl"
@@ -769,7 +792,7 @@ class TestBrowserReportCommandSurface:
             encoding="utf-8",
         )
 
-        with patch("reflect.report_server.start_publish_server"), \
+        with patch("reflect.report_server.start_publish_server", side_effect=self._prepare_report), \
              patch("reflect.report_server.default_otlp_traces", return_value=otlp_file), \
              patch("reflect.preparation_pipeline._discover_rich_session_files", return_value=[("cursor", cursor_file)]):
             db_path = tmp_path / "reflect.db"
@@ -779,10 +802,13 @@ class TestBrowserReportCommandSurface:
             ])
 
         assert result.exit_code == 0
-        assert "Inserted" in result.output
-        assert "Sessions" in result.output
+        conn = sqlite3.connect(db_path)
+        try:
+            assert conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0] > 0
+        finally:
+            conn.close()
 
-    def test_report_reprices_token_rows_with_session_model_hint(self, runner, tmp_path):
+    def test_report_preserves_unknown_request_model_despite_session_hint(self, runner, tmp_path):
         session_id = "copilot-priced-session"
         model_hint = make_span(
             "PostToolUse",
@@ -803,7 +829,7 @@ class TestBrowserReportCommandSurface:
         otlp_file = tmp_path / "copilot-traces.json"
         otlp_file.write_text(wrap_otlp([model_hint, token_row], agent="copilot") + "\n", encoding="utf-8")
 
-        with patch("reflect.report_server.start_publish_server"):
+        with patch("reflect.report_server.start_publish_server", side_effect=self._prepare_report):
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "--foreground",
@@ -823,19 +849,20 @@ class TestBrowserReportCommandSurface:
                 """,
                 (session_id,),
             ).fetchone()
-            assert row[0] == "gpt-4o"
-            assert row[1] > 0
+            assert row[0] is None
+            assert row[1] == 0
             assert conn.execute(
                 "SELECT total_cost FROM session_rollups WHERE session_id = ?",
                 (session_id,),
-            ).fetchone()[0] > 0
+            ).fetchone()[0] == 0
+            assert conn.execute("SELECT SUM(input_tokens) FROM llm_calls WHERE session_id=?", (session_id,)).fetchone()[0] == 1000
         finally:
             conn.close()
 
 _FAKE_SKILLS = [
-    {"name": "debug-loop", "description": "Iterative debug workflow", "content": "## Steps\n1. Do the thing"},
-    {"name": "context-reset", "description": "Clear and re-establish scope", "content": "## Steps\n1. Reset"},
-    {"name": "test-first", "description": "Write tests before fixing", "content": "## Steps\n1. Test"},
+    {"name": "debug-loop", "description": "Iterative debug workflow", "content": "## Steps\n1. Do the thing", "evidence": {"session_ids": ["sess-default-001"]}},
+    {"name": "context-reset", "description": "Clear and re-establish scope", "content": "## Steps\n1. Reset", "evidence": {"session_ids": ["sess-default-001"]}},
+    {"name": "test-first", "description": "Write tests before fixing", "content": "## Steps\n1. Test", "evidence": {"session_ids": ["sess-default-001"]}},
 ]
 _R = lambda code, out, err="": type("R", (), {"returncode": code, "stdout": out, "stderr": err})()  # noqa: E731
 
@@ -852,9 +879,12 @@ class TestSkillsSubcommand:
                 if item.name == "db_path"
             ),
         ]
+        # Historical OTLP fixtures must stay in scope for drafting tests.
+        time_range = next(item for item in skills_group.commands["discover"].params if item.name == "period")
+        parameters.append(time_range)
         originals = [parameter.default for parameter in parameters]
         for parameter in parameters:
-            parameter.default = tmp_path / "skills-reflect.db"
+            parameter.default = "all" if parameter.name == "period" else tmp_path / "skills-reflect.db"
         try:
             with patch(
                 "reflect.core.shutil.which",

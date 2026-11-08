@@ -101,6 +101,8 @@ def _write_session_spans(
                 "gen_ai.request.model": f"test-{agent}",
                 "gen_ai.usage.input_tokens": 100,
                 "gen_ai.usage.output_tokens": 20,
+                "gen_ai.usage.cache_read.input_tokens": 0,
+                "gen_ai.usage.cache_creation.input_tokens": 0,
                 "gen_ai.client.output": "Validated blog output",
             },
         )

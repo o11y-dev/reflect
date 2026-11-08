@@ -2,21 +2,96 @@
 
 ## 0.9.8 (unreleased)
 
+### Dependencies
+
+- Accept OpenTelemetry hooks 0.15 alongside 0.14; telemetry tests preserve source-specific capability and provenance differences.
+
 ### Added
+
+- Workflows and skill drafting share bounded execution procedure evidence: ordered operations, artifact areas, exact check scope, independent-session support, and failed or uncertain examples. Both detail views explain why executions match.
+- Skills now includes a bounded “Where used” graph and evidence table, linking observed reads, agent reports, executions, sessions and checks without guessing missing versions or ownership.
+- A validated graph vocabulary and execution/check relationships retain canonical source references; chronological assessments identify edits that invalidate a check.
+
+- Read-only `reflect impact` CLI inspection shares the MCP comparison ledger, including exact measurement lookup, eligibility reasons and guidance exposure coverage.
+- Shared evidence-based usage measurements, session insights, and captured Git/GitHub/GitLab activity across CLI, MCP and the existing dashboard, with explicit coverage and unknown outcomes.
+- Integrated M1–M7 Usage widgets for cost, token buckets, turns, paired tools, elapsed time, pauses and model switching, alongside existing charts and Git session drill-downs. Shared measurements include mean/p95 durations and per-bucket pricing/usage coverage.
 
 - Added a read-only MCP comparison of verified execution units with and without Reflect guidance, scoped to the same repository, task archetype, and model. It reports selected skill outcomes separately from guidance delivery and withholds cost averages when pricing is missing.
 - Guidance comparisons expose cache token mix, observed cache-read share, verified success rate, and cost per verified success to show cost drivers alongside outcome.
 
 ### Changed
 
+- Automatic procedure candidates require passing-check evidence across three independent sessions; check results remain distinct from task acceptance and measured impact. Extraction may return no candidates and validates candidate-specific source references before staging drafts.
+- Compact graph storage removes redundant per-step topology and projects ordinary tool calls on demand. Appends reuse source contributions; ambiguous corrections retain a conservative repair path.
+- Refresh journals changed canonical steps, repairs complete affected native turns and overlapping verification, and reuses per-session tool contributions for aggregate updates.
+
+- Automatic analysis and the dashboard default to a configurable seven-day window, retaining all captured history and all-time accounting. Explicit session and all-history refreshes remain available.
 - Simplified CLI service contexts, removed duplicate MCP migration checks and an unreachable cost-repair fallback, and clarified the shared writer lock's scope.
 
 ### Fixed
 - Memory searches preserve caller-owned read transactions and fall back to canonical records when the search index is empty, keeping guidance available during concurrent refreshes.
+
+- Skill identities distinguish independent installation sources and generated workflow contracts. Ambiguous name lookups require an exact ID; migration preserves historical evidence, and installation replay uses captured applied hashes instead of assigning the latest version.
+- Procedure contracts enforce the same operation and artifact signature during discovery, comparison, and outcome assessment; different exact test selectors cannot satisfy one another's contract.
+- Workflow and Impact panels load independently and preserve read-only evidence during refresh, including cold visits and links outside the current workflow page. Dialog retries retain selection and reject late responses.
+- Skill occurrences preserve observed, reported and inferred attribution separately. Boundary changes relink usage; unavailable historical versions remain unknown. Dashboard launch/use counts no longer treat prompt mentions as observed actions.
+- Tool measurements use a covering projection for terminal results, avoiding repeated decoding of large tool payloads.
+
+- Dashboard refresh publishes usage once, then attaches completed analysis to that same captured scope. Revision checks fall back to a full read after interrupted, replaced, or external publications instead of mixing generations.
+- Routine refresh reassesses unchanged workflow contracts only for changed execution evidence and its dependencies. Scoped measurements decode selected and potentially overlapping turn boundaries while preserving cross-session idle calculations.
+- The findings MCP tool exposes retained observations during refresh with explicit pending coverage, while withholding readiness for before/after comparison.
+- Skills receive newly generated Impact measurements in the same refresh instead of waiting for the next cycle. Recorded Impact lists and drill-downs remain readable during refresh across the dashboard, CLI and MCP, including a first visit after an upgrade.
+- Impact reuses recorded hook stops to establish execution boundaries independently of agent completion reports, with chronological checks and a targeted, durable historical reassessment. Usage remains unchanged and success still requires independent evidence.
+- Impact distinguishes baseline candidates, eligible samples, missing metric evidence and actual guidance exposure. Insufficient historical baselines can grow as evidence is recovered, valid baselines remain frozen, and policy revisions retain earlier comparison ledgers.
+- Removed Google Analytics from dashboard artifacts so local report URLs and filters are not sent to the tracking service.
+- Dashboard navigation stops queued detail, status and Explore reads from starting on a departing page; back/forward restoration resumes the existing polling lifecycle.
+- Workflow, Skill and Impact drill-downs expose stored evidence even on their first visit during refresh, distinguish recorded results from current validation, and retain read-only inspection when a fresh workflow preview is unavailable.
+- Sessions preserves SQL-selected matches instead of filtering them again using truncated cards; recent activity in long-lived sessions remains visible, empty results retain working controls, and Clear filters restores the seven-day default.
+- Explore Tools reads published usage independently of workflow analysis. Graph and Context & system expose available stored data with pending-analysis notices, consistent scoped reads, and retries instead of blocking on the full refresh.
+- Sessions preserves its lazy-tab request while analysis is pending, avoiding unrelated Usage tab scans during filtering. Tools combines file, skill and subagent extraction into one JSON pass; Graph filters hidden step nodes before ranking and reads full attributes only for displayed nodes.
+- Initial Explore loading keeps its URL scope stable; the Sessions default range is preserved when selecting a session without invalidating an in-flight Explore request.
+- Expensive dashboard reads use a bounded pool of read-only worker processes, allowing interactive queries to execute independently of background refresh. Queue limits, cancellation, snapshot errors and server shutdown retain their existing data-safety boundaries.
+- Tools, Graph and filtered Sessions reuse exact-scope results for the current publication and share one background read when a result is missing. Requests return retained data or a retry state promptly; recorded Graph evidence stays distinct from completed publications, and retries no longer fail because unrelated analysis is unavailable.
+- Core Usage publication runs in the background alongside graph and workflow derivation, while dependent database writes remain ordered and final publication waits for all work.
+- Dashboard views retain the last published data for previously loaded filter scopes during refresh and across restarts, with original freshness notices and in-place recovery. Older responses cannot replace newer cached data; historical evidence cannot enable workflow edits or approval.
+- Historical repository peers remain comparison context instead of becoming evidence-rebuild work. Actual corrections and overlap dependencies still refresh; deferred historical evidence stays explicitly unknown.
+- Execution assessments filter irrelevant historical edits using existing time and tool indexes before reading JSON, preserving chronological verification and overlapping edit evidence.
+- Skills remain browsable during refresh: current packages, versions, and installations load independently of analysis. Previously published usage, evidence, and impact remain visible as historical; unseen analysis stays pending. Skill detail failures offer retry.
+- Inbox loads findings independently from other sections, retains previously loaded findings with an updating notice, and retries unavailable data without requiring a page reload. Usage-only publication no longer clears the open Inbox.
+- Removed an orphaned graph histogram widget and its empty payload placeholders, fixing a JavaScript error when opening Graph.
+- Comparison tables adapt to the available dashboard width, and headline values scale within their cards. Cursor MCP smoke tests validate the final assistant message rather than combining it with earlier progress text.
+- Completed refreshes notify the initialized dashboard to update findings, avoiding a false “Status unavailable” error when preserving an open session.
+- Explore hides previous-scope charts and tables while the selected view is loading or pending, including grid containers whose display styles otherwise overrode the hidden state.
+- Refresh persists pending work per phase and session, resumes after interruption, and batches large scopes without converting 401 changed sessions into a full-history rebuild. Late historical corrections remain eligible for analysis.
+- Core usage publishes before graph and workflow analysis, with explicit freshness and publication progress. Completed dashboard caches survive restart; repeated projections share canonical measurements.
+- Selected-session Explore Usage reads the published core usage snapshot while derived analysis is still preparing.
+- Explore Tools skips unused cross-session turn and idle calculations while preserving its complete scoped response; Usage retains those measurements.
+- CLI, MCP and dashboard usage share analysis readiness and coverage, retaining observed usage while withholding insights that await current or historical analysis.
+- Improvement summaries expose scoped pending analysis across CLI, MCP and dashboard findings, retaining historical findings without labeling them safe for before/after comparison.
+- Windowed usage totals and dashboard capture-source counts read compact covering indexes without fetching large raw telemetry payloads; migration preserves existing usage facts and totals.
+- Window-scoped detectors preserve findings outside their evaluated scope, and unchanged analysis cohorts skip expensive detection.
+- Comparisons withhold success and impact claims while canonical, pricing or assessment work is pending, retaining observed usage and the original comparison ledger.
+- Normalization commits raw batches safely, then performs session-wide maintenance once per affected scope instead of repeating it after every batch.
+- Canonical refresh checks indexed transcript-estimate records instead of scanning every historical step, and repricing preserves unchanged costs and JSON rows. Model fallback reads are limited to sessions that need them; progress identifies usage attribution, context, transcript estimates and pricing work with separate timings.
+- Model-alias discovery groups model names before counting them, keeping large raw event payloads out of its temporary sort while preserving full and scoped inventories.
+- Full recovery preserves unchanged execution-step links and reconciles moved or removed ownership before assessment. Graph staging uses a bounded temporary cache when the connection has no explicit cache setting, restoring it after success or failure.
+- Session drill-downs keep captured conversation, timeline and tools available during refresh, with unpublished analysis explicitly pending. Linked sessions outside the navigation cache can open, and publication updates selected detail without resetting its subtab or reading position. Unknown tool outcomes remain unknown.
+- Refresh reuses execution evidence for unchanged sessions, while late edits, moved or retracted evidence, and independently reported task updates invalidate affected sessions. Report input checkpoints advance only after successful derivation; workflow approval and finding validation remain global. Refresh results include phase timings.
+- Graph refresh batches derived changes and preserves unchanged rows instead of deleting and rewriting them. Retractions, parent changes and cross-session memory references remain consistent with full rebuilds; failed updates roll back atomically.
+- Routine normalization checkpoints legacy provenance repair and checks new candidates through the existing index, avoiding repeated full-history JSON scans while preserving unknown context origins.
+- Explore views load and retry within their panels during telemetry refresh. Usage redraws from the authoritative scoped response; scope changes and late responses cannot reuse another session's charts or totals.
+- Selecting a session opens Sessions without reloading the whole report. Session links can reuse completed cards during refresh; unavailable details show a retry state, and late responses cannot replace a newer selection. Unavailable workflow evidence is no longer displayed as zero findings or impact checks.
+- Initial dashboard preparation runs through the existing background coordinator, showing live progress and retrying unready data without exposing partial measurements. Cache publication runs once at a time; browser requests keep showing progress while the first completed report is built.
+- Command evidence parsing rejects irrelevant scripts early and leaves oversized commands unclassified, avoiding pathological refresh times without truncating evidence into misleading Git or verification claims.
+- Dashboard loading completes visibly in Safari and timed-out report requests recover to an actionable error. Dashboard and gateway startup do not auto-create FastAPI exporters from inherited agent OTLP configuration.
+- Native Codex, Claude and Cursor records retain actual turn boundaries, usage identity and timestamp provenance; repeated capture can enrich tool results without duplicating usage.
+- Appended native sessions preserve unchanged normalized evidence; refresh replays only changed events and affected tool pairs, while decoder upgrades retain full backfill.
+- Dashboard filtering selects the full SQL population before pagination. Pricing uses request identity and actual token-bucket rates instead of identical-token deduplication or proportional allocation.
 - Codex sessions, filters, and usage now share one agent identity across CLI, app, and execution services. Session details retain capture-source names; sessionless runtime and hook evidence no longer create synthetic conversations, and retained unattributed evidence is preserved during migration.
-- Graph-derived memories are scoped before ranking and retain repository/workspace identity through promotion and retrieval. Candidates focus on folders, skills, and task contracts; legacy candidates are invalidated and ambiguous promoted memories are held for review.
 - Memory sync and mutations, workflow/skill changes, feedback, and MCP/dashboard workflow writes now share the refresh lock for their complete database lifetime; read-only inspection remains independent of writer coordination.
 - Skill registry sync waits for concurrent refresh and maintenance operations before opening the store, preventing SQLite lock failures; external writer timeouts report an actionable error and failed initialization closes its connection.
+- Graph-derived memories are scoped before ranking and retain repository/workspace identity through promotion and retrieval. Candidates focus on folders, skills, and task contracts; legacy candidates are invalidated and ambiguous promoted memories are held for review.
+- Task starts, completions, and workflow milestones are durably accepted during SQLite contention and replayed idempotently; task status and database health expose pending projection separately from session linkage. MCP guidance explicitly requests the caller's runtime identity.
 - Task tracking accepts explicit runtime identity and recovers exact historical task links during refresh, exposing missing and conflicting identity without guessing.
 - Frozen impact cohorts are revalidated before measurement and on reads; invalid comparisons retain their ledger and cannot claim improvement or savings. New comparison ledgers preserve per-task metric evidence.
 - Structured tool errors consistently reach canonical call status and session totals; retained inconsistencies are repaired without replaying usage.
@@ -25,9 +100,9 @@
 - Concurrent dashboard, CLI, usage, and database-maintenance operations now coordinate per database. Ingestion and normalization commit event batches without repeating global hash repair per batch; interrupted refreshes remain visibly incomplete and rebuild derived data on retry without replaying usage. No-change usage refreshes preserve completed reports. MCP guidance reads one consistent snapshot and remains available when task tracking is busy. SQLite writer waits are configurable with `REFLECT_SQLITE_BUSY_TIMEOUT_MS` (30 seconds by default).
 - Memory retrieval now includes user-scoped records in project queries and inherits project instructions only within their directory scope, without automatically injecting optional roles. Retained and new telemetry use canonical source metadata, and memory exposures preserve synced instruction content.
 - Tool-result normalization now recognizes explicit execution and MCP failure envelopes across providers, without treating quoted errors as failures; a one-way migration repairs retained tool and session outcomes.
-- Context outlier findings now include cache read, creation, and reasoning tokens. The dashboard reports observed cache-read token share instead of labeling a reuse ratio as provider cache hit rate.
-- Guidance comparisons exclude calls with unknown model identity, include reasoning output in billed-token means, and apply the result limit after matching a single model and an unambiguous task archetype.
-- Impact measurements of context outliers now count cache read, cache creation, and reasoning tokens consistently with the finding they measure.
+- Context outlier findings include cache read and creation tokens; reasoning remains a diagnostic subset of output. The dashboard reports observed cache-read token share instead of labeling a reuse ratio as provider cache hit rate.
+- Guidance comparisons exclude calls with unknown model identity, keep reasoning output separate from observed-token means, and apply the result limit after matching a single model and an unambiguous task archetype.
+- Impact measurements of context outliers count cache read and cache creation tokens consistently without adding reasoning twice.
 
 ## 0.9.7 (2026-08-11)
 

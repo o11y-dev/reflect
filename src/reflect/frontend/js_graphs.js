@@ -727,53 +727,6 @@ function initGraphs() {
   tbl.innerHTML = html;
 })();
 
-/* ── 5. Latency Histograms ── */
-(function buildHistograms(){
-  const hist = sqlTab('graph').graph_latency_histograms;
-  if (!hist || !Object.keys(hist.tools).length) return;
-
-  const labels = hist.labels;
-  const bucketColors = [P.green, P.teal, P.blue, P.yellow, P.orange, P.red];
-  const grid = document.getElementById('hist-grid');
-  grid.innerHTML = '';
-
-  Object.entries(hist.tools).forEach(([tool, buckets]) => {
-    const maxVal = Math.max(...buckets, 1);
-    const item = document.createElement('div');
-    item.className = 'hist-item';
-
-    const lbl = document.createElement('div');
-    lbl.className = 'hist-label';
-    lbl.textContent = tool;
-    item.appendChild(lbl);
-
-    const bars = document.createElement('div');
-    bars.className = 'hist-bars';
-
-    const bLabels = document.createElement('div');
-    bLabels.className = 'hist-bLabels';
-
-    buckets.forEach((v, i) => {
-      const bar = document.createElement('div');
-      bar.className = 'hist-bar';
-      bar.style.height = Math.max((v / maxVal) * 80, 2) + 'px';
-      bar.style.background = bucketColors[i];
-      bar.style.opacity = '0.8';
-      bar.title = `${labels[i]}: ${v} calls`;
-      bars.appendChild(bar);
-
-      const bl = document.createElement('div');
-      bl.className = 'hist-bLabel';
-      bl.textContent = labels[i].replace('ms','').replace('-','-');
-      bLabels.appendChild(bl);
-    });
-
-    item.appendChild(bars);
-    item.appendChild(bLabels);
-    grid.appendChild(item);
-  });
-})();
-
 } // end initGraphs
 
 function currentAgentComparison(){

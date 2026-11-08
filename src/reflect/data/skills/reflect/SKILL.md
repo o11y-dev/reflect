@@ -40,7 +40,8 @@ Always follow this order:
 1. **Start non-trivial repository work with Reflect**
    - After identifying the task and repository path, call the MCP `reflect_context` tool exactly once before implementation or file changes.
    - Pass a concrete task question, set `path` to the repository root or relevant target, and set `task_file` when a written task or specification exists.
-   - When the caller knows its actual runtime session ID, pass `runtime_session_id` and `runtime_agent` to `reflect_context` (or supply them at `reflect_complete` if learned later). Never guess an ID or use the newest session as identity. Missing identity is reported by `reflect_task_status`; ingestion can recover exact task IDs from retained structured MCP calls.
+   - Read the actual runtime session ID from the active caller's environment before calling context. For Codex, use `CODEX_THREAD_ID`; other supported runtimes expose their corresponding session variable. Pass that value and `runtime_agent` to both `reflect_context` and `reflect_complete`. Do not rely on the long-lived MCP server inheriting the caller's environment. If no exact ID is available, leave it absent and report the missing identity; never guess or use the newest captured session.
+   - `tracking_state=accepted_pending` means the task event is durable and awaits projection into the canonical store. Preserve its task ID, continue its lifecycle, and inspect `reflect_task_status` rather than creating a replacement task. Persistence state and session linkage are separate.
    - Preserve the returned `task_run_id`. Follow a selected skill only when `execution_state` is `follow_allowed` and its constraints and preconditions match.
    - If `execution_state` is `retrieve_full_instructions`, call the supplied `full_instructions_action` before following the skill. Do not treat truncated inline instructions as complete.
    - Treat `registry_lifecycle_state` and installation fields as descriptive state, not execution permission. Installing or applying a skill still requires explicit operator approval.
@@ -106,6 +107,11 @@ or maintenance-stale, report the error and offer `reflect refresh` or the
 command's explicit `--refresh` option. Use `reflect skills sync` to reconcile
 skill files and registry revisions; plain `reflect skills` only lists the
 current registry.
+
+`reflect_improvements`, `reflect_impact`, and `reflect impact` can inspect
+retained evidence during refresh when the schema is current. Respect their
+pending coverage and recorded-evidence labels; inspection does not establish
+current validation or readiness for a before/after comparison.
 
 4. **Baseline from local telemetry**
    - For current-session, selected-session, or global token/cost/tool/model statistics, use `$reflect-usage` and run `reflect usage --json` with the matching scope. Keep provider limit and billing reconciliation in this skill.

@@ -19,6 +19,8 @@ def session_card_from_row(
     first_prompt: str = "",
     primary_model: str = "",
     tools: dict[str, int] | None = None,
+    measurement: dict[str, object] | None = None,
+    cost_scope: str = "session_lifetime",
 ) -> dict[str, object]:
     """Shape one canonical session summary for dashboard navigation."""
     session_id = str(row.get("session_id") or row.get("id") or "")
@@ -50,7 +52,20 @@ def session_card_from_row(
     cost = float(row.get("estimated_cost_usd") or row.get("total_cost_usd") or 0)
     total_tokens = input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens
     token_provenance = quality_context.token_provenance
-    if cost > 0:
+    pricing_coverage = None
+    if measurement is not None:
+        cost = float(measurement.get("known_cost_usd") or 0)
+        pricing_coverage = {key: measurement.get(key) for key in (
+            "cost_status", "observed_usage", "priced_usage", "complete_priced_usage",
+            "partially_priced_usage", "legacy_cost_usage",
+        )}
+        cost_status = str(measurement["cost_status"])
+        cost_unavailable_reason = {
+            "complete": "",
+            "partial": "Known cost subtotal; some usage or applicable prices are unavailable.",
+            "unavailable": "The captured usage and applicable prices do not establish a cost.",
+        }[cost_status]
+    elif cost > 0:
         cost_status = "estimated"
         cost_unavailable_reason = ""
     elif token_provenance == "unavailable":
@@ -98,6 +113,8 @@ def session_card_from_row(
         "total_cost_usd": cost,
         "cost_status": cost_status,
         "cost_unavailable_reason": cost_unavailable_reason,
+        "pricing_coverage": pricing_coverage,
+        "cost_scope": cost_scope,
         "pricing_unit": "usd",
         "primary_model": model,
         "models": {model: 1} if model else {},
@@ -185,152 +202,53 @@ def sql_insight_payload(
     cache_creation_tokens = int(metrics["total_cache_creation_tokens"] or 0)
     cache_read_tokens = int(metrics["total_cache_read_tokens"] or 0)
     total_tokens = input_tokens + output_tokens + cache_creation_tokens + cache_read_tokens
-    prompt_count = sum(int(session["prompt_count"] or 0) for session in sessions)
-    session_tokens = [int(session["total_tokens"] or 0) for session in sessions]
-    top_session_share = (max(session_tokens) / total_tokens * 100) if total_tokens else 0.0
-    high_context_sessions = sum(1 for tokens in session_tokens if tokens >= 100_000)
-    mcp_calls = int(metrics["mcp_calls"] or 0)
-    tool_calls = int(overview["tool_call_count"] or 0)
-    failures = int(overview["failure_count"] or 0)
-    subagents = int(metrics["subagent_total_starts"] or 0)
-    file_reads = int(metrics.get("file_reads") or 0)
-    estimated_cost = float(overview["estimated_cost_usd"] or 0)
-    tool_to_prompt_ratio = (tool_calls / prompt_count) if prompt_count else 0.0
-    reads_per_prompt = (file_reads / prompt_count) if prompt_count else 0.0
-    mcp_per_prompt = (mcp_calls / prompt_count) if prompt_count else 0.0
-    cache_reuse_ratio = (cache_read_tokens / input_tokens) if input_tokens else 0.0
+    # Session cards are navigation/presentation rows and can be paginated.
+    # Only canonical scoped aggregates may support facts here; R5 owns advice.
+    session_count = int(overview.get("session_count") or 0)
+    mcp_calls = int(metrics.get("mcp_calls") or 0)
+    tool_calls = int(overview.get("tool_call_count") or 0)
+    failures = int(overview.get("failure_count") or 0)
+    subagents = int(metrics.get("subagent_total_starts") or 0)
     observed_input_tokens = input_tokens + cache_creation_tokens + cache_read_tokens
     economy = {
         "total_tokens": total_tokens,
-        "avg_input_per_prompt": (input_tokens / prompt_count) if prompt_count else 0,
-        "avg_output_per_prompt": (output_tokens / prompt_count) if prompt_count else 0,
-        "top_session_share": top_session_share,
-        "high_context_sessions": high_context_sessions,
-        "reads_per_prompt": reads_per_prompt,
-        "mcp_per_prompt": mcp_per_prompt,
-        "cache_reuse_ratio": cache_reuse_ratio,
-        # A token share is observable here; a provider cache hit rate is not.
+        "avg_input_per_prompt": None,
+        "avg_output_per_prompt": None,
+        "top_session_share": None,
+        "high_context_sessions": None,
+        "reads_per_prompt": None,
+        "mcp_per_prompt": None,
+        "cache_reuse_ratio": None,
         "cache_read_share_pct": (
-            100 * cache_read_tokens / observed_input_tokens if observed_input_tokens else 0.0
+            100 * cache_read_tokens / observed_input_tokens if observed_input_tokens else None
         ),
-        "heavy_model_share": 0,
+        "heavy_model_share": None,
     }
-    strengths = [
-        f"**Report data** - Loaded {len(sessions):,} session rows from the local report store.",
-    ]
+    strengths = [f"**Report data** - {session_count:,} sessions in the filtered report scope."]
+    observations = []
     if tool_calls:
-        strengths.append(
-            f"**Execution telemetry** - Captured {tool_calls:,} tool calls across the filtered report scope."
-        )
-    observations = [
-        f"**Token concentration** - The largest session accounts for {top_session_share:.1f}% of observed token volume.",
-    ]
-    if mcp_calls:
-        observations.append(
-            f"**MCP activity** - This scope contains {mcp_calls:,} MCP calls across {len(metrics['mcp_servers_by_count']):,} server(s)."
-        )
-    recommendations: list[str] = []
-    if prompt_count == 0 and (tool_calls or total_tokens):
-        recommendations.append(
-            "**Enable prompt capture for richer session analysis** - This scope has execution metadata, but no prompt submits. Re-run `reflect setup` and choose metadata, masked, or full text capture based on your local privacy preference."
-        )
-    if failures:
-        recommendations.append(
-            f"**Require schema/path checks before execution** - {failures:,} failed tool call(s) were observed. Make path, MCP schema, and required env checks the first step before mutating state."
-        )
-    if tool_to_prompt_ratio >= 3 or reads_per_prompt >= 3:
-        recommendations.append(
-            f"**Pin relevant files in the first prompt** - This scope averages {tool_to_prompt_ratio:.1f} tools/prompt and {reads_per_prompt:.1f} reads/prompt. Naming exact files, functions, and examples up front should reduce exploration churn."
-        )
-    if mcp_per_prompt >= 0.5:
-        recommendations.append(
-            f"**Reduce MCP context bloat** - This scope averages {mcp_per_prompt:.1f} MCP calls/prompt. Keep only the MCP servers needed for the task and prefer deterministic scripts for repeatable lookups."
-        )
-    if top_session_share >= 25 or high_context_sessions:
-        recommendations.append(
-            f"**Split large tasks into smaller sessions** - The largest session accounts for {top_session_share:.1f}% of observed token volume. Start a fresh session after each milestone to keep context pressure down."
-        )
-    if input_tokens >= 1_000_000 and cache_reuse_ratio < 0.05:
-        recommendations.append(
-            "**Compact context to improve cache reuse** - Input volume is high but cache reuse is low. Summarize at completed milestones instead of carrying a swollen context forward."
-        )
-    if estimated_cost >= 25:
-        recommendations.append(
-            f"**Review high model spend** - Estimated cost is ${estimated_cost:.2f}. Reserve expensive models for planning or hard analysis and route routine implementation to lower-cost models."
-        )
-    if subagents:
-        recommendations.append(
-            "**Specify subagent output format** - Subagents are active in this scope. Ask for a table, JSON, or concise markdown handoff so delegated work returns in a reusable shape."
-        )
-    if not recommendations:
-        recommendations.extend(
-            [
-                "**Use a fixed prompt contract for non-trivial requests** - Goal, Context, Constraints, Output, Done-when keeps observed sessions easier to compare and review.",
-                "**Close tasks with a structured handoff** - End each major task with changes, validations, residual risk, and the next command so future reports can distinguish completed work from drift.",
-            ]
-        )
-    practical_examples = [
-        (
-            "Make the next action measurable",
-            "Fix the flaky report.",
-            "Fix the report session filter. Done when `/api/data?agents=claude` returns non-empty sessions and the dashboard shows the same count.",
-        )
-    ]
-    achievements = [
-        {"icon": "&#128190;", "name": "Local Report", "sub": f"{len(sessions):,} sessions loaded"},
-    ]
-    if total_tokens:
-        achievements.append(
-            {"icon": "&#129534;", "name": "Token Ledger", "sub": f"{total_tokens:,} tokens"}
-        )
+        observations.append(f"**Tool activity** - {tool_calls:,} captured tool calls; {failures:,} recorded failures. Missing results remain unknown.")
     if cache_read_tokens:
-        achievements.append(
-            {
-                "icon": "&#129534;",
-                "name": "Cache Saver",
-                "sub": f"{economy['cache_reuse_ratio']:.1f}x cached reuse",
-            }
-        )
-    if metrics["unique_models"]:
-        achievements.append(
-            {
-                "icon": "&#9878;",
-                "name": "Model Mixer",
-                "sub": f"{metrics['unique_models']:,} models",
-            }
-        )
-    if metrics["unique_commands"]:
-        achievements.append(
-            {
-                "icon": "&#128187;",
-                "name": "Command Runner",
-                "sub": f"{metrics['unique_commands']:,} patterns",
-            }
-        )
-    if tool_calls and failures == 0:
-        achievements.append(
-            {"icon": "&#9989;", "name": "Zero Failures", "sub": "clean tool execution"}
-        )
-    elif tool_calls:
-        achievements.append(
-            {"icon": "&#128295;", "name": "Tool Operator", "sub": f"{tool_calls:,} tool calls"}
-        )
-    if overview["estimated_cost_usd"]:
-        achievements.append(
-            {
-                "icon": "&#128176;",
-                "name": "Cost Visibility",
-                "sub": f"${float(overview['estimated_cost_usd']):.2f} estimated",
-            }
-        )
+        observations.append(f"**Cache tokens** - {cache_read_tokens:,} recorded cache-read tokens. Token volume alone does not establish savings or a complete cache-hit rate.")
+    achievements = [{"icon": "&#128190;", "name": "Local Report", "sub": f"{session_count:,} captured sessions"}]
+    if total_tokens:
+        achievements.append({"icon": "&#129534;", "name": "Recorded Tokens", "sub": f"{total_tokens:,} tokens"})
+    if cache_read_tokens:
+        achievements.append({"icon": "&#129534;", "name": "Cache Tokens", "sub": f"{cache_read_tokens:,} recorded cache-read tokens"})
+    if metrics.get("unique_models"):
+        achievements.append({"icon": "&#9878;", "name": "Recorded Models", "sub": f"{metrics['unique_models']:,} models"})
+    if metrics.get("unique_commands"):
+        achievements.append({"icon": "&#128187;", "name": "Command Patterns", "sub": f"{metrics['unique_commands']:,} patterns"})
+    if tool_calls:
+        achievements.append({"icon": "&#128295;", "name": "Recorded Failures", "sub": f"{failures:,} failures; result coverage may be incomplete"})
+    if overview.get("estimated_cost_usd"):
+        achievements.append({"icon": "&#128176;", "name": "Recorded Cost", "sub": f"${float(overview['estimated_cost_usd']):.2f} recorded estimate"})
     if subagents:
-        achievements.append(
-            {"icon": "&#129302;", "name": "Delegator", "sub": f"{subagents:,} subagents"}
-        )
+        achievements.append({"icon": "&#129302;", "name": "Subagent Activity", "sub": f"{subagents:,} starts"})
     if mcp_calls:
-        achievements.append(
-            {"icon": "&#128268;", "name": "MCP Active", "sub": f"{mcp_calls:,} MCP calls"}
-        )
+        achievements.append({"icon": "&#128268;", "name": "MCP Activity", "sub": f"{mcp_calls:,} calls"})
+    recommendations: list[str] = []
+    practical_examples: list[tuple[str, str, str]] = []
     return {
         "token_economy": economy,
         "strengths": strengths,
@@ -443,7 +361,6 @@ def empty_sql_lazy_tabs() -> dict[str, object]:
             "graph_dep": {"nodes": [], "edges": [], "top_mcp_servers": []},
             "graph_session_timeline": [],
             "graph_semantic": {"nodes": [], "edges": [], "sessions": [], "legend": []},
-            "graph_latency_histograms": {},
         },
         "specs": {
             "total_specs": 0,

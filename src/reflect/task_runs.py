@@ -4,6 +4,7 @@ import hashlib
 import json
 import sqlite3
 import uuid
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
@@ -13,7 +14,109 @@ from reflect.context_artifacts import TaskContractArtifact, task_contract_artifa
 from reflect.execution_units import ExecutionUnitRepository
 from reflect.improvements.repository import utc_now
 from reflect.schema.base import ReflectModel
-from reflect.usage import UsageService
+from reflect.usage import RuntimeSessionHint, UsageService
+
+
+@dataclass(frozen=True)
+class TaskReportRefreshInputs:
+    session_ids: frozenset[str]
+    requires_full_refresh: bool
+    snapshot: dict[str, dict[str, object]]
+
+
+class TaskReportRefreshState:
+    """Checkpoint report inputs independently of derived linkage bookkeeping.
+
+    Inspect before derivation and mark that same captured input after success.
+    Reports arriving during derivation then remain visible to the next refresh.
+    Stored session IDs retain the old scope when a report moves or disappears.
+    """
+
+    METADATA_KEY = "task_report_inputs_v1"
+
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def inspect(self) -> TaskReportRefreshInputs:
+        receipts = dict(self.conn.execute(
+            "SELECT task_run_id, MAX(rowid) FROM task_event_receipts GROUP BY task_run_id"
+        ))
+        milestones: dict[str, list[tuple]] = {}
+        for task_id, event_id, details, created_at in self.conn.execute(
+            """SELECT entity_id, id, details_json, created_at FROM improvement_events
+               WHERE entity_type = 'mcp_task_run' AND event_type = 'workflow_milestone'
+               ORDER BY entity_id, id"""
+        ):
+            milestones.setdefault(str(task_id), []).append((event_id, details, created_at))
+        linked_sessions: dict[str, set[str]] = {}
+        for task_id, session_id in self.conn.execute(
+            """SELECT tr.id, eu.session_id FROM mcp_task_runs tr
+               JOIN execution_units eu ON eu.id = tr.execution_unit_id
+               UNION SELECT mcp_task_run_id, session_id FROM execution_units
+               WHERE mcp_task_run_id IS NOT NULL"""
+        ):
+            linked_sessions.setdefault(str(task_id), set()).add(str(session_id))
+        snapshot: dict[str, dict[str, object]] = {}
+        for row in self.conn.execute(
+            """SELECT id, runtime_session_id, runtime_agent, workspace_path,
+                      task_file_path, question_hash, workflow_id, selected_skills_json,
+                      selected_memories_json, task_contract_id, task_contract_hash,
+                      status, outcome, verification_passed, completion_summary_redacted,
+                      started_at, completed_at, runtime_identity_source,
+                      runtime_identity_evidence_id, runtime_identity_conflict
+               FROM mcp_task_runs ORDER BY id"""
+        ):
+            task_id = str(row[0])
+            sessions = linked_sessions.get(task_id, set())
+            if row[1]:
+                sessions.add(str(row[1]))
+            payload = [list(row), receipts.get(task_id), milestones.get(task_id, [])]
+            snapshot[task_id] = {
+                "fingerprint": hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest(),
+                "session_ids": sorted(sessions),
+            }
+        previous = self._stored_snapshot()
+        changed_sessions: set[str] = set()
+        for task_id in snapshot.keys() | (previous or {}).keys():
+            old = (previous or {}).get(task_id, {})
+            current = snapshot.get(task_id, {})
+            if previous is None or old.get("fingerprint") != current.get("fingerprint"):
+                changed_sessions.update(old.get("session_ids", []))
+                changed_sessions.update(current.get("session_ids", []))
+        return TaskReportRefreshInputs(frozenset(changed_sessions), previous is None, snapshot)
+
+    def mark_current(self, inputs: TaskReportRefreshInputs) -> None:
+        """Persist the captured inputs in the caller's successful derive transaction."""
+        self.conn.execute(
+            """INSERT INTO store_metadata(key, value, updated_at) VALUES (?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at""",
+            (self.METADATA_KEY, json.dumps(inputs.snapshot, sort_keys=True), utc_now()),
+        )
+
+    def _stored_snapshot(self) -> dict[str, dict[str, object]] | None:
+        row = self.conn.execute(
+            "SELECT value FROM store_metadata WHERE key = ?", (self.METADATA_KEY,),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            snapshot = json.loads(row[0])
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(snapshot, dict):
+            return None
+        for task_id, entry in snapshot.items():
+            if not isinstance(task_id, str) or not isinstance(entry, dict):
+                return None
+            fingerprint, sessions = entry.get("fingerprint"), entry.get("session_ids")
+            if (
+                not isinstance(fingerprint, str) or len(fingerprint) != 64
+                or any(char not in "0123456789abcdef" for char in fingerprint)
+                or not isinstance(sessions, list)
+                or any(not isinstance(session, str) or not session for session in sessions)
+            ):
+                return None
+        return snapshot
 
 
 class MCPTaskOutcome(StrEnum):
@@ -82,6 +185,8 @@ class MCPTaskRunStatus(ReflectModel):
     started_at: str
     completed_at: str | None = None
     updated_at: str
+    tracking_state: str = "applied"
+    projection_error: str | None = None
 
 
 class TaskRunReconciliationResult(ReflectModel):
@@ -105,6 +210,71 @@ class MCPTaskRunResult(ReflectModel):
     execution_unit_id: str | None = None
     linked_to_session: bool
     idempotent: bool
+    tracking_state: str = "applied"
+    link_state: MCPTaskRunLinkState = MCPTaskRunLinkState.NO_RUNTIME_SESSION
+
+
+class TaskStart(ReflectModel):
+    """Frozen, privacy-safe input to task persistence, including contract identity."""
+
+    task_run_id: str
+    question_hash: str
+    workspace_path: str
+    task_file_path: str | None
+    workflow_id: str | None
+    selected_skills: list[MCPSelectedSkillRef]
+    selected_memories: list[MCPSelectedMemoryRef]
+    runtime_session_id: str | None
+    runtime_agent: str | None
+    runtime_identity_source: str | None
+    started_at: str
+    contract: TaskContractArtifact | None = None
+
+    @classmethod
+    def capture(cls, *, question: str, workspace_path: Path, task_file_path: Path | None,
+                workflow_id: str | None, selected_skills: list[MCPSelectedSkillRef],
+                selected_memories: list[MCPSelectedMemoryRef],
+                runtime_session_id: str | None = None, runtime_agent: str | None = None,
+                session_hint: RuntimeSessionHint | None = None) -> TaskStart:
+        explicit_id = (runtime_session_id or "").strip() or None
+        session_id = explicit_id or (session_hint.session_id if session_hint else None)
+        return cls(
+            task_run_id=f"mcp_task_{uuid.uuid4().hex}",
+            question_hash=hashlib.sha256(question.encode("utf-8")).hexdigest(),
+            workspace_path=str(workspace_path), task_file_path=str(task_file_path) if task_file_path else None,
+            workflow_id=workflow_id, selected_skills=selected_skills, selected_memories=selected_memories,
+            runtime_session_id=session_id,
+            runtime_agent=runtime_agent if explicit_id else (session_hint.agent if session_hint else None),
+            runtime_identity_source="explicit_argument" if explicit_id else "environment" if session_id else None,
+            started_at=utc_now(),
+            contract=task_contract_artifact(task_file_path, workspace_root=workspace_path) if task_file_path else None,
+        )
+
+    def status(self) -> MCPTaskRunStatus:
+        return MCPTaskRunStatus(
+            **self.model_dump(exclude={"question_hash", "contract"}),
+            status="started", updated_at=self.started_at, tracking_state="accepted_pending",
+            task_contract_id=self.contract.artifact_id if self.contract else None,
+            task_contract_hash=self.contract.content_hash if self.contract else None,
+            link_state=MCPTaskRunLinkState.PENDING_INGESTION if self.runtime_session_id else MCPTaskRunLinkState.NO_RUNTIME_SESSION,
+        )
+
+
+def validate_completion(task: MCPTaskRunStatus, *, outcome: MCPTaskOutcome | str,
+                        verification_passed: bool | None = None, summary_redacted: str = "",
+                        runtime_session_id: str | None = None, runtime_agent: str | None = None
+                        ) -> tuple[MCPTaskOutcome, str, str | None, bool]:
+    normalized = MCPTaskOutcome(outcome)
+    summary = summary_redacted.strip()[:1000]
+    explicit_id = (runtime_session_id or "").strip() or None
+    if explicit_id and ((task.runtime_session_id and task.runtime_session_id != explicit_id)
+                        or (task.runtime_agent and runtime_agent and task.runtime_agent != runtime_agent)):
+        raise ValueError("Runtime identity conflicts with the task's recorded identity")
+    completed = task.status == "completed"
+    if completed and (task.outcome != normalized or task.verification_passed != verification_passed
+                      or task.summary_redacted != summary):
+        raise RuntimeError(f"MCP task run {task.task_run_id} is already completed; start a new guidance run for changed work")
+    return normalized, summary, explicit_id, completed
 
 
 class MCPTaskRunService:
@@ -136,18 +306,19 @@ class MCPTaskRunService:
         runtime_session_id: str | None = None,
         runtime_agent: str | None = None,
     ) -> str:
-        session_hint = self.usage.runtime_session_hint()
-        explicit_id = (runtime_session_id or "").strip() or None
-        session_id = explicit_id or (session_hint.session_id if session_hint else None)
-        agent = runtime_agent if explicit_id else (session_hint.agent if session_hint else None)
-        task_run_id = f"mcp_task_{uuid.uuid4().hex}"
-        now = utc_now()
-        contract = self._register_task_contract(
-            task_file_path,
-            workspace_path=workspace_path,
-            owner=agent,
-            now=now,
-        )
+        return self.apply_start(TaskStart.capture(
+            question=question, workspace_path=workspace_path, task_file_path=task_file_path,
+            workflow_id=workflow_id, selected_skills=selected_skills, selected_memories=selected_memories,
+            runtime_session_id=runtime_session_id, runtime_agent=runtime_agent,
+            session_hint=self.usage.runtime_session_hint(),
+        ))
+
+    def apply_start(self, start: TaskStart, *, commit: bool = True) -> str:
+        task_run_id, now = start.task_run_id, start.started_at
+        session_id, agent = start.runtime_session_id, start.runtime_agent
+        contract = start.contract
+        if contract:
+            self._register_task_contract(contract, owner=agent, now=now)
         self.conn.execute(
             """
             INSERT INTO mcp_task_runs(
@@ -161,24 +332,24 @@ class MCPTaskRunService:
                 task_run_id,
                 session_id,
                 agent,
-                str(workspace_path),
-                str(task_file_path) if task_file_path else None,
+                start.workspace_path,
+                start.task_file_path,
                 contract.artifact_id if contract else None,
                 contract.content_hash if contract else None,
-                hashlib.sha256(question.encode("utf-8")).hexdigest(),
-                workflow_id,
+                start.question_hash,
+                start.workflow_id,
                 json.dumps(
-                    [skill.model_dump(mode="json") for skill in selected_skills],
+                    [skill.model_dump(mode="json") for skill in start.selected_skills],
                     sort_keys=True,
                 ),
                 json.dumps(
-                    [memory.model_dump(mode="json") for memory in selected_memories],
+                    [memory.model_dump(mode="json") for memory in start.selected_memories],
                     sort_keys=True,
                 ),
                 now,
                 now,
                 now,
-                "explicit_argument" if explicit_id else "environment" if session_id else None,
+                start.runtime_identity_source,
             ),
         )
         if session_id:
@@ -187,20 +358,17 @@ class MCPTaskRunService:
                 session_id,
                 now=now,
             )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return task_run_id
 
     def _register_task_contract(
         self,
-        path: Path | None,
+        contract: TaskContractArtifact,
         *,
-        workspace_path: Path,
         owner: str | None,
         now: str,
-    ) -> TaskContractArtifact | None:
-        if path is None:
-            return None
-        contract = task_contract_artifact(path, workspace_root=workspace_path)
+    ) -> TaskContractArtifact:
         self.conn.execute(
             """
             INSERT INTO specs(
@@ -234,47 +402,21 @@ class MCPTaskRunService:
         summary_redacted: str = "",
         runtime_session_id: str | None = None,
         runtime_agent: str | None = None,
+        commit: bool = True,
+        completed_at: str | None = None,
     ) -> MCPTaskRunResult:
-        try:
-            normalized_outcome = MCPTaskOutcome(outcome)
-        except ValueError as exc:
-            raise ValueError(f"Unsupported task outcome: {outcome}") from exc
-        summary = summary_redacted.strip()[:1000]
-        row = self.conn.execute(
-            """
-            SELECT runtime_session_id, selected_skills_json, status, outcome,
-                   verification_passed, completion_summary_redacted
-            FROM mcp_task_runs WHERE id = ?
-            """,
-            (task_run_id,),
-        ).fetchone()
-        if row is None:
-            raise KeyError(f"MCP task run not found: {task_run_id}")
-        explicit_id = (runtime_session_id or "").strip() or None
-        if explicit_id:
-            identity = self.conn.execute(
-                "SELECT runtime_agent FROM mcp_task_runs WHERE id = ?", (task_run_id,),
-            ).fetchone()
-            if (row[0] and row[0] != explicit_id) or (
-                identity[0] and runtime_agent and identity[0] != runtime_agent
-            ):
-                raise ValueError("Runtime identity conflicts with the task's recorded identity")
-        existing_verification = None if row[4] is None else bool(row[4])
-        if str(row[2]) == "completed":
-            if (
-                str(row[3]) == normalized_outcome.value
-                and existing_verification == verification_passed
-                and str(row[5] or "") == summary
-            ):
-                self._complete_identity(task_run_id, explicit_id, runtime_agent)
-                self.reconciler.reconcile(task_run_ids={task_run_id}, commit=False)
+        normalized_outcome, summary, explicit_id, idempotent = validate_completion(
+            self.status(task_run_id), outcome=outcome, verification_passed=verification_passed,
+            summary_redacted=summary_redacted, runtime_session_id=runtime_session_id, runtime_agent=runtime_agent,
+        )
+        if idempotent:
+            self._complete_identity(task_run_id, explicit_id, runtime_agent)
+            self.reconciler.reconcile(task_run_ids={task_run_id}, commit=False)
+            if commit:
                 self.conn.commit()
-                return self._result(task_run_id, idempotent=True)
-            raise RuntimeError(
-                f"MCP task run {task_run_id} is already completed; start a new guidance run for changed work"
-            )
+            return self._result(task_run_id, idempotent=True)
 
-        now = utc_now()
+        now = completed_at or utc_now()
         self._complete_identity(task_run_id, explicit_id, runtime_agent)
         self.conn.execute(
             """
@@ -296,7 +438,8 @@ class MCPTaskRunService:
             task_run_ids={task_run_id},
             commit=False,
         )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return self._result(
             task_run_id,
             idempotent=False,
@@ -422,6 +565,7 @@ class MCPTaskRunService:
             execution_unit_id=str(row[6]) if row[6] else None,
             linked_to_session=linked_to_session,
             idempotent=idempotent,
+            link_state=self.status(task_run_id).link_state,
         )
 
 
@@ -592,6 +736,7 @@ class TaskRunReconciler:
                     str(row[1]),
                     execution_unit_id,
                     selected_skills,
+                    task_run_id=str(row[0]),
                     outcome=outcome,
                     verification_passed=verification_passed,
                     now=now,
@@ -672,26 +817,35 @@ class TaskRunReconciler:
         execution_unit_id: str,
         selected_skills: list[MCPSelectedSkillRef],
         *,
+        task_run_id: str,
         outcome: MCPTaskOutcome,
         verification_passed: bool | None,
         now: str,
     ) -> int:
         recorded = 0
+        observed_owner = self.conn.execute(
+            "SELECT 1 FROM execution_units eu WHERE eu.id=? AND eu.source <> 'mcp_report' "
+            "AND EXISTS (SELECT 1 FROM execution_unit_steps eus WHERE eus.execution_unit_id=eu.id)",
+            (execution_unit_id,),
+        ).fetchone()
         for skill in selected_skills:
             if not skill.skill_id:
                 continue
+            source_id = task_run_id
             usage_id = (
                 "skill_usage_"
-                + hashlib.sha256(f"{skill.skill_id}:{execution_unit_id}".encode()).hexdigest()[:24]
+                + hashlib.sha256(f"{skill.skill_id}:task_report:{source_id}".encode()).hexdigest()[:24]
             )
             self.conn.execute(
                 """
                 INSERT INTO skill_usage(
-                  id, skill_id, skill_version_id, session_id, execution_unit_id, state, outcome,
+                  id, skill_id, skill_version_id, session_id, execution_unit_id, source_kind, source_id, state, outcome,
                   confidence, evidence_json, observed_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 'reported', ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(skill_id, execution_unit_id) DO UPDATE SET
+                ) VALUES (?, ?, ?, ?, ?, 'task_report', ?, 'reported', ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(skill_id, source_kind, source_id) DO UPDATE SET
                   skill_version_id = excluded.skill_version_id,
+                  session_id = excluded.session_id,
+                  execution_unit_id = excluded.execution_unit_id,
                   state = excluded.state,
                   outcome = excluded.outcome,
                   confidence = MAX(skill_usage.confidence, excluded.confidence),
@@ -704,12 +858,15 @@ class TaskRunReconciler:
                     skill.skill_id,
                     skill.version_id or None,
                     session_id,
-                    execution_unit_id,
+                    execution_unit_id if observed_owner else None,
+                    source_id,
                     outcome.value,
                     0.9 if verification_passed is not None else 0.7,
                     json.dumps(
                         {
                             "source": "reflect_complete",
+                            "task_run_id": task_run_id,
+                            "relationship": "reported_use",
                             "verification_passed": verification_passed,
                         },
                         sort_keys=True,

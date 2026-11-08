@@ -52,6 +52,132 @@ def _load_extracted_skills(text: str) -> list[dict]:
     return parsed
 
 
+def _validate_skill_draft_evidence(
+    conn: sqlite3.Connection,
+    skill: dict,
+    *,
+    session_ids: list[str],
+    evidence_bundle: dict | None,
+) -> tuple[dict, dict | None]:
+    """Validate citations against the bounded packet before any staging writes.
+
+    Only explicit canonical procedure examples supply checked support. Session
+    citations describe context and cannot promote session quality or agent claims
+    into observed checks. Manual calls without a packet remain unverified.
+    """
+    raw = skill.get("evidence") or {}
+    if not isinstance(raw, dict):
+        raise ValueError("Skill evidence must be an object")
+    summary = {
+        "status": "unverified_draft",
+        "session_ids": [],
+        "execution_ids": [],
+        "checked_execution_count": 0,
+        "denominator_execution_count": 0,
+        "denominator": "candidate-cited executions; observed checks are separate from outcomes",
+        "why_it_improves": str(raw.get("why_it_improves") or ""),
+    }
+    if evidence_bundle is None:
+        return summary, None
+
+    def ids(key: str) -> list[str]:
+        values = raw.get(key) or []
+        if not isinstance(values, list) or any(not isinstance(value, str) or not value for value in values):
+            raise ValueError(f"evidence.{key} must be a list of nonempty IDs")
+        if len(values) > 300:
+            raise ValueError(f"evidence.{key} exceeds the bounded extraction limit")
+        return sorted(set(values))
+
+    cited_sessions, cited_executions = ids("session_ids"), ids("execution_ids")
+    pattern_ids = ids("pattern_ids")
+    patterns = [pattern for values in (evidence_bundle.get("summary") or {}).values()
+                if isinstance(values, list) for pattern in values if isinstance(pattern, dict)]
+    patterns.extend((evidence_bundle.get("graph_evidence") or {}).get("recurring_patterns", []))
+    if not set(pattern_ids).issubset({str(item.get("id")) for item in patterns}):
+        raise ValueError("Skill cites invented pattern IDs")
+    if not cited_sessions or not set(cited_sessions).issubset(session_ids):
+        raise ValueError("Skill must cite candidate-specific sessions within the extraction scope")
+    summary["session_ids"] = cited_sessions
+    procedure_bundle = evidence_bundle if "procedures" in evidence_bundle else evidence_bundle.get("procedure_evidence")
+    if procedure_bundle is None:
+        packet_sessions = {str(item.get("id")) for item in evidence_bundle.get("sessions", []) if isinstance(item, dict)}
+        if not set(cited_sessions).issubset(packet_sessions) or cited_executions or raw.get("procedure_signature"):
+            raise ValueError("Session-only packet cannot support execution or procedure claims")
+        return summary, None
+
+    valid_sessions = {str(row[0]) for row in conn.execute(
+        f"SELECT id FROM sessions WHERE id IN ({','.join('?' for _ in cited_sessions)})",
+        cited_sessions,
+    )}
+    if valid_sessions != set(cited_sessions):
+        raise ValueError("Skill cites nonexistent sessions")
+
+    signature = str(raw.get("procedure_signature") or "")
+    matches = [group for group in procedure_bundle.get("procedures", [])
+               if group.get("signature") == signature and all(
+                   key not in raw or raw[key] == group.get(key)
+                   for key in ("repo_id", "workspace_id", "task_archetype_id"))]
+    if len(matches) != 1:
+        raise ValueError("Skill procedure reference is missing, invented, or ambiguous within the evidence scope")
+    procedure = matches[0]
+    if not procedure.get("candidate_ready"):
+        raise ValueError("Procedure does not have enough independent observed checks for automatic drafting")
+    examples = {str(item["execution_unit_id"]): item
+                for key in ("supporting_examples", "counterexamples") for item in procedure.get(key, [])}
+    if not cited_executions or not set(cited_executions).issubset(procedure.get("execution_ids", [])) or not set(cited_executions).issubset(examples):
+        raise ValueError("Skill must cite execution IDs from the procedure's bounded explicit examples")
+    selected_examples = [examples[uid] for uid in cited_executions]
+    if {item["session_id"] for item in selected_examples} != set(cited_sessions):
+        raise ValueError("Cited sessions must match the cited execution examples exactly")
+    from reflect.execution_assessment import attrs_dict
+    from reflect.improvements.procedures import (
+        SIGNAL_LIMIT,
+        ProcedureEvidenceRepository,
+        assessment_fingerprint,
+    )
+    from reflect.improvements.workflow_roles import WorkflowEvidenceRepository
+
+    rows = conn.execute(
+        f"""SELECT eu.id,eu.session_id,eu.repo_id,eu.workspace_id,eu.boundary_json,
+                   eu.eligible,eua.task_archetype_id,eua.mixed,eua.confidence
+            FROM execution_units eu
+            LEFT JOIN execution_unit_archetypes eua ON eua.execution_unit_id=eu.id
+            WHERE eu.id IN ({','.join('?' for _ in cited_executions)})""",
+        cited_executions,
+    ).fetchall()
+    if len(rows) != len(cited_executions) or any(
+        str(row[1]) != str(examples[str(row[0])]["session_id"])
+        or row[2] != procedure.get("repo_id") or row[3] != procedure.get("workspace_id")
+        for row in rows
+    ):
+        raise ValueError("Cited executions are missing or outside the procedure scope")
+    changed = any(
+        not row[5] or row[6] != procedure.get("task_archetype_id") or row[7] or float(row[8] or 0) < .65
+        or examples[str(row[0])].get("assessment_fingerprint") != assessment_fingerprint(
+            attrs_dict(attrs_dict(row[4]).get("assessment")))
+        for row in rows
+    )
+    signals = WorkflowEvidenceRepository(conn).signals_for_execution_units(
+        cited_executions, limit_per_execution=SIGNAL_LIMIT + 1,
+    )
+    current_signatures = ProcedureEvidenceRepository(conn).signatures(cited_executions, signals)
+    if changed or any(current_signatures.get(uid) != signature for uid in cited_executions):
+        raise ValueError("Procedure evidence changed while drafting; rerun discovery before staging")
+    checked = [item for item in selected_examples if item.get("verification") == "passed" and not item.get("signals_truncated")]
+    if len({item["session_id"] for item in checked}) < 3:
+        raise ValueError("A reusable procedure draft needs cited observed checks from at least three independent sessions")
+    summary.update({
+        "status": "observed_checks",
+        "procedure_signature": signature,
+        "execution_ids": cited_executions,
+        "checked_execution_count": len(checked),
+        "denominator_execution_count": len(cited_executions),
+        "examples": selected_examples,
+        "match_explanation": str(procedure.get("match_explanation") or ""),
+    })
+    return summary, procedure
+
+
 def _compress_tool_sequence(tools: list[str]) -> list[str]:
     """Collapse consecutive identical tool calls into Tool×N notation."""
     if not tools:
@@ -540,12 +666,12 @@ def _build_graph_evidence(
                 ge.kind AS edge_kind,
                 sn.kind AS source_kind,
                 CASE
-                  WHEN sn.kind IN ('Session', 'ToolCall', 'Step', 'Path', 'Folder') THEN sn.kind
+                  WHEN sn.kind IN ('Session', 'ToolCall', 'Path', 'Folder') THEN sn.kind
                   ELSE sn.label
                 END AS source_pattern,
                 tn.kind AS target_kind,
                 CASE
-                  WHEN tn.kind IN ('Session', 'ToolCall', 'Step', 'Path', 'Folder') THEN tn.kind
+                  WHEN tn.kind IN ('Session', 'ToolCall', 'Path', 'Folder') THEN tn.kind
                   ELSE tn.label
                 END AS target_pattern,
                 ge.session_id AS session_id
@@ -559,8 +685,7 @@ def _build_graph_evidence(
                   'used_tool',
                   'spawned_subagent',
                   'launched_by_tool_call',
-                  'achieved_outcome',
-                  'produced_outcome',
+                  'suggests_outcome',
                   'touched_folder',
                   'touched_path'
                 )
@@ -677,6 +802,8 @@ def _skills_sql_tables_exist(conn: sqlite3.Connection) -> bool:
 
 
 def _sql_scope_session_ids(conn: sqlite3.Connection, session_ids: set[str] | None) -> list[str]:
+    if session_ids == set():
+        return []
     if session_ids:
         scoped = sorted({sid for sid in session_ids if sid})
         _populate_skill_scope_table(conn, scoped)
@@ -1031,8 +1158,11 @@ def _build_skill_evidence_bundle_from_sql(
         if ranked
         else 0.0
     )
+    from reflect.improvements.procedures import ProcedureEvidenceRepository
+
     bundle = {
         "schema_version": 1,
+        "procedure_evidence": ProcedureEvidenceRepository(conn).bundle(session_ids=set(scoped_session_ids)),
         "selection_policy": {
             "session_limit": _SKILL_SESSION_LIMIT,
             "deep_context_limit": 0,

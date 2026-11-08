@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from click.testing import CliRunner
 
 from reflect.core import main
@@ -115,9 +116,9 @@ def _seed_session(conn, session_id: str = "session-current", *, started_at: date
         """
         INSERT INTO llm_calls(
           id, step_id, session_id, provider, request_model, response_model,
-          input_tokens, output_tokens, estimated_cost_usd,
+          input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens, reasoning_output_tokens, estimated_cost_usd,
           raw_attrs_json, created_at, updated_at
-        ) VALUES (?, ?, ?, 'openai', 'gpt-5', 'gpt-5', 1000, 250, 1.25, '{}', ?, ?)
+        ) VALUES (?, ?, ?, 'openai', 'gpt-5', 'gpt-5', 1000, 250, 100, 400, 50, 1.25, '{}', ?, ?)
         """,
         (f"{session_id}-llm", f"{session_id}-step", session_id, NOW.isoformat(), NOW.isoformat()),
     )
@@ -275,7 +276,7 @@ def test_usage_labels_estimated_and_unavailable_token_sources(tmp_path):
     assert any("inference-only proxies" in item for item in unavailable.limitations)
 
 
-def test_model_breakdown_deduplicates_repeated_exact_usage(tmp_path):
+def test_identical_token_counts_do_not_deduplicate_distinct_requests(tmp_path):
     conn = _open_db(tmp_path / "reflect.db")
     try:
         _seed_session(conn)
@@ -310,8 +311,8 @@ def test_model_breakdown_deduplicates_repeated_exact_usage(tmp_path):
         conn.close()
 
     assert report.models[0].count == 2
-    assert report.models[0].input_tokens == report.totals.input_tokens == 1000
-    assert report.models[0].output_tokens == report.totals.output_tokens == 250
+    assert report.models[0].input_tokens == report.totals.input_tokens == 2000
+    assert report.models[0].output_tokens == report.totals.output_tokens == 500
 
 
 def test_usage_labels_token_bearing_zero_cost_sessions_as_unpriced(tmp_path):
@@ -330,7 +331,7 @@ def test_usage_labels_token_bearing_zero_cost_sessions_as_unpriced(tmp_path):
     finally:
         conn.close()
 
-    assert any("$0 is not proof" in limitation for limitation in report.limitations)
+    assert any("Missing rates or models do not imply free usage" in limitation for limitation in report.limitations)
 
 
 def test_current_session_usage_labels_workspace_fallback(tmp_path):
@@ -460,6 +461,10 @@ def test_global_usage_is_not_limited_to_500_sessions(tmp_path):
         """,
         (old_started_at.isoformat(), NOW.isoformat()),
     )
+    for sid, stamp, inp, out, cost in conn.execute("SELECT id,started_at,input_tokens,output_tokens,estimated_cost_usd FROM sessions").fetchall():
+        conn.execute("INSERT INTO steps(id,session_id,seq,type,started_at,status,raw_attrs_json,created_at,updated_at) VALUES(?,?,1,'llm_call',?,'ok','{}',?,?)", (sid+'-step',sid,stamp,stamp,stamp))
+        conn.execute("INSERT INTO llm_calls(id,step_id,session_id,input_tokens,output_tokens,estimated_cost_usd,raw_attrs_json,created_at,updated_at) VALUES(?,?,?,?,?,?,'{}',?,?)", (sid+'-call',sid+'-step',sid,inp,out,cost,stamp,stamp))
+        conn.execute("UPDATE steps SET summary='UserPromptSubmit' WHERE id=?", (sid+'-step',))
     conn.commit()
     try:
         service = UsageService(conn, environ={}, cwd=tmp_path, now=NOW)
@@ -474,7 +479,7 @@ def test_global_usage_is_not_limited_to_500_sessions(tmp_path):
     assert report.totals.sessions == 505
     assert report.totals.prompts == 505
     assert report.totals.input_tokens == 5050
-    assert report.totals.estimated_cost_usd == 5.05
+    assert report.totals.estimated_cost_usd == pytest.approx(5.05)
     assert all_time.totals.sessions == 506
 
 
@@ -680,7 +685,7 @@ def test_usage_requires_explicit_refresh_for_pending_rollup_rebuild(
         conn.close()
     conn = connect_sqlite(db_path)
     try:
-        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 37, 38]
+        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48]
     finally:
         conn.close()
     monkeypatch.setattr("reflect.core.default_otlp_traces", lambda: None)
@@ -820,3 +825,145 @@ def test_usage_cli_uses_period_option(tmp_path):
     )
     assert current.exit_code == 0, current.output
     assert json.loads(current.stdout)["period"] == "all"
+
+
+def test_period_activity_counts_events_not_lifetime_session_rollups(tmp_path, monkeypatch):
+    from reflect.dashboard_queries import build_dashboard_payload
+
+    conn = _open_db(tmp_path / "reflect.db")
+    try:
+        _seed_session(conn, "straddling", started_at=NOW-timedelta(days=2))
+        _seed_session(conn, "recent", started_at=NOW-timedelta(hours=1))
+        conn.execute("UPDATE steps SET seq=seq+10 WHERE session_id='recent'")
+        for table in ("steps", "tool_calls", "llm_calls"):
+            conn.execute(f"UPDATE {table} SET session_id='straddling' WHERE session_id='recent'")
+        conn.execute("DELETE FROM sessions WHERE id='recent'")
+        conn.execute("UPDATE sessions SET ended_at=? WHERE id='straddling'", ((NOW-timedelta(minutes=30)).isoformat(),))
+        conn.execute("UPDATE steps SET summary='UserPromptSubmit' WHERE id IN ('straddling-step','recent-step')")
+        conn.execute("UPDATE tool_calls SET status='error',input_hash='same-command' WHERE id='straddling-tool'")
+        conn.execute("UPDATE tool_calls SET input_hash='same-command' WHERE id='recent-tool'")
+        conn.commit()
+        report = UsageService(conn, now=NOW).report(global_scope=True, period="day")
+        assert report.totals.sessions == report.totals.prompts == report.totals.llm_calls == 1
+        assert report.totals.tool_calls == 2
+        assert report.totals.mcp_calls == report.totals.subagent_launches == 1
+        assert report.totals.failures == report.totals.recovered_failures == 0
+        assert report.totals.duration_ms == 84_600_000
+        assert sum(item.count for item in report.tools) == 2
+        assert report.totals.input_tokens == 1000
+        # All-time remains compatible with the existing lifetime rollups.
+        assert UsageService(conn, now=NOW).report(global_scope=True, period="all").totals.prompts == 2
+
+        class FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return NOW
+
+        monkeypatch.setattr("reflect.dashboard_queries.datetime", FrozenDatetime)
+        payload = build_dashboard_payload(tmp_path / "reflect.db", range_name="24h",
+            lazy_all_tabs=True, include_comparison=False)
+        overview = payload["sqlite"]["overview"]
+        assert overview["prompt_count"] == 1
+        assert overview["tool_call_count"] == 2
+        assert overview["failure_count"] == 0
+        assert payload["sqlite"]["tabs"]["usage"]["mcp_calls"] == 1
+        assert payload["sqlite"]["tabs"]["usage"]["subagent_launches"] == 1
+    finally:
+        conn.close()
+
+
+def test_window_activity_covering_migration_preserves_deduplicated_facts(tmp_path, monkeypatch):
+    previous = [migration for migration in load_migrations() if migration.version <= 41]
+    with monkeypatch.context() as patcher:
+        patcher.setattr("reflect.store.migrate.load_migrations", lambda: previous)
+        conn = _open_db(tmp_path / "reflect.db")
+    try:
+        _seed_session(conn, "recent", started_at=NOW - timedelta(hours=1))
+        conn.execute("""UPDATE steps SET summary='UserPromptSubmit',
+            raw_attrs_json='{"gen_ai.client.turn_id":"same-turn"}' WHERE id='recent-step'""")
+        conn.execute("UPDATE steps SET raw_attrs_json=json_set(raw_attrs_json,'$.output',?)",
+                     ("large captured output " * 10_000,))
+        conn.execute("""INSERT INTO steps(id,session_id,seq,type,started_at,ended_at,status,
+            summary,raw_attrs_json,created_at,updated_at)
+            SELECT 'duplicate-prompt',session_id,3,type,started_at,ended_at,status,
+                summary,raw_attrs_json,created_at,updated_at FROM steps WHERE id='recent-step'""")
+        conn.execute("""INSERT INTO steps(id,session_id,seq,type,started_at,ended_at,status,
+            summary,raw_attrs_json,created_at,updated_at)
+            SELECT 'inferred-launch',session_id,4,type,started_at,ended_at,status,
+                summary,'{"reflect.time.provenance":"inferred"}',created_at,updated_at
+                FROM steps WHERE id='recent-subagent'""")
+        conn.execute("""INSERT INTO tool_calls(id,step_id,session_id,tool_name,status,
+            raw_attrs_json,created_at,updated_at)
+            SELECT 'subagent-tool',id,session_id,'spawn_agent','ok','{}',created_at,updated_at
+                FROM steps WHERE id='recent-subagent'""")
+        window = {"date_from": (NOW - timedelta(days=1)).isoformat(), "date_to": NOW.isoformat()}
+        service = UsageService(conn, now=NOW)
+        before = service.activity_totals(session_ids={"recent"}, **window)
+        assert [getattr(before, key) for key in (
+            "sessions", "prompts", "tool_calls", "failures", "recovered_failures",
+            "duration_ms", "llm_calls", "mcp_calls", "subagent_launches",
+        )] == [1, 1, 3, 0, 0, 300_000, 1, 1, 1]
+        retained = conn.execute("SELECT * FROM steps ORDER BY id").fetchall()
+        scope_sql = service._scope_cte("s.id=?", **window, materialize=True) + "SELECT * FROM scoped_steps ORDER BY id"
+        scope_params = ["recent", window["date_from"], window["date_to"]]
+        scope_before = conn.execute(scope_sql, scope_params).fetchall()
+        steps_root = conn.execute("SELECT rootpage FROM sqlite_master WHERE name='steps'").fetchone()[0]
+
+        def table_reads():
+            bytecode = conn.execute("EXPLAIN " + scope_sql, scope_params).fetchall()
+            table_cursors = {row[2] for row in bytecode
+                             if row[1] == "OpenRead" and row[3] == steps_root and row[4] == 0}
+            return [row for row in bytecode if row[1] == "Column" and row[2] in table_cursors]
+
+        assert table_reads(), "The old index must reproduce the wide step-table reads"
+        assert migrate(conn) == [42, 43, 44, 45, 46, 47, 48]
+        plan = conn.execute("EXPLAIN QUERY PLAN " + scope_sql, scope_params).fetchall()
+        assert any("COVERING INDEX idx_steps_measurement_times" in row[-1] for row in plan)
+        assert table_reads() == []
+        assert conn.execute(scope_sql, scope_params).fetchall() == scope_before
+        assert conn.execute("SELECT * FROM steps ORDER BY id").fetchall() == retained
+        assert service.activity_totals(session_ids={"recent"}, **window) == before
+        assert migrate(conn) == []
+        assert service.activity_totals(session_ids={"recent"}, **window) == before
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("state", ["ready", "preparing", "historical_pending"])
+def test_cli_and_mcp_preserve_usage_and_withhold_pending_insights(tmp_path, monkeypatch, state):
+    from reflect import mcp
+    from reflect.store.pending_refresh import PendingRefreshState
+    from reflect.store.sqlite import mark_snapshot
+
+    db = tmp_path / "reflect.db"
+    conn = _open_db(db)
+    try:
+        _seed_session(conn)
+        if state != "ready":
+            pending = PendingRefreshState(conn)
+            pending.mark({"session-current"}, phases=("graph", "improvements"))
+            if state == "historical_pending":
+                pending.defer({"session-current"}, phases=("graph", "improvements"))
+        mark_snapshot(conn, ready=True)
+    finally:
+        conn.close()
+    reads = []
+
+    def insights(*args, **kwargs):
+        reads.append(True)
+        return {"session-current": [{"id": "retained-insight"}]}
+
+    monkeypatch.setattr("reflect.improvements.session_insights.read_session_insights", insights)
+    monkeypatch.setenv("REFLECT_DB_PATH", str(db))
+    result = CliRunner().invoke(main, ["usage", "--session", "session-current", "--json", "--db-path", str(db)])
+    assert result.exit_code == 0, result.output
+    reports = [json.loads(result.output), mcp.reflect_usage(session_id="session-current")]
+    for report in reports:
+        assert report["analysis_state"] == state
+        assert report["totals"]["input_tokens"] == 1000
+        assert report["totals"]["estimated_cost_usd"] == 1.25
+        assert bool(report["insights"]) is (state == "ready")
+        assert report["analysis_coverage"]["improvements"]["pending_sessions"] == (state != "ready")
+        if state != "ready":
+            assert any("Derived analysis" in limitation for limitation in report["limitations"])
+    assert len(reads) == (2 if state == "ready" else 0)

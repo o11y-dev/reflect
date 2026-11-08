@@ -86,13 +86,14 @@ def test_mcp_keeps_memory_available_when_tracking_writer_is_busy(tmp_path, monke
         writer.execute("BEGIN IMMEDIATE")
         answer = mcp.reflect_context("release gate", path=str(tmp_path))
         assert answer["memories"][0]["id"] == memory_id
-        assert answer["task_run_id"] is None
-        assert answer["next_action"] is None
-        assert any("tracking was not recorded" in s for s in answer["limitations"])
+        assert answer["task_run_id"]
+        assert answer["next_action"]["tool"] == "reflect_complete"
+        assert answer["tracking_state"] == "accepted_pending"
         assert writer.execute("SELECT COUNT(*) FROM mcp_task_runs").fetchone()[0] == 0
         writer.rollback()
-        retried = mcp.reflect_context("release gate", path=str(tmp_path))
-        assert retried["task_run_id"]
+        from reflect.task_inbox import TaskEventInbox
+        TaskEventInbox(db).drain()
+        assert mcp.reflect_task_status(answer["task_run_id"])["tracking_state"] == "applied"
     finally:
         writer.close()
 
@@ -282,6 +283,81 @@ def test_cache_publication_race_defers_reload_without_failing_completed_refresh(
     assert cache.get() == {"generation": 1}
 
 
+@pytest.mark.parametrize("has_cached_report", [False, True])
+def test_cache_read_during_preparation_or_publication_never_duplicates_load(has_cached_report):
+    import threading
+
+    from reflect.dashboard_server import DashboardDataCache
+
+    running = True
+    started, release = threading.Event(), threading.Event()
+    loads = []
+
+    def initial():
+        if not has_cached_report:
+            raise SnapshotNotReadyError("first snapshot is preparing")
+        return {"generation": 0}
+
+    def load():
+        loads.append(1)
+        started.set()
+        assert release.wait(timeout=2)
+        return {"generation": len(loads)}
+
+    cache = DashboardDataCache(initial, refresh_loader=load, preparation_running=lambda: running)
+
+    def read():
+        if has_cached_report:
+            assert cache.get() == {"generation": 0}
+        else:
+            with pytest.raises(SnapshotNotReadyError):
+                cache.get()
+
+    read()
+    assert loads == []
+    publication = threading.Thread(target=cache.refresh)
+    publication.start()
+    assert started.wait(timeout=1)
+    try:
+        read()
+        running = False  # Single-flight protection also covers uncoordinated readers.
+        read()
+        assert len(loads) == 1
+    finally:
+        release.set()
+        publication.join(timeout=2)
+    assert not publication.is_alive()
+    assert cache.get() == {"generation": 1}
+    assert len(loads) == 1
+
+
+def test_cache_preserves_a_newer_refresh_requested_during_publication():
+    import threading
+
+    from reflect.dashboard_server import DashboardDataCache
+
+    started, release = threading.Event(), threading.Event()
+    loads = []
+
+    def load():
+        loads.append(1)
+        started.set()
+        assert release.wait(timeout=2)
+        return {"generation": len(loads)}
+
+    cache = DashboardDataCache(lambda: {"generation": 0}, refresh_loader=load)
+    first = threading.Thread(target=cache.refresh)
+    first.start()
+    assert started.wait(timeout=1)
+    try:
+        assert cache.refresh() == {"generation": 0}
+        assert len(loads) == 1
+    finally:
+        release.set()
+        first.join(timeout=2)
+    assert cache.get() == {"generation": 2}
+
+
 def test_crashed_process_releases_lock_and_large_backlog_replays_without_duplicates(tmp_path):
     db, spans = tmp_path / "reflect.db", tmp_path / "spans"
     write_events(spans, 1205)
@@ -372,16 +448,29 @@ def test_dashboard_reports_preparing_until_snapshot_is_published(tmp_path):
     try:
         mark_snapshot(conn, ready=False)
         client = TestClient(build_dashboard_app(docs_dir=tmp_path, db_path=db))
-        for endpoint in ("/api/data", "/api/data?agents=future-provider", "/api/session/session-test", "/api/explore/usage"):
+        for endpoint in ("/api/data", "/api/data?agents=future-provider", "/api/explore/usage"):
             response = client.get(endpoint)
             assert response.status_code == 503
             assert response.headers["Retry-After"] == "2"
             assert response.json()["state"] == "preparing"
+        # Captured activity is independently readable in one pinned transaction;
+        # unpublished analysis must remain unavailable rather than blocking it.
+        detail = client.get("/api/session/session-test")
+        assert detail.status_code == 200
+        assert detail.json()["derived_state"] == "preparing"
+        assert "measurements" not in detail.json()
         mark_snapshot(conn, ready=True)
-        assert client.get("/api/data").status_code == 200
+        published = client.get("/api/data")
+        assert published.status_code == 200
+        published_at = conn.execute(
+            "SELECT value FROM store_metadata WHERE key = 'last_successful_refresh'"
+        ).fetchone()[0]
+        assert published.json()["snapshot_completed_at"] == published_at
         assert client.get("/api/data?agents=future-provider").status_code == 200
         mark_snapshot(conn, ready=False)
-        assert client.get("/api/data").status_code == 200  # Last completed cache remains available.
+        cached = client.get("/api/data")
+        assert cached.status_code == 200  # Last completed cache remains available.
+        assert cached.json()["snapshot_completed_at"] == published_at
     finally:
         conn.close()
 
@@ -431,7 +520,8 @@ prepare_sql_report_db(Path(sys.argv[1]), otlp_traces=None, spans_dir=Path(sys.ar
         expect(b"writer-held")
         fallback = mcp.reflect_context("release gate", path=str(tmp_path))
         assert fallback["memories"][0]["id"] == memory_id
-        assert fallback["task_run_id"] is None
+        assert fallback["task_run_id"]
+        assert fallback["tracking_state"] == "accepted_pending"
         process.stdin.write(b"continue\n")
         expect(b"batch-committed")
         tracked = mcp.reflect_context("release gate", path=str(tmp_path))
@@ -443,7 +533,7 @@ prepare_sql_report_db(Path(sys.argv[1]), otlp_traces=None, spans_dir=Path(sys.ar
         conn = connect_sqlite_read_only(db)
         try:
             assert conn.execute("SELECT COUNT(*) FROM llm_calls").fetchone()[0] == 505
-            assert conn.execute("SELECT COUNT(*) FROM mcp_task_runs").fetchone()[0] == 1
+            assert conn.execute("SELECT COUNT(*) FROM mcp_task_runs").fetchone()[0] == 2
             assert conn.execute("SELECT input_tokens FROM session_rollups").fetchone()[0] == 10 * 505 * 506 // 2
         finally:
             conn.close()

@@ -18,10 +18,12 @@ CSS_SOURCES = (
     "css_sessions.css",
     "css_conversation.css",
     "css_graphs.css",
+    "css_skill_usage.css",
 )
 JS_SOURCES = (
     "js_bootstrap.js",
     "js_ledger.js",
+    "js_skill_usage.js",
     "js_navigation.js",
     "js_sessions.js",
     "js_impact.js",

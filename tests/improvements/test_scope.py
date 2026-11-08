@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+
+import pytest
+from click.testing import CliRunner
 
 from reflect.improvements.models import (
     EvidenceRef,
@@ -206,6 +210,114 @@ def test_session_scope_includes_descendants_and_global_scope_is_bounded(tmp_path
         assert resolver.path(tmp_path / "missing").matched is False
     finally:
         conn.close()
+
+
+@pytest.mark.parametrize("state", ["ready", "preparing", "historical_pending"])
+@pytest.mark.parametrize("scope_kind", ["path", "session"])
+def test_improvement_readiness_preserves_findings_and_respects_scope(tmp_path, monkeypatch, state, scope_kind):
+    from reflect import mcp
+    from reflect.core import main
+    from reflect.dashboard_improvements import DashboardImprovementAdapter
+    from reflect.store.pending_refresh import PendingRefreshState
+    from reflect.store.sqlite import mark_snapshot
+
+    _, conn, observation_a, _ = _scoped_service(tmp_path)
+    db = tmp_path / "reflect.db"
+    try:
+        pending = PendingRefreshState(conn)
+        pending.mark({"session-b"}, phases=("graph", "improvements"))
+        pending.defer({"session-b"}, phases=("graph", "improvements"))
+        if state != "ready":
+            pending.mark({"session-a-1"}, phases=("graph", "improvements"))
+            if state == "historical_pending":
+                pending.defer({"session-a-1"}, phases=("graph", "improvements"))
+        conn.execute(
+            "INSERT INTO store_metadata(key, value, updated_at) VALUES ('last_successful_refresh', ?, ?)",
+            (NOW, NOW),
+        )
+        mark_snapshot(conn, ready=True)
+    finally:
+        conn.close()
+    monkeypatch.setenv("REFLECT_DB_PATH", str(db))
+    if scope_kind == "path":
+        cli_scope = ["--path", str(tmp_path / "project-a")]
+        mcp_scope = {"path": str(tmp_path / "project-a")}
+        expected_sessions = 25
+    else:
+        cli_scope = ["--session", "session-a-0"]
+        mcp_scope = {"session_id": "session-a-0"}
+        expected_sessions = 2
+    result = CliRunner().invoke(main, ["improve", *cli_scope, "--json", "--db-path", str(db)])
+    assert result.exit_code == 0, result.output
+    cli_report = json.loads(result.output)
+    mcp_report = mcp.reflect_improvements(**mcp_scope)
+    assert cli_report["observations"][0]["id"] == mcp_report["findings"][0]["id"] == observation_a
+    assert cli_report["analysis_coverage"] == mcp_report["analysis_coverage"]
+    for report in (cli_report, mcp_report):
+        assert report["analysis_state"] == state
+        assert report["analysis_coverage"]["improvements"]["session_count"] == expected_sessions
+        assert report["analysis_coverage"]["improvements"]["pending_sessions"] == int(state != "ready")
+        assert bool(report["limitations"]) is (state != "ready")
+    assert mcp_report["freshness"]["safe_for_before_after"] is (state == "ready")
+    assert mcp_report["analysis_pending"] is (state != "ready")
+    assert mcp_report["evidence_state"] == ("current" if state == "ready" else "recorded")
+    rendered = CliRunner().invoke(main, ["improve", *cli_scope, "--db-path", str(db)])
+    assert rendered.exit_code == 0, rendered.output
+    assert ("Derived analysis is pending" in rendered.output) is (state != "ready")
+    dashboard = DashboardImprovementAdapter(db).findings(status=None, include_resolved=False, limit=10)
+    assert dashboard["analysis_state"] == ("preparing" if state == "preparing" else "historical_pending")
+    assert dashboard["analysis_coverage"]["improvements"]["pending_sessions"] == 1 + int(state != "ready")
+    assert dashboard["findings"] and dashboard["limitations"]
+
+
+def test_mcp_reads_recorded_findings_during_refresh_without_writes(tmp_path, monkeypatch):
+    from reflect import mcp
+    from reflect.context import ReflectContextService
+    from reflect.store.sqlite import mark_snapshot
+
+    _, conn, observation_a, _ = _scoped_service(tmp_path)
+    mark_snapshot(conn, ready=False)
+    conn.close()
+    monkeypatch.setenv("REFLECT_DB_PATH", str(tmp_path / "reflect.db"))
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Recorded finding inspection must not migrate or refresh")
+
+    monkeypatch.setattr(mcp, "connect_sqlite", forbidden)
+    monkeypatch.setattr("reflect.improvements.service.migrate", forbidden)
+    monkeypatch.setattr(ImprovementService, "refresh", forbidden)
+    original = ReflectContextService.improvements_summary
+
+    def inspect_read_only(service, **parameters):
+        assert service.conn.execute("PRAGMA query_only").fetchone()[0] == 1
+        assert service.conn.in_transaction
+        result = original(service, **parameters)
+        assert service.conn.total_changes == 0
+        return result
+
+    monkeypatch.setattr(ReflectContextService, "improvements_summary", inspect_read_only)
+    result = mcp.reflect_improvements(path=str(tmp_path / "project-a"), detail="full")
+    assert [item["id"] for item in result["findings"]] == [observation_a]
+    assert result["findings"][0]["evidence"]
+    assert result["analysis_state"] == "preparing"
+    assert result["analysis_pending"] is True
+    assert result["evidence_state"] == "recorded"
+    assert result["freshness"]["safe_for_before_after"] is False
+    assert result["limitations"]
+
+
+def test_recorded_mcp_findings_still_require_current_schema(tmp_path, monkeypatch):
+    from reflect import mcp
+    from reflect.preparation import SnapshotUnavailableError
+    from reflect.store.sqlite import mark_snapshot
+
+    _, conn, _, _ = _scoped_service(tmp_path)
+    conn.execute("DELETE FROM schema_migrations WHERE version=(SELECT MAX(version) FROM schema_migrations)")
+    mark_snapshot(conn, ready=False)
+    conn.close()
+    monkeypatch.setenv("REFLECT_DB_PATH", str(tmp_path / "reflect.db"))
+    with pytest.raises(SnapshotUnavailableError, match="pending migrations"):
+        mcp.reflect_improvements(path=str(tmp_path / "project-a"))
 
 
 def test_context_query_does_not_select_higher_impact_unrelated_project(tmp_path):

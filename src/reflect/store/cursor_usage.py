@@ -8,6 +8,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+from reflect.store.pending_refresh import PendingRefreshState
 from reflect.utils import _flatten_text_content, _load_json_lines
 
 
@@ -67,7 +68,8 @@ def repair_misattributed_cursor_transcript_usage(
         FROM steps st
         JOIN sessions s ON s.id = st.session_id
         LEFT JOIN agents a ON a.id = s.agent_id
-        WHERE json_extract(st.raw_attrs_json, '$."reflect.token.source"')
+        WHERE st.type = 'token_estimate'
+          AND json_extract(st.raw_attrs_json, '$."reflect.token.source"')
                 = 'estimated_cursor_transcript'
           AND lower(COALESCE(a.name, '')) <> 'cursor'
         ORDER BY st.session_id
@@ -124,11 +126,13 @@ def repair_misattributed_cursor_transcript_usage(
             """
             DELETE FROM steps
             WHERE session_id = ?
+              AND type = 'token_estimate'
               AND json_extract(raw_attrs_json, '$."reflect.token.source"')
                   = 'estimated_cursor_transcript'
             """,
             (session_id,),
         )
+    PendingRefreshState(conn).mark(session_ids)
     conn.commit()
     return {"repaired": len(session_ids), "session_ids": session_ids}
 
@@ -244,6 +248,7 @@ def apply_cursor_transcript_usage_estimates(
         )
         updated += 1
         updated_session_ids.append(session_id)
+    PendingRefreshState(conn).mark(updated_session_ids)
     conn.commit()
     return {
         "updated": updated,

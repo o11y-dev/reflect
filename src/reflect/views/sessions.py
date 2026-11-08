@@ -74,6 +74,7 @@ def list_sessions(
     max_cost: float | None = None,
     min_failures: int | None = None,
     include_context_only: bool = False,
+    session_ids: set[str] | None = None,
 ) -> SessionPage:
     """Return a paginated SQL-backed Sessions screen model."""
     page_limit = _clamp_limit(limit)
@@ -91,6 +92,10 @@ def list_sessions(
         include_context_only=include_context_only,
     )
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    if session_ids is not None:
+        where.append(f"s.id IN ({','.join('?' for _ in session_ids)})" if session_ids else "0=1")
+        params.extend(sorted(session_ids))
+        where_sql = f"WHERE {' AND '.join(where)}"
     total = conn.execute(
         f"""
         SELECT COUNT(*)
@@ -232,3 +237,74 @@ def _cursor_dicts(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
 
 def _clamp_limit(limit: int) -> int:
     return max(1, min(limit, 500))
+
+
+def select_session_scope(
+    conn: sqlite3.Connection, *, q: str = "", agents: set[str] | None = None,
+    model: str = "all", status: str = "all", date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[dict[str, Any]]:
+    """Select the full canonical population before navigation pagination.
+
+    This is a bounded-column SQL projection, never a list of rendered cards or
+    their truncated top-N fields. Date selection means observed activity.
+    """
+    predicates = [_WORK_SESSION_PREDICATE]
+    params: list[Any] = []
+    if agents:
+        predicates.append(f"COALESCE(a.name,sr.agent,'') IN ({','.join('?' for _ in agents)})")
+        params.extend(sorted(agents))
+    if model != "all":
+        predicates.append("EXISTS(SELECT 1 FROM llm_calls lc WHERE lc.session_id=s.id AND COALESCE(NULLIF(lc.response_model,''),lc.request_model)=?)")
+        params.append(model)
+    if status == "completed":
+        predicates.append("s.status IN ('ok','completed','success')")
+    elif status == "active":
+        predicates.append("s.status NOT IN ('ok','completed','success')")
+    elif status == "failing":
+        predicates.append("COALESCE(sr.error_count,s.failure_count,0)>0")
+    elif status == "recovered":
+        predicates.append("s.recovered_failure_count>0")
+    if q.strip():
+        predicates.append("instr(lower(s.id||' '||COALESCE(s.title,'')||' '||COALESCE(a.name,'')||' '||s.status),?)>0")
+        params.append(q.lower().strip())
+    date_parts = []
+    for operator, value in ((">=", date_from), ("<", date_to)):
+        if value:
+            date_parts.append(f"julianday(st.started_at){operator}julianday(?)")
+            params.append(value)
+    if date_parts:
+        predicates.append(f"EXISTS(SELECT 1 FROM steps st WHERE st.session_id=s.id AND {' AND '.join(date_parts)})")
+    return _cursor_dicts(conn.execute(f"""SELECT s.id,s.id AS session_id,
+        COALESCE(a.name,sr.agent,'unknown') AS agent,s.status,s.title,
+        s.started_at,s.ended_at,s.token_provenance,
+        COALESCE(sr.prompt_count,0) AS prompt_count,
+        COALESCE(sr.tool_call_count,0) AS tool_calls,
+        COALESCE(sr.error_count,s.failure_count,0) AS failure_count,
+        COALESCE(sr.duration_ms,0) AS duration_ms,
+        COALESCE(sr.input_tokens,s.input_tokens) AS input_tokens,
+        COALESCE(sr.output_tokens,s.output_tokens) AS output_tokens,
+        COALESCE(sr.cache_write_tokens,s.cache_creation_tokens) AS cache_creation_tokens,
+        COALESCE(sr.cache_read_tokens,s.cache_read_tokens) AS cache_read_tokens,
+        COALESCE(sr.input_tokens,s.input_tokens)+COALESCE(sr.output_tokens,s.output_tokens)
+          +COALESCE(sr.cache_write_tokens,s.cache_creation_tokens)+COALESCE(sr.cache_read_tokens,s.cache_read_tokens) AS total_tokens,
+        s.estimated_cost_usd AS total_cost_usd,
+        (SELECT COALESCE(NULLIF(response_model,''),request_model) FROM llm_calls lc
+            WHERE lc.session_id=s.id GROUP BY COALESCE(NULLIF(response_model,''),request_model)
+            ORDER BY COUNT(*) DESC LIMIT 1) AS primary_model
+        FROM sessions s LEFT JOIN agents a ON a.id=s.agent_id
+        LEFT JOIN session_rollups sr ON sr.session_id=s.id
+        WHERE {' AND '.join(predicates)} ORDER BY s.started_at DESC,s.id""", params))
+
+
+def aggregate_session_scope(conn: sqlite3.Connection, session_ids: set[str]) -> dict[str, Any]:
+    clause = f"s.id IN ({','.join('?' for _ in session_ids)})" if session_ids else "0=1"
+    return _cursor_dicts(conn.execute(f"""SELECT COUNT(*) AS session_count,
+        COALESCE(SUM(sr.prompt_count),0) AS prompt_count,
+        COALESCE(SUM(sr.tool_call_count),0) AS tool_call_count,
+        COALESCE(SUM(COALESCE(sr.error_count,s.failure_count)),0) AS failure_count,
+        COALESCE(SUM(s.input_tokens),0) AS input_tokens,
+        COALESCE(SUM(s.output_tokens),0) AS output_tokens,
+        COALESCE(SUM(s.estimated_cost_usd),0) AS estimated_cost_usd
+        FROM sessions s LEFT JOIN session_rollups sr ON sr.session_id=s.id
+        WHERE {clause}""", sorted(session_ids)))[0]

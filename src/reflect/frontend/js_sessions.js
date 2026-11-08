@@ -203,11 +203,22 @@ class SessionConversationPlayhead {
 }
 
 (function initSessionBrowser(){
-  const sessions = D.sessions || [];
-  if (!sessions.length) return;
-
+  const sessions = D.sessions || (D.sessions = []);
   const params = currentParams();
   const initialSessionId = params.get('session');
+  if (initialSessionId && !sessions.some(session => (session.full_id || session.id) === initialSessionId || session.id === initialSessionId)) {
+    // Navigation identity only. Detail comes from its own API, never invented
+    // summary totals or a filtered aggregate rebuilt from session cards.
+    sessions.push({id:initialSessionId, full_id:initialSessionId, _navigationOnly:true});
+  }
+  D._navigationCompletedAt = D.snapshot_completed_at || D._navigationCompletedAt || '';
+  D._navigationLoadedAt = D._navigationLoadedAt || new Date().toISOString();
+  function navigationSnapshotLabel(){
+    if (D._unpublishedNavigation) return 'published navigation not loaded';
+    return D._navigationCompletedAt
+      ? `report completed ${new Date(D._navigationCompletedAt).toLocaleString()}`
+      : `report loaded ${new Date(D._navigationLoadedAt).toLocaleString()}`;
+  }
   let selectedIdx = initialSessionId ? sessions.findIndex(s => (s.full_id || s.id) === initialSessionId || s.id === initialSessionId) : -1;
   if (selectedIdx < 0) selectedIdx = null;
   let activeConversationPlayhead = null;
@@ -300,9 +311,14 @@ class SessionConversationPlayhead {
     agents: new Set((params.get('agents') || '').split(',').filter(Boolean)),
     model: params.get('model') || 'all',
     status: params.get('status') || 'all',
-    range: params.get('range') || 'all',
+    range: params.get('range') || (params.get('session') || !D.sql_backed ? 'all' : (D.range || '7d')),
     sort: params.get('sort') || 'recent',
   };
+  if (D.sql_backed && reportSupportsServerFiltering() && !params.has('range') && !initialSessionId && params.get('tab') !== 'explore') {
+    // Persist the default before selecting a session adds its identity to the
+    // URL; a reload must keep the same activity window.
+    updateUrlParams(urlParams => urlParams.set('range', filterState.range));
+  }
 
   document.addEventListener('keydown', event => {
     const session = selectedIdx === null ? null : sessions[selectedIdx];
@@ -321,6 +337,7 @@ class SessionConversationPlayhead {
   // Detect which agents exist
   const agentTab = sqlTab('agents');
   const agentSet = new Set([
+    ...filterState.agents,
     ...sessions.map(s => s.agent).filter(Boolean),
     ...(agentTab.agent_comparison || []).map(a => a.name).filter(Boolean),
     ...Object.keys(agentTab.agents || {}),
@@ -347,6 +364,7 @@ class SessionConversationPlayhead {
   let filterExpanded = true;
   const agentNames = [...agentSet].sort((a,b) => a.localeCompare(b));
   const modelNames = [...new Set([
+    ...(filterState.model === 'all' ? [] : [filterState.model]),
     ...sessions.map(s => s.primary_model).filter(Boolean),
     ...Object.keys(sqlTab('models').models_by_count || {}),
   ])].sort((a,b) => a.localeCompare(b));
@@ -381,8 +399,7 @@ class SessionConversationPlayhead {
       else urlParams.delete('model');
       if (filterState.status !== 'all') urlParams.set('status', filterState.status);
       else urlParams.delete('status');
-      if (filterState.range !== 'all') urlParams.set('range', filterState.range);
-      else urlParams.delete('range');
+      urlParams.set('range', filterState.range);
       if (filterState.sort !== 'recent') urlParams.set('sort', filterState.sort);
       else urlParams.delete('sort');
       urlParams.delete('session');
@@ -393,6 +410,7 @@ class SessionConversationPlayhead {
     if (!reportSupportsServerFiltering()) return false;
     if (reloadTimer) window.clearTimeout(reloadTimer);
     showReportLoader('Filtering sessions...');
+    suspendDashboardReads();
     reloadTimer = window.setTimeout(() => window.location.reload(), 120);
     return true;
   }
@@ -468,13 +486,12 @@ class SessionConversationPlayhead {
     renderSessionDetail(selectedIdx === null ? null : sessions[idx]);
     if (updateUrl) {
       updateUrlParams(urlParams => {
+        urlParams.set('range', filterState.range);
         const selected = selectedIdx === null ? null : sessions[selectedIdx];
         if (selected) urlParams.set('session', selected.full_id || selected.id);
         else urlParams.delete('session');
       });
-      if (selected && reportSupportsServerFiltering()) {
-        scheduleDashboardReload();
-      }
+      if (selected) activateTab('sessions');
     }
   }
 
@@ -501,6 +518,12 @@ class SessionConversationPlayhead {
   });
   modelSelect.value = modelNames.includes(filterState.model) ? filterState.model : 'all';
   statusSelect.value = filterState.status;
+  if (![...rangeSelect.options].some(option => option.value === filterState.range)) {
+    const option = document.createElement('option');
+    option.value = filterState.range;
+    option.textContent = `Last ${parseInt(filterState.range, 10)} days`;
+    rangeSelect.appendChild(option);
+  }
   rangeSelect.value = filterState.range;
   sortSelect.value = filterState.sort;
   modelSelect.addEventListener('change', () => { filterState.model = modelSelect.value; persistFilters(); if (scheduleDashboardReload()) return; renderSessionList(); });
@@ -512,12 +535,12 @@ class SessionConversationPlayhead {
     filterState.agents.clear();
     filterState.model = 'all';
     filterState.status = 'all';
-    filterState.range = 'all';
+    filterState.range = D.sql_backed ? '7d' : 'all';
     filterState.sort = 'recent';
     searchInput.value = '';
     modelSelect.value = 'all';
     statusSelect.value = 'all';
-    rangeSelect.value = 'all';
+    rangeSelect.value = filterState.range;
     sortSelect.value = 'recent';
     persistFilters();
     if (scheduleDashboardReload()) return;
@@ -572,6 +595,7 @@ class SessionConversationPlayhead {
   }
 
   function filteredSessions(){
+    const serverFiltered = D.sql_backed && reportSupportsServerFiltering() && !D._unfilteredNavigation;
     const searchText = filterState.q.toLowerCase();
     const reportNow = Math.max(...sessions.map(sessionTimeMs).filter(Boolean), Date.now());
     const rangeMs = filterState.range === '24h' ? 24 * 60 * 60 * 1000
@@ -579,6 +603,8 @@ class SessionConversationPlayhead {
       : filterState.range === '30d' ? 30 * 24 * 60 * 60 * 1000
       : 0;
     const filtered = sessions.map((s,i) => ({...s, _idx:i})).filter(s => {
+      if (serverFiltered) return true;
+      if ((s._navigationOnly || D._unfilteredNavigation) && (s.full_id || s.id) === initialSessionId) return true;
       if (filterState.agents.size && !filterState.agents.has(s.agent || '')) return false;
       if (filterState.model !== 'all' && (s.primary_model || '') !== filterState.model) return false;
       if (filterState.status === 'completed' && !s.is_completed) return false;
@@ -621,7 +647,11 @@ class SessionConversationPlayhead {
     renderFilterChips();
     const hasFilters = Boolean(filterState.q || filterState.agents.size || filterState.model !== 'all' || filterState.status !== 'all' || filterState.range !== 'all' || filterState.sort !== 'recent');
     const totalSessions = Number(D.session_list_total || sessions.length || 0);
-    metaEl.textContent = hasFilters
+    metaEl.textContent = D._unpublishedNavigation
+      ? 'Captured session activity · published navigation not loaded'
+      : D._navigationFromCache
+      ? `${fmt(filtered.length)} navigation entries · ${navigationSnapshotLabel()}`
+      : hasFilters
       ? `Showing ${fmt(filtered.length)} of ${fmt(totalSessions)} sessions`
       : `Showing ${fmt(filtered.length)} of ${fmt(totalSessions)} sessions`;
     if (launcherMetaEl) launcherMetaEl.textContent = metaEl.textContent;
@@ -656,16 +686,16 @@ class SessionConversationPlayhead {
         <div class="sb-card-header">
           <div class="sb-card-agent-icon">${agentIconSvg(s.agent)}</div>
           <div class="sb-card-agent">${escHtml(agentName)}</div>
-          <div class="sb-card-time">${escHtml(fmtWorkflowDate(s.created_at))}</div>
+          <div class="sb-card-time">${s._navigationOnly ? 'Linked session' : escHtml(fmtWorkflowDate(s.created_at))}</div>
         </div>
         <div class="sb-card-prompt">${prompt}</div>
         <div class="sb-card-badges">
-          <div class="sb-card-badge">${fmt(s.event_count || 0)} events</div>
+          ${s._navigationOnly ? '<div class="sb-card-badge">Activity detail · summary unavailable</div>' : `<div class="sb-card-badge">${fmt(s.event_count || 0)} events</div>
           ${tokens > 0 ? `<div class="sb-card-badge">${estimatedTokens ? '~' : ''}${fmtTokenShort(tokens)} tok</div>` : ''}
-          ${cost > 0
+          ${costPresentation.status === 'estimated'
             ? `<div class="sb-card-badge">${fmtCost(cost)} ${escHtml(unit)}</div>`
             : `<div class="sb-card-badge" style="color:var(--text-3)" title="${escHtml(costPresentation.reason)}">${escHtml(costPresentation.label)}</div>`}
-          ${s.quality_available ? `<div class="sb-card-badge" style="color:${Number(s.quality_score || 0) > 70 ? 'var(--green)' : 'var(--yellow)'}">${Number(s.quality_score || 0).toFixed(0)}%</div>` : '<div class="sb-card-badge" style="color:var(--text-3)">No score</div>'}
+          ${s.quality_available ? `<div class="sb-card-badge" style="color:${Number(s.quality_score || 0) > 70 ? 'var(--green)' : 'var(--yellow)'}">${Number(s.quality_score || 0).toFixed(0)}%</div>` : '<div class="sb-card-badge" style="color:var(--text-3)">No score</div>'}`}
         </div>
       </button>`;
     }).join('');
@@ -686,7 +716,7 @@ class SessionConversationPlayhead {
     activeConversationPlayhead?.destroy();
     activeConversationPlayhead = null;
     if (!session) {
-      detailEl.innerHTML = `<div class="sb-empty"><div class="sb-empty-icon" aria-hidden="true">&#9776;</div><div>Select a session to view its conversation timeline</div></div>`;
+      detailEl.innerHTML = '<div class="sb-empty"><div class="sb-empty-icon" aria-hidden="true">&#9776;</div><div>Select a session to view its conversation timeline</div></div>';
       return;
     }
 
@@ -700,10 +730,10 @@ class SessionConversationPlayhead {
     const sessionCost = detailCostPresentation.cost;
     const sessionUnit = String(session.pricing_unit || sqlTab('usage').pricing_unit || 'usd').toUpperCase();
     const tokenMeta = estimatedTokens
-      ? (session._fullLoaded ? 'Estimated from full Cursor transcript content.' : 'Estimated from available Cursor transcript preview.')
+      ? (session._activityLoaded || session._fullLoaded ? 'Estimated from full Cursor transcript content.' : 'Estimated from available Cursor transcript preview.')
       : (session.token_note || '');
     const tokenNote = estimatedTokens
-      ? (session._fullLoaded
+      ? (session._activityLoaded || session._fullLoaded
         ? 'Token counts are estimated from Cursor transcript text because exact per-session usage is not present in local telemetry.'
         : 'Token counts are estimated from the available Cursor transcript preview because exact per-session usage is not present in local telemetry. Load the full transcript to refine this estimate.')
       : (session.token_note || '');
@@ -721,17 +751,22 @@ class SessionConversationPlayhead {
         <div class="sb-detail-agent-badge" style="background:${agentColor}">${escHtml(agentName)}</div>
         ${session.primary_model ? `<div class="sb-detail-model">${escHtml(session.primary_model)}</div>` : ''}
       </div>
-      <div class="sb-detail-stats">
+      ${session._navigationOnly || (session.usage_state || session.derived_state) === 'preparing' ? '' : `<div class="sb-detail-stats">
         <span>Duration: <strong>${fmtDur(session.duration_ms)}</strong></span>
         <span>Events: <strong>${fmt(session.event_count || 0)}</strong></span>
         <span title="${tokenMeta}">In: <strong>${estimatedTokens ? '~' : ''}${fmtTokenShort(inTok)}</strong></span>
         <span title="${tokenMeta}">Out: <strong>${estimatedTokens ? '~' : ''}${fmtTokenShort(outTok)}</strong></span>
         ${cacheTok > 0 ? `<span>Cache: <strong>${fmtTokenShort(cacheTok)}</strong></span>` : ''}
-        ${sessionCost > 0
+        ${detailCostPresentation.status === 'estimated'
           ? `<span title="Cost basis: ${escHtml(session.pricing_source || sqlTab('usage').pricing_source || 'unknown')}">Cost: <strong>${fmtCost(sessionCost)} ${escHtml(sessionUnit)}</strong></span>`
           : `<span title="${escHtml(detailCostPresentation.reason)}">Cost: <strong>${escHtml(detailCostPresentation.label)}</strong></span>`}
         ${session.failure_count > 0 ? `<span style="color:var(--red)">Failures: <strong>${session.failure_count}</strong></span>` : ''}
-      </div>
+      </div>`}
+      ${D._navigationFromCache && !session._navigationOnly ? `<p class="inbox-copy">Summary from ${escHtml(navigationSnapshotLabel())}.</p>` : ''}
+      ${session._retainedUsage ? `<p class="inbox-copy" role="status">Showing observed usage from ${escHtml(new Date(session._usageLoadedAt).toLocaleString())}. Updated usage is pending.</p>` : ''}
+      ${session._navigationOnly ? '<p class="inbox-copy">Session summary unavailable. Captured activity is loaded separately.</p>' : ''}
+      ${session.derived_state === 'preparing' ? '<p class="inbox-copy" role="status">Captured activity available; analysis is refreshing. <button type="button" class="ledger-button" data-session-retry>Retry analysis</button></p>' : ''}
+      ${session.derived_state === 'historical_pending' ? `<p class="inbox-copy" role="status">${escHtml(session.analysis_pending_reason || 'Historical analysis is pending. Run reflect refresh --session with this session ID.')}</p>` : ''}
       <div class="feedback-row" aria-label="Record session outcome">
         <span class="feedback-label">Outcome</span>
         <button type="button" class="ledger-button" data-session-feedback="good">Good</button>
@@ -743,6 +778,10 @@ class SessionConversationPlayhead {
       ${tokenNote ? `<div class="sb-detail-model" style="margin-top:8px">${escHtml(tokenNote)}</div>` : ''}
     </div>`;
 
+    if (activeDetailTab === 'summary') headerHtml += renderObservedMeasurements(session);
+    if (session._detailLoadError) {
+      headerHtml += `<div class="inbox-copy" role="status">${escHtml(session._detailLoadError)} <button type="button" class="ledger-button" data-session-retry>Retry details</button></div>`;
+    }
     const conversation = session.conversation || [];
     const sessionStartTs = conversation.length > 0 ? conversation[0].ts : 0;
 
@@ -774,13 +813,14 @@ class SessionConversationPlayhead {
       + detailTabsHtml
       + `<div class="sb-detail-body">${bodyHtml}</div>`;
 
+    detailEl.querySelectorAll('[data-session-retry]').forEach(button => button.addEventListener('click', event => {
+      tryLoadFullDetail(session.full_id || session.id, event.currentTarget);
+    }));
+
     detailEl.querySelectorAll('.sb-detail-tab').forEach(tab => {
       tab.addEventListener('click', () => {
         session._detailTab = tab.dataset.tab || 'summary';
         renderSessionDetail(session);
-        if ((session._detailTab === 'evidence' || session._detailTab === 'execution' || session._detailTab === 'changes') && session.full_id && !session._fullLoaded && !session._loadingDetail) {
-          tryLoadFullDetail(session.full_id || session.id, null);
-        }
       });
     });
 
@@ -958,7 +998,7 @@ class SessionConversationPlayhead {
     }
 
     // Auto-load full detail silently on selection — no button required
-    if (session.full_id && !session._fullLoaded && !session._loadingDetail) {
+    if (session.full_id && !session._activityLoaded && !session._fullLoaded && !session._loadingDetail && !session._detailLoadError) {
       tryLoadFullDetail(session.full_id || session.id, null);
     }
   }
@@ -967,7 +1007,7 @@ class SessionConversationPlayhead {
     if (ev.type === 'prompt') return EVENT_COLORS.prompt;
     if (ev.type === 'response') return EVENT_COLORS.response;
     if (ev.type === 'tool_call') return EVENT_COLORS.tool_call;
-    if (ev.type === 'tool_result') return ev.success ? EVENT_COLORS.tool_result_ok : EVENT_COLORS.tool_result_fail;
+    if (ev.type === 'tool_result') return ev.success === true ? EVENT_COLORS.tool_result_ok : ev.success === false ? EVENT_COLORS.tool_result_fail : EVENT_COLORS.tool_call;
     if (ev.type === 'subagent_start' || ev.type === 'subagent_stop') return EVENT_COLORS.subagent_start;
     if (ev.type === 'mcp_call' || ev.type === 'mcp_result') return EVENT_COLORS.mcp_call;
     return EVENT_COLORS.session_start;
@@ -1023,9 +1063,9 @@ class SessionConversationPlayhead {
       icon = '▶'; name = ev.tool_name || 'Tool';
       meta2 = ev.preview ? ev.preview.slice(0,72) : 'input not captured';
     } else if (ev.type === 'tool_result') {
-      icon = ev.success !== false ? '✓' : '✗'; name = ev.tool_name || 'Result';
+      icon = ev.success === true ? '✓' : ev.success === false ? '✗' : '↩'; name = ev.tool_name || 'Result';
       meta2 = ev.preview ? ev.preview.slice(0,72) : (ev.success === false ? 'failure details not captured' : '');
-      statusHtml = ev.success !== false ? '<span class="chip-ok">ok</span>' : '<span class="chip-fail">failed</span>';
+      statusHtml = ev.success === true ? '<span class="chip-ok">ok</span>' : ev.success === false ? '<span class="chip-fail">failed</span>' : '<span>result observed · status unknown</span>';
     } else if (ev.type === 'mcp_call') {
       icon = '⬡'; name = ev.tool_name || 'MCP';
       meta2 = ev.server || '';
@@ -1092,7 +1132,7 @@ class SessionConversationPlayhead {
 
   function renderConversationThread(session, conversation, sessionStartTs, isActivityType){
     if (!conversation.length) {
-      if (session.full_id && !session._fullLoaded) {
+      if (session.full_id && !session._activityLoaded && !session._fullLoaded && !session._detailLoadError) {
         return `<div class="chat-loading"><div class="chat-loading-dot"></div><div class="chat-loading-dot"></div><div class="chat-loading-dot"></div><span>Loading conversation…</span></div>`;
       }
       return '<div style="color:var(--text-3);text-align:center;padding:40px">No conversation data for this session</div>';
@@ -1294,7 +1334,32 @@ class SessionConversationPlayhead {
     </div>`;
   }
 
+  function renderObservedMeasurements(session){
+    if ((session.usage_state || session.derived_state) === 'preparing' && !session._retainedUsage) return '';
+    const data = session.measurements;
+    if (!data) return '';
+    const m = data.metrics || {}, c = data.coverage || {};
+    const value = (v, format = fmt) => v == null ? 'Unavailable' : format(v);
+    const facts = [
+      ['Completed turns', value(m.completed_turns)],
+      ['Mean input / turn', value(m.mean_input_tokens, fmtTokenShort)],
+      ['Maximum tools / turn', value(m.max_tool_calls_per_turn)],
+      ['Cache read share', value(m.cache_read_ratio, v => `${(v*100).toFixed(1)}%`)],
+      ['Observed idle', value(m.idle_total_ms, fmtDur)],
+      ['Model switches', value(m.model_switches)],
+    ];
+    return `<section class="tool-inventory-section"><h4>Observed measurements</h4><div class="sb-detail-stats">${facts.map(([label,v])=>`<span>${escHtml(label)}: <strong>${escHtml(String(v))}</strong></span>`).join('')}</div><p class="inbox-copy">Session lifetime · pricing ${escHtml(c.cost_status || 'unavailable')} (${fmt(c.complete_priced_usage ?? c.priced_usage ?? 0)}/${fmt(c.observed_usage || 0)} fully priced usage records). Turn usage ${fmt(c.eligible_usage_turns || 0)}/${fmt(m.completed_turns || 0)}. Missing evidence stays unavailable.</p>${session.derived_state && session.derived_state !== 'ready' ? '<p class="inbox-copy">Task assessment is pending analysis.</p>' : !(session.assessments || []).length ? '<p class="inbox-copy">Task outcome: unknown. No validated acceptance evidence.</p>' : ''}${(session.assessments || []).length ? '<h4>Recent execution assessments · up to 20</h4>' : ''}${(session.assessments || []).map(a=>`<p class="inbox-copy">Outcome: ${escHtml(a.outcome || 'unknown')} · verification: ${a.verification_passed === 1 ? 'passed' : a.verification_passed === 0 ? 'failed or invalidated' : 'unknown'}</p>`).join('')}${(session.insights || []).slice(0,3).map(i=>`<article><strong>${escHtml(i.title)}</strong><p>${escHtml(i.summary)}</p><small>${escHtml(String(i.metric_value))} ${escHtml(i.metric_unit)} · session lifetime</small></article>`).join('')}</section>`;
+  }
+
+  function renderGitActivity(session){
+    if ((session.usage_state || session.derived_state) === 'preparing' && !session._retainedUsage) return '<section class="tool-inventory-section"><h4>Git &amp; PR/MR activity</h4><p class="inbox-copy">Git activity analysis is refreshing. Captured file events are shown below.</p></section>';
+    const data = session.git_activity;
+    if (!data) return '';
+    return `<section class="tool-inventory-section"><h4>Git &amp; PR/MR activity</h4><p class="inbox-copy">${fmt(data.total_operations || 0)} captured operations · ${fmt(data.states?.confirmed || 0)} confirmed · ${fmt(data.states?.failed || 0)} failed. Counts cover captured sessions.</p><table class="tool-inventory-table"><thead><tr><th>Operation</th><th>Artifact</th><th>Result</th></tr></thead><tbody>${(data.operations || []).map(o=>`<tr><td>${escHtml(o.provider || '')} ${escHtml(o.operation)}</td><td>${escHtml(o.artifact_id || o.repository || 'Identity unavailable')}</td><td title="${escHtml(o.reason || '')}">${escHtml(o.state)}</td></tr>`).join('')}</tbody></table>${!data.total_operations ? '<p>No Git operation evidence was captured.</p>' : ''}</section>`;
+  }
+
   function renderSessionChangesPanel(session){
+    const gitHtml = renderGitActivity(session);
     const events = [...(session.conversation || []), ...(session.spans || [])];
     const changes = events.filter(event => {
       const name = String(event.tool_name || event.name || event.type || '').toLowerCase();
@@ -1311,9 +1376,9 @@ class SessionConversationPlayhead {
     });
     const unique = Array.from(new Map(changes.map(item => [`${item.action}:${item.path}:${item.status}`, item])).values());
     if (!unique.length) {
-      return `<div class="tool-inventory-shell"><section class="tool-inventory-section"><h4>Changes</h4><div style="color:var(--text-3)">No file-change evidence was captured for this session. This does not prove that no change occurred.</div></section></div>`;
+      return gitHtml + `<div class="tool-inventory-shell"><section class="tool-inventory-section"><h4>Changes</h4><div style="color:var(--text-3)">No file-change evidence was captured for this session. This does not prove that no change occurred.</div></section></div>`;
     }
-    return `<div class="tool-inventory-shell"><section class="tool-inventory-section"><h4>Observed changes</h4><table class="tool-inventory-table"><thead><tr><th>Action</th><th>Path</th><th>Status</th></tr></thead><tbody>${unique.slice(0,100).map(item => `<tr><td>${escHtml(String(item.action))}</td><td><code>${escHtml(String(item.path))}</code></td><td>${escHtml(String(item.status))}</td></tr>`).join('')}</tbody></table></section></div>`;
+    return gitHtml + `<div class="tool-inventory-shell"><section class="tool-inventory-section"><h4>Observed changes</h4><table class="tool-inventory-table"><thead><tr><th>Action</th><th>Path</th><th>Status</th></tr></thead><tbody>${unique.slice(0,100).map(item => `<tr><td>${escHtml(String(item.action))}</td><td><code>${escHtml(String(item.path))}</code></td><td>${escHtml(String(item.status))}</td></tr>`).join('')}</tbody></table></section></div>`;
   }
 
   function renderConversationCasefile(session, conversation, loadBtnHtml, timelineHtml){
@@ -1352,7 +1417,7 @@ class SessionConversationPlayhead {
     if (ev.type === 'prompt') return 'Prompt';
     if (ev.type === 'response') return ev.model ? `Response · ${ev.model}` : 'Response';
     if (ev.type === 'tool_call') return ev.tool_name || 'Tool call';
-    if (ev.type === 'tool_result') return `${ev.success === false ? 'Failed' : 'Done'} · ${ev.tool_name || 'Tool'}`;
+    if (ev.type === 'tool_result') return `${ev.success === true ? 'Passed' : ev.success === false ? 'Failed' : 'Result observed'} · ${ev.tool_name || 'Tool'}`;
     if (ev.type === 'mcp_call') return `MCP · ${ev.tool_name || ev.server || 'Call'}`;
     if (ev.type === 'mcp_result') return `MCP result · ${ev.tool_name || ev.server || 'Call'}`;
     if (ev.type === 'subagent_start') return `Subagent · ${ev.subagent_type || 'start'}`;
@@ -1372,7 +1437,8 @@ class SessionConversationPlayhead {
       Number(session.prompt_count || 0) + Number(session.tool_calls || session.tool_call_count || 0)
     );
     if (!events.length) {
-      const copy = session.full_id && !session._fullLoaded ? 'Loading session timeline...' : 'No timeline events available for this session.';
+      const copy = session._detailLoadError ? 'Session timeline is currently unavailable.'
+        : session.full_id && !session._activityLoaded && !session._fullLoaded ? 'Loading session timeline...' : 'No timeline events available for this session.';
       return `<div class="session-timeline-panel"><div class="session-timeline-head"><div class="session-timeline-title">Session Timeline</div></div><div class="session-timeline-empty">${copy}</div></div>`;
     }
     const startTs = Number(events[0].ts || 0);
@@ -1517,7 +1583,7 @@ class SessionConversationPlayhead {
         output_tokens: ev.output_tokens || 0,
         cache_read_tokens: ev.cache_read_tokens || 0,
         duration_ms: ev.duration_ms || 0,
-        success: ev.success !== undefined ? ev.success : true,
+        success: typeof ev.success === 'boolean' ? ev.success : null,
         subagent_type: ev.subagent_type || '',
         server: ev.server || '',
       };
@@ -1639,6 +1705,8 @@ class SessionConversationPlayhead {
   }
 
   function renderQualityPanel(session){
+    if (session.derived_state === 'preparing') return '<p class="inbox-copy">Session analysis will be available after refresh. Conversation, tools and captured changes remain available.</p>';
+    if (session._navigationOnly) return '<p class="inbox-copy">No published summary is loaded for this linked session. See its captured activity and observed measurements.</p>';
     const rules = D.quality_rules || [];
     const hasScore = session.quality_available === true;
     const score = Number(session.quality_score || 0);
@@ -1698,7 +1766,7 @@ class SessionConversationPlayhead {
           <div class="quality-score-label">${escHtml(status)}</div>
         </div>
         <div class="quality-note">
-          <div style="font-weight:800;color:var(--text);margin-bottom:8px">Why this session ${hasScore ? 'has a score' : 'does not have a score'}</div>
+          <div style="font-weight:800;color:var(--text);margin-bottom:8px">Heuristic workflow score · task success is assessed separately</div>
           <div>${escHtml(note)}</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
             ${sessionSignals.map(([label, value]) => `<span class="sb-card-badge">${escHtml(label)}: ${escHtml(value)}</span>`).join('')}
@@ -1727,7 +1795,7 @@ class SessionConversationPlayhead {
           </tbody>
         </table>
       </div>` : `<div class="quality-note">No score breakdown is available because this session was not scored from detailed telemetry.</div>`}
-      <div class="panel-title" style="margin-top:2px">Quality Rules</div>
+      <div class="panel-title" style="margin-top:2px">Heuristic Rules</div>
       <div class="quality-rules">
         ${rules.map(rule => `
           <div class="quality-rule">
@@ -1938,15 +2006,32 @@ class SessionConversationPlayhead {
   }
 
   function tryLoadFullDetail(sessionId, btn){
+    if (!dashboardDocumentActive) return;
     const idx = sessions.findIndex(s => (s.full_id || s.id) === sessionId);
-    if (idx >= 0) sessions[idx]._loadingDetail = true;
+    if (idx >= 0) {
+      if (sessions[idx]._loadingDetail) return;
+      delete sessions[idx]._refreshDetailAfterLoad;
+      sessions[idx]._loadingDetail = true;
+      sessions[idx]._detailLoadError = '';
+    }
     if (btn) {
       btn.disabled = true;
       btn.textContent = 'Loading…';
     }
-    fetch('/api/session/' + encodeURIComponent(sessionId))
-      .then(r => {
-        if (!r.ok) throw new Error('not-found');
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 30000);
+    const initialDetail = idx >= 0 ? sessions[idx]._initialDetail : null;
+    if (idx >= 0) delete sessions[idx]._initialDetail;
+    const request = initialDetail
+      ? Promise.resolve({ok:true, status:200, json:async () => initialDetail})
+      : fetch('/api/session/' + encodeURIComponent(sessionId), {signal: controller.signal, cache:'no-store'});
+    return request
+      .then(async r => {
+        if (r.status === 503 && (await r.json()).state === 'preparing') {
+          throw new Error('Session details are refreshing. Showing the last completed summary. Retry after refresh completes.');
+        }
+        if (r.status === 404) throw new Error('Session not found in captured telemetry.');
+        if (!r.ok) throw new Error('Session details could not be loaded. Please retry.');
         return r.json();
       })
       .then(data => {
@@ -1954,11 +2039,25 @@ class SessionConversationPlayhead {
         const telemetry = data.telemetry || null;
         const toolInventory = data.tool_inventory || null;
         if (idx >= 0) {
+          if (data.session?.agent) sessions[idx].agent = data.session.agent;
           const conv = normalizeLoadedConversation(events, sessions[idx].conversation);
-          if (conv.length > 0) sessions[idx].conversation = conv;
+          sessions[idx].conversation = conv;
           if (telemetry) sessions[idx].telemetry = telemetry;
           if (toolInventory) sessions[idx].tool_inventory = toolInventory;
-          sessions[idx]._fullLoaded = true;
+          sessions[idx].derived_state = data.derived_state || 'ready';
+          sessions[idx].usage_state = data.usage_state || sessions[idx].derived_state;
+          sessions[idx].analysis_pending_reason = data.analysis_pending_reason || '';
+          if (sessions[idx].derived_state === 'preparing') markNavigationCached();
+          sessions[idx]._retainedUsage = sessions[idx].usage_state !== 'ready' && Boolean(sessions[idx]._usageLoadedAt);
+          for (const key of ['measurements','git_activity','pricing_coverage','cost_scope','total_cost_usd','insights','assessments']) {
+            const assessment = ['insights','assessments'].includes(key);
+            const state = assessment ? sessions[idx].derived_state : sessions[idx].usage_state;
+            if (state === 'ready' && Object.hasOwn(data, key)) sessions[idx][key] = data[key];
+            else if (assessment || !sessions[idx]._retainedUsage) delete sessions[idx][key];
+          }
+          if (sessions[idx].usage_state === 'ready') sessions[idx]._usageLoadedAt = data.snapshot_completed_at || new Date().toISOString();
+          sessions[idx]._activityLoaded = true;
+          sessions[idx]._fullLoaded = sessions[idx].derived_state === 'ready';
           sessions[idx]._loadingDetail = false;
           const estimated = getEstimatedSessionTokens(sessions[idx]);
           if (estimated) {
@@ -1968,26 +2067,73 @@ class SessionConversationPlayhead {
             sessions[idx].token_source = 'estimated_cursor_transcript';
             sessions[idx].token_note = 'Token counts are estimated from Cursor transcript text because exact per-session usage is not present in local telemetry.';
           }
-          renderSessionDetail(sessions[idx]);
+          renderLoadedSession(idx);
         } else if (btn) {
           btn.textContent = 'No conversation data for this session';
         }
       })
       .catch(err => {
-        if (idx >= 0) sessions[idx]._loadingDetail = false;
-        if (err.message === 'not-found') {
-          if (btn) {
-            btn.disabled = false;
-            btn.textContent = 'Session not found';
-          }
-        } else {
-          if (btn) {
-            btn.disabled = false;
-            btn.textContent = 'Retry telemetry load';
-          }
+        if (idx >= 0) {
+          sessions[idx]._loadingDetail = false;
+          sessions[idx]._detailLoadError = err.name === 'AbortError'
+            ? 'Session details took too long to load. Please retry.'
+            : err.message || 'Session details could not be loaded. Please retry.';
+          renderLoadedSession(idx);
+        }
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Retry details';
+        }
+      })
+      .finally(() => {
+        window.clearTimeout(timeout);
+        if (dashboardDocumentActive && idx >= 0 && sessions[idx]._refreshDetailAfterLoad) {
+          delete sessions[idx]._refreshDetailAfterLoad;
+          sessions[idx]._activityLoaded = false;
+          sessions[idx]._fullLoaded = false;
+          if (idx === selectedIdx) tryLoadFullDetail(sessionId, null);
         }
       });
   }
+
+  function renderLoadedSession(idx){
+    if (!dashboardDocumentActive || idx !== selectedIdx) return;
+    const detail = document.getElementById('sb-detail');
+    const scrollTop = detail?.querySelector('.sb-detail-body')?.scrollTop || 0;
+    renderSessionDetail(sessions[idx]);
+    const scroller = detail?.querySelector('.sb-detail-body');
+    if (scroller) scroller.scrollTop = scrollTop;
+  }
+
+  function markNavigationCached(){
+    if (!D._unpublishedNavigation) D._navigationFromCache = true;
+    for (const id of ['global-filter-meta', 'session-filter-launcher-meta']) {
+      const label = document.getElementById(id);
+      if (label) label.textContent = D._unpublishedNavigation
+        ? 'Captured session activity · published navigation not loaded'
+        : `Cached navigation · ${navigationSnapshotLabel()}`;
+    }
+  }
+
+  document.addEventListener('reflect-snapshot-published', event => {
+    if (!dashboardDocumentActive) return;
+    if (!document.getElementById('tab-sessions')?.classList.contains('active') || selectedIdx === null) return;
+    event.preventDefault();
+    markNavigationCached();
+    for (const session of sessions) {
+      session._activityLoaded = false;
+      session._fullLoaded = false;
+      session._detailLoadError = '';
+      if (session._loadingDetail) session._refreshDetailAfterLoad = true;
+    }
+    const selected = sessions[selectedIdx];
+    tryLoadFullDetail(selected.full_id || selected.id, null);
+  });
+  window.addEventListener('pageshow', event => {
+    if (!event.persisted || !dashboardDocumentActive || selectedIdx === null) return;
+    const selected = sessions[selectedIdx];
+    if (selected._refreshDetailAfterLoad) tryLoadFullDetail(selected.full_id || selected.id, null);
+  });
 
   renderSessionList();
   if (selectedIdx !== null) {

@@ -30,6 +30,7 @@ def ensure_cost_aliases(
     alias_path: Path | None = None,
     pricing_table: PricingTable | None = None,
     session_ids: set[str] | None = None,
+    observed_models: list[str] | None = None,
 ) -> CostAliasResult:
     """Append missing model aliases inferred from observed SQL model names."""
 
@@ -37,7 +38,8 @@ def ensure_cost_aliases(
     target_path = alias_path or cfg.model_aliases_path
     table = pricing_table or load_pricing_table()
     existing_aliases = load_model_aliases(target_path)
-    observed_models = _observed_sql_models(conn, session_ids=session_ids)
+    if observed_models is None:
+        observed_models = _observed_sql_models(conn, session_ids=session_ids)
 
     additions: dict[str, str] = {}
     resolved_count = 0
@@ -107,35 +109,26 @@ def _observed_sql_models(
         if scoped_ids is not None and not scoped_ids:
             return []
         placeholders = ", ".join("?" for _ in scoped_ids or [])
-        llm_scope = f"AND session_id IN ({placeholders})" if scoped_ids is not None else ""
-        step_scope = f"AND session_id IN ({placeholders})" if scoped_ids is not None else ""
+        scope = f"WHERE session_id IN ({placeholders})" if scoped_ids is not None else ""
         params = [*(scoped_ids or []), *(scoped_ids or [])]
+        # Materialize only model names: grouping an inline JSON expression makes
+        # SQLite carry the entire raw payload into its temporary sorter.
         rows = conn.execute(
             f"""
-            SELECT model, SUM(count) AS count
-            FROM (
-              SELECT
-                COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) AS model,
-                COUNT(*) AS count
+            WITH observed_models AS MATERIALIZED (
+              SELECT COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) AS model
               FROM llm_calls
-              WHERE COALESCE(NULLIF(response_model, ''), NULLIF(request_model, '')) IS NOT NULL
-                {llm_scope}
-              GROUP BY model
+              {scope}
               UNION ALL
-              SELECT
-                COALESCE(
+              SELECT COALESCE(
                   NULLIF(json_extract(raw_attrs_json, '$."gen_ai.response.model"'), ''),
                   NULLIF(json_extract(raw_attrs_json, '$."gen_ai.request.model"'), '')
-                ) AS model,
-                COUNT(*) AS count
+                ) AS model
               FROM steps
-              WHERE COALESCE(
-                NULLIF(json_extract(raw_attrs_json, '$."gen_ai.response.model"'), ''),
-                NULLIF(json_extract(raw_attrs_json, '$."gen_ai.request.model"'), '')
-              ) IS NOT NULL
-                {step_scope}
-              GROUP BY model
+              {scope}
             )
+            SELECT model, COUNT(*) AS count
+            FROM observed_models
             WHERE model IS NOT NULL
             GROUP BY model
             ORDER BY count DESC, model ASC

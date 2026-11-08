@@ -158,6 +158,9 @@ class MemoryService:
         selected: list[dict[str, Any]] = []
         for row in merged:
             provider_name = str(row.get("provider") or provider)
+            if provider_name == "local_sqlite":
+                fresh = self.local.check_source(row)
+                row = {**row, "validation_status": fresh.status, "stale_reason": fresh.stale_reason}
             content, source, truncated, status = _context_content(
                 row,
                 provider=provider_name,
@@ -477,7 +480,7 @@ def _context_content(
         source_size = 0
     preview_truncated = len(preview) > max_chars or source_size > len(preview)
     fallback = (
-        preview[:max_chars],
+        preview[:max_chars] if validation_status not in {"stale", "needs_review"} else "",
         "redacted_preview",
         preview_truncated,
         validation_status,
@@ -504,13 +507,13 @@ def _context_content(
     except ValueError:
         return fallback
     if not source_path.is_file():
-        return fallback[0], fallback[1], fallback[2], "stale"
+        return "", fallback[1], fallback[2], "stale"
     try:
         text = source_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        return fallback[0], fallback[1], fallback[2], "stale"
+        return "", fallback[1], fallback[2], "stale"
     if hashlib.sha256(text.encode("utf-8")).hexdigest() != expected_hash:
-        return fallback[0], fallback[1], fallback[2], "stale"
+        return "", fallback[1], fallback[2], "stale"
     return text[:max_chars], "validated_source_file", len(text) > max_chars, validation_status
 
 

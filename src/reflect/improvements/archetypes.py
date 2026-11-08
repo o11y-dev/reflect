@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
+from reflect.improvements.analysis_scope import AnalysisScope
 from reflect.improvements.contracts import (
     ContractEvaluationService,
     WorkflowContract,
@@ -65,6 +67,10 @@ def _classify_text(text: str) -> _ArchetypeMatch:
             for archetype_id, definition in _ARCHETYPES.items()
         }
     )
+    # References to a tracking issue are common in reviews and investigations;
+    # they do not establish a ticket-writing procedure.
+    if not re.search(r"\b(create|draft|file|open|update|refine)\b.{0,48}\b(ticket|jira|issue|story|work item)\b", normalized):
+        scores["ticket_creation"] = 0
     ranked = scores.most_common(2)
     archetype_id, score = ranked[0]
     runner_up_score = ranked[1][1] if len(ranked) > 1 else 0
@@ -91,13 +97,14 @@ class TaskArchetypeService:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
 
-    def refresh(self, *, session_ids: set[str] | None = None) -> dict[str, int]:
+    def refresh(self, *, session_ids: set[str] | None = None,
+                execution_unit_ids: set[str] | None = None) -> dict[str, int]:
         scoped_ids = (
             None
             if session_ids is None
             else sorted({str(item) for item in session_ids if item})
         )
-        if scoped_ids == []:
+        if scoped_ids == [] or execution_unit_ids == set():
             return {
                 "classified_execution_units": 0,
                 "excluded_execution_units": 0,
@@ -130,6 +137,7 @@ class TaskArchetypeService:
         execution_result = self._refresh_execution_units(
             now=now,
             scoped=scoped_ids is not None,
+            execution_unit_ids=execution_unit_ids,
         )
         self._drop_scope(scoped_ids)
         return {
@@ -157,7 +165,8 @@ class TaskArchetypeService:
         if scoped_ids is not None:
             self.conn.execute("DROP TABLE IF EXISTS reflect_archetype_session_scope")
 
-    def _refresh_execution_units(self, *, now: str, scoped: bool) -> dict[str, int]:
+    def _refresh_execution_units(self, *, now: str, scoped: bool,
+                                 execution_unit_ids: set[str] | None = None) -> dict[str, int]:
         scope_join = (
             "JOIN reflect_archetype_session_scope scope ON scope.session_id = tu.session_id"
             if scoped
@@ -168,6 +177,8 @@ class TaskArchetypeService:
             if scoped
             else "tua.execution_unit_id IS NULL OR tua.updated_at < tu.updated_at"
         )
+        params = sorted(execution_unit_ids) if execution_unit_ids is not None else []
+        unit_scope = f" AND tu.id IN ({','.join('?' for _ in params)})" if params else ""
         rows = self.conn.execute(
             f"""
             SELECT tu.id,
@@ -206,12 +217,12 @@ class TaskArchetypeService:
             FROM execution_units tu
             {scope_join}
             LEFT JOIN execution_unit_archetypes tua ON tua.execution_unit_id = tu.id
-            WHERE ({freshness_predicate})
+            WHERE ({freshness_predicate}) {unit_scope}
               AND EXISTS(
                 SELECT 1 FROM execution_unit_steps linked
                 WHERE linked.execution_unit_id = tu.id
               )
-            """
+            """, params,
         ).fetchall()
         classified = 0
         excluded = 0
@@ -249,10 +260,6 @@ class TaskArchetypeService:
                     now,
                     now,
                 ),
-            )
-            self.conn.execute(
-                "UPDATE execution_units SET eligible = ?, updated_at = ? WHERE id = ?",
-                (int(eligible), now, execution_unit_id),
             )
             classified += 1
             excluded += int(not eligible)
@@ -304,7 +311,13 @@ class WorkflowAdherenceService:
         self.conn = conn
         self.contracts = ContractEvaluationService(conn)
 
-    def refresh(self) -> dict[str, int]:
+    def refresh(
+        self, *, scope: AnalysisScope | None = None,
+        execution_unit_ids: set[str] | None = None,
+    ) -> dict[str, int]:
+        scope = scope or AnalysisScope()
+        if scope.session_ids == set():
+            return {"exposures": 0}
         rows = self.conn.execute(
             """
             SELECT i.id, i.exposure_started_at, wc.id, wc.content_json,
@@ -331,8 +344,31 @@ class WorkflowAdherenceService:
             slug = str(content.get("slug") or "")
             contract = WorkflowContract.from_raw(content.get("workflow_contract"))
             limit = max(1, min(int(measurement_window), 100)) if contract else 100
+            # Select the complete comparable cohort before applying the delta.
+            # Missing exposures include newly admitted members of a moving window.
+            changed = sorted(execution_unit_ids) if execution_unit_ids is not None else None
+            changed_filter = "1=1"
+            changed_params: list[str] = []
+            if changed is not None:
+                changed_filter = f"eu.id IN ({','.join('?' for _ in changed)}) OR " if changed else ""
+                changed_filter += "NOT EXISTS (SELECT 1 FROM workflow_exposures we WHERE we.intervention_id=? AND we.execution_unit_id=eu.id)"
+                changed_params = [*changed, intervention_id]
             execution_units = self.conn.execute(
-                """
+                f"""
+                WITH cohort AS MATERIALIZED (
+                    SELECT eu.id,eu.session_id,eu.mcp_task_run_id,eu.status,eu.outcome,
+                           eu.verification_passed,eu.started_at
+                    FROM {scope.execution_units} eu
+                    JOIN execution_unit_archetypes eua ON eua.execution_unit_id=eu.id
+                    WHERE eu.started_at >= ?
+                      AND COALESCE(eu.repo_id, '') = COALESCE(?, '')
+                      AND (? IS NULL OR eua.task_archetype_id = ?)
+                      AND (? = 0 OR (
+                        eu.eligible = 1 AND eua.mixed = 0
+                        AND lower(COALESCE(eu.status, '')) IN ('completed', 'ok', 'success')
+                      ))
+                    ORDER BY eu.started_at,eu.id LIMIT ?
+                )
                 SELECT eu.id, eu.session_id, eu.mcp_task_run_id,
                        EXISTS(
                          SELECT 1
@@ -341,38 +377,19 @@ class WorkflowAdherenceService:
                          WHERE eus.execution_unit_id = eu.id
                            AND lower(st.raw_attrs_json) LIKE ?
                        ) AS invoked,
-                       EXISTS(
-                         SELECT 1
-                         FROM execution_unit_steps eus
-                         JOIN tool_calls tc ON tc.step_id = eus.step_id
-                         WHERE eus.execution_unit_id = eu.id AND (
-                           lower(COALESCE(tc.input_preview_redacted, '')) GLOB '*pytest*'
-                           OR lower(COALESCE(tc.input_preview_redacted, '')) GLOB '*ruff*'
-                           OR lower(COALESCE(tc.input_preview_redacted, '')) GLOB '* test*'
-                           OR lower(COALESCE(tc.input_preview_redacted, '')) GLOB '*build*'
-                         )
-                       ) AS verified,
                        eu.status, eu.outcome, eu.verification_passed
-                FROM execution_units eu
-                JOIN execution_unit_archetypes eua ON eua.execution_unit_id = eu.id
-                WHERE eu.started_at >= ?
-                  AND COALESCE(eu.repo_id, '') = COALESCE(?, '')
-                  AND (? IS NULL OR eua.task_archetype_id = ?)
-                  AND (? = 0 OR (
-                    eu.eligible = 1 AND eua.mixed = 0
-                    AND lower(COALESCE(eu.status, '')) IN ('completed', 'ok', 'success')
-                  ))
-                ORDER BY eu.started_at, eu.id
-                LIMIT ?
+                FROM cohort eu WHERE {changed_filter}
+                ORDER BY eu.started_at,eu.id
                 """,
                 (
-                    f"%{slug.lower()}%",
                     exposed_at,
                     repo_id,
                     archetype_id,
                     archetype_id,
                     int(contract is not None),
                     limit,
+                    f"%{slug.lower()}%",
+                    *changed_params,
                 ),
             ).fetchall()
             task_run_ids = [str(item[2]) for item in execution_units if item[2]]
@@ -389,10 +406,10 @@ class WorkflowAdherenceService:
                             "reported_milestones": reported_by_run.get(
                                 str(item[2]) if item[2] else "", {}
                             ),
-                            "status": item[5],
-                            "outcome": item[6],
+                            "status": item[4],
+                            "outcome": item[5],
                             "verification_passed": (
-                                None if item[7] is None else bool(item[7])
+                                None if item[6] is None else bool(item[6])
                             ),
                             "workflow_slug_observed": bool(item[3]),
                         }
@@ -407,7 +424,6 @@ class WorkflowAdherenceService:
                 session_id = str(execution_unit[1])
                 task_run_id = str(execution_unit[2]) if execution_unit[2] else None
                 slug_invoked = bool(execution_unit[3])
-                legacy_verified = bool(execution_unit[4])
                 reported = reported_by_run.get(task_run_id or "", {})
                 structured_evidence = milestone_evidence_by_run.get(task_run_id or "", {})
                 if contract is not None:
@@ -422,10 +438,10 @@ class WorkflowAdherenceService:
                     observed_roles = []
                     signal_fingerprints = []
                     invoked = bool(slug_invoked)
-                    followed = invoked and bool(legacy_verified)
-                    corroborated = bool(legacy_verified)
+                    followed = False
+                    corroborated = False
                     evaluation = None
-                state = "followed" if followed else "invoked" if invoked else "ignored"
+                state = "followed" if followed else "invoked" if invoked else "unknown"
                 exposure_id = f"exposure_{intervention_id}_{execution_unit_id}"
                 self.conn.execute(
                     """
@@ -436,6 +452,8 @@ class WorkflowAdherenceService:
                     ON CONFLICT(intervention_id, execution_unit_id) DO UPDATE SET
                       state = excluded.state,
                       evidence_json = excluded.evidence_json
+                    WHERE (workflow_exposures.state,workflow_exposures.evidence_json)
+                      IS NOT (excluded.state,excluded.evidence_json)
                     """,
                     (
                         exposure_id,

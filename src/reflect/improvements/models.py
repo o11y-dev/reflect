@@ -196,8 +196,8 @@ class ObservationDraft(ReflectModel):
     impact_score: float = Field(ge=0, le=100)
     severity: Severity
     confidence: float = Field(ge=0, le=1)
-    occurrence_count: int = Field(default=1, ge=1)
-    affected_session_count: int = Field(default=1, ge=1)
+    occurrence_count: int = Field(default=1, ge=0)
+    affected_session_count: int = Field(default=1, ge=0)
     actionability: str = "review"
     repo_id: str | None = None
     evidence: list[EvidenceRef] = Field(default_factory=list)
@@ -427,6 +427,10 @@ class SkillMeasurementRecord(ReflectModel):
 
 
 class SkillUsageSessionRecord(ReflectModel):
+    usage_id: str = ""
+    execution_unit_id: str | None = None
+    source_kind: str = "legacy"
+    source_id: str = ""
     session_id: str
     skill_version_id: str | None = None
     title: str | None = None
@@ -499,6 +503,9 @@ class ImprovementSummary(ReflectModel):
     resolved_scope: ImprovementScope | None = None
     eligible_session_count: int = Field(default=0, ge=0)
     attribution_complete: bool = True
+    analysis_state: str = "ready"
+    analysis_coverage: dict[str, dict[str, int]] = Field(default_factory=dict)
+    limitations: list[str] = Field(default_factory=list)
 
 
 class AskEvidence(ReflectModel):

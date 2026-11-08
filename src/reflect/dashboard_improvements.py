@@ -3,12 +3,25 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import closing, contextmanager, nullcontext
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from reflect.improvements.models import LoopKind, LoopStatus, SkillLifecycleState
 from reflect.improvements.service import ImprovementService
 from reflect.preparation import PreparationLock
-from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only
+from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only, snapshot_incomplete
+
+
+def _recorded_evidence(payload: dict, *, recorded_at: str | None = None) -> dict:
+    """Recorded references are inspectable without claiming current validation."""
+    return {
+        **payload, "analysis_state": "pending", "evidence_state": "recorded",
+        "publication": {
+            "state": "recorded", "reason": "preparing",
+            "loaded_at": datetime.now(UTC).isoformat(),
+            "snapshot_completed_at": None, "recorded_at": recorded_at,
+        },
+    }
 
 
 @dataclass(frozen=True)
@@ -18,11 +31,15 @@ class DashboardImprovementAdapter:
     db_path: Path
 
     @contextmanager
-    def _service(self, *, writable: bool = False) -> Iterator[ImprovementService]:
-        connect = connect_sqlite if writable else connect_sqlite_read_only
+    def _service(
+        self, *, writable: bool = False, profile: str | None = "snapshot",
+    ) -> Iterator[ImprovementService]:
         with (
             PreparationLock(self.db_path) if writable else nullcontext(),
-            closing(connect(self.db_path)) as conn,
+            closing(
+                connect_sqlite(self.db_path) if writable else
+                connect_sqlite_read_only(self.db_path, profile=profile)
+            ) as conn,
         ):
             yield ImprovementService(conn, initialize_schema=False)
 
@@ -65,6 +82,9 @@ class DashboardImprovementAdapter:
                 "pending_workflows": summary.pending_workflows,
                 "active_interventions": summary.active_interventions,
                 "verified_improvement_rate": summary.verified_improvement_rate,
+                "analysis_state": summary.analysis_state,
+                "analysis_coverage": summary.analysis_coverage,
+                "limitations": summary.limitations,
             }
 
     def rules(self) -> dict[str, object]:
@@ -97,10 +117,12 @@ class DashboardImprovementAdapter:
         behavior_type: str | None,
         status: str | None,
     ) -> dict[str, object]:
-        with self._service() as service:
+        with self._service(profile=None) as service:
+            pending = snapshot_incomplete(service.conn)
             candidates = service.workflows.list(
                 behavior_types={behavior_type} if behavior_type else None,
                 statuses={status} if status else None,
+                recorded_only=pending,
             )
             serialized = []
             for candidate in candidates:
@@ -110,7 +132,8 @@ class DashboardImprovementAdapter:
                 except KeyError:
                     item["skill_id"] = None
                 serialized.append(item)
-        return {"workflows": serialized}
+        payload = {"workflows": serialized}
+        return _recorded_evidence(payload) if pending else payload
 
     def loops(
         self,
@@ -140,7 +163,10 @@ class DashboardImprovementAdapter:
         limit: int,
     ) -> dict[str, object]:
         lifecycle = SkillLifecycleState(status) if status else None
-        with self._service() as service:
+        with self._service(profile=None) as service:
+            # The read-only connection pins readiness and registry rows in one
+            # transaction. Package history remains browsable during derivation.
+            pending = snapshot_incomplete(service.conn)
             counts_by_lifecycle = service.skills.counts_by_lifecycle()
             records = service.skills.list(
                 lifecycle=lifecycle,
@@ -156,22 +182,47 @@ class DashboardImprovementAdapter:
                 counts_by_lifecycle.get(item.value, 0)
                 for item in (SkillLifecycleState.ACTIVE, SkillLifecycleState.PENDING)
             )
-        return {
-            "skills": [record.model_dump(mode="json") for record in records],
+        skills = [record.model_dump(mode="json") for record in records]
+        payload = {
+            "analysis_state": "pending" if pending else "ready",
+            "skills": skills,
             "total_count": total_count,
             "archived_count": counts_by_lifecycle.get(SkillLifecycleState.STALE.value, 0),
             "counts_by_lifecycle": counts_by_lifecycle,
         }
+        return _recorded_evidence(payload) if pending else payload
 
     def skill(self, skill_id: str) -> dict[str, object]:
-        with self._service() as service:
-            record = service.skills.show(skill_id)
-        return record.model_dump(mode="json")
+        with self._service(profile=None) as service:
+            pending = snapshot_incomplete(service.conn)
+            record = service.skills.show(skill_id, recorded_only=pending)
+        detail = record.model_dump(mode="json")
+        detail["analysis_state"] = "pending" if pending else "ready"
+        if pending:
+            for usage in detail["usage_sessions"]:
+                usage["outcome"] = None
+            for measurement in detail["measurements"]:
+                measurement["recorded_result"] = {
+                    field: measurement[field] for field in ("before_value", "after_value", "verdict", "confidence")
+                }
+                measurement.update(before_value=None, after_value=None, verdict="validation_pending", confidence=0.0)
+            return _recorded_evidence(detail)
+        return detail
 
     def workflow_evidence(self, candidate_id: str, *, limit: int) -> dict[str, object]:
-        with self._service() as service:
-            ledger = service.repository.workflow_evidence_ledger(candidate_id, limit=limit)
-        return ledger.model_dump(mode="json")
+        with self._service(profile=None) as service:
+            pending = snapshot_incomplete(service.conn)
+            ledger = service.repository.workflow_evidence_ledger(candidate_id, limit=limit, recorded_only=pending)
+            candidate = service.workflows.show(candidate_id, recorded_only=pending, evidence_ledger=ledger)
+        payload = ledger.model_dump(mode="json")
+        payload["candidate"] = candidate.model_dump(mode="json")
+        return _recorded_evidence(payload) if pending else payload
+
+    def skill_usage_graph(self, skill_id: str, **filters) -> dict[str, object]:
+        from reflect.dashboard_skill_graph import build_skill_usage_graph
+
+        with self._service(profile=None) as service:
+            return build_skill_usage_graph(service.conn, skill_id, **filters)
 
     def workflow_preview(self, candidate_id: str, *, project_root: Path) -> dict[str, object]:
         with self._service() as service:
@@ -211,9 +262,14 @@ class DashboardImprovementAdapter:
         return {"id": feedback_id, "session_id": session_id, "outcome": outcome}
 
     def impact(self) -> dict[str, object]:
-        with self._service() as service:
-            return {"impact_checks": service.measurements.list()}
+        with self._service(profile=None) as service:
+            pending = snapshot_incomplete(service.conn)
+            checks = service.measurements.list(recorded_only=pending)
+        payload = {"impact_checks": checks}
+        return _recorded_evidence(payload, recorded_at=checks[0]["measured_at"] if checks else None) if pending else payload
 
     def impact_evidence(self, impact_id: str) -> dict[str, object]:
-        with self._service() as service:
-            return service.measurements.sessions(impact_id)
+        with self._service(profile=None) as service:
+            pending = snapshot_incomplete(service.conn)
+            payload = service.measurements.sessions(impact_id, recorded_only=pending)
+        return _recorded_evidence(payload, recorded_at=payload.get("measured_at")) if pending else payload

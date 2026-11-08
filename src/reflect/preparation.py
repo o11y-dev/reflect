@@ -5,10 +5,12 @@ import os
 import sqlite3
 import threading
 from collections.abc import Callable, Iterable
+from concurrent.futures import Future, wait
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Protocol
 
 
@@ -38,6 +40,8 @@ class PreparationStage(StrEnum):
     REFRESHING_GRAPH = "refreshing_graph"
     REFRESHING_ROLLUPS = "refreshing_rollups"
     REFRESHING_IMPROVEMENTS = "refreshing_improvements"
+    PUBLISHING_USAGE = "publishing_usage"
+    PUBLISHING_SNAPSHOT = "publishing_snapshot"
     VACUUMING_STORE = "vacuuming_store"
     COMPLETE = "complete"
 
@@ -342,6 +346,7 @@ class PreparationSnapshot:
     generation: int
     started_at: str = ""
     finished_at: str = ""
+    usage_completed_at: str = ""
     stage: PreparationStage | None = None
     message: str = ""
     error: str = ""
@@ -396,6 +401,8 @@ class PreparationCoordinator:
         self._name = name
         self._lock = threading.Lock()
         self._callbacks: list[Callable[[PreparationResult], None]] = []
+        self._usage_callbacks: list[Callable[[dict[str, Any]], None]] = []
+        self._usage_publication: Future[float] | None = None
         self._thread: threading.Thread | None = None
         self._snapshot = PreparationSnapshot(state=PreparationState.IDLE, generation=0)
 
@@ -407,15 +414,56 @@ class PreparationCoordinator:
                 )
             self._callbacks.append(callback)
 
+    def add_usage_callback(self, callback: Callable[[dict[str, Any]], None]) -> None:
+        """Register publication of committed core usage before derived analysis."""
+        with self._lock:
+            if self._snapshot.state is not PreparationState.IDLE:
+                raise RuntimeError("usage callbacks must be registered before preparation starts")
+            self._usage_callbacks.append(callback)
+
+    def report_usage_ready(self, details: dict[str, Any]) -> Future[float]:
+        """Publish usage alongside analysis; the future returns publication seconds."""
+        self.report_progress(PreparationProgress(
+            PreparationStage.PUBLISHING_USAGE, "Publishing core usage...",
+        ))
+        with self._lock:
+            if self._usage_publication is not None:
+                raise RuntimeError("usage publication already started for this preparation")
+            callbacks = tuple(self._usage_callbacks)
+            publication: Future[float] = Future()
+            publication.set_running_or_notify_cancel()
+            self._usage_publication = publication
+
+        def publish() -> None:
+            started = perf_counter()
+            try:
+                for callback in callbacks:
+                    callback(details)
+                with self._lock:
+                    self._snapshot = replace(self._snapshot, usage_completed_at=_now())
+            except BaseException as exc:
+                publication.set_exception(exc)
+            else:
+                publication.set_result(perf_counter() - started)
+
+        try:
+            threading.Thread(target=publish, name=f"{self._name}-usage", daemon=True).start()
+        except BaseException as exc:
+            publication.set_exception(exc)
+            raise
+        return publication
+
     def start(self) -> bool:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 return False
             generation = self._snapshot.generation
+            self._usage_publication = None
             self._snapshot = PreparationSnapshot(
                 state=PreparationState.RUNNING,
                 generation=generation,
                 started_at=_now(),
+                usage_completed_at=self._snapshot.usage_completed_at,
             )
             self._thread = threading.Thread(target=self._run, name=self._name, daemon=True)
             self._thread.start()
@@ -447,16 +495,40 @@ class PreparationCoordinator:
         return self.wait(timeout)
 
     def _run(self) -> None:
+        started = perf_counter()
         try:
-            result = PreparationResult(
-                request=self.request,
-                details=self._operation(self.report_progress),
-            )
+            try:
+                result = PreparationResult(
+                    request=self.request,
+                    details=self._operation(self.report_progress),
+                )
+            finally:
+                # Even a failed analysis cannot leave publication running into
+                # the next generation. Preserve the original analysis error.
+                with self._lock:
+                    publication = self._usage_publication
+                if publication is not None:
+                    wait([publication])
+            if publication is not None:
+                duration = publication.result()
+                timings = result.details.get("timings")
+                if isinstance(timings, dict):
+                    timings["usage_publication_seconds"] = duration
+            self.report_progress(PreparationProgress(
+                PreparationStage.PUBLISHING_SNAPSHOT, "Publishing the completed report...",
+            ))
             with self._lock:
                 callbacks = tuple(self._callbacks)
+            publication_started = perf_counter()
             for callback in callbacks:
                 callback(result)
-        except Exception as exc:
+            timings = result.details.get("timings")
+            if isinstance(timings, dict):
+                timings["snapshot_publication_seconds"] = perf_counter() - publication_started
+                timings["coordinator_total_seconds"] = perf_counter() - started
+        except BaseException as exc:
+            # A worker exiting through SystemExit must not remain "running"
+            # forever. There is no process-level exit to preserve in this thread.
             with self._lock:
                 current = self._snapshot
                 self._snapshot = PreparationSnapshot(
@@ -464,9 +536,10 @@ class PreparationCoordinator:
                     generation=current.generation,
                     started_at=current.started_at,
                     finished_at=_now(),
+                    usage_completed_at=current.usage_completed_at,
                     stage=current.stage,
                     message=current.message,
-                    error=str(exc),
+                    error=str(exc) or type(exc).__name__,
                 )
             return
 
@@ -477,6 +550,7 @@ class PreparationCoordinator:
                 generation=current.generation + 1,
                 started_at=current.started_at,
                 finished_at=_now(),
+                usage_completed_at=current.usage_completed_at,
                 stage=PreparationStage.COMPLETE,
                 message="Preparation complete.",
                 result=result,

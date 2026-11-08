@@ -98,6 +98,7 @@ def test_mcp_read_service_factory_does_not_run_migrations(tmp_path, monkeypatch)
     monkeypatch.setenv("REFLECT_DB_PATH", str(db_path))
 
     with (
+        patch("reflect.mcp.migrate") as mcp_migrate,
         patch("reflect.improvements.service.migrate") as improvement_migrate,
         patch("reflect.improvements.loops.migrate") as loop_migrate,
         patch("reflect.improvements.skills.migrate") as skill_migrate,
@@ -108,6 +109,7 @@ def test_mcp_read_service_factory_does_not_run_migrations(tmp_path, monkeypatch)
         )
 
     assert count == 0
+    mcp_migrate.assert_not_called()
     improvement_migrate.assert_not_called()
     loop_migrate.assert_not_called()
     skill_migrate.assert_not_called()
@@ -124,7 +126,9 @@ def test_context_service_records_and_completes_an_agent_task(tmp_path):
         assert answer.task_run_id
         assert answer.next_action
         assert answer.next_action.tool == "reflect_complete"
-        assert answer.next_action.arguments == {"task_run_id": answer.task_run_id}
+        assert answer.next_action.arguments["task_run_id"] == answer.task_run_id
+        if answer.runtime_session_id:
+            assert answer.next_action.arguments["runtime_session_id"] == answer.runtime_session_id
         row = conn.execute(
             """
             SELECT question_hash, status, selected_memories_json

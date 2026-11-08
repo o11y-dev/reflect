@@ -13,9 +13,6 @@ from pathlib import Path
 from urllib import request as urllib_request
 
 import click
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
 
 from reflect.dashboard_server import start_publish_server
 from reflect.parsing import _canonical_otlp_traces_path
@@ -271,35 +268,6 @@ def has_sql_report_snapshot(db_path: Path) -> bool:
         return False
 
 
-def render_preparation_summary(
-    console: Console,
-    preparation: dict[str, object],
-) -> None:
-    ingest = preparation["ingest"]
-    normalize = preparation["normalize"]
-    rollups = preparation["rollups"]
-    assert isinstance(ingest, dict)
-    assert isinstance(normalize, dict)
-    assert isinstance(rollups, dict)
-    summary = Table.grid(padding=(0, 2))
-    summary.add_column(style="bold")
-    summary.add_column(justify="right")
-    for label, value in (
-        ("Inserted", ingest["inserted"]),
-        ("Skipped", ingest["skipped"]),
-        ("Normalized", normalize["processed"]),
-        ("Sessions", rollups["session_rollups"]),
-    ):
-        summary.add_row(label, f"{int(value):,}")
-    console.print(
-        Panel(
-            summary,
-            title="[bold orange3]REFLECT[/bold orange3]",
-            border_style="orange3",
-        )
-    )
-
-
 def run_browser_report(
     *,
     otlp_traces: Path | None,
@@ -313,7 +281,6 @@ def run_browser_report(
     if refresh_interval_seconds <= 0:
         raise ValueError("refresh_interval_seconds must be positive")
 
-    console = Console()
     include_native_sessions = False
     if refresh:
         if demo:
@@ -331,31 +298,25 @@ def run_browser_report(
             )
 
     requires_fresh_snapshot = not has_sql_report_snapshot(db_path)
-    prepared_synchronously = False
     if not refresh:
         if requires_fresh_snapshot:
             raise click.ClickException(
                 f"No report snapshot found at {db_path}. Enable refresh to create one."
             )
         click.echo("Serving the current snapshot without refreshing telemetry.")
-    elif requires_fresh_snapshot:
-        with console.status("[bold orange3]reflecting...[/bold orange3]", spinner="dots"):
-            preparation = prepare_sql_report_db(
-                db_path,
-                otlp_traces=otlp_traces,
-                include_native_sessions=include_native_sessions,
-            )
-        render_preparation_summary(console, preparation)
-        prepared_synchronously = True
 
     scheduler = None
     if refresh:
         def prepare_in_background(progress):
+            from reflect.config import analysis_window_days
+
             return prepare_sql_report_db(
                 db_path,
                 otlp_traces=otlp_traces,
                 include_native_sessions=include_native_sessions,
                 progress=progress,
+                analysis_days=analysis_window_days(),
+                usage_ready=coordinator.report_usage_ready,
             )
 
         coordinator = PreparationCoordinator(
@@ -374,10 +335,12 @@ def run_browser_report(
         scheduler = PreparationScheduler(
             coordinator,
             interval_seconds=refresh_interval_seconds,
-            run_immediately=not prepared_synchronously,
+            run_immediately=True,
         )
         click.echo(
-            "Serving the current snapshot; refreshing telemetry automatically "
+            ("Preparing the first report in the background; " if requires_fresh_snapshot
+             else "Serving the current snapshot; ")
+            + "refreshing telemetry automatically "
             f"every {refresh_interval_seconds} seconds."
         )
 

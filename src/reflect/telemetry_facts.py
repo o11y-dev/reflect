@@ -3,6 +3,44 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
+from datetime import UTC, datetime
+
+TURN_TERMINAL_KEYS = (
+    "reflect.turn.terminal", "gen_ai.client.hook.event", "event.name",
+    "reflect.telemetry.origin", "reflect.time.provenance", "reflect.turn.identity_provenance",
+)
+
+
+def event_time(value: object) -> datetime | None:
+    """Normalize event time without dropping sub-millisecond ordering."""
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+    except (ValueError, TypeError):
+        return None
+
+
+def observed_turn_terminal(attrs: Mapping[str, object]) -> bool:
+    """A recorded harness stop closes observation; it does not prove success.
+
+    Legacy hooks emitted Stop without the newer terminal flag. Accept their
+    structured event and origin, never tool output, summaries, or MCP reports.
+    Explicit non-terminal and synthetic records cannot establish a boundary.
+    """
+    if attrs.get("reflect.time.provenance") in {"synthetic", "inferred", "unavailable"}:
+        return False
+    if attrs.get("reflect.turn.identity_provenance") in {"synthetic", "inferred"}:
+        return False
+    terminal = attrs.get("reflect.turn.terminal")
+    if isinstance(terminal, bool):
+        return terminal
+    event = str(first_attr(attrs, "gen_ai.client.hook.event", "event.name") or "").lower().rsplit(".", 1)[-1]
+    origin = str(attrs.get("reflect.telemetry.origin") or "")
+    if event == "stop":
+        return origin.startswith("hook_")
+    return origin.startswith("native_") and event in {
+        "task_complete", "task_completed", "turn_complete", "turn_completed", "turncompleted",
+    }
 
 
 def first_attr(attrs: Mapping[str, object], *keys: str) -> object | None:

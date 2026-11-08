@@ -54,16 +54,6 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
   document.querySelectorAll('[data-explore-view]').forEach(button => {
     button.classList.toggle('active', button.dataset.exploreView === activeExploreView);
   });
-  if (activeTab === 'explore' && activeExploreView === 'graph') {
-    hydrateExploreView(activeExploreView)
-      .catch(() => {})
-      .finally(() => {
-        _graphsInited = true;
-        requestAnimationFrame(initGraphs);
-      });
-  } else {
-    if (activeTab === 'explore') hydrateExploreView(activeExploreView).catch(() => {});
-  }
   if (updateUrl) {
     updateUrlParams(params => {
       params.set('tab', activeTab);
@@ -82,6 +72,7 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
       if (activeTab !== 'skills') params.delete('skill_q');
     });
   }
+  if (activeTab === 'explore') hydrateExploreView(activeExploreView).catch(() => {});
 }
 
 tabButtons.forEach((button, index) => {
@@ -119,7 +110,8 @@ activateTab(requestedInitialTab || defaultProductTab, {
 });
 
 /* ── Header ── */
-document.getElementById('hdr-range').textContent = `${fmtWorkflowDate(D.first_event_ts)} — ${fmtWorkflowDate(D.last_event_ts)}`;
+const headerScope = D.measurements?.scope;
+document.getElementById('hdr-range').textContent = `${fmtWorkflowDate(headerScope?.kind === 'event_window' ? headerScope.date_from : D.first_event_ts)} — ${fmtWorkflowDate(headerScope?.kind === 'event_window' ? headerScope.date_to : D.last_event_ts)}`;
 document.getElementById('hdr-ts').textContent = 'Loaded ' + new Date().toLocaleString();
 startPreparationStatusPolling();
 window.setTimeout(requestDashboardRefresh, 250);

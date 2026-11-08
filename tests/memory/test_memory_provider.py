@@ -110,6 +110,37 @@ def test_sync_resets_stale_validation_state_for_updated_source(tmp_path):
         conn.close()
 
 
+def test_refresh_and_read_only_reuse_validate_sources_without_user_flow(tmp_path):
+    conn, service = _service(tmp_path)
+    root = tmp_path / "repo"
+    root.mkdir()
+    source = root / "AGENTS.md"
+    source.write_text("Release gate instructions\n")
+    try:
+        service.sync_path(root, home_root=tmp_path / "home")
+        assert service.local.validate_sources() == {"validated": 1}
+        source.write_text("Changed release gate instructions\n")
+        conn.execute("PRAGMA query_only = ON")
+        context = service.select_context("release gate", path=root)
+        assert context[0]["validation_status"] == "stale"
+        assert context[0]["context_content"] == ""
+        conn.execute("PRAGMA query_only = OFF")
+        assert service.local.validate_sources() == {"stale": 1}
+    finally:
+        conn.close()
+
+
+def test_generated_pattern_freshness_never_proves_its_recommendation(tmp_path):
+    conn, service = _service(tmp_path)
+    try:
+        item = service.remember(MemoryItem(content="A repeated procedure may help", type="graph_pattern", scope="project",
+            source_metadata=MemorySourceMetadata(source_kind="graph_candidate", source_ref="observed-pattern")))
+        assert service.validate(item["id"])["status"] == "needs_review"
+        assert service.inspect(item["id"])["stale_reason"] == "generated_recommendation"
+    finally:
+        conn.close()
+
+
 def test_provider_discovery_reports_external_stubs(tmp_path):
     conn, service = _service(tmp_path)
     try:

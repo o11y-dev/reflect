@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import os
-import sqlite3
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +27,9 @@ from reflect.preparation import (
     SnapshotLifecycleService,
     SQLiteSnapshotInspector,
 )
+from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only
+from reflect.task_inbox import TaskEventInbox
 from reflect.task_runs import MCPTaskOutcome
 
 SERVER_INSTRUCTIONS = """
@@ -38,7 +40,11 @@ when execution_state is follow_allowed and its preconditions match. When
 execution_state is retrieve_full_instructions, call the provided full_instructions_action first.
 Registry lifecycle and installation fields do not override execution_state. Call reflect_context
 again only when the goal, repository, or subsystem changes materially.
+Read the actual session ID from the active caller's runtime environment (for Codex,
+CODEX_THREAD_ID) and pass runtime_session_id and runtime_agent to context and completion.
+Never guess an ID or use the newest captured session. Inspect link_state for missing identity.
 After validation, call reflect_complete exactly once with the returned task_run_id.
+accepted_pending means the task event is durable and awaits projection; do not start a replacement task.
 When selected workflow instructions expose a workflow contract, record its named checkpoints with
 reflect_record_milestone before reflect_complete; milestone self-report is not treated as
 independently verified evidence.
@@ -107,7 +113,7 @@ def _with_service[ResultT](
     read_only: bool = False,
     require_sessions: bool = False,
     timeout_ms: int | None = None,
-    profile: PreparationProfile = PreparationProfile.SNAPSHOT,
+    profile: PreparationProfile | None = PreparationProfile.SNAPSHOT,
 ) -> ResultT:
     db_path = _db_path()
     if read_only:
@@ -116,7 +122,7 @@ def _with_service[ResultT](
             policy=CommandPreparationPolicy(require_sessions=require_sessions),
             refresh_hint="Run `reflect refresh` before using this read-only tool.",
         ).prepare(requested_refresh=None)
-        conn = connect_sqlite_read_only(db_path, profile=profile.value)
+        conn = connect_sqlite_read_only(db_path, profile=profile.value if profile is not None else None)
     else:
         conn = connect_sqlite(db_path, timeout_ms=timeout_ms)
     try:
@@ -139,38 +145,24 @@ def reflect_context(
 ) -> dict[str, Any]:
     """Call once at task start before implementation to get guidance and selected skills."""
 
-    resolved_path = Path(path).expanduser().resolve() if path else Path.cwd()
-    resolved_task = Path(task_file).expanduser().resolve() if task_file else None
-    from reflect.store.sqlite import busy_timeout_ms, is_sqlite_busy
-
-    try:
-        return _with_service(
-            lambda service: service.begin_task(
-                question, task_file=resolved_task, path=resolved_path,
-                memory_provider=memory_provider, memory_limit=memory_limit,
-                runtime_session_id=runtime_session_id or None,
-                runtime_agent=runtime_agent or None,
-            ).model_dump(mode="json"),
-            timeout_ms=min(busy_timeout_ms(), 1000),
+    db_path = _db_path()
+    if not db_path.exists():
+        with closing(connect_sqlite(db_path)) as conn:
+            migrate(conn)
+    with closing(connect_sqlite_read_only(db_path, profile=None)) as conn:
+        answer, start = ReflectContextService(conn, initialize_schema=False).prepare_task(
+            question, path=Path(path).expanduser().resolve() if path else Path.cwd(),
+            task_file=Path(task_file).expanduser().resolve() if task_file else None,
+            memory_provider=memory_provider, memory_limit=memory_limit,
+            runtime_session_id=runtime_session_id or None, runtime_agent=runtime_agent or None,
         )
-    except sqlite3.OperationalError as exc:
-        if not is_sqlite_busy(exc):
-            raise
-        # Do not let optional tracking take down guidance. A separate read-only
-        # connection discards any failed write transaction and cannot migrate.
-        conn = connect_sqlite_read_only(_db_path(), profile=None)
-        try:
-            answer = ReflectContextService(conn, initialize_schema=False).ask(
-                question, task_file=resolved_task, path=resolved_path,
-                memory_provider=memory_provider, memory_limit=memory_limit,
-            )
-            answer.limitations.append(
-                "Task tracking was not recorded because the local store is busy. "
-                "Guidance is available; no reflect_complete call is required for this response."
-            )
-            return answer.model_dump(mode="json")
-        finally:
-            conn.close()
+    inbox = TaskEventInbox(db_path)
+    inbox.start(start)
+    inbox.drain(task_id=start.task_run_id)
+    status = inbox.status(start.task_run_id)
+    return answer.model_copy(update={
+        "tracking_state": status.tracking_state, "link_state": status.link_state.value,
+    }).model_dump(mode="json")
 
 
 @mcp.tool(annotations=TASK_COMPLETE_TOOL)
@@ -184,16 +176,20 @@ def reflect_complete(
 ) -> dict[str, Any]:
     """Call once after validation to record the task outcome and close the Reflect guidance run."""
 
-    return _with_service(
-        lambda service: service.complete_task(
-            task_run_id,
-            outcome=outcome,
-            verification_passed=verification_passed,
-            summary_redacted=summary,
-            runtime_session_id=runtime_session_id or None,
-            runtime_agent=runtime_agent or None,
-        ).model_dump(mode="json")
-    )
+    inbox = TaskEventInbox(_db_path())
+    result = inbox.accept(task_run_id, "complete", {
+        "outcome": outcome, "verification_passed": verification_passed,
+        "summary_redacted": summary, "runtime_session_id": runtime_session_id or None,
+        "runtime_agent": runtime_agent or None,
+    })
+    inbox.drain(task_id=task_run_id)
+    status = inbox.status(task_run_id)
+    return {
+        **status.model_dump(mode="json"), "idempotent": result["idempotent"],
+        "linked_to_session": status.link_state == "linked",
+        "next_action": {"tool": "reflect_improvements", "arguments": {},
+                        "when": "When the task exposed a repeated success, failure, recovery pattern, or workflow gap."},
+    }
 
 
 @mcp.tool(annotations=MILESTONE_TOOL)
@@ -207,16 +203,14 @@ def reflect_record_milestone(
 ) -> dict[str, Any]:
     """Record one idempotent workflow checkpoint against the active Reflect task run."""
 
-    return _with_service(
-        lambda service: service.record_milestone(
-            task_run_id=task_run_id,
-            skill_version_id=skill_version_id,
-            milestone_id=milestone_id,
-            state=state,
-            idempotency_key=idempotency_key,
-            evidence=evidence,
-        ).model_dump(mode="json")
-    )
+    inbox = TaskEventInbox(_db_path())
+    result = inbox.accept(task_run_id, "milestone", {
+        "skill_version_id": skill_version_id, "milestone_id": milestone_id,
+        "state": state, "idempotency_key": idempotency_key,
+        "evidence": evidence.model_dump(mode="json", exclude_none=True) if evidence else {},
+    })
+    inbox.drain(task_id=task_run_id)
+    return {**result, "tracking_state": inbox.status(task_run_id).tracking_state}
 
 
 @mcp.tool(annotations=READ_ONLY_TOOL)
@@ -230,7 +224,7 @@ def reflect_improvements(
     global_scope: bool = False,
     period: str = "",
 ) -> dict[str, Any]:
-    """List scoped evidence-backed findings without running detectors or applying changes."""
+    """Read scoped findings, marking retained evidence while refresh is pending."""
 
     resolved_path = Path(path).expanduser().resolve() if path else None
     return _with_service(
@@ -246,6 +240,7 @@ def reflect_improvements(
         ),
         read_only=True,
         require_sessions=True,
+        profile=None,
     )
 
 
@@ -270,6 +265,7 @@ def reflect_skills(
             limit=limit,
         ).model_dump(mode="json"),
         read_only=True,
+        profile=None,
     )
 
 
@@ -294,6 +290,7 @@ def reflect_patterns(
             limit=limit,
         ).model_dump(mode="json"),
         read_only=True,
+        profile=None,
     )
 
 
@@ -312,6 +309,7 @@ def reflect_impact(
             limit=limit,
         ),
         read_only=True,
+        profile=None,
     )
 
 
@@ -336,10 +334,7 @@ def reflect_guidance_efficiency(
 def reflect_task_status(task_run_id: str) -> dict[str, Any]:
     """Inspect task completion and late-ingestion linkage without changing either."""
 
-    return _with_service(
-        lambda service: service.task_status(task_run_id).model_dump(mode="json"),
-        read_only=True,
-    )
+    return TaskEventInbox(_db_path()).status(task_run_id).model_dump(mode="json")
 
 
 @mcp.tool(annotations=CHANGE_REVIEW_TOOL)

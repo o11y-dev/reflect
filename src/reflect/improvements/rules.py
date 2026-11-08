@@ -6,18 +6,13 @@ import sqlite3
 import statistics
 from collections import defaultdict
 
+from reflect.improvements.analysis_scope import AnalysisScope
 from reflect.improvements.base import (
     BaseImprovementRule,
     RuleRegistry,
     scope_for_repository,
     severity_for_impact,
     stable_fingerprint,
-)
-from reflect.improvements.contracts import (
-    WorkflowContract,
-    WorkflowContractApplicability,
-    WorkflowContractValidation,
-    WorkflowMilestoneContract,
 )
 from reflect.improvements.models import (
     EvidenceRef,
@@ -28,7 +23,7 @@ from reflect.improvements.models import (
     WorkflowDefinition,
     WorkflowProposal,
 )
-from reflect.improvements.workflow_roles import WorkflowEvidenceRepository, workflow_roles
+from reflect.improvements.session_insights import session_insight_rules
 
 _stable_fingerprint = stable_fingerprint
 _scope = scope_for_repository
@@ -86,16 +81,17 @@ class RepeatedToolFailureRule(BaseImprovementRule):
             }
         )
 
-    def detect(self, conn: sqlite3.Connection) -> list[ObservationDraft]:
+    def detect(self, conn: sqlite3.Connection, *, scope: AnalysisScope | None = None) -> list[ObservationDraft]:
+        scope = scope or AnalysisScope()
         rows = conn.execute(
-            """
+            f"""
             WITH tool_totals AS (
               SELECT s.repo_id,
                      lower(trim(tc.tool_name)) AS tool_key,
                      MIN(tc.tool_name) AS tool_name,
                      COUNT(*) AS total_calls
               FROM tool_calls tc
-              JOIN sessions s ON s.id = tc.session_id
+              JOIN {scope.sessions} s ON s.id = tc.session_id
               GROUP BY s.repo_id, lower(trim(tc.tool_name))
             ), failed_tools AS (
               SELECT s.repo_id,
@@ -104,7 +100,7 @@ class RepeatedToolFailureRule(BaseImprovementRule):
                      COUNT(*) AS failures,
                      COUNT(DISTINCT tc.session_id) AS affected_sessions
               FROM tool_calls tc
-              JOIN sessions s ON s.id = tc.session_id
+              JOIN {scope.sessions} s ON s.id = tc.session_id
               WHERE lower(COALESCE(tc.status, '')) IN ('error', 'failed', 'failure')
                  OR NULLIF(tc.error_type, '') IS NOT NULL
               GROUP BY s.repo_id, lower(trim(tc.tool_name))
@@ -122,10 +118,10 @@ class RepeatedToolFailureRule(BaseImprovementRule):
         findings: list[ObservationDraft] = []
         for repo_id, tool_key, tool_name, failures, affected_sessions, total_calls in rows:
             source_rows = conn.execute(
-                """
+                f"""
                 SELECT tc.session_id, COUNT(*) AS failures
                 FROM tool_calls tc
-                JOIN sessions s ON s.id = tc.session_id
+                JOIN {scope.sessions} s ON s.id = tc.session_id
                 WHERE lower(trim(tc.tool_name)) = ?
                   AND COALESCE(s.repo_id, '') = COALESCE(?, '')
                   AND (
@@ -138,10 +134,10 @@ class RepeatedToolFailureRule(BaseImprovementRule):
                 (tool_key, repo_id),
             ).fetchall()
             evidence_rows = conn.execute(
-                """
+                f"""
                 SELECT tc.id, tc.session_id, tc.step_id, tc.status, tc.error_type
                 FROM tool_calls tc
-                JOIN sessions s ON s.id = tc.session_id
+                JOIN {scope.sessions} s ON s.id = tc.session_id
                 WHERE lower(trim(tc.tool_name)) = ?
                   AND COALESCE(s.repo_id, '') = COALESCE(?, '')
                   AND (
@@ -232,13 +228,14 @@ class RetryLoopRule(BaseImprovementRule):
     # Detecting repetition alone must not create a workflow or skill candidate.
     workflow = None
 
-    def detect(self, conn: sqlite3.Connection) -> list[ObservationDraft]:
+    def detect(self, conn: sqlite3.Connection, *, scope: AnalysisScope | None = None) -> list[ObservationDraft]:
+        scope = scope or AnalysisScope()
         rows = conn.execute(
-            """
+            f"""
             SELECT s.repo_id, tc.session_id, tc.tool_name, tc.input_hash,
                    COUNT(*) AS call_count
             FROM tool_calls tc
-            JOIN sessions s ON s.id = tc.session_id
+            JOIN {scope.sessions} s ON s.id = tc.session_id
             WHERE NULLIF(tc.input_hash, '') IS NOT NULL
             GROUP BY s.repo_id, tc.session_id, tc.tool_name, tc.input_hash
             HAVING COUNT(*) >= 3
@@ -349,9 +346,10 @@ class MissingVerificationRule(BaseImprovementRule):
         ],
     )
 
-    def detect(self, conn: sqlite3.Connection) -> list[ObservationDraft]:
+    def detect(self, conn: sqlite3.Connection, *, scope: AnalysisScope | None = None) -> list[ObservationDraft]:
+        scope = scope or AnalysisScope()
         rows = conn.execute(
-            """
+            f"""
             WITH classified AS (
               SELECT s.id AS session_id, s.repo_id,
                      SUM(CASE WHEN lower(tc.tool_name) GLOB '*write*'
@@ -366,7 +364,7 @@ class MissingVerificationRule(BaseImprovementRule):
                                   OR lower(COALESCE(tc.input_preview_redacted, '')) GLOB '*build*'
                                   OR lower(COALESCE(tc.input_preview_redacted, '')) GLOB '*compile*'
                               THEN 1 ELSE 0 END) AS verification_calls
-              FROM sessions s
+              FROM {scope.sessions} s
               JOIN tool_calls tc ON tc.session_id = s.id
               WHERE lower(COALESCE(s.status, '')) IN ('completed', 'ok', 'success', 'unknown')
               GROUP BY s.id, s.repo_id
@@ -381,7 +379,7 @@ class MissingVerificationRule(BaseImprovementRule):
         findings: list[ObservationDraft] = []
         for repo_id, affected_sessions, writes in rows:
             evidence_rows = conn.execute(
-                """
+                f"""
                 WITH classified AS (
                   SELECT s.id AS session_id,
                          SUM(CASE WHEN lower(tc.tool_name) GLOB '*write*'
@@ -396,7 +394,7 @@ class MissingVerificationRule(BaseImprovementRule):
                                       OR lower(COALESCE(tc.input_preview_redacted, '')) GLOB '*build*'
                                       OR lower(COALESCE(tc.input_preview_redacted, '')) GLOB '*compile*'
                                   THEN 1 ELSE 0 END) AS verification_calls
-                  FROM sessions s
+                  FROM {scope.sessions} s
                   JOIN tool_calls tc ON tc.session_id = s.id
                   WHERE COALESCE(s.repo_id, '') = COALESCE(?, '')
                     AND lower(COALESCE(s.status, '')) IN ('completed', 'ok', 'success', 'unknown')
@@ -471,7 +469,7 @@ class ContextExplosionRule(BaseImprovementRule):
         title="Context explosion",
         description="Finds sessions whose token volume is a robust outlier within the same repository.",
         detector_config={"minimum_tokens": 250000, "median_multiplier": 2.5},
-        required_signals=["sessions.input_tokens", "sessions.output_tokens", "sessions.cache_read_tokens", "sessions.cache_creation_tokens", "sessions.reasoning_tokens"],
+        required_signals=["sessions.input_tokens", "sessions.output_tokens", "sessions.cache_read_tokens", "sessions.cache_creation_tokens"],
     )
     workflow = WorkflowDefinition(
         slug="context-budget-checkpoints",
@@ -484,16 +482,16 @@ class ContextExplosionRule(BaseImprovementRule):
         ],
     )
 
-    def detect(self, conn: sqlite3.Connection) -> list[ObservationDraft]:
+    def detect(self, conn: sqlite3.Connection, *, scope: AnalysisScope | None = None) -> list[ObservationDraft]:
+        scope = scope or AnalysisScope()
         rows = conn.execute(
-            """
+            f"""
             SELECT id, repo_id,
                    input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens
-                   + reasoning_tokens
                    AS total_tokens
-            FROM sessions
+            FROM {scope.sessions}
             WHERE input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens
-                  + reasoning_tokens > 0
+                  > 0
             ORDER BY repo_id, total_tokens
             """
         ).fetchall()
@@ -550,7 +548,7 @@ class ContextExplosionRule(BaseImprovementRule):
                             entity_type="session",
                             entity_id=session_id,
                             session_id=session_id,
-                            summary_redacted=f"Session used {tokens:,} billed tokens including cache and reasoning",
+                            summary_redacted=f"Session used {tokens:,} observed tokens including cache",
                             attrs={"total_tokens": tokens, "threshold": threshold},
                         )
                         for session_id, tokens in sorted(
@@ -562,7 +560,7 @@ class ContextExplosionRule(BaseImprovementRule):
                     source_sessions=[
                         ObservationSessionRef(
                             session_id=session_id,
-                            summary_redacted=f"Session used {tokens:,} billed tokens including cache and reasoning",
+                            summary_redacted=f"Session used {tokens:,} observed tokens including cache",
                             focus_entity_type="session",
                             focus_entity_id=session_id,
                             attrs={"total_tokens": tokens, "threshold": threshold},
@@ -595,9 +593,10 @@ class RepeatedExplorationRule(BaseImprovementRule):
         ],
     )
 
-    def detect(self, conn: sqlite3.Connection) -> list[ObservationDraft]:
+    def detect(self, conn: sqlite3.Connection, *, scope: AnalysisScope | None = None) -> list[ObservationDraft]:
+        scope = scope or AnalysisScope()
         rows = conn.execute(
-            """
+            f"""
             WITH classified AS (
               SELECT s.id AS session_id, s.repo_id,
                      SUM(CASE WHEN lower(tc.tool_name) GLOB '*read*'
@@ -610,7 +609,7 @@ class RepeatedExplorationRule(BaseImprovementRule):
                                   OR lower(tc.tool_name) GLOB '*edit*'
                                   OR lower(tc.tool_name) GLOB '*patch*'
                               THEN 1 ELSE 0 END) AS writes
-              FROM sessions s
+              FROM {scope.sessions} s
               JOIN tool_calls tc ON tc.session_id = s.id
               GROUP BY s.id, s.repo_id
             )
@@ -624,7 +623,7 @@ class RepeatedExplorationRule(BaseImprovementRule):
         findings: list[ObservationDraft] = []
         for repo_id, affected_sessions, reads in rows:
             evidence_rows = conn.execute(
-                """
+                f"""
                 WITH classified AS (
                   SELECT s.id AS session_id,
                          SUM(CASE WHEN lower(tc.tool_name) GLOB '*read*'
@@ -637,7 +636,7 @@ class RepeatedExplorationRule(BaseImprovementRule):
                                       OR lower(tc.tool_name) GLOB '*edit*'
                                       OR lower(tc.tool_name) GLOB '*patch*'
                                   THEN 1 ELSE 0 END) AS writes
-                  FROM sessions s
+                  FROM {scope.sessions} s
                   JOIN tool_calls tc ON tc.session_id = s.id
                   WHERE COALESCE(s.repo_id, '') = COALESCE(?, '')
                   GROUP BY s.id
@@ -722,12 +721,13 @@ class UserCorrectionRule(BaseImprovementRule):
         ],
     )
 
-    def detect(self, conn: sqlite3.Connection) -> list[ObservationDraft]:
+    def detect(self, conn: sqlite3.Connection, *, scope: AnalysisScope | None = None) -> list[ObservationDraft]:
+        scope = scope or AnalysisScope()
         rows = conn.execute(
-            """
+            f"""
             SELECT s.repo_id, COUNT(*) AS corrections, COUNT(DISTINCT so.session_id) AS sessions
             FROM session_outcomes so
-            JOIN sessions s ON s.id = so.session_id
+            JOIN {scope.sessions} s ON s.id = so.session_id
             WHERE so.outcome = 'corrected'
               AND lower(COALESCE(s.status, '')) IN ('completed', 'ok', 'success', 'unknown')
             GROUP BY s.repo_id
@@ -738,10 +738,10 @@ class UserCorrectionRule(BaseImprovementRule):
         findings: list[ObservationDraft] = []
         for repo_id, corrections, affected_sessions in rows:
             source_rows = conn.execute(
-                """
+                f"""
                 SELECT so.session_id, COUNT(*) AS corrections
                 FROM session_outcomes so
-                JOIN sessions s ON s.id = so.session_id
+                JOIN {scope.sessions} s ON s.id = so.session_id
                 WHERE so.outcome = 'corrected'
                   AND COALESCE(s.repo_id, '') = COALESCE(?, '')
                 GROUP BY so.session_id
@@ -750,9 +750,9 @@ class UserCorrectionRule(BaseImprovementRule):
                 (repo_id,),
             ).fetchall()
             evidence_rows = conn.execute(
-                """
+                f"""
                 SELECT so.session_id, so.source
-                FROM session_outcomes so JOIN sessions s ON s.id = so.session_id
+                FROM session_outcomes so JOIN {scope.sessions} s ON s.id = so.session_id
                 WHERE so.outcome = 'corrected'
                   AND COALESCE(s.repo_id, '') = COALESCE(?, '')
                 ORDER BY so.updated_at DESC
@@ -834,7 +834,8 @@ class IgnoredConstraintRule(BaseImprovementRule):
         ],
     )
 
-    def detect(self, conn: sqlite3.Connection) -> list[ObservationDraft]:
+    def detect(self, conn: sqlite3.Connection, *, scope: AnalysisScope | None = None) -> list[ObservationDraft]:
+        scope = scope or AnalysisScope()
         match = """
           lower(COALESCE(tc.error_type, '')) GLOB '*permission*'
           OR lower(COALESCE(tc.error_type, '')) GLOB '*sandbox*'
@@ -846,7 +847,7 @@ class IgnoredConstraintRule(BaseImprovementRule):
         rows = conn.execute(
             f"""
             SELECT s.repo_id, COUNT(*) AS violations, COUNT(DISTINCT tc.session_id) AS sessions
-            FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id
+            FROM tool_calls tc JOIN {scope.sessions} s ON s.id = tc.session_id
             WHERE {match}
             GROUP BY s.repo_id
             HAVING COUNT(*) >= 2
@@ -859,7 +860,7 @@ class IgnoredConstraintRule(BaseImprovementRule):
                 f"""
                 SELECT tc.session_id, COUNT(*) AS violations
                 FROM tool_calls tc
-                JOIN sessions s ON s.id = tc.session_id
+                JOIN {scope.sessions} s ON s.id = tc.session_id
                 WHERE COALESCE(s.repo_id, '') = COALESCE(?, '') AND ({match})
                 GROUP BY tc.session_id
                 ORDER BY violations DESC, tc.session_id
@@ -869,7 +870,7 @@ class IgnoredConstraintRule(BaseImprovementRule):
             evidence_rows = conn.execute(
                 f"""
                 SELECT tc.id, tc.session_id, tc.step_id, tc.error_type
-                FROM tool_calls tc JOIN sessions s ON s.id = tc.session_id
+                FROM tool_calls tc JOIN {scope.sessions} s ON s.id = tc.session_id
                 WHERE COALESCE(s.repo_id, '') = COALESCE(?, '') AND ({match})
                 ORDER BY tc.created_at DESC
                 LIMIT 20
@@ -952,11 +953,12 @@ class SuccessfulRecoveryRule(BaseImprovementRule):
         ],
     )
 
-    def detect(self, conn: sqlite3.Connection) -> list[ObservationDraft]:
+    def detect(self, conn: sqlite3.Connection, *, scope: AnalysisScope | None = None) -> list[ObservationDraft]:
+        scope = scope or AnalysisScope()
         rows = conn.execute(
-            """
+            f"""
             SELECT repo_id, COUNT(*) AS sessions, SUM(recovered_failure_count) AS recoveries
-            FROM sessions
+            FROM {scope.sessions}
             WHERE recovered_failure_count > 0
               AND lower(COALESCE(status, '')) IN ('completed', 'ok', 'success')
             GROUP BY repo_id HAVING COUNT(*) >= 2
@@ -966,8 +968,8 @@ class SuccessfulRecoveryRule(BaseImprovementRule):
         findings: list[ObservationDraft] = []
         for repo_id, affected_sessions, recoveries in rows:
             evidence_rows = conn.execute(
-                """
-                SELECT id, recovered_failure_count FROM sessions
+                f"""
+                SELECT id, recovered_failure_count FROM {scope.sessions}
                 WHERE COALESCE(repo_id, '') = COALESCE(?, '')
                   AND recovered_failure_count > 0
                   AND lower(COALESCE(status, '')) IN ('completed', 'ok', 'success')
@@ -1031,239 +1033,93 @@ class SuccessfulRecoveryRule(BaseImprovementRule):
 class HighPerformingWorkflowRule(BaseImprovementRule):
     definition = RuleDefinition(
         id="high_performing_repeated_workflow",
-        version=2,
+        version=3,
         category="workflow",
-        title="High-performing repeated workflow worth preserving",
-        description="Finds repeated failure-free task procedures within one workspace and archetype.",
-        detector_config={
-            "minimum_execution_units": 3,
-            "minimum_source_sessions": 2,
-            "minimum_cohort_coverage": 0.6,
-            "maximum_milestones": 8,
-        },
-        required_signals=[
-            "execution_units.eligible",
-            "execution_unit_archetypes.task_archetype_id",
-            "execution_unit_steps.step_id",
-            "tool_calls.tool_name",
-        ],
+        title="Repeated procedure with observed checks",
+        description="Finds scoped procedures with repeatable check evidence and preserves counterexamples.",
+        detector_config={"minimum_source_sessions": 3, "minimum_checked_ratio": 0.6,
+                         "maximum_execution_units": 300},
+        required_signals=["execution_units.boundary_json", "execution_unit_steps.step_id"],
     )
     workflow = None
 
-    def detect(self, conn: sqlite3.Connection) -> list[ObservationDraft]:
-        rows = conn.execute(
-            """
-            SELECT eu.id, eu.session_id, eu.repo_id, eu.workspace_id,
-                   eua.task_archetype_id
-            FROM execution_units eu
-            JOIN execution_unit_archetypes eua ON eua.execution_unit_id = eu.id
-            WHERE eu.eligible = 1 AND eua.mixed = 0
-              AND lower(COALESCE(eu.status, '')) IN ('completed', 'ok', 'success')
-              AND COALESCE(eu.outcome, 'success')
-                  NOT IN ('failure', 'partial', 'abandoned')
-              AND COALESCE(eu.verification_passed, 1) <> 0
-            ORDER BY eu.started_at, eu.id
-            """
-        ).fetchall()
-        signals_by_execution = WorkflowEvidenceRepository(conn).signals_for_execution_units(
-            [str(row[0]) for row in rows]
-        )
-        executions: dict[str, dict[str, object]] = {}
-        for row in rows:
-            execution_unit_id = str(row[0])
-            signals = signals_by_execution.get(execution_unit_id, [])
-            executions[execution_unit_id] = {
-                "session_id": str(row[1]),
-                "repo_id": row[2],
-                "workspace_id": row[3],
-                "archetype_id": str(row[4]),
-                "signals": signals,
-                "failed": any(signal.failed for signal in signals),
-            }
+    def detect(self, conn: sqlite3.Connection, *, scope: AnalysisScope | None = None) -> list[ObservationDraft]:
+        from reflect.improvements.procedures import ProcedureEvidenceRepository, procedure_contract
 
-        cohort_sizes: dict[tuple[str | None, str | None, str], int] = defaultdict(int)
-        groups: dict[tuple[str | None, str | None, str, str], list[str]] = defaultdict(list)
-        signatures: dict[str, list[str]] = {}
-        for execution_unit_id, execution in executions.items():
-            cohort = (
-                execution["repo_id"],
-                execution["workspace_id"],
-                str(execution["archetype_id"]),
-            )
-            cohort_sizes[cohort] += 1
-            roles = workflow_roles(execution["signals"])  # type: ignore[arg-type]
-            if bool(execution["failed"]) or len(set(roles)) < 2:
+        scope = scope or AnalysisScope()
+        bundle = ProcedureEvidenceRepository(conn).bundle(execution_table=scope.execution_units)
+        findings = []
+        for procedure in bundle["procedures"]:
+            if not procedure["candidate_ready"]:
                 continue
-            signature = " > ".join(roles)
-            signatures[execution_unit_id] = roles
-            groups[(*cohort, signature)].append(execution_unit_id)
-
-        findings: list[ObservationDraft] = []
-        for (repo_id, workspace_id, archetype_id, signature), execution_unit_ids in groups.items():
-            session_ids = sorted(
-                {str(executions[item]["session_id"]) for item in execution_unit_ids}
-            )
-            coverage = len(execution_unit_ids) / cohort_sizes[(repo_id, workspace_id, archetype_id)]
-            if len(execution_unit_ids) < 3 or len(session_ids) < 2 or coverage < 0.6:
+            signature = procedure_contract(procedure).signature_hash
+            if conn.execute("""SELECT 1 FROM skill_installations si
+                JOIN skill_versions sv ON sv.id=si.skill_version_id
+                WHERE si.status='active'
+                  AND json_extract(sv.workflow_json,'$.workflow_contract.signature_hash')=?
+                LIMIT 1""", (signature,)).fetchone():
                 continue
-            signature_hash = _stable_fingerprint(archetype_id, signature)
-            if conn.execute(
-                """
-                SELECT 1
-                FROM skill_installations si
-                JOIN skill_versions sv ON sv.id = si.skill_version_id
-                WHERE si.status = 'active'
-                  AND json_extract(
-                    sv.workflow_json, '$.workflow_contract.signature_hash'
-                  ) = ?
-                  AND (
-                    si.target_kind <> 'repository'
-                    OR EXISTS (
-                      SELECT 1 FROM workspaces w
-                      WHERE w.id = ? AND rtrim(w.root_path, '/') = rtrim(si.target_ref, '/')
-                    )
-                  )
-                LIMIT 1
-                """,
-                (signature_hash, workspace_id),
-            ).fetchone():
-                continue
-            impact = min(82.0, 30.0 + len(execution_unit_ids) * 6.0 + coverage * 10.0)
-            scope_type, scope_id = _scope(repo_id)
-            findings.append(
-                ObservationDraft(
-                    rule_id=self.definition.id,
-                    rule_version=self.definition.version,
-                    scope_type=scope_type,
-                    scope_id=scope_id,
-                    repo_id=repo_id,
-                    fingerprint=_stable_fingerprint(workspace_id, archetype_id, signature),
-                    category=self.definition.category,
-                    title=f"A reliable {archetype_id} workflow repeats",
-                    summary=(
-                        f"{len(execution_unit_ids)} comparable task(s) across {len(session_ids)} "
-                        f"session(s) used the failure-free procedure: {signature}."
-                    ),
-                    metric_name="workflow_adherence",
-                    metric_value=coverage,
-                    metric_unit="ratio",
-                    metric_direction="higher_is_better",
-                    baseline_value=coverage,
-                    baseline_query={
-                        "repo_id": repo_id,
-                        "workspace_id": workspace_id,
-                        "task_archetype_id": archetype_id,
-                        "milestone_roles": signature.split(" > "),
-                        "signature_hash": signature_hash,
-                        "cohort_execution_unit_count": cohort_sizes[
-                            (repo_id, workspace_id, archetype_id)
-                        ],
-                        "coverage": coverage,
-                    },
-                    impact_score=impact,
-                    severity=_severity(impact),
-                    confidence=min(0.94, 0.58 + len(execution_unit_ids) * 0.06),
-                    occurrence_count=len(execution_unit_ids),
-                    affected_session_count=len(session_ids),
-                    evidence=[
-                        EvidenceRef(
-                            entity_type="execution_unit",
-                            entity_id=execution_unit_id,
-                            session_id=str(executions[execution_unit_id]["session_id"]),
-                            summary_redacted=(
-                                "Completed without recorded tool failures using the repeated procedure"
-                            ),
-                            attrs={"milestone_roles": signatures[execution_unit_id]},
-                        )
-                        for execution_unit_id in execution_unit_ids[:20]
-                    ],
-                    source_sessions=[
-                        ObservationSessionRef(
-                            session_id=session_id,
-                            occurrence_count=sum(
-                                1
-                                for execution_unit_id in execution_unit_ids
-                                if str(executions[execution_unit_id]["session_id"])
-                                == session_id
-                            ),
-                            summary_redacted=(
-                                "Contained comparable tasks using the repeated procedure"
-                            ),
-                            focus_entity_type="task_archetype",
-                            focus_entity_id=archetype_id,
-                        )
-                        for session_id in session_ids
-                    ],
-                )
-            )
+            roles = procedure["milestone_roles"]
+            examples = [(example, polarity) for key, polarity in
+                        (("supporting_examples", "supporting"), ("counterexamples", "counterexample"))
+                        for example in procedure[key]]
+            checked = procedure["verification_counts"].get("passed", 0)
+            scope_type, scope_id = _scope(procedure["repo_id"])
+            findings.append(ObservationDraft(
+                rule_id=self.definition.id, rule_version=self.definition.version,
+                scope_type=scope_type, scope_id=scope_id, repo_id=procedure["repo_id"],
+                fingerprint=signature, category="workflow",
+                title=f"A repeated {procedure['task_archetype_id']} procedure has check evidence",
+                summary=(f"{checked}/{procedure['execution_count']} matching executions have current passing checks "
+                         f"across {procedure['session_count']} sessions. Task outcomes remain separately assessed."),
+                metric_name="procedure_checked_ratio", metric_value=procedure["checked_ratio"],
+                metric_unit="ratio", metric_direction="higher_is_better",
+                baseline_value=procedure["checked_ratio"],
+                baseline_query={"repo_id": procedure["repo_id"], "workspace_id": procedure["workspace_id"],
+                    "task_archetype_id": procedure["task_archetype_id"], "milestone_roles": roles,
+                    "signature_hash": signature, "procedure": procedure, "selection": bundle["selection"]},
+                impact_score=min(75, 30 + procedure["session_count"] * 5), severity=_severity(50),
+                confidence=min(.9, .55 + len(procedure["checked_session_ids"]) * .05),
+                occurrence_count=procedure["execution_count"], affected_session_count=procedure["session_count"],
+                evidence=[EvidenceRef(entity_type="execution_unit", entity_id=example["execution_unit_id"],
+                    session_id=example["session_id"], polarity=polarity,
+                    summary_redacted=f"Matching operations and artifact scope; checks {example['verification']}; outcome {example['outcome']}.",
+                    attrs=example) for example, polarity in examples],
+                source_sessions=[ObservationSessionRef(session_id=sid,
+                    summary_redacted="Contained a matching scoped procedure; check and outcome evidence are separate.")
+                    for sid in procedure["session_ids"]],
+            ))
         return findings
 
     def propose(self, finding: ObservationDraft) -> WorkflowProposal | None:
-        roles = [str(item) for item in finding.baseline_query.get("milestone_roles") or []]
-        if len(roles) < 2:
+        procedure = finding.baseline_query.get("procedure") or {}
+        if not procedure.get("candidate_ready"):
             return None
-        archetype = str(finding.baseline_query.get("task_archetype_id") or "task")
-        signature_hash = str(finding.baseline_query.get("signature_hash") or finding.fingerprint)
-        steps = [f"Complete and record the {role} milestone." for role in roles]
-        evidence_fields = {
-            "authorize": ["preview_fingerprint", "approval_fingerprint"],
-            "act": ["provider", "target_ref", "write_fingerprint"],
-            "verify": ["readback_fingerprint"],
-        }
-        contract = WorkflowContract(
-            signature_hash=signature_hash,
-            applicability=WorkflowContractApplicability(
-                repo_id=finding.repo_id,
-                workspace_id=finding.baseline_query.get("workspace_id"),
-                task_archetype_id=archetype,
-            ),
-            milestones=[
-                WorkflowMilestoneContract(
-                    id=role,
-                    role=role,
-                    evidence_fields=evidence_fields.get(role, []),
-                )
-                for role in roles
-            ],
-            validation=WorkflowContractValidation(
-                baseline_minimum=3,
-                baseline_maximum=20,
-                minimum_evidence_coverage=0.8,
-            ),
-        )
+        signature = finding.baseline_query["signature_hash"]
+        archetype = str(procedure["task_archetype_id"])
+        verbs = {"inspect": "Inspect", "search": "Search", "modify": "Modify", "check": "Run the check for"}
+        steps = [f"{verbs.get(item['operation'], item['operation'])} {item['target']}."
+                 for item in procedure["operations"]]
+        from reflect.improvements.procedures import procedure_contract
+        contract = procedure_contract(procedure)
         return WorkflowProposal(
-            title=f"Workflow: preserve the {archetype} procedure",
-            hypothesis=(
-                f"Installing this bounded workflow will preserve or improve workflow_adherence. "
-                f"{finding.summary}"
-            ),
-            risk="low",
-            content={
-                "schema_version": 2,
-                "slug": f"proven-{archetype.replace('_', '-')}-{signature_hash[:8]}",
+            title=f"Workflow: repeat the scoped {archetype} procedure",
+            hypothesis=("This draft preserves a repeated procedure with observed checks. "
+                        "Whether using it improves outcomes remains unmeasured. " + finding.summary),
+            risk="low", content={"schema_version": 2,
+                "slug": f"scoped-{archetype.replace('_', '-')}-{signature[:8]}",
                 "behavior_type": WorkflowBehaviorType.PROVEN_PATTERN.value,
-                "suggested_artifact": "skill",
-                "description": f"Use for comparable {archetype} tasks in this workspace.",
-                "steps": steps,
-                "abstain_when": [
-                    "The task is outside the recorded workspace or task archetype.",
-                    "The linked execution-unit evidence is mixed or low confidence.",
-                ],
-                "verification": [
-                    "Record every required milestone against the active Reflect task run.",
-                    "Verify the task outcome independently from milestone self-reporting.",
-                ],
+                "suggested_artifact": "skill", "description": f"Use for matching {archetype} work and artifact scope.",
+                "steps": steps, "procedure": procedure,
+                "abstain_when": ["The task, artifact areas, or check scope differs from the linked executions.",
+                    "Required inputs are missing or the procedure evidence is incomplete.",
+                    "A check fails repeatedly without a relevant state change; stop and report the blocker."],
+                "verification": ["Run the relevant checks after the final affected edit and inspect their results.",
+                    "Keep task acceptance and unknown outcomes separate from passing checks."],
                 "workflow_contract": contract.model_dump(mode="json"),
-                "source": {
-                    "kind": "rule_blueprint",
-                    "observation_title": finding.title,
-                    "rule_id": self.definition.id,
-                    "rule_version": self.definition.version,
-                },
-            },
-            target_metric="workflow_adherence",
-            target_value=1.0,
-            measurement_window=5,
+                "source": {"kind": "rule_blueprint", "rule_id": self.definition.id,
+                           "rule_version": self.definition.version}},
+            target_metric="workflow_adherence", target_value=1.0, measurement_window=5,
         )
 
 class CorrectNoChangeRule(BaseImprovementRule):
@@ -1287,11 +1143,12 @@ class CorrectNoChangeRule(BaseImprovementRule):
         ],
     )
 
-    def detect(self, conn: sqlite3.Connection) -> list[ObservationDraft]:
+    def detect(self, conn: sqlite3.Connection, *, scope: AnalysisScope | None = None) -> list[ObservationDraft]:
+        scope = scope or AnalysisScope()
         rows = conn.execute(
-            """
+            f"""
             SELECT s.repo_id, COUNT(DISTINCT so.session_id) AS sessions
-            FROM session_outcomes so JOIN sessions s ON s.id = so.session_id
+            FROM session_outcomes so JOIN {scope.sessions} s ON s.id = so.session_id
             WHERE so.outcome = 'no-change-correct'
             GROUP BY s.repo_id HAVING COUNT(DISTINCT so.session_id) >= 2
             ORDER BY sessions DESC
@@ -1300,10 +1157,10 @@ class CorrectNoChangeRule(BaseImprovementRule):
         findings: list[ObservationDraft] = []
         for repo_id, affected_sessions in rows:
             source_rows = conn.execute(
-                """
+                f"""
                 SELECT so.session_id, COUNT(*) AS outcomes
                 FROM session_outcomes so
-                JOIN sessions s ON s.id = so.session_id
+                JOIN {scope.sessions} s ON s.id = so.session_id
                 WHERE so.outcome = 'no-change-correct'
                   AND COALESCE(s.repo_id, '') = COALESCE(?, '')
                 GROUP BY so.session_id
@@ -1312,9 +1169,9 @@ class CorrectNoChangeRule(BaseImprovementRule):
                 (repo_id,),
             ).fetchall()
             evidence_rows = conn.execute(
-                """
+                f"""
                 SELECT so.session_id FROM session_outcomes so
-                JOIN sessions s ON s.id = so.session_id
+                JOIN {scope.sessions} s ON s.id = so.session_id
                 WHERE so.outcome = 'no-change-correct'
                   AND COALESCE(s.repo_id, '') = COALESCE(?, '')
                 ORDER BY so.updated_at DESC
@@ -1385,6 +1242,7 @@ DEFAULT_RULE_REGISTRY = RuleRegistry(
         SuccessfulRecoveryRule(),
         HighPerformingWorkflowRule(),
         CorrectNoChangeRule(),
+        *session_insight_rules(),
     )
 )
 DEFAULT_RULES: tuple[BaseImprovementRule, ...] = DEFAULT_RULE_REGISTRY.rules

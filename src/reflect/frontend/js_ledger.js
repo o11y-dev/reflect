@@ -74,6 +74,13 @@ function sessionTokenTotal(session, estimatedTokens = null){
 
 function sessionCostPresentation(session, estimatedTokens = null){
   const cost = Number(session?.total_cost_usd || session?.total_cost || 0);
+  const coverage = session?.pricing_coverage || session?.measurements?.coverage;
+  if (coverage) {
+    const scope = session?.cost_scope === 'event_window' ? 'Selected dates' : 'Session lifetime';
+    if (coverage.cost_status === 'complete') return {cost, status:'estimated', label:'Estimated cost', reason:`${scope}: all observed usage priced, including explicit zero rates.`};
+    if (coverage.cost_status === 'partial') return {cost, status:'partial', label:`Known subtotal $${fmtCost(cost)}`, reason:`${scope}: ${coverage.complete_priced_usage || 0}/${coverage.observed_usage || 0} usage records fully priced. Missing evidence is excluded from this subtotal.`};
+    return {cost:0, status:'unavailable', label:'Cost unavailable', reason:'Captured usage has no supported price. Missing data does not imply free usage.'};
+  }
   if (cost > 0) return {cost, status:'estimated', label:'Estimated cost', reason:''};
   const inferredStatus = sessionTokenTotal(session, estimatedTokens) <= 0
     ? 'tokens_unavailable'
@@ -167,6 +174,7 @@ function openLedgerDialog({title, subtitle = '', body = '', actions = ''}){
 }
 
 function closeLedgerDialog(){
+  if (ledgerDialog) ledgerDialog.inspection = null;
   if (ledgerDialog?.open) ledgerDialog.close();
   updateUrlParams(params => {
     params.delete('workflow');
@@ -177,25 +185,57 @@ function closeLedgerDialog(){
 }
 
 document.getElementById('ledger-dialog-close')?.addEventListener('click', closeLedgerDialog);
+ledgerDialog?.addEventListener('close', () => {ledgerDialog.inspection = null;});
 ledgerDialog?.addEventListener('click', event => {
   if (event.target === ledgerDialog) closeLedgerDialog();
 });
 
 async function ledgerRequest(url, {method = 'GET', body} = {}){
-  const response = await fetch(url, {
-    method,
-    headers: {Accept: 'application/json', ...(body === undefined ? {} : {'Content-Type': 'application/json'})},
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
-  return payload;
+  const controller = new AbortController();
+  const deadline = method === 'GET' ? window.setTimeout(() => controller.abort(), 5000) : null;
+  try {
+    const response = await fetch(url, {
+      method, signal:controller.signal,
+      headers:{Accept:'application/json',...(body === undefined ? {} : {'Content-Type':'application/json'})},
+      body:body === undefined ? undefined : JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+    return payload;
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('Evidence is taking longer to load. Retry while analysis continues.');
+    throw error;
+  } finally {
+    if (deadline != null) window.clearTimeout(deadline);
+  }
 }
 
+let improvementRequest = null;
 async function refreshImprovementSurfaces(){
-  IMPROVEMENT_DATA = await loadImprovementData();
-  buildImprovementSurfaces();
+  if (improvementRequest) return improvementRequest;
+  improvementRequest = (async () => {
+    IMPROVEMENT_DATA = await loadImprovementData((partial, name) => {
+      IMPROVEMENT_DATA = partial;
+      buildImprovementSurfaces();
+      refreshOpenLedger(name, partial.resources?.[name]);
+    });
+    buildImprovementSurfaces();
+  })().finally(() => {improvementRequest = null;});
+  return improvementRequest;
 }
+
+const improvementTabs = new Set(['inbox', 'workflows', 'skills', 'impact']);
+window.setInterval(() => {
+  if (!dashboardDocumentActive || document.visibilityState === 'hidden') return;
+  if (currentParams().get('tab') === 'explore') {
+    hydrateExploreView(activeExploreView).catch(() => {});
+    return;
+  }
+  if (!improvementTabs.has(currentParams().get('tab'))) return;
+  if (IMPROVEMENT_DATA.skill_analysis_state === 'pending' || Object.values(IMPROVEMENT_DATA.resources || {}).some(resource => resource.state !== 'ready')) {
+    refreshImprovementSurfaces().catch(() => {});
+  }
+}, 15000);
 
 const workflowDateFormatter = new Intl.DateTimeFormat(navigator.language || undefined, {
   dateStyle:'medium',
@@ -278,6 +318,30 @@ function skillMatchesSearch(skill, query){
     availability.detail,
   ].filter(Boolean).join(' ').toLocaleLowerCase();
   return terms.every(term => searchable.includes(term));
+}
+
+function renderProcedureEvidence(content){
+  const procedure = content?.procedure;
+  if (!procedure || !Array.isArray(procedure.operations)) return '';
+  const total = Number(procedure.execution_count || 0);
+  const checked = Number(procedure.verification_counts?.passed || 0);
+  const states = values => Object.entries(values || {}).map(([key, value]) => `${humanizeLedgerLabel(key)}: ${fmt(Number(value))}`).join(' · ') || 'Unknown';
+  const examples = [...(procedure.supporting_examples || []), ...(procedure.counterexamples || [])];
+  const operations = procedure.operations.slice(0, 12).map(item => `<li>${escHtml(humanizeLedgerLabel(item.operation))} <span translate="no">${escHtml(item.target)}</span></li>`).join('');
+  const matches = (content.existing_workflow_matches || []).slice(0, 5).map(item => `<li>${item.id ? `<button type="button" class="ledger-button" data-ledger-action="review-workflow" data-candidate-id="${escHtml(item.id)}">${escHtml(item.title || item.id)}</button>` : escHtml(item.title || 'Related workflow')} · ${escHtml(humanizeLedgerLabel(item.status || 'unknown'))}</li>`).join('');
+  return `<section class="review-panel" aria-label="Procedure evidence">
+    <div class="review-panel-head"><h3 class="review-panel-title">Why these executions match</h3><span class="ledger-pill">${fmt(Number(procedure.session_count || 0))} sessions</span></div>
+    <p class="review-panel-copy">${escHtml(procedure.match_explanation || 'Matching task scope and recorded procedure.')}</p>
+    <p class="review-panel-copy">Within this recorded sample, ${fmt(checked)} of ${fmt(total)} executions had passing checks. This does not establish that the workflow improved outcomes.</p>
+    <div class="ledger-meta"><span>Checks · ${escHtml(states(procedure.verification_counts))}</span><span>Task outcomes · ${escHtml(states(procedure.outcome_counts))}</span></div>
+    <ol class="workflow-readable">${operations}</ol>
+    ${procedure.operations.length > 12 ? `<p class="review-panel-copy">Showing 12 of ${fmt(procedure.operations.length)} matched operations.</p>` : ''}
+    ${procedure.signals_truncated ? '<p class="review-panel-copy">Execution detail is incomplete; this sample cannot establish a complete procedure.</p>' : ''}
+    <details class="advanced-review"><summary>Supporting and uncertain examples · ${fmt(examples.length)}</summary><div class="session-ledger">
+      ${examples.slice(0, 20).map(item => `<article class="session-ledger-item"><div class="session-ledger-main"><div class="session-ledger-title">Checks ${escHtml(humanizeLedgerLabel(item.verification || 'unknown'))} · outcome ${escHtml(humanizeLedgerLabel(item.outcome || 'unknown'))}</div><div class="session-ledger-id" translate="no">${escHtml(item.execution_unit_id || '')}</div></div><a class="ledger-button" href="${escHtml(sessionInspectionUrl({session_id:item.session_id}))}">Open Session</a></article>`).join('')}
+    </div></details>
+    ${matches ? `<div class="review-eyebrow">Related existing workflows</div><ul class="workflow-readable">${matches}</ul><p class="review-panel-copy">Review these matches before creating another workflow. Existing installations are unchanged.</p>` : ''}
+  </section>`;
 }
 
 function renderWorkflowSteps(steps, {limit = 0, compact = false} = {}){
@@ -366,7 +430,7 @@ function renderWorkflowSessionLedger(sessions, {empty, total, initial = 5} = {})
       </div>
       <div class="session-ledger-side">
         ${session.exposure_state ? `<span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(session.exposure_state))}</span>` : `<span class="ledger-pill">${escHtml(evidenceLabel)}</span>`}
-        <a class="ledger-button" data-related-session-link href="${escHtml(sessionInspectionUrl(session))}">Open Session</a>
+        ${session.session_id ? `<a class="ledger-button" data-related-session-link href="${escHtml(sessionInspectionUrl(session))}">Open Session</a>` : '<span class="ledger-status">Session reference unavailable</span>'}
       </div>
     </article>`;
   };
@@ -382,11 +446,76 @@ function renderWorkflowSessionLedger(sessions, {empty, total, initial = 5} = {})
   return `<div class="session-ledger">${visibleRows}</div>${more}${countNote}`;
 }
 
+function staleEvidenceNotice(...payloads){
+  const recorded = payloads.filter(payload => payload?.publication?.state === 'recorded');
+  const recordedNotice = recorded.length
+    ? `<div class="review-warning" role="status"><strong>Recorded evidence.</strong> Stored references are available for inspection. Current comparability, outcomes, and impact validation are pending.${recorded.some(payload => payload.publication.recorded_at) ? ` Stored measurement: ${escHtml(recorded.filter(payload => payload.publication.recorded_at).map(payload => fmtWorkflowDate(payload.publication.recorded_at)).join('; '))}.` : ''}</div>`
+    : '';
+  const stale = payloads.filter(payload => payload?.publication?.state === 'stale');
+  if (!stale.length) return recordedNotice;
+  const timestamps = [...new Set(stale.map(payload => {
+    const published = payload.publication.snapshot_completed_at || payload.snapshot_completed_at;
+    if (published && Number.isFinite(Date.parse(published))) return `published ${new Date(published).toLocaleString()}`;
+    const loaded = payload.publication.loaded_at;
+    return loaded && Number.isFinite(Date.parse(loaded))
+      ? `last loaded ${new Date(loaded).toLocaleString()}; publication timestamp unavailable`
+      : 'publication timestamp unavailable';
+  }))];
+  const pending = stale.some(payload => payload.publication.reason === 'historical_pending')
+    ? 'Historical analysis is pending; an explicit historical refresh is required.'
+    : 'Current analysis is pending. Review again after refresh.';
+  return `${recordedNotice}<div class="review-warning" role="status"><strong>Historical evidence.</strong> ${escHtml(timestamps.join('; '))}. ${escHtml(pending)}</div>`;
+}
+
+function beginLedgerRead(kind, id, title){
+  const previous = ledgerDialog.inspection;
+  const request = {kind,id,retain:Boolean(ledgerDialog.open && previous?.kind === kind && previous?.id === id)};
+  if (request.retain) request.projectRoot = previous.projectRoot;
+  ledgerDialog.inspection = request;
+  if (!request.retain) openLedgerDialog({title});
+  return request;
+}
+
+function presentLedgerRead(request, content){
+  if (ledgerDialog.inspection !== request) return;
+  const body = ledgerDialog.querySelector?.('.ledger-dialog-body');
+  const scroll = request.retain ? body?.scrollTop || 0 : 0;
+  openLedgerDialog(content);
+  if (body && request.retain) body.scrollTop = scroll;
+}
+
+function failLedgerRead(request, content){
+  if (ledgerDialog.inspection !== request) return;
+  const body = ledgerDialog.querySelector?.('.ledger-dialog-body');
+  if (request.retain && body) {
+    let notice = body.querySelector('[data-evidence-retry-status]');
+    if (!notice) {
+      notice = document.createElement('div');
+      notice.dataset.evidenceRetryStatus = '';
+      notice.className = 'review-warning';
+      notice.setAttribute('role','status');
+      body.prepend(notice);
+    }
+    notice.textContent = 'Updated evidence could not be loaded. Showing the previous result; retry when ready.';
+    return;
+  }
+  presentLedgerRead(request, content);
+}
+
+function refreshOpenLedger(name, resource){
+  const request = ledgerDialog.inspection;
+  if (!ledgerDialog.open || !request?.pending || resource?.state !== 'ready') return;
+  if (name === 'workflows' && request.kind === 'workflow') showWorkflowReview(request.id, request.projectRoot || '');
+  if (name === 'impact' && request.kind === 'impact') showImpactSessions(request.id);
+  if (name === 'skills' && request.kind === 'skill') showSkillReview(request.id);
+}
+
 async function showObservationEvidence(observationId){
-  openLedgerDialog({title:'Loading evidence…'});
+  const request = beginLedgerRead('finding', observationId, 'Loading evidence…');
   try {
     const item = await ledgerRequest(`/api/findings/${encodeURIComponent(observationId)}`);
     const ledger = await ledgerRequest(`/api/findings/${encodeURIComponent(observationId)}/evidence`);
+    if (ledgerDialog.inspection !== request) return;
     const rawEvidence = (item.evidence || []).map(entry => `<div class="evidence-item">
       <div class="ledger-meta" style="margin-top:0"><span class="ledger-pill" translate="no">${escHtml(entry.entity_type)}:${escHtml(entry.entity_id)}</span><span class="ledger-pill">${Math.round(Number(entry.confidence || 0)*100)}% confidence</span></div>
       <div class="inbox-copy" style="margin-top:8px">${escHtml(entry.summary_redacted || '')}</div>
@@ -405,10 +534,10 @@ async function showObservationEvidence(observationId){
     const metricValue = Number(item.metric_value);
     const metricDisplay = Number.isFinite(metricValue) ? fmt(metricValue) : String(item.metric_value ?? '—');
     const ruleLabel = humanizeLedgerLabel(item.category || item.rule_id || 'Improvement');
-    openLedgerDialog({
+    presentLedgerRead(request, {
       title:item.title || 'Observation evidence',
       subtitle:`${ruleLabel} Rule · Version ${item.rule_version} · ${confidence}% confidence`,
-      body:`<div class="review-lead">
+      body:`${staleEvidenceNotice(item,ledger)}<div class="review-lead">
           <div class="review-eyebrow">Why This Matters</div>
           <p>${escHtml(item.summary || '')}</p>
         </div>
@@ -441,14 +570,15 @@ async function showObservationEvidence(observationId){
       actions:'<div class="ledger-action-spacer"></div><button type="button" class="ledger-button primary" data-ledger-action="close">Done</button>',
     });
   } catch (error) {
-    openLedgerDialog({title:'Evidence unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`});
+    failLedgerRead(request, {title:'Evidence unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`});
   }
 }
 
 async function showLoopReview(loopId){
-  openLedgerDialog({title:'Loading loop evidence…'});
+  const request = beginLedgerRead('loop', loopId, 'Loading loop evidence…');
   try {
     const detail = await ledgerRequest(`/api/loops/${encodeURIComponent(loopId)}`);
+    if (ledgerDialog.inspection !== request) return;
     const loop = detail.loop || {};
     const occurrences = detail.occurrences || [];
     const nativeLoop = loop.kind === 'agent_native';
@@ -476,11 +606,12 @@ async function showLoopReview(loopId){
     const evidenceFacts = Object.entries(loop.evidence || {}).map(([key, value]) => `
       <div class="review-fact"><dt>${escHtml(humanizeLedgerLabel(key))}</dt><dd>${escHtml(Array.isArray(value) ? value.join(', ') : String(value))}</dd></div>
     `).join('');
-    const canBuild = loop.status === 'detected' || loop.status === 'acknowledged';
-    openLedgerDialog({
+    const stale = detail.publication?.state === 'stale';
+    const canBuild = !stale && (loop.status === 'detected' || loop.status === 'acknowledged');
+    presentLedgerRead(request, {
       title:loop.title || 'Observed loop',
       subtitle:`${humanizeLedgerLabel(loop.kind || 'loop')} · ${humanizeLedgerLabel(loop.status || 'detected')} · ${Math.round(Number(loop.confidence || 0) * 100)}% confidence`,
-      body:`<div class="review-lead">
+      body:`${staleEvidenceNotice(detail)}<div class="review-lead">
           <div class="review-eyebrow">Observed Behavior</div>
           <p>${escHtml(loop.summary || '')}</p>
         </div>
@@ -508,30 +639,37 @@ async function showLoopReview(loopId){
             <section class="review-panel">
               <div class="review-panel-head"><h3 class="review-panel-title">Next Step</h3></div>
               <p class="review-panel-copy">A loop is evidence, not yet a workflow. Build stages one bounded workflow for review. After explicit installation, Reflect monitors comparable future task executions in Impact.</p>
-              <div class="ledger-command">reflect loops build ${escHtml(loopId)} --agent codex</div>
-              <div class="ledger-command">reflect workflows apply WORKFLOW_ID</div>
+              ${canBuild ? `<div class="ledger-command">reflect loops build ${escHtml(loopId)} --agent codex</div><div class="ledger-command">reflect workflows apply WORKFLOW_ID</div>` : '<p class="review-panel-copy">Current loop evidence is required before building a workflow.</p>'}
             </section>
           </aside>
         </div>`,
       actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div>${canBuild ? `<span class="ledger-status">Next: build a workflow, review it, then apply it to start monitoring.</span>` : ''}`,
     });
   } catch (error) {
-    openLedgerDialog({title:'Loop evidence unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`});
+    failLedgerRead(request, {title:'Loop evidence unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`});
   }
 }
 
 async function showSkillReview(skillId){
-  openLedgerDialog({title:'Loading skill history…'});
+  const request = beginLedgerRead('skill', skillId, 'Loading skill history…');
   try {
     const detail = await ledgerRequest(`/api/skills/${encodeURIComponent(skillId)}`);
+    if (ledgerDialog.inspection !== request) return;
+    const analysisPending = detail.analysis_state === 'pending';
+    const analysisStale = detail.analysis_state === 'stale' || detail.publication?.state === 'stale';
+    const recordedEvidence = detail.evidence_state === 'recorded';
+    request.pending = analysisPending || analysisStale;
+    const analysisUnavailable = analysisPending && !recordedEvidence;
     const skill = detail.skill || {};
     const versions = detail.versions || [];
     const installations = detail.installations || [];
-    const measurements = detail.measurements || [];
-    const evidence = detail.evidence || [];
-    const usageSessions = detail.usage_sessions || [];
+    const measurements = analysisUnavailable ? [] : detail.measurements || [];
+    const evidence = analysisUnavailable ? [] : detail.evidence || [];
+    const usageSessions = analysisUnavailable ? [] : detail.usage_sessions || [];
+    const analysisCount = value => analysisUnavailable || value == null ? '—' : fmt(Number(value));
+    const pendingAnalysis = '<div class="session-ledger-empty">Analysis is updating. These results are not available yet.</div>';
     const availability = skillAvailabilityPresentation(skill, installations);
-    const workflowCandidateId = versions.find(item => item.workflow_candidate_id)?.workflow_candidate_id || '';
+    const workflowCandidateId = analysisPending || analysisStale ? '' : versions.find(item => item.workflow_candidate_id)?.workflow_candidate_id || '';
     updateUrlParams(params => {
       params.delete('workflow');
       params.delete('workflow_root');
@@ -549,6 +687,11 @@ async function showSkillReview(skillId){
     </article>`).join('');
     const measurementRows = measurements.map(item => {
       const metric = impactMetricPresentation(item.metric_name);
+      if (recordedEvidence) {
+        const result = item.recorded_result;
+        const value = number => number == null ? 'Unknown' : formatImpactValue(metric, number);
+        return `<article class="skill-detail-tile"><div class="inbox-card-head"><div class="inbox-title">${escHtml(metric.goal)}</div><span class="ledger-pill">Validation pending</span></div><div class="inbox-copy">${result ? `Recorded result: ${escHtml(value(result.before_value))} before → ${escHtml(value(result.after_value))} after · ${escHtml(humanizeLedgerLabel(result.verdict || 'unknown'))}` : 'Stored result details are unavailable.'}</div><div class="ledger-status">Measured ${escHtml(item.measured_at ? fmtWorkflowDate(item.measured_at) : 'at an unknown time')}; current validation is pending.</div></article>`;
+      }
       const verdict = impactVerdictPresentation(item.verdict);
       const ready = item.verdict !== 'insufficient_data';
       const afterCount = Number(item.details?.after_count || 0);
@@ -563,7 +706,7 @@ async function showSkillReview(skillId){
       <div class="session-ledger-main"><div class="session-ledger-title">Source Session</div><div class="session-ledger-id" title="${escHtml(item.entity_id)}" translate="no">${escHtml(compactLedgerId(item.entity_id))}</div><div class="session-ledger-meta"><span>${escHtml(humanizeLedgerLabel(item.relationship || 'source evidence'))}</span><span>${Math.round(Number(item.confidence || 0) * 100)}% confidence</span></div></div>
       <div class="session-ledger-side"><a class="ledger-button" href="${escHtml(sessionInspectionUrl({session_id:item.entity_id}))}">Open Session</a></div>
     </article>`).join('');
-    const usageSessionRows = renderWorkflowSessionLedger(usageSessions.map(item => ({
+    const usageSessionRows = analysisUnavailable ? pendingAnalysis : renderWorkflowSessionLedger(usageSessions.map(item => ({
       session_id:item.session_id,
       title:item.title,
       agent:item.agent,
@@ -572,22 +715,24 @@ async function showSkillReview(skillId){
       workspace:item.workspace,
       exposure_state:item.state,
       evidence_count:1,
-      evidence_summaries:[`Skill use observed ${fmtWorkflowDate(item.observed_at)}${item.outcome ? ` · outcome ${humanizeLedgerLabel(item.outcome)}` : ''}`],
+      evidence_summaries:[`Skill use observed ${fmtWorkflowDate(item.observed_at)}${!recordedEvidence && item.outcome ? ` · outcome ${humanizeLedgerLabel(item.outcome)}` : ''}`],
     })), {
-      empty:'No telemetry-observed use sessions are linked yet.',
+      empty:recordedEvidence ? 'No stored use references are linked.' : analysisStale ? 'No telemetry-observed use sessions in the last published analysis.' : 'No telemetry-observed use sessions are linked yet.',
       total:Number(skill.usage_count || usageSessions.length),
       initial:5,
     });
-    openLedgerDialog({
+    presentLedgerRead(request, {
       title:humanizeLedgerLabel(skill.name || skill.slug || 'Skill'),
       subtitle:`${humanizeLedgerLabel(skill.lifecycle_state || 'pending')} · ${humanizeLedgerLabel(skill.origin || 'imported')} · ${fmt(Number(skill.version_count || versions.length))} versions`,
-      body:`<div class="review-lead"><div class="review-eyebrow">Durable Package</div><p>${escHtml(skill.description || 'No description is available.')}</p><div class="tile-card-meta"><span class="ledger-pill skill-availability ${escHtml(availability.kind)}">${escHtml(availability.label)}</span><span class="ledger-pill">${escHtml(availability.detail)}</span></div></div>
+      body:`${staleEvidenceNotice(detail)}${analysisUnavailable ? '<div class="inbox-copy" role="status">Showing recorded packages and installations. Usage, evidence, and impact are updating.</div>' : ''}<div class="review-lead"><div class="review-eyebrow">Durable Package</div><p>${escHtml(skill.description || 'No description is available.')}</p><div class="tile-card-meta"><span class="ledger-pill skill-availability ${escHtml(availability.kind)}">${escHtml(availability.label)}</span><span class="ledger-pill">${escHtml(availability.detail)}</span></div></div>
         <div class="review-kpi-strip">
           <div class="review-kpi"><div class="review-kpi-label">Versions</div><div class="review-kpi-value signal">${fmt(Number(skill.version_count || versions.length))}</div></div>
-          <div class="review-kpi"><div class="review-kpi-label">Evidence Links</div><div class="review-kpi-value">${fmt(Number(skill.evidence_count || evidence.length))}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">Evidence Links</div><div class="review-kpi-value">${analysisCount(skill.evidence_count)}</div></div>
           <div class="review-kpi"><div class="review-kpi-label">Availability</div><div class="review-kpi-value">${escHtml(availability.label)}</div></div>
-          <div class="review-kpi"><div class="review-kpi-label">Observed Uses</div><div class="review-kpi-value">${fmt(Number(skill.usage_count || 0))}</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">Observed Uses</div><div class="review-kpi-value">${analysisCount(skill.usage_count)}</div></div>
         </div>
+        <section class="review-panel skill-usage-section"><div class="review-panel-head"><h3 class="review-panel-title">Where used</h3></div><div class="skill-usage-graph" data-skill-usage-graph><div class="session-ledger-empty" role="status">Loading captured usage…</div></div></section>
+        ${versions[0]?.workflow?.procedure ? renderProcedureEvidence(versions[0].workflow) : ''}
         <div class="review-grid">
           <main class="review-stack">
             <section class="review-panel"><div class="review-panel-head"><h3 class="review-panel-title">Version History</h3><span class="ledger-pill signal">${fmt(versions.length)} semantic versions</span></div><div class="skill-detail-grid">${versionRows || '<div class="session-ledger-empty">No versions are registered.</div>'}</div></section>
@@ -595,35 +740,71 @@ async function showSkillReview(skillId){
           </main>
           <aside class="review-stack">
             <section class="review-panel">
-              <div class="review-panel-head"><h3 class="review-panel-title">Related Sessions</h3><span class="ledger-pill signal">${fmt(Number(skill.usage_count || usageSessions.length))} observed uses</span></div>
+              <div class="review-panel-head"><h3 class="review-panel-title">Related Sessions</h3><span class="ledger-pill signal">${analysisCount(skill.usage_count)} observed uses</span></div>
               <p class="review-panel-copy">Observed uses show sessions where telemetry linked this skill. Source evidence separately shows sessions that produced a Reflect-generated version.</p>
               <div class="review-eyebrow" style="margin:16px 0 8px">Observed Uses</div>
               ${usageSessionRows}
               <div class="review-eyebrow" style="margin:18px 0 8px">Source Evidence</div>
-              <div class="session-ledger">${evidenceRows || '<div class="session-ledger-empty">This imported skill was not generated from Reflect source sessions.</div>'}</div>
+              <div class="session-ledger">${analysisUnavailable ? pendingAnalysis : evidenceRows || `<div class="session-ledger-empty">${recordedEvidence ? 'No stored source session references are linked.' : analysisStale ? 'No source sessions in the last published analysis.' : 'This imported skill was not generated from Reflect source sessions.'}</div>`}</div>
               ${sessionEvidence.length > 20 ? `<div class="ledger-status">Showing 20 of ${fmt(sessionEvidence.length)} source sessions.</div>` : ''}
             </section>
-            <section class="review-panel"><div class="review-panel-head"><h3 class="review-panel-title">Impact Results</h3><span class="ledger-pill">${fmt(measurements.length)} checks</span></div><div class="skill-detail-grid">${measurementRows || '<div class="session-ledger-empty">No before/after impact check is available yet.</div>'}</div></section>
+            <section class="review-panel"><div class="review-panel-head"><h3 class="review-panel-title">Impact Results</h3><span class="ledger-pill">${analysisUnavailable ? '—' : fmt(measurements.length)} checks</span></div><div class="skill-detail-grid">${analysisUnavailable ? pendingAnalysis : measurementRows || `<div class="session-ledger-empty">${recordedEvidence ? 'No stored impact checks are linked. Current validation is pending.' : analysisStale ? 'No before/after impact check in the last published analysis.' : 'No before/after impact check is available yet.'}</div>`}</div></section>
           </aside>
         </div>`,
-      actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div>${workflowCandidateId ? `<button type="button" class="ledger-button primary" data-ledger-action="review-workflow" data-candidate-id="${escHtml(workflowCandidateId)}">Review Source Workflow</button>` : ''}`,
+      actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div>${analysisPending || analysisStale ? `<button type="button" class="ledger-button" data-ledger-action="review-skill" data-skill-id="${escHtml(skillId)}">Retry Analysis</button>` : ''}${workflowCandidateId ? `<button type="button" class="ledger-button primary" data-ledger-action="review-workflow" data-candidate-id="${escHtml(workflowCandidateId)}">Review Source Workflow</button>` : ''}`,
     });
+    if (ledgerDialog.inspection !== request) return;
+    const graphContainer = ledgerDialog.querySelector?.('[data-skill-usage-graph]');
+    if (graphContainer && typeof loadSkillUsageGraph === 'function') loadSkillUsageGraph(skillId, graphContainer);
   } catch (error) {
-    openLedgerDialog({title:'Skill history unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`});
+    failLedgerRead(request, {title:'Skill history unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`,
+      actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><button type="button" class="ledger-button primary" data-ledger-action="review-skill" data-skill-id="${escHtml(skillId)}">Retry</button>`});
   }
 }
 
 async function showWorkflowReview(candidateId, requestedRoot = ''){
-  openLedgerDialog({title:'Preparing workflow review…'});
+  const request = beginLedgerRead('workflow', candidateId, 'Preparing workflow review…');
+  requestedRoot = request.projectRoot = requestedRoot || request.projectRoot || '';
   try {
-    const candidate = (IMPROVEMENT_DATA.workflows || []).find(item => item.id === candidateId);
-    if (!candidate) throw new Error('Workflow candidate is no longer available.');
+    const sourceCandidate = (IMPROVEMENT_DATA.workflows || []).find(item => item.id === candidateId);
+    const candidateSnapshot = sourceCandidate ? JSON.stringify(sourceCandidate) : null;
+    const resource = IMPROVEMENT_DATA.resources?.workflows || {};
+    const listedCandidateCurrent = Boolean(sourceCandidate) && resource.state === 'ready';
     const previewUrl = new URL(`/api/workflows/${encodeURIComponent(candidateId)}/preview`, window.location.origin);
     if (requestedRoot) previewUrl.searchParams.set('project_root', requestedRoot);
-    const [preview, ledger] = await Promise.all([
-      ledgerRequest(previewUrl.pathname + previewUrl.search),
+    let [previewRead, evidenceRead] = await Promise.allSettled([
+      listedCandidateCurrent ? ledgerRequest(previewUrl.pathname + previewUrl.search) : Promise.resolve(null),
       ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/evidence`),
     ]);
+    let ledger = evidenceRead.status === 'fulfilled' ? evidenceRead.value || {} : {};
+    // Evidence includes its candidate in the same database read. Deep links and
+    // Impact inspection do not depend on a paginated Workflow list being loaded.
+    const candidate = ledger.candidate || (sourceCandidate && JSON.parse(candidateSnapshot));
+    if (!candidate) throw new Error(evidenceRead.reason?.message || 'Workflow not found.');
+    const current = payload => !['pending','stale'].includes(payload.analysis_state) && !['stale','recorded'].includes(payload.publication?.state);
+    const candidateCurrent = ledger.candidate ? current(ledger) : listedCandidateCurrent;
+    if (!listedCandidateCurrent && ledger.candidate && candidateCurrent) {
+      [previewRead] = await Promise.allSettled([ledgerRequest(previewUrl.pathname + previewUrl.search)]);
+    }
+    if (ledgerDialog.inspection !== request) return;
+    const preview = previewRead.status === 'fulfilled' ? previewRead.value || {} : {};
+    const candidateStable = !sourceCandidate || JSON.stringify((IMPROVEMENT_DATA.workflows || []).find(item => item.id === candidateId)) === candidateSnapshot;
+    const evidenceMatches = (!ledger.contract_signature || !candidate.contract_signature || ledger.contract_signature === candidate.contract_signature)
+      && (!preview.contract_signature || preview.contract_signature === candidate.contract_signature)
+      && (!preview.candidate_updated_at || preview.candidate_updated_at === candidate.updated_at);
+    const evidenceAvailable = evidenceRead.status === 'fulfilled' && candidateStable && evidenceMatches;
+    if (!evidenceAvailable) ledger = {};
+    const canReview = candidateCurrent && candidateStable
+      && (ledger.candidate || IMPROVEMENT_DATA.resources?.workflows?.state === 'ready')
+      && previewRead.status === 'fulfilled' && previewRead.value != null && evidenceAvailable
+      && current(preview) && current(ledger);
+    request.pending = !canReview;
+    const evidenceCount = (value, fallback) => value == null && fallback == null ? '—' : fmt(Number(value ?? fallback));
+    const unavailableEvidence = '<div class="session-ledger-empty">Evidence references are updating. Their absence has not been established.</div>';
+    const readOnlyNotice = canReview ? '' : `<div class="review-warning" role="status"><strong>Read-only inspection.</strong> ${!candidateStable ? 'The workflow changed while loading. ' : ''}${!evidenceMatches ? 'The evidence belongs to a different workflow revision. ' : ''}Current workflow validation and a fresh project preview are required before editing or applying.${previewRead.status === 'rejected' ? ` Project preview unavailable: ${escHtml(previewRead.reason.message)}.` : ''}${evidenceRead.status === 'rejected' ? ` Evidence unavailable: ${escHtml(evidenceRead.reason.message)}.` : ''}</div>`;
+    const candidatePublication = ledger.candidate ? ledger : !candidateCurrent ? {publication:{...resource.publication,
+      state:resource.publication?.state === 'recorded' || resource.state === 'recorded' ? 'recorded' : 'stale',
+      loaded_at:resource.publication?.loaded_at ?? resource.loaded_at}} : {};
     updateUrlParams(params => {
       params.delete('loop');
       params.delete('skill');
@@ -637,7 +818,9 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     const applyLabel = applyAllowed
       ? (evidenceReady ? 'Approve & Apply to This Project' : 'Apply Unvalidated Draft')
       : 'Choose a Project Folder';
-    const reviewActions = active
+    const reviewActions = !canReview
+      ? `<button type="button" class="ledger-button" data-ledger-action="review-workflow" data-candidate-id="${escHtml(candidateId)}">Retry Review</button>`
+      : active
       ? `<button type="button" class="ledger-button danger" data-ledger-action="rollback" data-candidate-id="${escHtml(candidateId)}">Roll Back</button>`
       : !reviewable
         ? ''
@@ -662,18 +845,18 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     const evidenceReadinessNotice = evidenceReady
       ? ''
       : '<div class="review-warning"><strong>Unvalidated draft.</strong> No comparable task evidence supports this workflow yet. Applying installs the draft, but Impact must establish whether it helps.</div>';
-    const supportTasks = renderWorkflowSessionLedger(ledger.support_execution_units, {
-      empty:'No comparable execution units support this workflow.',
+    const supportTasks = !evidenceAvailable ? unavailableEvidence : renderWorkflowSessionLedger(ledger.support_execution_units, {
+      empty:canReview ? 'No comparable execution units support this workflow.' : 'No supporting task references in this recorded evidence.',
       total:ledger.support_execution_unit_count,
       initial:3,
     });
-    const provenanceSessions = renderWorkflowSessionLedger(ledger.provenance_sessions, {
+    const provenanceSessions = !evidenceAvailable ? unavailableEvidence : renderWorkflowSessionLedger(ledger.provenance_sessions, {
       empty:'No provenance sessions are linked to this workflow.',
       total:ledger.provenance_session_count,
       initial:3,
     });
-    const exposedTasks = renderWorkflowSessionLedger(ledger.exposed_execution_units, {
-      empty:'No tasks have been exposed to this workflow yet. Exposure begins after approval and application.',
+    const exposedTasks = !evidenceAvailable ? unavailableEvidence : renderWorkflowSessionLedger(ledger.exposed_execution_units, {
+      empty:canReview ? 'No tasks have been exposed to this workflow yet. Exposure begins after approval and application.' : 'No exposure references in this recorded evidence.',
       total:ledger.exposed_execution_unit_count,
       initial:3,
     });
@@ -715,23 +898,24 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     ledgerDialog.dataset.projectRoot = preview.project_root || '';
     ledgerDialog.dataset.targetPath = preview.target_path || '';
     ledgerDialog.dataset.workflowSlug = String(content.slug || '');
-    openLedgerDialog({
+    presentLedgerRead(request, {
       title:reviewTitle,
       subtitle:`${origin.label} · ${behaviorType} · ${humanizeLedgerLabel(candidate.lifecycle?.display || candidate.status)} · Rule ${humanizeLedgerLabel(sourceRule)}`,
-      body:`<div class="review-lead">
+      body:`${staleEvidenceNotice(candidatePublication,ledger)}${readOnlyNotice}<div class="review-lead">
           <div class="review-eyebrow">Why Reflect Suggested This</div>
           <p>${escHtml(humanizeLedgerText(candidate.hypothesis || 'Review the linked evidence and proposed workflow before applying it.'))}</p>
           <p class="review-panel-copy">${escHtml(origin.detail)}</p>
         </div>
-        <div class="workflow-approval-summary" aria-label="Workflow approval summary">
+        ${content.procedure ? renderProcedureEvidence(content) : ''}
+        ${canReview ? `<div class="workflow-approval-summary" aria-label="Workflow approval summary">
           <div class="workflow-approval-item"><div class="workflow-approval-label">Evidence</div><div class="workflow-approval-value signal">${fmt(Number(ledger.provenance_session_count || 0))} linked sessions</div><div class="workflow-approval-copy">${fmt(Number(ledger.support_execution_unit_count || 0))} comparable tasks · ${evidenceReady ? 'task-bounded evidence' : 'unvalidated draft'}</div></div>
           <div class="workflow-approval-item"><div class="workflow-approval-label">Selected Project</div><div class="workflow-approval-value">${escHtml(projectName)}</div><div class="workflow-approval-copy">${escHtml(relationLabel)}</div></div>
           <div class="workflow-approval-item"><div class="workflow-approval-label">File Change</div><div class="workflow-approval-value">${escHtml(changeLabel)}</div><div class="workflow-approval-copy" translate="no">${escHtml(targetFile || 'Target file unavailable')}</div></div>
         </div>
-        <div class="workflow-scope-note ${escHtml(relationState)}"><div><strong>${escHtml(relationLabel)}.</strong> ${escHtml(relationCopy)} Only the selected project will be changed; this is not a global or multi-project install.</div></div>
+        <div class="workflow-scope-note ${escHtml(relationState)}"><div><strong>${escHtml(relationLabel)}.</strong> ${escHtml(relationCopy)} Only the selected project will be changed; this is not a global or multi-project install.</div></div>` : ''}
         <div class="review-grid">
           <main class="review-stack">
-            <section class="review-panel">
+            ${canReview ? `<section class="review-panel">
               <div class="review-panel-head"><h3 class="review-panel-title">Apply to One Project</h3><span class="ledger-pill">${escHtml(changeLabel)}</span></div>
               <p class="review-panel-copy">Reflect writes one project-local skill file. No other project or global agent folder will be changed.</p>
               <div class="workflow-target">
@@ -744,28 +928,30 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
                 <div class="workflow-target-file" title="${escHtml(preview.target_path || '')}" translate="no">${escHtml(targetFile || 'Target file unavailable')}</div>
               </div>
               <div class="${checkClass}" aria-live="polite">${escHtml(checkCopy)}</div>${evidenceReadinessNotice}${advisoryNotice}${evidenceVariantNotice}${ownerNotice}
-            </section>
+            </section>` : ''}
             <section class="review-panel review-section">
               <div class="review-panel-head"><h3 class="review-panel-title">${escHtml(origin.sectionLabel)}</h3><span class="ledger-pill signal">${escHtml(proposedSize)}</span></div>
               ${proposedWorkflow}
             </section>
             <div class="workflow-support-grid">
+              ${(content.preconditions || []).length ? `<section class="review-panel review-section"><h3>Prerequisites</h3><ul class="workflow-readable">${content.preconditions.map(item => `<li>${escHtml(item)}</li>`).join('')}</ul></section>` : ''}
+              ${(content.checkpoints || []).length ? `<section class="review-panel review-section"><h3>Checkpoints</h3><ul class="workflow-readable">${content.checkpoints.map(item => `<li>${escHtml(item)}</li>`).join('')}</ul></section>` : ''}
               <section class="review-panel review-section"><h3>Stop Conditions</h3><ul class="workflow-readable">${(content.abstain_when || []).map(item => `<li>${escHtml(item)}</li>`).join('') || '<li>No stop conditions are defined.</li>'}</ul></section>
               <section class="review-panel review-section"><h3>Verification</h3><ul class="workflow-readable">${(content.verification || []).map(item => `<li>${escHtml(item)}</li>`).join('') || '<li>No verification steps are defined.</li>'}</ul></section>
             </div>
-            <details class="advanced-review"><summary>Exact File Diff</summary><pre class="ledger-diff">${escHtml(preview.diff || 'No filesystem change; rendered content already matches.')}</pre></details>
-            <details class="advanced-review"><summary>Edit Structured Workflow</summary><label class="review-summary-label" for="workflow-content-editor">Workflow JSON</label><textarea class="ledger-editor" id="workflow-content-editor" name="workflow-content" autocomplete="off" spellcheck="false" ${active ? 'readonly' : ''}>${escHtml(JSON.stringify(content, null, 2))}</textarea></details>
+            ${canReview ? `<details class="advanced-review"><summary>Exact File Diff</summary><pre class="ledger-diff">${escHtml(preview.diff || 'No filesystem change; rendered content already matches.')}</pre></details>
+            <details class="advanced-review"><summary>Edit Structured Workflow</summary><label class="review-summary-label" for="workflow-content-editor">Workflow JSON</label><textarea class="ledger-editor" id="workflow-content-editor" name="workflow-content" autocomplete="off" spellcheck="false" ${active ? 'readonly' : ''}>${escHtml(JSON.stringify(content, null, 2))}</textarea></details>` : ''}
           </main>
           <aside class="review-stack">
             <section class="review-panel">
-              <div class="review-panel-head"><h3 class="review-panel-title">Supporting Tasks</h3><span class="ledger-pill signal">${fmt(Number(ledger.support_execution_unit_count || 0))} comparable</span></div>
-              <p class="review-panel-copy">Task-bounded evidence behind this contract. Provenance sessions are retained separately and never counted as comparable executions.</p>
+              <div class="review-panel-head"><h3 class="review-panel-title">${canReview ? 'Supporting Tasks' : 'Recorded Task References'}</h3><span class="ledger-pill signal">${evidenceCount(ledger.support_execution_unit_count,candidate.support_execution_unit_count)} ${canReview ? 'comparable' : 'linked'}</span></div>
+              <p class="review-panel-copy">${canReview ? 'Task-bounded evidence behind this contract. Provenance sessions are retained separately and never counted as comparable executions.' : 'Stored references are available for inspection. Current comparability and verification have not been established.'}</p>
               ${supportTasks}
-              <details class="advanced-review"><summary>Provenance Sessions · ${fmt(Number(ledger.provenance_session_count || 0))}</summary>${provenanceSessions}</details>
+              <details class="advanced-review"><summary>Provenance Sessions · ${evidenceCount(ledger.provenance_session_count)}</summary>${provenanceSessions}</details>
             </section>
             <section class="review-panel">
-              <div class="review-panel-head"><h3 class="review-panel-title">After Activation</h3><span class="ledger-pill">${fmt(Number(ledger.exposed_execution_unit_count || 0))} tasks</span></div>
-              <p class="review-panel-copy">Comparable execution units where Reflect observed this workflow after it was applied.</p>
+              <div class="review-panel-head"><h3 class="review-panel-title">After Activation</h3><span class="ledger-pill">${evidenceCount(ledger.exposed_execution_unit_count)} tasks</span></div>
+              <p class="review-panel-copy">${canReview ? 'Comparable execution units where Reflect observed this workflow after it was applied.' : 'Stored workflow exposure references; current applicability and outcomes remain unverified.'}</p>
               ${exposedTasks}
             </section>
           </aside>
@@ -773,7 +959,8 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
       actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div>${reviewActions}`,
     });
   } catch (error) {
-    openLedgerDialog({title:'Workflow review unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`});
+    failLedgerRead(request, {title:'Workflow review unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`,
+      actions:`<button type="button" class="ledger-button" data-ledger-action="review-workflow" data-candidate-id="${escHtml(candidateId)}">Retry Review</button>`});
   }
 }
 
@@ -798,13 +985,17 @@ async function submitSessionFeedback(sessionId, outcome, button){
 }
 
 async function showImpactSessions(measurementId){
-  openLedgerDialog({title:'Loading comparison evidence…'});
+  const request = beginLedgerRead('impact', measurementId, 'Loading comparison evidence…');
   try {
     const ledger = await ledgerRequest(`/api/impact/${encodeURIComponent(measurementId)}/evidence`);
+    if (ledgerDialog.inspection !== request) return;
+    request.pending = ['pending','stale'].includes(ledger.analysis_state) || ['stale','recorded'].includes(ledger.publication?.state);
     const metric = impactMetricPresentation(ledger.metric_name);
+    const recordedEvidence = ledger.evidence_state === 'recorded';
     const unit = 'task';
     const unitPlural = 'tasks';
-    const cohortCopy = 'These are the stored execution-unit cohorts behind this impact snapshot.';
+    const cohortCopy = `These are the stored execution-unit cohorts behind this impact snapshot.${ledger.measured_at ? ` Measured ${fmtWorkflowDate(ledger.measured_at)}.` : recordedEvidence ? ' Measurement time is unavailable.' : ''}`;
+    const count = value => value == null ? '—' : fmt(Number(value));
     const measurementReasons = ledger.measurement_reasons || [];
     const qualityNotice = measurementReasons.length
       ? `<div class="review-warning"><strong>${escHtml(humanizeLedgerLabel(ledger.measurement_state || 'not measurable'))}.</strong> ${escHtml(measurementReasons.join(' '))}</div>`
@@ -812,38 +1003,40 @@ async function showImpactSessions(measurementId){
     const prepare = (items, relationship) => (items || []).map(item => ({
       ...item,
       relationship,
-      evidence_label:formatImpactSessionValue(ledger.metric_name, item.metric_value, item),
+      evidence_label:item.snapshot_missing ? 'Snapshot details unavailable'
+        : `${recordedEvidence ? 'Recorded: ' : ''}${formatImpactSessionValue(ledger.metric_name, item.metric_value, item)}`,
     }));
     const beforeSessions = renderWorkflowSessionLedger(prepare(ledger.before_execution_units, 'baseline'), {
-      empty:`No baseline ${unitPlural} remain available for this snapshot.`,
+      empty:recordedEvidence ? 'No baseline references are stored in this snapshot.' : `No baseline ${unitPlural} remain available for this snapshot.`,
       total:ledger.before_count,
       initial:5,
     });
     const afterSessions = renderWorkflowSessionLedger(prepare(ledger.after_execution_units, 'after activation'), {
-      empty:`No post-application ${unitPlural} have been collected yet.`,
+      empty:recordedEvidence ? 'No post-application references are stored in this snapshot.' : `No post-application ${unitPlural} have been collected yet.`,
       total:ledger.after_count,
       initial:5,
     });
-    openLedgerDialog({
+    presentLedgerRead(request, {
       title:`Tasks Compared for ${metric.goal}`,
       subtitle:cohortCopy,
-      body:`<div class="review-lead"><div class="review-eyebrow">Impact Evidence</div><p>${escHtml(cohortCopy)} Open the containing session to inspect the underlying conversation, tools, and outcome.</p></div>${qualityNotice}
+      body:`${staleEvidenceNotice(ledger)}<div class="review-lead"><div class="review-eyebrow">Impact Evidence</div><p>${escHtml(cohortCopy)} Open a linked session to inspect the captured conversation and tools.</p></div>${qualityNotice}${ledger.snapshot_exact === false ? '<div class="review-warning">Some stored cohort references have no frozen snapshot details. Their metrics and outcomes remain unknown; current session data is not substituted.</div>' : ''}
         <div class="review-grid">
           <section class="review-panel">
-            <div class="review-panel-head"><h3 class="review-panel-title">Before Activation</h3><span class="ledger-pill">${fmt(Number(ledger.before_count || 0))} ${unitPlural}</span></div>
+            <div class="review-panel-head"><h3 class="review-panel-title">Before Activation</h3><span class="ledger-pill">${count(ledger.before_count)} ${unitPlural}</span></div>
             <p class="review-panel-copy">Baseline ${unitPlural} used to establish the earlier behavior.</p>
             ${beforeSessions}
           </section>
           <section class="review-panel">
-            <div class="review-panel-head"><h3 class="review-panel-title">After Activation</h3><span class="ledger-pill signal">${fmt(Number(ledger.after_count || 0))} ${unitPlural}</span></div>
-            <p class="review-panel-copy">Comparable ${unitPlural} available after the workflow was applied.</p>
+            <div class="review-panel-head"><h3 class="review-panel-title">After Activation</h3><span class="ledger-pill signal">${count(ledger.after_count)} ${unitPlural}</span></div>
+            <p class="review-panel-copy">${recordedEvidence ? 'Stored post-application references. Current comparability and impact validation are pending.' : `Comparable ${unitPlural} available after the workflow was applied.`}</p>
             ${afterSessions}
           </section>
         </div>`,
-      actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div><button type="button" class="ledger-button primary" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(ledger.candidate_id || ''))}">Review Applied Workflow</button>`,
+      actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div><button type="button" class="ledger-button" data-ledger-action="review-impact-sessions" data-measurement-id="${escHtml(measurementId)}">Retry Evidence</button><button type="button" class="ledger-button primary" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(ledger.candidate_id || ''))}">Inspect Applied Workflow</button>`,
     });
   } catch (error) {
-    openLedgerDialog({title:'Comparison sessions unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`});
+    failLedgerRead(request, {title:'Comparison sessions unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`,
+      actions:`<button type="button" class="ledger-button" data-ledger-action="review-impact-sessions" data-measurement-id="${escHtml(measurementId)}">Retry Evidence</button>`});
   }
 }
 
@@ -860,6 +1053,7 @@ document.addEventListener('click', async event => {
     activateTab('workflows');
     return showWorkflowReview(candidateId);
   }
+  if (action === 'retry-improvements') return refreshImprovementSurfaces();
   if (action === 'review-workflow') return showWorkflowReview(candidateId);
   if (action === 'review-impact-sessions') return showImpactSessions(trigger.dataset.measurementId || '');
   if (action === 'use-unique-name') {
@@ -934,7 +1128,31 @@ let dashboardFilterActive = false;
 let dashboardSelectedSessionId = currentParams().get('session') || '';
 const lazySqlTabRequests = new Map();
 const exploreViewStates = new Map([['usage', 'ready']]);
+const exploreViewScopes = new Map();
+let explorePublication = 0;
+document.addEventListener('reflect-snapshot-published', event => {
+  explorePublication += 1;
+  if (currentParams().get('tab') === 'explore') {
+    event.preventDefault();
+    Promise.resolve().then(() => hydrateExploreView(activeExploreView)).catch(() => {});
+  }
+  if (improvementTabs.has(currentParams().get('tab'))) {
+    // Usage can publish while every improvement endpoint is still preparing.
+    // Preserve the loaded Inbox instead of reloading into an empty page.
+    event.preventDefault();
+    if (event.detail?.profile !== 'snapshot') {
+      for (const resource of Object.values(IMPROVEMENT_DATA.resources || {})) resource.state = 'preparing';
+      buildImprovementSurfaces();
+    }
+  }
+  if (event.detail?.profile === 'snapshot') {
+    Promise.resolve().then(() => {
+      if (event.defaultPrevented) return refreshImprovementSurfaces();
+    }).catch(() => {});
+  }
+});
 const exploreViewLoadingCopy = {
+  usage:'Loading observed usage and Git activity...',
   tools:'Loading command and tool patterns...',
   graph:'Loading graphs...',
   context:'Loading context and system data...',
@@ -946,13 +1164,28 @@ function setExploreViewState(viewName, state, errorMessage = ''){
   const status = document.getElementById(`${viewName}-view-status`);
   if (!panel || !status) return;
   const loading = state === 'loading';
+  const previous = exploreViewScopes.get(viewName);
+  const retained = previous?.scope === exploreViewUrl(viewName).url.toString();
   panel.setAttribute('aria-busy', loading ? 'true' : 'false');
   status.classList.toggle('error', state === 'error');
-  status.textContent = loading ? exploreViewLoadingCopy[viewName] : errorMessage;
+  const message = loading ? exploreViewLoadingCopy[viewName] : errorMessage;
+  status.textContent = retained && state !== 'ready'
+    ? `${previous.publication_state === 'recorded'
+      ? `Showing stored telemetry${previous.loaded_at ? ` read ${new Date(previous.loaded_at).toLocaleString()}` : '; read time unavailable'}.`
+      : previous.loaded_at ? `Showing data from ${new Date(previous.loaded_at).toLocaleString()}.` : 'Showing last published data; timestamp unavailable.'} ${message || 'Updating in the background.'}`
+    : message;
   status.hidden = state === 'ready';
+  if (['error','preparing','stale','recorded'].includes(state)) {
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'ledger-button';
+    retry.textContent = 'Retry';
+    retry.addEventListener('click', () => hydrateExploreView(viewName).catch(() => {}));
+    status.appendChild(retry);
+  }
   [...panel.children].forEach(child => {
     if (child === status || child.classList.contains('explore-subnav')) return;
-    child.hidden = state !== 'ready';
+    child.hidden = state !== 'ready' && !retained;
   });
 }
 
@@ -969,25 +1202,83 @@ function exploreViewUrl(viewName){
   return {url, sessionId};
 }
 
+// The initial Usage payload may belong to the last completed navigation cache,
+// rather than the session/filter requested by a deep link.
+if (!D._navigationFromCache && Object.hasOwn(sqlTab('usage'), 'unique_sessions')) {
+  const initialUsageUrl = exploreViewUrl('usage').url;
+  if (D.focused_session_id) initialUsageUrl.searchParams.set('session', D.focused_session_id);
+  else initialUsageUrl.searchParams.delete('session');
+  exploreViewScopes.set('usage', {
+    scope:initialUsageUrl.toString(), publication:explorePublication,
+    publication_state:D.publication?.state || 'ready',
+    loaded_at:D.publication?.state === 'recorded' ? D.publication.loaded_at || null
+      : D.publication?.snapshot_completed_at || D.snapshot_completed_at || D.publication?.loaded_at
+      || (D.publication?.state === 'stale' ? null : new Date().toISOString()),
+  });
+  if (D.publication?.state === 'stale') setExploreViewState('usage', 'stale', 'Refresh is pending; these are the last published results.');
+  if (D.publication?.state === 'recorded') setExploreViewState('usage', 'recorded', 'Analysis is pending; stored telemetry remains available.');
+}
+if (D._unpublishedNavigation) {
+  for (const view of Object.keys(exploreViewLoadingCopy)) {
+    setExploreViewState(view, 'preparing', 'No published report loaded. Captured session activity is available in Sessions.');
+  }
+}
+
 async function loadExploreView(viewName){
-  if (!D.sql_backed || !reportSupportsServerFiltering()) return null;
+  if (!dashboardDocumentActive || !D.sql_backed || !reportSupportsServerFiltering()) return null;
   if (!D.sqlite) D.sqlite = {};
   if (!D.sqlite.tabs) D.sqlite.tabs = {};
-  const {url, sessionId} = exploreViewUrl(viewName);
+  const {url} = exploreViewUrl(viewName);
   const cacheKey = url.toString();
   if (lazySqlTabRequests.has(cacheKey)) return lazySqlTabRequests.get(cacheKey);
-  const request = fetch(url.toString(), {headers: {Accept: 'application/json'}})
-    .then(response => {
-      if (!response.ok) throw new Error(`explore-fetch-failed:${viewName}`);
+  const publication = explorePublication;
+  const requestUrl = new URL(url);
+  if (viewName === 'usage') {
+    requestUrl.pathname = '/api/data';
+    requestUrl.searchParams.set('tab', 'explore');
+    requestUrl.searchParams.set('view', 'usage');
+  }
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 30000);
+  const request = fetch(requestUrl.toString(), {headers: {Accept: 'application/json'}, signal: controller.signal, cache:'no-store'})
+    .then(async response => {
+      if (response.status === 409) {
+        const payload = await response.json();
+        throw new Error(payload.error || 'Historical analysis is pending. Run an explicit historical refresh.');
+      }
+      if (response.status === 503) {
+        const pending = await response.json();
+        if (pending.state === 'preparing' || (pending.state === 'busy' && pending.reason === 'reading')) {
+          const error = new Error(pending.error || 'This view is refreshing. Retry after telemetry refresh completes.');
+          error.preparing = true;
+          throw error;
+        }
+      }
+      if (!response.ok) throw new Error('This view could not be loaded. Please retry.');
       return response.json();
     })
     .then(payload => {
+      if (publication !== explorePublication || exploreViewUrl(viewName).url.toString() !== cacheKey) return null;
       if (viewName === 'context') {
         ['specs','memory','privacy','exports'].forEach(name => {
           if (payload[name]) D.sqlite.tabs[name] = payload[name];
         });
       } else if (viewName === 'usage') {
-        ['activity','models','costs','tools','mcp','agents'].forEach(name => D.sqlite.tabs[name] = payload);
+        if (!Object.hasOwn(payload.sqlite?.tabs?.usage || {}, 'unique_sessions')) {
+          const error = new Error('Usage details are preparing. Retry after telemetry refresh completes.');
+          error.preparing = true;
+          throw error;
+        }
+        // Each lazy view owns its SQL payload and exact scope. A Usage response
+        // must not replace it with a different cohort's incidental tab data.
+        const retainedTabs = {};
+        for (const [view, names] of Object.entries({tools:['tools','mcp'], graph:['graph'], context:['specs','memory','privacy','exports']})) {
+          if (exploreViewScopes.has(view)) {
+            for (const name of names) retainedTabs[name] = D.sqlite.tabs[name];
+          }
+        }
+        Object.assign(D, payload, {sessions:D.sessions, _unpublishedNavigation:false, publication:payload.publication || null});
+        Object.assign(D.sqlite.tabs, retainedTabs);
       } else if (viewName === 'tools') {
         ['tools','mcp'].forEach(name => D.sqlite.tabs[name] = payload);
       } else {
@@ -995,28 +1286,55 @@ async function loadExploreView(viewName){
       }
       return payload;
     })
-    .finally(() => lazySqlTabRequests.delete(cacheKey));
+    .finally(() => {
+      window.clearTimeout(timeout);
+      lazySqlTabRequests.delete(cacheKey);
+    });
   lazySqlTabRequests.set(cacheKey, request);
   return request;
 }
 
 async function hydrateExploreView(viewName){
-  if (viewName === 'usage' || exploreViewStates.get(viewName) === 'ready') return;
-  const loadingCopy = viewName === 'graph' && dashboardSelectedSessionId
-    ? 'Loading session graphs...'
-    : exploreViewLoadingCopy[viewName];
+  const cacheKey = exploreViewUrl(viewName).url.toString();
+  const previous = exploreViewScopes.get(viewName);
+  const publication = explorePublication;
+  if (exploreViewStates.get(viewName) === 'ready' && previous?.scope === cacheKey && previous.publication === publication) return;
+  if (exploreViewStates.get(viewName) === 'loading' && lazySqlTabRequests.has(cacheKey)) return;
+  if (!D.sql_backed || !reportSupportsServerFiltering()) return;
   setExploreViewState(viewName, 'loading');
-  showReportLoader(loadingCopy);
   try {
-    await loadExploreView(viewName);
+    const payload = await loadExploreView(viewName);
+    if (exploreViewUrl(viewName).url.toString() !== cacheKey) return;
+    if (publication !== explorePublication) return hydrateExploreView(viewName);
+    if (!payload) return;
+    exploreViewScopes.set(viewName, {
+      scope:cacheKey, publication,
+      publication_state:payload.publication?.state || 'ready',
+      loaded_at:payload.publication?.state === 'recorded' ? payload.publication.loaded_at || null
+        : payload.publication?.snapshot_completed_at || payload.snapshot_completed_at || payload.publication?.loaded_at
+        || (payload.publication?.state === 'stale' ? null : new Date().toISOString()),
+    });
+    setExploreViewState(viewName, ['stale','recorded'].includes(payload.publication?.state) ? payload.publication.state : 'ready',
+      payload.publication?.state === 'recorded'
+        ? payload.publication.reason === 'historical_pending'
+          ? 'Historical analysis is pending. Stored telemetry is available; an explicit historical refresh is needed to update analysis.'
+          : 'Analysis is pending; stored telemetry remains available and will update after refresh.'
+        : payload.publication?.reason === 'reading'
+        ? 'Reading the current selection in the background; showing the last available results.'
+        : payload.publication?.reason === 'historical_pending'
+        ? 'Historical analysis is pending. These are the last published results.'
+        : 'Refresh is pending; these are the last published results.');
+    if (viewName === 'usage') renderUsageView();
     if (viewName === 'context') renderSqlTabPayloads();
     if (viewName === 'tools') renderToolsView();
-    setExploreViewState(viewName, 'ready');
+    if (viewName === 'graph') {
+      _graphsInited = true;
+      requestAnimationFrame(initGraphs);
+    }
   } catch (error) {
-    const label = humanizeLedgerLabel(viewName);
-    setExploreViewState(viewName, 'error', `Could not load ${label} data. Check the local report server, then reopen this view.`);
-    throw error;
-  } finally {
-    hideReportLoader();
+    if (exploreViewUrl(viewName).url.toString() !== cacheKey) return;
+    if (publication !== explorePublication) return hydrateExploreView(viewName);
+    setExploreViewState(viewName, error.preparing ? 'preparing' : 'error', error.name === 'AbortError'
+      ? 'This view took too long to load. Please retry.' : error.message);
   }
 }

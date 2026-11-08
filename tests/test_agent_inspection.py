@@ -104,9 +104,8 @@ def test_agent_skill_search_filters_existing_registry_without_refreshing(tmp_pat
         assert answer.skills[0].evidence_count >= 1
         explanation = service.explain(release_version_id)
         assert explanation["kind"] == "skill_version"
-        source = explanation["entity"]["source_execution_units"][0]
-        assert source["execution_unit_id"] == "source-unit"
-        assert source["session_id"] == "source-session"
+        # A manual draft does not inherit checked support from an entire session.
+        assert explanation["entity"]["source_execution_units"] == []
         assert explanation["entity"]["measurements"][0]["id"] == "measurement-1"
     finally:
         conn.close()
@@ -221,6 +220,24 @@ def test_context_impact_lists_and_explains_persisted_measurements(tmp_path):
             "impact_id": "missing",
             "provenance": "reflect_measurement_ledger",
         }
+        # A preserved policy revision remains inspectable beyond the recent
+        # list cap; exact lookup must not validate 500 unrelated measurements.
+        conn.execute("""WITH RECURSIVE n(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM n WHERE value<501)
+            INSERT INTO measurements(id,intervention_id,metric_name,cohort_json,before_count,after_count,
+                verdict,confidence,confounders_json,measured_at,created_at,updated_at)
+            SELECT 'newer-'||value,intervention_id,metric_name,'{}',0,0,'insufficient_data',0,'[]',
+                strftime('%Y-%m-%dT%H:%M:%SZ','2026-11-01','+'||value||' seconds'),created_at,updated_at
+                FROM measurements,n WHERE id='impact-1'""")
+        assert service.impact(impact_id="impact-1")["impact_check"]["id"] == "impact-1"
+        from reflect.store.sqlite import mark_snapshot
+
+        mark_snapshot(conn, ready=False)
+        retained = service.impact(impact_id="impact-1")
+        assert retained["analysis_pending"] is True
+        assert retained["evidence_state"] == "recorded"
+        assert [item["execution_unit_id"] for item in retained["comparison"]["before_execution_units"]] == ["before-unit"]
+        assert retained["comparison"]["before_execution_units"][0]["snapshot_missing"] is True
+        assert retained["comparison"]["missing_snapshot_execution_unit_ids"] == ["before-unit", "after-unit"]
     finally:
         conn.close()
 

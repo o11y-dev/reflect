@@ -3,6 +3,7 @@ from pathlib import Path
 
 from reflect.store.graph_normalize import rebuild_graph
 from reflect.store.migrate import migrate
+from reflect.store.pending_refresh import PendingRefreshState
 from reflect.store.sqlite import connect_sqlite
 from reflect.store.workspaces import WorkspaceResolver, backfill_session_context
 from reflect.views.report_tabs import _semantic_graph
@@ -120,6 +121,7 @@ def test_backfill_persists_hook_repository_metadata(tmp_path):
         result = backfill_session_context(conn, timestamp=now)
 
         assert result["sessions_updated"] == 1
+        assert PendingRefreshState(conn).capture().pending_for("graph") == {"session-hook-repo"}
         stored = conn.execute(
             "SELECT owner, name, branch, raw_json FROM repos"
         ).fetchone()

@@ -33,16 +33,6 @@
 .timeline-track{flex:1;position:relative;height:24px;background:rgba(255,255,255,.04);border-radius:4px;overflow:hidden;min-width:400px}
 .timeline-span{position:absolute;top:3px;height:18px;border-radius:3px;cursor:default;transition:opacity .15s;min-width:2px}
 .timeline-span:hover{opacity:.7}
-/* Latency histogram */
-.hist-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
-@media(max-width:800px){.hist-grid{grid-template-columns:1fr}}
-.hist-item{}
-.hist-label{font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:8px;font-family:'SF Mono',ui-monospace,monospace}
-.hist-bars{display:flex;gap:4px;align-items:flex-end;height:80px}
-.hist-bar{flex:1;border-radius:3px 3px 0 0;min-height:2px;cursor:default;transition:opacity .15s}
-.hist-bar:hover{opacity:.7}
-.hist-bLabels{display:flex;gap:4px;margin-top:4px}
-.hist-bLabel{flex:1;text-align:center;font-size:9px;color:var(--text-3)}
 /* Graph legend */
 .graph-legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px}
 .graph-legend-item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-3)}

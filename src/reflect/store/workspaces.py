@@ -11,6 +11,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from reflect.store.pending_refresh import PendingRefreshState
+
 WORKSPACE_ATTRIBUTE_KEYS = (
     "code.workspace.root",
     "gen_ai.client.cwd",
@@ -337,6 +339,7 @@ def backfill_session_context(
     params: list[str] = []
     if session_ids is not None:
         if not session_ids:
+            PendingRefreshState(conn).mark(invalid_sessions)
             return {"sessions_updated": 0, "workspaces": 0, "parents": 0}
         placeholders = ", ".join("?" for _ in session_ids)
         filters.append(f"id IN ({placeholders})")
@@ -432,6 +435,7 @@ def backfill_session_context(
         parent_updates += int(parent_id != str(session[4] or ""))
         if changed_session_ids is not None:
             changed_session_ids.add(session_id)
+    PendingRefreshState(conn).mark(updated_session_ids)
     return {
         "sessions_updated": len(updated_session_ids),
         "workspaces": len(touched_workspaces),

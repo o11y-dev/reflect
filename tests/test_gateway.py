@@ -185,6 +185,31 @@ class TestProtoConversion:
 
 
 class TestHttpEndpoints:
+    def test_lifespan_does_not_create_exporters_from_agent_environment(self, traces_path, logs_path, monkeypatch):
+        from fastapi.testclient import TestClient
+        from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+        from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+        from reflect.gateway import _build_http_app
+
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+        monkeypatch.delenv("OTEL_SDK_DISABLED", raising=False)
+        calls = []
+
+        def unexpected_exporter(*args, **kwargs):
+            calls.append(True)
+            raise AssertionError("Gateway must not initialize agent telemetry exporters")
+
+        for exporter in (OTLPSpanExporter, OTLPMetricExporter, OTLPLogExporter):
+            monkeypatch.setattr(exporter, "__init__", unexpected_exporter)
+        with TestClient(_build_http_app(traces_path=traces_path, logs_path=logs_path)) as client:
+            assert client.get("/health").status_code == 200
+            payload = {"resourceSpans": []}
+            assert client.post("/v1/traces", json=payload).status_code == 200
+            assert json.loads(traces_path.read_text()) == payload
+        assert calls == []
+
     def test_health_endpoint(self):
         from fastapi.testclient import TestClient
 

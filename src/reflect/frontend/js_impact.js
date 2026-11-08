@@ -1,24 +1,24 @@
 /* ════════════════════ EXPLORE: USAGE ════════════════════ */
 
 /* Stat row */
-const usageTab = sqlTab('usage');
-const usageModels = usageTab.models_by_count || sqlTab('models').models_by_count || {};
-const usageEvents = usageTab.events_by_type || sqlTab('activity').events_by_type || {};
-const usageModelCosts = usageTab.model_costs || sqlTab('costs').model_costs || {};
-const statDefs = [
-  { label:'Avg Quality',   value:Number(usageTab.avg_quality_score || 0).toFixed(1)+'%', sub:'current selection',              c:Number(usageTab.avg_quality_score || 0) > 70 ? 'var(--green)' : 'var(--yellow)' },
-  { label:'Sessions',      value:fmt(usageTab.unique_sessions || 0),  sub:String(usageTab.first_event_ts || '').slice(0,10)+' - now',   c:'var(--purple)' },
-  { label:'Prompts',       value:fmt(usageTab.prompt_submits || 0),   sub:'user prompt submits',                   c:'var(--teal)' },
-  { label:'Tool Calls',    value:fmt(usageTab.tool_calls || 0),       sub:String(usageTab.tool_to_prompt_ratio || '0.0')+':1 per prompt',  c:'var(--blue)' },
-];
-document.getElementById('stat-row').innerHTML = statDefs.map(s=>`
-  <div class="stat" style="--c:${s.c}">
-    <div class="stat-label">${s.label}</div>
-    <div class="stat-value">${s.value}</div>
-    <div class="stat-sub">${s.sub}</div>
-  </div>`).join('');
+function renderUsageSummary(){
+  const usageTab = sqlTab('usage');
+  const statDefs = [
+    { label:'Avg Quality',   value:Number(usageTab.avg_quality_score || 0).toFixed(1)+'%', sub:'current selection',              c:Number(usageTab.avg_quality_score || 0) > 70 ? 'var(--green)' : 'var(--yellow)' },
+    { label:'Sessions',      value:fmt(usageTab.unique_sessions || 0),  sub:D.measurements?.scope?.kind === 'event_window' ? String(D.measurements.scope.date_from || '').slice(0,10)+' — '+String(D.measurements.scope.date_to || '').slice(0,10) : String(usageTab.first_event_ts || '').slice(0,10)+' - now',   c:'var(--purple)' },
+    { label:'Prompts',       value:fmt(usageTab.prompt_submits || 0),   sub:'user prompt submits',                   c:'var(--teal)' },
+    { label:'Tool Calls',    value:fmt(usageTab.tool_calls || 0),       sub:String(usageTab.tool_to_prompt_ratio || '0.0')+':1 per prompt',  c:'var(--blue)' },
+  ];
+  document.getElementById('stat-row').innerHTML = statDefs.map(s=>`
+    <div class="stat" style="--c:${s.c}">
+      <div class="stat-label">${s.label}</div>
+      <div class="stat-value">${s.value}</div>
+      <div class="stat-sub">${s.sub}</div>
+    </div>`).join('');
+}
 
 function renderSqlTabPayloads(){
+  if (D._unpublishedNavigation && exploreViewScopes.get('context')?.scope !== exploreViewUrl('context').url.toString()) return;
   const tabs = (D.sqlite && D.sqlite.tabs) || {};
   const specs = tabs.specs || {};
   const memory = tabs.memory || {};
@@ -93,8 +93,6 @@ function renderSqlTabPayloads(){
 }
 renderSqlTabPayloads();
 
-const costUnit = String(usageTab.pricing_unit || 'usd').toUpperCase();
-
 function formatSignedDelta(delta, suffix = ''){
   const value = Number(delta || 0);
   const sign = value > 0 ? '+' : '';
@@ -102,6 +100,7 @@ function formatSignedDelta(delta, suffix = ''){
 }
 
 function buildCohortComparison(){
+  const costUnit = String(sqlTab('usage').pricing_unit || 'usd').toUpperCase();
   const summaryEl = document.getElementById('cohort-comparison-summary');
   const detailsEl = document.getElementById('cohort-comparison-details');
   const baselineEl = document.getElementById('cohort-baseline-agents');
@@ -109,6 +108,7 @@ function buildCohortComparison(){
 
   const cohortTab = sqlTab('cohort_comparison');
   const comparison = cohortTab.comparison;
+  const comparisonScopeCaption = `<caption style="caption-side:top;text-align:left;color:var(--text-2);font-size:12px;padding-bottom:10px"><strong>Full lifetime of matching sessions</strong>${D.measurements?.scope?.kind === 'event_window' ? ' · Includes activity outside the selected period; period totals count only events within it.' : ''}</caption>`;
   if (comparison && comparison.primary && comparison.baseline) {
     const primary = comparison.primary;
     const baseline = comparison.baseline;
@@ -143,7 +143,7 @@ function buildCohortComparison(){
         </div>
       </div>
     `;
-    detailsEl.innerHTML = `<table class="tbl"><thead><tr><th>Metric</th><th style="text-align:right">${escHtml(primary.label)}</th><th style="text-align:right">${escHtml(baseline.label)}</th><th style="text-align:right">Delta</th></tr></thead><tbody>${
+    detailsEl.innerHTML = `<table class="tbl">${comparisonScopeCaption}<thead><tr><th>Metric</th><th style="text-align:right">${escHtml(primary.label)}</th><th style="text-align:right">${escHtml(baseline.label)}</th><th style="text-align:right">Delta</th></tr></thead><tbody>${
       metricRows.map(([label, a, b, delta]) => `
         <tr>
           <td style="font-weight:600">${label}</td>
@@ -154,7 +154,7 @@ function buildCohortComparison(){
       `).join('')
     }</tbody></table>`;
     baselineEl.innerHTML = (comparison.baseline_agents || []).length
-      ? `<table class="data-table"><thead><tr><th>Agent</th><th style="text-align:right">Sessions</th><th style="text-align:right">Tools</th><th style="text-align:right">Cost</th><th style="text-align:right">Quality</th></tr></thead><tbody>${
+      ? `<table class="data-table">${comparisonScopeCaption}<thead><tr><th>Agent</th><th style="text-align:right">Sessions</th><th style="text-align:right">Tools</th><th style="text-align:right">Cost</th><th style="text-align:right">Quality</th></tr></thead><tbody>${
           comparison.baseline_agents.map(agent => `
             <tr>
               <td style="font-weight:600">${escHtml(agent.name || 'unknown')}</td>
@@ -178,11 +178,11 @@ function buildCohortComparison(){
         <div style="font-size:24px;font-weight:800;color:var(--signal-2)">Cross-agent comparison</div>
         <div style="color:var(--text-2);margin-top:4px">Filter to one agent to compare that cohort against all other agents still in scope.</div>
       </div>
-      <div style="font-size:13px;color:var(--text-3)">Current ranking is based on the sessions visible in this report.</div>
+      <div style="font-size:13px;color:var(--text-3)">Current filters select the sessions; comparison totals cover their full lifetimes.</div>
     </div>
   `;
   detailsEl.innerHTML = ranking.length
-    ? `<table class="tbl"><thead><tr><th>Agent</th><th style="text-align:right">Sessions</th><th style="text-align:right">Prompts</th><th style="text-align:right">Tools</th><th style="text-align:right">Cost</th><th style="text-align:right">Failures</th><th style="text-align:right">Quality</th></tr></thead><tbody>${
+    ? `<table class="tbl">${comparisonScopeCaption}<thead><tr><th>Agent</th><th style="text-align:right">Sessions</th><th style="text-align:right">Prompts</th><th style="text-align:right">Tools</th><th style="text-align:right">Cost</th><th style="text-align:right">Failures</th><th style="text-align:right">Quality</th></tr></thead><tbody>${
         ranking.map(agent => `
           <tr>
             <td style="font-weight:600">${escHtml(agent.name || 'unknown')}</td>
@@ -198,7 +198,6 @@ function buildCohortComparison(){
     : `<div style="color:var(--text-3)">No comparison data available for the current report.</div>`;
   baselineEl.innerHTML = `<div style="color:var(--text-3)">Apply an agent filter to unlock primary-vs-baseline comparison and keep session A/B below for drill-down.</div>`;
 }
-buildCohortComparison();
 document.addEventListener('dashboard-filters-changed', event => {
   dashboardSelectedSessionId = event.detail?.selectedSessionId || dashboardSelectedSessionId || '';
   dashboardFilterActive = Boolean(event.detail?.hasFilters || dashboardSelectedSessionId);
@@ -206,192 +205,203 @@ document.addEventListener('dashboard-filters-changed', event => {
 });
 
 /* Metric tiles */
-const ph   = Number(usageTab.peak_hour ?? -1) >= 0 ? h12(usageTab.peak_hour) : '--';
-const signatureCommand = usageTab.signature_command || '';
-const sig  = signatureCommand ? signatureCommand.slice(0,28)+(signatureCommand.length>28?'…':'') : '—';
-const metricDefs = [
-  { label:'MCP Calls',          value:fmt(usageTab.mcp_calls || 0),           sub:Object.keys(usageTab.mcp_servers_by_count || {}).length+' servers' },
-  { label:'Subagents Launched', value:fmt(usageTab.subagent_launches || 0),   sub:Object.keys(usageTab.subagent_types_by_count || {}).length+' agent types' },
-  { label:'File Edits',         value:fmt(usageTab.file_edits || 0),          sub:'modified files' },
-  { label:'Shell Runs',         value:fmt(usageTab.shell_executions || 0),    sub:fmt(usageTab.unique_commands || 0)+' unique patterns' },
-  { label:'Tool Failures',      value:fmt(usageTab.tool_failures || 0),       sub:Number(usageTab.failure_rate_pct || 0)+'% failure rate' },
-  { label:'Peak Hour',          value:ph,                         sub:fmt(usageTab.peak_hour_count || 0)+' events at peak' },
-  { label:'AI Models',          value:fmt(usageTab.unique_models || 0),       sub:'distinct models used' },
-  { label:'Signature Command',  value:sig,                        sub:fmt(usageTab.signature_command_count || 0)+'x run' },
-];
-document.getElementById('metric-row').innerHTML = metricDefs.map(m=>`
-  <div class="metric">
-    <div class="metric-label">${m.label}</div>
-    <div class="metric-value" title="${escHtml(String(m.value))}">${escHtml(String(m.value))}</div>
-    <div class="metric-sub">${escHtml(String(m.sub))}</div>
-  </div>`).join('');
+function renderUsageMetrics(){
+  const usageTab = sqlTab('usage');
+  const usageModels = usageTab.models_by_count || sqlTab('models').models_by_count || {};
+  const usageEvents = usageTab.events_by_type || sqlTab('activity').events_by_type || {};
+  const usageModelCosts = usageTab.model_costs || sqlTab('costs').model_costs || {};
+  const costUnit = String(usageTab.pricing_unit || 'usd').toUpperCase();
+  const ph   = Number(usageTab.peak_hour ?? -1) >= 0 ? h12(usageTab.peak_hour) : '--';
+  const signatureCommand = usageTab.signature_command || '';
+  const sig  = signatureCommand ? signatureCommand.slice(0,28)+(signatureCommand.length>28?'…':'') : '—';
+  const metricDefs = [
+    { label:'MCP Calls',          value:fmt(usageTab.mcp_calls || 0),           sub:Object.keys(usageTab.mcp_servers_by_count || {}).length+' servers' },
+    { label:'Subagents Launched', value:fmt(usageTab.subagent_launches || 0),   sub:Object.keys(usageTab.subagent_types_by_count || {}).length+' agent types' },
+    { label:'File Edits',         value:fmt(usageTab.file_edits || 0),          sub:'modified files' },
+    { label:'Shell Runs',         value:fmt(usageTab.shell_executions || 0),    sub:fmt(usageTab.unique_commands || 0)+' unique patterns' },
+    { label:'Tool Failures',      value:fmt(usageTab.tool_failures || 0),       sub:Number(usageTab.failure_rate_pct || 0)+'% failure rate' },
+    { label:'Peak Hour',          value:ph,                         sub:fmt(usageTab.peak_hour_count || 0)+' events at peak' },
+    { label:'AI Models',          value:fmt(usageTab.unique_models || 0),       sub:'distinct models used' },
+    { label:'Signature Command',  value:sig,                        sub:fmt(usageTab.signature_command_count || 0)+'x run' },
+  ];
+  document.getElementById('metric-row').innerHTML = metricDefs.map(m=>`
+    <div class="metric">
+      <div class="metric-label">${m.label}</div>
+      <div class="metric-value" title="${escHtml(String(m.value))}">${escHtml(String(m.value))}</div>
+      <div class="metric-sub">${escHtml(String(m.sub))}</div>
+    </div>`).join('');
 
-/* Charts */
-Chart.defaults.color = 'rgba(255,255,255,.5)';
-Chart.defaults.borderColor = 'rgba(255,255,255,.06)';
+  /* Charts */
+  Chart.defaults.color = 'rgba(255,255,255,.5)';
+  Chart.defaults.borderColor = 'rgba(255,255,255,.06)';
 
-const usageModelEntries = Object.entries(usageModels)
-  .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0) || String(a[0]).localeCompare(String(b[0])));
-const usageModelSeries = usageModelEntries.slice(0, 8);
-const usageModelOther = usageModelEntries.slice(8).reduce((sum, entry) => sum + Number(entry[1] || 0), 0);
-if (usageModelOther > 0) usageModelSeries.push(['Other models', usageModelOther]);
-if (usageModelSeries.length) {
-  makeDoughnut('modelChart',
-    usageModelSeries.map(([model])=>model.replace('claude-4.6-','cl-').replace('claude-','cl-').replace('gpt-5.4-','gpt-')),
-    usageModelSeries.map(([, count])=>count));
-} else {
-  renderChartEmpty('modelChart', 'No model calls match the current selection.');
-}
-
-if (Object.keys(usageEvents).length) {
-  makeHBar('eventChart',
-    Object.keys(usageEvents).slice(0,8),
-    Object.values(usageEvents).slice(0,8),
-    P.blue);
-} else {
-  renderChartEmpty('eventChart', 'No events match the current selection.');
-}
-const sourceProvenance = usageTab.source_provenance || [];
-const sourceProvenanceEl = document.getElementById('source-provenance');
-if (sourceProvenanceEl) {
-  sourceProvenanceEl.innerHTML = sourceProvenance.length
-    ? `<div style="font-size:12px;color:var(--text-3);margin-bottom:8px">Transport/source provenance. The chart above stays semantic by event type.</div>
-       <table class="tbl"><thead><tr><th>Source</th><th>Transport</th><th style="text-align:right">Events</th></tr></thead><tbody>${
-          sourceProvenance.slice(0, 6).map(entry => `
-            <tr>
-              <td style="font-weight:600">${escHtml(entry.label || entry.origin_kind || 'unknown')}</td>
-              <td>${escHtml(String(entry.transport || 'unknown').replace(/_/g, ' '))}</td>
-              <td style="text-align:right">${fmt(entry.event_count || 0)}</td>
-            </tr>
-          `).join('')
-       }</tbody></table>`
-    : `<div style="font-size:12px;color:var(--text-3)">No source provenance available for the current selection.</div>`;
-}
-
-/* Token chart + stats */
-function validCostTrendDay(value){
-  const day = String(value || '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return '';
-  if (Number(day.slice(0, 4)) < 2000) return '';
-  return day;
-}
-function normalizeAgentCostRows(rows){
-  return (rows || []).map(row => ({
-    day: validCostTrendDay(row.day),
-    agent: String(row.agent || 'unknown'),
-    total_cost: Number(row.total_cost || 0),
-  })).filter(row => row.day && row.total_cost > 0);
-}
-function hasPricedSessionCost(sessions){
-  return (sessions || []).some(session => Number(session.total_cost_usd ?? session.total_cost ?? session.estimated_cost_usd ?? 0) > 0);
-}
-function deriveAgentCostRowsFromSessions(sessions){
-  const rows = new Map();
-  (sessions || []).forEach(session => {
-    const totalCost = Number(session.total_cost_usd ?? session.total_cost ?? session.estimated_cost_usd ?? 0);
-    if (!totalCost) return;
-    const day = validCostTrendDay(session.day || session.started_at || session.created_at || session.timestamp);
-    if (!day) return;
-    const agent = String(session.agent || 'unknown');
-    const key = `${day}\u0000${agent}`;
-    const current = rows.get(key) || {day, agent, total_cost: 0};
-    current.total_cost += totalCost;
-    rows.set(key, current);
-  });
-  return Array.from(rows.values()).sort((a, b) => String(a.day).localeCompare(String(b.day)) || Number(b.total_cost || 0) - Number(a.total_cost || 0) || String(a.agent).localeCompare(String(b.agent)));
-}
-const rawUsageAgentCostRows = usageTab.agent_cost_over_time || [];
-const normalizedUsageAgentCostRows = normalizeAgentCostRows(rawUsageAgentCostRows);
-const usageAgentCostRows = normalizedUsageAgentCostRows.length ? normalizedUsageAgentCostRows : deriveAgentCostRowsFromSessions(D.sessions || []);
-const agentCostChartEl = document.getElementById('agentCostChart');
-if (agentCostChartEl) {
-  if (usageAgentCostRows.length) {
-    const dayLabels = Array.from(new Set(usageAgentCostRows.map(row => String(row.day || '')))).filter(Boolean).sort();
-    const totalsByAgent = new Map();
-    const byAgentDay = new Map();
-    usageAgentCostRows.forEach(row => {
-      const agent = String(row.agent || 'unknown');
-      const day = String(row.day || '');
-      const totalCost = Number(row.total_cost || 0);
-      totalsByAgent.set(agent, (totalsByAgent.get(agent) || 0) + totalCost);
-      if (!byAgentDay.has(agent)) byAgentDay.set(agent, new Map());
-      byAgentDay.get(agent).set(day, totalCost);
-    });
-    const topAgents = Array.from(totalsByAgent.entries())
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .slice(0, 6)
-      .map(([agent]) => agent);
-    makeLine('agentCostChart', dayLabels, topAgents.map((agent, idx) => ({
-      label: agent,
-      data: dayLabels.map(day => byAgentDay.get(agent)?.get(day) || 0),
-      borderColor: COLORS[idx % COLORS.length],
-      backgroundColor: COLORS[idx % COLORS.length],
-    })), true);
+  const usageModelEntries = Object.entries(usageModels)
+    .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0) || String(a[0]).localeCompare(String(b[0])));
+  const usageModelSeries = usageModelEntries.slice(0, 8);
+  const usageModelOther = usageModelEntries.slice(8).reduce((sum, entry) => sum + Number(entry[1] || 0), 0);
+  if (usageModelOther > 0) usageModelSeries.push(['Other models', usageModelOther]);
+  if (usageModelSeries.length) {
+    makeDoughnut('modelChart',
+      usageModelSeries.map(([model])=>model.replace('claude-4.6-','cl-').replace('claude-','cl-').replace('gpt-5.4-','gpt-')),
+      usageModelSeries.map(([, count])=>count));
   } else {
-    const message = hasPricedSessionCost(D.sessions || [])
-      ? 'Cost totals are available, but priced sessions do not have valid dates for a trend chart.'
-      : 'No priced sessions available yet for agent cost trends.';
-    agentCostChartEl.parentElement.innerHTML = `<div style="font-size:12px;color:var(--text-3);padding:24px 0">${message}</div>`;
+    renderUsageChartEmpty('modelChart', 'No model calls match the current selection.');
   }
-}
-const usageInputTokens = usageTab.total_input_tokens || 0;
-const usageOutputTokens = usageTab.total_output_tokens || 0;
-const usageCacheCreationTokens = usageTab.total_cache_creation_tokens || 0;
-const usageCacheReadTokens = usageTab.total_cache_read_tokens || 0;
-if (usageInputTokens > 0 || usageOutputTokens > 0) {
-  makeDoughnut('tokenChart',
-    ['Input','Output','Cache Creation','Cache Read'],
-    [usageInputTokens, usageOutputTokens, usageCacheCreationTokens, usageCacheReadTokens]);
-} else {
-  renderChartEmpty('tokenChart', 'No token usage is available for the current selection.');
-}
-document.getElementById('stat-input-tok').textContent = fmt(usageInputTokens);
-document.getElementById('stat-output-tok').textContent = fmt(usageOutputTokens);
-document.getElementById('stat-cache-tok').textContent = fmt(usageCacheReadTokens);
-document.getElementById('stat-tok-ratio').textContent = usageInputTokens ? (usageOutputTokens / usageInputTokens).toFixed(2) : '--';
 
-const costStats = [
-  ['Total Cost', fmtCost(usageTab.total_cost_usd || 0), costUnit],
-  ['Input Cost', fmtCost(usageTab.input_cost_usd || 0), costUnit],
-  ['Output Cost', fmtCost(usageTab.output_cost_usd || 0), costUnit],
-  ['Cache Cost', fmtCost(Number(usageTab.cache_creation_cost_usd || 0) + Number(usageTab.cache_read_cost_usd || 0)), costUnit],
-  ['Cost Basis', escHtml(usageTab.pricing_source || 'unknown'), `${Object.keys(usageModelCosts).length} priced model(s)`],
-];
-const costStatsEl = document.getElementById('cost-stats');
-if (costStatsEl) {
-  costStatsEl.innerHTML = costStats.map(([label, value, sub]) => `
-    <div style="background:var(--surface2);border-radius:8px;padding:14px 16px">
-      <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">${label}</div>
-      <div style="font-size:22px;font-weight:700;margin-top:4px">${value}</div>
-      <div style="font-size:12px;color:var(--text-3);margin-top:4px">${sub}</div>
-    </div>
-  `).join('');
-}
-const modelCostRows = Object.entries(usageModelCosts)
-  .sort((a,b) => Number(b[1] || 0) - Number(a[1] || 0))
-  .slice(0, 8);
-const modelCostEl = document.getElementById('model-cost-share');
-if (modelCostEl) {
-  modelCostEl.innerHTML = modelCostRows.length
-    ? `<table class="tbl"><thead><tr><th>Model</th><th style="text-align:right">Estimated cost</th></tr></thead><tbody>${
-        modelCostRows.map(([model, cost]) => `
-          <tr><td style="font-weight:600">${escHtml(model)}</td><td style="text-align:right">${fmtCost(cost)} ${escHtml(costUnit)}</td></tr>
-        `).join('')
-      }</tbody></table>`
-    : `<div style="color:var(--text-3);padding:12px 0">No model cost data available. Run reflect doctor to inspect pricing status.</div>`;
+  if (Object.keys(usageEvents).length) {
+    makeHBar('eventChart',
+      Object.keys(usageEvents).slice(0,8),
+      Object.values(usageEvents).slice(0,8),
+      P.blue);
+  } else {
+    renderUsageChartEmpty('eventChart', 'No events match the current selection.');
+  }
+  const sourceProvenance = usageTab.source_provenance || [];
+  const sourceProvenanceEl = document.getElementById('source-provenance');
+  if (sourceProvenanceEl) {
+    sourceProvenanceEl.innerHTML = sourceProvenance.length
+      ? `<div style="font-size:12px;color:var(--text-3);margin-bottom:8px">Transport/source provenance. The chart above stays semantic by event type.</div>
+         <table class="tbl"><thead><tr><th>Source</th><th>Transport</th><th style="text-align:right">Events</th></tr></thead><tbody>${
+            sourceProvenance.slice(0, 6).map(entry => `
+              <tr>
+                <td style="font-weight:600">${escHtml(entry.label || entry.origin_kind || 'unknown')}</td>
+                <td>${escHtml(String(entry.transport || 'unknown').replace(/_/g, ' '))}</td>
+                <td style="text-align:right">${fmt(entry.event_count || 0)}</td>
+              </tr>
+            `).join('')
+         }</tbody></table>`
+      : `<div style="font-size:12px;color:var(--text-3)">No source provenance available for the current selection.</div>`;
+  }
+
+  /* Token chart + stats */
+  function validCostTrendDay(value){
+    const day = String(value || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return '';
+    if (Number(day.slice(0, 4)) < 2000) return '';
+    return day;
+  }
+  function normalizeAgentCostRows(rows){
+    return (rows || []).map(row => ({
+      day: validCostTrendDay(row.day),
+      agent: String(row.agent || 'unknown'),
+      total_cost: Number(row.total_cost || 0),
+    })).filter(row => row.day && row.total_cost > 0);
+  }
+  function hasPricedSessionCost(sessions){
+    return (sessions || []).some(session => Number(session.total_cost_usd ?? session.total_cost ?? session.estimated_cost_usd ?? 0) > 0);
+  }
+  function deriveAgentCostRowsFromSessions(sessions){
+    const rows = new Map();
+    (sessions || []).forEach(session => {
+      const totalCost = Number(session.total_cost_usd ?? session.total_cost ?? session.estimated_cost_usd ?? 0);
+      if (!totalCost) return;
+      const day = validCostTrendDay(session.day || session.started_at || session.created_at || session.timestamp);
+      if (!day) return;
+      const agent = String(session.agent || 'unknown');
+      const key = `${day}\u0000${agent}`;
+      const current = rows.get(key) || {day, agent, total_cost: 0};
+      current.total_cost += totalCost;
+      rows.set(key, current);
+    });
+    return Array.from(rows.values()).sort((a, b) => String(a.day).localeCompare(String(b.day)) || Number(b.total_cost || 0) - Number(a.total_cost || 0) || String(a.agent).localeCompare(String(b.agent)));
+  }
+  const rawUsageAgentCostRows = usageTab.agent_cost_over_time || [];
+  const normalizedUsageAgentCostRows = normalizeAgentCostRows(rawUsageAgentCostRows);
+  const usageAgentCostRows = normalizedUsageAgentCostRows.length ? normalizedUsageAgentCostRows : D.sql_backed ? [] : deriveAgentCostRowsFromSessions(D.sessions || []);
+  const agentCostChartEl = document.getElementById('agentCostChart');
+  if (agentCostChartEl) {
+    if (usageAgentCostRows.length) {
+      const dayLabels = Array.from(new Set(usageAgentCostRows.map(row => String(row.day || '')))).filter(Boolean).sort();
+      const totalsByAgent = new Map();
+      const byAgentDay = new Map();
+      usageAgentCostRows.forEach(row => {
+        const agent = String(row.agent || 'unknown');
+        const day = String(row.day || '');
+        const totalCost = Number(row.total_cost || 0);
+        totalsByAgent.set(agent, (totalsByAgent.get(agent) || 0) + totalCost);
+        if (!byAgentDay.has(agent)) byAgentDay.set(agent, new Map());
+        byAgentDay.get(agent).set(day, totalCost);
+      });
+      const topAgents = Array.from(totalsByAgent.entries())
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, 6)
+        .map(([agent]) => agent);
+      makeLine('agentCostChart', dayLabels, topAgents.map((agent, idx) => ({
+        label: agent,
+        data: dayLabels.map(day => byAgentDay.get(agent)?.get(day) || 0),
+        borderColor: COLORS[idx % COLORS.length],
+        backgroundColor: COLORS[idx % COLORS.length],
+      })), true);
+    } else {
+      const hasCost = D.sql_backed ? Number(usageTab.total_cost_usd || 0) > 0 : hasPricedSessionCost(D.sessions || []);
+      const message = hasCost
+        ? 'Cost totals are available, but priced sessions do not have valid dates for a trend chart.'
+        : 'No priced sessions available yet for agent cost trends.';
+      renderUsageChartEmpty('agentCostChart', message);
+    }
+  }
+  const usageInputTokens = usageTab.total_input_tokens || 0;
+  const usageOutputTokens = usageTab.total_output_tokens || 0;
+  const usageCacheCreationTokens = usageTab.total_cache_creation_tokens || 0;
+  const usageCacheReadTokens = usageTab.total_cache_read_tokens || 0;
+  if (usageInputTokens > 0 || usageOutputTokens > 0 || usageCacheCreationTokens > 0 || usageCacheReadTokens > 0) {
+    makeDoughnut('tokenChart',
+      ['Input','Output','Cache Creation','Cache Read'],
+      [usageInputTokens, usageOutputTokens, usageCacheCreationTokens, usageCacheReadTokens]);
+  } else {
+    renderUsageChartEmpty('tokenChart', 'No token usage is available for the current selection.');
+  }
+  document.getElementById('stat-input-tok').textContent = fmt(usageInputTokens);
+  document.getElementById('stat-output-tok').textContent = fmt(usageOutputTokens);
+  document.getElementById('stat-cache-tok').textContent = fmt(usageCacheReadTokens);
+  document.getElementById('stat-tok-ratio').textContent = usageInputTokens ? (usageOutputTokens / usageInputTokens).toFixed(2) : '--';
+
+  const pricingCoverage = D.measurements?.coverage || {};
+  const bucketCost = amount => pricingCoverage.priced_usage ? fmtCost(amount || 0) : 'Unavailable';
+  const costStats = [
+    ['Total Cost', pricingCoverage.cost_status === 'unavailable' ? 'Unavailable' : fmtCost(usageTab.total_cost_usd || 0), costUnit],
+    ['Input Cost', bucketCost(usageTab.input_cost_usd), costUnit],
+    ['Output Cost', bucketCost(usageTab.output_cost_usd), costUnit],
+    ['Cache Cost', bucketCost(Number(usageTab.cache_creation_cost_usd || 0) + Number(usageTab.cache_read_cost_usd || 0)), costUnit],
+    ['Cost Basis', escHtml(pricingCoverage.cost_status || 'unavailable'), `${fmt(pricingCoverage.priced_usage || 0)}/${fmt(pricingCoverage.observed_usage || 0)} usage records priced`],
+  ];
+  const costStatsEl = document.getElementById('cost-stats');
+  if (costStatsEl) {
+    costStatsEl.innerHTML = costStats.map(([label, value, sub]) => `
+      <div style="background:var(--surface2);border-radius:8px;padding:14px 16px">
+        <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">${label}</div>
+        <div style="font-size:22px;font-weight:700;margin-top:4px">${value}</div>
+        <div style="font-size:12px;color:var(--text-3);margin-top:4px">${sub}</div>
+      </div>
+    `).join('');
+  }
+  const modelCostRows = Object.entries(usageModelCosts)
+    .sort((a,b) => Number(b[1] || 0) - Number(a[1] || 0))
+    .slice(0, 8);
+  const modelCostEl = document.getElementById('model-cost-share');
+  if (modelCostEl) {
+    modelCostEl.innerHTML = modelCostRows.length
+      ? `<table class="tbl"><thead><tr><th>Model</th><th style="text-align:right">Estimated cost</th></tr></thead><tbody>${
+          modelCostRows.map(([model, cost]) => `
+            <tr><td style="font-weight:600">${escHtml(model)}</td><td style="text-align:right">${fmtCost(cost)} ${escHtml(costUnit)}</td></tr>
+          `).join('')
+        }</tbody></table>`
+      : `<div style="color:var(--text-3);padding:12px 0">No model cost data available. Run reflect doctor to inspect pricing status.</div>`;
+  }
+
 }
 
 const IMPACT_METRIC_PRESENTATION = Object.freeze({
   tool_failure_rate:{goal:'Recover From Tool Failures Without Repeating Them',measure:'Failed tool call rate',format:'percent',direction:'lower_is_better'},
   identical_retry_calls:{goal:'Avoid Repeating Unchanged Tool Calls',measure:'Identical retry calls',format:'number',direction:'lower_is_better'},
-  unverified_change_sessions:{goal:'Finish Changes With Verification',measure:'Unverified change sessions',format:'percent',direction:'lower_is_better'},
+  unverified_change_sessions:{goal:'Finish Changes With Verification',measure:'Unverified change tasks',format:'percent',direction:'lower_is_better'},
   context_outlier_sessions:{goal:'Reduce Oversized Context',measure:'Average context size',format:'tokens',direction:'lower_is_better'},
   read_only_exploration_calls:{goal:'Shorten Unproductive Exploration',measure:'Read-only exploration calls',format:'number',direction:'lower_is_better'},
   operator_correction_rate:{goal:'Reduce Operator Corrections',measure:'Operator correction rate',format:'percent',direction:'lower_is_better'},
   constraint_violation_rate:{goal:'Reduce Constraint Violations',measure:'Constraint violations',format:'number',direction:'lower_is_better'},
-  recovered_failure_sessions:{goal:'Improve Failure Recovery',measure:'Recovered failure sessions',format:'percent',direction:'higher_is_better'},
-  successful_workflow_sessions:{goal:'Increase Successful Workflow Runs',measure:'Successful workflow sessions',format:'percent',direction:'higher_is_better'},
-  correct_no_change_sessions:{goal:'Recognize Correct No-Change Outcomes',measure:'Correct no-change sessions',format:'percent',direction:'higher_is_better'},
+  recovered_failure_sessions:{goal:'Improve Failure Recovery',measure:'Recovered failure tasks',format:'percent',direction:'higher_is_better'},
+  successful_workflow_sessions:{goal:'Increase Successful Workflow Runs',measure:'Successful workflow tasks',format:'percent',direction:'higher_is_better'},
+  correct_no_change_sessions:{goal:'Recognize Correct No-Change Outcomes',measure:'Correct no-change tasks',format:'percent',direction:'higher_is_better'},
   workflow_adherence:{goal:'Preserve the Proven Procedure',measure:'Procedure adherence',format:'percent',direction:'higher_is_better'},
 });
 
@@ -419,8 +429,8 @@ function formatImpactValue(metric, value){
   if (value == null || !Number.isFinite(Number(value))) return 'Not available';
   const number = Number(value);
   if (metric.format === 'percent') return `${fmt(number * 100)}%`;
-  if (metric.format === 'tokens') return `${fmt(Math.round(number))} tokens/session`;
-  return `${fmt(Number(number.toFixed(2)))} per session`;
+  if (metric.format === 'tokens') return `${fmt(Math.round(number))} tokens/task`;
+  return `${fmt(Number(number.toFixed(2)))} per task`;
 }
 
 function formatImpactSessionValue(metricName, value, item = {}){
@@ -479,7 +489,10 @@ function impactProgressGraph(history, metric){
   const latestState = impactMeasurementState(latestSnapshot);
   if (latestState !== 'measured') {
     const reasons = latestSnapshot?.cohort?.measurement_reasons || [];
-    const message = reasons[0] || (latestState === 'not_measurable' ? 'The current cohorts do not pass the evidence-quality gate.' : 'Waiting for enough comparable followed sessions.');
+    const baselineState = latestSnapshot?.cohort?.baseline_state;
+    const message = baselineState === 'historical_unavailable' ? 'The selected pre-activation evidence currently lacks enough metric-bearing tasks for this bounded comparison.'
+      : baselineState === 'analysis_pending' ? 'Baseline eligibility is awaiting analysis.'
+      : reasons[0] || (latestState === 'not_measurable' ? 'The current cohorts do not pass the evidence-quality gate.' : 'Waiting for enough eligible, comparable post-activation tasks.');
     return `<section class="impact-chart" aria-label="Impact evidence status"><div class="impact-chart-head"><span class="impact-chart-title">Evidence status</span><span class="impact-chart-direction">${escHtml(humanizeLedgerLabel(latestState))}</span></div><div class="impact-chart-empty">${escHtml(message)}</div></section>`;
   }
   const baselineSnapshot = latestSnapshot?.before_value != null && Number.isFinite(Number(latestSnapshot.before_value))
@@ -543,35 +556,54 @@ function impactSummary(item, metric, trend = null){
   const measurementState = impactMeasurementState(item);
   const before = Number(item.before_value);
   const after = Number(item.after_value);
-  const afterCount = Number(item.after_count || 0);
-  const unit = 'task';
-  const units = 'tasks';
-  const minimumAfter = Number(item.cohort?.minimum_after_execution_units || 5);
-  const minimumBefore = Number(item.cohort?.minimum_before_execution_units || 5);
+  const afterCount = item.after_count == null ? null : Number(item.after_count);
+  const baselineState = item.cohort?.baseline_state;
+  if (baselineState === 'analysis_pending') return 'Baseline analysis is pending. Candidate tasks are recorded; their eligibility has not been established yet.';
+  if (baselineState === 'historical_unavailable') return 'Historical baseline unavailable: the selected pre-activation evidence currently does not support the required sample for this bounded comparison. Post-activation tasks cannot fill this baseline; late or backfilled pre-activation evidence may change eligibility.';
   if (measurementState === 'not_measurable') {
     const reasons = item.cohort?.measurement_reasons || [];
     return reasons.join(' ') || 'The current cohorts do not pass the evidence-quality gate, so Reflect will not claim impact.';
   }
   if (verdict === 'insufficient_data') {
-    const afterNeeded = Math.max(0, minimumAfter - afterCount);
-    const beforeNeeded = Math.max(0, minimumBefore - Number(item.before_count || 0));
-    if (beforeNeeded > 0) return `Reflect still needs ${fmt(beforeNeeded)} baseline and ${fmt(afterNeeded)} post-application ${unit}${afterNeeded === 1 ? '' : 's'} before evaluating this change.`;
-    if (afterNeeded > 0) return `${fmt(afterCount)} of ${fmt(minimumAfter)} post-application ${units} collected. Reflect needs ${fmt(afterNeeded)} more before evaluating this change.`;
-    return 'The minimum sample is available. Reflect will publish a result on the next impact refresh.';
+    return baselineState === 'provisional'
+      ? 'The baseline is provisional. Eligibility and required metric coverage must be established before comparing outcomes.'
+      : 'Collecting eligible, comparable post-activation tasks. Candidate counts alone do not establish exposure or a measured outcome.';
   }
+  if (item.before_value == null || item.after_value == null || !Number.isFinite(before) || !Number.isFinite(after)) return 'The recorded comparison values are unavailable; no outcome shift can be established.';
   const percent = Number.isFinite(before) && Number.isFinite(after) && before !== 0
     ? Math.abs((after - before) / before) * 100
     : null;
   const movement = after > before ? 'increased' : after < before ? 'decreased' : 'did not change';
   const amount = percent == null ? '' : ` by ${fmt(Number(percent.toFixed(1)))}%`;
-  if (verdict === 'unchanged') return `${metric.measure} stayed within the 10% decision threshold across ${fmt(afterCount)} post-application ${units}.`;
+  if (verdict === 'unchanged') return `${metric.measure} stayed within the 10% decision threshold across ${afterCount == null ? 'an unknown number of' : fmt(afterCount)} comparable post-activation tasks.`;
   if (verdict === 'regressed' && trend?.kind === 'improving') {
     const baselinePosition = after > before ? 'above' : 'below';
     const baselineGap = percent == null ? '' : `${fmt(Number(percent.toFixed(1)))}% `;
     const trendAmount = trend.percent == null ? '' : ` by ${fmt(Number(trend.percent.toFixed(1)))}%`;
-    return `${metric.measure} remains ${baselineGap}${baselinePosition} the pre-activation baseline. It improved${trendAmount} since the previous check—moving in the right direction, but not enough yet.`;
+    return `${metric.measure} remains ${baselineGap}${baselinePosition} the pre-activation baseline. The observed value improved${trendAmount} since the previous check.`;
   }
-  return `${metric.measure} ${movement}${amount} across ${fmt(afterCount)} post-application ${units}.`;
+  return `${metric.measure} ${movement}${amount} across ${afterCount == null ? 'an unknown number of' : fmt(afterCount)} comparable post-activation tasks.`;
+}
+
+function impactCohortDetails(item, side){
+  const cohort = item.cohort || {};
+  const eligibility = cohort.eligibility?.[side] || {};
+  const count = value => value == null || !Number.isFinite(Number(value)) ? 'Unknown' : fmt(Number(value));
+  const metricCount = Object.hasOwn(eligibility, 'metric_count') ? eligibility.metric_count : item[`${side}_count`];
+  const minimum = cohort[`minimum_${side}_execution_units`];
+  const states = {provisional:'Provisional baseline',frozen:'Frozen baseline',analysis_pending:'Baseline analysis pending',historical_unavailable:'Historical baseline unavailable'};
+  const baseline = side === 'before' ? `<div class="impact-period-note">${escHtml(states[cohort.baseline_state] || 'Baseline eligibility unknown')}</div>` : '';
+  const exclusions = Object.entries(eligibility.exclusion_reasons || {})
+    .filter(([,value]) => value != null && Number.isFinite(Number(value)) && Number(value) > 0)
+    .map(([reason,value]) => `${humanizeLedgerLabel(reason)}: ${count(value)}`);
+  const exposure = cohort.exposure?.[side];
+  const exposureCopy = exposure
+    ? `Recorded exposure in ${count(exposure.selected_count)} selected tasks: ${count(exposure.followed)} followed · ${count(exposure.invoked)} invoked · ${count(exposure.ignored)} ignored · ${count(exposure.unknown)} unknown`
+    : 'Guidance exposure: unknown';
+  return `${baseline}<div class="impact-period-note">${escHtml(count(eligibility.candidate_count))} candidates · ${escHtml(count(eligibility.eligible_count))} eligible · ${escHtml(count(minimum))} required</div>
+    <div class="impact-period-note">${escHtml(count(eligibility.selected_count))} selected · ${escHtml(count(metricCount))} with metric values · ${escHtml(count(eligibility.missing_metric_count))} missing metric values</div>
+    <div class="impact-period-note">${escHtml(count(eligibility.excluded_count))} excluded${exclusions.length ? `: ${escHtml(exclusions.join('; '))}` : ''}</div>
+    <div class="impact-period-note">${escHtml(exposureCopy)}</div>`;
 }
 
 function impactScope(item){
@@ -583,6 +615,53 @@ function impactScope(item){
 
 /* Product operating surfaces */
 function buildImprovementSurfaces(){
+  const resource = name => IMPROVEMENT_DATA.resources?.[name] || {state:'ready'};
+  const hasLoaded = name => ['ready','stale'].includes(resource(name).state) || Boolean(resource(name).loaded || resource(name).loaded_at);
+  const skillAnalysisPending = ['pending','stale'].includes(IMPROVEMENT_DATA.skill_analysis_state) || resource('skills').state !== 'ready';
+  const pendingCopy = name => resource(name.toLowerCase()).state === 'preparing'
+    ? `${name} ${name === 'Impact' ? 'is' : 'are'} updating. Results will appear automatically when ready.`
+    : `${name} could not be loaded. Reflect will retry automatically.`;
+  for (const [name, sources] of Object.entries({inbox:['findings','loops'], workflows:['workflows'], skills:['skills'], impact:['impact']})) {
+    const panel = document.getElementById(`tab-${name}`);
+    if (!panel) continue;
+    const unavailable = sources.some(source => resource(source).state !== 'ready');
+    const analysisPending = name === 'skills' && skillAnalysisPending;
+    const needsNotice = unavailable || analysisPending;
+    // Retained results are historical observations, never a new assessment.
+    // Only an initial unavailable read hides the outcome/impact surface.
+    panel.classList.toggle('evidence-unavailable', unavailable && !sources.every(hasLoaded) && name !== 'inbox' && name !== 'skills');
+    let notice = panel.querySelector('.evidence-unavailable-message');
+    if (needsNotice && !notice) {
+      notice = document.createElement('div');
+      notice.className = 'evidence-unavailable-message inbox-copy';
+      notice.setAttribute('role', 'status');
+      panel.prepend(notice);
+    }
+    if (needsNotice) {
+      const pending = sources.filter(source => resource(source).state !== 'ready');
+      const messages = pending.map(source => {
+        const label = source[0].toUpperCase() + source.slice(1);
+        const loadedAt = resource(source).loaded_at;
+        if (resource(source).state === 'recorded') return `${label}: showing stored references read ${loadedAt ? new Date(loadedAt).toLocaleString() : 'at an unknown time'}. Current validation is pending.`;
+        return loadedAt
+          ? `${label} ${name === 'impact' ? 'is' : 'are'} updating. Showing data last loaded ${new Date(loadedAt).toLocaleString()}; it may have changed.`
+          : hasLoaded(source) ? `${label}: showing last published data; timestamp unavailable. Refresh is pending.`
+          : pendingCopy(label);
+      });
+      if (name === 'skills' && hasLoaded('skills') && skillAnalysisPending) {
+        const retainedAnalysis = (IMPROVEMENT_DATA.skills || []).some(item => item.analysis_state !== 'pending' && [item.usage_count,item.evidence_count,item.measurement_count].some(value => value != null));
+        messages.push(IMPROVEMENT_DATA.skill_evidence_state === 'recorded'
+          ? 'Showing recorded packages, installations, usage, and evidence. Stored impact results have not been revalidated.'
+          : retainedAnalysis
+          ? 'Showing recorded packages and installations with historical usage, evidence, and impact where available. Updated analysis is pending; missing results remain unknown.'
+          : 'Showing recorded packages and installations. Usage, evidence, and impact are updating.');
+        if (IMPROVEMENT_DATA.skill_evidence_state !== 'recorded' && (IMPROVEMENT_DATA.skills || []).some(item => item.evidence_state === 'recorded')) messages.push('Newly recorded references are marked separately and await validation.');
+      }
+      if ((name === 'workflows' || name === 'impact') && unavailable && sources.every(hasLoaded)) messages.push('Historical results remain available for inspection. A new workflow review requires current evidence.');
+      notice.innerHTML = `${escHtml(messages.join(' '))} <button type="button" class="ledger-button" data-ledger-action="retry-improvements">Retry</button>`;
+    }
+    if (notice) notice.hidden = !needsNotice;
+  }
   const observations = IMPROVEMENT_DATA.observations || [];
   const loops = sortObservedLoops(IMPROVEMENT_DATA.loops || []);
   const skills = IMPROVEMENT_DATA.skills || [];
@@ -599,17 +678,18 @@ function buildImprovementSurfaces(){
   const findingTotal = Number(IMPROVEMENT_DATA.finding_total_count ?? observations.length);
   const actionableLoopCount = loops.filter(item => item.status === 'detected' || item.status === 'acknowledged').length;
   const skillTotal = Number(IMPROVEMENT_DATA.skill_total_count ?? skills.length);
-  if (inboxSignalCount) inboxSignalCount.firstChild.textContent = String(findingTotal + actionableLoopCount);
+  if (inboxSignalCount) inboxSignalCount.firstChild.textContent = hasLoaded('findings') && hasLoaded('loops') ? String(findingTotal + actionableLoopCount) : '—';
   const findingCount = document.getElementById('finding-count');
   const inboxFindingsCount = document.getElementById('inbox-findings-count');
   const inboxLoopsCount = document.getElementById('inbox-loops-count');
   const inboxLoopsDetail = document.getElementById('inbox-loops-detail');
-  if (findingCount) findingCount.firstChild.textContent = String(findingTotal);
-  if (inboxFindingsCount) inboxFindingsCount.textContent = String(findingTotal);
-  if (inboxLoopsCount) inboxLoopsCount.textContent = String(loops.length);
-  if (inboxLoopsDetail && actionableLoopCount) inboxLoopsDetail.textContent = `${fmt(actionableLoopCount)} ready to review and build`;
-  if (loopCount) loopCount.firstChild.textContent = String(loops.length);
-  if (workflowTotalCount) workflowTotalCount.firstChild.textContent = String(workflows.length);
+  if (findingCount) findingCount.firstChild.textContent = hasLoaded('findings') ? String(findingTotal) : '—';
+  if (inboxFindingsCount) inboxFindingsCount.textContent = hasLoaded('findings') ? String(findingTotal) : '—';
+  if (inboxLoopsCount) inboxLoopsCount.textContent = hasLoaded('loops') ? String(loops.length) : '—';
+  if (inboxLoopsDetail) inboxLoopsDetail.textContent = actionableLoopCount
+    ? `${fmt(actionableLoopCount)} ready to review and build` : 'Goals, schedules, and repeated behavior';
+  if (loopCount) loopCount.firstChild.textContent = hasLoaded('loops') ? String(loops.length) : '—';
+  if (workflowTotalCount) workflowTotalCount.firstChild.textContent = hasLoaded('workflows') ? String(workflows.length) : '—';
   const reviewableWorkflowStates = new Set(['pending','approved']);
   const workflowDeployment = item => String(item.lifecycle?.deployment || 'not_deployed');
   const workflowDisplay = item => String(item.lifecycle?.display || item.status || 'pending');
@@ -620,9 +700,9 @@ function buildImprovementSurfaces(){
     return String(item.status || 'pending') === state;
   };
   const reviewableWorkflows = workflows.filter(item => workflowMatchesState(item, 'reviewable'));
-  if (workflowCount) workflowCount.firstChild.textContent = String(reviewableWorkflows.length);
-  if (skillCount) skillCount.firstChild.textContent = String(skillTotal);
-  if (measurementCount) measurementCount.firstChild.textContent = String(measurementGroups.length);
+  if (workflowCount) workflowCount.firstChild.textContent = hasLoaded('workflows') ? String(reviewableWorkflows.length) : '—';
+  if (skillCount) skillCount.firstChild.textContent = hasLoaded('skills') ? String(skillTotal) : '—';
+  if (measurementCount) measurementCount.firstChild.textContent = hasLoaded('impact') ? String(measurementGroups.length) : '—';
 
   const inboxViewButtons = [...document.querySelectorAll('[data-inbox-view]')];
   const inboxViewPanels = {
@@ -657,14 +737,17 @@ function buildImprovementSurfaces(){
   const requestedInboxView = currentParams().get('inbox_view');
   const initialInboxView = requestedInboxView === 'loops' || currentParams().get('loop')
     ? 'loops'
-    : (findingTotal === 0 && loops.length ? 'loops' : 'findings');
+    : (hasLoaded('findings') && findingTotal === 0 && loops.length ? 'loops' : 'findings');
   setInboxView(initialInboxView, {persist:false});
 
   const ruleCount = document.getElementById('rule-count');
   const ruleGrid = document.getElementById('rule-grid');
-  if (ruleCount) ruleCount.textContent = `${fmt(rules.length)} deterministic rules · ${fmt(rules.reduce((sum, rule) => sum + Number(rule.open_observation_count || 0), 0))} open findings`;
+  if (ruleCount) ruleCount.textContent = resource('rules').state === 'ready'
+    ? `${fmt(rules.length)} deterministic rules · ${fmt(rules.reduce((sum, rule) => sum + Number(rule.open_observation_count || 0), 0))} open findings` : 'Rule definitions unavailable';
   if (ruleGrid) {
-    ruleGrid.innerHTML = rules.length ? rules.map(rule => {
+    ruleGrid.innerHTML = resource('rules').state !== 'ready'
+      ? `<div class="session-ledger-empty">${escHtml(pendingCopy('Rules'))}</div>`
+      : rules.length ? rules.map(rule => {
       const config = Object.entries(rule.detector_config || {}).map(([key,value]) => `${key.replaceAll('_',' ')}: ${Array.isArray(value) ? value.join(', ') : value}`).join(' · ');
       return `<article class="rule-card">
         <div class="inbox-card-head"><div class="inbox-title">${escHtml(rule.title || rule.id)}</div><span class="ledger-pill signal">${fmt(Number(rule.open_observation_count || 0))} open</span></div>
@@ -677,7 +760,9 @@ function buildImprovementSurfaces(){
 
   const findingLedger = document.getElementById('finding-ledger');
   if (findingLedger) {
-    findingLedger.innerHTML = observations.length ? observations.map(item => {
+    findingLedger.innerHTML = !hasLoaded('findings')
+      ? `<div class="session-ledger-empty">${escHtml(pendingCopy('Findings'))}</div>`
+      : observations.length ? observations.map(item => {
       const proposedWorkflow = workflows.find(workflow => workflow.id === item.candidate_id);
       const workflowState = proposedWorkflow
         ? humanizeLedgerLabel(proposedWorkflow.lifecycle?.display || proposedWorkflow.status || 'pending')
@@ -698,17 +783,23 @@ function buildImprovementSurfaces(){
         </div>
         <div class="ledger-actions"><button type="button" class="ledger-button" data-ledger-action="evidence" data-observation-id="${escHtml(String(item.id))}">View Task Evidence</button>${proposedWorkflow ? `<button type="button" class="ledger-button primary" data-ledger-action="open-workflow" data-candidate-id="${escHtml(String(proposedWorkflow.id))}">Open Linked Workflow</button>` : ''}</div>
       </article>`;
-    }).join('') : `<div class="panel"><div class="panel-title">Inbox is clear</div><div class="inbox-copy">Reflect has no open finding with retained task evidence in this scope.</div></div>`;
+    }).join('') : resource('findings').state !== 'ready'
+      ? '<div class="session-ledger-empty">No findings in the last loaded data. Updated findings are still pending.</div>'
+      : `<div class="panel"><div class="panel-title">Inbox is clear</div><div class="inbox-copy">Reflect has no open finding with retained task evidence in this scope.</div></div>`;
   }
 
   const loopLedger = document.getElementById('loop-ledger');
   if (loopLedger) {
-    loopLedger.innerHTML = loops.length ? loops.map(item => `<article class="inbox-card">
+    loopLedger.innerHTML = !hasLoaded('loops')
+      ? `<div class="session-ledger-empty">${escHtml(pendingCopy('Loops'))}</div>`
+      : loops.length ? loops.map(item => `<article class="inbox-card">
       <div class="inbox-card-head"><div><div class="inbox-title">${escHtml(String(item.title || 'Observed loop'))}</div><div class="inbox-copy">${escHtml(String(item.summary || ''))}</div></div><span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(item.kind || 'stalled'))}</span></div>
       <div class="ledger-meta">${item.status === 'detected' ? '<span class="ledger-pill signal">Ready to review</span>' : ''}<span class="ledger-pill">${fmt(Number(item.affected_session_count || 0))} sessions</span><span class="ledger-pill">${fmt(Number(item.occurrence_count || 0))} occurrences</span>${item.kind === 'agent_native' ? `<span class="ledger-pill">${escHtml(item.tool_name || 'native command')}</span>` : `<span class="ledger-pill">${fmt(Number(item.state_change_count || 0))} state changes</span>`}<span class="ledger-pill">${Math.round(Number(item.confidence || 0)*100)}% confidence</span><span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.status || 'detected'))}</span></div>
       <div class="ledger-command">reflect loops show ${escHtml(String(item.id))}</div>
       <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-loop" data-loop-id="${escHtml(String(item.id))}">${item.status === 'detected' ? 'Review & Build Instructions' : 'Review Loop Evidence'}</button></div>
-    </article>`).join('') : `<div class="session-ledger-empty">No agent-native or behavioral loop is currently detected. Run <code>reflect loops</code> after more sessions are captured.</div>`;
+    </article>`).join('') : resource('loops').state !== 'ready'
+      ? '<div class="session-ledger-empty">No loops in the last loaded data. Updated loops are still pending.</div>'
+      : `<div class="session-ledger-empty">No agent-native or behavioral loop is currently detected. Run <code>reflect loops</code> after more sessions are captured.</div>`;
   }
 
   const skillRegistry = document.getElementById('skill-registry');
@@ -722,13 +813,17 @@ function buildImprovementSurfaces(){
       updateUrlParams(params => {
         query.trim() ? params.set('skill_q', query.trim()) : params.delete('skill_q');
       });
-      if (filterSummary) filterSummary.textContent = `Showing ${fmt(visible.length)} of ${fmt(skills.length)} skills`;
-      skillRegistry.innerHTML = visible.length ? visible.map(item => {
+      if (filterSummary) filterSummary.textContent = hasLoaded('skills') ? `Showing ${fmt(visible.length)} of ${fmt(skills.length)} skills` : 'Skill registry is unavailable';
+      skillRegistry.innerHTML = !hasLoaded('skills')
+        ? `<div class="session-ledger-empty">${escHtml(pendingCopy('Skills'))}</div>`
+        : visible.length ? visible.map(item => {
         const title = humanizeLedgerLabel(item.slug || item.name || 'Skill');
         const state = humanizeLedgerLabel(item.lifecycle_state || 'pending');
         const origin = humanizeLedgerLabel(item.origin || 'imported');
         const availability = skillAvailabilityPresentation(item);
         const command = `reflect skills show ${String(item.id)}`;
+        const recordedEvidence = (item.evidence_state ?? IMPROVEMENT_DATA.skill_evidence_state) === 'recorded';
+        const analysisCount = value => (item.analysis_state === 'pending' && !recordedEvidence) || value == null ? '—' : fmt(Number(value));
         return `<article class="workflow-card skill-tile" data-state="${escHtml(String(item.lifecycle_state || 'pending'))}">
           <div class="tile-card-main">
             <div class="tile-card-kicker"><span>Durable Skill</span><span>${escHtml(origin)}</span><span>${escHtml(state)}</span></div>
@@ -736,16 +831,18 @@ function buildImprovementSurfaces(){
             <dl class="tile-metric-grid">
               <div class="tile-metric signal"><dt>Current Version</dt><dd>${fmt(Number(item.current_version || 0))}</dd></div>
               <div class="tile-metric"><dt>Installations</dt><dd>${fmt(Number(item.installation_count || 0))}</dd></div>
-              <div class="tile-metric"><dt>Observed Uses</dt><dd>${fmt(Number(item.usage_count || 0))}</dd></div>
-              <div class="tile-metric"><dt>Impact Checks</dt><dd>${fmt(Number(item.measurement_count || 0))}</dd></div>
+              <div class="tile-metric"><dt>Observed Uses</dt><dd>${analysisCount(item.usage_count)}</dd></div>
+              <div class="tile-metric"><dt>Impact Checks</dt><dd>${analysisCount(item.measurement_count)}</dd></div>
             </dl>
-            <div class="tile-card-meta"><span class="ledger-pill">${escHtml(availability.detail)}</span><span class="ledger-pill">${fmt(Number(item.evidence_count || 0))} evidence links</span><span class="ledger-pill">${fmt(Number(item.version_count || item.current_version || 0))} versions</span></div>
+            <div class="tile-card-meta"><span class="ledger-pill">${escHtml(availability.detail)}</span><span class="ledger-pill">${analysisCount(item.evidence_count)} evidence links</span><span class="ledger-pill">${fmt(Number(item.version_count || item.current_version || 0))} versions</span>${recordedEvidence ? '<span class="ledger-pill">Recorded references · validation pending</span>' : ''}</div>
           </div>
           <footer class="tile-card-footer"><code class="tile-card-command" title="${escHtml(command)}" translate="no">${escHtml(command)}</code><button type="button" class="ledger-button primary" data-ledger-action="review-skill" data-skill-id="${escHtml(String(item.id))}">Inspect Skill</button></footer>
         </article>`;
       }).join('') : query.trim()
         ? `<div class="session-ledger-empty">No skills match <strong>${escHtml(query.trim())}</strong>. Clear the search to return to the full registry.</div>`
-        : `<div class="session-ledger-empty">No skill records are registered. Run <code>reflect skills sync</code> to reconcile installed skills or <code>reflect skills discover</code> to stage evidence-backed drafts.</div>`;
+        : resource('skills').state !== 'ready'
+          ? '<div class="session-ledger-empty">No skills in the last loaded registry. Updated records are still pending.</div>'
+          : `<div class="session-ledger-empty">No skill records are registered. Run <code>reflect skills sync</code> to reconcile installed skills or <code>reflect skills discover</code> to stage evidence-backed drafts.</div>`;
     };
     if (searchInput) searchInput.oninput = renderSkillRegistry;
     renderSkillRegistry();
@@ -787,19 +884,21 @@ function buildImprovementSurfaces(){
             <div class="tile-card-kicker"><span>${escHtml(origin.label)}</span><span>${escHtml(humanizeLedgerLabel(behaviorType))}</span></div>
             <div class="tile-card-head"><div class="tile-card-heading"><h3 class="tile-card-title">${escHtml(humanizeLedgerLabel(slug))}</h3><p class="tile-card-description">${escHtml(String(content.description || item.hypothesis || 'No description is available yet.'))}</p></div><span class="ledger-pill signal tile-card-status">${escHtml(status)}</span></div>
             <dl class="tile-metric-grid">
-              <div class="tile-metric"><dt>Execution Units</dt><dd>${fmt(Number(item.support_execution_unit_count || 0))}</dd></div>
+              <div class="tile-metric"><dt>${resource('workflows').state === 'ready' ? 'Supporting Tasks' : 'Recorded Task Links'}</dt><dd>${item.support_execution_unit_count == null ? '—' : fmt(Number(item.support_execution_unit_count))}</dd></div>
               <div class="tile-metric"><dt>Evidence Patterns</dt><dd>${fmt(Number(item.supporting_observation_count || 1))}</dd></div>
-              <div class="tile-metric signal"><dt>Confidence</dt><dd>${Math.round(Number(item.confidence || 0) * 100)}%</dd></div>
+              <div class="tile-metric signal"><dt>Evidence Confidence</dt><dd>${resource('workflows').state === 'ready' ? `${Math.round(Number(item.confidence || 0) * 100)}% confidence` : 'Updating'}</dd></div>
             </dl>
             <section class="workflow-step-preview" aria-label="Workflow Step Preview"><div class="workflow-step-preview-head"><span>Workflow Steps</span><span>${fmt(steps.length)} total</span></div>${renderWorkflowSteps(steps, {limit:4, compact:true})}</section>
             <div class="tile-card-meta"><span class="ledger-pill">Suggested ${escHtml(artifact)}</span><span class="ledger-pill">Rule ${escHtml(humanizeLedgerLabel(sourceRule))}</span><span class="ledger-pill">${fmt((item.source_scopes || []).length)} scopes</span></div>
           </div>
-          <footer class="tile-card-footer"><code class="tile-card-command" title="${escHtml(command)}" translate="no">${escHtml(command)}</code><button type="button" class="ledger-button${item.status === 'pending' ? ' primary' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.id))}">${workflowDeployment(item) === 'active' ? 'Review Application' : escHtml(origin.reviewLabel)}</button></footer>
+          <footer class="tile-card-footer"><code class="tile-card-command" title="${escHtml(command)}" translate="no">${escHtml(command)}</code><button type="button" class="ledger-button${item.status === 'pending' ? ' primary' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.id))}">${resource('workflows').state !== 'ready' ? 'Inspect Workflow' : workflowDeployment(item) === 'active' ? 'Review Application' : escHtml(origin.reviewLabel)}</button></footer>
         </article>`;
-      }).join('') : `<div class="panel"><div class="panel-title">No workflows match these filters</div><div class="workflow-copy">Clear the behavior or state filter, run <code>reflect improve</code> for deterministic proposals, build one reviewed loop with <code>reflect loops build LOOP_ID</code>, or import an existing procedure with <code>reflect workflows add SKILL.md</code>.</div></div>`;
+      }).join('') : resource('workflows').state !== 'ready'
+        ? '<div class="panel"><div class="panel-title">Workflow analysis is updating</div><div class="workflow-copy">No stored workflows are available for these filters. New results will appear here when ready.</div></div>'
+        : `<div class="panel"><div class="panel-title">No workflows match these filters</div><div class="workflow-copy">Clear the behavior or state filter, run <code>reflect improve</code> for deterministic proposals, build one reviewed loop with <code>reflect loops build LOOP_ID</code>, or import an existing procedure with <code>reflect workflows add SKILL.md</code>.</div></div>`;
     };
-    typeFilter?.addEventListener('change', renderWorkflowLedger);
-    statusFilter?.addEventListener('change', renderWorkflowLedger);
+    if (typeFilter) typeFilter.onchange = renderWorkflowLedger;
+    if (statusFilter) statusFilter.onchange = renderWorkflowLedger;
     renderWorkflowLedger();
   }
 
@@ -812,11 +911,13 @@ function buildImprovementSurfaces(){
       const verdict = impactVerdictPresentation(item.verdict, measurementState);
       const workflow = workflows.find(candidate => candidate.id === item.candidate_id);
       const workflowName = humanizeLedgerLabel(workflow?.content?.slug || 'Applied workflow');
-      const unit = 'task';
-      const units = 'tasks';
-      const minimumAfter = Number(item.cohort?.minimum_after_execution_units || 5);
-      const afterCount = Number(item.after_count || 0);
+      const minimumAfter = item.cohort?.minimum_after_execution_units;
+      const afterCount = item.cohort?.eligibility?.after?.metric_count;
+      const count = value => value == null || !Number.isFinite(Number(value)) ? 'Unknown' : fmt(Number(value));
       const ready = measurementState === 'measured' && item.verdict !== 'insufficient_data';
+      const retained = resource('impact').state !== 'ready';
+      const baselineUnavailable = item.cohort?.baseline_state === 'historical_unavailable';
+      const baselinePending = item.cohort?.baseline_state === 'analysis_pending';
       const previous = history[1] || null;
       const trend = impactTrendPresentation(item, previous, metric);
       const regressedButImproving = item.verdict === 'regressed' && trend?.kind === 'improving';
@@ -828,25 +929,33 @@ function buildImprovementSurfaces(){
       return `<article class="measurement-card impact-card" data-verdict="${escHtml(String(item.verdict || 'insufficient_data'))}" data-trend="${escHtml(trend?.kind || 'unknown')}">
         <div class="impact-head">
           <div class="impact-head-main"><div class="impact-eyebrow">Applied Workflow · ${escHtml(workflowName)}</div><h3 class="impact-title">${escHtml(metric.goal)}</h3></div>
-          <div class="impact-status-stack"><span class="impact-status ${escHtml(verdict.className)}">${escHtml(verdict.label)}</span>${trend ? `<span class="impact-trend-status ${escHtml(trend.kind)}">${escHtml(trend.label)}</span>` : ''}</div>
+          <div class="impact-status-stack"><span class="impact-status ${escHtml(verdict.className)}">${retained ? 'Stored check · ' : ''}${escHtml(baselineUnavailable ? 'Historical Baseline Unavailable' : baselinePending ? 'Analysis Pending' : verdict.label)}</span>${trend ? `<span class="impact-trend-status ${escHtml(trend.kind)}">${escHtml(trend.label)}</span>` : ''}</div>
         </div>
         <p class="impact-summary">${escHtml(impactSummary(item, metric, trend))}</p>
-        ${measurementState === 'collecting' ? `<div class="impact-progress"><div class="impact-progress-copy"><strong>${fmt(afterCount)} of ${fmt(minimumAfter)} followed ${units} collected</strong><span>${fmt(Math.max(0, minimumAfter - afterCount))} remaining</span></div><progress value="${Math.min(afterCount, minimumAfter)}" max="${minimumAfter}" aria-label="Post-application ${unit} collection progress"></progress></div>` : ''}
+        <div class="impact-readiness" aria-label="Comparison readiness">
+          <span><strong>${count(item.before_count)}</strong> baseline tasks</span>
+          <span><strong>${count(item.after_count)}</strong> after activation</span>
+          <span>${retained ? 'Current validation updating' : ready ? 'Comparison available' : 'Collecting comparable evidence'}</span>
+        </div>
+        ${measurementState === 'collecting' && !baselineUnavailable && !baselinePending && afterCount != null && minimumAfter > 0 ? `<div class="impact-progress"><div class="impact-progress-copy"><strong>Post-activation comparison sample: ${count(afterCount)} selected tasks with metrics of ${count(minimumAfter)} required</strong><span>${fmt(Math.max(0, minimumAfter - afterCount))} remaining</span></div><progress value="${Math.min(afterCount, minimumAfter)}" max="${minimumAfter}" aria-label="Selected post-activation tasks with metric coverage"></progress></div>` : ''}
         <div class="impact-comparison">
-          <div class="impact-period"><div class="impact-period-label">Before Activation</div><div class="impact-period-value">${ready ? escHtml(formatImpactValue(metric, item.before_value)) : `${fmt(Number(item.before_count || 0))} ${units}`}</div><div class="impact-period-note">${ready ? `${fmt(Number(item.before_count || 0))} baseline ${units}` : measurementState === 'not_measurable' ? 'Quality gate failed' : 'Baseline candidate cohort'}</div></div>
+          <div class="impact-period"><div class="impact-period-label">Before Activation</div><div class="impact-period-value">${ready ? escHtml(formatImpactValue(metric, item.before_value)) : `${count(item.cohort?.eligibility?.before?.candidate_count)} candidate tasks`}</div>${impactCohortDetails(item, 'before')}</div>
           <div class="impact-arrow" aria-hidden="true">→</div>
-          <div class="impact-period"><div class="impact-period-label">After Activation</div><div class="impact-period-value">${ready ? escHtml(formatImpactValue(metric, item.after_value)) : `${fmt(afterCount)} ${units}`}</div><div class="impact-period-note">${ready ? `${fmt(afterCount)} comparable ${units}${trend ? ` · ${escHtml(trend.shortLabel)}` : ''}` : measurementState === 'not_measurable' ? 'Impact withheld' : `Collecting followed ${units}`}</div></div>
+          <div class="impact-period"><div class="impact-period-label">After Activation</div><div class="impact-period-value">${ready ? escHtml(formatImpactValue(metric, item.after_value)) : `${count(item.cohort?.eligibility?.after?.candidate_count)} candidate tasks`}</div>${impactCohortDetails(item, 'after')}</div>
         </div>
         ${progressGraph}
-        <div class="impact-scope">${escHtml(impactScope(item))}${ready ? ` · ${Math.round(Number(item.confidence || 0) * 100)}% confidence` : ''}</div>
+        <div class="impact-scope">${escHtml(impactScope(item))}${ready && item.confidence != null && Number.isFinite(Number(item.confidence)) ? ` · ${Math.round(Number(item.confidence) * 100)}% confidence` : ''}</div>
+        <div class="impact-scope">${retained ? `Stored check ${escHtml(item.measured_at ? fmtWorkflowDate(item.measured_at) : 'date unknown')}; current validation is pending. ` : ''}Observed cohort differences do not establish that the workflow caused the change.</div>
         <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-impact-sessions" data-measurement-id="${escHtml(String(item.id))}">View Compared Tasks</button><button type="button" class="ledger-button${item.verdict === 'regressed' && !regressedButImproving ? ' danger' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.candidate_id))}">${reviewLabel}</button></div>
         ${historyRows ? `<details class="impact-history"><summary>${fmt(history.length - 1)} Previous Check${history.length === 2 ? '' : 's'}</summary><ol class="impact-history-list">${historyRows}</ol></details>` : ''}
       </article>`;
-    }).join('') : `<div class="panel"><div class="panel-title">No Impact Checks Yet</div><div class="measurement-copy">Install a reviewed workflow to start a bounded validation window. Reflect reports a result only when both task cohorts and their required signals are complete.</div></div>`;
+    }).join('') : resource('impact').state !== 'ready'
+      ? `<div class="panel"><div class="panel-title">Impact analysis is pending</div><div class="measurement-copy">${hasLoaded('impact') ? 'No checks were available in the last loaded result. Current results are unknown until refresh completes.' : 'Checks and baseline eligibility are unknown until analysis is available.'}</div></div>`
+      : `<div class="panel"><div class="panel-title">No Impact Checks Yet</div><div class="measurement-copy">Install a reviewed workflow to start a bounded validation window. Reflect reports a result only when both task cohorts and their required signals are complete.</div></div>`;
   }
 
   const linkedWorkflow = currentParams().get('workflow') || '';
-  if (linkedWorkflow && !window._linkedWorkflowInitialized && workflows.some(item => item.id === linkedWorkflow)) {
+  if (linkedWorkflow && !window._linkedWorkflowInitialized) {
     window._linkedWorkflowInitialized = true;
     queueMicrotask(() => showWorkflowReview(linkedWorkflow, currentParams().get('workflow_root') || ''));
   }
@@ -861,10 +970,11 @@ function buildImprovementSurfaces(){
     queueMicrotask(() => showSkillReview(linkedSkill));
   }
 }
+improvementSurfacesReady = true;
 buildImprovementSurfaces();
 
 /* Explore achievements */
-(function buildAchievements(){
+function buildAchievements(){
   const obsTab = sqlTab('observations');
   const achievements = obsTab.achievements || [];
   const badgeGrid = document.getElementById('obs-badges');
@@ -879,4 +989,4 @@ buildImprovementSurfaces();
     </div>
   `).join('') || '<div class="empty-note">No outcomes are available for the current selection.</div>';
 
-})();
+}

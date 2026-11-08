@@ -376,7 +376,7 @@ class TestCodexOtlpLogs:
         assert [s["attributes"]["gen_ai.client.hook.event"] for s in spans] == [
             "PreToolUse",
             "PostToolUse",
-            "Stop",
+            "Usage",
         ]
         assert spans[0]["attributes"]["gen_ai.client.tool_name"] == "exec_command"
         assert spans[1]["end_time_ns"] - spans[1]["start_time_ns"] == 200_000_000
@@ -463,7 +463,7 @@ class TestCursorNativeSessions:
         )
         assistant_span = next(
             span for span in spans
-            if span["attributes"].get("gen_ai.client.hook.event") == "Stop"
+            if span["attributes"].get("gen_ai.client.hook.event") == "AssistantMessage"
         )
 
         assert [span["attributes"]["gen_ai.client.tool_name"] for span in tool_spans] == ["Shell", "CallMcpTool"]
@@ -475,6 +475,7 @@ class TestCursorNativeSessions:
         assert "reflect.token.source" not in user_span["attributes"]
         assert "reflect.token.estimate_algorithm" not in assistant_span["attributes"]
         assert all(span["start_time_ns"] >= 946_684_800_000_000_000 for span in spans)
+        assert all(span["attributes"]["reflect.time.provenance"] == "inferred" for span in spans)
 
 
 @pytest.mark.parametrize(
@@ -511,7 +512,7 @@ def test_jsonl_native_session_spans_preserve_assistant_output(tmp_path, agent, p
     parser = _iter_claude_session_spans if agent == "claude" else _iter_copilot_session_spans
     spans = list(parser(session))
     response = next(
-        span for span in spans if span["attributes"].get("gen_ai.client.hook.event") == "Stop"
+        span for span in spans if span["attributes"].get("gen_ai.client.hook.event") == ("AssistantMessage" if agent == "claude" else "Stop")
     )
 
     assert response["attributes"]["gen_ai.client.output"] == expected
@@ -600,7 +601,7 @@ class TestCodexSessionFiles:
             "UserPromptSubmit",
             "PreToolUse",
             "PostToolUse",
-            "Stop",
+            "AssistantMessage",
             "SessionStart",
             "SessionEnd",
         ]
@@ -747,7 +748,7 @@ class TestCodexSessionFiles:
             "SessionEnd",
         ]
 
-    def test_codex_session_uses_config_model_when_meta_omits_model(self, tmp_path, monkeypatch):
+    def test_codex_session_does_not_invent_historical_model_from_config(self, tmp_path, monkeypatch):
         home = tmp_path / "home"
         (home / ".codex").mkdir(parents=True)
         (home / ".codex" / "config.toml").write_text('model = "gpt-5.5"\n', encoding="utf-8")
@@ -781,8 +782,8 @@ class TestCodexSessionFiles:
         spans = list(_iter_codex_session_spans(p))
 
         token_span = next(span for span in spans if span["attributes"].get("gen_ai.usage.output_tokens") == 80)
-        assert token_span["attributes"]["gen_ai.request.model"] == "gpt-5.5"
-        assert token_span["attributes"]["gen_ai.request.model_source"] == "codex_config_default"
+        assert "gen_ai.request.model" not in token_span["attributes"]
+        assert "gen_ai.request.model_source" not in token_span["attributes"]
 
 
 class TestLoadJsonLines:

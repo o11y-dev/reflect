@@ -289,6 +289,16 @@ class HookFactRepository:
             (session_id,),
         ):
             conversation_by_step[str(fact["step_id"])].append(fact)
+        agent_events_by_step = self.load_agent_events(session_id).agent_events_by_step
+        return HookFactSessionView(
+            conversation_by_step={
+                step_id: tuple(facts) for step_id, facts in conversation_by_step.items()
+            },
+            agent_events_by_step=agent_events_by_step,
+        )
+
+    def load_agent_events(self, session_id: str) -> HookFactSessionView:
+        """Read agent relations without loading unrelated conversation payloads."""
         agent_events_by_step: dict[str, dict[str, object]] = {}
         for event in self._query_dicts(
             """
@@ -301,9 +311,7 @@ class HookFactRepository:
         ):
             agent_events_by_step[str(event["step_id"])] = event
         return HookFactSessionView(
-            conversation_by_step={
-                step_id: tuple(facts) for step_id, facts in conversation_by_step.items()
-            },
+            conversation_by_step={},
             agent_events_by_step=agent_events_by_step,
         )
 
@@ -362,7 +370,7 @@ class HookFactRepository:
                 contract.event_id,
                 contract.agent_id,
                 contract.parent_agent_id,
-                _text(attrs, "gen_ai.client.subagent_type", "gen_ai.agent.name"),
+                _text(attrs, "gen_ai.client.subagent_type", "ide.subagent_type", "subagent.type", "gen_ai.agent.name"),
                 _text(attrs, "gen_ai.client.agent_id_source"),
                 _text(attrs, "gen_ai.client.status"),
                 task.content_hash if task else None,

@@ -39,6 +39,14 @@ def is_sqlite_busy(exc: BaseException) -> bool:
 class SnapshotNotReadyError(sqlite3.OperationalError):
     """Canonical and derived data have not finished refreshing together."""
 
+    state = "preparing"
+
+
+class HistoricalAnalysisPendingError(SnapshotNotReadyError):
+    """Stored history needs explicitly scoped analysis, not polling or ingestion."""
+
+    state = "historical_pending"
+
 
 @contextmanager
 def read_transaction(conn: sqlite3.Connection):
@@ -75,26 +83,33 @@ def mark_snapshot(conn: sqlite3.Connection, *, ready: bool, profile: str = "snap
     conn.commit()
 
 
-def consistent_snapshot(operation):
+def snapshot_revision(db_path, *, profile: str = "snapshot") -> tuple[str, str] | None:
+    """Read the publication marker, including atomic maintenance revisions."""
+    conn = connect_sqlite_read_only(db_path, profile=profile)
+    try:
+        if not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'store_metadata'"
+        ).fetchone():
+            return None
+        return conn.execute(
+            "SELECT value, updated_at FROM store_metadata WHERE key = ?",
+            (f"prepared_{profile}",),
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def consistent_snapshot(operation=None, *, profile: str | Callable[..., str] = "snapshot"):
     """Reject a composed response if its separate SQL reads span a refresh."""
-    def revision(db_path):
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            if not conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE name = 'store_metadata'"
-            ).fetchone():
-                return None
-            return conn.execute(
-                "SELECT value, updated_at FROM store_metadata WHERE key = 'prepared_snapshot'"
-            ).fetchone()
-        finally:
-            conn.close()
+    if operation is None:
+        return lambda wrapped: consistent_snapshot(wrapped, profile=profile)
 
     @wraps(operation)
     def read(db_path, *args, **kwargs):
-        before = revision(db_path)
+        selected_profile = profile(db_path, *args, **kwargs) if callable(profile) else profile
+        before = snapshot_revision(db_path, profile=selected_profile)
         result = operation(db_path, *args, **kwargs)
-        if revision(db_path) != before:
+        if snapshot_revision(db_path, profile=selected_profile) != before:
             raise SnapshotNotReadyError("The snapshot changed during this request. Please retry.")
         return result
 

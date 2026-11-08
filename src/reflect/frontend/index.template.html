@@ -48,16 +48,7 @@
   ]
 }
 </script>
-<!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-WBE682BQVP"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-  gtag('config', 'G-WBE682BQVP');
-</script>
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin/>
-<link rel="preconnect" href="https://www.googletagmanager.com" crossorigin/>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
@@ -66,9 +57,6 @@
 </style>
 </head>
 <body>
-<!-- Google Tag Manager (noscript) -->
-<!-- End Google Tag Manager (noscript) -->
-
 <div id="report-loader" class="report-loader" role="status" aria-live="polite" aria-label="Loading report">
   <div class="report-loader-inner">
     <div class="loader-mark" aria-hidden="true"></div>
@@ -189,12 +177,28 @@
     <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
     <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
   </div>
+  <div class="panel explore-view-status" id="usage-view-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+  <section class="usage-measurements" id="measurement-panel" aria-labelledby="usage-heading">
+    <div class="usage-heading"><div><span class="usage-eyebrow">Captured telemetry</span><h2 id="usage-heading">Usage &amp; delivery</h2><p id="measurement-scope"></p></div><span class="usage-scope-tag">M1–M7</span></div>
+    <div class="usage-headlines" id="measurement-summary"></div>
+    <div class="usage-widget-grid usage-chart-grid">
+      <section class="usage-widget"><div class="usage-widget-head"><h3>Cost over time</h3><span class="usage-unit">USD</span></div><p class="usage-copy">Estimated cost of dated, priced observations.</p><div class="chart-box"><canvas id="agentCostChart"></canvas></div></section>
+      <section class="usage-widget"><div class="usage-widget-head"><h3>Captured token mix</h3><span class="usage-unit">U / R / W / O</span></div><p class="usage-copy">Known token buckets in the selected scope.</p><div class="chart-box"><canvas id="tokenChart"></canvas></div></section>
+    </div>
+    <div class="usage-widget-grid" id="measurement-time"></div>
+    <section class="usage-widget usage-models"><div class="usage-widget-head"><h3><span class="usage-code">M7</span> Models &amp; switches</h3></div><div id="measurement-model-summary"></div><div class="usage-model-grid"><div class="chart-box"><canvas id="modelChart"></canvas></div><div id="measurement-models"></div></div></section>
+    <section class="usage-widget usage-delivery" id="measurement-git"></section>
+  </section>
+
+  <details class="usage-diagnostics" id="usage-diagnostics">
+    <summary><span>Activity &amp; deeper diagnostics</span><span>Session inventories, comparisons, and provenance</span></summary>
+    <p class="usage-copy">Usage totals above follow the selected event window. These activity and workflow inventories cover the full matching sessions.</p>
   <div class="panel" id="cohort-comparison-panel">
     <div class="panel-title">Comparable cohorts</div>
     <div id="cohort-comparison-summary"></div>
   </div>
 
-  <div class="cols-2">
+  <div class="cols-2 cohort-comparison-grid">
     <div class="panel" style="margin-bottom:0">
       <div class="panel-title">Cohort Details</div>
       <div id="cohort-comparison-details"></div>
@@ -207,69 +211,11 @@
   <!-- Row 1: 4 headline stats -->
   <div class="stat-row" id="stat-row"></div>
 
-  <div class="panel">
-    <div class="panel-title">Outcomes &amp; Achievements</div>
-    <div class="badge-grid" id="obs-badges"></div>
-  </div>
-
-  <!-- Row 4: 8 metric tiles -->
-  <div class="metric-row" id="metric-row"></div>
-
-  <!-- Row 5: charts side by side -->
-  <div class="cols-2">
-    <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Model Usage</div>
-      <div class="chart-box" style="height:200px"><canvas id="modelChart"></canvas></div>
-    </div>
-    <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Event Types</div>
-      <div class="chart-box" style="height:200px"><canvas id="eventChart"></canvas></div>
-      <div id="source-provenance" style="padding:8px 0 0"></div>
-    </div>
-  </div>
-
-  <!-- Row 6: Token Usage -->
-  <div class="cols-2">
-    <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Token Usage</div>
-      <div class="chart-box" style="height:200px"><canvas id="tokenChart"></canvas></div>
-    </div>
-    <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Token Stats</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px 0">
-        <div style="background:var(--surface2);border-radius:8px;padding:14px 16px">
-          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Input Tokens</div>
-          <div style="font-size:22px;font-weight:700;margin-top:4px" id="stat-input-tok"></div>
-        </div>
-        <div style="background:var(--surface2);border-radius:8px;padding:14px 16px">
-          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Output Tokens</div>
-          <div style="font-size:22px;font-weight:700;margin-top:4px" id="stat-output-tok"></div>
-        </div>
-        <div style="background:var(--surface2);border-radius:8px;padding:14px 16px">
-          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Cache Read Tokens</div>
-          <div style="font-size:22px;font-weight:700;margin-top:4px" id="stat-cache-tok"></div>
-        </div>
-        <div style="background:var(--surface2);border-radius:8px;padding:14px 16px">
-          <div style="font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em">Out / In Ratio</div>
-          <div style="font-size:22px;font-weight:700;margin-top:4px" id="stat-tok-ratio"></div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Row 6: Cost Usage -->
-  <div class="cols-2">
-    <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Estimated Cost</div>
-      <div id="cost-stats" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px 0"></div>
-    </div>
-    <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Cost Trends</div>
-      <div class="chart-box" style="height:200px"><canvas id="agentCostChart"></canvas></div>
-      <div id="model-cost-share" style="padding:12px 0 0"></div>
-    </div>
-  </div>
-
+    <div class="panel"><div class="panel-title">Outcomes &amp; Achievements</div><div class="badge-grid" id="obs-badges"></div></div>
+    <div class="metric-row" id="metric-row"></div>
+    <div class="panel"><div class="panel-title">Event Types</div><div class="chart-box" style="height:200px"><canvas id="eventChart"></canvas></div><div id="source-provenance" style="padding:8px 0 0"></div></div>
+    <div class="cols-2"><div class="panel"><div class="panel-title">Cost components</div><div id="cost-stats" class="usage-legacy-grid"></div></div><div class="panel"><div class="panel-title">Model cost details</div><div id="model-cost-share"></div></div></div>
+    <div class="panel"><div class="panel-title">Token details</div><dl class="usage-facts"><div><dt>Input tokens</dt><dd id="stat-input-tok"></dd></div><div><dt>Output tokens</dt><dd id="stat-output-tok"></dd></div><div><dt>Cache read tokens</dt><dd id="stat-cache-tok"></dd></div><div><dt>Output / input</dt><dd id="stat-tok-ratio"></dd></div></dl></div>
   <div class="cols-2">
     <div class="panel" style="margin-bottom:0">
       <div class="panel-title">Activity — Last Year</div>
@@ -313,6 +259,7 @@
     <div id="weekly-trends-table"></div>
   </div>
 
+  </details>
 </div>
 
 <!-- ════════════════════ IMPACT ════════════════════ -->
@@ -516,12 +463,6 @@
   <div class="panel">
     <div class="panel-title">Tool Co-occurrence Matrix <span class="panel-title-count">(sessions where both tools appeared)</span></div>
     <div class="matrix-wrap"><table class="matrix-table" id="matrix-table"></table></div>
-  </div>
-
-  <!-- 5. Latency Distributions -->
-  <div class="panel">
-    <div class="panel-title">Latency Distributions <span class="panel-title-count">(call count per bucket)</span></div>
-    <div class="hist-grid" id="hist-grid"></div>
   </div>
 
 </div>

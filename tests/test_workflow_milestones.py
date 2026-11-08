@@ -29,9 +29,9 @@ def _seed(conn) -> None:
     conn.execute(
         """
         INSERT INTO skills(
-          id, slug, name, description, origin, lifecycle_state,
+          id, identity_key, slug, name, description, origin, lifecycle_state,
           current_version_id, first_seen_at, last_seen_at, created_at, updated_at
-        ) VALUES ('skill', 'proven-review', 'Proven review', 'Review safely',
+        ) VALUES ('skill', 'workflow:signature', 'proven-review', 'Proven review', 'Review safely',
                   'rule_blueprint', 'active', 'skill-version', ?, ?, ?, ?)
         """,
         (NOW, NOW, NOW, NOW),

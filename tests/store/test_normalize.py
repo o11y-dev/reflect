@@ -643,11 +643,15 @@ def test_backfill_mcp_calls_attaches_metadata_to_canonical_tool_call(tmp_path):
         ).fetchone()
         assert tuple(row) == ("tool-call-row", "reflect", "reflect_context", "ok")
         assert changed == {"sess-encoded-mcp"}
+        from reflect.store.pending_refresh import PendingRefreshState
+        pending = PendingRefreshState(conn).capture()
+        assert pending.pending_for("graph") == changed
         assert backfill_mcp_calls(conn) == {
             "inserted": 0,
             "skipped_duplicates": 0,
             "updated_status": 0,
         }
+        assert PendingRefreshState(conn).capture() == pending
     finally:
         conn.close()
 

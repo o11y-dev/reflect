@@ -9,6 +9,7 @@ from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from typing import Any
 
+from reflect.improvements.analysis_scope import AnalysisScope
 from reflect.improvements.models import (
     EvidenceRef,
     FindingEvidenceLedger,
@@ -33,6 +34,8 @@ from reflect.improvements.models import (
 )
 from reflect.improvements.scope import session_scope_predicate
 from reflect.improvements.workflow_identity import WorkflowIdentity
+from reflect.store.pending_refresh import analysis_coverage, derived_analysis_state
+from reflect.store.sqlite import snapshot_incomplete
 
 _ACTIVE_OBSERVATION_STATUSES = {
     ObservationStatus.NEW.value,
@@ -289,7 +292,10 @@ class ImprovementRepository:
         seen_ids: set[str],
         *,
         now: str,
+        scope: AnalysisScope | None = None,
     ) -> int:
+        if scope is not None and scope.session_ids == set():
+            return 0
         placeholders = ",".join("?" for _ in seen_ids)
         query = """
             UPDATE observations
@@ -307,13 +313,15 @@ class ImprovementRepository:
         if seen_ids:
             query += f" AND id NOT IN ({placeholders})"
             params.extend(sorted(seen_ids))
+        scope_predicate = scope.observation_predicate() if scope else "1=1"
+        query += f" AND {scope_predicate}"
         resolved = self.conn.execute(query, params).rowcount
         self.conn.execute(
-            """
+            f"""
             UPDATE workflow_candidates
             SET status = 'stale',
                 checks_json = json_set(
-                  COALESCE(NULLIF(checks_json, ''), '{}'),
+                  COALESCE(NULLIF(checks_json, ''), '{{}}'),
                   '$.stale_reason',
                   'source_observation_resolved'
                 ),
@@ -322,9 +330,10 @@ class ImprovementRepository:
               AND observation_id IN (
                 SELECT id FROM observations
                 WHERE rule_id = ? AND rule_version = ? AND status = 'resolved'
+                  AND last_evaluated_at = ? AND {scope_predicate}
               )
             """,
-            (now, definition.id, definition.version),
+            (now, definition.id, definition.version, now),
         )
         return resolved
 
@@ -774,6 +783,7 @@ class ImprovementRepository:
         *,
         scope: ImprovementScope | None,
         limit: int,
+        recorded_only: bool = False,
     ) -> tuple[int, list[WorkflowExecutionUnitRecord]]:
         placeholders = ",".join("?" for _ in observation_ids)
         scope_sql = ""
@@ -823,7 +833,7 @@ class ImprovementRepository:
               LEFT JOIN agents a ON a.id = eu.agent_id
               LEFT JOIN workspaces w ON w.id = eu.workspace_id
               LEFT JOIN repos r ON r.id = eu.repo_id
-              WHERE eu.eligible = 1 {scope_sql}
+              WHERE {"1" if recorded_only else "eu.eligible = 1"} {scope_sql}
               GROUP BY eu.id, eu.session_id, s.title, a.name, eu.started_at,
                        eu.ended_at, eu.status, eu.outcome, eu.verification_passed,
                        w.root_path, r.full_name, eu.source
@@ -846,8 +856,8 @@ class ImprovementRepository:
                 started_at=str(row[4]),
                 ended_at=str(row[5]) if row[5] else None,
                 status=str(row[6]),
-                outcome=str(row[7]) if row[7] else None,
-                verification_passed=None if row[8] is None else bool(row[8]),
+                outcome=str(row[7]) if row[7] and not recorded_only else None,
+                verification_passed=None if recorded_only or row[8] is None else bool(row[8]),
                 workspace=str(row[9] or ""),
                 source=str(row[10]),
                 evidence_count=int(row[11] or 0),
@@ -953,6 +963,7 @@ class ImprovementRepository:
         candidate_id: str,
         *,
         limit: int = 50,
+        recorded_only: bool = False,
     ) -> WorkflowEvidenceLedger:
         candidate = self.get_candidate(candidate_id)
         if candidate is None:
@@ -980,6 +991,7 @@ class ImprovementRepository:
             observation_ids,
             scope=None,
             limit=bounded_limit,
+            recorded_only=recorded_only,
         )
         exposure_rows = self.conn.execute(
             f"""
@@ -1011,13 +1023,13 @@ class ImprovementRepository:
                 started_at=str(row[4]),
                 ended_at=str(row[5]) if row[5] else None,
                 status=str(row[6]),
-                outcome=str(row[7]) if row[7] else None,
-                verification_passed=None if row[8] is None else bool(row[8]),
+                outcome=str(row[7]) if row[7] and not recorded_only else None,
+                verification_passed=None if recorded_only or row[8] is None else bool(row[8]),
                 workspace=str(row[9] or ""),
                 source=str(row[10]),
                 evidence_count=1,
-                evidence_summaries=self._exposure_summaries(row[11], row[12]),
-                exposure_state=str(row[11]),
+                evidence_summaries=self._exposure_summaries(row[11], row[12], recorded_only=recorded_only),
+                exposure_state=None if recorded_only else str(row[11]),
             )
             for row in exposure_rows
         ]
@@ -1110,6 +1122,27 @@ class ImprovementRepository:
         self.conn.commit()
         return feedback_id
 
+    def analysis_readiness(
+        self, scope: ImprovementScope | None = None,
+    ) -> tuple[str, dict[str, dict[str, int]], list[str]]:
+        """Keep retained findings visibly pending within the selected session scope."""
+        session_ids = None
+        if scope is not None:
+            predicate, params = session_scope_predicate(scope)
+            session_ids = {str(row[0]) for row in self.conn.execute(
+                f"SELECT s.id FROM sessions s WHERE {predicate}", params,
+            )}
+        coverage = analysis_coverage(self.conn, session_ids)
+        state = derived_analysis_state(coverage, snapshot_ready=not snapshot_incomplete(self.conn))
+        limitations = []
+        if state != "ready":
+            reason = "retained history in this scope" if state == "historical_pending" else "this scope"
+            limitations.append(
+                f"Derived analysis is pending for {reason}. Retained findings are not ready "
+                "for before/after comparison; refresh the selected sessions or all history."
+            )
+        return state, coverage, limitations
+
     def summary(
         self,
         *,
@@ -1143,6 +1176,7 @@ class ImprovementRepository:
         measured = Counter(item["verdict"] for item in MeasurementService(self.conn).iter_results()
                            if item["verdict"] != "insufficient_data")
         rate = measured["improved"] / measured.total() if measured.total() else None
+        analysis_state, coverage, limitations = self.analysis_readiness(scope)
         return ImprovementSummary(
             generated_at=utc_now(),
             observations=observations,
@@ -1153,6 +1187,9 @@ class ImprovementRepository:
             resolved_scope=scope,
             eligible_session_count=scope.eligible_session_count if scope else 0,
             attribution_complete=self.finding_evidence_complete(),
+            analysis_state=analysis_state,
+            analysis_coverage=coverage,
+            limitations=limitations,
         )
 
     def finding_evidence_complete(self) -> bool:
@@ -1473,14 +1510,14 @@ class ImprovementRepository:
         return str(row[0]) if row and row[0] else None
 
     @staticmethod
-    def _exposure_summaries(state: str, evidence_json: str) -> list[str]:
+    def _exposure_summaries(state: str, evidence_json: str, *, recorded_only: bool = False) -> list[str]:
         evidence = _loads(evidence_json, {})
         details = [f"Workflow exposure classified as {state}."]
         if evidence.get("slug_observed"):
             details.append("The workflow slug was observed in session telemetry.")
         if evidence.get("verification_observed"):
             details.append("Verification activity was observed after workflow use.")
-        return details
+        return [f"Recorded classification (current validation pending): {detail}" for detail in details] if recorded_only else details
 
     def _observation_from_row(self, row: tuple[Any, ...]) -> ObservationRecord:
         return ObservationRecord(
@@ -1603,7 +1640,9 @@ class ImprovementRepository:
 
         from reflect.improvements.measurement import MeasurementService
 
-        measurements = MeasurementService(self.conn).list(limit=1, candidate_id=candidate_id)
+        measurements = MeasurementService(self.conn).list(
+            limit=1, candidate_id=candidate_id, recorded_only=snapshot_incomplete(self.conn),
+        )
         measurement = measurements[0] if measurements else None
         measurement_state = WorkflowMeasurementState.NOT_STARTED
         if deployment is WorkflowDeploymentState.ACTIVE:

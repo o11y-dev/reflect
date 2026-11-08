@@ -18,6 +18,7 @@ from reflect.improvements.models import (
 from reflect.improvements.skills import SkillRegistryService
 from reflect.improvements.workflows import WorkflowService
 from reflect.schema.base import ReflectModel
+from reflect.store.sqlite import snapshot_incomplete
 
 
 class SkillAvailability(StrEnum):
@@ -47,6 +48,10 @@ class SkillInspectionAnswer(ReflectModel):
     skills: list[SkillRecord] = Field(default_factory=list)
     count: int = Field(default=0, ge=0)
     truncated: bool = False
+    analysis_state: str = "ready"
+    analysis_pending: bool = False
+    evidence_state: str = "current"
+    limitations: list[str] = Field(default_factory=list)
 
 
 class SkillSourceExecutionUnit(ReflectModel):
@@ -75,6 +80,10 @@ class PatternInspectionAnswer(ReflectModel):
     workflow_count: int = Field(default=0, ge=0)
     loop_count: int = Field(default=0, ge=0)
     truncated: bool = False
+    analysis_state: str = "ready"
+    analysis_pending: bool = False
+    evidence_state: str = "current"
+    limitations: list[str] = Field(default_factory=list)
 
 
 class AgentInspectionService:
@@ -107,6 +116,7 @@ class AgentInspectionService:
     ) -> SkillInspectionAnswer:
         """Search already-indexed skills without refreshing or mutating the registry."""
 
+        pending = snapshot_incomplete(self.conn)
         bounded_limit = max(1, min(limit, 100))
         normalized_query = query.strip().casefold()
         normalized_agent = source_agent.strip().casefold() if source_agent else None
@@ -129,6 +139,9 @@ class AgentInspectionService:
         if normalized_query:
             filtered.sort(key=lambda skill: self._skill_search_key(skill, normalized_query))
         return SkillInspectionAnswer(
+            analysis_state="pending" if pending else "ready",
+            analysis_pending=pending, evidence_state="recorded" if pending else "current",
+            limitations=["Stored usage, evidence, and impact have not been revalidated during the active refresh."] if pending else [],
             query=query.strip(),
             lifecycle=lifecycle,
             availability=availability,
@@ -151,6 +164,7 @@ class AgentInspectionService:
     ) -> PatternInspectionAnswer:
         """Inspect existing workflow candidates and loops without running detectors."""
 
+        pending = snapshot_incomplete(self.conn)
         bounded_limit = max(1, min(limit, 100))
         normalized_query = query.strip().casefold()
         workflows: list[WorkflowCandidateRecord] = []
@@ -162,6 +176,7 @@ class AgentInspectionService:
             workflows = self.workflows.list(
                 limit=self._SOURCE_LIMIT,
                 statuses={workflow_status.value} if workflow_status else None,
+                recorded_only=pending,
             )
             workflow_source_count = len(workflows)
             workflows = [
@@ -201,6 +216,9 @@ class AgentInspectionService:
         workflow_count = len(workflows)
         loop_count = len(loops)
         return PatternInspectionAnswer(
+            analysis_state="pending" if pending else "ready",
+            analysis_pending=pending, evidence_state="recorded" if pending else "current",
+            limitations=["Stored procedures and evidence references are available; current comparability and impact validation are pending."] if pending else [],
             pattern_type=pattern_type,
             query=query.strip(),
             workflows=workflows[:bounded_limit],

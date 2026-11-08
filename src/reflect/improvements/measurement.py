@@ -9,7 +9,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from reflect.improvements.contracts import ContractEvaluationService, WorkflowContract
-from reflect.improvements.measurement_validity import MeasurementValidity
+from reflect.improvements.measurement_validity import COMPARISON_POLICY_VERSION, MeasurementValidity
 from reflect.improvements.repository import utc_now
 
 _RECOVERY_METRICS = {"tool_failure_rate", "identical_retry_calls"}
@@ -38,7 +38,13 @@ def _cohort_fingerprint(
         "after_values": after_values,
         "measurement_state": cohort.get("measurement_state"),
         "quality": cohort.get("quality"),
+        "assessment_version": cohort.get("assessment_version"),
+        "evidence_digests": cohort.get("evidence_digests"),
         "invalid_members": cohort.get("invalid_members", {}),
+        "policy_version": cohort.get("policy_version"),
+        "baseline_state": cohort.get("baseline_state"),
+        "exposure": cohort.get("exposure"),
+        "eligibility": cohort.get("eligibility"),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -86,7 +92,7 @@ class MeasurementService:
             str(content.get("behavior_type") or "") == "recovery"
             and str(metric_name) in _RECOVERY_METRICS
         )
-        latest = self.conn.execute(
+        previous = self.conn.execute(
             """
             SELECT id, before_count, after_count, verdict, measured_at, cohort_json
             FROM measurements
@@ -95,7 +101,9 @@ class MeasurementService:
             """,
             (intervention_id, metric_name),
         ).fetchone()
-        latest_cohort = json.loads(latest[5]) if latest else {}
+        previous_cohort = json.loads(previous[5]) if previous else {}
+        latest = previous if previous_cohort.get("policy_version") == COMPARISON_POLICY_VERSION else None
+        latest_cohort = previous_cohort if latest else {}
         quality: dict[str, Any] | None = None
         workspace_id = contract.applicability.workspace_id if contract is not None else None
         minimum_before = (
@@ -105,35 +113,45 @@ class MeasurementService:
             contract.validation.baseline_maximum if contract is not None else 20
         )
         minimum_after = max(1, min(int(measurement_window), 100))
+        cohort_scope = {
+            "assessment_version": 1, "policy_version": COMPARISON_POLICY_VERSION,
+            "repo_id": repo_id, "workspace_id": workspace_id,
+            "task_archetype_id": archetype_id, "metric": str(metric_name),
+        }
+        eligibility = {
+            side: self.validity.diagnostics(cohort_scope, exposed_at, before=side == "before")
+            for side in ("before", "after")
+        }
         frozen_before_ids = [
             str(item) for item in latest_cohort.get("before_execution_unit_ids") or []
-        ]
+        ] if latest_cohort.get("baseline_frozen") else []
         before_units = (
             self._execution_units_by_ids(frozen_before_ids)
             if frozen_before_ids
-            else self._cohort_execution_units(
-                repo_id,
-                workspace_id=workspace_id,
-                task_archetype_id=archetype_id,
-                before=exposed_at,
-                limit=baseline_limit,
-                newest_first=True,
-            )
+            else self._execution_units_by_ids(self.validity.select_ids(
+                cohort_scope, exposed_at, before=True, limit=baseline_limit, newest_first=True,
+            ))
         )
-        after_units = self._cohort_execution_units(
-            repo_id,
-            workspace_id=workspace_id,
-            task_archetype_id=archetype_id,
-            after=exposed_at,
-            limit=minimum_after,
+        frozen_after_ids = [str(item) for item in latest_cohort.get("after_execution_unit_ids") or []]
+        if len(frozen_after_ids) < minimum_after:
+            frozen_after_ids = []
+        after_units = (
+            self._execution_units_by_ids(frozen_after_ids)
+            if frozen_after_ids
+            else self._execution_units_by_ids(self.validity.select_ids(
+                cohort_scope, exposed_at, before=False, limit=minimum_after,
+            ))
         )
         eligibility_cohort = {
-            "repo_id": repo_id, "workspace_id": workspace_id,
-            "task_archetype_id": archetype_id,
+            **cohort_scope,
+            "evidence_digests": {
+                unit_id: digest for unit_id, digest in latest_cohort.get("evidence_digests", {}).items()
+                if unit_id in {*frozen_before_ids, *frozen_after_ids}
+            },
             "before_execution_unit_ids": frozen_before_ids or [
                 item["execution_unit_id"] for item in before_units
             ],
-            "after_execution_unit_ids": [item["execution_unit_id"] for item in after_units],
+            "after_execution_unit_ids": frozen_after_ids or [item["execution_unit_id"] for item in after_units],
         }
         invalid_members = self.validity.invalid_members(eligibility_cohort, exposed_at)
         if contract_mode and contract is not None:
@@ -188,9 +206,24 @@ class MeasurementService:
                     "before_signal_coverage": before_coverage,
                     "after_signal_coverage": after_coverage,
                 }
+        for side, values in (("before", before), ("after", after)):
+            selected_count = len(eligibility_cohort[f"{side}_execution_unit_ids"])
+            eligibility[side].update(selected_count=selected_count, metric_count=len(values),
+                                     missing_metric_count=selected_count - len(values))
+        baseline_frozen = bool(frozen_before_ids) or (len(before) >= minimum_before and not invalid_members)
+        if baseline_frozen:
+            baseline_state = "frozen"
+        elif eligibility["before"]["exclusion_reasons"].get("evidence_pending"):
+            baseline_state = "analysis_pending"
+        else:
+            baseline_state = "historical_unavailable"
+        exposure = {
+            side: self._exposure_counts(intervention_id, eligibility_cohort[f"{side}_execution_unit_ids"])
+            for side in ("before", "after")
+        }
         if invalid_members:
             quality = {"state": "not_measurable", "reasons": [
-                "Frozen baseline contains missing or ineligible execution units; no replacements were selected."
+                "Frozen comparison contains missing or ineligible execution units; no replacements were selected."
             ]}
         raw_before_value = statistics.mean(before) if before else None
         raw_after_value = statistics.mean(after) if after else None
@@ -207,6 +240,17 @@ class MeasurementService:
             if sample_ready
             else "collecting"
         )
+        if measurement_state == "measured" and not sample_ready:
+            measurement_state = "collecting"
+        if baseline_state == "historical_unavailable":
+            measurement_state = "not_measurable"
+        reasons = list(quality["reasons"]) if quality is not None else []
+        if baseline_state == "historical_unavailable":
+            reasons.append("Selected pre-activation evidence does not currently supply the required baseline; future post-activation tasks cannot fill it.")
+        elif baseline_state == "analysis_pending":
+            reasons.append("Pre-activation evidence is awaiting analysis; the baseline remains provisional.")
+        if quality is not None:
+            quality = {**quality, "state": measurement_state, "reasons": reasons}
         before_value = (
             raw_before_value
             if not invalid_members and (not recovery_mode or measurement_state == "measured")
@@ -239,6 +283,19 @@ class MeasurementService:
         now = utc_now()
         cohort = {
             "unit": "execution_units",
+            "policy_version": COMPARISON_POLICY_VERSION,
+            "previous_policy_measurement_id": latest_cohort.get("previous_policy_measurement_id")
+            if latest else previous[0] if previous else None,
+            "baseline_state": baseline_state,
+            "baseline_frozen": baseline_frozen,
+            "eligibility": eligibility,
+            "exposure": exposure,
+            "assessment_version": eligibility_cohort["assessment_version"],
+            "evidence_digests": {
+                **{item["execution_unit_id"]: item.get("assessment", {}).get("input_digest")
+                   for item in [*before_units, *after_units]},
+                **eligibility_cohort["evidence_digests"],
+            },
             "repo_id": repo_id,
             "workspace_id": workspace_id,
             "task_archetype_id": archetype_id,
@@ -249,7 +306,7 @@ class MeasurementService:
             "minimum_before_execution_units": minimum_before,
             "metric_direction": metric_direction,
             "before_execution_unit_ids": eligibility_cohort["before_execution_unit_ids"],
-            "after_execution_unit_ids": [item["execution_unit_id"] for item in after_units],
+            "after_execution_unit_ids": eligibility_cohort["after_execution_unit_ids"],
             "contract_signature": (
                 contract.signature_hash if contract is not None else None
             ),
@@ -264,8 +321,9 @@ class MeasurementService:
             },
         }
         if quality is not None:
-            cohort["measurement_reasons"] = quality["reasons"]
             cohort["quality"] = quality
+        if reasons:
+            cohort["measurement_reasons"] = reasons
         cohort["fingerprint"] = _cohort_fingerprint(
             cohort,
             before_values=before,
@@ -287,7 +345,7 @@ class MeasurementService:
                 "delta": delta,
                 "verdict": latest[3],
                 "confidence": confidence,
-                "cohort": cohort,
+                "cohort": latest_cohort,
                 "measured_at": latest[4],
                 "created": False,
             }
@@ -364,16 +422,32 @@ class MeasurementService:
             regressed += int(result["verdict"] == "regressed")
         return {"active": len(candidate_ids), "created": created, "regressed": regressed}
 
+    def _exposure_counts(self, intervention_id: str, execution_unit_ids: list[str]) -> dict[str, int]:
+        counts = dict.fromkeys(("followed", "invoked", "ignored", "unknown"), 0)
+        if execution_unit_ids:
+            placeholders = ",".join("?" for _ in execution_unit_ids)
+            rows = self.conn.execute(
+                f"""SELECT state, COUNT(*) FROM workflow_exposures
+                    WHERE intervention_id = ? AND execution_unit_id IN ({placeholders}) GROUP BY state""",
+                [intervention_id, *execution_unit_ids],
+            )
+            for state, count in rows:
+                counts[state if state in counts else "unknown"] += count
+        counts["unknown"] += len(execution_unit_ids) - sum(counts.values())
+        return {"selected_count": len(execution_unit_ids), **counts}
+
     def list(
         self, *, limit: int | None = 100, candidate_id: str | None = None,
-        measurement_id: str | None = None,
+        measurement_id: str | None = None, recorded_only: bool = False,
     ) -> list[dict[str, Any]]:
-        return list(self.iter_results(limit=limit, candidate_id=candidate_id, measurement_id=measurement_id))
+        return list(self.iter_results(limit=limit, candidate_id=candidate_id,
+                                      measurement_id=measurement_id, recorded_only=recorded_only))
 
     def iter_results(
         self, *, limit: int | None = None, candidate_id: str | None = None,
-        measurement_id: str | None = None,
+        measurement_id: str | None = None, recorded_only: bool = False,
     ) -> Iterator[dict[str, Any]]:
+        """Read saved comparisons; recorded-only callers label validation pending."""
         rows = self.conn.execute(
             """
             SELECT m.id, wv.candidate_id, m.metric_name, m.cohort_json,
@@ -390,7 +464,7 @@ class MeasurementService:
              -1 if limit is None else max(1, min(limit, 500))),
         )
         for row in rows:
-            yield self.validity.apply({
+            result = {
                 "id": row[0],
                 "candidate_id": row[1],
                 "metric_name": row[2],
@@ -403,15 +477,16 @@ class MeasurementService:
                 "verdict": row[9],
                 "confidence": row[10],
                 "measured_at": row[11],
-            }, json.loads(row[3]), row[12])
+            }
+            yield result if recorded_only else self.validity.apply(result, json.loads(row[3]), row[12])
 
-    def sessions(self, measurement_id: str) -> dict[str, Any]:
+    def sessions(self, measurement_id: str, *, recorded_only: bool = False) -> dict[str, Any]:
         """Return the bounded execution-unit cohorts in a measurement snapshot."""
         row = self.conn.execute(
             """
             SELECT m.id, wv.candidate_id, m.metric_name, m.cohort_json,
                    m.before_count, m.after_count, i.exposure_started_at,
-                   o.repo_id, wc.task_archetype_id, wv.content_json
+                   o.repo_id, wc.task_archetype_id, wv.content_json, m.measured_at
             FROM measurements m
             JOIN interventions i ON i.id = m.intervention_id
             JOIN workflow_versions wv ON wv.id = i.workflow_version_id
@@ -434,6 +509,7 @@ class MeasurementService:
             repo_id,
             archetype_id,
             workflow_content_json,
+            measured_at,
         ) = row
         cohort = json.loads(cohort_json)
         before_execution_ids = [
@@ -448,6 +524,15 @@ class MeasurementService:
         if snapshots is not None:
             before_execution_units = snapshots["before"]
             after_execution_units = snapshots["after"]
+        elif recorded_only:
+            # Older measurements froze membership but not the member details.
+            # Current unit rows cannot reconstruct their historical outcomes.
+            before_execution_units, after_execution_units = [
+                [{"execution_unit_id": unit_id, "snapshot_missing": True, "metric_value": None,
+                  "evidence_summaries": ["Member details were not frozen in this measurement."]}
+                 for unit_id in ids]
+                for ids in (before_execution_ids, after_execution_ids)
+            ]
         else:
             before_execution_units = self._execution_units_by_ids(before_execution_ids)
             after_execution_units = self._execution_units_by_ids(after_execution_ids)
@@ -486,20 +571,34 @@ class MeasurementService:
             after_execution_units = [
                 by_id[str(item["execution_unit_id"])] for item in after_execution_units
             ]
-        invalid = self.validity.invalid_members(cohort, exposed_at)
+        invalid = None if recorded_only else self.validity.invalid_members(cohort, exposed_at)
+        if recorded_only:
+            before_execution_units, after_execution_units = [
+                [{**item, "outcome": None, "verification_passed": None,
+                  "assessment": None, "adherence_state": None} for item in units]
+                for units in (before_execution_units, after_execution_units)
+            ]
         return {
             "id": stored_id,
             "candidate_id": candidate_id,
             "metric_name": metric_name,
             "unit": "execution_units",
-            "measurement_state": "not_measurable" if invalid else cohort.get("measurement_state", "collecting"),
-            "measurement_reasons": ["Recorded comparison members are no longer eligible."]
+            "measured_at": measured_at,
+            "measurement_state": "validation_pending" if recorded_only else "not_measurable" if invalid else cohort.get("measurement_state", "collecting"),
+            "measurement_reasons": ["Current validation is pending; only recorded cohort evidence is shown."]
+            if recorded_only else ["Recorded comparison members are no longer eligible."]
             if invalid else cohort.get("measurement_reasons", []),
             "invalid_members": invalid,
             "quality": cohort.get("quality", {}),
+            "policy_version": cohort.get("policy_version", 1),
+            "baseline_state": cohort.get("baseline_state"),
+            "eligibility": cohort.get("eligibility"),
+            "exposure": cohort.get("exposure"),
             "before_count": int(before_count),
             "after_count": int(after_count),
             "snapshot_exact": snapshots is not None,
+            "missing_snapshot_execution_unit_ids": [*before_execution_ids, *after_execution_ids]
+            if recorded_only and snapshots is None else [],
             "before_execution_units": before_execution_units,
             "after_execution_units": after_execution_units,
         }
@@ -512,7 +611,7 @@ class MeasurementService:
             f"""
             SELECT eu.id, eu.session_id, s.title, a.name, eu.started_at,
                    eu.status, w.root_path, eua.task_archetype_id, eu.source,
-                   eu.outcome, eu.verification_passed
+                   eu.outcome, eu.verification_passed, eu.boundary_json
             FROM execution_units eu
             JOIN sessions s ON s.id = eu.session_id
             LEFT JOIN agents a ON a.id = eu.agent_id
@@ -535,6 +634,7 @@ class MeasurementService:
                 "boundary_source": item[8],
                 "outcome": item[9],
                 "verification_passed": None if item[10] is None else bool(item[10]),
+                "assessment": json.loads(item[11] or "{}").get("assessment", {}),
             }
             for item in rows
         }
@@ -640,8 +740,7 @@ class MeasurementService:
                      SUM(COALESCE(llm.input_tokens, 0)
                          + COALESCE(llm.output_tokens, 0)
                          + COALESCE(llm.cache_read_input_tokens, 0)
-                         + COALESCE(llm.cache_creation_input_tokens, 0)
-                         + COALESCE(llm.reasoning_output_tokens, 0))
+                         + COALESCE(llm.cache_creation_input_tokens, 0))
                        AS tokens
               FROM execution_unit_steps eus
               JOIN llm_calls llm ON llm.step_id = eus.step_id
@@ -653,7 +752,7 @@ class MeasurementService:
                    COALESCE(ts.read_calls, 0), COALESCE(ts.mutation_calls, 0),
                    COALESCE(ts.verification_calls, 0),
                    COALESCE(ts.constraint_violations, 0),
-                   COALESCE(rs.identical_retry_calls, 0), toks.tokens
+                   COALESCE(rs.identical_retry_calls, 0), toks.tokens, eu.verification_passed, eu.boundary_json
             FROM execution_units eu
             LEFT JOIN tool_summary ts ON ts.execution_unit_id = eu.id
             LEFT JOIN retry_summary rs ON rs.execution_unit_id = eu.id
@@ -683,7 +782,7 @@ class MeasurementService:
             elif metric_name == "identical_retry_calls":
                 value = float(row[9])
             elif metric_name == "unverified_change_sessions":
-                value = float(bool(row[6]) and not bool(row[7]))
+                value = float(bool(row[6]) and row[11] is not True and row[11] != 1)
             elif metric_name == "read_only_exploration_calls":
                 value = float(row[5]) if int(row[5]) >= 8 and not row[6] else 0.0
             elif metric_name == "operator_correction_rate":
@@ -693,27 +792,14 @@ class MeasurementService:
             elif metric_name == "constraint_violation_rate":
                 value = float(row[8])
             elif metric_name == "recovered_failure_sessions":
-                value = float(int(row[4]) > 0 and row[1] in {"completed", "ok", "success"})
+                if outcome not in {"success", "failure"} or row[11] is None:
+                    continue
+                value = float(int(row[4]) > 0 and outcome == "success" and bool(row[11]))
             elif metric_name == "successful_workflow_sessions":
-                value = float(int(row[4]) == 0 and row[1] in {"completed", "ok", "success"})
+                if outcome not in {"success", "failure"} or row[11] is None:
+                    continue
+                value = float(outcome == "success" and bool(row[11]))
             else:
                 value = float(row[4])
             values[execution_unit_id] = value
         return values
-
-    def _cohort_execution_units(
-        self,
-        repo_id: str | None,
-        *,
-        workspace_id: str | None,
-        task_archetype_id: str | None,
-        before: str | None = None,
-        after: str | None = None,
-        limit: int,
-        newest_first: bool = False,
-    ) -> list[dict[str, Any]]:
-        execution_unit_ids = self.validity.select_ids(
-            {"repo_id": repo_id, "workspace_id": workspace_id, "task_archetype_id": task_archetype_id},
-            before or after, before=bool(before), limit=limit, newest_first=newest_first,
-        )
-        return self._execution_units_by_ids(execution_unit_ids)

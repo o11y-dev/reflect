@@ -238,3 +238,35 @@ def test_loops_list_show_and_build_promote_selected_evidence_to_pending_skill(tm
         conn.close()
     assert tuple(version) == (loop_id, "codex", "pending")
     assert tuple(loop) == ("promoted", built_payload["skill_id"])
+
+
+def test_loop_build_empty_array_leaves_pattern_and_registry_unchanged(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    loop_id = _seed_loop(db_path)
+    conn = connect_sqlite(db_path)
+    before = tuple(conn.execute("SELECT status,evidence_json FROM loop_patterns WHERE id=?", (loop_id,)).fetchone())
+    conn.close()
+    with patch("reflect.core.shutil.which", return_value="/usr/bin/codex"), patch(
+        "subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="[]", stderr="")
+    ):
+        result = CliRunner().invoke(main, ["loops", "build", loop_id, "--agent", "codex", "--db-path", str(db_path)])
+    assert result.exit_code == 0, result.output
+    assert "Nothing was staged" in result.output
+    conn = connect_sqlite(db_path)
+    try:
+        assert tuple(conn.execute("SELECT status,evidence_json FROM loop_patterns WHERE id=?", (loop_id,)).fetchone()) == before
+        assert conn.execute("SELECT COUNT(*) FROM workflow_candidates").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM skills").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
+def test_loop_build_rejects_multiple_drafts(tmp_path):
+    db_path = tmp_path / "reflect.db"
+    loop_id = _seed_loop(db_path)
+    with patch("reflect.core.shutil.which", return_value="/usr/bin/codex"), patch(
+        "subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="[{}, {}]", stderr="")
+    ):
+        result = CliRunner().invoke(main, ["loops", "build", loop_id, "--agent", "codex", "--db-path", str(db_path)])
+    assert result.exit_code != 0
+    assert "exactly one" in result.output

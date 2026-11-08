@@ -143,8 +143,14 @@ def inspect_database(conn: sqlite3.Connection) -> dict[str, Any]:
     pending = [version for version in expected if version not in applied_set]
     unknown = [version for version in applied if version not in expected_set]
     ok = not pending and not unknown and not foreign_key_issues and pragma_ok
+    from reflect.task_inbox import TaskEventInbox
+    database_path = next((row[2] for row in conn.execute("PRAGMA database_list") if row[1] == "main"), "")
+    task_inbox = TaskEventInbox(Path(database_path)).health() if database_path else None
+    if task_inbox and task_inbox["projection_errors"]:
+        ok = False
     return {
         "ok": ok,
+        "task_inbox": task_inbox,
         "expected_migrations": expected,
         "applied_migrations": applied,
         "pending_migrations": pending,

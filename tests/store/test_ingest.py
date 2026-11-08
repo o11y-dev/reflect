@@ -621,7 +621,8 @@ def test_ingest_otlp_logs_normalizes_claude_api_request(tmp_path):
             "SELECT source_type, event_type, session_id, origin_kind, attrs_json FROM raw_events"
         ).fetchone()
         attrs = json.loads(row[4])
-        assert row[:4] == ("otlp_logs_json", "gen_ai.client.hook.Stop", "claude-sess-1", "native_otlp_log")
+        assert row[:4] == ("otlp_logs_json", "gen_ai.client.hook.Usage", "claude-sess-1", "native_otlp_log")
+        assert attrs["reflect.turn.terminal"] is False
         assert attrs["gen_ai.client.name"] == "claude"
         assert attrs["gen_ai.request.model"] == "claude-opus-4-6"
         assert attrs["gen_ai.usage.output_tokens"] == 7238
@@ -698,7 +699,7 @@ def test_normalize_codex_context_records_one_artifact_with_session_exposure(tmp_
         conn.close()
 
 
-def test_ingest_native_session_skips_session_already_created_from_otlp(tmp_path):
+def test_ingest_native_session_enriches_session_already_created_from_otlp(tmp_path):
     db = tmp_path / "reflect.db"
     logs = tmp_path / "otel-logs.json"
     session_file = tmp_path / "rollout-codex-native-sess-1.jsonl"
@@ -721,13 +722,13 @@ def test_ingest_native_session_skips_session_already_created_from_otlp(tmp_path)
             skip_unchanged=True,
         )
 
-        assert result == {"inserted": 0, "skipped": 0, "unchanged": 1}
-        assert conn.execute("SELECT COUNT(*) FROM raw_events").fetchone()[0] == 1
+        assert result == {"inserted": 6, "skipped": 0, "unchanged": 0}
+        assert conn.execute("SELECT COUNT(*) FROM raw_events").fetchone()[0] == 7
         assert conn.execute(
             "SELECT COUNT(*) FROM raw_events WHERE source_type = 'native_session'"
-        ).fetchone()[0] == 0
+        ).fetchone()[0] == 6
         assert normalize_pending_raw_events(conn) == {
-            "processed": 1,
+            "processed": 7,
             "failed": 0,
             "skipped": 0,
         }
@@ -821,10 +822,14 @@ def test_ingest_native_session_does_not_duplicate_normalized_otlp_tokens(tmp_pat
             skip_existing_sessions=True,
             skip_unchanged=True,
         )
-        assert result == {"inserted": 0, "skipped": 0, "unchanged": 1}
+        assert result == {"inserted": 6, "skipped": 0, "unchanged": 0}
         assert conn.execute(
             "SELECT COUNT(*) FROM raw_events WHERE source_type = 'native_session'"
-        ).fetchone()[0] == 0
+        ).fetchone()[0] == 6
+        assert conn.execute(
+            "SELECT COUNT(*) FROM raw_events WHERE source_type = 'native_session' "
+            "AND json_extract(attrs_json, '$.\"reflect.usage.enrichment_only\"') = 1"
+        ).fetchone()[0] == 6
     finally:
         conn.close()
 
@@ -875,8 +880,9 @@ def test_ingest_native_session_allows_updates_from_the_owning_file(tmp_path):
             skip_unchanged=True,
         )
 
-        assert result == {"inserted": 2, "skipped": 5, "unchanged": 0}
-        assert conn.execute("SELECT COUNT(*) FROM raw_events").fetchone()[0] == 8
+        assert result["replaced_native_events"] == 2
+        assert result["inserted"] == 3
+        assert result["skipped"] == 4
         assert conn.execute(
             """
             SELECT COUNT(*)

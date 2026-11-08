@@ -164,7 +164,7 @@ def test_registry_summarizes_evidence_variants_as_one_semantic_version(tmp_path)
         conn.close()
 
 
-def test_registry_records_observed_skill_usage_without_a_local_file(tmp_path):
+def test_aggregate_graph_without_sources_cannot_establish_skill_usage(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
         registry = SkillRegistryService(conn)
@@ -202,23 +202,8 @@ def test_registry_records_observed_skill_usage_without_a_local_file(tmp_path):
         )
         conn.commit()
 
-        assert registry.sync_usage() == 1
-        conn.commit()
-        detail = registry.show("observed-skill")
-        skill = detail.skill
-        assert skill.usage_count == 1
-        assert skill.version_count == 0
-        assert skill.lifecycle_state == SkillLifecycleState.STALE
-        assert len(detail.usage_sessions) == 1
-        usage = detail.usage_sessions[0]
-        assert usage.session_id == "session-1"
-        assert usage.agent == "codex"
-        assert usage.state == "observed"
-        assert usage.evidence == {
-            "edge_kind": "used_skill",
-            "source": "behavioral_memory_graph",
-        }
-        assert registry.list(include_stale=False) == []
-        assert registry.counts_by_lifecycle() == {"stale": 1}
+        assert registry.sync_usage() == 0
+        assert conn.execute("SELECT COUNT(*) FROM skill_usage").fetchone()[0] == 0
+        assert registry.list(include_stale=True) == []
     finally:
         conn.close()

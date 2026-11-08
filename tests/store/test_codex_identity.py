@@ -5,6 +5,7 @@ import pytest
 
 from reflect.dashboard_sessions import load_session_detail
 from reflect.store.graph_normalize import rebuild_graph
+from reflect.store.graph_ontology import graph_id
 from reflect.store.ingest import ingest_local_spans_file
 from reflect.store.migrate import load_migrations, migrate
 from reflect.store.normalize import normalize_pending_raw_events
@@ -109,7 +110,12 @@ def test_migration_preserves_usage_ids_and_unattributed_evidence(tmp_path):
             patch("reflect.store.normalize.telemetry_agent_name", side_effect=lambda attrs: attrs.get("gen_ai.client.name") or attrs.get("service.name", "codex")),
             patch("reflect.store.ingest.unassigned_codex_classification", return_value=None),
             patch("reflect.store.normalize.unassigned_codex_classification", return_value=None),
+            patch("reflect.store.normalize.PendingRefreshState.mark"),
+            patch("reflect.store.normalize.PendingRefreshState.mark_steps"),
+            patch("reflect.store.normalize.PendingRefreshState.capture") as pending_capture,
+            patch("reflect.store.normalize.PendingRefreshState.acknowledge"),
         ):
+            pending_capture.return_value.pending_for.return_value = set()
             _ingest(conn, tmp_path / "real.jsonl",
                 _span("first", **{"service.name": "codex-app-server", "conversation.id": "real-1", "gen_ai.usage.input_tokens": 31}),
                 _span("second", **{"service.name": "codex_cli_rs", "conversation.id": "real-2", "gen_ai.usage.input_tokens": 17}),
@@ -123,8 +129,19 @@ def test_migration_preserves_usage_ids_and_unattributed_evidence(tmp_path):
                 _span("runtime", **{"service.name": "codex-exec-server"}),
                 _span("unknown", **{"service.name": "custom-agent", "gen_ai.client.tool_name": "Read"}),
             )
-        rebuild_rollups(conn)
-        rebuild_graph(conn)
+        # Seed only the historical projections exercised by migration 038.
+        # Current graph/rollup builders require the current schema.
+        conn.execute("""INSERT INTO session_rollups(session_id,agent,input_tokens,updated_at)
+            SELECT s.id,a.name,s.input_tokens,s.updated_at FROM sessions s JOIN agents a ON a.id=s.agent_id""")
+        for name, created in conn.execute("SELECT name,created_at FROM agents").fetchall():
+            conn.execute("INSERT INTO graph_nodes(id,kind,label,created_at,updated_at) VALUES(?,'Agent',?,?,?)",
+                         (graph_id("node", "Agent", name, ""), name, created, created))
+        for sid, name, created in conn.execute("SELECT s.id,a.name,s.created_at FROM sessions s JOIN agents a ON a.id=s.agent_id").fetchall():
+            source, target = graph_id("node", "Agent", name, ""), graph_id("node", "Session", sid, sid)
+            conn.execute("INSERT INTO graph_nodes(id,kind,label,session_id,created_at,updated_at) VALUES(?,'Session',?,?,?,?)",
+                         (target, sid, sid, created, created))
+            conn.execute("""INSERT INTO graph_edges(id,source_node_id,target_node_id,kind,session_id,created_at,updated_at)
+                VALUES(?,?,?,'ran_session',?,?,?)""", (graph_id("edge", "ran_session", source, target, sid), source, target, sid, created, created))
         real_before = conn.execute("SELECT id, input_tokens FROM sessions WHERE id LIKE 'real-%' ORDER BY id").fetchall()
         graph_before = conn.execute("SELECT id, session_id FROM graph_nodes WHERE kind = 'Session' AND session_id LIKE 'real-%' ORDER BY id").fetchall()
         unassigned_id = conn.execute("SELECT id FROM sessions WHERE source_ref LIKE '%unassigned.jsonl'").fetchone()[0]
@@ -133,7 +150,8 @@ def test_migration_preserves_usage_ids_and_unattributed_evidence(tmp_path):
         conn.execute("DELETE FROM raw_events WHERE event_type = 'tool'")
         conn.commit()
 
-        assert migrate(conn) == [38]
+        with patch("reflect.store.migrate.load_migrations", return_value=[m for m in migrations if m.version <= 38]):
+            assert migrate(conn) == [38]
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         assert conn.execute("SELECT id, input_tokens FROM sessions WHERE id LIKE 'real-%' ORDER BY id").fetchall() == real_before
         assert conn.execute("SELECT id, session_id FROM graph_nodes WHERE kind = 'Session' AND session_id LIKE 'real-%' ORDER BY id").fetchall() == graph_before
@@ -144,6 +162,10 @@ def test_migration_preserves_usage_ids_and_unattributed_evidence(tmp_path):
         retained = [json.loads(row[0]) for row in conn.execute("SELECT attrs_json FROM raw_events WHERE normalized_status = 'ignored'")]
         assert any(row.get("gen_ai.client.tool.output") == "preserve me" and row.get("reflect.telemetry.recovered_from_step") for row in retained)
         assert {row[0] for row in conn.execute("SELECT name FROM agents WHERE name LIKE 'codex%'")} == {"codex"}
+        assert migrate(conn) == [m.version for m in migrations if m.version > 38]
+        assert conn.execute("SELECT COUNT(*) FROM graph_nodes").fetchone()[0] == 0
+        assert {row[0] for row in conn.execute("SELECT session_id FROM pending_refresh WHERE phase='graph'")} >= {"real-1", "real-2"}
+        assert conn.execute("SELECT id, input_tokens FROM sessions WHERE id LIKE 'real-%' ORDER BY id").fetchall() == real_before
         assert normalize_pending_raw_events(conn) == {"processed": 0, "failed": 0, "skipped": 0}
         assert rollup_rebuild_pending(conn)
         rebuild_rollups(conn)

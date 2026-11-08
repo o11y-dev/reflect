@@ -7,6 +7,20 @@ from reflect.views.report_tabs import _semantic_graph, build_report_tab, build_r
 from reflect.views.sessions import list_sessions
 
 
+def test_command_patterns_skip_embedded_payloads_before_shell_parsing(monkeypatch):
+    from reflect.views.report_tabs import _cli_command_pattern, display_mcp_server_name
+
+    def unexpected_parse(_command):
+        raise AssertionError("irrelevant or oversized commands must not reach shlex")
+
+    monkeypatch.setattr("reflect.views.report_tabs.shlex.split", unexpected_parse)
+    payload = "'" + "x" * (1024 * 1024) + "'"
+    assert _cli_command_pattern("python -c 'print(1)'") == ""
+    assert _cli_command_pattern("rtk --payload " + payload + " memory sync") == ""
+    assert display_mcp_server_name("npx --payload " + payload) == "npx"
+    assert display_mcp_server_name("docker run --env " + payload) == "docker"
+
+
 def _seed_view_db(conn):
     now = "2026-05-01T09:00:00+00:00"
     agents = [
@@ -458,6 +472,10 @@ def _seed_view_db(conn):
         """,
         (now,),
     )
+    # The read model consumes the normalized lifecycle fact. It does not
+    # normalize raw steps or count prompt/tool requests as launches on a GET.
+    conn.execute("""INSERT INTO agent_events(id,step_id,session_id,event_name,agent_type,created_at,updated_at)
+        VALUES('legacy-start','step-legacy-ide-subagent','sess-2','SubagentStart','legacy-helper',?,?)""", (now,now))
     conn.commit()
 
 
@@ -736,12 +754,8 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
             "mcp__metrics__cx_dashboards": 1,
             "mcp__user-gitlab-mcp__search": 1,
         }
-        assert scoped.tools.skills_by_count == {"review-skill": 1}
-        assert scoped.tools.subagent_types_by_count == {
-            "legacy-helper": 1,
-            "repo-strategy": 1,
-            "research-helper": 1,
-        }
+        assert scoped.tools.skills_by_count == {}  # Only an unprojected name mention was captured.
+        assert scoped.tools.subagent_types_by_count == {"legacy-helper": 1}
         assert scoped.tools.top_commands == [
             {"command": "rtk memory sync", "count": 2},
         ]
@@ -750,7 +764,7 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         ]
         assert usage_tools["shell_executions"] == 2
         assert usage_tools["file_edits"] == 1
-        assert usage_tools["subagent_launches"] == 3
+        assert usage_tools["subagent_launches"] == 1
         assert usage_tools["agent_comparison"][0]["name"] == "codex"
         assert "gen_ai.client.hook.PreToolUse" not in scoped.tools.tools_by_count
         assert all(
@@ -766,10 +780,8 @@ def test_build_report_tabs_view_models_from_sql(tmp_path):
         }
         assert scoped.mcp.mcp_server_after["gitlab-mcp"] == 1
         assert scoped.mcp.mcp_server_status_known["gitlab-mcp"] == 2
-        assert scoped.agents.agents["codex"]["top_skills"] == {"review-skill": 1}
+        assert scoped.agents.agents["codex"]["top_skills"] == {}
         assert scoped.agents.agents["codex"]["subagents"] == 1
-        assert scoped.agents.agents["copilot"]["subagents"] == 1
-        assert scoped.agents.agents["cursor"]["subagents"] == 1
         assert any(node["label"] == "AGENTS.md" for node in scoped.graph.graph_semantic["nodes"])
         assert any(node["kind"] == "Spec" and node["label"] == "SQL view test spec" for node in scoped.graph.graph_semantic["nodes"])
         assert all(node["label"] != "global-memory" for node in scoped.graph.graph_semantic["nodes"])

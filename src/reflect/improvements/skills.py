@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from reflect.execution_units import ExecutionUnitRepository
+from reflect.improvements.analysis_scope import AnalysisScope
 from reflect.improvements.models import (
     SkillDetail,
     SkillInstallationRecord,
@@ -45,8 +46,8 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _skill_id(slug: str) -> str:
-    return f"skill_{_hash(slug)[:24]}"
+def _skill_id(identity_key: str) -> str:
+    return f"skill_{_hash(identity_key)[:24]}"
 
 
 def _normalize_slug(value: str) -> str:
@@ -70,10 +71,13 @@ class SkillRegistryService:
         *,
         scan_paths: Iterable[Path] = (),
         commit: bool = True,
+        scope: AnalysisScope | None = None,
+        usage_scope: AnalysisScope | None = None,
+        usage_step_ids: set[str] | None = None,
     ) -> dict[str, int]:
         workflow_result = self.sync_workflow_candidates()
         filesystem_result = self.sync_paths(scan_paths)
-        usage = self.sync_usage()
+        usage = self.sync_usage(scope=usage_scope if usage_scope is not None else scope, step_ids=usage_step_ids)
         measurements = self.sync_measurements()
         if commit:
             self.conn.commit()
@@ -110,6 +114,7 @@ class SkillRegistryService:
             rendered = self.workflows._render_skill(candidate)
             version_status, lifecycle = self._candidate_status(candidate)
             skill_id, version_id, created = self._track_version(
+                identity_key=f"workflow:{candidate.contract_signature}",
                 slug=str(candidate.content.get("slug") or candidate.id),
                 name=str(candidate.content.get("slug") or candidate.title),
                 description=str(candidate.content.get("description") or candidate.hypothesis),
@@ -151,9 +156,13 @@ class SkillRegistryService:
                 (candidate.id,),
             ).fetchall()
             for install in installation_rows:
+                installed_version = self.conn.execute(
+                    "SELECT id FROM skill_versions WHERE skill_id=? AND content_hash=?",
+                    (skill_id, install[1]),
+                ).fetchone()
                 self._upsert_installation(
                     skill_id=skill_id,
-                    version_id=version_id,
+                    version_id=str(installed_version[0]) if installed_version else None,
                     path=Path(str(install[0])),
                     installed_hash=install[1],
                     status=str(install[2]),
@@ -193,22 +202,38 @@ class SkillRegistryService:
             if parsed is None:
                 continue
             slug, description, content = parsed
-            skill_id, version_id, _created = self._track_version(
-                slug=slug,
-                name=slug,
-                description=description,
-                origin=SkillOrigin.IMPORTED,
-                content=content,
-                workflow={},
-                source_kind="filesystem",
-                source_agent=None,
-                source_loop_id=None,
-                source_workflow_id=None,
-                workflow_candidate_id=None,
-                version_status=SkillVersionStatus.ACTIVE,
-                lifecycle=SkillLifecycleState.ACTIVE,
-                now=now,
-            )
+            # An exact installed generated version is already source-owned.
+            # Matching bytes preserve that linkage; identical copies elsewhere
+            # do not establish shared lineage.
+            generated = self.conn.execute(
+                """SELECT s.id, v.id FROM skill_installations i
+                   JOIN skills s ON s.id=i.skill_id
+                   LEFT JOIN skill_versions v ON v.skill_id=s.id AND v.content_hash=i.installed_hash
+                   WHERE i.path=? AND s.identity_key LIKE 'workflow:%'
+                     AND i.installed_hash=?""",
+                (str(path.resolve()), _hash(content)),
+            ).fetchone()
+            if generated:
+                skill_id = str(generated[0])
+                version_id = str(generated[1]) if generated[1] else None
+            else:
+                skill_id, version_id, _created = self._track_version(
+                    identity_key=f"filesystem:{path.resolve()}",
+                    slug=slug,
+                    name=slug,
+                    description=description,
+                    origin=SkillOrigin.IMPORTED,
+                    content=content,
+                    workflow={},
+                    source_kind="filesystem",
+                    source_agent=None,
+                    source_loop_id=None,
+                    source_workflow_id=None,
+                    workflow_candidate_id=None,
+                    version_status=SkillVersionStatus.ACTIVE,
+                    lifecycle=SkillLifecycleState.ACTIVE,
+                    now=now,
+                )
             resolved = str(path.resolve())
             seen_paths.add(resolved)
             self._upsert_installation(
@@ -253,119 +278,55 @@ class SkillRegistryService:
         )
         return {"skills": skills, "installations": installations, "missing": missing}
 
-    def sync_usage(self) -> int:
-        rows = self.conn.execute(
-            """
-            SELECT gn.label, ge.session_id, MAX(COALESCE(ge.last_seen_at, ge.updated_at)),
-                   MAX(ge.weight)
-            FROM graph_edges ge
-            JOIN graph_nodes gn ON gn.id = ge.target_node_id
-            WHERE ge.kind = 'used_skill'
-              AND gn.kind = 'Skill'
-              AND ge.session_id IS NOT NULL
-            GROUP BY gn.label, ge.session_id
-            """
-        ).fetchall()
-        now = utc_now()
-        upserted = 0
-        for label, session_id, observed_at, weight in rows:
-            slug = _normalize_slug(str(label))
-            if not slug:
-                continue
-            skill_id = _skill_id(slug)
-            self._upsert_skill(
-                skill_id=skill_id,
-                slug=slug,
-                name=str(label),
-                description="Observed in local agent-session telemetry.",
-                origin=SkillOrigin.IMPORTED,
-                lifecycle=SkillLifecycleState.STALE,
-                current_version_id=None,
-                now=str(observed_at or now),
-            )
-            version_row = self.conn.execute(
-                "SELECT current_version_id FROM skills WHERE id = ?",
-                (skill_id,),
-            ).fetchone()
-            version_id = str(version_row[0]) if version_row and version_row[0] else None
-            timestamp = str(observed_at or now)
-            execution_row = self.conn.execute(
-                """
-                SELECT id FROM execution_units
-                WHERE session_id = ?
-                  AND started_at <= ?
-                  AND (ended_at IS NULL OR ended_at >= ?)
-                ORDER BY source_confidence DESC, started_at DESC
-                LIMIT 1
-                """,
-                (session_id, timestamp, timestamp),
-            ).fetchone()
-            if execution_row is None:
-                execution_unit_id = self.execution_units.ensure_session_fallback(
-                    str(session_id),
-                    now=timestamp,
-                )
-                if execution_unit_id is None:
-                    continue
-            else:
-                execution_unit_id = str(execution_row[0])
-            usage_id = f"skill_usage_{_hash(f'{skill_id}:{execution_unit_id}')[:24]}"
-            self.conn.execute(
-                """
-                INSERT INTO skill_usage(
-                  id, skill_id, skill_version_id, session_id, execution_unit_id,
-                  state, confidence,
-                  evidence_json, observed_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 'observed', ?, ?, ?, ?, ?)
-                ON CONFLICT(skill_id, execution_unit_id) DO UPDATE SET
-                  skill_version_id = excluded.skill_version_id,
-                  confidence = MAX(skill_usage.confidence, excluded.confidence),
-                  evidence_json = excluded.evidence_json,
-                  observed_at = excluded.observed_at,
-                  updated_at = excluded.updated_at
-                """,
-                (
-                    usage_id,
-                    skill_id,
-                    version_id,
-                    str(session_id),
-                    execution_unit_id,
-                    min(0.95, 0.55 + float(weight or 1) * 0.05),
-                    _json({"source": "behavioral_memory_graph", "edge_kind": "used_skill"}),
-                    timestamp,
-                    timestamp,
-                    timestamp,
-                ),
-            )
-            upserted += 1
-        return upserted
+    def sync_usage(self, *, scope: AnalysisScope | None = None, step_ids: set[str] | None = None) -> int:
+        from reflect.improvements.skill_usage import SkillUsageProjector
+
+        scope = scope or AnalysisScope()
+        return SkillUsageProjector(self.conn).refresh(
+            session_ids=scope.session_ids, step_ids=step_ids, now=utc_now(),
+        )
 
     def sync_measurements(self) -> int:
         rows = self.conn.execute(
             """
-            SELECT m.id, sv.skill_id, sv.id, m.metric_name, m.before_value,
+            SELECT m.id, identity.skill_id, sv.id, m.metric_name, m.before_value,
                    m.after_value, m.verdict, m.confidence, m.measured_at,
-                   m.cohort_json, m.before_count, m.after_count, m.delta
+                   m.cohort_json, m.before_count, m.after_count, m.delta,
+                   EXISTS (SELECT 1 FROM skill_installations si
+                           WHERE si.skill_id=identity.skill_id AND si.path=i.target_path)
             FROM measurements m
             JOIN interventions i ON i.id = m.intervention_id
             JOIN workflow_versions wv ON wv.id = i.workflow_version_id
-            JOIN skill_versions sv ON sv.id = (
-              SELECT latest.id FROM skill_versions latest
-              WHERE latest.workflow_candidate_id = wv.candidate_id
-              ORDER BY latest.version DESC LIMIT 1
-            )
+            JOIN (SELECT DISTINCT skill_id,workflow_candidate_id FROM skill_versions
+                  WHERE workflow_candidate_id IS NOT NULL) identity
+              ON identity.workflow_candidate_id=wv.candidate_id
+            LEFT JOIN skill_versions sv ON sv.skill_id=identity.skill_id
+              AND sv.content_hash=i.applied_hash
             ORDER BY m.measured_at
             """
         ).fetchall()
-        synced = 0
+        by_source: dict[str, list[tuple]] = {}
         for row in rows:
-            measurement_id = f"skill_measurement_{_hash(str(row[0]))[:24]}"
+            by_source.setdefault(str(row[0]), []).append(row)
+        synced = 0
+        for source_id, candidates in by_source.items():
+            measurement_id = f"skill_measurement_{_hash(source_id)[:24]}"
+            exact_path = [row for row in candidates if row[13]]
+            exact_hash = [row for row in candidates if row[2]]
+            resolved = exact_path or exact_hash or candidates
+            if len(resolved) != 1:
+                # A merged historical candidate does not establish which
+                # independently owned package received the intervention.
+                self.conn.execute("DELETE FROM skill_measurements WHERE id=?", (measurement_id,))
+                continue
+            row = resolved[0]
             details = {
                 "source_measurement_id": str(row[0]),
                 "cohort": _loads(row[9], {}),
                 "before_count": int(row[10]),
                 "after_count": int(row[11]),
                 "delta": row[12],
+                "version_attribution": "captured_applied_hash" if row[2] else "unknown",
             }
             self.conn.execute(
                 """
@@ -388,7 +349,7 @@ class SkillRegistryService:
                 (
                     measurement_id,
                     str(row[1]),
-                    str(row[2]),
+                    str(row[2]) if row[2] else None,
                     str(row[3]),
                     row[4],
                     row[5],
@@ -489,7 +450,24 @@ class SkillRegistryService:
             ).fetchall()
         }
 
-    def show(self, skill_id_or_slug: str) -> SkillDetail:
+    def resolve_id(self, skill_id_or_slug: str) -> str:
+        """Resolve an exact ID first, or a display slug with one source owner."""
+        matches = self.conn.execute(
+            "SELECT id FROM skills WHERE id=?", (skill_id_or_slug,)
+        ).fetchall()
+        if not matches:
+            matches = self.conn.execute(
+                "SELECT id FROM skills WHERE slug=? ORDER BY id", (skill_id_or_slug,)
+            ).fetchall()
+        if len(matches) > 1:
+            choices = ", ".join(str(item[0]) for item in matches)
+            raise ValueError(f"Ambiguous skill name {skill_id_or_slug!r}; use an exact skill ID: {choices}")
+        if not matches:
+            raise KeyError(f"Skill not found: {skill_id_or_slug}")
+        return str(matches[0][0])
+
+    def show(self, skill_id_or_slug: str, *, recorded_only: bool = False) -> SkillDetail:
+        resolved_id = self.resolve_id(skill_id_or_slug)
         row = self.conn.execute(
             """
             SELECT s.id, s.slug, s.name, s.description, s.origin, s.lifecycle_state,
@@ -504,9 +482,9 @@ class SkillRegistryService:
                    s.first_seen_at, s.last_seen_at, s.updated_at
             FROM skills s
             LEFT JOIN skill_versions sv ON sv.id = s.current_version_id
-            WHERE s.id = ? OR s.slug = ?
+            WHERE s.id = ?
             """,
-            (skill_id_or_slug, skill_id_or_slug),
+            (resolved_id,),
         ).fetchone()
         if row is None:
             raise KeyError(f"Skill not found: {skill_id_or_slug}")
@@ -542,7 +520,8 @@ class SkillRegistryService:
             """
             SELECT u.session_id, u.skill_version_id, u.state, u.outcome,
                    u.confidence, u.evidence_json, u.observed_at,
-                   s.title, a.name, s.started_at, s.status, w.root_path
+                   s.title, a.name, s.started_at, s.status, w.root_path,
+                   u.id, u.execution_unit_id, u.source_kind, u.source_id
             FROM skill_usage u
             JOIN sessions s ON s.id = u.session_id
             LEFT JOIN agents a ON a.id = s.agent_id
@@ -613,21 +592,25 @@ class SkillRegistryService:
                     started_at=str(item[9]),
                     status=str(item[10]),
                     workspace=item[11],
+                    usage_id=str(item[12]),
+                    execution_unit_id=item[13],
+                    source_kind=str(item[14]),
+                    source_id=str(item[15]),
                 )
                 for item in usage_rows
             ],
             measurements=[
-                self._measurement_record(item)
+                self._measurement_record(item, recorded_only=recorded_only)
                 for item in measurement_rows
             ],
         )
 
-    def _measurement_record(self, row: tuple) -> SkillMeasurementRecord:
+    def _measurement_record(self, row: tuple, *, recorded_only: bool = False) -> SkillMeasurementRecord:
         from reflect.improvements.measurement import MeasurementService
 
         details = _loads(row[9], {})
         source_id = details.get("source_measurement_id")
-        current = MeasurementService(self.conn).list(measurement_id=source_id, limit=1) if source_id else []
+        current = MeasurementService(self.conn).list(measurement_id=source_id, limit=1) if source_id and not recorded_only else []
         values = current[0] if current else {
             "before_value": row[4], "after_value": row[5], "verdict": row[6], "confidence": row[7],
         }
@@ -657,7 +640,7 @@ class SkillRegistryService:
     def skill_for_candidate(self, candidate_id: str) -> SkillRecord:
         row = self.conn.execute(
             """
-            SELECT s.slug FROM skills s JOIN skill_versions sv ON sv.skill_id = s.id
+            SELECT s.id FROM skills s JOIN skill_versions sv ON sv.skill_id = s.id
             WHERE sv.workflow_candidate_id = ?
             ORDER BY sv.version DESC LIMIT 1
             """,
@@ -684,17 +667,25 @@ class SkillRegistryService:
         version_status: SkillVersionStatus,
         lifecycle: SkillLifecycleState,
         now: str,
+        identity_key: str | None = None,
     ) -> tuple[str, str, bool]:
         normalized_slug = _normalize_slug(slug)
         if not normalized_slug:
             raise ValueError(f"Unsafe skill slug: {slug!r}")
-        skill_id = _skill_id(normalized_slug)
+        # Source-specific callers supply their canonical identity. The internal
+        # blueprint helper without a candidate uses its semantic procedure.
+        identity_key = identity_key or f"{source_kind}:{_hash(self._semantic_version_key(_json(workflow), _hash(content)))}"
+        existing_skill = self.conn.execute(
+            "SELECT id FROM skills WHERE identity_key=?", (identity_key,)
+        ).fetchone()
+        skill_id = str(existing_skill[0]) if existing_skill else _skill_id(identity_key)
         content_hash = _hash(content)
         # Establish the stable skill identity before inserting a version. The
         # current version remains unset until the child row exists so both
         # sides of the foreign-key relationship are valid at every step.
         self._upsert_skill(
             skill_id=skill_id,
+            identity_key=identity_key,
             slug=normalized_slug,
             name=name,
             description=description,
@@ -799,6 +790,7 @@ class SkillRegistryService:
             current_version_id = None
         self._upsert_skill(
             skill_id=skill_id,
+            identity_key=identity_key,
             slug=normalized_slug,
             name=name,
             description=description,
@@ -813,6 +805,7 @@ class SkillRegistryService:
         self,
         *,
         skill_id: str,
+        identity_key: str,
         slug: str,
         name: str,
         description: str,
@@ -824,9 +817,9 @@ class SkillRegistryService:
         self.conn.execute(
             """
             INSERT INTO skills(
-              id, slug, name, description, origin, lifecycle_state,
+              id, identity_key, slug, name, description, origin, lifecycle_state,
               current_version_id, first_seen_at, last_seen_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               name = CASE WHEN excluded.description <> '' THEN excluded.name ELSE skills.name END,
               description = CASE WHEN excluded.description <> '' THEN excluded.description ELSE skills.description END,
@@ -845,6 +838,7 @@ class SkillRegistryService:
             """,
             (
                 skill_id,
+                identity_key,
                 slug,
                 name,
                 description,

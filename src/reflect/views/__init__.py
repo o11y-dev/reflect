@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from reflect.views.measurements import MeasurementView, TurnMeasurement, build_measurements
 from reflect.views.overview import (
     OverviewViewModel,
     build_overview,
@@ -21,6 +22,9 @@ from reflect.views.report_tabs import (
 from reflect.views.sessions import SessionPage, SessionRow, list_sessions
 
 __all__ = [
+    "MeasurementView",
+    "TurnMeasurement",
+    "build_measurements",
     "ActivityViewModel",
     "AgentsViewModel",
     "CostsViewModel",
