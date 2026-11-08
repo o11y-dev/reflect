@@ -12,7 +12,7 @@ from pathlib import Path
 from reflect.mcp_clients import local_mcp_agent_names
 
 AGENTS = local_mcp_agent_names()
-SUITES = ("smoke", "effectiveness", "blog", "all")
+SUITES = ("smoke", "effectiveness", "blog", "telemetry", "all")
 
 
 def main() -> int:
@@ -57,6 +57,7 @@ def main() -> int:
             repo_root / "tests" / "local_agents" / "test_effectiveness.py"
         ],
         "blog": [repo_root / "tests" / "local_agents" / "test_blog_memory_e2e.py"],
+        "telemetry": [repo_root / "tests" / "local_agents" / "test_telemetry_e2e.py"],
         "all": [repo_root / "tests" / "local_agents"],
     }
     command = [

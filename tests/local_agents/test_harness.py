@@ -32,11 +32,28 @@ from .harness import (
     blog_revision_prompt,
     effectiveness_task_prompt,
     extract_final_message,
+    retain_session_otlp,
     score_effectiveness,
     seed_effectiveness_workflow,
     validate_blog_draft,
     validate_blog_revision,
 )
+
+
+def test_otlp_capture_selects_identity_not_quoted_session_text(tmp_path):
+    source = tmp_path / "raw.jsonl"
+    def span(session_id, text):
+        return {"name": "test", "attributes": [
+            {"key": "gen_ai.client.session_id", "value": {"stringValue": session_id}},
+            {"key": "gen_ai.client.tool.output", "value": {"stringValue": text}},
+        ]}
+    source.write_text(json.dumps({"resourceSpans": [{"resource": {}, "scopeSpans": [{"spans": [
+        span("selected", "result"), span("other", "selected"),
+    ]}]}]}) + "\n")
+    retained = retain_session_otlp({"traces": [source]}, tmp_path / "captured", "selected")
+    payload = json.loads(retained["traces"].read_text())
+    assert len(payload["resourceSpans"][0]["scopeSpans"][0]["spans"]) == 1
+    assert "other" not in retained["traces"].read_text()
 
 
 @pytest.fixture
@@ -48,6 +65,21 @@ def context(tmp_path: Path) -> AgentTestContext:
         db_path=tmp_path / "reflect.db",
         python_executable="/opt/reflect/bin/python",
     )
+
+
+@pytest.mark.parametrize("adapter", [CodexAdapter(), ClaudeAdapter(), CursorAdapter()], ids=lambda adapter: adapter.name)
+def test_telemetry_profiles_preserve_capture_and_resume(adapter, context):
+    from dataclasses import replace
+
+    context = replace(context, prompt_override="Run the isolated telemetry fixture.")
+    initial = adapter.build_telemetry(context)
+    resumed = adapter.build_telemetry(context, resume_session_id="observed-session")
+    assert "--ephemeral" not in initial.argv
+    assert "--no-session-persistence" not in initial.argv
+    assert "--bare" not in initial.argv
+    assert "observed-session" in resumed.argv
+    assert not any("reflect_context" in argument or "reflect_complete" in argument for argument in initial.argv)
+    assert initial.cwd == context.workspace
 
 
 def test_claude_adapter_uses_strict_one_run_mcp_config(
@@ -113,6 +145,9 @@ def test_cursor_adapter_uses_temporary_workspace_config_and_ask_mode(
     assert "--mode" in command.argv
     assert "ask" in command.argv
     assert "--approve-mcps" in command.argv
+    assert command.argv[command.argv.index("--output-format") + 1] == "stream-json"
+    baseline = CursorAdapter().build_baseline(context)
+    assert baseline.argv[baseline.argv.index("--output-format") + 1] == "stream-json"
     config = json.loads((context.workspace / ".cursor" / "mcp.json").read_text())
     assert config["mcpServers"]["reflect"]["command"] == context.python_executable
     assert config["mcpServers"]["reflect"]["env"]["REFLECT_DB_PATH"] == str(
@@ -325,6 +360,24 @@ def test_blog_prompts_hide_stage_contract_and_validators_score_outputs(tmp_path:
 )
 def test_extract_final_message_ignores_tool_payloads(stdout: str, expected: str) -> None:
     assert extract_final_message(stdout) == expected
+
+
+@pytest.mark.parametrize("final_text", ["REFLECT_MCP_OK", "The MCP call failed."])
+def test_cursor_final_assistant_message_overrides_concatenated_result(final_text: str) -> None:
+    # Shape recorded from Cursor 2026.10.22-27dcf5f stream-json output.
+    preamble = "I'll run the Reflect MCP smoke test exactly as specified."
+    events = [
+        {"type": "assistant", "message": {
+            "role": "assistant", "content": [{"type": "text", "text": preamble}],
+        }},
+        {"type": "tool_call", "subtype": "completed", "result": "REFLECT_MCP_OK"},
+        {"type": "assistant", "message": {
+            "role": "assistant", "content": [{"type": "text", "text": final_text}],
+        }},
+        {"type": "result", "subtype": "success", "result": preamble + final_text},
+    ]
+
+    assert CursorAdapter().extract_final_message("\n".join(map(json.dumps, events))) == final_text
 
 
 @pytest.mark.parametrize(
