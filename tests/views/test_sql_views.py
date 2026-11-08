@@ -7,16 +7,14 @@ from reflect.views.report_tabs import _semantic_graph, build_report_tab, build_r
 from reflect.views.sessions import list_sessions
 
 
-def test_command_patterns_skip_embedded_payloads_before_shell_parsing(monkeypatch):
-    from reflect.views.report_tabs import _cli_command_pattern, display_mcp_server_name
+def test_mcp_display_skips_embedded_payloads_before_shell_parsing(monkeypatch):
+    from reflect.views.report_tabs import display_mcp_server_name
 
     def unexpected_parse(_command):
         raise AssertionError("irrelevant or oversized commands must not reach shlex")
 
     monkeypatch.setattr("reflect.views.report_tabs.shlex.split", unexpected_parse)
     payload = "'" + "x" * (1024 * 1024) + "'"
-    assert _cli_command_pattern("python -c 'print(1)'") == ""
-    assert _cli_command_pattern("rtk --payload " + payload + " memory sync") == ""
     assert display_mcp_server_name("npx --payload " + payload) == "npx"
     assert display_mcp_server_name("docker run --env " + payload) == "docker"
 
@@ -476,6 +474,8 @@ def _seed_view_db(conn):
     # normalize raw steps or count prompt/tool requests as launches on a GET.
     conn.execute("""INSERT INTO agent_events(id,step_id,session_id,event_name,agent_type,created_at,updated_at)
         VALUES('legacy-start','step-legacy-ide-subagent','sess-2','SubagentStart','legacy-helper',?,?)""", (now,now))
+    from reflect.store.command_patterns import refresh_command_projection
+    refresh_command_projection(conn)
     conn.commit()
 
 

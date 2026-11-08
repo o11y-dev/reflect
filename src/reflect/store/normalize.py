@@ -6,6 +6,7 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
+from reflect.store.command_patterns import refresh_command_projection
 from reflect.store.hook_facts import HookFactRepository, backfill_hook_facts
 from reflect.store.mcp import DEFAULT_MCP_CLASSIFIER, MCPCallBackfill
 from reflect.store.pending_refresh import PendingRefreshState
@@ -18,6 +19,7 @@ from reflect.store.provenance import (
 )
 from reflect.store.workspaces import backfill_session_context
 from reflect.task_runs import TaskRunReconciler
+from reflect.telemetry_facts import TOOL_NAME_KEYS, recorded_tool_call_id, recorded_tool_name
 from reflect.tool_outcomes import with_tool_outcome
 from reflect.usage_facts import usage_facts
 from reflect.utils import _json_dumps
@@ -84,20 +86,15 @@ def _logical_tool_call_id(attrs: dict[str, Any], fallback: object) -> str:
     """Return the provider-neutral identity shared by invocation and result events."""
     return (
         DEFAULT_MCP_CLASSIFIER.call_id(attrs)
-        or _first_text(
-            attrs,
-            "tool.id",
-            "tool_call.id",
-            "gen_ai.tool.call.id",
-        )
+        or recorded_tool_call_id(attrs)
         or str(fallback)
     )
 
 
 def _canonical_tool_name(attrs: dict[str, Any], fallback: object) -> str:
     raw_name = str(
-        attrs.get("gen_ai.client.tool_name")
-        or attrs.get("gen_ai.client.command")
+        recorded_tool_name(attrs)
+        or ("Shell" if attrs.get("gen_ai.client.command") else "")
         or fallback
     )
     identity = DEFAULT_MCP_CLASSIFIER.identify(attrs)
@@ -242,7 +239,14 @@ def _step_type(event_type: str, attrs: dict[str, Any]) -> str:
         return "agent_call"
     if attrs.get("gen_ai.client.command"):
         return "shell_command"
-    if attrs.get("gen_ai.client.tool_name") or attrs.get("ide.tool_name") or "tool" in event:
+    # Runtime spans can mention tools while only measuring queue/wait time.
+    # A tool projection needs a recorded identity or explicit invocation event.
+    if (
+        recorded_tool_name(attrs)
+        or event in {"pretooluse", "posttooluse", "posttoolusefailure", "beforetoolcall", "aftertoolcall"}
+        or str(attrs.get("event.name") or event_type).lower() in {"tool.execution_start", "tool.execution_complete"}
+        or attrs.get("gen_ai.operation.name") == "execute_tool"
+    ):
         return "tool_call"
     if event in {"userpromptsubmit", "user.message", "user_message"}:
         return "llm_call" if _has_token_usage(attrs) else "conversation_event"
@@ -552,8 +556,11 @@ def _upsert_tool_call(
     identity = DEFAULT_MCP_CLASSIFIER.identify(attrs)
     input_preview = _first_text(attrs, "gen_ai.client.tool.input", "tool.input")
     output_preview = _first_text(attrs, "gen_ai.client.tool.output", "tool.output")
+    recorded_name_sql = "COALESCE(" + ",".join(
+        f"NULLIF(trim(json_extract(tool_calls.raw_attrs_json, '$.\"{key}\"')), '')" for key in TOOL_NAME_KEYS
+    ) + ")"
     conn.execute(
-        """
+        f"""
         INSERT OR IGNORE INTO tool_calls(
           id, step_id, session_id, logical_call_id, tool_name, tool_type, status, duration_ms,
           input_hash, output_hash, input_preview_redacted, output_preview_redacted, error_type,
@@ -562,7 +569,8 @@ def _upsert_tool_call(
         ON CONFLICT(session_id, logical_call_id)
           WHERE logical_call_id IS NOT NULL AND logical_call_id <> ''
         DO UPDATE SET
-          tool_name = excluded.tool_name,
+          tool_name = CASE WHEN ? OR (? AND {recorded_name_sql} IS NULL AND tool_calls.tool_type IS NOT 'mcp')
+            THEN excluded.tool_name ELSE tool_calls.tool_name END,
           tool_type = COALESCE(excluded.tool_type, tool_calls.tool_type),
           status = CASE
             WHEN excluded.status = 'error' OR tool_calls.status = 'error'
@@ -622,6 +630,8 @@ def _upsert_tool_call(
             json.dumps(attrs, sort_keys=True),
             timestamp,
             timestamp,
+            bool(recorded_tool_name(attrs) or identity.server_name and identity.tool_name),
+            bool(attrs.get("gen_ai.client.command")),
         ),
     )
     row = conn.execute(
@@ -634,6 +644,7 @@ def _upsert_tool_call(
     ).fetchone()
     if row is None:
         raise RuntimeError("canonical tool call was not persisted")
+    refresh_command_projection(conn, str(row[0]))
     if row[2] == "error":
         conn.execute(
             "UPDATE steps SET status = 'error' WHERE id IN (?, ?)", (row[1], step_id),

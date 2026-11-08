@@ -30,6 +30,9 @@
 
 ### Fixed
 - Memory searches preserve caller-owned read transactions and fall back to canonical records when the search index is empty, keeping guidance available during concurrent refreshes.
+- Subagent reports use recorded launches and lifecycle evidence across harnesses, preserve role and child identity, and exclude prompt mentions from launch counts. Recorded stops no longer imply verified task success.
+- Tool reports recover captured tool names across attribute formats and exclude internal timing spans from invocation counts, with a one-time repair of retained evidence.
+- Command templates share extraction and grouping across reports, retaining compound actions and using captured command arguments instead of stale decision metadata or truncated text. Normalization stores the template projection so dashboard reads avoid reparsing historical commands; reports show command-text coverage.
 
 - Preserve captured agent lifecycle usage and reconcile repeated request observations; cumulative usage with unknown intervals stays in lifetime totals without being assigned to an arbitrary day. Running tool envelopes remain incomplete until a terminal result.
 - Verification recovery matches both workspace and check scope, and edits overlapping or following a check invalidate its result. Pending evidence cannot support a new skill draft; renamed installed skills retain identity and resolve by their new slug.

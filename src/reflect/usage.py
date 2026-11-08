@@ -383,13 +383,9 @@ class UsageService:
                 (SELECT COUNT(*) FROM mcp_calls mc JOIN tool_calls tc ON tc.id=mc.tool_call_id
                     JOIN scoped_steps st ON st.id=tc.step_id),
                 (SELECT COUNT(*) FROM (
-                  SELECT st.session_id, st.id FROM scoped_steps st
-                  WHERE lower(st.type) IN ('subagent','subagent_start')
-                    OR lower(COALESCE(json_extract(st.raw_attrs_json,'$."gen_ai.client.hook.event"'),''))='subagentstart'
-                  UNION
-                  SELECT tc.session_id, tc.step_id FROM tool_calls tc
-                  JOIN scoped_steps st ON st.id=tc.step_id
-                  WHERE lower(tc.tool_name) IN ('agent','subagent','task','spawn_agent','delegate')))
+                  SELECT ae.session_id,COALESCE(NULLIF(ae.agent_id,''),ae.event_id,ae.step_id)
+                  FROM agent_events ae JOIN scoped_steps st ON st.id=ae.step_id
+                  WHERE ae.event_name='SubagentStart' GROUP BY 1,2))
             """, [*params, date_from, date_to, date_to, date_to, date_from]).fetchone()
             return UsageTotals(sessions=int(row[0]), prompts=int(row[1]), tool_calls=int(row[2]),
                 failures=int(row[3]), recovered_failures=int(row[4]), duration_ms=round(row[5]),
@@ -514,15 +510,9 @@ class UsageService:
             + """
             SELECT COUNT(*)
             FROM (
-              SELECT st.session_id, st.id AS identity
-              FROM scoped_steps st
-              WHERE lower(st.type) IN ('subagent', 'subagent_start')
-                 OR lower(COALESCE(json_extract(st.raw_attrs_json, '$."gen_ai.client.hook.event"'), '')) = 'subagentstart'
-              UNION
-              SELECT tc.session_id, tc.step_id AS identity
-              FROM tool_calls tc
-              JOIN scoped_steps st ON st.id = tc.step_id
-              WHERE lower(tc.tool_name) IN ('agent', 'subagent', 'task', 'spawn_agent', 'delegate')
+              SELECT ae.session_id,COALESCE(NULLIF(ae.agent_id,''),ae.event_id,ae.step_id) AS identity
+              FROM agent_events ae JOIN scoped_steps st ON st.id=ae.step_id
+              WHERE ae.event_name='SubagentStart' GROUP BY 1,2
             )
             """,
             params,

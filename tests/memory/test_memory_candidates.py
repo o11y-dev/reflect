@@ -143,7 +143,7 @@ def test_migration_quarantines_legacy_memories_and_regenerates_candidates(tmp_pa
         conn.execute("UPDATE memories SET validation_status='validated' WHERE id=?", (old["id"],))
         conn.execute("INSERT INTO memory_candidates(id, scope, type, content_preview_redacted, status, promoted_memory_id, created_at, updated_at) VALUES ('candidate-old', 'project', 'graph_pattern', 'old', 'promoted', ?, 'now', 'now')", (old["id"],))
         conn.commit()
-        assert migrate(conn) == [37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49]
+        assert migrate(conn) == [37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50]
         assert migrate(conn) == []
         assert service.inspect(old["id"])["validation_status"] == "needs_review"
         assert service.validate(old["id"])["status"] == "needs_review"

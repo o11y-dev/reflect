@@ -6,10 +6,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from reflect.command_patterns import command_pattern, shell_command
 from reflect.models import AgentStats, TelemetryStats
 from reflect.parsing import _default_sessions_dir, _default_spans_dir
 from reflect.store.provenance import telemetry_agent_name, unassigned_codex_classification
-from reflect.telemetry_facts import extract_subagent_name_from_tool, first_attr
+from reflect.telemetry_facts import (
+    SubagentTracker,
+    first_attr,
+    recorded_tool_name,
+    subagent_fact,
+)
 from reflect.tool_outcomes import tool_failure
 
 if TYPE_CHECKING:
@@ -108,6 +114,8 @@ def _process_span(
     mcp_server_after: Counter | None = None,
     subagent_stops_by_type: Counter | None = None,
     session_conversation: dict[str, list[dict]] | None = None,
+    subagent_tracker: SubagentTracker | None = None,
+    seen_shell_calls: set[tuple[str, str]] | None = None,
 ) -> None:
     """Process a single flat span dict and update counters."""
     if subagent_stops_by_type is None:
@@ -134,7 +142,7 @@ def _process_span(
     if model:
         models[model] += 1
 
-    raw_tool_name = first_attr(attrs, "gen_ai.client.tool_name", "ide.tool_name")
+    raw_tool_name = recorded_tool_name(attrs)
     mcp_server, mcp_tool = _extract_mcp_server_and_tool(attrs)
     tool_name = raw_tool_name
     if event in ("BeforeMCPExecution", "AfterMCPExecution") and mcp_tool:
@@ -150,21 +158,24 @@ def _process_span(
         elif event == "AfterMCPExecution" and mcp_server_after is not None:
             mcp_server_after[short_server] += 1
 
-    subagent_type = first_attr(attrs, "gen_ai.client.subagent_type", "ide.subagent_type", "subagent.type")
-    is_subagent_start = event == "SubagentStart"
-    is_subagent_stop = event == "SubagentStop"
-    if subagent_type or is_subagent_start or is_subagent_stop:
-        subagent_name = str(subagent_type or "unknown")
-        if is_subagent_start:
-            subagent_types[subagent_name] += 1
-        elif is_subagent_stop and subagent_stops_by_type is not None:
-            subagent_stops_by_type[subagent_name] += 1
-    tool_subagent = extract_subagent_name_from_tool(tool_name, attrs)
-    if tool_subagent and event == "PreToolUse":
-        events_by_type["SubagentStart"] += 1
-        subagent_types[tool_subagent] += 1
-
     session_id = _extract_session_id(attrs)
+    delegation = subagent_fact(attrs, event or "", tool_name=tool_name)
+    if delegation is None and subagent_tracker:
+        delegation = subagent_tracker.result_fact(str(session_id or ""), attrs, event or "")
+    subagent_type = delegation.label if delegation else ""
+    is_subagent_start = event == "SubagentStart"
+    delegation_delta = {"SubagentStart": Counter(), "SubagentStop": Counter()}
+    if delegation:
+        tracker = subagent_tracker or SubagentTracker()
+        delegation_delta = tracker.observe(str(_extract_session_id(attrs) or ""), delegation,
+                                           str(span.get("spanId") or span.get("span_id") or id(span)))
+        subagent_types.update(delegation_delta["SubagentStart"])
+        subagent_stops_by_type.update(delegation_delta["SubagentStop"])
+        subagent_types += Counter()
+        subagent_stops_by_type += Counter()
+        if not is_subagent_start:
+            events_by_type["SubagentStart"] += sum(delegation_delta["SubagentStart"].values())
+
     if session_id:
         sessions_seen.add(session_id)
         session_events[session_id] = session_events.get(session_id, 0) + 1
@@ -198,21 +209,24 @@ def _process_span(
         if duration_ms >= 0:
             tool_durations_ms.setdefault(tool_name, []).append(duration_ms)
 
-    # Track shell commands — two sources:
-    # 1. BeforeShellExecution (Cursor): gen_ai.client.command
-    # 2. PreToolUse Bash/Shell (Claude Code): gen_ai.client.tool.input (when capture enabled)
-    cmd = ""
-    if event == "BeforeShellExecution":
-        cmd = attrs.get("gen_ai.client.command", "")
-    elif tool_name in ("Shell", "Bash") and event == "PreToolUse":
-        cmd = attrs.get("gen_ai.client.tool.input", "")
-    if isinstance(cmd, str) and cmd:
-        short = cmd[:60] + ("..." if len(cmd) > 60 else "")
-        shell_commands[short] += 1
+    # Results may supply arguments missing from a decision/invocation envelope.
+    # Count the first command-bearing observation of each logical call once.
+    cmd = shell_command(tool_name, attrs)
+    call_id = first_attr(attrs, "gen_ai.client.tool_use_id", "gen_ai.tool.call.id",
+                         "tool.call_id", "tool_call_id", "tool.id", "tool_call.id")
+    call_key = (str(session_id or ""), str(call_id)) if call_id else None
+    command_event = event in {"BeforeShellExecution", "PreToolUse"} or (
+        call_key is not None and event in {"PostToolUse", "PostToolUseFailure", "AfterShellExecution"}
+    )
+    if cmd and command_event and not (seen_shell_calls is not None and call_key in seen_shell_calls):
+        if seen_shell_calls is not None and call_key is not None:
+            seen_shell_calls.add(call_key)
+        pattern = command_pattern(cmd)
+        shell_commands[pattern] += 1
         if session_id:
             if session_id not in session_shell_commands:
                 session_shell_commands[session_id] = Counter()
-            session_shell_commands[session_id][short] += 1
+            session_shell_commands[session_id][pattern] += 1
 
     # Graph analysis: record per-session tool sequences
     start_ns = span.get("start_time_ns")
@@ -362,11 +376,10 @@ def _process_span(
         ag.tools_by_count[tool_name] += 1
     if mcp_server:
         ag.mcp_servers[_shorten_mcp_server(mcp_server)] += 1
-    if (subagent_type or is_subagent_start) and event == "SubagentStart":
-        ag.subagent_types[str(subagent_type or "unknown")] += 1
-    if tool_subagent and event == "PreToolUse":
-        ag.events_by_type["SubagentStart"] += 1
-        ag.subagent_types[tool_subagent] += 1
+    ag.subagent_types.update(delegation_delta["SubagentStart"])
+    ag.subagent_types += Counter()
+    if delegation and not is_subagent_start:
+        ag.events_by_type["SubagentStart"] += sum(delegation_delta["SubagentStart"].values())
     if session_id:
         ag.sessions_seen.add(session_id)
     if tool_name and start_ns and end_ns:
@@ -468,7 +481,8 @@ def analyze_telemetry(
         token_totals, session_tokens,
         mcp_server_before, mcp_server_after, subagent_stops_by_type,
     )
-    proc_kwargs = {"session_conversation": session_conversation}
+    proc_kwargs = {"session_conversation": session_conversation, "seen_shell_calls": set(),
+                   "subagent_tracker": SubagentTracker()}
 
     # Source 1: Legacy JSONL span files
     if materialized_local_otlp is None:

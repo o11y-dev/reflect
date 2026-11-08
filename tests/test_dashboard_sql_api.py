@@ -357,6 +357,8 @@ def _seed_sql_report_db(db_path):
             """,
             (now,),
         )
+        from reflect.store.command_patterns import refresh_command_projection
+        refresh_command_projection(conn)
         conn.commit()
     finally:
         conn.close()
@@ -616,7 +618,7 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path):
     assert "docker run" not in next(iter(tabs["mcp"]["mcp_servers_by_count"]))
     assert tools["skills_by_count"] == {}  # Names and file mentions alone do not establish use.
     assert tools["subagent_types_by_count"] == {}  # The prompt requests a helper; no launch was captured.
-    assert tools["top_commands"] == [{"command": "poetry run pytest", "count": 1}]
+    assert tools["top_commands"] == [{"command": "pytest", "count": 1}]
     assert tools["unique_commands"] == 1
     assert tools["shell_executions"] == 1
     assert tools["tool_percentiles"][0]["tool"] == "exec_command"
@@ -675,7 +677,7 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path):
     assert tool_inventory["tools"][0]["name"] == "exec_command"
     assert tool_inventory["tools"][0]["count"] == 1
     assert {skill["name"] for skill in tool_inventory["skills"]} >= {"review-skill", "sql-review"}
-    assert {subagent["name"] for subagent in tool_inventory["subagents"]} >= {"research-helper"}
+    assert tool_inventory["subagents"] == []  # A prompt mention is not a captured launch.
     assert tool_inventory["mcp_tools"][0]["name"].endswith("/jira_search")
 
 

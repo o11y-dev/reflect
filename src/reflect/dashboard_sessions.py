@@ -26,7 +26,6 @@ from reflect.telemetry_facts import (
     extract_skill_name_from_preview,
     extract_skill_names_from_text,
     extract_subagent_name_from_tool,
-    extract_subagent_names_from_text,
 )
 from reflect.utils import logger
 
@@ -157,7 +156,7 @@ def _build_tool_inventory(
         attrs = event.get("attrs")
         if not isinstance(attrs, dict):
             attrs = {}
-        subagent_name = extract_subagent_name_from_tool(tool_name, attrs, preview)
+        subagent_name = extract_subagent_name_from_tool(tool_name, attrs, preview) if subagent_events is None else ""
         if subagent_name:
             subagents[subagent_name] += count
             subagent_sources[subagent_name][tool_name] += count
@@ -173,9 +172,15 @@ def _build_tool_inventory(
         if server_name:
             mcp_servers[server_name] += 1
 
+    seen_subagents: set[tuple[str, str]] = set()
     for event in subagent_events or []:
-        name = clean_subagent_name(event.get("name")) or "unknown"
+        name = clean_subagent_name(event.get("name")) or "Role not recorded"
         status = str(event.get("status") or "start").lower()
+        identity = str(event.get("agent_id") or event.get("event_id") or event.get("step_id") or "")
+        if identity and (status, identity) in seen_subagents:
+            continue
+        if identity:
+            seen_subagents.add((status, identity))
         if status == "stop":
             subagent_stops[name] += 1
         else:
@@ -195,7 +200,7 @@ def _build_tool_inventory(
         }
 
     return {
-        "tools": [tool_row(item) for item in tools.most_common()],
+        "tools": [tool_row(item) for item in sorted(tools.items(), key=lambda item: (-item[1], item[0]))],
         "skills": [
             {
                 "name": name,
@@ -243,29 +248,6 @@ def _add_skill_hints_to_inventory(
     if hinted:
         inventory["skills"] = [*inventory.get("skills", []), *hinted]
         inventory["total_skill_calls"] = int(inventory.get("total_skill_calls") or 0) + len(hinted)
-    return inventory
-
-
-def _add_subagent_hints_to_inventory(
-    inventory: dict[str, object], subagent_names: set[str]
-) -> dict[str, object]:
-    if not subagent_names:
-        return inventory
-    existing = {
-        str(item.get("name") or "")
-        for item in inventory.get("subagents", [])
-        if isinstance(item, dict)
-    }
-    hinted = [
-        {"name": name, "count": 1, "stops": 0, "sources": {}, "source": "conversation"}
-        for name in sorted(subagent_names)
-        if name not in existing
-    ]
-    if hinted:
-        inventory["subagents"] = [*inventory.get("subagents", []), *hinted]
-        inventory["total_subagent_starts"] = int(inventory.get("total_subagent_starts") or 0) + len(
-            hinted
-        )
     return inventory
 
 
@@ -966,28 +948,14 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
             ],
             [
                 {
-                    "name": sql_attr(
-                        attrs := load_json_dict(step.get("raw_attrs_json")),
-                        "gen_ai.client.subagent_type",
-                        "ide.subagent_type",
-                        "subagent.type",
-                    )
-                    or "unknown",
-                    "status": "stop"
-                    if "stop"
-                    in str(
-                        sql_attr(attrs, "gen_ai.client.hook.event", "ide.hook.event")
-                        or step.get("summary")
-                        or ""
-                    ).lower()
-                    else "start",
-                    "source": "lifecycle",
+                    "name": event.get("agent_type") or "Role not recorded",
+                    "status": "stop" if event.get("event_name") == "SubagentStop" else "start",
+                    "source": "observed",
+                    "agent_id": event.get("agent_id"),
+                    "event_id": event.get("event_id"),
+                    "step_id": event.get("step_id"),
                 }
-                for step in steps
-                if (
-                    "subagent" in str(step.get("summary") or "").lower()
-                    or "subagent" in str(step.get("raw_attrs_json") or "").lower()
-                )
+                for event in hook_facts.agent_events_by_step.values()
             ],
         )
         derived: dict[str, object] = {}
@@ -1205,7 +1173,7 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
                     if str(agent_event.get("event_name") or "").lower().endswith("stop")
                     else "subagent_start",
                     "ts": base_ts,
-                    "subagent_type": agent_event.get("agent_type") or "unknown",
+                    "subagent_type": agent_event.get("agent_type") or "Role not recorded",
                     "agent_id": agent_event.get("agent_id") or "",
                     "parent_agent_id": agent_event.get("parent_agent_id") or "",
                     "status": agent_event.get("status") or "",
@@ -1357,17 +1325,6 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
             for event in conversation
             if event.get("type") in {"prompt", "response"}
             for skill_name in extract_skill_names_from_text(
-                str(event.get("preview") or event.get("content") or "")
-            )
-        },
-    )
-    tool_inventory = _add_subagent_hints_to_inventory(
-        tool_inventory,
-        {
-            subagent_name
-            for event in conversation
-            if event.get("type") in {"prompt", "response"}
-            for subagent_name in extract_subagent_names_from_text(
                 str(event.get("preview") or event.get("content") or "")
             )
         },

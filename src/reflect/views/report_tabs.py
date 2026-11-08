@@ -5,14 +5,12 @@ import re
 import shlex
 import sqlite3
 from collections import Counter
-from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
 from pydantic import Field
 
 from reflect.schema.base import ReflectModel
-from reflect.utils import _sanitize_command_display
 from reflect.views.measurements import MeasurementView
 
 
@@ -53,6 +51,7 @@ class ToolsViewModel(ReflectModel):
     subagent_total_stops: int
     top_commands: list[dict[str, Any]]
     unique_commands: int
+    commands_with_template: int = 0
     signature_command: str
     signature_command_count: int
     shell_executions: int
@@ -82,6 +81,7 @@ class UsageToolSummaryViewModel(ReflectModel):
     subagent_total_stops: int
     top_commands: list[dict[str, Any]]
     unique_commands: int
+    commands_with_template: int = 0
     signature_command: str
     signature_command_count: int
     shell_executions: int
@@ -395,7 +395,7 @@ def _build_tools(
         }
         for tool, values in sorted(tool_durations.items(), key=lambda item: len(item[1]), reverse=True)
     ][:10]
-    commands = _command_patterns(conn, scoped_ids)
+    commands, shell_executions = _command_summary(conn, scoped_ids)
     top_commands = [{"command": command, "count": count} for command, count in commands.most_common(25)]
     signature = top_commands[0] if top_commands else {"command": "", "count": 0}
     file_counts = skill_subagent["file_counts"]
@@ -414,9 +414,10 @@ def _build_tools(
         subagent_total_stops=sum(skill_subagent["subagent_stops"].values()),
         top_commands=top_commands,
         unique_commands=len(commands),
+        commands_with_template=sum(commands.values()),
         signature_command=str(signature["command"]),
         signature_command_count=int(signature["count"]),
-        shell_executions=_shell_execution_count(conn, scoped_ids),
+        shell_executions=shell_executions,
         file_edits=file_counts["edits"],
         file_reads=file_counts["reads"],
     )
@@ -427,7 +428,7 @@ def _build_usage_tool_summary(
     scoped_ids: list[str] | None,
 ) -> UsageToolSummaryViewModel:
     skill_subagent = _usage_subagent_counts(conn, scoped_ids)
-    commands = _grouped_tool_command_patterns(conn, scoped_ids)
+    commands, shell_executions = _command_summary(conn, scoped_ids)
     top_commands = [{"command": command, "count": count} for command, count in commands.most_common(25)]
     signature = top_commands[0] if top_commands else {"command": "", "count": 0}
     file_counts = _usage_file_counts(conn, scoped_ids)
@@ -443,9 +444,10 @@ def _build_usage_tool_summary(
         subagent_total_stops=sum(stops.values()),
         top_commands=top_commands,
         unique_commands=len(commands),
+        commands_with_template=sum(commands.values()),
         signature_command=str(signature["command"]),
         signature_command_count=int(signature["count"]),
-        shell_executions=sum(commands.values()),
+        shell_executions=shell_executions,
         file_edits=file_counts["edits"],
         file_reads=file_counts["reads"],
         agent_comparison=agents.agent_comparison,
@@ -559,8 +561,8 @@ def _usage_subagent_counts(conn: sqlite3.Connection, scoped_ids: list[str] | Non
     scope, params = _scope_clause("ae.session_id", scoped_ids)
     for agent, event, kind, count in conn.execute(f"""
         SELECT COALESCE(a.name,'unknown'),ae.event_name,
-          COALESCE(NULLIF(ae.agent_type,''),'unknown'),
-          COUNT(DISTINCT COALESCE(ae.event_id,ae.agent_id,ae.step_id))
+          COALESCE(NULLIF(ae.agent_type,''),'Role not recorded'),
+          COUNT(DISTINCT ae.session_id || char(0) || COALESCE(NULLIF(ae.agent_id,''),ae.event_id,ae.step_id))
         FROM agent_events ae JOIN sessions s ON s.id=ae.session_id
         LEFT JOIN agents a ON a.id=s.agent_id
         {scope} GROUP BY 1,2,3
@@ -601,190 +603,19 @@ def _and_scope(column: str, scoped_ids: list[str] | None) -> str:
     return f"AND {column} IN ({', '.join('?' for _ in scoped_ids)})"
 
 
-def _command_patterns(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> Counter[str]:
-    tool_rows = _dict_rows(conn.execute(
-        f"""
-        SELECT input_preview_redacted, raw_attrs_json
-        FROM tool_calls tc
-        WHERE LOWER(tool_name) IN ('shell', 'bash', 'exec_command')
-        {_and_scope('tc.session_id', scoped_ids)}
-        """,
-        scoped_ids or [],
-    ))
+def _command_summary(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> tuple[Counter[str], int]:
+    rows = conn.execute(
+        f"""SELECT command_template, COUNT(*) FROM tool_calls tc
+        WHERE is_shell_call = 1 {_and_scope('tc.session_id', scoped_ids)}
+        GROUP BY command_template""", scoped_ids or [],
+    )
     commands: Counter[str] = Counter()
-    for row in tool_rows:
-        command = _extract_command(row["raw_attrs_json"], row["input_preview_redacted"])
-        if command:
-            commands[_sanitize_command(command)] += 1
-    return Counter({command: count for command, count in commands.items() if command})
-
-
-def _grouped_tool_command_patterns(
-    conn: sqlite3.Connection,
-    scoped_ids: list[str] | None,
-) -> Counter[str]:
-    rows = _dict_rows(conn.execute(
-        f"""
-        WITH command_calls AS (
-          SELECT input_hash, input_preview_redacted, raw_attrs_json
-          FROM tool_calls tc
-          WHERE LOWER(tool_name) IN ('shell', 'bash', 'exec_command')
-          {_and_scope('tc.session_id', scoped_ids)}
-        )
-        SELECT
-          MIN(input_preview_redacted) AS input_preview_redacted,
-          MIN(raw_attrs_json) AS raw_attrs_json,
-          COUNT(*) AS occurrence_count
-        FROM command_calls
-        WHERE input_hash IS NOT NULL AND input_hash <> ''
-        GROUP BY input_hash
-        UNION ALL
-        SELECT input_preview_redacted, raw_attrs_json, COUNT(*) AS occurrence_count
-        FROM command_calls
-        WHERE input_hash IS NULL OR input_hash = ''
-        GROUP BY input_preview_redacted, raw_attrs_json
-        """,
-        scoped_ids or [],
-    ))
-    commands: Counter[str] = Counter()
-    for row in rows:
-        command = _extract_command(row["raw_attrs_json"], row["input_preview_redacted"])
-        if command:
-            commands[_sanitize_command(command)] += int(row["occurrence_count"] or 0)
-    return Counter({command: count for command, count in commands.items() if command})
-
-
-def _shell_execution_count(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> int:
-    scope, params = _scope_clause("session_id", scoped_ids, prefix="AND")
-    row = conn.execute(
-        f"""
-        SELECT COUNT(*)
-        FROM tool_calls
-        WHERE LOWER(tool_name) IN ('shell', 'bash', 'exec_command')
-        {scope}
-        """,
-        params,
-    ).fetchone()
-    return int(row[0] or 0)
-
-
-def _extract_command(
-    attrs_json: object,
-    preview: object = "",
-    *,
-    allow_text_fallback: bool = True,
-) -> str:
-    import json
-
-    attrs: dict[str, Any] = {}
-    try:
-        payload = json.loads(str(attrs_json or "{}"))
-        if isinstance(payload, dict):
-            attrs = payload
-    except json.JSONDecodeError:
-        attrs = {}
-    for key in ("gen_ai.client.command", "ide.command", "command", "shell.command"):
-        value = attrs.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    text = str(preview or "").strip()
-    if not text:
-        return ""
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        return text.splitlines()[0].strip() if allow_text_fallback else ""
-    if isinstance(payload, dict):
-        value = payload.get("cmd") or payload.get("command")
-        if isinstance(value, str):
-            return value.strip()
-    return ""
-
-
-def _sanitize_command(value: str) -> str:
-    text = " ".join(_sanitize_command_display(value).strip().split())
-    if not text:
-        return ""
-    cli_pattern = _cli_command_pattern(text)
-    if cli_pattern:
-        return cli_pattern
-    lowered = text.lower()
-    if lowered.startswith("poetry run pytest") or " pytest" in lowered:
-        return text[:120]
-    if lowered.startswith("python"):
-        return "python command"
-    return text[:120]
-
-
-@dataclass
-class CLICommandPattern:
-    """Describes how to canonicalize a CLI command into a stable pattern string.
-
-    options_with_values lists flags whose next token is a value (not an action),
-    e.g. ``--project /path``.  max_actions controls how many positional subcommand
-    tokens to keep (default 2, e.g. ``rtk memory sync``).
-    """
-
-    options_with_values: frozenset[str] = field(default_factory=frozenset)
-    max_actions: int = 2
-
-    def extract(self, cli: str, tokens: list[str]) -> str:
-        """Return a canonical ``cli [sub] [cmd]`` string, stripping flag noise."""
-        actions: list[str] = []
-        skip_next = False
-        for token in tokens:
-            if skip_next:
-                skip_next = False
-                continue
-            if token.startswith("-"):
-                option_name = token.split("=", 1)[0]
-                if "=" not in token and option_name in self.options_with_values:
-                    skip_next = True
-                continue
-            actions.append(token)
-            if len(actions) == self.max_actions:
-                break
-        return " ".join([cli, *actions])[:120] if actions else cli
-
-
-# Registry of CLI tools whose commands should be normalized.
-# Add an entry here to teach the pattern extractor about a new tool.
-_CLI_PATTERNS: dict[str, CLICommandPattern] = {
-    "rtk": CLICommandPattern(
-        options_with_values=frozenset({
-            "--config",
-            "--cwd",
-            "--format",
-            "--output",
-            "--profile",
-            "--project",
-            "--workspace",
-            "-c",
-            "-o",
-        }),
-    ),
-}
-
-
-def _cli_command_pattern(value: str) -> str:
-    """Return a canonical pattern string for known CLI tools, or empty string."""
-    # Bound shell parsing without inventing a command from a truncated script.
-    if len(value) > 32 * 1024:
-        return ""
-    first = value.split(None, 1)
-    if not first or first[0].strip("'\"") not in _CLI_PATTERNS:
-        return ""
-    try:
-        tokens = shlex.split(value)
-    except ValueError:
-        tokens = value.split()
-    if not tokens:
-        return ""
-    cli = tokens[0].strip()
-    pattern = _CLI_PATTERNS.get(cli)
-    if pattern is None:
-        return ""
-    return pattern.extract(cli, tokens[1:])
+    shell_calls = 0
+    for template, count in rows:
+        if template:
+            commands[str(template)] += int(count)
+        shell_calls += int(count)
+    return commands, shell_calls
 
 
 def _usage_file_counts(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> dict[str, int]:

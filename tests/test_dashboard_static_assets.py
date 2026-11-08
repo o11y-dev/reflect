@@ -637,7 +637,8 @@ def test_dashboard_usage_separates_source_provenance_from_event_semantics(path: 
     assert "const usageModelSeries = usageModelEntries.slice(0, 8);" in text
     assert "if (usageModelOther > 0) usageModelSeries.push(['Other models', usageModelOther]);" in text
     assert "const types = allTypes.slice(0, 12);" in text
-    assert "Showing the 12 most-launched types" in text
+    assert "recorded roles or tasks" in text
+    assert "Stops depend on harness capture and do not verify task success" in text
     assert "const wt = (sqlTab('activity').weekly_trends || []).slice(-12);" in text
     assert 'title="${escHtml(String(m.value))}"' in text
     assert "params.delete('workflow_type');" in text

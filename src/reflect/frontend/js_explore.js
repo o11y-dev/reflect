@@ -191,50 +191,39 @@ function buildHourBars(){
   }
 }
 
-/* Subagent effectiveness table */
-function buildSubagentEffectiveness(){
+/* Recorded launches and lifecycle stops are observations, not success rates. */
+function buildSubagentActivity(){
   const el = document.getElementById('subagent-effectiveness');
   const toolsTab = sqlTab('tools');
   const launches = toolsTab.subagent_types_by_count || {};
   const stops = toolsTab.subagent_stops_by_type || {};
-  const allTypes = Object.keys(launches)
+  const allTypes = [...new Set([...Object.keys(launches), ...Object.keys(stops)])]
     .sort((a, b) => Number(launches[b] || 0) - Number(launches[a] || 0) || a.localeCompare(b));
   const types = allTypes.slice(0, 12);
   if (!types.length) {
-    el.innerHTML = '<p style="color:var(--text-3);font-size:14px;text-align:center;padding:40px 0">No subagent data yet</p>';
+    el.innerHTML = '<p class="empty-note">No recorded subagent launches or stops in this selection.</p>';
     return;
   }
-  const totalLaunches = toolsTab.subagent_total_starts || Object.values(launches).reduce((a,b)=>a+b,0);
-  const totalStops = toolsTab.subagent_total_stops || Object.values(stops).reduce((a,b)=>a+b,0);
-  const rows = types.map(t => {
-    const launched = launches[t] || 0;
-    const done = Math.min(stops[t] || 0, launched);
-    const rate = launched > 0 ? Math.round(done / launched * 100) : 0;
-    const color = rate >= 90 ? 'var(--green)' : rate >= 70 ? 'var(--yellow)' : 'var(--red)';
-    return `<tr>
-      <td>${escHtml(t)}</td>
-      <td style="text-align:right">${launched.toLocaleString()}</td>
-      <td style="text-align:right">${done.toLocaleString()}</td>
-      <td style="text-align:right"><span style="color:${color};font-weight:600">${rate}%</span></td>
-    </tr>`;
-  }).join('');
-  const totalRate = totalLaunches > 0 ? Math.round(Math.min(totalStops,totalLaunches)/totalLaunches*100) : 0;
-  const totalColor = totalRate >= 90 ? 'var(--green)' : totalRate >= 70 ? 'var(--yellow)' : 'var(--red)';
+  const totalLaunches = toolsTab.subagent_total_starts ?? Object.values(launches).reduce((a,b)=>a+b,0);
+  const totalStops = toolsTab.subagent_total_stops ?? Object.values(stops).reduce((a,b)=>a+b,0);
+  const rows = types.map(t => `<tr>
+      <td>${escHtml(t === 'unknown' ? 'Role not recorded' : t)}</td>
+      <td style="text-align:right">${Number(launches[t] || 0).toLocaleString()}</td>
+      <td style="text-align:right">${Number(stops[t] || 0).toLocaleString()}</td>
+    </tr>`).join('');
   el.innerHTML = `<table class="data-table">
     <thead><tr>
-      <th>Agent Type</th>
-      <th style="text-align:right">Launched</th>
-      <th style="text-align:right">Completed</th>
-      <th style="text-align:right">Rate</th>
+      <th>Role / task</th>
+      <th style="text-align:right">Launches</th>
+      <th style="text-align:right">Recorded stops</th>
     </tr></thead>
     <tbody>${rows}</tbody>
     <tfoot><tr style="border-top:1px solid rgba(255,255,255,.1);font-weight:600">
       <td>Total</td>
       <td style="text-align:right">${totalLaunches.toLocaleString()}</td>
-      <td style="text-align:right">${Math.min(totalStops,totalLaunches).toLocaleString()}</td>
-      <td style="text-align:right"><span style="color:${totalColor}">${totalRate}%</span></td>
+      <td style="text-align:right">${totalStops.toLocaleString()}</td>
     </tr></tfoot>
-  </table>${allTypes.length > types.length ? `<div class="empty-note" style="padding-top:10px">Showing the 12 most-launched types of ${fmt(allTypes.length)}.</div>` : ''}`;
+  </table><p class="empty-note">Stops depend on harness capture and do not verify task success. A missing stop does not establish failure.</p>${allTypes.length > types.length ? `<div class="empty-note">Showing 12 of ${fmt(allTypes.length)} recorded roles or tasks.</div>` : ''}`;
 }
 
 /* ════════════════════ TOOLS ════════════════════ */
@@ -248,7 +237,7 @@ function buildBarList(elId, obj, color){
   const max=entries[0]?.[1]||1;
   document.getElementById(elId).innerHTML=entries.map(([name,count])=>`
     <div class="bar-item">
-      <div class="bar-lbl" title="${name}">${name}</div>
+      <div class="bar-lbl" title="${escHtml(name)}">${escHtml(name)}</div>
       <div class="bar-track"><div class="bar-fill" style="width:${(count/max*100).toFixed(1)}%;background:${color}"></div></div>
       <div class="bar-cnt">${count.toLocaleString()}</div>
     </div>`).join('');
@@ -402,7 +391,7 @@ function renderUsageView(){
   renderUsageMetrics();
   buildHeatmap();
   buildHourBars();
-  buildSubagentEffectiveness();
+  buildSubagentActivity();
   buildWeeklyTrends();
   buildEventBar();
   buildAchievements();
@@ -431,7 +420,7 @@ function buildPercentiles(){
   }
   tbody.innerHTML = pctl.map(r => `
     <tr>
-      <td><span class="mono" style="color:var(--teal)">${r.tool}</span></td>
+      <td><span class="mono" style="color:var(--teal)">${escHtml(r.tool)}</span></td>
       <td style="text-align:right;font-weight:600">${r.count.toLocaleString()}</td>
       <td style="text-align:right;color:${pctlColor(r.p50)}">${fmtMs(r.p50)}</td>
       <td style="text-align:right;color:${pctlColor(r.p90)}">${fmtMs(r.p90)}</td>
@@ -443,13 +432,16 @@ function buildPercentiles(){
 function buildCommandPatterns(){
   const toolsTab = sqlTab('tools');
   const commands = toolsTab.top_commands || [];
-  document.getElementById('cmd-unique').textContent='-- '+Number(toolsTab.unique_commands || 0)+' unique patterns';
+  document.getElementById('cmd-unique').textContent='-- '+Number(toolsTab.unique_commands || 0)+' templates';
+  const coverage = document.getElementById('cmd-coverage');
+  if (coverage) coverage.textContent = toolsTab.commands_with_template == null ? ''
+    : `${fmt(toolsTab.commands_with_template)} of ${fmt(toolsTab.shell_executions || 0)} recorded shell calls have command text available for templates.`;
   document.getElementById('cmd-tbody').innerHTML=commands.length ? commands.map((c,i)=>`
     <tr>
       <td style="color:var(--text-3);font-weight:600">${i+1}</td>
       <td><span class="mono" style="color:var(--teal)">${escHtml(c.command)}</span></td>
       <td style="text-align:right"><span class="run-badge">${c.count}x</span></td>
-    </tr>`).join('') : '<tr><td colspan="3" class="empty-note">No command patterns match this cohort.</td></tr>';
+    </tr>`).join('') : '<tr><td colspan="3" class="empty-note">No captured command templates match this cohort.</td></tr>';
 }
 
 function renderToolsView(){

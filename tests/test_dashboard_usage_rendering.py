@@ -160,3 +160,30 @@ assert.ok(!element('obs-badges').innerHTML.includes('second'));
         [node, "-e", script], input=json.dumps({"impact": impact, "explore": explore}),
         text=True, capture_output=True, check=True,
     )
+
+
+def test_subagent_activity_preserves_observed_stops_without_claiming_success():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is required for subagent rendering checks")
+    source = Path("src/reflect/frontend/js_explore.js").read_text()
+    source = source[source.index("function buildSubagentActivity(){"):source.index("/* ════════════════════ TOOLS")]
+    script = r"""
+const assert=require('node:assert/strict'),vm=require('node:vm');
+const element={};
+const context={document:{getElementById:()=>element},escHtml:String,fmt:String,
+  sqlTab:()=>({subagent_types_by_count:{explorer:2,unknown:1},
+    subagent_stops_by_type:{explorer:3,worker:1}})};
+vm.createContext(context);
+vm.runInContext(require('node:fs').readFileSync(0,'utf8'),context);
+context.buildSubagentActivity();
+assert.ok(element.innerHTML.includes('Role not recorded'));
+assert.ok(element.innerHTML.includes('worker'));
+assert.ok(element.innerHTML.includes('Recorded stops'));
+assert.ok(element.innerHTML.includes('>3</td>'));
+assert.ok(element.innerHTML.includes('>4</td>'));
+assert.ok(!element.innerHTML.includes('Completed'));
+assert.ok(!element.innerHTML.includes('%'));
+assert.ok(element.innerHTML.includes('do not verify task success'));
+"""
+    subprocess.run([node, "-e", script], input=source, text=True, capture_output=True, check=True)

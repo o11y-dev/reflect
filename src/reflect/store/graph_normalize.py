@@ -16,6 +16,7 @@ from reflect.telemetry_facts import (
     extract_subagent_name_from_tool,
     extract_subagent_names_from_text,
     first_attr,
+    subagent_fact,
 )
 
 
@@ -482,6 +483,7 @@ def _derive_graph(
         nodes = 0
         edges = 0
         writer = GraphSourceWriter(conn, _insert_edge)
+        observed_agents: dict[str, dict[str, object]] = {}
 
         conn.execute("CREATE TEMP TABLE reflect_graph_seen_edges AS SELECT * FROM graph_edges WHERE 0")
         conn.execute("CREATE UNIQUE INDEX temp.reflect_graph_seen_edges_id ON reflect_graph_seen_edges(id)")
@@ -641,6 +643,8 @@ def _derive_graph(
             # The append guard admits only independent new source facts.
             # Delegation/context changes use the session repair path below.
             hook_facts = None if source_only else HookFactRepository(conn).load_agent_events(str(session["id"]))
+            if hook_facts:
+                observed_agents.update(hook_facts.agent_events_by_step)
             agent_types_by_id = hook_facts.agent_types_by_id() if hook_facts else {}
             for step in conn.execute(
                 "SELECT id, seq, summary, started_at, ended_at, raw_attrs_json FROM steps WHERE session_id = ? ORDER BY seq, id",
@@ -706,9 +710,10 @@ def _derive_graph(
                     )
                     or ""
                 )
-                is_subagent_event = subagent_type or "subagent" in event_lc
+                is_subagent_event = bool(agent_event) or event_lc.replace("_", "") in {"subagentstart", "subagentstop"}
                 if is_subagent_event:
-                    subagent_name = subagent_type or "unknown"
+                    explicit = subagent_fact(step_attrs, event)
+                    subagent_name = subagent_type or (explicit.label if explicit else "Role not recorded")
                     agent_id = str(
                         agent_event.get("agent_id")
                         or first_attr(step_attrs, "gen_ai.client.agent_id", "gen_ai.agent.id")
@@ -725,7 +730,7 @@ def _derive_graph(
                         label=subagent_name,
                         session_id=session["id"],
                         identity_key=(
-                            f"{session['id']}:{agent_id}" if agent_id else ""
+                            f"{session['id']}:{agent_id or agent_event.get('event_id') or step['id']}"
                         ),
                         attrs={
                             "source": "lifecycle",
@@ -1020,12 +1025,18 @@ def _derive_graph(
 
             subagent_name = extract_subagent_name_from_tool(str(tool["tool_name"]), tool_attrs, preview)
             if subagent_name:
+                observed_agent = observed_agents.get(str(tool["step_id"]), {})
+                tool_fact = subagent_fact(tool_attrs, tool_name=tool["tool_name"], preview=preview)
+                subagent_name = str(observed_agent.get("agent_type") or subagent_name)
+                child_id = observed_agent.get("agent_id") or (tool_fact.agent_id if tool_fact else "")
+                identity = child_id or observed_agent.get("event_id") or f"tool:{tool['logical_call_id'] or tool['id']}"
                 nodes += materialize_call()
                 subagent_node, inserted = _insert_node(
                     conn,
                     kind="Subagent",
                     label=subagent_name,
                     session_id=tool["session_id"],
+                    identity_key=f"{tool['session_id']}:{identity}",
                     attrs={"source": "tool_call", "status": tool["status"]},
                     timestamp=timestamp,
                 )

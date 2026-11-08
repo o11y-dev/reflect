@@ -241,7 +241,7 @@
       </div>
     </div>
     <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Subagent Effectiveness</div>
+      <div class="panel-title">Subagent Activity</div>
       <div id="subagent-effectiveness"></div>
     </div>
   </div>
@@ -390,12 +390,14 @@
 
   <!-- Command patterns (merged from old Latency tab) -->
   <div class="panel">
-    <div class="panel-title">Command Patterns <span class="panel-title-count" id="cmd-unique"></span></div>
+    <div class="panel-title">Command Templates <span class="panel-title-count" id="cmd-unique"></span></div>
+    <p class="empty-note" id="cmd-coverage"></p>
+    <p class="empty-note">Captured shell calls grouped by command structure. Variable arguments are placeholders; scripts and compound commands keep their own templates.</p>
     <table class="tbl">
       <thead><tr>
         <th style="width:36px">#</th>
-        <th>Pattern</th>
-        <th style="text-align:right;width:80px">Runs</th>
+        <th>Template</th>
+        <th style="text-align:right;width:80px">Calls</th>
       </tr></thead>
       <tbody id="cmd-tbody"></tbody>
     </table>

@@ -1181,25 +1181,9 @@ class SessionConversationPlayhead {
     return '';
   }
 
-  function extractSubagentFromPreview(toolName, preview){
-    const normalizedTool = String(toolName || '').trim().toLowerCase();
-    if (!['subagent','agent','task','read_agent'].includes(normalizedTool)) return '';
-    let payload = {};
-    try { payload = JSON.parse(String(preview || '').trim() || '{}'); }
-    catch (_) { payload = {}; }
-    const keys = normalizedTool === 'task' || normalizedTool === 'read_agent'
-      ? ['agent_id','name','agent_type']
-      : ['subagent_type','agent_type','name','agent_id','description'];
-    for (const key of keys) {
-      const value = String(payload[key] || '').trim();
-      if (value && !value.includes('REDACTED') && !value.startsWith('[')) return value.slice(0,80);
-    }
-    return '';
-  }
-
   function deriveToolInventory(session){
     const provided = session.tool_inventory || {};
-    const hasProvided = Boolean((provided.tools || []).length || (provided.skills || []).length || (provided.mcp_tools || []).length || (provided.subagents || []).length);
+    const hasProvided = Boolean(session.tool_inventory);
     const toolMap = new Map();
     const skillMap = new Map();
     const mcpMap = new Map();
@@ -1248,12 +1232,6 @@ class SessionConversationPlayhead {
               skillMap.set(skillName, current);
             }
           }
-          const subagentName = extractSubagentFromPreview(ev.tool_name, ev.preview);
-          if (subagentName) {
-            const current = subagentMap.get(subagentName) || {name:subagentName,count:0,stops:0,source:'tool'};
-            current.count += 1;
-            subagentMap.set(subagentName, current);
-          }
         } else if (ev.type === 'tool_result' && ev.success === false && ev.tool_name) {
           addTool(ev.tool_name, 0, 1, ev.duration_ms || 0, []);
         } else if (ev.type === 'mcp_call') {
@@ -1264,7 +1242,7 @@ class SessionConversationPlayhead {
             mcpMap.set(label, current);
           }
         } else if (ev.type === 'subagent_start' || ev.type === 'subagent_stop') {
-          const name = ev.subagent_type || 'unknown';
+          const name = ev.subagent_type || 'Role not recorded';
           const current = subagentMap.get(name) || {name,count:0,stops:0,source:'lifecycle'};
           if (ev.type === 'subagent_stop') current.stops += 1;
           else current.count += 1;

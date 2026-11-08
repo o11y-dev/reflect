@@ -5,8 +5,15 @@ import json
 import sqlite3
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
+
+from reflect.telemetry_facts import (
+    is_subagent_launch_tool,
+    recorded_tool_call_id,
+    recorded_tool_name,
+    subagent_fact,
+)
 
 
 def _stable_id(prefix: str, *parts: object) -> str:
@@ -90,8 +97,12 @@ class HookFactParser:
         event_name = str(
             attrs.get("gen_ai.client.hook.event")
             or attrs.get("ide.hook.event")
+            or attrs.get("event.name")
             or fallback_event
         ).rsplit(".", 1)[-1]
+        event_name = {"subagentstart": "SubagentStart", "subagentstop": "SubagentStop"}.get(
+            event_name.replace("_", "").lower(), event_name,
+        )
         schema_value = attrs.get("gen_ai.client.hook_schema_version")
         try:
             schema_version = int(schema_value) if schema_value is not None else None
@@ -213,8 +224,20 @@ class HookFactRepository:
         timestamp: str,
     ) -> bool:
         contract = self.parser.parse(attrs, fallback_event)
+        promoted = False
+        call_id = recorded_tool_call_id(attrs)
+        if is_subagent_launch_tool(recorded_tool_name(attrs)) or (call_id and not recorded_tool_name(attrs)):
+            lookup, params = (
+                ("session_id=? AND logical_call_id=? AND logical_call_id<>''", (session_id, call_id))
+                if call_id else ("step_id=?", (step_id,))
+            )
+            rows = self._query_dicts(
+                f"SELECT * FROM tool_calls WHERE {lookup} LIMIT 1", params,
+            )
+            if rows:
+                promoted = self.persist_tool_delegation(rows[0], timestamp=timestamp)
         if not contract.has_facts:
-            return False
+            return promoted
         self.conn.execute(
             """
             UPDATE steps
@@ -272,9 +295,42 @@ class HookFactRepository:
                     timestamp,
                 ),
             )
-        if contract.event_name not in {"SubagentStart", "SubagentStop"}:
+        fact = subagent_fact(attrs, fallback_event)
+        if not fact or contract.event_name not in {"SubagentStart", "SubagentStop"}:
             return True
         self._persist_agent_event(contract, step_id, session_id, attrs, raw_attrs, timestamp)
+        return True
+
+    def persist_tool_delegation(self, tool: Mapping[str, object], *, timestamp: str) -> bool:
+        """Promote a canonical tool row, including its paired input/result evidence.
+
+        Also used by one-way repairs; callers can stream only launch-tool rows.
+        """
+        if not is_subagent_launch_tool(tool.get("tool_name")):
+            return False
+        attrs = json.loads(str(tool.get("raw_attrs_json") or "{}"))
+        if not isinstance(attrs, dict):
+            return False
+        attrs["gen_ai.client.tool_name"] = str(tool["tool_name"])
+        for key, column in (("gen_ai.client.tool.input", "input_preview_redacted"),
+                            ("gen_ai.client.tool.output", "output_preview_redacted")):
+            if not attrs.get(key) and tool.get(column):
+                attrs[key] = tool[column]
+        fact = subagent_fact(attrs)
+        if fact is None:
+            return False
+        if fact.failed and not fact.agent_id:
+            deleted = self.conn.execute(
+                """DELETE FROM agent_events WHERE step_id=? AND event_name='SubagentStart'
+                   AND NULLIF(agent_id,'') IS NULL AND event_id=?""",
+                (tool["step_id"], f"tool:{tool['logical_call_id']}"),
+            )
+            return bool(deleted.rowcount)
+        contract = replace(self.parser.parse(attrs), event_name="SubagentStart", agent_id=fact.agent_id or None,
+                           parent_agent_id=_text(attrs, "gen_ai.client.parent_agent_id", "gen_ai.agent.id"),
+                           event_id=f"tool:{tool['logical_call_id']}" if tool.get("logical_call_id") else None)
+        self._persist_agent_event(contract, str(tool["step_id"]), str(tool["session_id"]),
+                                  attrs, json.dumps(attrs, sort_keys=True), timestamp)
         return True
 
     def load_session(self, session_id: str) -> HookFactSessionView:
@@ -336,6 +392,7 @@ class HookFactRepository:
         raw_attrs: str,
         timestamp: str,
     ) -> None:
+        fact = subagent_fact(attrs, contract.event_name)
         task = next(
             (fact for fact in contract.conversation if fact.kind == "delegation.task"),
             None,
@@ -370,7 +427,7 @@ class HookFactRepository:
                 contract.event_id,
                 contract.agent_id,
                 contract.parent_agent_id,
-                _text(attrs, "gen_ai.client.subagent_type", "ide.subagent_type", "subagent.type", "gen_ai.agent.name"),
+                fact.label if fact else None,
                 _text(attrs, "gen_ai.client.agent_id_source"),
                 _text(attrs, "gen_ai.client.status"),
                 task.content_hash if task else None,
@@ -381,6 +438,19 @@ class HookFactRepository:
                 timestamp,
             ),
         )
+        if contract.agent_id:
+            # Only recorded IDs link lifecycle and tool facts. Never associate
+            # nearby tools, prompts, or unrelated agents by session or timing.
+            related = self._query_dicts(
+                "SELECT event_name,raw_attrs_json FROM agent_events WHERE session_id=? AND agent_id=?",
+                (session_id, contract.agent_id),
+            )
+            identities = [subagent_fact(json.loads(str(row["raw_attrs_json"])), str(row["event_name"]))
+                          for row in related]
+            label = next((item.role for item in identities if item and item.role), "")
+            label = label or next((item.name for item in identities if item and item.name), "Role not recorded")
+            self.conn.execute("UPDATE agent_events SET agent_type=? WHERE session_id=? AND agent_id=?",
+                              (label, session_id, contract.agent_id))
 
 
 class HookFactBackfill:

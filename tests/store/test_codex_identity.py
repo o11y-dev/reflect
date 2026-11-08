@@ -107,6 +107,7 @@ def test_migration_preserves_usage_ids_and_unattributed_evidence(tmp_path):
             migrate(conn)
         # Reproduce historical service-based identities and file-based sessions.
         with (
+            patch("reflect.store.normalize.refresh_command_projection"),
             patch("reflect.store.normalize.telemetry_agent_name", side_effect=lambda attrs: attrs.get("gen_ai.client.name") or attrs.get("service.name", "codex")),
             patch("reflect.store.ingest.unassigned_codex_classification", return_value=None),
             patch("reflect.store.normalize.unassigned_codex_classification", return_value=None),

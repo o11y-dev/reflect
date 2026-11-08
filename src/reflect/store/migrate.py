@@ -53,6 +53,117 @@ def _migration_statements(sql: str) -> list[str]:
     return statements
 
 
+def _repair_tool_evidence(conn: sqlite3.Connection) -> dict[str, int]:
+    """One-way migration 50: repair canonical facts without replaying usage.
+
+    Stream small identity attributes first; only actual delegation candidates
+    need their retained input/result payloads. No source or accounting rows are
+    modified. Dirty step owners reuse the existing downstream refresh pipeline.
+    """
+    from collections import defaultdict
+
+    from reflect.store.command_patterns import refresh_command_projection
+    from reflect.store.hook_facts import HookFactRepository
+    from reflect.store.normalize import _canonical_tool_name, _step_type
+    from reflect.store.pending_refresh import PendingRefreshState
+    from reflect.store.provenance import is_codex_otel_service
+    from reflect.telemetry_facts import is_subagent_launch_tool
+    from reflect.utils import _json_loads
+
+    timestamp = datetime.now(UTC).isoformat()
+    identity_keys = (
+        "gen_ai.client.tool_name", "gen_ai.tool.name", "ide.tool_name", "tool.name", "tool_name",
+        "gen_ai.client.mcp_server", "gen_ai.client.mcp_tool",
+        "mcp.server.name", "mcp.server", "server.name", "mcp.tool.name", "mcp.tool",
+        "gen_ai.client.hook.event", "ide.hook.event", "event.name", "gen_ai.operation.name",
+        "gen_ai.client.agent_id", "gen_ai.memory.id", "gen_ai.request.model", "gen_ai.response.model",
+        "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens", "service.name",
+        "reflect.telemetry.origin", "code.module.name",
+    )
+    projection = ",".join(f"'$.\"{key}\"'" for key in identity_keys)
+    changed: dict[str, set[str]] = defaultdict(set)
+    launches: list[str] = []
+    repaired = removed = 0
+    last_rowid = 0
+    while rows := conn.execute(
+        f"""SELECT tc.rowid,tc.id,tc.step_id,tc.session_id,tc.tool_name,
+          json_extract(tc.raw_attrs_json,{projection}),
+          COALESCE(json_extract(tc.raw_attrs_json,'$."gen_ai.client.command"'),'')<>''
+        FROM tool_calls tc
+        WHERE tc.rowid>? ORDER BY tc.rowid LIMIT 256""", (last_rowid,),
+    ).fetchall():
+        last_rowid = rows[-1][0]
+        for _, tool_id, step_id, session_id, old_name, values, has_command in rows:
+            attrs = {key: value for key, value in zip(identity_keys, _json_loads(values), strict=True)
+                     if value is not None}
+            if has_command:
+                attrs["gen_ai.client.command"] = True
+            # This retained runtime shape was incorrectly projected solely
+            # because its span name contained "tool". Other unknowns survive.
+            timing = (
+                old_name == "codex.tool_blocking"
+                and attrs.get("code.module.name") == "codex_core::session::turn"
+                and is_codex_otel_service(attrs.get("service.name"))
+                and _step_type(str(old_name), attrs) == "unknown"
+            )
+            if timing:
+                conn.execute("DELETE FROM tool_calls WHERE id=?", (tool_id,))
+                conn.execute("UPDATE steps SET type='unknown',updated_at=? WHERE id=?", (timestamp, step_id))
+                changed[str(session_id)].add(str(step_id))
+                removed += 1
+                continue
+            name = _canonical_tool_name(attrs, old_name)
+            # A previous canonical MCP identity may have come from a payload;
+            # compact attribute reads must not downgrade that known identity.
+            if str(old_name).startswith("mcp__") and not name.startswith("mcp__"):
+                name = old_name
+            if name != old_name:
+                conn.execute("UPDATE tool_calls SET tool_name=?,updated_at=? WHERE id=?", (name, timestamp, tool_id))
+                changed[str(session_id)].add(str(step_id))
+                repaired += 1
+            if is_subagent_launch_tool(name):
+                launches.append(str(tool_id))
+
+    repository = HookFactRepository(conn)
+    columns = ("tool_name", "raw_attrs_json", "step_id", "session_id", "logical_call_id",
+               "input_preview_redacted", "output_preview_redacted")
+    promoted = 0
+    for offset in range(0, len(launches), 256):
+        batch = launches[offset:offset + 256]
+        rows = conn.execute(
+            f"SELECT {','.join(columns)} FROM tool_calls WHERE id IN ({','.join('?' for _ in batch)})", batch,
+        )
+        for values in rows:
+            tool = dict(zip(columns, values, strict=True))
+            if repository.persist_tool_delegation(tool, timestamp=timestamp):
+                changed[str(tool["session_id"])].add(str(tool["step_id"]))
+                promoted += 1
+
+    # The indexed agent-call population is much smaller than the step history.
+    # Inspect only explicit lifecycle event fields, never arbitrary JSON text.
+    for step_id, session_id, event, raw_attrs in conn.execute("""
+        SELECT id,session_id,summary,raw_attrs_json FROM steps
+        WHERE type='agent_call' AND (
+          lower(replace(COALESCE(json_extract(raw_attrs_json,'$."gen_ai.client.hook.event"'),
+              json_extract(raw_attrs_json,'$."ide.hook.event"'),
+              json_extract(raw_attrs_json,'$."event.name"'),summary,''),'_','')) GLOB '*subagentstart'
+          OR lower(replace(COALESCE(json_extract(raw_attrs_json,'$."gen_ai.client.hook.event"'),
+              json_extract(raw_attrs_json,'$."ide.hook.event"'),
+              json_extract(raw_attrs_json,'$."event.name"'),summary,''),'_','')) GLOB '*subagentstop'
+        )
+    """):
+        repository.persist_step(step_id=step_id, session_id=session_id,
+                                fallback_event=event or "", attrs=_json_loads(raw_attrs), timestamp=timestamp)
+        changed[str(session_id)].add(str(step_id))
+        promoted += 1
+    commands = refresh_command_projection(conn)
+    pending = PendingRefreshState(conn)
+    for session_id, steps in changed.items():
+        pending.mark_steps(session_id, steps, phases=("rollup", "graph", "improvements"))
+    return {"tool_names": repaired, "timing_projections_removed": removed,
+            "delegation_facts": promoted, "command_projections": commands}
+
+
 def migrate(conn: sqlite3.Connection, *, commit: bool = True) -> list[int]:
     """Apply pending migrations, optionally inside a caller-owned transaction."""
     from reflect.improvements.workflow_identity import workflow_identity_from_json
@@ -138,6 +249,8 @@ def migrate(conn: sqlite3.Connection, *, commit: bool = True) -> list[int]:
                 continue
             for statement in _migration_statements(migration.sql):
                 conn.execute(statement)
+            if migration.version == 50:
+                _repair_tool_evidence(conn)
             conn.execute(
                 "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
                 (migration.version, migration.name, datetime.now(UTC).isoformat()),

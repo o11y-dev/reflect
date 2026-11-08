@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from reflect.telemetry_facts import is_subagent_launch_tool
+
 
 def try_append_graph(
     conn: sqlite3.Connection, session_ids: set[str], step_ids: set[str], tool_ids: set[str] | None,
@@ -49,7 +51,7 @@ def try_append_graph(
           AND step_id NOT IN ({placeholders}) LIMIT 1""", (*sorted(tool_ids), *selected_steps)).fetchone():
         return None
     if selected_tools and any(
-        str(row[0]).lower() in {"task", "agent", "spawn_agent", "send_message", "wait_agent"}
+        is_subagent_launch_tool(row[0]) or str(row[0]).lower() in {"send_message", "wait_agent"}
         or "subagent" in f"{row[1]} {row[2]}".lower()
         for row in conn.execute(f"""SELECT tool_name,raw_attrs_json,input_preview_redacted FROM main.tool_calls
             WHERE id IN ({','.join('?' for _ in selected_tools)})""", selected_tools)
