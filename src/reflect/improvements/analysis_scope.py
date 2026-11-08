@@ -12,9 +12,15 @@ class AnalysisScope:
     supply complete cohorts for repository rules, not merely changed sessions.
     """
 
-    def __init__(self, conn: sqlite3.Connection | None = None, session_ids: set[str] | None = None):
+    def __init__(
+        self, conn: sqlite3.Connection | None = None, session_ids: set[str] | None = None,
+        *, current_execution_ids: set[str] | frozenset[str] = frozenset(),
+    ):
         self.conn = conn
         self.session_ids = session_ids
+        # Internal detector context after successful evidence preparation.
+        # This does not acknowledge durable work for any external reader.
+        self.current_execution_ids = frozenset(current_execution_ids)
 
     def __enter__(self) -> AnalysisScope:
         if self.session_ids is not None:

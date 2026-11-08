@@ -264,6 +264,10 @@ def _usage_attrs_from_token_count(info: dict) -> dict[str, int]:
 def _native_tool_result_metadata(output: object) -> dict:
     """Decode only the execution envelope, never arbitrary stdout/application JSON."""
     value = output
+    if (isinstance(value, list) and len(value) == 1
+            and isinstance(value[0], dict)
+            and str(value[0].get("text") or "").startswith("Script running with cell ID ")):
+        value = value[0]["text"]
     if (isinstance(value, list) and len(value) == 2
             and all(isinstance(block, dict) for block in value)
             and str(value[0].get("text") or "").startswith("Script completed\nWall time ")):
@@ -274,13 +278,19 @@ def _native_tool_result_metadata(output: object) -> dict:
         if isinstance(candidate, dict) and {"chunk_id", "wall_time_seconds", "output"} <= candidate.keys():
             value = candidate
     if isinstance(value, str):
+        # These are outer harness status lines. Never inspect application
+        # stdout after Final output for process/cell lifecycle evidence.
+        if re.match(r"\AScript running with cell ID \S+(?:\s|$)", value):
+            return {"reflect.tool.terminal": False}
         try:
             value = _json_loads(value)
         except (ValueError, TypeError):
             value = None
         # Codex's native exec envelope places status before the Final output.
-        if value is None and output.startswith("Chunk ID:"):
+        if value is None and isinstance(output, str) and output.startswith("Chunk ID:"):
             header = output.split("Final output:", 1)[0]
+            if re.search(r"^Process running with session ID \S+\s*$", header, re.MULTILINE):
+                return {"reflect.tool.terminal": False}
             match = re.search(r"^Process exited with code (-?\d+)\s*$", header, re.MULTILINE)
             if match:
                 return {"process.exit.code": int(match.group(1)), "reflect.tool.terminal": True}

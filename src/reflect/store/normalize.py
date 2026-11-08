@@ -19,6 +19,7 @@ from reflect.store.provenance import (
 from reflect.store.workspaces import backfill_session_context
 from reflect.task_runs import TaskRunReconciler
 from reflect.tool_outcomes import with_tool_outcome
+from reflect.usage_facts import usage_facts
 from reflect.utils import _json_dumps
 
 
@@ -690,7 +691,9 @@ def _insert_call_record(
 ) -> None:
     duration = _duration_ms(raw_event["observed_at"], raw_event["received_at"])
     status = _status(raw_event["event_type"], attrs)
-    if step_type == "llm_call":
+    # Agent lifecycle and model usage are independent facts. A token-bearing
+    # SubagentStop remains an agent_call step while owning canonical usage.
+    if step_type == "llm_call" or (step_type == "agent_call" and _has_token_attributes(attrs)):
         request_id = attrs.get("gen_ai.request.id")
         call_id = (
             _stable_id("llm", session_id, raw_event["source_id"], str(request_id))
@@ -948,22 +951,46 @@ def _backfill_parent_step_ids(conn: sqlite3.Connection, session_ids: set[str]) -
 
 
 def refresh_session_usage(conn: sqlite3.Connection, session_ids: set[str]) -> None:
-    """Reconcile additive session caches after canonical request updates/replay."""
+    """Reconcile canonical observations with the pricing/reader identity rule."""
+    keys = ("gen_ai.request.id", "reflect.usage.identity", "reflect.usage.input_semantics",
+            *_TOKEN_ATTRIBUTE_KEYS, "hook.cache_read_tokens", "hook.cache_write_tokens")
+    paths = ",".join(f"'$.\"{key}\"'" for key in keys)
     for session_id in session_ids:
-        conn.execute(
+        # Keep retained hook/request row IDs and source provenance intact.
+        # Multiple observations of one explicit request own one subtotal, in
+        # the same chronological order used by pricing and measurements.
+        cursor = conn.execute(
+            f"""SELECT lc.id,lc.session_id,lc.provider,lc.input_tokens,lc.output_tokens,
+                      lc.cache_creation_input_tokens,lc.cache_read_input_tokens,lc.reasoning_output_tokens,
+                      json_extract(lc.raw_attrs_json,{paths}) AS usage_attrs_json
+               FROM llm_calls lc JOIN steps st ON st.id=lc.step_id
+               WHERE lc.session_id=? ORDER BY st.started_at,lc.id""", (session_id,),
+        )
+        names = [column[0] for column in cursor.description]
+        totals = dict.fromkeys(("input_tokens", "output_tokens", "cache_creation_input_tokens",
+                                "cache_read_input_tokens", "reasoning_output_tokens"), 0)
+        seen: set[tuple] = set()
+        for values in cursor:
+            row = dict(zip(names, values, strict=True))
+            attrs = dict(zip(keys, json.loads(row["usage_attrs_json"]), strict=True))
+            facts = usage_facts(row, attrs)
+            if facts.present and facts.identity not in seen:
+                seen.add(facts.identity)
+                for key in totals:
+                    totals[key] += facts.tokens[key]
+        updated = conn.execute(
             """
             UPDATE sessions SET
-              (input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, reasoning_tokens) = (
-                SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
-                       COALESCE(SUM(cache_creation_input_tokens), 0),
-                       COALESCE(SUM(cache_read_input_tokens), 0),
-                       COALESCE(SUM(reasoning_output_tokens), 0)
-                FROM llm_calls WHERE session_id = ?
-              )
+              (input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, reasoning_tokens)
+              = (?, ?, ?, ?, ?)
             WHERE id = ? AND token_provenance <> 'estimated_cursor_transcript'
+              AND (input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, reasoning_tokens)
+                  IS NOT (?, ?, ?, ?, ?)
             """,
-            (session_id, session_id),
+            (*totals.values(), session_id, *totals.values()),
         )
+        if updated.rowcount:
+            PendingRefreshState(conn).mark({session_id}, phases=("cost", "rollup"))
 
 
 def _refresh_session_statuses(conn: sqlite3.Connection, session_ids: set[str], timestamp: str) -> None:
@@ -1102,6 +1129,12 @@ def _refresh_normalized_sessions(conn: sqlite3.Connection, session_ids: set[str]
         if repair_identities:
             conn.execute("DELETE FROM maintenance_tasks WHERE task = 'reconcile_task_identities'")
         reconciler.reconcile(session_ids=session_ids, commit=False)
+        # Git evidence is a canonical-call projection shared by usage/report
+        # refreshes. Its rows and the acknowledgement must commit together so
+        # an interrupted refresh can retry even after raw batches were drained.
+        from reflect.store.git_activity import refresh_git_activity
+
+        refresh_git_activity(conn, session_ids=session_ids)
         # Context/identity repair can record additional revisions in this same
         # transaction. They are also maintained; no other writer can intervene.
         pending.acknowledge(pending.capture(), "canonical", session_ids=session_ids)

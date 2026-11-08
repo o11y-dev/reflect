@@ -39,7 +39,7 @@ from reflect.store.provenance import (
 CHECKPOINT_HASH_WINDOW_BYTES = 64 * 1024
 JSONL_SCAN_CHUNK_BYTES = 64 * 1024
 SOURCE_DECODER_VERSION = 2
-NATIVE_DECODER_VERSION = 3
+NATIVE_DECODER_VERSION = 4
 logger = logging.getLogger(__name__)
 
 IngestionResult = dict[str, int | str]

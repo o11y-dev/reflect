@@ -62,7 +62,9 @@ class BaseImprovementRule(ABC):
         """Run the detector and enforce the cross-rule persistence contract."""
         if not isinstance(self.definition, RuleDefinition):
             raise TypeError(f"{type(self).__name__}.definition must be a RuleDefinition")
-        findings = self.detect(conn) if scope is None or scope.session_ids is None else self.detect(conn, scope=scope)
+        findings = self.detect(conn) if scope is None or (
+            scope.session_ids is None and not scope.current_execution_ids
+        ) else self.detect(conn, scope=scope)
         if not isinstance(findings, list):
             raise TypeError(f"{type(self).__name__}.detect() must return list[ObservationDraft]")
 

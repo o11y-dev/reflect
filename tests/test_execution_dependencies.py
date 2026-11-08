@@ -176,6 +176,7 @@ def test_stable_consumer_reassessment_keeps_peer_membership_and_history(tmp_path
         service = ImprovementService(conn, rules=[])
         service.refresh()
         native_step(conn, "late-edit", "10:03", "editor", session="changed", terminal=True)
+        conn.execute("UPDATE steps SET ended_at=started_at WHERE id='late-edit'")
         conn.execute("""INSERT INTO tool_calls(id,step_id,session_id,tool_name,raw_attrs_json,created_at,updated_at)
                         VALUES ('edit','late-edit','changed','Edit',?,?,?)""", (
             json.dumps({"gen_ai.client.file_path": "src/app.py"}), NOW, NOW,

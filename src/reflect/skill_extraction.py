@@ -130,6 +130,7 @@ def _validate_skill_draft_evidence(
     if {item["session_id"] for item in selected_examples} != set(cited_sessions):
         raise ValueError("Cited sessions must match the cited execution examples exactly")
     from reflect.execution_assessment import attrs_dict
+    from reflect.improvements.measurement_validity import EXECUTION_EVIDENCE_CURRENT_SQL
     from reflect.improvements.procedures import (
         SIGNAL_LIMIT,
         ProcedureEvidenceRepository,
@@ -139,7 +140,8 @@ def _validate_skill_draft_evidence(
 
     rows = conn.execute(
         f"""SELECT eu.id,eu.session_id,eu.repo_id,eu.workspace_id,eu.boundary_json,
-                   eu.eligible,eua.task_archetype_id,eua.mixed,eua.confidence
+                   eu.eligible,eua.task_archetype_id,eua.mixed,eua.confidence,
+                   ({EXECUTION_EVIDENCE_CURRENT_SQL}) AS evidence_current
             FROM execution_units eu
             LEFT JOIN execution_unit_archetypes eua ON eua.execution_unit_id=eu.id
             WHERE eu.id IN ({','.join('?' for _ in cited_executions)})""",
@@ -152,7 +154,7 @@ def _validate_skill_draft_evidence(
     ):
         raise ValueError("Cited executions are missing or outside the procedure scope")
     changed = any(
-        not row[5] or row[6] != procedure.get("task_archetype_id") or row[7] or float(row[8] or 0) < .65
+        not row[9] or not row[5] or row[6] != procedure.get("task_archetype_id") or row[7] or float(row[8] or 0) < .65
         or examples[str(row[0])].get("assessment_fingerprint") != assessment_fingerprint(
             attrs_dict(attrs_dict(row[4]).get("assessment")))
         for row in rows

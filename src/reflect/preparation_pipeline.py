@@ -34,6 +34,7 @@ def prepare_usage_db(
         apply_cursor_transcript_usage_estimates,
         repair_misattributed_cursor_transcript_usage,
     )
+    from reflect.store.git_activity import refresh_git_activity
     from reflect.store.ingest import (
         SegmentBatchIngestion,
         finalize_processed_segments,
@@ -204,6 +205,9 @@ def prepare_usage_db(
             refresh_rollups(conn, changed_session_ids)
         if cost_inputs is not None:
             cost_state.mark_current(cost_inputs)
+        # Normalization projects new calls. Context repairs after normalization
+        # can change their repository; finish that remaining scope before ack.
+        refresh_git_activity(conn, session_ids=None if 39 in applied else usage_inputs.pending_for("canonical"))
         for phase in ("canonical", "cost", "rollup"):
             pending_state.acknowledge(usage_inputs, phase)
         conn.commit()
@@ -309,6 +313,7 @@ def prepare_sql_report_db(
         apply_cursor_transcript_usage_estimates,
         repair_misattributed_cursor_transcript_usage,
     )
+    from reflect.store.git_activity import refresh_git_activity
     from reflect.store.graph_normalize import rebuild_graph, refresh_graph
     from reflect.store.ingest import (
         AppendOnlyReplayPolicy,
@@ -677,6 +682,9 @@ def prepare_sql_report_db(
                 pending_state.acknowledge(pending_inputs, "cost", session_ids=set(batch))
                 conn.commit()
         pending_state.acknowledge(pending_inputs, "cost")
+        operation_git_started = perf_counter()
+        refresh_git_activity(conn, session_ids=None if 39 in applied else pending_inputs.pending_for("canonical"))
+        timings["git_activity_seconds"] = perf_counter() - operation_git_started
         pending_state.acknowledge(pending_inputs, "canonical")
         conn.commit()
 
@@ -727,12 +735,6 @@ def prepare_sql_report_db(
                 (key, value, usage_completed_at),
             )
         conn.commit()
-        from reflect.store.git_activity import refresh_git_activity
-
-        operation_started = perf_counter()
-        refresh_git_activity(conn, session_ids=None if 39 in applied else changed_session_ids)
-        conn.commit()
-        timings["git_activity_seconds"] = perf_counter() - operation_started
         mark_snapshot(conn, ready=True, profile="usage")
         operation_started = perf_counter()
         publication = (

@@ -70,7 +70,7 @@ def _projection(column: str, keys: tuple[str, ...]) -> str:
 
 _TURN_KEYS = ("gen_ai.client.turn_id", "turn.id", "turn_id", "generation.id", "gen_ai.client.generation_id")
 _USAGE_KEYS = (
-    "reflect.time.provenance", "gen_ai.request.id", "reflect.usage.identity",
+    "reflect.time.provenance", "reflect.usage.time_provenance", "gen_ai.request.id", "reflect.usage.identity",
     "reflect.usage.input_semantics", "reflect.usage.grain", "reflect.token.source",
     "reflect.cost.source", "reflect.cost.breakdown", "reflect.model.provenance",
     "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens",
@@ -163,7 +163,10 @@ def build_measurements(
         if facts.identity in seen:
             continue
         seen.add(facts.identity)
-        if not _observed_time(attrs) or event_time(row["event_at"]) is None:
+        observed_at = event_time(row["event_at"]) if (
+            _observed_time(attrs) and attrs.get("reflect.usage.time_provenance") != "unknown_interval"
+        ) else None
+        if observed_at is None:
             coverage["undated_usage"] += 1
             if start or end:
                 continue
@@ -206,7 +209,7 @@ def build_measurements(
             info["known_cost_usd"] += amount
             info["estimated_cost_usd"] += amount
             costs["total_cost_usd"] += amount
-            dated = event_time(row["event_at"]) if _observed_time(attrs) else None
+            dated = observed_at
             if dated:
                 day = dated.date().isoformat()
                 daily_costs[day] += amount

@@ -128,7 +128,10 @@ class ImprovementService:
         )
         self._backfill_workflow_metadata()
         self.timings["contracts"] = perf_counter() - phase_started
-        with AnalysisScope(self.conn, analysis_session_ids) as analysis_scope:
+        with AnalysisScope(
+            self.conn, analysis_session_ids,
+            current_execution_ids=self.execution_units.changed_unit_ids,
+        ) as analysis_scope:
             return self._refresh_findings(
                 now, resolved, workflow_evidence, analysis_scope,
                 integrity_result, contract_inputs, contracts_changed, measure,

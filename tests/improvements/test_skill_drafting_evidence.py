@@ -357,3 +357,44 @@ def test_changed_installed_draft_preserves_active_artifact_and_version(evidence_
     assert Path(applied['target_path']).read_bytes() == original_bytes
     assert tuple(conn.execute("SELECT id,content_hash,content_markdown,workflow_json,status FROM skill_versions WHERE skill_id=? AND status='active'", (skill_id,)).fetchone()) == active_before
     assert conn.execute("SELECT COUNT(*) FROM skill_versions WHERE skill_id=? AND status='pending'", (skill_id,)).fetchone()[0] == 1
+
+
+@pytest.mark.parametrize('phase', ['canonical', 'cost', 'improvements'])
+def test_pending_reassessment_disqualifies_discovery_and_staging(evidence_service, phase):
+    from reflect.store.pending_refresh import PendingRefreshState
+
+    service, conn, bundle = evidence_service
+    attrs = json.loads(conn.execute("SELECT raw_attrs_json FROM tool_calls WHERE step_id='u0-2'").fetchone()[0])
+    attrs['process.exit.code'] = 1
+    conn.execute("UPDATE tool_calls SET raw_attrs_json=? WHERE step_id='u0-2'", (json.dumps(attrs),))
+    PendingRefreshState(conn).mark_steps('s0', {'u0-2'}, phases=(phase,))
+    current = ProcedureEvidenceRepository(conn).bundle()['procedures'][0]
+    assert not current['candidate_ready']
+    assert current['verification_counts'] == {'passed': 2, 'failed': 1, 'unknown': 2}
+    before = conn.total_changes
+    with pytest.raises(ValueError, match='changed while drafting'):
+        service.stage_extracted_skills([_draft()], session_ids=[f's{i}' for i in range(5)], evidence_bundle=bundle)
+    assert conn.total_changes == before
+
+
+def test_staging_rejects_saved_packet_while_reassessment_is_pending(evidence_service):
+    from reflect.store.pending_refresh import PendingRefreshState
+
+    service, conn, bundle = evidence_service
+    PendingRefreshState(conn).mark_steps('s0', {'u0-2'}, phases=('improvements',))
+    before = conn.total_changes
+    with pytest.raises(ValueError, match='changed while drafting'):
+        service.stage_extracted_skills([_draft()], session_ids=[f's{i}' for i in range(5)], evidence_bundle=bundle)
+    assert conn.total_changes == before
+
+
+@pytest.mark.parametrize('phase,expected_checked', [('canonical', 2), ('cost', 2), ('improvements', 3)])
+def test_internal_discovery_only_accepts_refreshed_ids_with_current_inputs(evidence_service, phase, expected_checked):
+    from reflect.store.pending_refresh import PendingRefreshState
+
+    _, conn, _ = evidence_service
+    PendingRefreshState(conn).mark_steps('s0', {'u0-2'}, phases=(phase,))
+    group = ProcedureEvidenceRepository(conn).bundle(current_execution_ids=frozenset({'u0'}))['procedures'][0]
+    assert group['verification_counts']['passed'] == expected_checked
+    unrelated = ProcedureEvidenceRepository(conn).bundle(current_execution_ids=frozenset({'u1'}))['procedures'][0]
+    assert unrelated['verification_counts']['passed'] == 2

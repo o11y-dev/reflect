@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 import shlex
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
 
-ASSESSMENT_VERSION = 1
+ASSESSMENT_VERSION = 2
 
 
 def attrs_dict(value: object) -> dict[str, Any]:
@@ -116,7 +117,7 @@ def edit_paths(tool: dict[str, Any]) -> set[str] | None:
 
 @dataclass(frozen=True, slots=True)
 class CheckObservation:
-    identity: str
+    identity: tuple[object, ...]
     step_id: str
     at: str
     started_at: str
@@ -129,6 +130,7 @@ class EditObservation:
     step_id: str
     at: str
     paths: frozenset[str]
+    started_at: str = ""
 
 
 def assess_execution(
@@ -138,8 +140,8 @@ def assess_execution(
     closed: bool,
     input_identity: list[object],
 ) -> dict[str, Any]:
-    checks: dict[str, CheckObservation] = {}
-    pending: dict[str, str] = {}
+    checks: dict[tuple[object, ...], CheckObservation] = {}
+    pending: dict[tuple[object, ...], str] = {}
     for tool in tools:
         command = check_command(command_from_tool(tool))
         if command is None:
@@ -148,31 +150,38 @@ def assess_execution(
         scope = attrs.get("reflect.check.scope")
         # A test command without an explicit narrower dependency scope covers
         # the workspace conservatively; file arguments are not a dependency map.
-        scope = tuple(str(p) for p in scope) if isinstance(scope, list) else (".",)
+        scope_known = scope is None or (isinstance(scope, list) and bool(scope)
+                                         and all(isinstance(p, str) and p for p in scope))
+        scope = tuple(sorted({posixpath.normpath(p) for p in scope})) if scope_known and scope else (".",)
+        payload = attrs_dict(attrs.get("gen_ai.client.tool.input")) or attrs_dict(tool.get("input_preview_redacted"))
+        cwd = payload.get("workdir", payload.get("cwd", attrs.get("gen_ai.client.cwd")))
+        cwd = posixpath.normpath(cwd) if isinstance(cwd, str) and cwd.startswith("/") else None
+        # Unknown working directories/scopes cannot establish rerun equivalence.
+        identity = (command, cwd, scope, None if cwd and scope_known else str(tool["step_id"]))
         observation = CheckObservation(
-            identity=command,
+            identity=identity,
             step_id=str(tool["step_id"]),
             at=str(tool.get("ended_at") or tool.get("started_at") or ""),
             started_at=str(tool.get("started_at") or tool.get("ended_at") or ""),
             exit_code=explicit_exit(tool),
             scope=scope,
         )
-        previous = checks.get(command)
+        previous = checks.get(identity)
         if previous is None or observation.at >= previous.at:
             if observation.exit_code is None:
-                pending[command] = observation.step_id
+                pending[identity] = observation.step_id
                 if previous is not None and previous.exit_code is not None:
                     continue
             else:
-                pending.pop(command, None)
-            checks[command] = observation
+                pending.pop(identity, None)
+            checks[identity] = observation
 
     invalidated: dict[str, list[str]] = {}
     for check in checks.values():
         if check.exit_code is None:
             continue
         for edit in edits:
-            if edit.at < check.started_at:
+            if edit.at and edit.at < check.started_at:
                 continue
             if not edit.paths or "." in check.scope or any(
                 path == scope or path.startswith(scope.rstrip("/") + "/")
@@ -187,6 +196,7 @@ def assess_execution(
         "failed" if failed else "invalidated" if invalidated else
         "unknown" if unknown or not checks else "passed"
     )
+    tool_step_ids = {str(tool["step_id"]) for tool in tools}
     payload = {
         "version": ASSESSMENT_VERSION,
         "boundary": "closed" if closed else "open_or_ambiguous",
@@ -203,9 +213,15 @@ def assess_execution(
         "check_count": len(checks),
         "terminal_check_count": sum(check.exit_code is not None for check in checks.values()),
         "pending_check_step_ids": sorted(pending.values()),
+        # Retain ownership of unknown edit intervals so deletion/movement can
+        # invalidate the same downstream consumers as its original arrival.
+        "unbounded_edit_step_ids": sorted(edit.step_id for edit in edits
+            if not edit.at and edit.step_id in tool_step_ids),
     }
+    relevant_edits = {step_id for values in invalidated.values() for step_id in values}
     payload["input_digest"] = hashlib.sha256(
-        json.dumps([input_identity, payload, [(edit.step_id, edit.at, sorted(edit.paths)) for edit in edits]],
+        json.dumps([input_identity, payload, [(edit.step_id, edit.started_at, edit.at, sorted(edit.paths))
+                                              for edit in edits if edit.step_id in relevant_edits]],
                    sort_keys=True, default=str).encode()
     ).hexdigest()
     return payload

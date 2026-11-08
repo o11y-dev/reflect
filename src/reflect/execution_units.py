@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from bisect import bisect_left, bisect_right
+from bisect import bisect_right
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -11,6 +11,14 @@ from typing import Any
 
 from reflect.execution_assessment import EditObservation, assess_execution, attrs_dict, edit_paths
 from reflect.telemetry_facts import event_time, observed_turn_terminal
+
+# A captured edit without an observed completion can affect later executions.
+# Keep the same interval in dirty-scope propagation and assessment collection.
+_EDIT_END_SQL = """CASE WHEN NULLIF(st.ended_at, '') IS NULL AND EXISTS (
+    SELECT 1 FROM tool_calls tc WHERE tc.step_id=st.id
+      AND (lower(tc.tool_name) LIKE '%edit%' OR lower(tc.tool_name) LIKE '%patch%'
+           OR lower(tc.tool_name) LIKE '%write%')
+) THEN char(1114111) ELSE COALESCE(NULLIF(st.ended_at, ''),st.started_at) END"""
 
 
 def _execution_id(prefix: str, *parts: object) -> str:
@@ -206,6 +214,38 @@ class ExecutionUnitRepository:
         ).fetchone()
 
 
+class _EditIntervalIndex:
+    """Prune completed history while retaining every overlapping/unknown edit."""
+
+    def __init__(self, edits: list[EditObservation]):
+        self.edits = sorted(edits, key=lambda item: item.started_at or item.at)
+        self.starts = [edit.started_at or edit.at for edit in self.edits]
+        self.size = 1 << (max(len(self.edits), 1) - 1).bit_length()
+        self.ends = [""] * (2 * self.size)
+        for index, edit in enumerate(self.edits):
+            # An absent completion has no observed upper bound.
+            self.ends[self.size + index] = edit.at or "\uffff"
+        for index in range(self.size - 1, 0, -1):
+            self.ends[index] = max(self.ends[2 * index], self.ends[2 * index + 1])
+
+    def overlapping(self, started_at: str, ended_at: str) -> list[EditObservation]:
+        limit = bisect_right(self.starts, ended_at)
+        result = []
+
+        def collect(node: int, left: int, right: int) -> None:
+            if left >= limit or self.ends[node] < started_at:
+                return
+            if right - left == 1:
+                result.append(self.edits[left])
+                return
+            middle = (left + right) // 2
+            collect(2 * node, left, middle)
+            collect(2 * node + 1, middle, right)
+
+        collect(1, 0, self.size)
+        return result
+
+
 class ExecutionUnitService:
     """Derive bounded executions beneath long-lived provider sessions."""
 
@@ -217,7 +257,7 @@ class ExecutionUnitService:
     ):
         self.conn = conn
         self.repository = repository or ExecutionUnitRepository(conn)
-        self._workspace_edits: dict[tuple[str, str], list[EditObservation]] = {}
+        self._workspace_edits: dict[tuple[str, str], _EditIntervalIndex] = {}
         self._workspace_edit_starts: dict[tuple[str, str], str] = {}
 
     def affected_session_ids(
@@ -249,18 +289,18 @@ class ExecutionUnitService:
                 continue
             placeholders = ",".join("?" for _ in step_ids)
             steps = self.conn.execute(
-                f"SELECT id,started_at,COALESCE(ended_at,started_at) FROM steps "
-                f"WHERE session_id=? AND id IN ({placeholders})",
+                f"SELECT st.id,st.started_at,{_EDIT_END_SQL} FROM steps st "
+                f"WHERE st.session_id=? AND st.id IN ({placeholders})",
                 (session_id, *sorted(step_ids)),
             ).fetchall()
             # Pending ownership survives a deleted/moved step; current ownership
             # also supports callers which did not enter through normalization.
             owners = self.conn.execute(
-                f"""SELECT eus.step_id,eu.session_id,eu.workspace_id,eu.repo_id,eu.started_at,eu.ended_at
+                f"""SELECT eus.step_id,eu.session_id,eu.workspace_id,eu.repo_id,eu.started_at,eu.ended_at,eu.boundary_json
                     FROM execution_unit_steps eus JOIN execution_units eu ON eu.id=eus.execution_unit_id
                     WHERE eus.step_id IN ({placeholders})
                     UNION
-                    SELECT changed.step_id,eu.session_id,eu.workspace_id,eu.repo_id,eu.started_at,eu.ended_at
+                    SELECT changed.step_id,eu.session_id,eu.workspace_id,eu.repo_id,eu.started_at,eu.ended_at,eu.boundary_json
                     FROM pending_step_changes changed
                     LEFT JOIN execution_units eu ON eu.id=changed.old_execution_unit_id
                     WHERE changed.phase='improvements' AND changed.session_id=?
@@ -273,7 +313,9 @@ class ExecutionUnitService:
                 continue
             full_sessions.remove(session_id)
             changed_intervals = [(session[1], session[2], row[1], row[2]) for row in steps]
-            changed_intervals.extend((row[2], row[3], row[4], row[5]) for row in owners)
+            changed_intervals.extend((row[2], row[3], row[4],
+                "\U0010ffff" if row[0] in attrs_dict(attrs_dict(row[6]).get("assessment")).get("unbounded_edit_step_ids", []) else row[5])
+                for row in owners)
             for workspace_id, repo_id, start, end in changed_intervals:
                 for kind, value in (("workspace_id", workspace_id), ("repo_id", repo_id)):
                     if value:
@@ -282,15 +324,17 @@ class ExecutionUnitService:
             self._prepare_scope(sorted(full_sessions))
             try:
                 current = self.conn.execute(
-                    """SELECT s.id,s.workspace_id,s.repo_id,
-                              MIN(st.started_at),MAX(COALESCE(st.ended_at,st.started_at))
+                    f"""SELECT s.id,s.workspace_id,s.repo_id,
+                              MIN(st.started_at),MAX({_EDIT_END_SQL})
                        FROM reflect_execution_session_scope scope
                        JOIN sessions s ON s.id=scope.session_id
                        LEFT JOIN steps st ON st.session_id=s.id GROUP BY s.id"""
                 ).fetchall()
                 previous = self.conn.execute(
                     """SELECT eu.session_id,eu.workspace_id,eu.repo_id,
-                              MIN(eu.started_at),MAX(COALESCE(eu.ended_at,eu.started_at))
+                              MIN(eu.started_at),MAX(CASE WHEN json_array_length(json_extract(
+                                  eu.boundary_json,'$.assessment.unbounded_edit_step_ids')) > 0
+                                THEN char(1114111) ELSE COALESCE(eu.ended_at,eu.started_at) END)
                        FROM reflect_execution_session_scope scope
                        JOIN execution_units eu ON eu.session_id=scope.session_id
                        GROUP BY eu.session_id,eu.workspace_id,eu.repo_id"""
@@ -440,12 +484,14 @@ class ExecutionUnitService:
         # A late edit can invalidate another native turn in this same session.
         # Retained ownership covers edits moved to a different time or group.
         intervals = self.conn.execute(
-            f"SELECT started_at,COALESCE(ended_at,started_at) FROM steps WHERE id IN ({placeholders})",
+            f"SELECT st.started_at,{_EDIT_END_SQL} FROM steps st WHERE st.id IN ({placeholders})",
             sorted(step_ids),
         ).fetchall()
         if old_units:
             intervals += self.conn.execute(
-                f"SELECT started_at,COALESCE(ended_at,started_at) FROM execution_units WHERE id IN ({','.join('?' for _ in old_units)})",
+                f"SELECT started_at,CASE WHEN json_array_length(json_extract(boundary_json,"
+                f"'$.assessment.unbounded_edit_step_ids')) > 0 THEN char(1114111) "
+                f"ELSE COALESCE(ended_at,started_at) END FROM execution_units WHERE id IN ({','.join('?' for _ in old_units)})",
                 [row[0] for row in old_units],
             ).fetchall()
         dependent = {str(row[0]): row for row in old_units}
@@ -779,21 +825,21 @@ class ExecutionUnitService:
                 # reading tool payloads or parsing hook JSON.
                 earliest = self._workspace_edit_starts.get(scope, boundary.started_at)
                 external = self.conn.execute(
-                    f"""SELECT tc.tool_name, tc.input_preview_redacted, tc.raw_attrs_json, st.started_at, st.id
+                    f"""SELECT tc.tool_name, tc.input_preview_redacted, tc.raw_attrs_json, st.started_at, st.id, st.ended_at
                        FROM sessions s CROSS JOIN steps st INDEXED BY idx_steps_measurement_times
                          ON st.session_id = s.id
                        CROSS JOIN tool_calls tc INDEXED BY idx_tool_calls_step
                          ON tc.step_id = st.id AND tc.session_id = s.id
                        WHERE s.{scope[0]} = ?
-                         AND st.started_at >= ?
+                         AND (COALESCE(NULLIF(st.ended_at, ''), st.started_at) >= ? OR NULLIF(st.ended_at, '') IS NULL)
                          AND (lower(tc.tool_name) LIKE '%edit%' OR lower(tc.tool_name) LIKE '%patch%'
                               OR lower(tc.tool_name) LIKE '%write%')""", (scope[1], earliest),
                 )
                 observed = []
-                for name, preview, attrs, at, step_id in external:
+                for name, preview, attrs, at, step_id, ended_at in external:
                     paths = edit_paths({"tool_name": name, "input_preview_redacted": preview, "raw_attrs_json": attrs})
                     if paths is not None:
-                        observed.append(EditObservation(str(step_id), str(at), frozenset(paths)))
+                        observed.append(EditObservation(str(step_id), str(ended_at or ""), frozenset(paths), str(at)))
                 file_events = self.conn.execute(
                     f"""SELECT st.raw_attrs_json, COALESCE(st.ended_at, st.started_at), st.id
                        FROM sessions s CROSS JOIN steps st INDEXED BY idx_steps_measurement_times
@@ -806,13 +852,12 @@ class ExecutionUnitService:
                 for raw, at, step_id in file_events:
                     path = attrs_dict(raw).get("gen_ai.client.file_path")
                     observed.append(EditObservation(str(step_id), str(at), frozenset({str(path)} if path else set())))
-                self._workspace_edits[scope] = sorted(observed, key=lambda item: item.at)
-            observed = self._workspace_edits[scope]
-            start = bisect_left(observed, boundary.started_at, key=lambda item: item.at)
-            end = bisect_right(observed, boundary.ended_at or boundary.started_at, key=lambda item: item.at)
-            edits = observed[start:end]
+                self._workspace_edits[scope] = _EditIntervalIndex(observed)
+            edits = self._workspace_edits[scope].overlapping(
+                boundary.started_at, boundary.ended_at or boundary.started_at,
+            )
         else:
-            edits = [EditObservation(str(tool['step_id']), str(tool["started_at"]), frozenset(paths)) for tool in tools
+            edits = [EditObservation(str(tool['step_id']), str(tool.get("ended_at") or ""), frozenset(paths), str(tool["started_at"])) for tool in tools
                      if (paths := edit_paths(tool)) is not None]
         assessment = assess_execution(tools=tools, edits=edits, closed=boundary.status == "completed",
                                       input_identity=[boundary.id, boundary.started_at, boundary.ended_at, session[1], session[2],

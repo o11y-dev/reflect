@@ -17,6 +17,10 @@ from typing import TYPE_CHECKING
 
 from reflect.execution_assessment import attrs_dict, check_command, command_from_tool
 from reflect.improvements.analysis_scope import AnalysisScope
+from reflect.improvements.measurement_validity import (
+    EXECUTION_EVIDENCE_CURRENT_SQL,
+    EXECUTION_INPUTS_CURRENT_SQL,
+)
 from reflect.improvements.workflow_roles import (
     WorkflowEvidenceRepository,
     WorkflowSignal,
@@ -170,7 +174,8 @@ class ProcedureEvidenceRepository:
         return result
 
     def bundle(self, *, session_ids: set[str] | None = None,
-               execution_table: str = 'execution_units', limit: int = 300) -> dict:
+               execution_table: str = 'execution_units', limit: int = 300,
+               current_execution_ids: set[str] | frozenset[str] = frozenset()) -> dict:
         allowed = {'execution_units', AnalysisScope(session_ids=set()).execution_units}
         if execution_table not in allowed:
             raise ValueError('Unsupported procedure execution scope')
@@ -189,7 +194,8 @@ class ProcedureEvidenceRepository:
         rows = self.conn.execute(f"""
             SELECT eu.id,eu.session_id,eu.repo_id,eu.workspace_id,eu.eligible,eu.status,
                    eu.boundary_json,eua.task_archetype_id,eua.mixed,eua.confidence,
-                   COALESCE(w.root_path,'')
+                   COALESCE(w.root_path,''), ({EXECUTION_EVIDENCE_CURRENT_SQL}) AS evidence_current,
+                   ({EXECUTION_INPUTS_CURRENT_SQL}) AS inputs_current
             FROM {execution_table} eu
             LEFT JOIN execution_unit_archetypes eua ON eua.execution_unit_id=eu.id
             LEFT JOIN workspaces w ON w.id=eu.workspace_id
@@ -225,7 +231,11 @@ class ProcedureEvidenceRepository:
                 'match_explanation': 'Same task scope, ordered operations, artifact areas, and recorded check scope.',
             })
             verification = str(assessment.get('verification') or 'unknown')
-            if assessment.get('boundary') != 'closed' or assessment.get('pending_check_step_ids'):
+            # Internal discovery can use units rebuilt in this refresh before
+            # its improvements revision is acknowledged. Captured inputs must
+            # already be current; external discovery has no such override.
+            current = row[11] or (unit_id in current_execution_ids and row[12])
+            if not current or assessment.get('boundary') != 'closed' or assessment.get('pending_check_step_ids'):
                 verification = 'unknown'
             checks = [check for check in assessment.get('checks', []) if isinstance(check, dict)]
             # Malformed or incomplete assessments cannot create positive support.

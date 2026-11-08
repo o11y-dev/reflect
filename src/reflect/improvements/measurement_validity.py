@@ -9,11 +9,17 @@ from reflect.telemetry_facts import event_time
 
 # Shared by selection, frozen-ledger validation and guidance comparison. Deferred
 # analytics are pending evidence too; a graph-only backlog does not affect this.
-EXECUTION_EVIDENCE_CURRENT_SQL = """
+EXECUTION_INPUTS_CURRENT_SQL = """
     NOT EXISTS (
       SELECT 1 FROM pending_refresh pending
       WHERE pending.session_id = eu.session_id
-        AND pending.phase IN ('canonical', 'cost', 'improvements')
+        AND pending.phase IN ('canonical', 'cost')
+    )
+"""
+EXECUTION_EVIDENCE_CURRENT_SQL = f"""
+    ({EXECUTION_INPUTS_CURRENT_SQL}) AND NOT EXISTS (
+      SELECT 1 FROM pending_refresh pending
+      WHERE pending.session_id = eu.session_id AND pending.phase = 'improvements'
     )
 """
 

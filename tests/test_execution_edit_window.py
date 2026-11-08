@@ -33,6 +33,7 @@ def _edit(conn, name, seq, at, *, hook=False, end=None):
         attrs["gen_ai.client.hook.event"] = "afterfileedit"
         conn.execute("UPDATE steps SET raw_attrs_json=?, ended_at=? WHERE id=?", (json.dumps(attrs), end, name))
     else:
+        conn.execute("UPDATE steps SET ended_at=? WHERE id=?", (end or at, name))
         conn.execute(
             """INSERT INTO tool_calls(id,step_id,session_id,tool_name,raw_attrs_json,created_at,updated_at)
                VALUES (?,?,'external','Edit',?,?,?)""", (name, name, json.dumps(attrs), NOW, NOW),
@@ -115,3 +116,80 @@ def test_non_date_timestamps_keep_existing_chronology_and_unknown_checks(tmp_pat
         assert json.loads(original)["assessment"]["verification"] == "unknown"
         service.refresh(session_ids={"session"})
         assert conn.execute("SELECT boundary_json FROM execution_units WHERE eligible=1").fetchone()[0] == original
+
+
+@pytest.mark.parametrize('edit_end', ['10:03', '10:05', None, ''])
+@pytest.mark.parametrize('workspace', [True, False])
+def test_edit_interval_overlapping_check_cannot_verify(tmp_path, edit_end, workspace):
+    with closing(connect_sqlite(tmp_path / 'overlap.db')) as conn:
+        migrate(conn)
+        _base(conn)
+        if not workspace:
+            conn.execute('UPDATE sessions SET workspace_id=NULL, repo_id=NULL')
+        def timestamp(at):
+            return f'2026-08-02T{at}:00+00:00' if at else at
+
+        for seq, (name, start, end) in enumerate([
+            ('edit', '10:00', edit_end), ('check', '10:01', '10:02'), ('stop', '10:04', '10:04'),
+        ]):
+            _step(conn, name, seq, timestamp(start), name)
+            conn.execute('UPDATE steps SET ended_at=?,raw_attrs_json=? WHERE id=?',
+                (timestamp(end), json.dumps({'gen_ai.client.turn_id': 'turn', 'reflect.turn.terminal': name == 'stop'}), name))
+        for name, tool_name, attrs in [
+            ('edit', 'Edit', {'gen_ai.client.file_path': 'src/app.py'}),
+            ('check', 'exec_command', {'gen_ai.client.command': 'pytest', 'process.exit.code': 0}),
+        ]:
+            conn.execute('INSERT INTO tool_calls(id,step_id,session_id,tool_name,raw_attrs_json,created_at,updated_at) VALUES (?,?,\'session\',?,?,?,?)',
+                (name, name, tool_name, json.dumps(attrs), NOW, NOW))
+        ExecutionUnitService(conn).refresh()
+        verification, raw = conn.execute('SELECT verification_passed,boundary_json FROM execution_units WHERE eligible=1').fetchone()
+        assert verification is None
+        assert json.loads(raw)['assessment']['verification'] == 'invalidated'
+
+
+def test_interval_index_selects_completed_overlap_and_unbounded_edits():
+    from reflect.execution_assessment import EditObservation
+    from reflect.execution_units import _EditIntervalIndex
+
+    observations = [
+        EditObservation('old', '09:30', frozenset(), '09:00'),
+        EditObservation('overlap', '10:03', frozenset(), '09:00'),
+        EditObservation('unknown', '', frozenset(), '09:15'),
+        EditObservation('future', '11:01', frozenset(), '11:00'),
+    ]
+    index = _EditIntervalIndex(observations)
+    assert {edit.step_id for edit in index.overlapping('10:00', '10:05')} == {'overlap', 'unknown'}
+    assert {edit.step_id for edit in index.overlapping('12:00', '12:01')} == {'unknown'}
+
+
+@pytest.mark.parametrize('precise', [True, False])
+def test_unknown_edit_propagation_matches_full_refresh_and_recovers_on_retraction(tmp_path, precise):
+    from reflect.store.pending_refresh import PendingRefreshState
+
+    with closing(connect_sqlite(tmp_path / 'late-unknown.db')) as conn:
+        migrate(conn)
+        _base(conn)
+        _additional_session(conn, 'external')
+        _check(conn, 'session', 'consumer', '2026-08-02T10:01:00+00:00', '2026-08-02T10:05:00+00:00')
+        service = ExecutionUnitService(conn)
+        service.refresh(session_ids={'session'})
+        _edit(conn, 'late-unknown', 1, '2026-08-02T09:00:00+00:00')
+        conn.execute("UPDATE steps SET ended_at=NULL WHERE id='late-unknown'")
+        scope = {'external': {'late-unknown'}} if precise else None
+        affected = service.affected_session_ids({'external'}, step_scope=scope)
+        assert affected == {'external', 'session'}
+        service.refresh(session_ids=affected, step_scope=scope)
+        query = "SELECT id,verification_passed,boundary_json FROM execution_units ORDER BY id"
+        incremental = conn.execute(query).fetchall()
+        service.refresh()
+        assert conn.execute(query).fetchall() == incremental
+        assert conn.execute("SELECT verification_passed FROM execution_units WHERE session_id='session'").fetchone()[0] is None
+        PendingRefreshState(conn).mark_steps('external', {'late-unknown'}, phases=('improvements',))
+        conn.execute("DELETE FROM steps WHERE id='late-unknown'")
+        affected = service.affected_session_ids({'external'}, step_scope=scope)
+        assert affected == {'external', 'session'}
+        service.refresh(session_ids=affected, step_scope=scope)
+        incremental = conn.execute(query).fetchall()
+        service.refresh()
+        assert conn.execute(query).fetchall() == incremental
+        assert conn.execute("SELECT verification_passed FROM execution_units WHERE session_id='session'").fetchone()[0] == 1

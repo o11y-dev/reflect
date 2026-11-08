@@ -22,11 +22,16 @@ def try_append_graph(
         return {"nodes": 0, "edges": 0, "refreshed_sessions": 0, "source_scoped_sessions": 0}
     placeholders = ",".join("?" for _ in step_ids)
     selected_steps = sorted(step_ids)
-    steps = conn.execute(f"SELECT id,session_id,seq,raw_attrs_json,summary FROM main.steps WHERE id IN ({placeholders})", selected_steps).fetchall()
+    steps = conn.execute(f"SELECT id,session_id,seq,raw_attrs_json,summary,type FROM main.steps WHERE id IN ({placeholders})", selected_steps).fetchall()
     if len(steps) != len(step_ids) or any(str(row[1]) not in session_ids for row in steps):
         return None
     # Late events may revise prior delegation/context or first-writer metadata.
     if any("subagent" in f"{row[3]} {row[4]}".lower() for row in steps):
+        return None
+    # Context changes can update an existing artifact or exposure owned by
+    # another session. The full session repair closes those dependencies;
+    # source-only derivation deliberately does not project memory artifacts.
+    if any(row[5] == "memory_event" for row in steps):
         return None
     if conn.execute(f"SELECT 1 FROM main.agent_events WHERE step_id IN ({placeholders}) LIMIT 1", selected_steps).fetchone():
         return None

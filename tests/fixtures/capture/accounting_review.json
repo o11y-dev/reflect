@@ -1,0 +1,28 @@
+{
+  "agent_stop": {
+    "name": "SubagentStop",
+    "start_time_ns": 1794218400000000000,
+    "end_time_ns": 1794218400000000000,
+    "traceId": "redacted-trace",
+    "spanId": "redacted-agent-stop",
+    "attributes": {
+      "gen_ai.client.name": "claude",
+      "gen_ai.client.session_id": "redacted-session",
+      "gen_ai.client.hook.event": "SubagentStop",
+      "gen_ai.client.agent_id": "redacted-child",
+      "gen_ai.request.model": "recorded-model",
+      "gen_ai.usage.input_tokens": 100,
+      "gen_ai.usage.output_tokens": 50
+    }
+  },
+  "running_envelopes": [
+    "Chunk ID: redacted\nWall time: 1.0 seconds\nProcess running with session ID 123\nFinal output:\n",
+    "Script running with cell ID 123",
+    [{"type": "text", "text": "Script running with cell ID 123"}],
+    {"output": "", "session_id": 123}
+  ],
+  "terminal_envelopes": [
+    "Chunk ID: redacted\nWall time: 1.0 seconds\nProcess exited with code 0\nFinal output:\nScript running with cell ID 123",
+    {"output": "Process running with session ID 123", "exit_code": 0}
+  ]
+}

@@ -507,6 +507,7 @@ def test_incremental_late_edit_reassesses_closed_peer_and_retraction_recovers(tm
         assert conn.execute(query).fetchone()[0] == 1
         conn.execute("UPDATE execution_units SET updated_at='untouched' WHERE session_id='later'")
         _step(conn, "late-edit", 2, "2026-08-02T10:03:00+00:00", "Edit", session_id="changed")
+        conn.execute("UPDATE steps SET ended_at=started_at WHERE id='late-edit'")
         conn.execute("""INSERT INTO tool_calls(id,step_id,session_id,tool_name,raw_attrs_json,created_at,updated_at)
                         VALUES ('late-edit','late-edit','changed','Edit',?,?,?)""",
                      (json.dumps({"gen_ai.client.file_path": "src/app.py"}), NOW, NOW))

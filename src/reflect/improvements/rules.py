@@ -1047,7 +1047,10 @@ class HighPerformingWorkflowRule(BaseImprovementRule):
         from reflect.improvements.procedures import ProcedureEvidenceRepository, procedure_contract
 
         scope = scope or AnalysisScope()
-        bundle = ProcedureEvidenceRepository(conn).bundle(execution_table=scope.execution_units)
+        bundle = ProcedureEvidenceRepository(conn).bundle(
+            execution_table=scope.execution_units,
+            current_execution_ids=scope.current_execution_ids,
+        )
         findings = []
         for procedure in bundle["procedures"]:
             if not procedure["candidate_ready"]:

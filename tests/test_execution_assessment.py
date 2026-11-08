@@ -13,7 +13,7 @@ from reflect.improvements.workflow_roles import WorkflowSignal, workflow_role
 
 
 def tool(step, command, at, code=None, scope=None):
-    attrs = {"gen_ai.client.command": command}
+    attrs = {"gen_ai.client.command": command, "gen_ai.client.cwd": "/repo"}
     if code is not None:
         attrs["process.exit.code"] = code
     if scope is not None:
@@ -117,3 +117,37 @@ def test_edits_during_a_check_invalidate_its_scope(exit_code):
     result = assess_execution(tools=[check], edits=[EditObservation("edit", "10:02", frozenset({"src/app.py"}))],
         closed=True, input_identity=["unit"])
     assert result["verification"] == "invalidated"
+
+
+@pytest.mark.parametrize('second_attrs', [
+    {'gen_ai.client.cwd': '/repo/ui'},
+    {'reflect.check.scope': ['ui']},
+    {'gen_ai.client.tool.input': {'cmd': 'pytest', 'workdir': '/repo/ui'}},
+    {'gen_ai.client.cwd': ''},
+    {'reflect.check.scope': []},
+])
+def test_reruns_preserve_failures_from_different_or_unknown_check_identity(second_attrs):
+    first = tool('failed-api', 'pytest', '10:01', 1, ['api'])
+    second = tool('passed-ui', 'pytest', '10:02', 0, ['api'])
+    for item in (first, second):
+        attrs = json.loads(item['raw_attrs_json'])
+        attrs['gen_ai.client.cwd'] = '/repo/api'
+        item['raw_attrs_json'] = json.dumps(attrs)
+    attrs = json.loads(second['raw_attrs_json'])
+    attrs.update(second_attrs)
+    second['raw_attrs_json'] = json.dumps(attrs)
+    result = assess_execution(tools=[first, second], edits=[], closed=True, input_identity=['unit'])
+    assert result['verification'] == 'failed'
+    assert result['check_count'] == 2
+
+
+def test_normalized_cwd_and_scope_allow_matching_recovery():
+    first = tool('fail', 'pytest', '10:01', 1, ['src/./api', 'tests'])
+    second = tool('pass', 'pytest', '10:02', 0, ['tests', 'src/api'])
+    for item, cwd in ((first, '/repo/./api'), (second, '/repo/api')):
+        attrs = json.loads(item['raw_attrs_json'])
+        attrs['gen_ai.client.cwd'] = cwd
+        item['raw_attrs_json'] = json.dumps(attrs)
+    result = assess_execution(tools=[first, second], edits=[], closed=True, input_identity=['unit'])
+    assert result['verification'] == 'passed'
+    assert result['check_count'] == 1
