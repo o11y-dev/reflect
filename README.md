@@ -145,6 +145,29 @@ a registered skill is installed or effective. Use `reflect skills` or
 
 ## What Reflect Can Prove
 
+Skills includes a **Where used** view: follow a captured skill read or agent
+report into its session, attributed execution and verification evidence. The
+graph and evidence table share the same filters and bounded pagination. Unknown
+versions and ambiguous ownership stay visible instead of being guessed.
+
+Workflows and Impact retain recorded evidence while background analysis runs.
+Verification is scoped to the recorded execution and check time; a later
+relevant edit can invalidate it. A completion report remains a report, and a
+skill occurrence alone does not establish effectiveness.
+
+Workflow discovery and skill drafting share a bounded procedure evidence model.
+It matches ordered operations and artifact areas while keeping exact test
+selectors and verification scopes distinct. Automatic candidates need current
+passing-check evidence across three independent sessions. Failed checks,
+invalidated verification and unknown task outcomes remain in the evidence.
+Both detail views explain the match and link its examples. Extracted drafts cite
+their own sources; weak evidence can produce no candidate.
+
+Same-named skills from independent installation paths have separate identities.
+Generated skills retain their workflow identity, and captured versions are never
+replaced with today's version when explaining historical use. Unresolved legacy
+provenance stays separate until evidence establishes an owner.
+
 Reflect derives these views from canonical local evidence:
 
 - session conversations, outcomes, duration, agents, and source provenance
@@ -245,17 +268,30 @@ managed services:
 REFLECT_OTLP_MAX_BYTES=4294967296           # combined raw traces + logs
 REFLECT_OTLP_SEGMENT_BYTES=268435456        # one active segment
 REFLECT_REFRESH_INTERVAL_SECONDS=300        # refresh-enabled report server
+REFLECT_ANALYSIS_WINDOW_DAYS=7              # automatic analysis; history is retained
 REFLECT_SQLITE_BUSY_TIMEOUT_MS=30000         # writer wait; 0 means no wait
 ```
 
 Refresh and maintenance commands coordinate across processes. Imports commit in
 batches, and a failed refresh remains incomplete until `reflect refresh` repairs
 it. The dashboard can retain its last completed cached view; requests needing an
-incomplete snapshot return a retryable response. MCP context caps each SQLite
+incomplete snapshot return a retryable response. `reflect_improvements`,
+`reflect_impact`, and `reflect impact` can inspect retained evidence during refresh
+with explicit pending coverage. MCP context caps each SQLite
 writer wait at one second, then returns available memory/guidance with an explicit
 tracking limitation. Guidance queries share one read transaction, and no-change
 usage refreshes preserve completed reports. Increasing the SQLite timeout permits longer waits; it does
 not increase the number of simultaneous writers.
+
+Automatic refresh analyses changed recent activity in a seven-day window.
+Canonical usage still accounts for all incoming telemetry, including delayed old
+events. Late corrections to historical work remain eligible for analysis. Core
+usage publishes before graph and workflow analysis; those panels show their
+separate readiness. Pending work is durable, so a restart resumes unfinished
+phases. Historical findings are retained when they leave the automatic window.
+Use the dashboard's **All time** range for retained usage, and explicitly refresh
+historical analysis with `reflect refresh --session SESSION_ID` or
+`reflect refresh --all-history`.
 
 `tool_calls` stores one logical invocation. `mcp_calls` is a one-to-one metadata
 extension for MCP server, tool, transport, and protocol identity, not a second
@@ -270,6 +306,8 @@ module ownership, data flow, and architectural guardrails.
 reflect usage                         # current runtime usage
 reflect usage --global --period week # all matching local usage for seven days
 reflect refresh --json               # explicit ingest and snapshot refresh
+reflect refresh --analysis-days 7    # bounded analysis, retaining all history
+reflect refresh --session SESSION_ID # explicitly refresh historical analysis
 reflect improve                      # scoped findings
 reflect loops                        # observed stalled or productive loops
 reflect workflows list               # reviewable and historical workflow state
