@@ -61,12 +61,12 @@ def test_tool_evidence_upgrade_repairs_retained_history_without_usage_replay(tmp
         raw_before = conn.execute("SELECT * FROM raw_events ORDER BY id").fetchall()
         usage_before = conn.execute("SELECT * FROM llm_calls").fetchall()
         attrs_before = conn.execute("SELECT id,raw_attrs_json FROM steps ORDER BY id").fetchall()
-        assert migrate(conn) == [50]
+        assert migrate(conn) == [50, 51]
         assert dict(conn.execute("SELECT id,tool_name FROM tool_calls")) == {
             "alias": "Read", "broker": "exec_command", "shell": "Shell",
             "spawn": "collaboration.spawn_agent", "task": "Task", "missing": "PreToolUse", "known": "Bash",
         }
-        assert conn.execute("SELECT type FROM steps WHERE id='timing'").fetchone()[0] == "unknown"
+        assert conn.execute("SELECT type FROM steps WHERE id='timing'").fetchone()[0] == "runtime_span"
         assert conn.execute("SELECT * FROM raw_events ORDER BY id").fetchall() == raw_before
         assert conn.execute("SELECT * FROM llm_calls").fetchall() == usage_before
         assert conn.execute("SELECT id,raw_attrs_json FROM steps ORDER BY id").fetchall() == attrs_before

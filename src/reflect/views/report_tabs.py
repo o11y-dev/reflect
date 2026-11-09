@@ -37,6 +37,7 @@ class CostsViewModel(ReflectModel):
 
 
 class ToolsViewModel(ReflectModel):
+    events_by_type: dict[str, int]
     tools_by_count: dict[str, int]
     tool_percentiles: list[dict[str, Any]]
     skills_by_count: dict[str, int]
@@ -290,6 +291,14 @@ def _percentile(values: list[float], pct: float) -> float:
     return float(ordered[index])
 
 
+def _event_type_counts(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> dict[str, int]:
+    scope, params = _scope_clause("session_id", scoped_ids)
+    return dict(conn.execute(
+        f"SELECT type, COUNT(*) FROM steps {scope} GROUP BY type ORDER BY COUNT(*) DESC, type ASC",
+        params,
+    ))
+
+
 def _build_activity(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> ActivityViewModel:
     rollup_scope, rollup_params = _scope_clause("session_id", scoped_ids, prefix="AND")
     steps_scope, steps_params = _scope_clause("session_id", scoped_ids)
@@ -316,21 +325,11 @@ def _build_activity(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> A
         """,
         steps_params,
     ))
-    event_rows = _dict_rows(conn.execute(
-        f"""
-        SELECT type, COUNT(*) AS event_count
-        FROM steps
-        {steps_scope}
-        GROUP BY type
-        ORDER BY event_count DESC, type ASC
-        """,
-        steps_params,
-    ))
     by_hour = {str(hour): 0 for hour in range(24)}
     by_hour.update({str(row["hour"]): int(row["event_count"] or 0) for row in hour_rows if row.get("hour") is not None})
     peak_hour = max(range(24), key=lambda hour: by_hour.get(str(hour), 0)) if hour_rows else -1
     return ActivityViewModel(
-        events_by_type=_counter(event_rows, "type", "event_count"),
+        events_by_type=_event_type_counts(conn, scoped_ids),
         activity_by_day=_counter(daily_rows, "day", "event_count"),
         activity_by_hour=by_hour,
         peak_hour=peak_hour,
@@ -400,6 +399,7 @@ def _build_tools(
     signature = top_commands[0] if top_commands else {"command": "", "count": 0}
     file_counts = skill_subagent["file_counts"]
     return ToolsViewModel(
+        events_by_type=_event_type_counts(conn, scoped_ids),
         tools_by_count=tools_by_count,
         tool_percentiles=percentiles,
         skills_by_count=dict(skill_subagent["skills"].most_common()),

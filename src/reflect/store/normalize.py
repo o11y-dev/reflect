@@ -24,6 +24,8 @@ from reflect.tool_outcomes import with_tool_outcome
 from reflect.usage_facts import usage_facts
 from reflect.utils import _json_dumps
 
+NON_OPERATION_SPAN_TYPES = frozenset({"runtime_span", "session_span", "generation_span"})
+
 
 def _now() -> str:
     return datetime.now(tz=UTC).isoformat()
@@ -266,6 +268,22 @@ def _step_type(event_type: str, attrs: dict[str, Any]) -> str:
         return "llm_call"
     if "error" in event or "fail" in event:
         return "error"
+    # Container and runtime instrumentation is retained evidence, but does not
+    # establish an invocation, a model exchange, or a task boundary. Explicit
+    # operation semantics above always take precedence over this fallback.
+    full_event = str(attrs.get("gen_ai.client.hook.event") or attrs.get("ide.hook.event")
+                     or attrs.get("event.name") or event_type).lower()
+    if (_first_text(attrs, "gen_ai.client.session_id") or "").strip():
+        if full_event == "gen_ai.client.session":
+            return "session_span"
+        if full_event == "gen_ai.client.generation" and (_first_text(attrs, "gen_ai.client.generation_id") or "").strip():
+            return "generation_span"
+    if (
+        (_first_text(attrs, "code.module.name") or "").strip()
+        and all(type(attrs.get(key)) in (int, float) and 0 <= attrs[key] < float("inf")
+                for key in ("busy_ns", "idle_ns"))
+    ):
+        return "runtime_span"
     return "unknown"
 
 

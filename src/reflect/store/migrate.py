@@ -164,6 +164,32 @@ def _repair_tool_evidence(conn: sqlite3.Connection) -> dict[str, int]:
             "delegation_facts": promoted, "command_projections": commands}
 
 
+def _classify_retained_event_spans(conn: sqlite3.Connection) -> int:
+    """Migration 51 changes only proven non-operation categories, in bounded batches.
+
+    Historical rows that now suggest a tool/model call remain unclassified:
+    changing their type alone would invent a projection that was never stored.
+    Raw evidence, operation tables, accounting and execution work are untouched.
+    """
+    from reflect.store.normalize import NON_OPERATION_SPAN_TYPES, _load_json, _step_type
+
+    timestamp = datetime.now(UTC).isoformat()
+    last_rowid = changed = 0
+    while rows := conn.execute(
+        "SELECT rowid,id,summary,raw_attrs_json FROM steps "
+        "WHERE rowid>? AND type='unknown' ORDER BY rowid LIMIT 256", (last_rowid,),
+    ).fetchall():
+        last_rowid = rows[-1][0]
+        updates = []
+        for _, step_id, event, raw_attrs in rows:
+            category = _step_type(event or "", _load_json(raw_attrs))
+            if category in NON_OPERATION_SPAN_TYPES:
+                updates.append((category, timestamp, step_id))
+        conn.executemany("UPDATE steps SET type=?,updated_at=? WHERE id=?", updates)
+        changed += len(updates)
+    return changed
+
+
 def migrate(conn: sqlite3.Connection, *, commit: bool = True) -> list[int]:
     """Apply pending migrations, optionally inside a caller-owned transaction."""
     from reflect.improvements.workflow_identity import workflow_identity_from_json
@@ -251,6 +277,8 @@ def migrate(conn: sqlite3.Connection, *, commit: bool = True) -> list[int]:
                 conn.execute(statement)
             if migration.version == 50:
                 _repair_tool_evidence(conn)
+            if migration.version == 51:
+                _classify_retained_event_spans(conn)
             conn.execute(
                 "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
                 (migration.version, migration.name, datetime.now(UTC).isoformat()),

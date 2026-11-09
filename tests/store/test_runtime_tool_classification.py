@@ -30,7 +30,8 @@ def test_recorded_invocation_semantics_survive_without_provider_specific_span_na
 def test_runtime_timing_remains_retained_without_inflating_canonical_tool_counts(tmp_path):
     path = tmp_path / "runtime.jsonl"
     events = [
-        ("codex.tool_blocking", {"turn.id": "turn-1", "busy_ns": 2000, "idle_ns": 3000}),
+        ("codex.tool_blocking", {"turn.id": "turn-1", "busy_ns": 2000, "idle_ns": 3000,
+                                 "code.module.name": "codex_core::session::turn"}),
         ("code_mode.broker.invoke_tool", {"tool_name": "exec_command", "cell.id": "1",
                                           "runtime_tool_call_id": "tool-1"}),
         # Runtime IDs are cell-local and can repeat after a process restart.
@@ -51,7 +52,7 @@ def test_runtime_timing_remains_retained_without_inflating_canonical_tool_counts
         assert normalize_pending_raw_events(conn)["failed"] == 0
         assert conn.execute("SELECT COUNT(*) FROM raw_events").fetchone()[0] == 4
         assert conn.execute("SELECT COUNT(*) FROM steps").fetchone()[0] == 4
-        assert conn.execute("SELECT type FROM steps WHERE summary='codex.tool_blocking'").fetchone()[0] == "unknown"
+        assert conn.execute("SELECT type FROM steps WHERE summary='codex.tool_blocking'").fetchone()[0] == "runtime_span"
         assert sorted(tuple(row) for row in conn.execute(
             "SELECT tool_name,COUNT(*) FROM tool_calls GROUP BY tool_name"
         )) == [("Read", 1), ("exec_command", 2)]

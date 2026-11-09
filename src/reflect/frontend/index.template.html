@@ -154,6 +154,17 @@
       </button>
     </div>
 
+    <section id="explore-scope" class="explore-scope" aria-label="Explore session scope" hidden>
+      <div class="explore-scope-copy" aria-live="polite" aria-atomic="true">
+        <strong id="explore-scope-label">All matching sessions</strong>
+        <p id="explore-scope-detail"></p>
+      </div>
+      <div class="explore-scope-actions">
+        <button id="explore-session-change" class="ledger-button" type="button">Choose session</button>
+        <button id="explore-session-clear" class="ledger-button" type="button" hidden>All matching sessions</button>
+      </div>
+    </section>
+
 <!-- ════════════════════ SESSIONS BROWSER ════════════════════ -->
 <div class="tab-panel active" id="tab-sessions" role="tabpanel" aria-labelledby="tab-button-sessions">
   <div class="session-browser">
@@ -386,7 +397,8 @@
   </div>
 
   <div class="panel">
-    <div class="panel-title">Event Distribution</div>
+    <div class="panel-title">Recorded event categories</div>
+    <p class="usage-copy">Full lifetime of the matching sessions. Includes tool calls, runtime timing, and session records. Unclassified events are retained records, not unnamed tools.</p>
     <div class="chart-box" id="event-bar-box" style="height:280px"><canvas id="eventBarChart"></canvas></div>
   </div>
 

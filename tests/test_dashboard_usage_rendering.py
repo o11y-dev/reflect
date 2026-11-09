@@ -138,9 +138,10 @@ for (const [label,n] of [['first',11],['second',22]]) {
     assert.ok(element(id).innerHTML.includes(label), `${id} did not refresh`);
     if (label==='second') assert.ok(!element(id).innerHTML.includes('first'), `${id} retained old scope`);
   }
-  assert.equal(charts.size,5);
+  assert.equal(charts.size,4);
   assert.equal(charts.get('modelChart').config.data.labels[0],label);
-  assert.equal(charts.get('eventBarChart').config.data.labels[0],label);
+  assert.equal(charts.get('eventChart').config.data.labels[0],label);
+  assert.equal(charts.has('eventBarChart'),false,'Usage must not create the independently scoped Tools chart');
   assert.equal(charts.get('tokenChart').config.data.datasets[0].data[0],n);
   assert.equal(charts.get('agentCostChart').config.data.datasets[0].label,label);
   assert.ok(element('hour-bars').children[2].title.includes(`${n} events`));
@@ -152,7 +153,7 @@ assert.ok(element('cost-stats').innerHTML.includes('EUR'));
 context.D=empty();
 context.renderUsageView();
 assert.equal(charts.size,0);
-assert.equal(destroyed,10);
+assert.equal(destroyed,8);
 assert.equal(element('stat-input-tok').textContent,'0');
 assert.ok(element('hour-bars').innerHTML.includes('No hourly activity'));
 assert.ok(element('modelChart').hidden);

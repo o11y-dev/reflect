@@ -1310,6 +1310,7 @@ async function loadExploreView(viewName){
 }
 
 async function hydrateExploreView(viewName){
+  if (typeof updateExploreScope === 'function' && currentParams().get('tab') === 'explore' && activeExploreView === viewName) updateExploreScope();
   const cacheKey = exploreViewUrl(viewName).url.toString();
   const previous = exploreViewScopes.get(viewName);
   const publication = explorePublication;

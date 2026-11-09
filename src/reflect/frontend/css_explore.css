@@ -3,6 +3,15 @@
 .explore-view-status{padding:18px;border-color:rgba(242,138,26,.28);background:rgba(242,138,26,.055);color:var(--text-2);font-size:13px;line-height:1.5}
 .explore-view-status.error{border-color:rgba(255,69,58,.28);background:rgba(255,69,58,.055);color:#ff8b84}
 [id^="tab-explore-"]>[hidden]{display:none!important}
+.explore-scope{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 0 20px;padding:16px 0;border-bottom:1px solid var(--glass-border)}
+.explore-scope[hidden]{display:none}
+.explore-scope-copy{min-width:0;max-width:75ch}
+.explore-scope-copy strong{display:block;color:var(--text);font-size:14px;overflow-wrap:anywhere}
+.explore-scope-copy p{margin:6px 0 0;color:var(--text-2);font-size:13px;line-height:1.5}
+.explore-scope-actions{display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0}
+.explore-scope-actions button{min-height:44px}
+.report-shell[data-view="explore"][data-explore-view="context"]{grid-template-columns:minmax(0,1fr)}
+@media(max-width:900px){.explore-scope{align-items:flex-start;flex-direction:column}}
 
 /* ── Heatmap ─────────────────────────────────────────────── */
 .heatmap-wrap{overflow-x:auto;padding-bottom:4px}

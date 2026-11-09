@@ -14,6 +14,8 @@ def _run_explore_contract(scenario: str, **data) -> None:
         pytest.skip("Node is required for Explore loading contract checks")
     source = Path("src/reflect/frontend/js_ledger.js").read_text()
     loading = source[source.index("const lazySqlTabRequests ="):]
+    navigation = Path("src/reflect/frontend/js_navigation.js").read_text()
+    loading += navigation[navigation.index("function clearExploreSessionScope("):navigation.index("function chooseExploreSession(")]
     loading = Path("src/reflect/frontend/js_demo.js").read_text() + "\n" + loading
     script = r"""
 const assert = require('node:assert/strict'), vm = require('node:vm');
@@ -58,6 +60,7 @@ const context = {
   _graphsInited:false, requestAnimationFrame:fn=>fn(),
   sqlTab:name=>context.D.sqlite?.tabs?.[name] || {},
   currentParams:()=>params, reportSupportsServerFiltering:()=>true,
+  updateUrlParams:fn=>fn(params),updateExploreScope:()=>{},
   reportUrlWithCurrentFilters:()=>{
     const url = new URL('/api/data','http://localhost:4000');
     for (const [key,value] of params) url.searchParams.set(key,value);
@@ -178,6 +181,27 @@ assert.equal(context.D.sessions, navSessions);
 """, old_status=old_status)
 
 
+def test_clearing_session_hides_old_totals_until_matching_cohort_arrives():
+    _run_explore_contract(r"""
+context.fetch=async url=>{requests.push(url);return response(200,payload('A'));};
+await context.hydrateExploreView('usage');
+assert.equal(panels.usage.children[1].hidden,false);
+let resolveFetch;
+context.fetch=url=>new Promise(resolve=>{requests.push(url);resolveFetch=resolve;});
+const cleared=context.clearExploreSessionScope();
+assert.equal(params.has('session'),false);
+assert.equal(context.dashboardSelectedSessionId,'');
+const requested=new URL(requests.at(-1));
+assert.equal(requested.searchParams.has('session'),false);
+assert.equal(requested.searchParams.get('agents'),'codex');
+assert.equal(panels.usage.children[1].hidden,true,'old single-session totals must not appear as all-session totals');
+resolveFetch(response(200,payload('')));
+await cleared;
+assert.equal(context.D.focused_session_id,'');
+assert.equal(panels.usage.children[1].hidden,false);
+""")
+
+
 @pytest.mark.parametrize("changed_filter", ["session", "agents"])
 def test_explore_ready_state_is_keyed_by_current_scope(changed_filter):
     _run_explore_contract(r"""
@@ -296,6 +320,71 @@ await context.hydrateExploreView('tools');
 assert.equal(requests.length,3,'a different scope still requires its own response');
 assert.equal(context.D.sqlite.tabs.tools.scope,'B');
 assert.equal(renders.at(-1), 'tools');
+""")
+
+
+def test_tools_event_chart_keeps_its_session_counts_after_usage_changes():
+    source = Path("src/reflect/frontend/js_explore.js").read_text()
+    chart = source[source.index("function buildEventBar("):source.index("function renderUsageView(")]
+    renderers = source[source.index("function renderUsageView("):source.index("\nrenderUsageView();")]
+    renderers += source[source.index("function renderToolsView("):source.index("\nrenderToolsView();")]
+    _run_explore_contract(r"""
+const charts=[];
+const liveCharts=new Map();
+const originalGetElement=context.document.getElementById;
+context.document.getElementById=id=>id==='event-bar-box'?{style:{}}
+  :id==='eventBarChart'?{getContext:()=>({})}:originalGetElement(id);
+context.COLORS=['orange'];
+context.Chart=class{constructor(canvas,config){charts.push(config.data);liveCharts.set('eventBarChart',config.data);}};
+context.renderUsageChartEmpty=()=>assert.fail('Tools event totals should be present');
+context.resetUsageChart=id=>liveCharts.delete(id);
+for(const name of ['renderUsageSummary','renderMeasurementCoverage','buildCohortComparison','renderUsageMetrics',
+  'buildHeatmap','buildHourBars','buildSubagentActivity','buildWeeklyTrends','buildAchievements',
+  'buildToolsLists','buildMcpPanel','buildPercentiles','buildCommandPatterns'])context[name]=()=>{};
+vm.runInContext(input.chart+input.renderers,context);
+context.D.sqlite.tabs.activity={events_by_type:{unrelated_initial:99999}};
+context.fetch=async url=>{
+  requests.push(url);
+  const request=new URL(url),scope=request.searchParams.get('session');
+  const view=request.pathname==='/api/data'?'usage':'tools';
+  const result=payload(scope,view);
+  if(view==='tools')result.events_by_type={tool_call:scope==='A'?2:7};
+  else{
+    result.sqlite.tabs.activity={events_by_type:{unrelated_usage:88888}};
+    result.sqlite.tabs.tools={events_by_type:{unrelated_incidental:77777}};
+  }
+  return response(200,result);
+};
+await context.hydrateExploreView('tools');
+assert.deepEqual(Array.from(charts.at(-1).labels),['tool_call']);
+assert.deepEqual(Array.from(charts.at(-1).datasets[0].data),[2]);
+params.set('session','B');
+await context.hydrateExploreView('tools');
+assert.deepEqual(Array.from(charts.at(-1).datasets[0].data),[7]);
+params.set('session','C');
+await context.hydrateExploreView('usage');
+params.set('session','B');
+assert.ok(liveCharts.has('eventBarChart'),'Usage must not destroy the retained Tools chart');
+assert.deepEqual(Array.from(liveCharts.get('eventBarChart').labels),['tool_call']);
+assert.deepEqual(Array.from(liveCharts.get('eventBarChart').datasets[0].data),[7]);
+await context.hydrateExploreView('tools');
+assert.equal(requests.length,3,'the retained Tools scope should be reused');
+""", chart=chart, renderers=renderers)
+
+
+def test_active_explore_scope_is_updated_before_cached_or_pending_reads():
+    _run_explore_contract(r"""
+const scopeUpdates=[];
+context.updateExploreScope=()=>scopeUpdates.push(params.get('session') || 'all');
+context.fetch=async()=>response(200,payload('A'));
+await context.hydrateExploreView('usage');
+await context.hydrateExploreView('usage');
+params.set('session','B');
+context.fetch=async()=>response(503,{state:'preparing'});
+await context.hydrateExploreView('usage');
+assert.deepEqual(scopeUpdates,['A','A','B'],'scope remains current even when data is cached or not ready');
+await context.hydrateExploreView('tools');
+assert.deepEqual(scopeUpdates,['A','A','B'],'an inactive read cannot relabel the visible scope');
 """)
 
 
@@ -454,6 +543,7 @@ def test_unpublished_navigation_allows_actual_renderers_only_after_exact_scope_l
 context.D._unpublishedNavigation=true;
 let toolsRenders=0;
 context.buildToolsLists=()=>{toolsRenders++;};
+context.resetUsageChart=()=>{};context.buildEventBar=()=>{};
 context.buildMcpPanel=()=>{};context.buildPercentiles=()=>{};context.buildCommandPatterns=()=>{};
 context.fmt=String;context.escHtml=String;
 const inventoryElements=Object.fromEntries(['data-stat-row','sql-specs-panel','sql-memory-panel',

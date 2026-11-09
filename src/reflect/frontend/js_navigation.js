@@ -31,11 +31,53 @@ function animateTabIndicator(){
   tabsEl.classList.add('tab-rail-animate');
 }
 
+function updateExploreScope(){
+  const label = document.getElementById('explore-scope-label');
+  const detail = document.getElementById('explore-scope-detail');
+  const change = document.getElementById('explore-session-change');
+  const clear = document.getElementById('explore-session-clear');
+  if (!label || !detail || !change || !clear) return;
+  const fixed = isStaticDemo();
+  const context = activeExploreView === 'context';
+  const sessionId = fixed || context ? '' : exploreViewUrl(activeExploreView).sessionId;
+  const session = (D.sessions || []).find(item => (item.full_id || item.id) === sessionId || item.id === sessionId);
+  label.textContent = fixed ? 'Full illustrative sample' : context ? 'All captured context'
+    : sessionId ? `Selected session: ${sessionListIdentity(session || {id:sessionId}).title}` : 'All matching sessions';
+  const identity = sessionId ? [session?.agent ? formatAgentLabel(session.agent) : '', sessionId.slice(-8)].filter(Boolean).join(' · ') + '. ' : '';
+  detail.textContent = fixed ? 'Fixed sample scope; session selections do not filter these views.'
+    : context ? 'Stored context and system inventory. Session and date filters do not apply.'
+    : identity + 'Date and matching-session filters still apply. Each section labels its event-window or full-session totals.';
+  change.hidden = fixed || context;
+  change.textContent = sessionId ? 'Change session' : 'Choose session';
+  clear.hidden = fixed || context || !sessionId;
+}
+
+function clearExploreSessionScope(){
+  dashboardSelectedSessionId = '';
+  updateUrlParams(params => params.delete('session'));
+  updateExploreScope();
+  document.getElementById('explore-session-change')?.focus();
+  return hydrateExploreView(activeExploreView).catch(() => {});
+}
+
+function chooseExploreSession(){
+  activateTab('sessions', {focusButton:true});
+  if (window.matchMedia('(max-width: 900px)').matches || document.body.classList.contains('sessions-rail-collapsed')) {
+    document.getElementById('session-rail-open')?.click();
+  }
+}
+
 function updateDashboardViewScope(tabName){
   const sessionsVisible = tabName === 'sessions';
-  const filtersVisible = sessionsVisible || (tabName === 'explore' && !isStaticDemo());
+  const filtersVisible = sessionsVisible || (tabName === 'explore' && activeExploreView !== 'context' && !isStaticDemo());
+  const exploreScope = document.getElementById('explore-scope');
+  if (exploreScope) exploreScope.hidden = tabName !== 'explore';
+  if (tabName === 'explore') updateExploreScope();
   const shell = document.getElementById('report-shell');
-  if (shell) shell.dataset.view = tabName;
+  if (shell) {
+    shell.dataset.view = tabName;
+    shell.dataset.exploreView = activeExploreView;
+  }
   for (const id of ['session-rail', 'session-rail-open']) {
     const element = document.getElementById(id);
     if (element) element.hidden = !sessionsVisible;
@@ -131,6 +173,8 @@ tabButtons.forEach((button, index) => {
     activateTab(nextButton.dataset.tab, {focusButton: true});
   });
 });
+document.getElementById('explore-session-change')?.addEventListener('click', chooseExploreSession);
+document.getElementById('explore-session-clear')?.addEventListener('click', clearExploreSessionScope);
 document.querySelectorAll('[data-explore-view]').forEach(button => {
   button.addEventListener('click', () => activateTab('explore', {view: button.dataset.exploreView || 'usage'}));
 });

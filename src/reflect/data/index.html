@@ -696,6 +696,15 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .explore-view-status{padding:18px;border-color:rgba(242,138,26,.28);background:rgba(242,138,26,.055);color:var(--text-2);font-size:13px;line-height:1.5}
 .explore-view-status.error{border-color:rgba(255,69,58,.28);background:rgba(255,69,58,.055);color:#ff8b84}
 [id^="tab-explore-"]>[hidden]{display:none!important}
+.explore-scope{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 0 20px;padding:16px 0;border-bottom:1px solid var(--glass-border)}
+.explore-scope[hidden]{display:none}
+.explore-scope-copy{min-width:0;max-width:75ch}
+.explore-scope-copy strong{display:block;color:var(--text);font-size:14px;overflow-wrap:anywhere}
+.explore-scope-copy p{margin:6px 0 0;color:var(--text-2);font-size:13px;line-height:1.5}
+.explore-scope-actions{display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0}
+.explore-scope-actions button{min-height:44px}
+.report-shell[data-view="explore"][data-explore-view="context"]{grid-template-columns:minmax(0,1fr)}
+@media(max-width:900px){.explore-scope{align-items:flex-start;flex-direction:column}}
 
 /* ── Heatmap ─────────────────────────────────────────────── */
 .heatmap-wrap{overflow-x:auto;padding-bottom:4px}
@@ -3076,6 +3085,17 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
       </button>
     </div>
 
+    <section id="explore-scope" class="explore-scope" aria-label="Explore session scope" hidden>
+      <div class="explore-scope-copy" aria-live="polite" aria-atomic="true">
+        <strong id="explore-scope-label">All matching sessions</strong>
+        <p id="explore-scope-detail"></p>
+      </div>
+      <div class="explore-scope-actions">
+        <button id="explore-session-change" class="ledger-button" type="button">Choose session</button>
+        <button id="explore-session-clear" class="ledger-button" type="button" hidden>All matching sessions</button>
+      </div>
+    </section>
+
 <!-- ════════════════════ SESSIONS BROWSER ════════════════════ -->
 <div class="tab-panel active" id="tab-sessions" role="tabpanel" aria-labelledby="tab-button-sessions">
   <div class="session-browser">
@@ -3308,7 +3328,8 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   </div>
 
   <div class="panel">
-    <div class="panel-title">Event Distribution</div>
+    <div class="panel-title">Recorded event categories</div>
+    <p class="usage-copy">Full lifetime of the matching sessions. Includes tool calls, runtime timing, and session records. Unclassified events are retained records, not unnamed tools.</p>
     <div class="chart-box" id="event-bar-box" style="height:280px"><canvas id="eventBarChart"></canvas></div>
   </div>
 
@@ -5549,6 +5570,7 @@ async function loadExploreView(viewName){
 }
 
 async function hydrateExploreView(viewName){
+  if (typeof updateExploreScope === 'function' && currentParams().get('tab') === 'explore' && activeExploreView === viewName) updateExploreScope();
   const cacheKey = exploreViewUrl(viewName).url.toString();
   const previous = exploreViewScopes.get(viewName);
   const publication = explorePublication;
@@ -5722,11 +5744,53 @@ function animateTabIndicator(){
   tabsEl.classList.add('tab-rail-animate');
 }
 
+function updateExploreScope(){
+  const label = document.getElementById('explore-scope-label');
+  const detail = document.getElementById('explore-scope-detail');
+  const change = document.getElementById('explore-session-change');
+  const clear = document.getElementById('explore-session-clear');
+  if (!label || !detail || !change || !clear) return;
+  const fixed = isStaticDemo();
+  const context = activeExploreView === 'context';
+  const sessionId = fixed || context ? '' : exploreViewUrl(activeExploreView).sessionId;
+  const session = (D.sessions || []).find(item => (item.full_id || item.id) === sessionId || item.id === sessionId);
+  label.textContent = fixed ? 'Full illustrative sample' : context ? 'All captured context'
+    : sessionId ? `Selected session: ${sessionListIdentity(session || {id:sessionId}).title}` : 'All matching sessions';
+  const identity = sessionId ? [session?.agent ? formatAgentLabel(session.agent) : '', sessionId.slice(-8)].filter(Boolean).join(' · ') + '. ' : '';
+  detail.textContent = fixed ? 'Fixed sample scope; session selections do not filter these views.'
+    : context ? 'Stored context and system inventory. Session and date filters do not apply.'
+    : identity + 'Date and matching-session filters still apply. Each section labels its event-window or full-session totals.';
+  change.hidden = fixed || context;
+  change.textContent = sessionId ? 'Change session' : 'Choose session';
+  clear.hidden = fixed || context || !sessionId;
+}
+
+function clearExploreSessionScope(){
+  dashboardSelectedSessionId = '';
+  updateUrlParams(params => params.delete('session'));
+  updateExploreScope();
+  document.getElementById('explore-session-change')?.focus();
+  return hydrateExploreView(activeExploreView).catch(() => {});
+}
+
+function chooseExploreSession(){
+  activateTab('sessions', {focusButton:true});
+  if (window.matchMedia('(max-width: 900px)').matches || document.body.classList.contains('sessions-rail-collapsed')) {
+    document.getElementById('session-rail-open')?.click();
+  }
+}
+
 function updateDashboardViewScope(tabName){
   const sessionsVisible = tabName === 'sessions';
-  const filtersVisible = sessionsVisible || (tabName === 'explore' && !isStaticDemo());
+  const filtersVisible = sessionsVisible || (tabName === 'explore' && activeExploreView !== 'context' && !isStaticDemo());
+  const exploreScope = document.getElementById('explore-scope');
+  if (exploreScope) exploreScope.hidden = tabName !== 'explore';
+  if (tabName === 'explore') updateExploreScope();
   const shell = document.getElementById('report-shell');
-  if (shell) shell.dataset.view = tabName;
+  if (shell) {
+    shell.dataset.view = tabName;
+    shell.dataset.exploreView = activeExploreView;
+  }
   for (const id of ['session-rail', 'session-rail-open']) {
     const element = document.getElementById(id);
     if (element) element.hidden = !sessionsVisible;
@@ -5822,6 +5886,8 @@ tabButtons.forEach((button, index) => {
     activateTab(nextButton.dataset.tab, {focusButton: true});
   });
 });
+document.getElementById('explore-session-change')?.addEventListener('click', chooseExploreSession);
+document.getElementById('explore-session-clear')?.addEventListener('click', clearExploreSessionScope);
 document.querySelectorAll('[data-explore-view]').forEach(button => {
   button.addEventListener('click', () => activateTab('explore', {view: button.dataset.exploreView || 'usage'}));
 });
@@ -9358,8 +9424,7 @@ function buildWeeklyTrends(){
 
 /* Event distribution */
 function buildEventBar(){
-  const activityTab = sqlTab('activity');
-  const entries=Object.entries(activityTab.events_by_type || {});
+  const entries=Object.entries(sqlTab('tools').events_by_type || {});
   const n=entries.length;
   const barH=28, pad=40;
   document.getElementById('event-bar-box').style.height=(n*barH+pad)+'px';
@@ -9370,10 +9435,10 @@ function buildEventBar(){
   new Chart(document.getElementById('eventBarChart').getContext('2d'),{
     type:'bar',
     data:{
-      labels:entries.map(e=>e[0]),
+      labels:entries.map(e=>e[0] === 'unknown' ? 'Unclassified events' : e[0]),
       datasets:[{
         data:entries.map(e=>e[1]),
-        backgroundColor:entries.map((_,i)=>COLORS[i%COLORS.length]),
+        backgroundColor:entries.map(([kind],i)=>kind === 'unknown' ? '#beb8ad' : COLORS[i%COLORS.length]),
         borderRadius:6,
         borderSkipped:false,
       }]
@@ -9402,7 +9467,7 @@ function buildEventBar(){
 
 function renderUsageView(){
   if (D._unpublishedNavigation && exploreViewScopes.get('usage')?.scope !== exploreViewUrl('usage').url.toString()) return;
-  ['modelChart', 'eventChart', 'agentCostChart', 'tokenChart', 'eventBarChart'].forEach(resetUsageChart);
+  ['modelChart', 'eventChart', 'agentCostChart', 'tokenChart'].forEach(resetUsageChart);
   renderUsageSummary();
   renderMeasurementCoverage();
   buildCohortComparison();
@@ -9411,7 +9476,6 @@ function renderUsageView(){
   buildHourBars();
   buildSubagentActivity();
   buildWeeklyTrends();
-  buildEventBar();
   buildAchievements();
 }
 renderUsageView();
@@ -9464,6 +9528,8 @@ function buildCommandPatterns(){
 
 function renderToolsView(){
   if (D._unpublishedNavigation && exploreViewScopes.get('tools')?.scope !== exploreViewUrl('tools').url.toString()) return;
+  resetUsageChart('eventBarChart');
+  buildEventBar();
   buildToolsLists();
   buildMcpPanel();
   buildPercentiles();

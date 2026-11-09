@@ -1397,6 +1397,8 @@ def test_dashboard_explore_api_uses_product_view_names(tmp_path, monkeypatch):
         {"day": "2026-05-01", "agent": "codex", "total_cost": 0.42},
     ]
     assert tools.json()["view"] == "tools"
+    assert tools.json()["events_by_type"] == {"llm_call": 2, "tool_call": 2}
+    assert filtered_tools.json()["events_by_type"] == {}
     assert tools.json()["tools_by_count"] == {
         "exec_command": 1,
         "mcp__mcp-issue-tracker__jira_search": 1,

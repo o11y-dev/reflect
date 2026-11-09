@@ -167,6 +167,8 @@
 
 ### Fixed
 
+- Usage and Explore show the selected session explicitly, with actions to change it or return to all matching sessions. Tools owns its event-category chart so switching views cannot reuse another session's counts.
+- Recognized runtime timing and session/generation wrapper spans have distinct categories instead of `unknown`. A bounded migration relabels proven non-operation records without replaying usage or inventing historical tool calls; ambiguous records stay unclassified.
 - Added canonical token provenance and stopped materializing lifecycle-only prompt/session events as LLM calls, while preserving conversation facts, usage-bearing lifecycle records, session token totals, and model-backed assistant responses.
 - Moved refresh, storage-pressure, and failure notifications into a responsive header activity rail with five real preparation phases, richer status detail, and reduced-motion-safe animation so alerts no longer cover dashboard content.
 - Stopped materializing Codex runtime-internal OTLP spans in SQLite after classification; bounded raw segments still checkpoint and rotate without growing canonical evidence.

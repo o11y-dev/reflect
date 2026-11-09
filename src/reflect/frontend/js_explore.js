@@ -340,8 +340,7 @@ function buildWeeklyTrends(){
 
 /* Event distribution */
 function buildEventBar(){
-  const activityTab = sqlTab('activity');
-  const entries=Object.entries(activityTab.events_by_type || {});
+  const entries=Object.entries(sqlTab('tools').events_by_type || {});
   const n=entries.length;
   const barH=28, pad=40;
   document.getElementById('event-bar-box').style.height=(n*barH+pad)+'px';
@@ -352,10 +351,10 @@ function buildEventBar(){
   new Chart(document.getElementById('eventBarChart').getContext('2d'),{
     type:'bar',
     data:{
-      labels:entries.map(e=>e[0]),
+      labels:entries.map(e=>e[0] === 'unknown' ? 'Unclassified events' : e[0]),
       datasets:[{
         data:entries.map(e=>e[1]),
-        backgroundColor:entries.map((_,i)=>COLORS[i%COLORS.length]),
+        backgroundColor:entries.map(([kind],i)=>kind === 'unknown' ? '#beb8ad' : COLORS[i%COLORS.length]),
         borderRadius:6,
         borderSkipped:false,
       }]
@@ -384,7 +383,7 @@ function buildEventBar(){
 
 function renderUsageView(){
   if (D._unpublishedNavigation && exploreViewScopes.get('usage')?.scope !== exploreViewUrl('usage').url.toString()) return;
-  ['modelChart', 'eventChart', 'agentCostChart', 'tokenChart', 'eventBarChart'].forEach(resetUsageChart);
+  ['modelChart', 'eventChart', 'agentCostChart', 'tokenChart'].forEach(resetUsageChart);
   renderUsageSummary();
   renderMeasurementCoverage();
   buildCohortComparison();
@@ -393,7 +392,6 @@ function renderUsageView(){
   buildHourBars();
   buildSubagentActivity();
   buildWeeklyTrends();
-  buildEventBar();
   buildAchievements();
 }
 renderUsageView();
@@ -446,6 +444,8 @@ function buildCommandPatterns(){
 
 function renderToolsView(){
   if (D._unpublishedNavigation && exploreViewScopes.get('tools')?.scope !== exploreViewUrl('tools').url.toString()) return;
+  resetUsageChart('eventBarChart');
+  buildEventBar();
   buildToolsLists();
   buildMcpPanel();
   buildPercentiles();

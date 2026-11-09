@@ -10,7 +10,7 @@ def _readme() -> str:
 def test_readme_has_current_quick_start_contract():
     readme = _readme()
 
-    assert "Evidence, Not Vibes." in readme
+    assert "Keep what your agents figure out." in readme
     assert readme.count("## Quick Start") == 1
     assert "curl -fsSL https://reflect.o11y.dev/install.sh | sh" in readme
     assert "https://reflect.o11y.dev/install.sh" in readme
@@ -25,7 +25,7 @@ def test_readme_has_current_quick_start_contract():
     assert "### Explore visually in the UI" in readme
     assert "Use Reflect to explain why this session was expensive" in readme
     assert "Use Reflect to prepare an internal AI budget increase request" in readme
-    assert "Evidence-backed improvement for AI agent work across teams" in readme
+    assert "Find repeated mistakes, review reusable skills, and check whether they help." in readme
     assert "From Personal Reflection to Organizational Improvement" in readme
     assert "human review" in readme
 
