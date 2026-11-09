@@ -107,12 +107,12 @@
   <button class="tab" id="tab-button-workflows" type="button" role="tab" aria-selected="false" aria-controls="tab-workflows" tabindex="-1" data-tab="workflows">Workflows</button>
   <button class="tab" id="tab-button-skills" type="button" role="tab" aria-selected="false" aria-controls="tab-skills" tabindex="-1" data-tab="skills">Skills</button>
   <button class="tab" id="tab-button-impact" type="button" role="tab" aria-selected="false" aria-controls="tab-impact" tabindex="-1" data-tab="impact">Impact</button>
-  <button class="tab" id="tab-button-explore" type="button" role="tab" aria-selected="false" aria-controls="tab-explore-usage" tabindex="-1" data-tab="explore">Explore</button>
+  <button class="tab" id="tab-button-explore" type="button" role="tab" aria-selected="false" aria-controls="tab-explore-usage" tabindex="-1" data-tab="explore">Usage &amp; explore</button>
 </nav>
 
 <main id="main-content">
 
-<div class="report-shell" id="report-shell">
+<div class="report-shell" id="report-shell" data-view="sessions">
   <aside class="session-rail" id="session-rail" aria-label="Sessions">
     <div class="rail-head">
       <div class="rail-title">Sessions</div>
@@ -127,7 +127,7 @@
   </aside>
 
   <div class="report-content">
-    <div class="shell-toolbar" aria-label="Report panels">
+    <div class="shell-toolbar" id="report-panel-controls" aria-label="Report panels">
       <button type="button" class="rail-toggle shell-left-toggle" id="session-rail-open" aria-label="Open sessions" aria-expanded="true">
         <span class="rail-toggle-lines" aria-hidden="true"></span>
       </button>
@@ -264,8 +264,8 @@
 
 <!-- ════════════════════ IMPACT ════════════════════ -->
 <div class="tab-panel" id="tab-impact" role="tabpanel" aria-labelledby="tab-button-impact" hidden>
-  <div class="product-hero">
-    <div><h2>Impact</h2><p>See whether installed workflows improve later, comparable task executions. Reflect withholds a claim when the cohort or telemetry is incomplete.</p></div>
+  <div class="product-hero view-intro">
+    <div><h2>Impact</h2><p>Check whether later, comparable tasks support a workflow improvement.</p><p class="view-scope">Each check uses its recorded before/after task cohorts. Session filters do not apply.</p></div>
     <div class="product-count" id="measurement-count">0<small>impact checks</small></div>
   </div>
   <div class="impact-explainer" aria-label="How impact checks work">
@@ -278,8 +278,8 @@
 
 <!-- ════════════════════ INBOX ════════════════════ -->
 <div class="tab-panel" id="tab-inbox" role="tabpanel" aria-labelledby="tab-button-inbox" hidden>
-  <div class="product-hero">
-    <div><h2>Inbox</h2><p>Investigate evidence-backed findings and repeated behavior before deciding whether they deserve a workflow.</p></div>
+  <div class="product-hero view-intro">
+    <div><h2>Inbox</h2><p>Inspect findings and repeated behavior before choosing a workflow.</p><p class="view-scope"><span id="inbox-analysis-window">Analysis window not supplied by this report.</span> Retained evidence may include older sessions. Session filters do not apply.</p></div>
     <div class="product-count" id="inbox-signal-count">0<small>needs attention</small></div>
   </div>
   <div class="inbox-view-switch" role="tablist" aria-label="Inbox evidence views">
@@ -306,8 +306,8 @@
 
 <!-- ════════════════════ WORKFLOWS ════════════════════ -->
 <div class="tab-panel" id="tab-workflows" role="tabpanel" aria-labelledby="tab-button-workflows" hidden>
-  <div class="product-hero">
-    <div><h2>Workflows</h2><p>Review recurring ways of working, apply a procedure, and check whether comparable future tasks improve.</p></div>
+  <div class="product-hero view-intro">
+    <div><h2>Workflows</h2><p>Review a procedure and its evidence before applying it.</p><p class="view-scope">Stored workflow inventory. Each workflow shows its supporting task scope; session filters do not apply.</p></div>
     <div class="product-count" id="workflow-total-count">0<small>workflow contracts</small></div>
   </div>
   <section class="panel product-section" id="workflow-candidates-section">
@@ -326,8 +326,8 @@
 
 <!-- ════════════════════ SKILL REGISTRY ════════════════════ -->
 <div class="tab-panel" id="tab-skills" role="tabpanel" aria-labelledby="tab-button-skills" hidden>
-  <div class="product-hero">
-    <div><h2>Skills Registry</h2><p>Inspect the versioned procedures available to agents, where each version is installed, and whether later task evidence shows it was actually used.</p></div>
+  <div class="product-hero view-intro">
+    <div><h2>Skills Registry</h2><p>Inspect skill versions, installations, and recorded use.</p><p class="view-scope">Stored skill inventory. Reference counts cover all captured history; session filters do not apply.</p></div>
     <div class="product-count" id="skill-count">0<small>registry entries</small></div>
   </div>
   <section class="panel product-section" id="skill-registry-section">
@@ -521,7 +521,7 @@
     <section class="global-filter-shell" id="global-filter-shell" aria-label="Session filters">
       <div class="global-filter-top">
         <div>
-          <div class="global-filter-title">Session filters</div>
+          <div class="global-filter-title" id="filter-scope-title">Session filters</div>
           <div class="global-filter-meta" id="global-filter-meta">Showing all sessions</div>
         </div>
         <div class="global-filter-actions">
@@ -529,6 +529,7 @@
           <button type="button" class="filter-clear" id="filter-clear">Clear filters</button>
         </div>
       </div>
+      <p class="view-scope filter-scope-note" id="filter-scope-note">Choose sessions to inspect. Session details cover their captured lifetime.</p>
       <div class="global-filter-grid" id="global-filter-grid">
         <div class="filter-field">
           <label class="filter-label" for="sb-search">Search</label>
@@ -559,7 +560,7 @@
             <option value="30d">Last 30 days</option>
           </select>
         </div>
-        <div class="filter-field filter-field-secondary">
+        <div class="filter-field filter-field-secondary" id="session-sort-field">
           <label class="filter-label" for="filter-sort">Sort</label>
           <select class="filter-select" id="filter-sort">
             <option value="recent">Most recent</option>

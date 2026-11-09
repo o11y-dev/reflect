@@ -5,9 +5,30 @@
   gap:12px;
   align-items:start;
 }
-body.sessions-rail-collapsed .report-shell{
+body.sessions-rail-collapsed .report-shell[data-view="sessions"]{
   grid-template-columns:48px minmax(0,1fr) minmax(300px,360px);
 }
+.report-shell[data-view="explore"]{
+  grid-template-columns:minmax(0,1fr) minmax(280px,320px);
+}
+.report-shell:not([data-view="sessions"]):not([data-view="explore"]){display:block}
+.report-shell [hidden],#hdr-range[hidden]{display:none!important}
+.product-hero.view-intro{
+  align-items:flex-start;
+  padding:0 0 12px;
+  margin-bottom:14px;
+  border:0;
+  border-bottom:1px solid var(--glass-border);
+  border-radius:0;
+  background:none;
+}
+.view-intro h2{font-size:22px}
+.view-intro p{max-width:75ch;font-size:14px}
+.view-intro .product-count{display:flex;align-items:baseline;gap:6px;font-size:22px}
+.view-intro .product-count small{font-size:11px;letter-spacing:0;text-transform:none}
+.view-scope,.view-intro p.view-scope{margin-top:6px;color:var(--muted);font-size:12px;line-height:1.5}
+.filter-scope-note{margin-bottom:12px}
+.report-content .evidence-unavailable-message{padding:9px 12px;margin-bottom:12px;font-size:12px;line-height:1.5}
 .report-content{min-width:0}
 .session-rail,
 .filter-rail{
@@ -95,7 +116,7 @@ body.sessions-rail-collapsed .report-shell{
 }
 .rail-toggle-lines::before{top:-5px}
 .rail-toggle-lines::after{top:5px}
-.shell-left-toggle{display:none!important}
+.shell-left-toggle{display:none}
 .shell-filter-toggle{display:none}
 body.sessions-rail-collapsed .session-rail{
   align-items:center;
@@ -108,7 +129,6 @@ body.sessions-rail-collapsed .session-rail .sb-left,
 body.sessions-rail-collapsed .session-rail .rail-title{
   display:none;
 }
-body.sessions-rail-collapsed .shell-left-toggle{display:none!important}
 
 /* ── Session Browser — Detail Pane ───────────────────────── */
 .session-browser{
@@ -336,7 +356,7 @@ body.rail-overlay-open{overflow:hidden}
     pointer-events:auto;
     justify-content:space-between;
   }
-  .shell-left-toggle{display:inline-flex!important}
+  .shell-left-toggle{display:inline-flex}
   .shell-filter-toggle{display:inline-flex}
   .session-rail,
   .filter-rail{

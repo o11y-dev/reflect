@@ -21,6 +21,8 @@
 
 ### Changed
 
+- Dashboard navigation gives each view its own space and scope: session filters stay with Sessions and Usage, while stored workflows, skills and comparison cohorts are identified separately. Session titles fall back to captured model or harness metadata and a short ID.
+- Finding priority, heuristic scores and workflow hypotheses are labeled separately from measured outcomes. Blocked comparisons explain the evidence gap and next action, with candidate accounting available on demand.
 - Automatic procedure candidates require passing-check evidence across three independent sessions; check results remain distinct from task acceptance and measured impact. Extraction may return no candidates and validates candidate-specific source references before staging drafts.
 - Compact graph storage removes redundant per-step topology and projects ordinary tool calls on demand. Appends reuse source contributions; ambiguous corrections retain a conservative repair path.
 - Refresh journals changed canonical steps, repairs complete affected native turns and overlapping verification, and reuses per-session tool contributions for aggregate updates.
@@ -30,6 +32,7 @@
 
 ### Fixed
 - Memory searches preserve caller-owned read transactions and fall back to canonical records when the search index is empty, keeping guidance available during concurrent refreshes.
+- Dashboard tab styling follows the accessible selected state; closing a review with Escape clears its deep link, and a collapsed desktop session rail can reopen on mobile.
 - Subagent reports use recorded launches and lifecycle evidence across harnesses, preserve role and child identity, and exclude prompt mentions from launch counts. Recorded stops no longer imply verified task success.
 - Tool reports recover captured tool names across attribute formats and exclude internal timing spans from invocation counts, with a one-time repair of retained evidence.
 - Command templates share extraction and grouping across reports, retaining compound actions and using captured command arguments instead of stale decision metadata or truncated text. Normalization stores the template projection so dashboard reads avoid reparsing historical commands; reports show command-text coverage.

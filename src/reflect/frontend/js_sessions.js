@@ -1,4 +1,25 @@
 /* ════════════════════ SESSION BROWSER ════════════════════ */
+function sessionListIdentity(session){
+  const prompt = String(session.first_prompt || '').trim();
+  if (prompt) return {title:prompt.slice(0, 80) + (prompt.length > 80 ? '…' : ''), missingPrompt:false};
+  const model = String(session.primary_model || '').trim();
+  const agent = session.agent && session.agent !== 'unknown' ? formatAgentLabel(session.agent) : '';
+  const id = String(session.full_id || session.id || '').slice(-8);
+  return {title:[model || agent || 'Session', id].filter(Boolean).join(' · '), missingPrompt:true};
+}
+
+function renderSessionQualityBadge(session){
+  const score = session.quality_score;
+  if (!session.quality_available || score == null || !Number.isFinite(Number(score))) {
+    return '<div class="sb-card-badge" style="color:var(--text-3)">No score</div>';
+  }
+  const coverage = session.quality_coverage_pct;
+  const coverageLabel = coverage != null && Number.isFinite(Number(coverage))
+    ? `${Number(coverage).toFixed(0)}% evidence coverage` : 'Evidence coverage unavailable';
+  const label = `Heuristic ${Number(score).toFixed(0)}/100`;
+  return `<div class="sb-card-badge" title="${escHtml(coverageLabel)} · task success is assessed separately" aria-label="${escHtml(label + ' · ' + coverageLabel + ' · task success is assessed separately')}">${label}</div>`;
+}
+
 class SessionConversationPlayhead {
   constructor(panel, options = {}) {
     this.panel = panel;
@@ -675,7 +696,7 @@ class SessionConversationPlayhead {
     listEl.innerHTML = filtered.map(s => {
       const agentColor = colorForAgent(s.agent);
       const agentName = formatAgentLabel(s.agent);
-      const prompt = s.first_prompt ? escHtml(s.first_prompt.slice(0, 80)) + (s.first_prompt.length > 80 ? '…' : '') : 'No prompt data';
+      const identity = sessionListIdentity(s);
       const isActive = s._idx === selectedIdx;
       const estimatedTokens = getEstimatedSessionTokens(s);
       const tokens = sessionTokenTotal(s, estimatedTokens);
@@ -688,14 +709,15 @@ class SessionConversationPlayhead {
           <div class="sb-card-agent">${escHtml(agentName)}</div>
           <div class="sb-card-time">${s._navigationOnly ? 'Linked session' : escHtml(fmtWorkflowDate(s.created_at))}</div>
         </div>
-        <div class="sb-card-prompt">${prompt}</div>
+        <div class="sb-card-prompt">${escHtml(identity.title)}</div>
         <div class="sb-card-badges">
+          ${identity.missingPrompt ? '<div class="sb-card-badge">Prompt text unavailable</div>' : ''}
           ${s._navigationOnly ? '<div class="sb-card-badge">Activity detail · summary unavailable</div>' : `<div class="sb-card-badge">${fmt(s.event_count || 0)} events</div>
           ${tokens > 0 ? `<div class="sb-card-badge">${estimatedTokens ? '~' : ''}${fmtTokenShort(tokens)} tok</div>` : ''}
           ${costPresentation.status === 'estimated'
             ? `<div class="sb-card-badge">${fmtCost(cost)} ${escHtml(unit)}</div>`
             : `<div class="sb-card-badge" style="color:var(--text-3)" title="${escHtml(costPresentation.reason)}">${escHtml(costPresentation.label)}</div>`}
-          ${s.quality_available ? `<div class="sb-card-badge" style="color:${Number(s.quality_score || 0) > 70 ? 'var(--green)' : 'var(--yellow)'}">${Number(s.quality_score || 0).toFixed(0)}%</div>` : '<div class="sb-card-badge" style="color:var(--text-3)">No score</div>'}`}
+          ${renderSessionQualityBadge(s)}`}
         </div>
       </button>`;
     }).join('');

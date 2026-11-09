@@ -173,9 +173,8 @@ function openLedgerDialog({title, subtitle = '', body = '', actions = ''}){
   if (!ledgerDialog.open) ledgerDialog.showModal();
 }
 
-function closeLedgerDialog(){
+function clearLedgerDialogSelection(){
   if (ledgerDialog) ledgerDialog.inspection = null;
-  if (ledgerDialog?.open) ledgerDialog.close();
   updateUrlParams(params => {
     params.delete('workflow');
     params.delete('workflow_root');
@@ -184,8 +183,16 @@ function closeLedgerDialog(){
   });
 }
 
+function closeLedgerDialog(){
+  if (ledgerDialog?.open) ledgerDialog.close();
+  clearLedgerDialogSelection();
+}
+
 document.getElementById('ledger-dialog-close')?.addEventListener('click', closeLedgerDialog);
-ledgerDialog?.addEventListener('close', () => {ledgerDialog.inspection = null;});
+ledgerDialog?.addEventListener('close', () => {
+  // A queued close event must not clear a newly opened inspection.
+  if (!ledgerDialog.open) clearLedgerDialogSelection();
+});
 ledgerDialog?.addEventListener('click', event => {
   if (event.target === ledgerDialog) closeLedgerDialog();
 });
@@ -903,8 +910,9 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
       title:reviewTitle,
       subtitle:`${origin.label} · ${behaviorType} · ${humanizeLedgerLabel(candidate.lifecycle?.display || candidate.status)} · Rule ${humanizeLedgerLabel(sourceRule)}`,
       body:`${staleEvidenceNotice(candidatePublication,ledger)}${readOnlyNotice}<div class="review-lead">
-          <div class="review-eyebrow">Why Reflect Suggested This</div>
+          <h3 class="review-panel-title">Hypothesis to test</h3>
           <p>${escHtml(humanizeLedgerText(candidate.hypothesis || 'Review the linked evidence and proposed workflow before applying it.'))}</p>
+          <p class="review-panel-copy">Proposed benefit; this is not a measured outcome.</p>
           <p class="review-panel-copy">${escHtml(origin.detail)}</p>
         </div>
         ${content.procedure ? renderProcedureEvidence(content) : ''}
@@ -994,7 +1002,7 @@ async function showImpactSessions(measurementId){
     const metric = impactMetricPresentation(ledger.metric_name);
     const recordedEvidence = ledger.evidence_state === 'recorded';
     const unitPlural = 'tasks';
-    const cohortCopy = `These are the stored execution-unit cohorts behind this impact snapshot.${ledger.measured_at ? ` Measured ${fmtWorkflowDate(ledger.measured_at)}.` : recordedEvidence ? ' Measurement time is unavailable.' : ''}`;
+    const cohortCopy = `These are the stored execution-unit cohorts behind this comparison check.${ledger.measured_at ? ` Recorded ${fmtWorkflowDate(ledger.measured_at)}.` : recordedEvidence ? ' Measurement time is unavailable.' : ''}`;
     const count = value => value == null ? '—' : fmt(Number(value));
     const measurementReasons = ledger.measurement_reasons || [];
     const qualityNotice = measurementReasons.length
@@ -1017,13 +1025,13 @@ async function showImpactSessions(measurementId){
       initial:5,
     });
     presentLedgerRead(request, {
-      title:`Tasks Compared for ${metric.goal}`,
+      title:`Comparison evidence: ${metric.goal}`,
       subtitle:cohortCopy,
       body:`${staleEvidenceNotice(ledger)}<div class="review-lead"><div class="review-eyebrow">Impact Evidence</div><p>${escHtml(cohortCopy)} Open a linked session to inspect the captured conversation and tools.</p></div>${qualityNotice}${ledger.snapshot_exact === false ? '<div class="review-warning">Some stored cohort references have no frozen snapshot details. Their metrics and outcomes remain unknown; current session data is not substituted.</div>' : ''}
         <div class="review-grid">
           <section class="review-panel">
             <div class="review-panel-head"><h3 class="review-panel-title">Before Activation</h3><span class="ledger-pill">${count(ledger.before_count)} ${unitPlural}</span></div>
-            <p class="review-panel-copy">Baseline ${unitPlural} used to establish the earlier behavior.</p>
+            <p class="review-panel-copy">Stored baseline ${unitPlural}; eligibility and missing evidence are shown below.</p>
             ${impactCohortDetails({cohort:ledger,before_count:ledger.before_count}, 'before')}
             ${beforeSessions}
           </section>

@@ -72,7 +72,7 @@ class RepeatedToolFailureRule(BaseImprovementRule):
         return proposal.model_copy(
             update={
                 "hypothesis": (
-                    f"A reviewed {slug} workflow will reduce identical retries after "
+                    f"A reviewed {slug} workflow aims to reduce identical retries after "
                     f"{tool_name} failures. {finding.summary}"
                 ),
                 "content": {**proposal.content, "slug": slug},

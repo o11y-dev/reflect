@@ -141,7 +141,7 @@ def test_dashboard_html_surfaces_background_refresh_progress(path: Path):
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
-def test_dashboard_html_uses_persistent_session_and_filter_rails(path: Path):
+def test_dashboard_html_uses_contextual_session_and_filter_rails(path: Path):
     text = path.read_text(encoding="utf-8")
 
     assert 'id="report-shell"' in text
@@ -157,7 +157,8 @@ def test_dashboard_html_uses_persistent_session_and_filter_rails(path: Path):
     assert ".filter-rail{\n  display:block;" in text
     assert ".shell-filter-toggle{display:none}" in text
     assert ".shell-filter-toggle{display:inline-flex}" in text
-    assert ".shell-left-toggle{display:none!important}" in text
+    assert ".shell-left-toggle{display:none}" in text
+    assert '.report-shell [hidden],#hdr-range[hidden]{display:none!important}' in text
     assert text.index('id="sb-list"') < text.index('id="tab-sessions"')
 
 
@@ -372,7 +373,8 @@ def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(p
     assert "reviewableWorkflowStates.has(String(item.status || 'pending'))" in text
     assert "String(reviewableWorkflows.length)" in text
     assert "not a Git or filesystem lock" in text
-    assert "Why Reflect Suggested This" in text
+    assert "Hypothesis to test" in text
+    assert "Proposed benefit; this is not a measured outcome." in text
     assert 'aria-label="Workflow approval summary"' in text
     assert "Apply to One Project" in text
     assert "Linked to source evidence" in text
@@ -401,7 +403,7 @@ def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(p
 def test_dashboard_activity_widgets_live_on_explore_usage_view(path: Path):
     text = path.read_text(encoding="utf-8")
 
-    assert 'data-tab="explore">Explore</button>' in text
+    assert 'data-tab="explore">Usage &amp; explore</button>' in text
     assert 'data-explore-view="usage">Usage</button>' in text
     assert 'data-tab="activity"' not in text
     assert 'id="tab-activity"' not in text
@@ -421,7 +423,7 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert 'data-tab="workflows">Workflows</button>' in text
     assert 'data-tab="skills">Skills</button>' in text
     assert 'data-tab="impact">Impact</button>' in text
-    assert 'data-tab="explore">Explore</button>' in text
+    assert 'data-tab="explore">Usage &amp; explore</button>' in text
     assert 'data-tab="observations"' not in text
     assert 'data-tab="compare"' not in text
     assert 'data-tab="overview"' not in text

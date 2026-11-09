@@ -457,6 +457,42 @@ function impactMeasurementState(item){
   return item?.verdict === 'insufficient_data' ? 'collecting' : 'measured';
 }
 
+function impactBlockedGuidance(item = {}){
+  const state = impactMeasurementState(item);
+  const baseline = item.cohort?.baseline_state;
+  const inspect = {action:'review-impact-sessions',actionLabel:'Inspect Task Evidence'};
+  if (baseline === 'historical_unavailable') return {
+    ...inspect, label:'Historical Baseline Unavailable',actionLabel:'Inspect Baseline Evidence',
+    summary:'Historical baseline unavailable: the selected pre-activation evidence currently does not support the required sample for this bounded comparison. Post-activation tasks cannot fill this baseline; late or backfilled pre-activation evidence may change eligibility.',
+    nextStep:'Inspect the baseline evidence to identify which pre-activation records are missing or ineligible.',
+  };
+  if (baseline === 'analysis_pending' || state === 'validation_pending' || state === 'analysis_pending') return {
+    ...inspect, label:'Analysis Pending',actionLabel:'Inspect Recorded Tasks',
+    summary:baseline === 'analysis_pending'
+      ? 'Baseline analysis is pending. Candidate tasks are recorded; their eligibility has not been established yet.'
+      : 'Current analysis has not established whether these recorded tasks support a comparison.',
+    nextStep:'Inspect the recorded tasks while analysis establishes their eligibility.',
+  };
+  if (state === 'measured' && item.verdict !== 'insufficient_data'
+      && item.before_value != null && item.after_value != null
+      && Number.isFinite(Number(item.before_value)) && Number.isFinite(Number(item.after_value))) return null;
+  if (state === 'not_measurable' || state === 'measured') return {
+    ...inspect, label:'Comparison Blocked',
+    summary:'The recorded tasks do not provide a reliable before-and-after comparison. No outcome change can be established.',
+    nextStep:'Inspect the task evidence and exclusions to understand what prevents this comparison.',
+  };
+  if (baseline !== 'frozen') return {
+    ...inspect, label:'Baseline Eligibility Unknown',actionLabel:'Inspect Baseline Evidence',
+    summary:'Baseline eligibility and required metric coverage have not been established. Later tasks alone cannot establish a pre-activation baseline.',
+    nextStep:'Inspect the pre-activation evidence before deciding whether later collection would help.',
+  };
+  return {
+    label:'Collecting Evidence',collecting:true,action:'review-workflow',actionLabel:'Review Applied Workflow',
+    summary:'The baseline is available. Reflect is still collecting eligible, comparable post-activation tasks with the required measurements.',
+    nextStep:'Review the applied workflow before continuing comparable tasks with recorded outcomes and verification.',
+  };
+}
+
 function impactVerdictPresentation(verdict, measurementState = ''){
   if (measurementState === 'not_measurable') return {label:'Not Measurable',className:'unchanged'};
   if (measurementState === 'collecting') return {label:'Collecting Evidence',className:'collecting'};
@@ -486,15 +522,7 @@ function impactTrendPresentation(item, previous, metric){
 function impactProgressGraph(history, metric){
   const snapshots = [...(history || [])].reverse();
   const latestSnapshot = snapshots[snapshots.length - 1];
-  const latestState = impactMeasurementState(latestSnapshot);
-  if (latestState !== 'measured') {
-    const reasons = latestSnapshot?.cohort?.measurement_reasons || [];
-    const baselineState = latestSnapshot?.cohort?.baseline_state;
-    const message = baselineState === 'historical_unavailable' ? 'The selected pre-activation evidence currently lacks enough metric-bearing tasks for this bounded comparison.'
-      : baselineState === 'analysis_pending' ? 'Baseline eligibility is awaiting analysis.'
-      : reasons[0] || (latestState === 'not_measurable' ? 'The current cohorts do not pass the evidence-quality gate.' : 'Waiting for enough eligible, comparable post-activation tasks.');
-    return `<section class="impact-chart" aria-label="Impact evidence status"><div class="impact-chart-head"><span class="impact-chart-title">Evidence status</span><span class="impact-chart-direction">${escHtml(humanizeLedgerLabel(latestState))}</span></div><div class="impact-chart-empty">${escHtml(message)}</div></section>`;
-  }
+  if (impactBlockedGuidance(latestSnapshot)) return '';
   const baselineSnapshot = latestSnapshot?.before_value != null && Number.isFinite(Number(latestSnapshot.before_value))
     ? latestSnapshot
     : [...snapshots].reverse().find(item => item.before_value != null && Number.isFinite(Number(item.before_value)));
@@ -552,24 +580,12 @@ function impactProgressGraph(history, metric){
 }
 
 function impactSummary(item, metric, trend = null){
+  const guidance = impactBlockedGuidance(item);
+  if (guidance) return guidance.summary;
   const verdict = String(item.verdict || 'insufficient_data');
-  const measurementState = impactMeasurementState(item);
   const before = Number(item.before_value);
   const after = Number(item.after_value);
   const afterCount = item.after_count == null ? null : Number(item.after_count);
-  const baselineState = item.cohort?.baseline_state;
-  if (baselineState === 'analysis_pending') return 'Baseline analysis is pending. Candidate tasks are recorded; their eligibility has not been established yet.';
-  if (baselineState === 'historical_unavailable') return 'Historical baseline unavailable: the selected pre-activation evidence currently does not support the required sample for this bounded comparison. Post-activation tasks cannot fill this baseline; late or backfilled pre-activation evidence may change eligibility.';
-  if (measurementState === 'not_measurable') {
-    const reasons = item.cohort?.measurement_reasons || [];
-    return reasons.join(' ') || 'The current cohorts do not pass the evidence-quality gate, so Reflect will not claim impact.';
-  }
-  if (verdict === 'insufficient_data') {
-    return baselineState === 'provisional'
-      ? 'The baseline is provisional. Eligibility and required metric coverage must be established before comparing outcomes.'
-      : 'Collecting eligible, comparable post-activation tasks. Candidate counts alone do not establish exposure or a measured outcome.';
-  }
-  if (item.before_value == null || item.after_value == null || !Number.isFinite(before) || !Number.isFinite(after)) return 'The recorded comparison values are unavailable; no outcome shift can be established.';
   const percent = Number.isFinite(before) && Number.isFinite(after) && before !== 0
     ? Math.abs((after - before) / before) * 100
     : null;
@@ -767,20 +783,25 @@ function buildImprovementSurfaces(){
       const workflowState = proposedWorkflow
         ? humanizeLedgerLabel(proposedWorkflow.lifecycle?.display || proposedWorkflow.status || 'pending')
         : '';
+      const priority = item.impact_score != null && Number.isFinite(Number(item.impact_score))
+        ? `Priority ${Math.round(Number(item.impact_score))}/100` : 'Priority unavailable';
+      const detectionConfidence = item.confidence != null && Number.isFinite(Number(item.confidence))
+        ? `${Math.round(Number(item.confidence) * 100)}% detection confidence` : 'Detection confidence unavailable';
       return `<article class="inbox-card">
         <div class="inbox-card-head">
           <div><div class="inbox-title">${escHtml(String(item.title || 'Observation'))}</div><div class="inbox-copy">${escHtml(String(item.summary || ''))}</div></div>
-          <span class="ledger-pill signal">impact ${Math.round(Number(item.impact_score || 0))}</span>
+          <span class="ledger-pill signal">${priority}</span>
         </div>
         <div class="ledger-meta">
           <span class="ledger-pill">${escHtml(String(item.status || 'new').replaceAll('_',' '))}</span>
           <span class="ledger-pill">${escHtml(String(item.severity || 'low'))} severity</span>
-          <span class="ledger-pill">${Math.round(Number(item.confidence || 0) * 100)}% confidence</span>
+          <span class="ledger-pill">${detectionConfidence}</span>
           <span class="ledger-pill">${fmt(Number(item.affected_session_count || 0))} linked session(s)</span>
           <span class="ledger-pill">${fmt(Number(item.observation_count || 1))} evidence pattern(s)</span>
           <span class="ledger-pill">${fmt(Number(item.source_scope_count || 1))} scope(s)</span>
           ${proposedWorkflow ? `<span class="ledger-pill">Linked workflow · ${escHtml(workflowState)}</span>` : ''}
         </div>
+        <div class="inbox-copy">Priority ranks this finding for review. Detection confidence describes the evidence pattern, not a measured outcome or likelihood of improvement.</div>
         <div class="ledger-actions"><button type="button" class="ledger-button" data-ledger-action="evidence" data-observation-id="${escHtml(String(item.id))}">View Task Evidence</button>${proposedWorkflow ? `<button type="button" class="ledger-button primary" data-ledger-action="open-workflow" data-candidate-id="${escHtml(String(proposedWorkflow.id))}">Open Linked Workflow</button>` : ''}</div>
       </article>`;
     }).join('') : resource('findings').state !== 'ready'
@@ -914,39 +935,47 @@ function buildImprovementSurfaces(){
       const minimumAfter = item.cohort?.minimum_after_execution_units;
       const afterCount = item.cohort?.eligibility?.after?.metric_count;
       const count = value => value == null || !Number.isFinite(Number(value)) ? 'Unknown' : fmt(Number(value));
-      const ready = measurementState === 'measured' && item.verdict !== 'insufficient_data';
+      const guidance = impactBlockedGuidance(item);
+      const ready = !guidance;
       const retained = resource('impact').state !== 'ready';
-      const baselineUnavailable = item.cohort?.baseline_state === 'historical_unavailable';
-      const baselinePending = item.cohort?.baseline_state === 'analysis_pending';
       const previous = history[1] || null;
-      const trend = impactTrendPresentation(item, previous, metric);
+      const trend = ready ? impactTrendPresentation(item, previous, metric) : null;
       const regressedButImproving = item.verdict === 'regressed' && trend?.kind === 'improving';
       const reviewLabel = item.verdict === 'regressed'
         ? (regressedButImproving ? 'Review Progress' : 'Review &amp; Roll Back')
         : 'Review Applied Workflow';
       const progressGraph = impactProgressGraph(history, metric);
+      const reasons = item.cohort?.measurement_reasons || [];
       const historyRows = history.slice(1).map(previousItem => `<li class="impact-history-item"><span>${escHtml(fmtWorkflowDate(previousItem.measured_at))}</span><span>${escHtml(formatImpactValue(metric, previousItem.after_value))} · ${escHtml(impactVerdictPresentation(previousItem.verdict, impactMeasurementState(previousItem)).label)}</span></li>`).join('');
       return `<article class="measurement-card impact-card" data-verdict="${escHtml(String(item.verdict || 'insufficient_data'))}" data-trend="${escHtml(trend?.kind || 'unknown')}">
         <div class="impact-head">
           <div class="impact-head-main"><div class="impact-eyebrow">Applied Workflow · ${escHtml(workflowName)}</div><h3 class="impact-title">${escHtml(metric.goal)}</h3></div>
-          <div class="impact-status-stack"><span class="impact-status ${escHtml(verdict.className)}">${retained ? 'Stored check · ' : ''}${escHtml(baselineUnavailable ? 'Historical Baseline Unavailable' : baselinePending ? 'Analysis Pending' : verdict.label)}</span>${trend ? `<span class="impact-trend-status ${escHtml(trend.kind)}">${escHtml(trend.label)}</span>` : ''}</div>
+          <div class="impact-status-stack"><span class="impact-status ${escHtml(guidance ? guidance.collecting ? 'collecting' : 'unchanged' : verdict.className)}">${retained ? 'Stored check · ' : ''}${escHtml(guidance?.label || verdict.label)}</span>${trend ? `<span class="impact-trend-status ${escHtml(trend.kind)}">${escHtml(trend.label)}</span>` : ''}</div>
         </div>
         <p class="impact-summary">${escHtml(impactSummary(item, metric, trend))}</p>
-        <div class="impact-readiness" aria-label="Comparison readiness">
+        ${guidance ? `<p class="impact-summary"><strong>Next step:</strong> ${escHtml(guidance.nextStep)}</p>` : `<div class="impact-readiness" aria-label="Comparison readiness">
           <span><strong>${count(item.before_count)}</strong> baseline tasks</span>
           <span><strong>${count(item.after_count)}</strong> after activation</span>
-          <span>${retained ? 'Current validation updating' : ready ? 'Comparison available' : 'Collecting comparable evidence'}</span>
-        </div>
-        ${measurementState === 'collecting' && !baselineUnavailable && !baselinePending && afterCount != null && minimumAfter > 0 ? `<div class="impact-progress"><div class="impact-progress-copy"><strong>Post-activation comparison sample: ${count(afterCount)} selected tasks with metrics of ${count(minimumAfter)} required</strong><span>${fmt(Math.max(0, minimumAfter - afterCount))} remaining</span></div><progress value="${Math.min(afterCount, minimumAfter)}" max="${minimumAfter}" aria-label="Selected post-activation tasks with metric coverage"></progress></div>` : ''}
-        <div class="impact-comparison">
-          <div class="impact-period"><div class="impact-period-label">Before Activation</div><div class="impact-period-value">${ready ? escHtml(formatImpactValue(metric, item.before_value)) : `${count(item.cohort?.eligibility?.before?.candidate_count)} candidate tasks`}</div>${impactCohortDetails(item, 'before')}</div>
+          <span>${retained ? 'Current validation updating' : 'Comparison available'}</span>
+        </div>`}
+        ${guidance?.collecting && afterCount != null && Number.isFinite(Number(afterCount)) && minimumAfter > 0 ? `<div class="impact-progress"><div class="impact-progress-copy"><strong>Post-activation comparison sample: ${count(afterCount)} selected tasks with metrics of ${count(minimumAfter)} required</strong><span>${fmt(Math.max(0, minimumAfter - afterCount))} remaining</span></div><progress value="${Math.min(afterCount, minimumAfter)}" max="${minimumAfter}" aria-label="Selected post-activation tasks with metric coverage"></progress></div>` : ''}
+        ${ready ? `<div class="impact-comparison">
+          <div class="impact-period"><div class="impact-period-label">Before Activation</div><div class="impact-period-value">${escHtml(formatImpactValue(metric, item.before_value))}</div></div>
           <div class="impact-arrow" aria-hidden="true">→</div>
-          <div class="impact-period"><div class="impact-period-label">After Activation</div><div class="impact-period-value">${ready ? escHtml(formatImpactValue(metric, item.after_value)) : `${count(item.cohort?.eligibility?.after?.candidate_count)} candidate tasks`}</div>${impactCohortDetails(item, 'after')}</div>
-        </div>
+          <div class="impact-period"><div class="impact-period-label">After Activation</div><div class="impact-period-value">${escHtml(formatImpactValue(metric, item.after_value))}</div></div>
+        </div>` : ''}
         ${progressGraph}
         <div class="impact-scope">${escHtml(impactScope(item))}${ready && item.confidence != null && Number.isFinite(Number(item.confidence)) ? ` · ${Math.round(Number(item.confidence) * 100)}% confidence` : ''}</div>
         <div class="impact-scope">${retained ? `Stored check ${escHtml(item.measured_at ? fmtWorkflowDate(item.measured_at) : 'date unknown')}; current validation is pending. ` : ''}Observed cohort differences do not establish that the workflow caused the change.</div>
-        <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-impact-sessions" data-measurement-id="${escHtml(String(item.id))}">View Compared Tasks</button><button type="button" class="ledger-button${item.verdict === 'regressed' && !regressedButImproving ? ' danger' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.candidate_id))}">${reviewLabel}</button></div>
+        <div class="ledger-actions">${guidance ? `<button type="button" class="ledger-button primary" data-ledger-action="${guidance.action}" data-measurement-id="${escHtml(String(item.id))}" data-candidate-id="${escHtml(String(item.candidate_id))}">${guidance.actionLabel}</button>` : `<button type="button" class="ledger-button primary" data-ledger-action="review-impact-sessions" data-measurement-id="${escHtml(String(item.id))}">View Compared Tasks</button><button type="button" class="ledger-button${item.verdict === 'regressed' && !regressedButImproving ? ' danger' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.candidate_id))}">${reviewLabel}</button>`}</div>
+        <details class="impact-history"><summary>Comparison evidence and exclusions</summary>
+          <div class="impact-comparison">
+            <div class="impact-period"><div class="impact-period-label">Before Activation</div>${impactCohortDetails(item, 'before')}</div>
+            <div class="impact-arrow" aria-hidden="true">→</div>
+            <div class="impact-period"><div class="impact-period-label">After Activation</div>${impactCohortDetails(item, 'after')}</div>
+          </div>
+          ${reasons.length ? `<p class="impact-scope">${escHtml(reasons.join(' '))}</p>` : ''}
+        </details>
         ${historyRows ? `<details class="impact-history"><summary>${fmt(history.length - 1)} Previous Check${history.length === 2 ? '' : 's'}</summary><ol class="impact-history-list">${historyRows}</ol></details>` : ''}
       </article>`;
     }).join('') : resource('impact').state !== 'ready'

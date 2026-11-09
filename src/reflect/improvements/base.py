@@ -114,7 +114,7 @@ class BaseImprovementRule(ABC):
         return WorkflowProposal(
             title=f"Workflow: {finding.title}",
             hypothesis=(
-                f"A reviewed {workflow.slug} workflow will {direction} "
+                f"A reviewed {workflow.slug} workflow aims to {direction} "
                 f"{finding.metric_name}. {finding.summary}"
             ),
             risk=workflow.risk,

@@ -31,6 +31,46 @@ function animateTabIndicator(){
   tabsEl.classList.add('tab-rail-animate');
 }
 
+function updateDashboardViewScope(tabName){
+  const sessionsVisible = tabName === 'sessions';
+  const filtersVisible = sessionsVisible || tabName === 'explore';
+  const shell = document.getElementById('report-shell');
+  if (shell) shell.dataset.view = tabName;
+  for (const id of ['session-rail', 'session-rail-open']) {
+    const element = document.getElementById(id);
+    if (element) element.hidden = !sessionsVisible;
+  }
+  for (const id of ['filter-rail', 'filter-sheet-open', 'report-panel-controls', 'hdr-range']) {
+    const element = document.getElementById(id);
+    if (element) element.hidden = !filtersVisible;
+  }
+  const sortField = document.getElementById('session-sort-field');
+  if (sortField) sortField.hidden = !sessionsVisible;
+  const filterTitle = document.getElementById('filter-scope-title');
+  if (filterTitle) filterTitle.textContent = sessionsVisible ? 'Session filters' : 'Matching-session filters';
+  const filterNote = document.getElementById('filter-scope-note');
+  if (filterNote) filterNote.textContent = sessionsVisible
+    ? 'Choose sessions to inspect. Session details cover their captured lifetime.'
+    : 'Choose matching sessions. Each view labels its event-window or lifetime scope.';
+  // Close temporary mobile panels without changing the saved session selection,
+  // filters, or the desktop rail's collapsed preference.
+  document.body.classList.remove('sessions-rail-open', 'filters-rail-open', 'rail-overlay-open');
+  const backdrop = document.getElementById('filter-sheet-backdrop');
+  if (backdrop) backdrop.hidden = true;
+  const mobile = window.matchMedia('(max-width: 900px)').matches;
+  for (const id of ['session-rail-open', 'session-rail-toggle']) {
+    document.getElementById(id)?.setAttribute('aria-expanded', String(sessionsVisible && !mobile && !document.body.classList.contains('sessions-rail-collapsed')));
+  }
+  document.getElementById('filter-sheet-open')?.setAttribute('aria-expanded', String(filtersVisible && !mobile));
+  const analysisScope = document.getElementById('inbox-analysis-window');
+  const analysisWindow = D.analysis_window;
+  if (analysisScope) analysisScope.textContent = analysisWindow?.date_from && analysisWindow?.date_to
+    ? `Latest analysis window: ${fmtWorkflowDate(analysisWindow.date_from)} — ${fmtWorkflowDate(analysisWindow.date_to)}.`
+    : analysisWindow?.days && analysisWindow?.date_to
+      ? `Latest analysis window: ${analysisWindow.days} days ending ${fmtWorkflowDate(analysisWindow.date_to)}.`
+      : 'Analysis window not supplied by this report.';
+}
+
 function activateTab(tabName, {view = '', updateUrl = true, focusButton = false} = {}){
   const location = canonicalDashboardLocation(tabName, view || activeExploreView);
   const activeTab = location.tab;
@@ -49,6 +89,7 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
     panel.classList.toggle('active', isActive);
     panel.hidden = !isActive;
   });
+  updateDashboardViewScope(activeTab);
   updateTabIndicator(activeButton);
   animateTabIndicator();
   document.querySelectorAll('[data-explore-view]').forEach(button => {
@@ -93,7 +134,7 @@ tabButtons.forEach((button, index) => {
 document.querySelectorAll('[data-explore-view]').forEach(button => {
   button.addEventListener('click', () => activateTab('explore', {view: button.dataset.exploreView || 'usage'}));
 });
-window.addEventListener('resize', () => updateTabIndicator(document.querySelector('.tab.active')));
+window.addEventListener('resize', () => updateTabIndicator(document.querySelector('.tab[aria-selected="true"]')));
 
 const requestedInitialTab = currentParams().get('tab');
 const requestedInitialView = currentParams().get('view');

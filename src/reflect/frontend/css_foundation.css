@@ -418,8 +418,8 @@ nav::after{
 }
 .tab:hover{color:var(--text-2)}
 .tab:hover::before{opacity:.5;transform:scale(1)}
-.tab.active{color:var(--signal-2);font-weight:800}
-.tab.active::before{
+.tab[aria-selected="true"]{color:var(--signal-2);font-weight:800}
+.tab[aria-selected="true"]::before{
   opacity:1;
   transform:scale(1);
   background:linear-gradient(180deg,rgba(242,138,26,.04) 0%,rgba(242,138,26,.08) 78%,rgba(255,177,86,.16) 100%);

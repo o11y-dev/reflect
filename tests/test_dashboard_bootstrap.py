@@ -268,7 +268,7 @@ const hydrated = [];
 const button = {classList:{toggle:()=>{}}, setAttribute:()=>{}};
 const panel = {id:'tab-explore-usage', classList:{toggle:()=>{}}, hidden:true};
 const context = {activeExploreView:'usage', D:{sql_backed:true, focused_session_id:''},
-  tabButtons:[button], updateTabIndicator:()=>{}, animateTabIndicator:()=>{},
+  tabButtons:[button], updateTabIndicator:()=>{}, animateTabIndicator:()=>{}, updateDashboardViewScope:()=>{},
   currentParams:()=>params, canonicalDashboardLocation:(tab,view)=>({tab,view}),
   updateUrlParams:fn=>fn(params),
   showReportLoader:()=>{throw new Error('must not block whole dashboard');},

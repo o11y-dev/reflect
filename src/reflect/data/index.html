@@ -473,8 +473,8 @@ nav::after{
 }
 .tab:hover{color:var(--text-2)}
 .tab:hover::before{opacity:.5;transform:scale(1)}
-.tab.active{color:var(--signal-2);font-weight:800}
-.tab.active::before{
+.tab[aria-selected="true"]{color:var(--signal-2);font-weight:800}
+.tab[aria-selected="true"]::before{
   opacity:1;
   transform:scale(1);
   background:linear-gradient(180deg,rgba(242,138,26,.04) 0%,rgba(242,138,26,.08) 78%,rgba(255,177,86,.16) 100%);
@@ -821,9 +821,30 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
   gap:12px;
   align-items:start;
 }
-body.sessions-rail-collapsed .report-shell{
+body.sessions-rail-collapsed .report-shell[data-view="sessions"]{
   grid-template-columns:48px minmax(0,1fr) minmax(300px,360px);
 }
+.report-shell[data-view="explore"]{
+  grid-template-columns:minmax(0,1fr) minmax(280px,320px);
+}
+.report-shell:not([data-view="sessions"]):not([data-view="explore"]){display:block}
+.report-shell [hidden],#hdr-range[hidden]{display:none!important}
+.product-hero.view-intro{
+  align-items:flex-start;
+  padding:0 0 12px;
+  margin-bottom:14px;
+  border:0;
+  border-bottom:1px solid var(--glass-border);
+  border-radius:0;
+  background:none;
+}
+.view-intro h2{font-size:22px}
+.view-intro p{max-width:75ch;font-size:14px}
+.view-intro .product-count{display:flex;align-items:baseline;gap:6px;font-size:22px}
+.view-intro .product-count small{font-size:11px;letter-spacing:0;text-transform:none}
+.view-scope,.view-intro p.view-scope{margin-top:6px;color:var(--muted);font-size:12px;line-height:1.5}
+.filter-scope-note{margin-bottom:12px}
+.report-content .evidence-unavailable-message{padding:9px 12px;margin-bottom:12px;font-size:12px;line-height:1.5}
 .report-content{min-width:0}
 .session-rail,
 .filter-rail{
@@ -911,7 +932,7 @@ body.sessions-rail-collapsed .report-shell{
 }
 .rail-toggle-lines::before{top:-5px}
 .rail-toggle-lines::after{top:5px}
-.shell-left-toggle{display:none!important}
+.shell-left-toggle{display:none}
 .shell-filter-toggle{display:none}
 body.sessions-rail-collapsed .session-rail{
   align-items:center;
@@ -924,7 +945,6 @@ body.sessions-rail-collapsed .session-rail .sb-left,
 body.sessions-rail-collapsed .session-rail .rail-title{
   display:none;
 }
-body.sessions-rail-collapsed .shell-left-toggle{display:none!important}
 
 /* ── Session Browser — Detail Pane ───────────────────────── */
 .session-browser{
@@ -1152,7 +1172,7 @@ body.rail-overlay-open{overflow:hidden}
     pointer-events:auto;
     justify-content:space-between;
   }
-  .shell-left-toggle{display:inline-flex!important}
+  .shell-left-toggle{display:inline-flex}
   .shell-filter-toggle{display:inline-flex}
   .session-rail,
   .filter-rail{
@@ -2964,12 +2984,12 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   <button class="tab" id="tab-button-workflows" type="button" role="tab" aria-selected="false" aria-controls="tab-workflows" tabindex="-1" data-tab="workflows">Workflows</button>
   <button class="tab" id="tab-button-skills" type="button" role="tab" aria-selected="false" aria-controls="tab-skills" tabindex="-1" data-tab="skills">Skills</button>
   <button class="tab" id="tab-button-impact" type="button" role="tab" aria-selected="false" aria-controls="tab-impact" tabindex="-1" data-tab="impact">Impact</button>
-  <button class="tab" id="tab-button-explore" type="button" role="tab" aria-selected="false" aria-controls="tab-explore-usage" tabindex="-1" data-tab="explore">Explore</button>
+  <button class="tab" id="tab-button-explore" type="button" role="tab" aria-selected="false" aria-controls="tab-explore-usage" tabindex="-1" data-tab="explore">Usage &amp; explore</button>
 </nav>
 
 <main id="main-content">
 
-<div class="report-shell" id="report-shell">
+<div class="report-shell" id="report-shell" data-view="sessions">
   <aside class="session-rail" id="session-rail" aria-label="Sessions">
     <div class="rail-head">
       <div class="rail-title">Sessions</div>
@@ -2984,7 +3004,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   </aside>
 
   <div class="report-content">
-    <div class="shell-toolbar" aria-label="Report panels">
+    <div class="shell-toolbar" id="report-panel-controls" aria-label="Report panels">
       <button type="button" class="rail-toggle shell-left-toggle" id="session-rail-open" aria-label="Open sessions" aria-expanded="true">
         <span class="rail-toggle-lines" aria-hidden="true"></span>
       </button>
@@ -3121,8 +3141,8 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 <!-- ════════════════════ IMPACT ════════════════════ -->
 <div class="tab-panel" id="tab-impact" role="tabpanel" aria-labelledby="tab-button-impact" hidden>
-  <div class="product-hero">
-    <div><h2>Impact</h2><p>See whether installed workflows improve later, comparable task executions. Reflect withholds a claim when the cohort or telemetry is incomplete.</p></div>
+  <div class="product-hero view-intro">
+    <div><h2>Impact</h2><p>Check whether later, comparable tasks support a workflow improvement.</p><p class="view-scope">Each check uses its recorded before/after task cohorts. Session filters do not apply.</p></div>
     <div class="product-count" id="measurement-count">0<small>impact checks</small></div>
   </div>
   <div class="impact-explainer" aria-label="How impact checks work">
@@ -3135,8 +3155,8 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 <!-- ════════════════════ INBOX ════════════════════ -->
 <div class="tab-panel" id="tab-inbox" role="tabpanel" aria-labelledby="tab-button-inbox" hidden>
-  <div class="product-hero">
-    <div><h2>Inbox</h2><p>Investigate evidence-backed findings and repeated behavior before deciding whether they deserve a workflow.</p></div>
+  <div class="product-hero view-intro">
+    <div><h2>Inbox</h2><p>Inspect findings and repeated behavior before choosing a workflow.</p><p class="view-scope"><span id="inbox-analysis-window">Analysis window not supplied by this report.</span> Retained evidence may include older sessions. Session filters do not apply.</p></div>
     <div class="product-count" id="inbox-signal-count">0<small>needs attention</small></div>
   </div>
   <div class="inbox-view-switch" role="tablist" aria-label="Inbox evidence views">
@@ -3163,8 +3183,8 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 <!-- ════════════════════ WORKFLOWS ════════════════════ -->
 <div class="tab-panel" id="tab-workflows" role="tabpanel" aria-labelledby="tab-button-workflows" hidden>
-  <div class="product-hero">
-    <div><h2>Workflows</h2><p>Review recurring ways of working, apply a procedure, and check whether comparable future tasks improve.</p></div>
+  <div class="product-hero view-intro">
+    <div><h2>Workflows</h2><p>Review a procedure and its evidence before applying it.</p><p class="view-scope">Stored workflow inventory. Each workflow shows its supporting task scope; session filters do not apply.</p></div>
     <div class="product-count" id="workflow-total-count">0<small>workflow contracts</small></div>
   </div>
   <section class="panel product-section" id="workflow-candidates-section">
@@ -3183,8 +3203,8 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 <!-- ════════════════════ SKILL REGISTRY ════════════════════ -->
 <div class="tab-panel" id="tab-skills" role="tabpanel" aria-labelledby="tab-button-skills" hidden>
-  <div class="product-hero">
-    <div><h2>Skills Registry</h2><p>Inspect the versioned procedures available to agents, where each version is installed, and whether later task evidence shows it was actually used.</p></div>
+  <div class="product-hero view-intro">
+    <div><h2>Skills Registry</h2><p>Inspect skill versions, installations, and recorded use.</p><p class="view-scope">Stored skill inventory. Reference counts cover all captured history; session filters do not apply.</p></div>
     <div class="product-count" id="skill-count">0<small>registry entries</small></div>
   </div>
   <section class="panel product-section" id="skill-registry-section">
@@ -3378,7 +3398,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
     <section class="global-filter-shell" id="global-filter-shell" aria-label="Session filters">
       <div class="global-filter-top">
         <div>
-          <div class="global-filter-title">Session filters</div>
+          <div class="global-filter-title" id="filter-scope-title">Session filters</div>
           <div class="global-filter-meta" id="global-filter-meta">Showing all sessions</div>
         </div>
         <div class="global-filter-actions">
@@ -3386,6 +3406,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
           <button type="button" class="filter-clear" id="filter-clear">Clear filters</button>
         </div>
       </div>
+      <p class="view-scope filter-scope-note" id="filter-scope-note">Choose sessions to inspect. Session details cover their captured lifetime.</p>
       <div class="global-filter-grid" id="global-filter-grid">
         <div class="filter-field">
           <label class="filter-label" for="sb-search">Search</label>
@@ -3416,7 +3437,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
             <option value="30d">Last 30 days</option>
           </select>
         </div>
-        <div class="filter-field filter-field-secondary">
+        <div class="filter-field filter-field-secondary" id="session-sort-field">
           <label class="filter-label" for="filter-sort">Sort</label>
           <select class="filter-select" id="filter-sort">
             <option value="recent">Most recent</option>
@@ -4199,9 +4220,8 @@ function openLedgerDialog({title, subtitle = '', body = '', actions = ''}){
   if (!ledgerDialog.open) ledgerDialog.showModal();
 }
 
-function closeLedgerDialog(){
+function clearLedgerDialogSelection(){
   if (ledgerDialog) ledgerDialog.inspection = null;
-  if (ledgerDialog?.open) ledgerDialog.close();
   updateUrlParams(params => {
     params.delete('workflow');
     params.delete('workflow_root');
@@ -4210,8 +4230,16 @@ function closeLedgerDialog(){
   });
 }
 
+function closeLedgerDialog(){
+  if (ledgerDialog?.open) ledgerDialog.close();
+  clearLedgerDialogSelection();
+}
+
 document.getElementById('ledger-dialog-close')?.addEventListener('click', closeLedgerDialog);
-ledgerDialog?.addEventListener('close', () => {ledgerDialog.inspection = null;});
+ledgerDialog?.addEventListener('close', () => {
+  // A queued close event must not clear a newly opened inspection.
+  if (!ledgerDialog.open) clearLedgerDialogSelection();
+});
 ledgerDialog?.addEventListener('click', event => {
   if (event.target === ledgerDialog) closeLedgerDialog();
 });
@@ -4929,8 +4957,9 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
       title:reviewTitle,
       subtitle:`${origin.label} · ${behaviorType} · ${humanizeLedgerLabel(candidate.lifecycle?.display || candidate.status)} · Rule ${humanizeLedgerLabel(sourceRule)}`,
       body:`${staleEvidenceNotice(candidatePublication,ledger)}${readOnlyNotice}<div class="review-lead">
-          <div class="review-eyebrow">Why Reflect Suggested This</div>
+          <h3 class="review-panel-title">Hypothesis to test</h3>
           <p>${escHtml(humanizeLedgerText(candidate.hypothesis || 'Review the linked evidence and proposed workflow before applying it.'))}</p>
+          <p class="review-panel-copy">Proposed benefit; this is not a measured outcome.</p>
           <p class="review-panel-copy">${escHtml(origin.detail)}</p>
         </div>
         ${content.procedure ? renderProcedureEvidence(content) : ''}
@@ -5020,7 +5049,7 @@ async function showImpactSessions(measurementId){
     const metric = impactMetricPresentation(ledger.metric_name);
     const recordedEvidence = ledger.evidence_state === 'recorded';
     const unitPlural = 'tasks';
-    const cohortCopy = `These are the stored execution-unit cohorts behind this impact snapshot.${ledger.measured_at ? ` Measured ${fmtWorkflowDate(ledger.measured_at)}.` : recordedEvidence ? ' Measurement time is unavailable.' : ''}`;
+    const cohortCopy = `These are the stored execution-unit cohorts behind this comparison check.${ledger.measured_at ? ` Recorded ${fmtWorkflowDate(ledger.measured_at)}.` : recordedEvidence ? ' Measurement time is unavailable.' : ''}`;
     const count = value => value == null ? '—' : fmt(Number(value));
     const measurementReasons = ledger.measurement_reasons || [];
     const qualityNotice = measurementReasons.length
@@ -5043,13 +5072,13 @@ async function showImpactSessions(measurementId){
       initial:5,
     });
     presentLedgerRead(request, {
-      title:`Tasks Compared for ${metric.goal}`,
+      title:`Comparison evidence: ${metric.goal}`,
       subtitle:cohortCopy,
       body:`${staleEvidenceNotice(ledger)}<div class="review-lead"><div class="review-eyebrow">Impact Evidence</div><p>${escHtml(cohortCopy)} Open a linked session to inspect the captured conversation and tools.</p></div>${qualityNotice}${ledger.snapshot_exact === false ? '<div class="review-warning">Some stored cohort references have no frozen snapshot details. Their metrics and outcomes remain unknown; current session data is not substituted.</div>' : ''}
         <div class="review-grid">
           <section class="review-panel">
             <div class="review-panel-head"><h3 class="review-panel-title">Before Activation</h3><span class="ledger-pill">${count(ledger.before_count)} ${unitPlural}</span></div>
-            <p class="review-panel-copy">Baseline ${unitPlural} used to establish the earlier behavior.</p>
+            <p class="review-panel-copy">Stored baseline ${unitPlural}; eligibility and missing evidence are shown below.</p>
             ${impactCohortDetails({cohort:ledger,before_count:ledger.before_count}, 'before')}
             ${beforeSessions}
           </section>
@@ -5488,6 +5517,46 @@ function animateTabIndicator(){
   tabsEl.classList.add('tab-rail-animate');
 }
 
+function updateDashboardViewScope(tabName){
+  const sessionsVisible = tabName === 'sessions';
+  const filtersVisible = sessionsVisible || tabName === 'explore';
+  const shell = document.getElementById('report-shell');
+  if (shell) shell.dataset.view = tabName;
+  for (const id of ['session-rail', 'session-rail-open']) {
+    const element = document.getElementById(id);
+    if (element) element.hidden = !sessionsVisible;
+  }
+  for (const id of ['filter-rail', 'filter-sheet-open', 'report-panel-controls', 'hdr-range']) {
+    const element = document.getElementById(id);
+    if (element) element.hidden = !filtersVisible;
+  }
+  const sortField = document.getElementById('session-sort-field');
+  if (sortField) sortField.hidden = !sessionsVisible;
+  const filterTitle = document.getElementById('filter-scope-title');
+  if (filterTitle) filterTitle.textContent = sessionsVisible ? 'Session filters' : 'Matching-session filters';
+  const filterNote = document.getElementById('filter-scope-note');
+  if (filterNote) filterNote.textContent = sessionsVisible
+    ? 'Choose sessions to inspect. Session details cover their captured lifetime.'
+    : 'Choose matching sessions. Each view labels its event-window or lifetime scope.';
+  // Close temporary mobile panels without changing the saved session selection,
+  // filters, or the desktop rail's collapsed preference.
+  document.body.classList.remove('sessions-rail-open', 'filters-rail-open', 'rail-overlay-open');
+  const backdrop = document.getElementById('filter-sheet-backdrop');
+  if (backdrop) backdrop.hidden = true;
+  const mobile = window.matchMedia('(max-width: 900px)').matches;
+  for (const id of ['session-rail-open', 'session-rail-toggle']) {
+    document.getElementById(id)?.setAttribute('aria-expanded', String(sessionsVisible && !mobile && !document.body.classList.contains('sessions-rail-collapsed')));
+  }
+  document.getElementById('filter-sheet-open')?.setAttribute('aria-expanded', String(filtersVisible && !mobile));
+  const analysisScope = document.getElementById('inbox-analysis-window');
+  const analysisWindow = D.analysis_window;
+  if (analysisScope) analysisScope.textContent = analysisWindow?.date_from && analysisWindow?.date_to
+    ? `Latest analysis window: ${fmtWorkflowDate(analysisWindow.date_from)} — ${fmtWorkflowDate(analysisWindow.date_to)}.`
+    : analysisWindow?.days && analysisWindow?.date_to
+      ? `Latest analysis window: ${analysisWindow.days} days ending ${fmtWorkflowDate(analysisWindow.date_to)}.`
+      : 'Analysis window not supplied by this report.';
+}
+
 function activateTab(tabName, {view = '', updateUrl = true, focusButton = false} = {}){
   const location = canonicalDashboardLocation(tabName, view || activeExploreView);
   const activeTab = location.tab;
@@ -5506,6 +5575,7 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
     panel.classList.toggle('active', isActive);
     panel.hidden = !isActive;
   });
+  updateDashboardViewScope(activeTab);
   updateTabIndicator(activeButton);
   animateTabIndicator();
   document.querySelectorAll('[data-explore-view]').forEach(button => {
@@ -5550,7 +5620,7 @@ tabButtons.forEach((button, index) => {
 document.querySelectorAll('[data-explore-view]').forEach(button => {
   button.addEventListener('click', () => activateTab('explore', {view: button.dataset.exploreView || 'usage'}));
 });
-window.addEventListener('resize', () => updateTabIndicator(document.querySelector('.tab.active')));
+window.addEventListener('resize', () => updateTabIndicator(document.querySelector('.tab[aria-selected="true"]')));
 
 const requestedInitialTab = currentParams().get('tab');
 const requestedInitialView = currentParams().get('view');
@@ -5576,6 +5646,27 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) requestDashboardRefresh();
 });
 /* ════════════════════ SESSION BROWSER ════════════════════ */
+function sessionListIdentity(session){
+  const prompt = String(session.first_prompt || '').trim();
+  if (prompt) return {title:prompt.slice(0, 80) + (prompt.length > 80 ? '…' : ''), missingPrompt:false};
+  const model = String(session.primary_model || '').trim();
+  const agent = session.agent && session.agent !== 'unknown' ? formatAgentLabel(session.agent) : '';
+  const id = String(session.full_id || session.id || '').slice(-8);
+  return {title:[model || agent || 'Session', id].filter(Boolean).join(' · '), missingPrompt:true};
+}
+
+function renderSessionQualityBadge(session){
+  const score = session.quality_score;
+  if (!session.quality_available || score == null || !Number.isFinite(Number(score))) {
+    return '<div class="sb-card-badge" style="color:var(--text-3)">No score</div>';
+  }
+  const coverage = session.quality_coverage_pct;
+  const coverageLabel = coverage != null && Number.isFinite(Number(coverage))
+    ? `${Number(coverage).toFixed(0)}% evidence coverage` : 'Evidence coverage unavailable';
+  const label = `Heuristic ${Number(score).toFixed(0)}/100`;
+  return `<div class="sb-card-badge" title="${escHtml(coverageLabel)} · task success is assessed separately" aria-label="${escHtml(label + ' · ' + coverageLabel + ' · task success is assessed separately')}">${label}</div>`;
+}
+
 class SessionConversationPlayhead {
   constructor(panel, options = {}) {
     this.panel = panel;
@@ -6252,7 +6343,7 @@ class SessionConversationPlayhead {
     listEl.innerHTML = filtered.map(s => {
       const agentColor = colorForAgent(s.agent);
       const agentName = formatAgentLabel(s.agent);
-      const prompt = s.first_prompt ? escHtml(s.first_prompt.slice(0, 80)) + (s.first_prompt.length > 80 ? '…' : '') : 'No prompt data';
+      const identity = sessionListIdentity(s);
       const isActive = s._idx === selectedIdx;
       const estimatedTokens = getEstimatedSessionTokens(s);
       const tokens = sessionTokenTotal(s, estimatedTokens);
@@ -6265,14 +6356,15 @@ class SessionConversationPlayhead {
           <div class="sb-card-agent">${escHtml(agentName)}</div>
           <div class="sb-card-time">${s._navigationOnly ? 'Linked session' : escHtml(fmtWorkflowDate(s.created_at))}</div>
         </div>
-        <div class="sb-card-prompt">${prompt}</div>
+        <div class="sb-card-prompt">${escHtml(identity.title)}</div>
         <div class="sb-card-badges">
+          ${identity.missingPrompt ? '<div class="sb-card-badge">Prompt text unavailable</div>' : ''}
           ${s._navigationOnly ? '<div class="sb-card-badge">Activity detail · summary unavailable</div>' : `<div class="sb-card-badge">${fmt(s.event_count || 0)} events</div>
           ${tokens > 0 ? `<div class="sb-card-badge">${estimatedTokens ? '~' : ''}${fmtTokenShort(tokens)} tok</div>` : ''}
           ${costPresentation.status === 'estimated'
             ? `<div class="sb-card-badge">${fmtCost(cost)} ${escHtml(unit)}</div>`
             : `<div class="sb-card-badge" style="color:var(--text-3)" title="${escHtml(costPresentation.reason)}">${escHtml(costPresentation.label)}</div>`}
-          ${s.quality_available ? `<div class="sb-card-badge" style="color:${Number(s.quality_score || 0) > 70 ? 'var(--green)' : 'var(--yellow)'}">${Number(s.quality_score || 0).toFixed(0)}%</div>` : '<div class="sb-card-badge" style="color:var(--text-3)">No score</div>'}`}
+          ${renderSessionQualityBadge(s)}`}
         </div>
       </button>`;
     }).join('');
@@ -8155,6 +8247,42 @@ function impactMeasurementState(item){
   return item?.verdict === 'insufficient_data' ? 'collecting' : 'measured';
 }
 
+function impactBlockedGuidance(item = {}){
+  const state = impactMeasurementState(item);
+  const baseline = item.cohort?.baseline_state;
+  const inspect = {action:'review-impact-sessions',actionLabel:'Inspect Task Evidence'};
+  if (baseline === 'historical_unavailable') return {
+    ...inspect, label:'Historical Baseline Unavailable',actionLabel:'Inspect Baseline Evidence',
+    summary:'Historical baseline unavailable: the selected pre-activation evidence currently does not support the required sample for this bounded comparison. Post-activation tasks cannot fill this baseline; late or backfilled pre-activation evidence may change eligibility.',
+    nextStep:'Inspect the baseline evidence to identify which pre-activation records are missing or ineligible.',
+  };
+  if (baseline === 'analysis_pending' || state === 'validation_pending' || state === 'analysis_pending') return {
+    ...inspect, label:'Analysis Pending',actionLabel:'Inspect Recorded Tasks',
+    summary:baseline === 'analysis_pending'
+      ? 'Baseline analysis is pending. Candidate tasks are recorded; their eligibility has not been established yet.'
+      : 'Current analysis has not established whether these recorded tasks support a comparison.',
+    nextStep:'Inspect the recorded tasks while analysis establishes their eligibility.',
+  };
+  if (state === 'measured' && item.verdict !== 'insufficient_data'
+      && item.before_value != null && item.after_value != null
+      && Number.isFinite(Number(item.before_value)) && Number.isFinite(Number(item.after_value))) return null;
+  if (state === 'not_measurable' || state === 'measured') return {
+    ...inspect, label:'Comparison Blocked',
+    summary:'The recorded tasks do not provide a reliable before-and-after comparison. No outcome change can be established.',
+    nextStep:'Inspect the task evidence and exclusions to understand what prevents this comparison.',
+  };
+  if (baseline !== 'frozen') return {
+    ...inspect, label:'Baseline Eligibility Unknown',actionLabel:'Inspect Baseline Evidence',
+    summary:'Baseline eligibility and required metric coverage have not been established. Later tasks alone cannot establish a pre-activation baseline.',
+    nextStep:'Inspect the pre-activation evidence before deciding whether later collection would help.',
+  };
+  return {
+    label:'Collecting Evidence',collecting:true,action:'review-workflow',actionLabel:'Review Applied Workflow',
+    summary:'The baseline is available. Reflect is still collecting eligible, comparable post-activation tasks with the required measurements.',
+    nextStep:'Review the applied workflow before continuing comparable tasks with recorded outcomes and verification.',
+  };
+}
+
 function impactVerdictPresentation(verdict, measurementState = ''){
   if (measurementState === 'not_measurable') return {label:'Not Measurable',className:'unchanged'};
   if (measurementState === 'collecting') return {label:'Collecting Evidence',className:'collecting'};
@@ -8184,15 +8312,7 @@ function impactTrendPresentation(item, previous, metric){
 function impactProgressGraph(history, metric){
   const snapshots = [...(history || [])].reverse();
   const latestSnapshot = snapshots[snapshots.length - 1];
-  const latestState = impactMeasurementState(latestSnapshot);
-  if (latestState !== 'measured') {
-    const reasons = latestSnapshot?.cohort?.measurement_reasons || [];
-    const baselineState = latestSnapshot?.cohort?.baseline_state;
-    const message = baselineState === 'historical_unavailable' ? 'The selected pre-activation evidence currently lacks enough metric-bearing tasks for this bounded comparison.'
-      : baselineState === 'analysis_pending' ? 'Baseline eligibility is awaiting analysis.'
-      : reasons[0] || (latestState === 'not_measurable' ? 'The current cohorts do not pass the evidence-quality gate.' : 'Waiting for enough eligible, comparable post-activation tasks.');
-    return `<section class="impact-chart" aria-label="Impact evidence status"><div class="impact-chart-head"><span class="impact-chart-title">Evidence status</span><span class="impact-chart-direction">${escHtml(humanizeLedgerLabel(latestState))}</span></div><div class="impact-chart-empty">${escHtml(message)}</div></section>`;
-  }
+  if (impactBlockedGuidance(latestSnapshot)) return '';
   const baselineSnapshot = latestSnapshot?.before_value != null && Number.isFinite(Number(latestSnapshot.before_value))
     ? latestSnapshot
     : [...snapshots].reverse().find(item => item.before_value != null && Number.isFinite(Number(item.before_value)));
@@ -8250,24 +8370,12 @@ function impactProgressGraph(history, metric){
 }
 
 function impactSummary(item, metric, trend = null){
+  const guidance = impactBlockedGuidance(item);
+  if (guidance) return guidance.summary;
   const verdict = String(item.verdict || 'insufficient_data');
-  const measurementState = impactMeasurementState(item);
   const before = Number(item.before_value);
   const after = Number(item.after_value);
   const afterCount = item.after_count == null ? null : Number(item.after_count);
-  const baselineState = item.cohort?.baseline_state;
-  if (baselineState === 'analysis_pending') return 'Baseline analysis is pending. Candidate tasks are recorded; their eligibility has not been established yet.';
-  if (baselineState === 'historical_unavailable') return 'Historical baseline unavailable: the selected pre-activation evidence currently does not support the required sample for this bounded comparison. Post-activation tasks cannot fill this baseline; late or backfilled pre-activation evidence may change eligibility.';
-  if (measurementState === 'not_measurable') {
-    const reasons = item.cohort?.measurement_reasons || [];
-    return reasons.join(' ') || 'The current cohorts do not pass the evidence-quality gate, so Reflect will not claim impact.';
-  }
-  if (verdict === 'insufficient_data') {
-    return baselineState === 'provisional'
-      ? 'The baseline is provisional. Eligibility and required metric coverage must be established before comparing outcomes.'
-      : 'Collecting eligible, comparable post-activation tasks. Candidate counts alone do not establish exposure or a measured outcome.';
-  }
-  if (item.before_value == null || item.after_value == null || !Number.isFinite(before) || !Number.isFinite(after)) return 'The recorded comparison values are unavailable; no outcome shift can be established.';
   const percent = Number.isFinite(before) && Number.isFinite(after) && before !== 0
     ? Math.abs((after - before) / before) * 100
     : null;
@@ -8465,20 +8573,25 @@ function buildImprovementSurfaces(){
       const workflowState = proposedWorkflow
         ? humanizeLedgerLabel(proposedWorkflow.lifecycle?.display || proposedWorkflow.status || 'pending')
         : '';
+      const priority = item.impact_score != null && Number.isFinite(Number(item.impact_score))
+        ? `Priority ${Math.round(Number(item.impact_score))}/100` : 'Priority unavailable';
+      const detectionConfidence = item.confidence != null && Number.isFinite(Number(item.confidence))
+        ? `${Math.round(Number(item.confidence) * 100)}% detection confidence` : 'Detection confidence unavailable';
       return `<article class="inbox-card">
         <div class="inbox-card-head">
           <div><div class="inbox-title">${escHtml(String(item.title || 'Observation'))}</div><div class="inbox-copy">${escHtml(String(item.summary || ''))}</div></div>
-          <span class="ledger-pill signal">impact ${Math.round(Number(item.impact_score || 0))}</span>
+          <span class="ledger-pill signal">${priority}</span>
         </div>
         <div class="ledger-meta">
           <span class="ledger-pill">${escHtml(String(item.status || 'new').replaceAll('_',' '))}</span>
           <span class="ledger-pill">${escHtml(String(item.severity || 'low'))} severity</span>
-          <span class="ledger-pill">${Math.round(Number(item.confidence || 0) * 100)}% confidence</span>
+          <span class="ledger-pill">${detectionConfidence}</span>
           <span class="ledger-pill">${fmt(Number(item.affected_session_count || 0))} linked session(s)</span>
           <span class="ledger-pill">${fmt(Number(item.observation_count || 1))} evidence pattern(s)</span>
           <span class="ledger-pill">${fmt(Number(item.source_scope_count || 1))} scope(s)</span>
           ${proposedWorkflow ? `<span class="ledger-pill">Linked workflow · ${escHtml(workflowState)}</span>` : ''}
         </div>
+        <div class="inbox-copy">Priority ranks this finding for review. Detection confidence describes the evidence pattern, not a measured outcome or likelihood of improvement.</div>
         <div class="ledger-actions"><button type="button" class="ledger-button" data-ledger-action="evidence" data-observation-id="${escHtml(String(item.id))}">View Task Evidence</button>${proposedWorkflow ? `<button type="button" class="ledger-button primary" data-ledger-action="open-workflow" data-candidate-id="${escHtml(String(proposedWorkflow.id))}">Open Linked Workflow</button>` : ''}</div>
       </article>`;
     }).join('') : resource('findings').state !== 'ready'
@@ -8612,39 +8725,47 @@ function buildImprovementSurfaces(){
       const minimumAfter = item.cohort?.minimum_after_execution_units;
       const afterCount = item.cohort?.eligibility?.after?.metric_count;
       const count = value => value == null || !Number.isFinite(Number(value)) ? 'Unknown' : fmt(Number(value));
-      const ready = measurementState === 'measured' && item.verdict !== 'insufficient_data';
+      const guidance = impactBlockedGuidance(item);
+      const ready = !guidance;
       const retained = resource('impact').state !== 'ready';
-      const baselineUnavailable = item.cohort?.baseline_state === 'historical_unavailable';
-      const baselinePending = item.cohort?.baseline_state === 'analysis_pending';
       const previous = history[1] || null;
-      const trend = impactTrendPresentation(item, previous, metric);
+      const trend = ready ? impactTrendPresentation(item, previous, metric) : null;
       const regressedButImproving = item.verdict === 'regressed' && trend?.kind === 'improving';
       const reviewLabel = item.verdict === 'regressed'
         ? (regressedButImproving ? 'Review Progress' : 'Review &amp; Roll Back')
         : 'Review Applied Workflow';
       const progressGraph = impactProgressGraph(history, metric);
+      const reasons = item.cohort?.measurement_reasons || [];
       const historyRows = history.slice(1).map(previousItem => `<li class="impact-history-item"><span>${escHtml(fmtWorkflowDate(previousItem.measured_at))}</span><span>${escHtml(formatImpactValue(metric, previousItem.after_value))} · ${escHtml(impactVerdictPresentation(previousItem.verdict, impactMeasurementState(previousItem)).label)}</span></li>`).join('');
       return `<article class="measurement-card impact-card" data-verdict="${escHtml(String(item.verdict || 'insufficient_data'))}" data-trend="${escHtml(trend?.kind || 'unknown')}">
         <div class="impact-head">
           <div class="impact-head-main"><div class="impact-eyebrow">Applied Workflow · ${escHtml(workflowName)}</div><h3 class="impact-title">${escHtml(metric.goal)}</h3></div>
-          <div class="impact-status-stack"><span class="impact-status ${escHtml(verdict.className)}">${retained ? 'Stored check · ' : ''}${escHtml(baselineUnavailable ? 'Historical Baseline Unavailable' : baselinePending ? 'Analysis Pending' : verdict.label)}</span>${trend ? `<span class="impact-trend-status ${escHtml(trend.kind)}">${escHtml(trend.label)}</span>` : ''}</div>
+          <div class="impact-status-stack"><span class="impact-status ${escHtml(guidance ? guidance.collecting ? 'collecting' : 'unchanged' : verdict.className)}">${retained ? 'Stored check · ' : ''}${escHtml(guidance?.label || verdict.label)}</span>${trend ? `<span class="impact-trend-status ${escHtml(trend.kind)}">${escHtml(trend.label)}</span>` : ''}</div>
         </div>
         <p class="impact-summary">${escHtml(impactSummary(item, metric, trend))}</p>
-        <div class="impact-readiness" aria-label="Comparison readiness">
+        ${guidance ? `<p class="impact-summary"><strong>Next step:</strong> ${escHtml(guidance.nextStep)}</p>` : `<div class="impact-readiness" aria-label="Comparison readiness">
           <span><strong>${count(item.before_count)}</strong> baseline tasks</span>
           <span><strong>${count(item.after_count)}</strong> after activation</span>
-          <span>${retained ? 'Current validation updating' : ready ? 'Comparison available' : 'Collecting comparable evidence'}</span>
-        </div>
-        ${measurementState === 'collecting' && !baselineUnavailable && !baselinePending && afterCount != null && minimumAfter > 0 ? `<div class="impact-progress"><div class="impact-progress-copy"><strong>Post-activation comparison sample: ${count(afterCount)} selected tasks with metrics of ${count(minimumAfter)} required</strong><span>${fmt(Math.max(0, minimumAfter - afterCount))} remaining</span></div><progress value="${Math.min(afterCount, minimumAfter)}" max="${minimumAfter}" aria-label="Selected post-activation tasks with metric coverage"></progress></div>` : ''}
-        <div class="impact-comparison">
-          <div class="impact-period"><div class="impact-period-label">Before Activation</div><div class="impact-period-value">${ready ? escHtml(formatImpactValue(metric, item.before_value)) : `${count(item.cohort?.eligibility?.before?.candidate_count)} candidate tasks`}</div>${impactCohortDetails(item, 'before')}</div>
+          <span>${retained ? 'Current validation updating' : 'Comparison available'}</span>
+        </div>`}
+        ${guidance?.collecting && afterCount != null && Number.isFinite(Number(afterCount)) && minimumAfter > 0 ? `<div class="impact-progress"><div class="impact-progress-copy"><strong>Post-activation comparison sample: ${count(afterCount)} selected tasks with metrics of ${count(minimumAfter)} required</strong><span>${fmt(Math.max(0, minimumAfter - afterCount))} remaining</span></div><progress value="${Math.min(afterCount, minimumAfter)}" max="${minimumAfter}" aria-label="Selected post-activation tasks with metric coverage"></progress></div>` : ''}
+        ${ready ? `<div class="impact-comparison">
+          <div class="impact-period"><div class="impact-period-label">Before Activation</div><div class="impact-period-value">${escHtml(formatImpactValue(metric, item.before_value))}</div></div>
           <div class="impact-arrow" aria-hidden="true">→</div>
-          <div class="impact-period"><div class="impact-period-label">After Activation</div><div class="impact-period-value">${ready ? escHtml(formatImpactValue(metric, item.after_value)) : `${count(item.cohort?.eligibility?.after?.candidate_count)} candidate tasks`}</div>${impactCohortDetails(item, 'after')}</div>
-        </div>
+          <div class="impact-period"><div class="impact-period-label">After Activation</div><div class="impact-period-value">${escHtml(formatImpactValue(metric, item.after_value))}</div></div>
+        </div>` : ''}
         ${progressGraph}
         <div class="impact-scope">${escHtml(impactScope(item))}${ready && item.confidence != null && Number.isFinite(Number(item.confidence)) ? ` · ${Math.round(Number(item.confidence) * 100)}% confidence` : ''}</div>
         <div class="impact-scope">${retained ? `Stored check ${escHtml(item.measured_at ? fmtWorkflowDate(item.measured_at) : 'date unknown')}; current validation is pending. ` : ''}Observed cohort differences do not establish that the workflow caused the change.</div>
-        <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-impact-sessions" data-measurement-id="${escHtml(String(item.id))}">View Compared Tasks</button><button type="button" class="ledger-button${item.verdict === 'regressed' && !regressedButImproving ? ' danger' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.candidate_id))}">${reviewLabel}</button></div>
+        <div class="ledger-actions">${guidance ? `<button type="button" class="ledger-button primary" data-ledger-action="${guidance.action}" data-measurement-id="${escHtml(String(item.id))}" data-candidate-id="${escHtml(String(item.candidate_id))}">${guidance.actionLabel}</button>` : `<button type="button" class="ledger-button primary" data-ledger-action="review-impact-sessions" data-measurement-id="${escHtml(String(item.id))}">View Compared Tasks</button><button type="button" class="ledger-button${item.verdict === 'regressed' && !regressedButImproving ? ' danger' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.candidate_id))}">${reviewLabel}</button>`}</div>
+        <details class="impact-history"><summary>Comparison evidence and exclusions</summary>
+          <div class="impact-comparison">
+            <div class="impact-period"><div class="impact-period-label">Before Activation</div>${impactCohortDetails(item, 'before')}</div>
+            <div class="impact-arrow" aria-hidden="true">→</div>
+            <div class="impact-period"><div class="impact-period-label">After Activation</div>${impactCohortDetails(item, 'after')}</div>
+          </div>
+          ${reasons.length ? `<p class="impact-scope">${escHtml(reasons.join(' '))}</p>` : ''}
+        </details>
         ${historyRows ? `<details class="impact-history"><summary>${fmt(history.length - 1)} Previous Check${history.length === 2 ? '' : 's'}</summary><ol class="impact-history-list">${historyRows}</ol></details>` : ''}
       </article>`;
     }).join('') : resource('impact').state !== 'ready'

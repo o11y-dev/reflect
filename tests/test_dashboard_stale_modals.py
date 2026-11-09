@@ -224,7 +224,7 @@ context.ledgerRequest=async()=>({analysis_state:'pending',evidence_state:'record
   before_execution_units:[{execution_unit_id:'exact-task',session_id:'recorded-session',title:'Frozen task',metric_value:0},
     {execution_unit_id:'legacy-task',snapshot_missing:true,metric_value:null}],after_execution_units:[]});
 await context.showImpactSessions('impact');const dialog=dialogs.at(-1);
-assert.match(dialog.body,/Recorded evidence/);assert.match(dialog.body,/Measured 2020-01-01/);
+assert.match(dialog.body,/Recorded evidence/);assert.match(dialog.body,/Recorded 2020-01-01/);
 assert.ok(!dialog.body.includes('2026-11-08'),'read time must not become measurement time');
 assert.match(dialog.body,/Recorded: 0% failed/);
 assert.match(dialog.body,/legacy-task/);assert.match(dialog.body,/Snapshot details unavailable/);
