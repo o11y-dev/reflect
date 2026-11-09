@@ -8,6 +8,7 @@
 
 ### Added
 
+- A reproducible synthetic public demo with linked findings, reviewed skills, source sessions, and comparison evidence, built through the existing telemetry pipeline and SQL views.
 - Workflows and skill drafting share bounded execution procedure evidence: ordered operations, artifact areas, exact check scope, independent-session support, and failed or uncertain examples. Both detail views explain why executions match.
 - Skills now includes a bounded “Where used” graph and evidence table, linking observed reads, agent reports, executions, sessions and checks without guessing missing versions or ownership.
 - A validated graph vocabulary and execution/check relationships retain canonical source references; chronological assessments identify edits that invalidate a check.
@@ -21,6 +22,7 @@
 
 ### Changed
 
+- The landing page leads with a worked example, clear installation compatibility and first-use steps. Reports share restrained semantic colors; the public sample adds guided examples and installation/GitHub links without exposing local sessions.
 - Dashboard navigation gives each view its own space and scope: session filters stay with Sessions and Usage, while stored workflows, skills and comparison cohorts are identified separately. Session titles fall back to captured model or harness metadata and a short ID.
 - Finding priority, heuristic scores and workflow hypotheses are labeled separately from measured outcomes. Blocked comparisons explain the evidence gap and next action, with candidate accounting available on demand.
 - Automatic procedure candidates require passing-check evidence across three independent sessions; check results remain distinct from task acceptance and measured impact. Extraction may return no candidates and validates candidate-specific source references before staging drafts.
@@ -32,6 +34,7 @@
 
 ### Fixed
 - Memory searches preserve caller-owned read transactions and fall back to canonical records when the search index is empty, keeping guidance available during concurrent refreshes.
+- Static report inventories and evidence drill-downs use a versioned, read-only sample source. Sample dates stay fixed, unavailable evidence is explicit, and local report navigation never loads public conversion analytics.
 - Dashboard tab styling follows the accessible selected state; closing a review with Escape clears its deep link, and a collapsed desktop session rail can reopen on mobile.
 - Subagent reports use recorded launches and lifecycle evidence across harnesses, preserve role and child identity, and exclude prompt mentions from launch counts. Recorded stops no longer imply verified task success.
 - Tool reports recover captured tool names across attribute formats and exclude internal timing spans from invocation counts, with a one-time repair of retained evidence.

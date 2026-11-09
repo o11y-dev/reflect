@@ -5,7 +5,8 @@ from pathlib import Path
 
 
 def _run(script: str) -> None:
-    source = Path("src/reflect/frontend/js_skill_usage.js").read_text()
+    source = "\n".join(Path("src/reflect/frontend", name).read_text()
+                       for name in ("js_demo.js", "js_skill_usage.js"))
     prelude = """
 const assert=require('node:assert/strict'),vm=require('node:vm');
 const context={URLSearchParams,AbortController,console,

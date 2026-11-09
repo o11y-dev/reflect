@@ -21,6 +21,7 @@ def _browser(scenario, **data):
         pytest.skip("Node is required for Sessions filter contracts")
     source = Path("src/reflect/frontend/js_sessions.js").read_text()
     parts = {
+        "demo": Path("src/reflect/frontend/js_demo.js").read_text(),
         "initialize": source[source.index("(function initSessionBrowser(){"):
                              source.index("  function sessionTimeMs(")],
         "time": source[source.index("  function sessionTimeMs("):
@@ -51,6 +52,7 @@ const context={D:input.payload || {sql_backed:true,sessions:[],range:'7d'},
   scheduleDashboardReload:()=>{reloads++;return true;},renderSessionList:()=>{},
   dashboardSelectedSessionId:'selected',Date};
 vm.createContext(context);
+vm.runInContext(input.demo,context);
 """ + scenario + r"""
 process.stdout.write('filters-ok\n');
 """

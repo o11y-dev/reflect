@@ -16,6 +16,7 @@ def _run_browser_contract(scenario: str, **data) -> None:
     source = Path("src/reflect/frontend/js_sessions.js").read_text()
     navigation = source[source.index("function setSelectedSession("):
                         source.index("// Pill click")]
+    navigation = Path("src/reflect/frontend/js_demo.js").read_text() + "\n" + navigation
     detail_start = re.search(r"(?:async )?function tryLoadFullDetail\(", source)
     assert detail_start is not None
     detail = source[detail_start.start():source.index("\n  renderSessionList();\n  if (selectedIdx")]

@@ -135,7 +135,7 @@ def test_dashboard_html_surfaces_background_refresh_progress(path: Path):
     assert "@media(prefers-reduced-motion:reduce)" in text
     assert "window.location.reload()" in text
     assert "startPreparationStatusPolling();" in text
-    assert "hdr-ts').textContent = 'Loaded '" in text
+    assert "'Loaded ' + new Date().toLocaleString()" in text
     assert "Telemetry capture is paused. Refresh to reclaim processed segments." in text
     assert "Raw OTLP storage is ${Math.round(ratio * 100)}% full" in text
 
@@ -810,8 +810,8 @@ def test_dashboard_telemetry_tree_only_infers_parents_inside_real_traces(path: P
 def test_public_showcase_demo_includes_codex_agent():
     data = json.loads((REPO_ROOT / "docs/reports/showcase.json").read_text(encoding="utf-8"))
 
-    assert "codex" in data["agents"]
-    assert any(agent["name"] == "codex" for agent in data["agent_comparison"])
+    assert data["demo"]["schema_version"] == 1
+    assert data["sqlite"]["tabs"]["usage"]["unique_sessions"] == len(data["sessions"])
     assert any(session["agent"] == "codex" for session in data["sessions"])
 
 

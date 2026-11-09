@@ -53,3 +53,7 @@
 }
 
 .impact-readiness{display:flex;flex-wrap:wrap;gap:8px 18px;margin:12px 0;padding:10px 12px;border:1px solid var(--border);border-radius:6px;color:var(--text-2);font-size:11px}.impact-readiness strong{color:var(--text)}.impact-readiness span:last-child{color:var(--blue)}.skill-usage-section{margin:0 0 18px}
+.skill-tile,.skill-tile[data-state="active"],.workflow-tile[data-state="active"]{--tile-accent:var(--skill)}
+.skill-availability.installed,.skill-availability.available{color:var(--skill)}
+.ledger-button[data-ledger-action="evidence"],.ledger-button[data-ledger-action="open-session"]{color:var(--evidence)}
+.ledger-button[data-ledger-action="review-skill"]{color:var(--skill)}

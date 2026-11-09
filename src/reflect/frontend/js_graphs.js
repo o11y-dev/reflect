@@ -839,6 +839,7 @@ function urlHasDashboardFilters(){
 dashboardFilterActive = urlHasDashboardFilters();
 buildCohortComparison();
 
+setupDemoNavigation({evidence:showObservationEvidence, workflow:showWorkflowReview, impact:showImpactSessions});
 hideReportLoader();
 
 }

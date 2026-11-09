@@ -14,6 +14,7 @@ def _run_navigation(scenario: str) -> None:
         pytest.skip("Node is required for browser navigation checks")
     source = Path("src/reflect/frontend/js_navigation.js").read_text()
     source = source[:source.index("tabButtons.forEach((button, index)")]
+    source = Path("src/reflect/frontend/js_demo.js").read_text() + "\n" + source
     script = r"""
 const assert=require('node:assert/strict'), vm=require('node:vm');
 class Element {

@@ -54,12 +54,23 @@ async function loadSkillUsageGraph(skillId, container, filters = {}) {
   Object.entries(filters).forEach(([key,value])=>{if(value != null && value !== '') query.set(key,String(value));});
   if (!container._skillUsagePayload) container.innerHTML='<p class="inbox-copy" role="status">Loading skill references…</p>';
   try {
-    const response=await fetch(`/api/skills/${encodeURIComponent(skillId)}/usage-graph?${query}`,{headers:{Accept:'application/json'},signal:controller.signal});
+    const response=await reportReadResponse(`/api/skills/${encodeURIComponent(skillId)}/usage-graph?${query}`,{headers:{Accept:'application/json'},signal:controller.signal});
     const payload=await response.json();
     if(!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
     if(container._skillUsageRequest !== requestId || !container.isConnected) return;
     container._skillUsagePayload=payload;
     renderSkillUsageGraph(container,payload);
+    if (isStaticDemo()) {
+      container.querySelectorAll('select,button,[data-skill-graph-expand]').forEach(control => {
+        control.setAttribute('aria-disabled','true');
+        control.removeAttribute('tabindex');
+        if ('disabled' in control) control.disabled = true;
+      });
+      const note = document.createElement('p'); note.className = 'review-panel-copy';
+      note.textContent = 'Illustrative sample · all included references. Interactive graph filters are available in your local report.';
+      container.prepend(note);
+      return;
+    }
     const expand=id=>{
       const record=(payload.records || []).find(item=>item.id===id);
       if(!record) return;

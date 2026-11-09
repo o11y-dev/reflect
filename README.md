@@ -7,8 +7,8 @@
 <h1 align="center">reflect</h1>
 
 <p align="center">
-  <strong>Evidence, Not Vibes.</strong><br>
-  Evidence-backed improvement for AI agent work across teams.
+  <strong>Keep what your agents figure out.</strong><br>
+  Find repeated mistakes, review reusable skills, and check whether they help.
 </p>
 
 <p align="center">
@@ -20,16 +20,16 @@
 
 <p align="center">
   <a href="https://reflect.o11y.dev/">Website</a> ·
-  <a href="https://reflect.o11y.dev/report.html?report=reports/showcase.json">Live dashboard</a> ·
+  <a href="https://reflect.o11y.dev/report.html?report=reports/showcase.json">Explore a synthetic example — no installation</a> ·
   <a href="https://pypi.org/project/o11y-reflect/">PyPI</a> ·
   <a href="CONTRIBUTING.md">Contributing</a> ·
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-Reflect is a local-first improvement loop for AI coding agents. It captures
-what happened, discovers repeated engineering procedures, lets a developer
-review a bounded workflow, and measures whether comparable future tasks
-improved.
+Reflect shows where coding agents get stuck, helps you turn useful routines
+into skills you review, and checks whether those skills help on future tasks.
+Inspect the supporting evidence, including when there is not enough to judge
+the result.
 
 No hosted backend and no Reflect account are required. Telemetry, task
 evidence, workflow reviews, and SQLite state remain on your machine.

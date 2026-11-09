@@ -327,14 +327,13 @@ assert.equal(notices.at(-1).kicker,'Telemetry ready');
                    text=True, capture_output=True, check=True)
 
 
-@pytest.mark.parametrize("initial_tab", ["session_detail", "skills", "skills_empty", "workflows", "impact", "inbox"])
-def test_complete_bootstrap_opens_captured_session_before_first_published_report(initial_tab):
+def _run_complete_bootstrap_contract(initial_tab):
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node is required for complete dashboard initialization")
     frontend = Path("src/reflect/frontend")
     bundle = "\n".join((frontend / name).read_text() for name in (
-        "js_bootstrap.js", "js_ledger.js", "js_navigation.js", "js_sessions.js",
+        "js_demo.js", "js_bootstrap.js", "js_ledger.js", "js_skill_usage.js", "js_navigation.js", "js_sessions.js",
         "js_impact.js", "js_explore.js", "js_graphs.js",
     ))
     # Surface initialization errors instead of the packaged top-level catch.
@@ -342,7 +341,8 @@ def test_complete_bootstrap_opens_captured_session_before_first_published_report
     script = r"""
 const assert = require('node:assert/strict'), vm = require('node:vm');
 const input = JSON.parse(require('node:fs').readFileSync(0,'utf8'));
-const bundle = input.bundle, independent = input.initial_tab !== 'session_detail';
+const bundle = input.bundle, sample = input.initial_tab.startsWith('static');
+const independent = !sample && input.initial_tab !== 'session_detail';
 const empty = input.initial_tab === 'skills_empty', initialTab = empty ? 'skills' : input.initial_tab;
 const elements = new Map(), listeners = new Map(), requests = [];
 class Element {
@@ -361,16 +361,29 @@ class Element {
   get textContent(){return this.text || '';}
   setAttribute(name,value){this.attributes[name]=value;}
   appendChild(child){child.parentElement=this;this.children.push(child);}
+  append(...children){children.forEach(child=>this.appendChild(child));}
+  replaceChildren(...children){this.children=[];this.append(...children);}
   prepend(child){child.parentElement=this;this.children.unshift(child);}
+  remove(){if(this.parentElement)this.parentElement.children=this.parentElement.children.filter(child=>child!==this);}
+  showModal(){this.open=true;}
+  close(){this.open=false;}
+  getContext(){return {canvas:this};}
   addEventListener(name,fn){(this.listeners ||= {})[name]=fn;}
   querySelector(selector){return this.children.find(child=>selector === '.'+child.className) || null;}
   querySelectorAll(){return [];}
   getBoundingClientRect(){return {left:0,width:100,top:0,bottom:100,height:100};}
   closest(){return null;}
 }
-function element(id){if(!elements.has(id))elements.set(id,new Element(id));return elements.get(id);}
+function element(id){
+  if(!elements.has(id)){
+    const item=new Element(id);elements.set(id,item);
+    if(id.endsWith('Chart'))new Element().appendChild(item);
+  }
+  return elements.get(id);
+}
 const names=['sessions','inbox','workflows','skills','impact','explore'];
 const tabs=names.map(name=>{const item=element('button-'+name);item.dataset.tab=name;return item;});
+const demoSteps=['evidence','reviewed-skill','later-tasks'].map(step=>{const item=element('demo-step-'+step);item.dataset.demoStep=step;return item;});
 const panels=names.filter(name=>name!=='explore').map(name=>element('tab-'+name));
 for(const view of ['usage','tools','graph','context']) {
   const panel=element('tab-explore-'+view);panels.push(panel);
@@ -383,16 +396,23 @@ if(independent){
  const url=new URL(location.href);url.search='?report=/api/data'+(empty ? '' : '&session=first')+'&tab='+initialTab+'&range=all&agents=codex&q=needle&model=model-a&status=completed&sort=cost';
  location.href=url.href;location.search=url.search;
 }
+if(sample){
+  const url=new URL('http://localhost:4000/report.html?report=reports/showcase.json');
+  if(input.initial_tab==='static_session'){
+    url.searchParams.set('tab','sessions');url.searchParams.set('session',input.demo.demo.scenarios[0].session_id);
+  }
+  Object.assign(location,{href:url.href,search:url.search,pathname:url.pathname,protocol:url.protocol});
+}
 const response=(status,body)=>({status,ok:status===200,json:async()=>body});
 const captured={session:{id:'first',agent:'codex'},derived_state:'preparing',
   conversation:[{type:'response',preview:'Captured activity before first publication',ts:1}],
   telemetry:{spans:[]},tool_inventory:{tools:[]}};
 const context={URL,URLSearchParams,AbortController,console,navigator:{language:'en-US'},
   CustomEvent:class{constructor(type,opts={}){this.type=type;Object.assign(this,opts);}preventDefault(){this.defaultPrevented=true;}},
-  Chart:class{static defaults={};constructor(){throw new Error('unpublished aggregates must not create charts');}},
-  document:{body:element('body'),getElementById:element,createElement:()=>new Element(),
+  Chart:class{static defaults={};static getChart(){return undefined;}constructor(){if(!sample)throw new Error('unpublished aggregates must not create charts');}},
+  document:{body:element('body'),head:element('head'),getElementById:element,createElement:()=>new Element(),
     querySelector:selector=>selector.startsWith('.tab[data-tab=') ? tabs.find(tab=>selector.includes('"'+tab.dataset.tab+'"')) : null,
-    querySelectorAll:selector=>selector==='.tab' ? tabs : selector==='.tab-panel' ? panels : [],
+    querySelectorAll:selector=>selector==='.tab' ? tabs : selector==='.tab-panel' ? panels : selector==='[data-demo-step]' ? demoSteps : [],
     addEventListener:(name,fn)=>{if(!listeners.has(name))listeners.set(name,[]);listeners.get(name).push(fn);},
     dispatchEvent:event=>{for(const fn of listeners.get(event.type)||[])fn(event);return !event.defaultPrevented;}},
   window:{location,innerWidth:1200,setTimeout:()=>1,setInterval:()=>1,clearTimeout:()=>{},addEventListener:()=>{},
@@ -400,6 +420,7 @@ const context={URL,URLSearchParams,AbortController,console,navigator:{language:'
     history:{replaceState:(_,__,url)=>{const parsed=new URL(url,location.href);location.href=parsed.href;location.search=parsed.search;}}},
   requestAnimationFrame:fn=>fn(),
   fetch:async url=>{const path=new URL(url,location.href).pathname;requests.push(path);
+    if(sample){assert.equal(path,'/reports/showcase.json','static report must not fetch an API');return response(200,input.demo);}
     if(independent && ['/api/skills','/api/workflows','/api/impact','/api/findings','/api/loops'].includes(path))return response(200,{skills:[],workflows:[],impact_checks:[],findings:[],loops:[]});
     if(path==='/api/session/first')return response(200,captured);
     if(path==='/api/status')return response(200,{preparation:{state:'running',stage:'refreshing_improvements'}});
@@ -408,6 +429,49 @@ vm.createContext(context);vm.runInContext(bundle,context);
 (async()=>{
   await context.appReady;await new Promise(resolve=>setImmediate(resolve));
   const data=vm.runInContext('D',context);
+  if(sample){
+    assert.equal(context.isStaticDemo(),true);
+    assert.ok(element('body').classList.contains('synthetic-demo'));
+    assert.equal(element('demo-badge').textContent,'Illustrative sample');
+    assert.equal(element('demo-story').hidden,false);
+    assert.equal(element('demo-title').textContent,input.demo.demo.scenarios[0].title);
+    assert.equal(data.sessions.length,input.demo.sessions.length);
+    for(const button of demoSteps){
+      button.listeners.click();
+      assert.equal(new URL(element('demo-session').href).searchParams.get('step'),button.dataset.demoStep,
+        'opening a source session preserves the selected example step');
+    }
+    assert.equal(element('head').children.length,0,'localhost must not load public analytics');
+    assert.ok(element('button-'+(input.initial_tab==='static_session'?'sessions':'inbox')).classList.contains('active'));
+    const action=async(name,data)=>{
+      const trigger={dataset:{ledgerAction:name,...data},disabled:false};
+      for(const handler of listeners.get('click') || [])await handler({target:{closest:selector=>selector==='[data-ledger-action]'?trigger:null}});
+      await new Promise(resolve=>setImmediate(resolve));
+    };
+    for(const scenario of input.demo.demo.scenarios){
+      for(const [name,ids] of [
+        ['evidence',{observationId:scenario.finding_id}],
+        ['review-workflow',{candidateId:scenario.workflow_id}],
+        ['review-skill',{skillId:scenario.skill_id}],
+        ['review-impact-sessions',{measurementId:scenario.impact_id}],
+      ]){
+        await action(name,ids);
+        assert.ok(element('ledger-dialog').open,`${scenario.id}: ${name} opens supporting records`);
+        assert.ok(!/unavailable/i.test(element('ledger-dialog-title').textContent),
+          `${scenario.id}: ${name}: ${element('ledger-dialog-body').innerHTML}`);
+        assert.ok(!/data-ledger-action="(?:apply|rollback|reject|save-edit)"/.test(element('ledger-dialog-actions').innerHTML));
+        if(name==='review-workflow'){
+          assert.match(element('ledger-dialog-body').innerHTML,/Illustrative reviewed change/);
+          assert.match(element('ledger-dialog-body').innerHTML,/Exact File Diff/);
+          assert.ok(!/id="workflow-(?:content-editor|project-root|name)"/.test(element('ledger-dialog-body').innerHTML));
+        }
+      }
+    }
+    element('button-explore').listeners.click();await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(element('filter-rail').hidden,true,'fixed sample Usage has no misleading aggregate filters');
+    assert.deepEqual(requests,['/reports/showcase.json'],'all detail and inventory reads use the bundle');
+    return;
+  }
   assert.equal(data._unpublishedNavigation,true);
   if(independent){
     const params=new URLSearchParams(location.search);
@@ -449,7 +513,18 @@ vm.createContext(context);vm.runInContext(bundle,context);
   assert.match(element('finding-ledger').innerHTML,/Findings are updating/);
 })().then(()=>process.stdout.write('bootstrap-contract-ok\n')).catch(error=>{console.error(error);process.exitCode=1;});
 """
-    result = subprocess.run([node, "-e", script], input=json.dumps({"bundle": bundle, "initial_tab": initial_tab}),
+    demo = json.loads(Path("docs/reports/showcase.json").read_text()) if initial_tab.startswith("static") else None
+    result = subprocess.run([node, "-e", script], input=json.dumps({"bundle": bundle, "initial_tab": initial_tab, "demo": demo}),
                             text=True, capture_output=True, timeout=10)
     assert result.returncode == 0, result.stderr or result.stdout
     assert "bootstrap-contract-ok" in result.stdout
+
+
+@pytest.mark.parametrize("initial_tab", ["session_detail", "skills", "skills_empty", "workflows", "impact", "inbox"])
+def test_complete_bootstrap_opens_captured_session_before_first_published_report(initial_tab):
+    _run_complete_bootstrap_contract(initial_tab)
+
+
+@pytest.mark.parametrize("initial_tab", ["static_demo", "static_session"])
+def test_static_demo_bootstrap_and_all_scenario_evidence_stay_read_only(initial_tab):
+    _run_complete_bootstrap_contract(initial_tab)

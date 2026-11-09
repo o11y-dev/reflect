@@ -4,13 +4,13 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <meta name="theme-color" content="#000000"/>
-<title>reflect — Behavioral Memory for Developer-Agent Workflow</title>
-<meta name="description" content="reflect is the behavioral memory layer for developer-agent workflow. Turn local session data and OpenTelemetry GenAI spans into patterns about prompts, tools, context, budget burn, and enterprise handoff."/>
+<title>Reflect — Understand the work. Improve the next session.</title>
+<meta name="description" content="Inspect AI coding sessions, review reusable skills, and check their evidence in Reflect. Explore a clearly labeled synthetic example or your local report."/>
 <link rel="canonical" href="https://reflect.o11y.dev/"/>
 <link rel="icon" type="image/svg+xml" href="favicon.svg"/>
 <meta property="og:type" content="website"/>
 <meta property="og:site_name" content="reflect.o11y.dev"/>
-<meta property="og:title" content="reflect — Behavioral Memory for Developer-Agent Workflow"/>
+<meta property="og:title" content="Reflect — Understand the work. Improve the next session."/>
 <meta property="og:description" content="Behavioral memory for developer-agent workflow. Patterns about prompts, tools, context, budget burn, and enterprise handoff."/>
 <meta property="og:url" content="https://reflect.o11y.dev/"/>
 <meta property="og:image" content="https://reflect.o11y.dev/og-image-v2.png"/>
@@ -18,12 +18,12 @@
 <meta property="og:image:type" content="image/png"/>
 <meta property="og:image:width" content="1200"/>
 <meta property="og:image:height" content="630"/>
-<meta property="og:image:alt" content="reflect — See How Agents Work. Improve What Happens Next."/>
+<meta property="og:image:alt" content="Reflect — Keep what your agents figure out."/>
 <meta name="twitter:card" content="summary_large_image"/>
-<meta name="twitter:title" content="reflect — Behavioral Memory for Developer-Agent Workflow"/>
+<meta name="twitter:title" content="Reflect — Understand the work. Improve the next session."/>
 <meta name="twitter:description" content="Behavioral memory for developer-agent workflow. Built on OpenTelemetry GenAI semantic conventions."/>
 <meta name="twitter:image" content="https://reflect.o11y.dev/og-image-v2.png"/>
-<meta name="twitter:image:alt" content="reflect — See How Agents Work. Improve What Happens Next."/>
+<meta name="twitter:image:alt" content="Reflect — Keep what your agents figure out."/>
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -79,6 +79,9 @@
   --muted:    #beb8ad;
   --signal:   #f28a1a;
   --signal-2: #ffb156;
+  --evidence: #75b8ff;
+  --skill:    #b99aff;
+  --finding:  #e7f72d;
   --panel:    #10100f;
   --panel-2:  #0b0b0a;
 
@@ -591,6 +594,44 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .badge-icon{font-size:22px;line-height:1}
 .badge-name{font-size:14px;font-weight:600;color:var(--text)}
 .badge-sub{font-size:12px;color:var(--text-3);margin-top:2px}
+/* Public examples remain a small shell around the same local report views. */
+.demo-story[hidden]{display:none}
+.demo-story{max-width:1440px;margin:24px auto;padding:24px 32px;background:var(--panel);border:1px solid var(--glass-border);border-radius:8px}
+.demo-toolbar,.demo-links,.demo-actions,.demo-steps{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.demo-toolbar{justify-content:space-between;margin-bottom:28px}
+.demo-toolbar label{display:flex;align-items:center;gap:12px;font-size:14px;color:var(--text-2)}
+.demo-toolbar select{max-width:440px;background:var(--bg);color:var(--text);border:1px solid var(--glass-border);border-radius:6px;padding:10px;font:inherit}
+.demo-links a,.demo-actions a{color:var(--text);text-underline-offset:4px;font-size:14px}
+.demo-links a:first-child{color:var(--signal-2)}
+.demo-story-grid{display:grid;grid-template-columns:1fr 1fr;gap:36px;align-items:start}
+.demo-story h2{font-size:clamp(24px,2.6vw,36px);line-height:1.2;letter-spacing:-.025em;margin:0 0 14px;text-wrap:balance}
+.demo-story p{max-width:66ch;color:var(--text-2);margin:0 0 16px}
+.demo-story .demo-disclosure{font-size:13px;color:var(--muted)}
+.demo-preview{border-top:1px solid var(--glass-border)}
+.demo-evidence-row{display:flex;justify-content:space-between;align-items:start;gap:16px;padding:12px 0;border-bottom:1px solid var(--glass-border);font-size:14px}
+.demo-evidence-row code{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
+.demo-evidence-row span{max-width:50%;text-align:right;overflow-wrap:anywhere}
+.demo-result-failed{color:var(--red)}.demo-result-passed{color:var(--green)}.demo-result-info{color:var(--evidence)}
+.demo-steps{gap:8px;margin-top:24px}
+.demo-steps button{background:transparent;border:1px solid var(--glass-border);color:var(--text-2);padding:10px 16px;border-radius:6px;cursor:pointer;font:inherit;font-size:14px;min-height:44px}
+.demo-steps button[aria-pressed=true]{border-color:var(--signal);color:var(--signal-2);background:rgba(242,138,26,.08)}
+.demo-steps button:hover{border-color:var(--text-2)}
+.demo-story .demo-step-copy{margin:16px 0}
+.synthetic-demo .feedback-row,.synthetic-demo .ledger-command,.synthetic-demo .tile-card-command{display:none}
+.synthetic-demo #hdr-ts{color:var(--muted)}
+.synthetic-demo #report-shell[data-view=explore]{grid-template-columns:minmax(0,1fr)}
+.synthetic-demo [data-skill-graph-expand][aria-disabled=true]{cursor:default}
+.synthetic-demo .skill-usage-summary label,.synthetic-demo [data-skill-graph-reset],.synthetic-demo [data-skill-graph-next],.synthetic-demo [data-skill-evidence-next]{display:none}
+.synthetic-demo .demo-scope{color:var(--evidence)}
+@media(max-width:900px){
+  .demo-story{margin:16px;padding:20px}
+  .demo-story-grid{grid-template-columns:1fr;gap:16px}
+  .demo-toolbar{align-items:flex-start;gap:16px;margin-bottom:24px}
+  .demo-toolbar label{align-items:flex-start;flex-direction:column;width:100%}
+  .demo-toolbar select{width:100%;max-width:100%}
+  .demo-actions{gap:16px}
+  .demo-evidence-row{font-size:13px}
+}
 /* ── Improvement product surfaces ────────────────────────── */
 .product-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:20px;padding:22px;border:1px solid rgba(242,138,26,.2);border-radius:8px;background:linear-gradient(135deg,rgba(242,138,26,.11),rgba(18,17,15,.78))}
 .product-hero h2{margin:0 0 7px;font-size:25px;letter-spacing:-.03em}.product-hero p{margin:0;color:var(--text-2);max-width:720px;line-height:1.55}
@@ -646,6 +687,10 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 }
 
 .impact-readiness{display:flex;flex-wrap:wrap;gap:8px 18px;margin:12px 0;padding:10px 12px;border:1px solid var(--border);border-radius:6px;color:var(--text-2);font-size:11px}.impact-readiness strong{color:var(--text)}.impact-readiness span:last-child{color:var(--blue)}.skill-usage-section{margin:0 0 18px}
+.skill-tile,.skill-tile[data-state="active"],.workflow-tile[data-state="active"]{--tile-accent:var(--skill)}
+.skill-availability.installed,.skill-availability.available{color:var(--skill)}
+.ledger-button[data-ledger-action="evidence"],.ledger-button[data-ledger-action="open-session"]{color:var(--evidence)}
+.ledger-button[data-ledger-action="review-skill"]{color:var(--skill)}
 /* ── Chart wrappers ──────────────────────────────────────── */
 .chart-box{position:relative}
 .explore-view-status{padding:18px;border-color:rgba(242,138,26,.28);background:rgba(242,138,26,.055);color:var(--text-2);font-size:13px;line-height:1.5}
@@ -2977,6 +3022,24 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   </div>
 </header>
 
+<section id="demo-story" class="demo-story" aria-labelledby="demo-title" hidden>
+  <div class="demo-toolbar">
+    <label for="demo-example">Choose an example <select id="demo-example"></select></label>
+    <div class="demo-links"><a href="./#install">Install Reflect</a><a id="demo-github" href="https://github.com/o11y-dev/reflect" target="_blank" rel="noopener noreferrer">Star on GitHub</a></div>
+  </div>
+  <div class="demo-story-grid">
+    <div><h2 id="demo-title"></h2><p id="demo-description"></p><p class="demo-disclosure">Synthetic sessions, fictional projects. Every displayed result links to its supporting sample records.</p></div>
+    <div id="demo-preview" class="demo-preview" aria-label="Example evidence"></div>
+  </div>
+  <div class="demo-steps" role="group" aria-label="Follow the example">
+    <button type="button" data-demo-step="evidence" aria-pressed="true">1. Evidence</button>
+    <button type="button" data-demo-step="reviewed-skill" aria-pressed="false">2. Reviewed skill</button>
+    <button type="button" data-demo-step="later-tasks" aria-pressed="false">3. Later tasks</button>
+  </div>
+  <p id="demo-step-copy" class="demo-step-copy" aria-live="polite"></p>
+  <div class="demo-actions"><button id="demo-inspect" type="button" class="ledger-button primary">Inspect evidence</button><a id="demo-session" href="#main-content">Open source session</a><a href="#tabs">Explore all sample data</a></div>
+</section>
+
 <!-- ── Nav tabs ── -->
 <nav id="tabs" role="tablist" aria-label="Dashboard sections">
   <button class="tab active" id="tab-button-sessions" type="button" role="tab" aria-selected="true" aria-controls="tab-sessions" tabindex="0" data-tab="sessions">Sessions</button>
@@ -3471,9 +3534,130 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   <div class="ledger-dialog-actions" id="ledger-dialog-actions"></div>
 </dialog>
 
-<footer>Powered by <a href="https://github.com/o11y-dev/reflect" style="color:var(--text-2);text-decoration:none"><code>reflect</code></a> — report data stays local and private</footer>
+<footer>Powered by <a href="https://github.com/o11y-dev/reflect" style="color:var(--text-2);text-decoration:none"><code>reflect</code></a><span id="report-privacy-copy"> — report data stays local and private</span></footer>
 
 <script>
+// Static samples use the same read contracts as the local API. Missing evidence
+// never falls through to a network request, and this source cannot mutate state.
+class StaticReportSource {
+  constructor(bundle){
+    const sample = bundle.demo;
+    if (sample?.schema_version !== 1) throw new Error('Unsupported sample version. Reload the latest public example.');
+    if (!Number.isFinite(Date.parse(sample.clock))) throw new Error('The sample clock is unavailable.');
+    if (!Array.isArray(sample.scenarios) || !sample.scenarios.length) throw new Error('The sample has no examples.');
+    for (const name of ['findings','workflows','impact','rules','loops','skills']) {
+      const resource = sample.resources?.['/api/' + name];
+      if (!resource || !Array.isArray(resource[name === 'impact' ? 'impact_checks' : name])) {
+        throw new Error(`The sample is incomplete: ${name} is unavailable.`);
+      }
+    }
+    if (!bundle.sqlite?.tabs?.usage || !Array.isArray(bundle.sessions)) throw new Error('The sample usage records are unavailable.');
+    this.sample = sample;
+  }
+  async read(address, options = {}){
+    const respond = (status, payload) => ({status, ok:status === 200,
+      json:async () => JSON.parse(JSON.stringify(payload))});
+    if ((options.method || 'GET').toUpperCase() !== 'GET') {
+      return respond(405, {error:'This illustrative sample is read-only. Install Reflect to review changes on your own work.'});
+    }
+    const url = new URL(address, window.location.href);
+    if (url.origin !== window.location.origin) return respond(400, {error:'External sample resources are not supported.'});
+    const path = decodeURIComponent(url.pathname);
+    if (!Object.hasOwn(this.sample.resources, path)) return respond(404, {error:'This evidence is not included in the illustrative sample.'});
+    return respond(200, this.sample.resources[path]);
+  }
+}
+
+let staticReportSource = null;
+function configureReportSource(bundle){
+  staticReportSource = bundle.demo ? new StaticReportSource(bundle) : null;
+}
+function isStaticDemo(){ return staticReportSource !== null; }
+function reportClockNow(){ return isStaticDemo() ? Date.parse(staticReportSource.sample.clock) : Date.now(); }
+function reportReadResponse(url, options){
+  return isStaticDemo() ? staticReportSource.read(url, options) : fetch(url, options);
+}
+
+function setupDemoNavigation(actions){
+  if (!isStaticDemo()) return;
+  const sample = staticReportSource.sample;
+  document.body.classList.add('synthetic-demo');
+  const panel = document.getElementById('demo-story');
+  panel.hidden = false;
+  const badge = document.getElementById('demo-badge');
+  badge.textContent = 'Illustrative sample';
+  document.getElementById('report-privacy-copy').textContent = ' — synthetic example, no private session data';
+  const params = new URLSearchParams(window.location.search);
+  const picker = document.getElementById('demo-example');
+  for (const item of sample.scenarios) {
+    const option = document.createElement('option');
+    option.value = item.id; option.textContent = item.title; picker.appendChild(option);
+  }
+  const steps = ['evidence','reviewed-skill','later-tasks'];
+  let scenario = sample.scenarios.find(item => item.id === params.get('example'))
+    || sample.scenarios.find(item => item.id === sample.default_scenario) || sample.scenarios[0];
+  let step = steps.includes(params.get('step')) ? params.get('step') : 'evidence';
+  const pendingEvents = [];
+  const track = (event, placement = 'demo-story') => {
+    const payload = {scenario:scenario.id, step, placement};
+    if (window.ReflectPublicAnalytics) window.ReflectPublicAnalytics.track(event, payload);
+    else if (pendingEvents.length < 20) pendingEvents.push([event,payload]);
+  };
+  if (window.location.protocol === 'https:' && window.location.hostname === 'reflect.o11y.dev') {
+    const script = document.createElement('script');
+    script.src = 'assets/public-analytics.js';
+    script.onload = () => pendingEvents.splice(0).forEach(args => window.ReflectPublicAnalytics?.track(...args));
+    document.head.appendChild(script);
+  }
+  const inspect = document.getElementById('demo-inspect');
+  const render = () => {
+    picker.value = scenario.id;
+    document.getElementById('demo-title').textContent = scenario.title;
+    document.getElementById('demo-description').textContent = scenario.description;
+    const summary = step === 'reviewed-skill' ? scenario.review_summary
+      : step === 'later-tasks' ? scenario.result_summary : 'Inspect the recorded calls and their results.';
+    document.getElementById('demo-step-copy').textContent = summary || 'Open the supporting records to inspect this illustrative example.';
+    const preview = document.getElementById('demo-preview');
+    preview.replaceChildren();
+    for (const event of scenario.preview || []) {
+      const row = document.createElement('div'); row.className = 'demo-evidence-row';
+      const label = document.createElement('code'); label.textContent = event.label;
+      const result = document.createElement('span'); result.textContent = event.result;
+      result.className = ['failed','passed','info'].includes(event.status) ? 'demo-result-' + event.status : '';
+      row.append(label,result); preview.appendChild(row);
+    }
+    document.querySelectorAll('[data-demo-step]').forEach(button => {
+      button.setAttribute('aria-pressed', String(button.dataset.demoStep === step));
+    });
+    inspect.textContent = step === 'evidence' ? 'Inspect evidence' : step === 'reviewed-skill' ? 'Inspect reviewed skill' : 'Inspect later tasks';
+    inspect.disabled = !scenario[step === 'evidence' ? 'finding_id' : step === 'reviewed-skill' ? 'workflow_id' : 'impact_id'];
+    const link = document.getElementById('demo-session');
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab','sessions'); url.searchParams.set('session',scenario.session_id);
+    url.searchParams.set('example',scenario.id);
+    url.searchParams.set('step',step);
+    for (const key of ['evidence','workflow','workflow_root','skill','loop','impact']) url.searchParams.delete(key);
+    link.href = url.toString();
+    const current = new URL(window.location.href);
+    current.searchParams.set('example',scenario.id); current.searchParams.set('step',step);
+    window.history.replaceState({},'',current.toString());
+  };
+  picker.addEventListener('change', () => {
+    scenario = sample.scenarios.find(item => item.id === picker.value) || scenario;
+    step = 'evidence'; render(); track('example_open');
+  });
+  document.querySelectorAll('[data-demo-step]').forEach(button => button.addEventListener('click', () => {
+    step = button.dataset.demoStep; render();
+    if (step === 'later-tasks') track('example_complete');
+  }));
+  inspect.addEventListener('click', () => {
+    if (step === 'evidence') actions.evidence(scenario.finding_id);
+    if (step === 'reviewed-skill') actions.workflow(scenario.workflow_id);
+    if (step === 'later-tasks') actions.impact(scenario.impact_id);
+  });
+  document.getElementById('demo-github').addEventListener('click', () => track('github_click','demo-header'));
+  render(); track('example_open');
+}
 // ════════════════════ DATA LOADING ════════════════════
 let D;
 let IMPROVEMENT_DATA = {observations:[], loops:[], skills:[], workflows:[], measurements:[], rules:[], counts_by_status:{}, finding_total_count:0, observation_record_count:0, skill_total_count:0, skill_archived_count:0};
@@ -3928,7 +4112,7 @@ async function loadDashboardData(){
 }
 
 async function loadImprovementData(onResource = null){
-  if (!dashboardDocumentActive || !D || !D.sql_backed || !reportSupportsServerFiltering()) return IMPROVEMENT_DATA;
+  if (!dashboardDocumentActive || !D || !D.sql_backed || (!isStaticDemo() && !reportSupportsServerFiltering())) return IMPROVEMENT_DATA;
   const sequence = loadImprovementData.sequence = (loadImprovementData.sequence || 0) + 1;
   const result = {...IMPROVEMENT_DATA, resources:{...IMPROVEMENT_DATA.resources}};
   const requests = [
@@ -3969,7 +4153,7 @@ async function loadImprovementData(onResource = null){
       const previous = IMPROVEMENT_DATA.resources?.[name];
       const loaded = Boolean(previous?.loaded || loaded_at || ['ready','stale'].includes(previous?.state));
       try {
-        const response = await fetch(url, requestOptions);
+        const response = await reportReadResponse(url, requestOptions);
         const payload = await response.json();
         if (!response.ok) {
           result.resources[name] = {
@@ -4033,6 +4217,14 @@ async function initApp(){
     hideReportLoader();
     return;
   }
+  try {
+    configureReportSource(D);
+    const report = new URLSearchParams(window.location.search).get('report') || '';
+    if (/showcase\.json(?:$|\?)/.test(report) && !isStaticDemo()) throw new Error('This sample is outdated. Reload the latest public example.');
+  } catch (error) {
+    renderDashboardError('sample-unavailable', error.message);
+    return;
+  }
   let improvementSurfacesReady = false;
   // The core dashboard is usable immediately; each analysis panel publishes
   // independently as its bounded read completes.
@@ -4047,14 +4239,14 @@ async function initApp(){
   if (demoBadge && isLocalApiReport) demoBadge.hidden = true;
 /* ── Palette — reflect showcase colors ── */
 const P = {
-  blue:    '#f28a1a',
+  blue:    '#75b8ff',
   indigo:  '#ffb156',
-  purple:  '#d7d1c6',
+  purple:  '#b99aff',
   teal:    '#f6c47b',
-  green:   '#30d158',
+  green:   '#48d597',
   yellow:  '#ffd60a',
   orange:  '#ff9f0a',
-  red:     '#ff453a',
+  red:     '#ff6b5c',
   pink:    '#ff375f',
   mint:    '#66d4cf',
 };
@@ -4248,7 +4440,7 @@ async function ledgerRequest(url, {method = 'GET', body} = {}){
   const controller = new AbortController();
   const deadline = method === 'GET' ? window.setTimeout(() => controller.abort(), 5000) : null;
   try {
-    const response = await fetch(url, {
+    const response = await reportReadResponse(url, {
       method, signal:controller.signal,
       headers:{Accept:'application/json',...(body === undefined ? {} : {'Content-Type':'application/json'})},
       body:body === undefined ? undefined : JSON.stringify(body),
@@ -4590,7 +4782,7 @@ async function showObservationEvidence(observationId){
     const ruleLabel = humanizeLedgerLabel(item.category || item.rule_id || 'Improvement');
     presentLedgerRead(request, {
       title:item.title || 'Observation evidence',
-      subtitle:`${ruleLabel} Rule · Version ${item.rule_version} · ${confidence}% confidence`,
+      subtitle:`${ruleLabel} Rule · Version ${item.rule_version} · ${confidence}% detection confidence`,
       body:`${staleEvidenceNotice(item,ledger)}<div class="review-lead">
           <div class="review-eyebrow">Why This Matters</div>
           <p>${escHtml(item.summary || '')}</p>
@@ -4599,7 +4791,7 @@ async function showObservationEvidence(observationId){
           <div class="review-kpi"><div class="review-kpi-label">Affected Sessions</div><div class="review-kpi-value signal">${fmt(Number(item.affected_session_count || 0))}</div></div>
           <div class="review-kpi"><div class="review-kpi-label">Supporting Tasks</div><div class="review-kpi-value">${fmt(Number(ledger?.support_execution_unit_count || 0))}</div></div>
           <div class="review-kpi"><div class="review-kpi-label">${escHtml(humanizeLedgerLabel(item.metric_name || 'Metric'))}</div><div class="review-kpi-value">${escHtml(metricDisplay)} ${escHtml(item.metric_unit || '')}</div></div>
-          <div class="review-kpi"><div class="review-kpi-label">Impact Score</div><div class="review-kpi-value">${fmt(Number(item.impact_score || 0))} / 100</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">Review Priority</div><div class="review-kpi-value">${fmt(Number(item.impact_score || 0))} / 100</div></div>
         </div>
         <div class="review-grid">
           <section class="review-panel">
@@ -4615,7 +4807,7 @@ async function showObservationEvidence(observationId){
                 <div class="review-fact"><dt>Rule</dt><dd translate="no">${escHtml(item.rule_id)} v${fmt(Number(item.rule_version || 1))}</dd></div>
                 <div class="review-fact"><dt>Scope</dt><dd>${escHtml(humanizeLedgerLabel(item.scope_type || 'user'))} · ${escHtml(item.scope_id || 'local')}</dd></div>
                 <div class="review-fact"><dt>Metric</dt><dd>${escHtml(humanizeLedgerLabel(item.metric_name || 'Unavailable'))}</dd></div>
-                <div class="review-fact"><dt>Confidence</dt><dd>${confidence}%</dd></div>
+                <div class="review-fact"><dt>Detection confidence</dt><dd>${confidence}%</dd></div>
               </dl>
             </section>
             <details class="advanced-review"><summary>Raw Evidence Links · ${fmt((item.evidence || []).length)}</summary><div class="evidence-list">${rawEvidence || '<div class="session-ledger-empty">No bounded evidence is available.</div>'}</div></details>
@@ -4664,7 +4856,7 @@ async function showLoopReview(loopId){
     const canBuild = !stale && (loop.status === 'detected' || loop.status === 'acknowledged');
     presentLedgerRead(request, {
       title:loop.title || 'Observed loop',
-      subtitle:`${humanizeLedgerLabel(loop.kind || 'loop')} · ${humanizeLedgerLabel(loop.status || 'detected')} · ${Math.round(Number(loop.confidence || 0) * 100)}% confidence`,
+      subtitle:`${humanizeLedgerLabel(loop.kind || 'loop')} · ${humanizeLedgerLabel(loop.status || 'detected')} · ${Math.round(Number(loop.confidence || 0) * 100)}% detection confidence`,
       body:`${staleEvidenceNotice(detail)}<div class="review-lead">
           <div class="review-eyebrow">Observed Behavior</div>
           <p>${escHtml(loop.summary || '')}</p>
@@ -4856,7 +5048,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     request.pending = !canReview;
     const evidenceCount = (value, fallback) => value == null && fallback == null ? '—' : fmt(Number(value ?? fallback));
     const unavailableEvidence = '<div class="session-ledger-empty">Evidence references are updating. Their absence has not been established.</div>';
-    const readOnlyNotice = canReview ? '' : `<div class="review-warning" role="status"><strong>Read-only inspection.</strong> ${!candidateStable ? 'The workflow changed while loading. ' : ''}${!evidenceMatches ? 'The evidence belongs to a different workflow revision. ' : ''}Current workflow validation and a fresh project preview are required before editing or applying.${previewRead.status === 'rejected' ? ` Project preview unavailable: ${escHtml(previewRead.reason.message)}.` : ''}${evidenceRead.status === 'rejected' ? ` Evidence unavailable: ${escHtml(evidenceRead.reason.message)}.` : ''}</div>`;
+    const readOnlyNotice = isStaticDemo() ? '<div class="review-warning" role="status"><strong>Illustrative reviewed change.</strong> This is the exact synthetic skill and target shown in the example. Nothing can be edited or installed from this sample.</div>' : canReview ? '' : `<div class="review-warning" role="status"><strong>Read-only inspection.</strong> ${!candidateStable ? 'The workflow changed while loading. ' : ''}${!evidenceMatches ? 'The evidence belongs to a different workflow revision. ' : ''}Current workflow validation and a fresh project preview are required before editing or applying.${previewRead.status === 'rejected' ? ` Project preview unavailable: ${escHtml(previewRead.reason.message)}.` : ''}${evidenceRead.status === 'rejected' ? ` Evidence unavailable: ${escHtml(evidenceRead.reason.message)}.` : ''}</div>`;
     const candidatePublication = ledger.candidate ? ledger : !candidateCurrent ? {publication:{...resource.publication,
       state:resource.publication?.state === 'recorded' || resource.state === 'recorded' ? 'recorded' : 'stale',
       loaded_at:resource.publication?.loaded_at ?? resource.loaded_at}} : {};
@@ -4873,7 +5065,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     const applyLabel = applyAllowed
       ? (evidenceReady ? 'Approve & Apply to This Project' : 'Apply Unvalidated Draft')
       : 'Choose a Project Folder';
-    const reviewActions = !canReview
+    const reviewActions = isStaticDemo() ? '' : !canReview
       ? `<button type="button" class="ledger-button" data-ledger-action="review-workflow" data-candidate-id="${escHtml(candidateId)}">Retry Review</button>`
       : active
       ? `<button type="button" class="ledger-button danger" data-ledger-action="rollback" data-candidate-id="${escHtml(candidateId)}">Roll Back</button>`
@@ -4968,10 +5160,10 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
           <div class="workflow-approval-item"><div class="workflow-approval-label">Selected Project</div><div class="workflow-approval-value">${escHtml(projectName)}</div><div class="workflow-approval-copy">${escHtml(relationLabel)}</div></div>
           <div class="workflow-approval-item"><div class="workflow-approval-label">File Change</div><div class="workflow-approval-value">${escHtml(changeLabel)}</div><div class="workflow-approval-copy" translate="no">${escHtml(targetFile || 'Target file unavailable')}</div></div>
         </div>
-        <div class="workflow-scope-note ${escHtml(relationState)}"><div><strong>${escHtml(relationLabel)}.</strong> ${escHtml(relationCopy)} Only the selected project will be changed; this is not a global or multi-project install.</div></div>` : ''}
+        <div class="workflow-scope-note ${escHtml(relationState)}"><div><strong>${escHtml(relationLabel)}.</strong> ${escHtml(relationCopy)} ${isStaticDemo() ? 'The recorded example targets this fictional project only.' : 'Only the selected project will be changed; this is not a global or multi-project install.'}</div></div>` : ''}
         <div class="review-grid">
           <main class="review-stack">
-            ${canReview ? `<section class="review-panel">
+            ${canReview && !isStaticDemo() ? `<section class="review-panel">
               <div class="review-panel-head"><h3 class="review-panel-title">Apply to One Project</h3><span class="ledger-pill">${escHtml(changeLabel)}</span></div>
               <p class="review-panel-copy">Reflect writes one project-local skill file. No other project or global agent folder will be changed.</p>
               <div class="workflow-target">
@@ -4996,7 +5188,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
               <section class="review-panel review-section"><h3>Verification</h3><ul class="workflow-readable">${(content.verification || []).map(item => `<li>${escHtml(item)}</li>`).join('') || '<li>No verification steps are defined.</li>'}</ul></section>
             </div>
             ${canReview ? `<details class="advanced-review"><summary>Exact File Diff</summary><pre class="ledger-diff">${escHtml(preview.diff || 'No filesystem change; rendered content already matches.')}</pre></details>
-            <details class="advanced-review"><summary>Edit Structured Workflow</summary><label class="review-summary-label" for="workflow-content-editor">Workflow JSON</label><textarea class="ledger-editor" id="workflow-content-editor" name="workflow-content" autocomplete="off" spellcheck="false" ${active ? 'readonly' : ''}>${escHtml(JSON.stringify(content, null, 2))}</textarea></details>` : ''}
+            ${!isStaticDemo() ? `<details class="advanced-review"><summary>Edit Structured Workflow</summary><label class="review-summary-label" for="workflow-content-editor">Workflow JSON</label><textarea class="ledger-editor" id="workflow-content-editor" name="workflow-content" autocomplete="off" spellcheck="false" ${active ? 'readonly' : ''}>${escHtml(JSON.stringify(content, null, 2))}</textarea></details>` : ''}` : ''}
           </main>
           <aside class="review-stack">
             <section class="review-panel">
@@ -5021,6 +5213,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
 }
 
 async function submitSessionFeedback(sessionId, outcome, button){
+  if (isStaticDemo()) return;
   const reason = ['bad','corrected'].includes(outcome)
     ? window.prompt('Optional local reason (avoid secrets or sensitive source content):', '')
     : null;
@@ -5251,6 +5444,7 @@ function setExploreViewState(viewName, state, errorMessage = ''){
 
 function exploreViewUrl(viewName){
   const url = new URL(`/api/explore/${encodeURIComponent(viewName)}`, window.location.href);
+  if (isStaticDemo()) return {url, sessionId:''};
   const sessionId = viewName === 'context' ? '' : currentParams().get('session') || dashboardSelectedSessionId || '';
   if (sessionId) url.searchParams.set('session', sessionId);
   if (viewName !== 'context') {
@@ -5285,7 +5479,7 @@ if (D._unpublishedNavigation) {
 }
 
 async function loadExploreView(viewName){
-  if (!dashboardDocumentActive || !D.sql_backed || !reportSupportsServerFiltering()) return null;
+  if (!dashboardDocumentActive || !D.sql_backed || (!isStaticDemo() && !reportSupportsServerFiltering())) return null;
   if (!D.sqlite) D.sqlite = {};
   if (!D.sqlite.tabs) D.sqlite.tabs = {};
   const {url} = exploreViewUrl(viewName);
@@ -5293,14 +5487,14 @@ async function loadExploreView(viewName){
   if (lazySqlTabRequests.has(cacheKey)) return lazySqlTabRequests.get(cacheKey);
   const publication = explorePublication;
   const requestUrl = new URL(url);
-  if (viewName === 'usage') {
+  if (viewName === 'usage' && !isStaticDemo()) {
     requestUrl.pathname = '/api/data';
     requestUrl.searchParams.set('tab', 'explore');
     requestUrl.searchParams.set('view', 'usage');
   }
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 30000);
-  const request = fetch(requestUrl.toString(), {headers: {Accept: 'application/json'}, signal: controller.signal, cache:'no-store'})
+  const request = reportReadResponse(requestUrl.toString(), {headers: {Accept: 'application/json'}, signal: controller.signal, cache:'no-store'})
     .then(async response => {
       if (response.status === 409) {
         const payload = await response.json();
@@ -5360,7 +5554,7 @@ async function hydrateExploreView(viewName){
   const publication = explorePublication;
   if (exploreViewStates.get(viewName) === 'ready' && previous?.scope === cacheKey && previous.publication === publication) return;
   if (exploreViewStates.get(viewName) === 'loading' && lazySqlTabRequests.has(cacheKey)) return;
-  if (!D.sql_backed || !reportSupportsServerFiltering()) return;
+  if (!D.sql_backed || (!isStaticDemo() && !reportSupportsServerFiltering())) return;
   setExploreViewState(viewName, 'loading');
   try {
     const payload = await loadExploreView(viewName);
@@ -5454,12 +5648,23 @@ async function loadSkillUsageGraph(skillId, container, filters = {}) {
   Object.entries(filters).forEach(([key,value])=>{if(value != null && value !== '') query.set(key,String(value));});
   if (!container._skillUsagePayload) container.innerHTML='<p class="inbox-copy" role="status">Loading skill references…</p>';
   try {
-    const response=await fetch(`/api/skills/${encodeURIComponent(skillId)}/usage-graph?${query}`,{headers:{Accept:'application/json'},signal:controller.signal});
+    const response=await reportReadResponse(`/api/skills/${encodeURIComponent(skillId)}/usage-graph?${query}`,{headers:{Accept:'application/json'},signal:controller.signal});
     const payload=await response.json();
     if(!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
     if(container._skillUsageRequest !== requestId || !container.isConnected) return;
     container._skillUsagePayload=payload;
     renderSkillUsageGraph(container,payload);
+    if (isStaticDemo()) {
+      container.querySelectorAll('select,button,[data-skill-graph-expand]').forEach(control => {
+        control.setAttribute('aria-disabled','true');
+        control.removeAttribute('tabindex');
+        if ('disabled' in control) control.disabled = true;
+      });
+      const note = document.createElement('p'); note.className = 'review-panel-copy';
+      note.textContent = 'Illustrative sample · all included references. Interactive graph filters are available in your local report.';
+      container.prepend(note);
+      return;
+    }
     const expand=id=>{
       const record=(payload.records || []).find(item=>item.id===id);
       if(!record) return;
@@ -5519,7 +5724,7 @@ function animateTabIndicator(){
 
 function updateDashboardViewScope(tabName){
   const sessionsVisible = tabName === 'sessions';
-  const filtersVisible = sessionsVisible || tabName === 'explore';
+  const filtersVisible = sessionsVisible || (tabName === 'explore' && !isStaticDemo());
   const shell = document.getElementById('report-shell');
   if (shell) shell.dataset.view = tabName;
   for (const id of ['session-rail', 'session-rail-open']) {
@@ -5550,7 +5755,7 @@ function updateDashboardViewScope(tabName){
   document.getElementById('filter-sheet-open')?.setAttribute('aria-expanded', String(filtersVisible && !mobile));
   const analysisScope = document.getElementById('inbox-analysis-window');
   const analysisWindow = D.analysis_window;
-  if (analysisScope) analysisScope.textContent = analysisWindow?.date_from && analysisWindow?.date_to
+  if (analysisScope) analysisScope.textContent = isStaticDemo() ? 'Fixed illustrative sample. Findings and comparisons retain their own linked tasks.' : analysisWindow?.date_from && analysisWindow?.date_to
     ? `Latest analysis window: ${fmtWorkflowDate(analysisWindow.date_from)} — ${fmtWorkflowDate(analysisWindow.date_to)}.`
     : analysisWindow?.days && analysisWindow?.date_to
       ? `Latest analysis window: ${analysisWindow.days} days ending ${fmtWorkflowDate(analysisWindow.date_to)}.`
@@ -5631,7 +5836,7 @@ const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPRO
     : (IMPROVEMENT_DATA.skills || []).length
       ? 'skills'
       : 'sessions';
-activateTab(requestedInitialTab || defaultProductTab, {
+activateTab(requestedInitialTab || (isStaticDemo() ? 'inbox' : defaultProductTab), {
   view: requestedInitialView || '',
   updateUrl: Boolean(requestedInitialTab || requestedInitialView),
 });
@@ -5639,7 +5844,9 @@ activateTab(requestedInitialTab || defaultProductTab, {
 /* ── Header ── */
 const headerScope = D.measurements?.scope;
 document.getElementById('hdr-range').textContent = `${fmtWorkflowDate(headerScope?.kind === 'event_window' ? headerScope.date_from : D.first_event_ts)} — ${fmtWorkflowDate(headerScope?.kind === 'event_window' ? headerScope.date_to : D.last_event_ts)}`;
-document.getElementById('hdr-ts').textContent = 'Loaded ' + new Date().toLocaleString();
+document.getElementById('hdr-ts').textContent = isStaticDemo()
+  ? 'Illustrative sample · fixed dates · all sample usage'
+  : 'Loaded ' + new Date().toLocaleString();
 startPreparationStatusPolling();
 window.setTimeout(requestDashboardRefresh, 250);
 document.addEventListener('visibilitychange', () => {
@@ -6265,7 +6472,7 @@ class SessionConversationPlayhead {
   function filteredSessions(){
     const serverFiltered = D.sql_backed && reportSupportsServerFiltering() && !D._unfilteredNavigation;
     const searchText = filterState.q.toLowerCase();
-    const reportNow = Math.max(...sessions.map(sessionTimeMs).filter(Boolean), Date.now());
+    const reportNow = Math.max(...sessions.map(sessionTimeMs).filter(Boolean), reportClockNow());
     const rangeMs = filterState.range === '24h' ? 24 * 60 * 60 * 1000
       : filterState.range === '7d' ? 7 * 24 * 60 * 60 * 1000
       : filterState.range === '30d' ? 30 * 24 * 60 * 60 * 1000
@@ -7671,7 +7878,7 @@ class SessionConversationPlayhead {
     if (idx >= 0) delete sessions[idx]._initialDetail;
     const request = initialDetail
       ? Promise.resolve({ok:true, status:200, json:async () => initialDetail})
-      : fetch('/api/session/' + encodeURIComponent(sessionId), {signal: controller.signal, cache:'no-store'});
+      : reportReadResponse('/api/session/' + encodeURIComponent(sessionId), {signal: controller.signal, cache:'no-store'});
     return request
       .then(async r => {
         if (r.status === 503 && (await r.json()).state === 'preparing') {
@@ -7795,7 +8002,7 @@ function renderUsageSummary(){
   const usageTab = sqlTab('usage');
   const statDefs = [
     { label:'Avg Quality',   value:Number(usageTab.avg_quality_score || 0).toFixed(1)+'%', sub:'current selection',              c:Number(usageTab.avg_quality_score || 0) > 70 ? 'var(--green)' : 'var(--yellow)' },
-    { label:'Sessions',      value:fmt(usageTab.unique_sessions || 0),  sub:D.measurements?.scope?.kind === 'event_window' ? String(D.measurements.scope.date_from || '').slice(0,10)+' — '+String(D.measurements.scope.date_to || '').slice(0,10) : String(usageTab.first_event_ts || '').slice(0,10)+' - now',   c:'var(--purple)' },
+    { label:'Sessions',      value:fmt(usageTab.unique_sessions || 0),  sub:isStaticDemo() ? 'Full illustrative sample' : D.measurements?.scope?.kind === 'event_window' ? String(D.measurements.scope.date_from || '').slice(0,10)+' — '+String(D.measurements.scope.date_to || '').slice(0,10) : String(usageTab.first_event_ts || '').slice(0,10)+' - now',   c:'var(--purple)' },
     { label:'Prompts',       value:fmt(usageTab.prompt_submits || 0),   sub:'user prompt submits',                   c:'var(--teal)' },
     { label:'Tool Calls',    value:fmt(usageTab.tool_calls || 0),       sub:String(usageTab.tool_to_prompt_ratio || '0.0')+':1 per prompt',  c:'var(--blue)' },
   ];
@@ -8176,7 +8383,7 @@ function renderUsageMetrics(){
             <tr><td style="font-weight:600">${escHtml(model)}</td><td style="text-align:right">${fmtCost(cost)} ${escHtml(costUnit)}</td></tr>
           `).join('')
         }</tbody></table>`
-      : `<div style="color:var(--text-3);padding:12px 0">No model cost data available. Run reflect doctor to inspect pricing status.</div>`;
+      : `<div style="color:var(--text-3);padding:12px 0">${isStaticDemo() ? 'Pricing is unavailable in this sample; unknown cost is not zero.' : 'No model cost data available. Run reflect doctor to inspect pricing status.'}</div>`;
   }
 
 }
@@ -8610,7 +8817,7 @@ function buildImprovementSurfaces(){
       <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-loop" data-loop-id="${escHtml(String(item.id))}">${item.status === 'detected' ? 'Review & Build Instructions' : 'Review Loop Evidence'}</button></div>
     </article>`).join('') : resource('loops').state !== 'ready'
       ? '<div class="session-ledger-empty">No loops in the last loaded data. Updated loops are still pending.</div>'
-      : `<div class="session-ledger-empty">No agent-native or behavioral loop is currently detected. Run <code>reflect loops</code> after more sessions are captured.</div>`;
+      : `<div class="session-ledger-empty">${isStaticDemo() ? 'No additional loops are included in this illustrative sample. Choose another example above.' : 'No agent-native or behavioral loop is currently detected. Run <code>reflect loops</code> after more sessions are captured.'}</div>`;
   }
 
   const skillRegistry = document.getElementById('skill-registry');
@@ -8653,7 +8860,7 @@ function buildImprovementSurfaces(){
         ? `<div class="session-ledger-empty">No skills match <strong>${escHtml(query.trim())}</strong>. Clear the search to return to the full registry.</div>`
         : resource('skills').state !== 'ready'
           ? '<div class="session-ledger-empty">No skills in the last loaded registry. Updated records are still pending.</div>'
-          : `<div class="session-ledger-empty">No skill records are registered. Run <code>reflect skills sync</code> to reconcile installed skills or <code>reflect skills discover</code> to stage evidence-backed drafts.</div>`;
+          : `<div class="session-ledger-empty">${isStaticDemo() ? 'No skills match this selection. Clear the filters to explore the sample skills.' : 'No skill records are registered. Run <code>reflect skills sync</code> to reconcile installed skills or <code>reflect skills discover</code> to stage evidence-backed drafts.'}</div>`;
     };
     if (searchInput) searchInput.oninput = renderSkillRegistry;
     renderSkillRegistry();
@@ -8706,7 +8913,7 @@ function buildImprovementSurfaces(){
         </article>`;
       }).join('') : resource('workflows').state !== 'ready'
         ? '<div class="panel"><div class="panel-title">Workflow analysis is updating</div><div class="workflow-copy">No stored workflows are available for these filters. New results will appear here when ready.</div></div>'
-        : `<div class="panel"><div class="panel-title">No workflows match these filters</div><div class="workflow-copy">Clear the behavior or state filter, run <code>reflect improve</code> for deterministic proposals, build one reviewed loop with <code>reflect loops build LOOP_ID</code>, or import an existing procedure with <code>reflect workflows add SKILL.md</code>.</div></div>`;
+        : `<div class="panel"><div class="panel-title">No workflows match these filters</div><div class="workflow-copy">${isStaticDemo() ? 'Clear the behavior or state filter to explore the sample workflows.' : 'Clear the behavior or state filter, run <code>reflect improve</code> for deterministic proposals, build one reviewed loop with <code>reflect loops build LOOP_ID</code>, or import an existing procedure with <code>reflect workflows add SKILL.md</code>.'}</div></div>`;
     };
     if (typeFilter) typeFilter.onchange = renderWorkflowLedger;
     if (statusFilter) statusFilter.onchange = renderWorkflowLedger;
@@ -10299,6 +10506,7 @@ function urlHasDashboardFilters(){
 dashboardFilterActive = urlHasDashboardFilters();
 buildCohortComparison();
 
+setupDemoNavigation({evidence:showObservationEvidence, workflow:showWorkflowReview, impact:showImpactSessions});
 hideReportLoader();
 
 }

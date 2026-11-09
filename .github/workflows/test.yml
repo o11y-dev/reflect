@@ -28,6 +28,14 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: pip install -e ".[test]"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify generated public demo and report
+        run: |
+          python scripts/build_showcase.py --check
+          python scripts/build_dashboard.py
+          git diff --exit-code -- src/reflect/data/index.html docs/report.html
       - name: Run tests with coverage
         run: pytest tests/ -v --tb=short
 

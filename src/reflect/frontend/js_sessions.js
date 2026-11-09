@@ -618,7 +618,7 @@ class SessionConversationPlayhead {
   function filteredSessions(){
     const serverFiltered = D.sql_backed && reportSupportsServerFiltering() && !D._unfilteredNavigation;
     const searchText = filterState.q.toLowerCase();
-    const reportNow = Math.max(...sessions.map(sessionTimeMs).filter(Boolean), Date.now());
+    const reportNow = Math.max(...sessions.map(sessionTimeMs).filter(Boolean), reportClockNow());
     const rangeMs = filterState.range === '24h' ? 24 * 60 * 60 * 1000
       : filterState.range === '7d' ? 7 * 24 * 60 * 60 * 1000
       : filterState.range === '30d' ? 30 * 24 * 60 * 60 * 1000
@@ -2024,7 +2024,7 @@ class SessionConversationPlayhead {
     if (idx >= 0) delete sessions[idx]._initialDetail;
     const request = initialDetail
       ? Promise.resolve({ok:true, status:200, json:async () => initialDetail})
-      : fetch('/api/session/' + encodeURIComponent(sessionId), {signal: controller.signal, cache:'no-store'});
+      : reportReadResponse('/api/session/' + encodeURIComponent(sessionId), {signal: controller.signal, cache:'no-store'});
     return request
       .then(async r => {
         if (r.status === 503 && (await r.json()).state === 'preparing') {

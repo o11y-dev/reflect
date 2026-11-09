@@ -15,6 +15,7 @@ def test_header_and_session_summary_use_selected_event_window():
     frontend = Path("src/reflect/frontend")
     source = (frontend / "js_impact.js").read_text()
     summary = source[source.index("function renderUsageSummary(){"):source.index("function renderSqlTabPayloads(){")]
+    summary = (frontend / "js_demo.js").read_text() + "\n" + summary
     source = (frontend / "js_navigation.js").read_text()
     header = source[source.index("const headerScope ="):source.index("document.getElementById('hdr-ts')")]
     script = r"""
@@ -51,6 +52,7 @@ def test_usage_rerenders_scope_and_recovers_from_empty_charts():
     explore = (frontend / "js_explore.js").read_text().split("/* ════════════════════ SESSION COMPARISON")[0]
     # Other product surfaces keep their existing startup lifecycle.
     impact = impact.replace("renderSqlTabPayloads();", "").replace("buildImprovementSurfaces();", "")
+    impact = (frontend / "js_demo.js").read_text() + "\n" + impact
     explore = explore.replace("renderToolsView();", "")
     script = r"""
 const assert = require('node:assert/strict');

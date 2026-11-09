@@ -452,7 +452,7 @@ async function loadDashboardData(){
 }
 
 async function loadImprovementData(onResource = null){
-  if (!dashboardDocumentActive || !D || !D.sql_backed || !reportSupportsServerFiltering()) return IMPROVEMENT_DATA;
+  if (!dashboardDocumentActive || !D || !D.sql_backed || (!isStaticDemo() && !reportSupportsServerFiltering())) return IMPROVEMENT_DATA;
   const sequence = loadImprovementData.sequence = (loadImprovementData.sequence || 0) + 1;
   const result = {...IMPROVEMENT_DATA, resources:{...IMPROVEMENT_DATA.resources}};
   const requests = [
@@ -493,7 +493,7 @@ async function loadImprovementData(onResource = null){
       const previous = IMPROVEMENT_DATA.resources?.[name];
       const loaded = Boolean(previous?.loaded || loaded_at || ['ready','stale'].includes(previous?.state));
       try {
-        const response = await fetch(url, requestOptions);
+        const response = await reportReadResponse(url, requestOptions);
         const payload = await response.json();
         if (!response.ok) {
           result.resources[name] = {
@@ -555,6 +555,14 @@ async function initApp(){
   D = await loadDashboardData();
   if (!D) {
     hideReportLoader();
+    return;
+  }
+  try {
+    configureReportSource(D);
+    const report = new URLSearchParams(window.location.search).get('report') || '';
+    if (/showcase\.json(?:$|\?)/.test(report) && !isStaticDemo()) throw new Error('This sample is outdated. Reload the latest public example.');
+  } catch (error) {
+    renderDashboardError('sample-unavailable', error.message);
     return;
   }
   let improvementSurfacesReady = false;

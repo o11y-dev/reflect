@@ -33,7 +33,7 @@ function animateTabIndicator(){
 
 function updateDashboardViewScope(tabName){
   const sessionsVisible = tabName === 'sessions';
-  const filtersVisible = sessionsVisible || tabName === 'explore';
+  const filtersVisible = sessionsVisible || (tabName === 'explore' && !isStaticDemo());
   const shell = document.getElementById('report-shell');
   if (shell) shell.dataset.view = tabName;
   for (const id of ['session-rail', 'session-rail-open']) {
@@ -64,7 +64,7 @@ function updateDashboardViewScope(tabName){
   document.getElementById('filter-sheet-open')?.setAttribute('aria-expanded', String(filtersVisible && !mobile));
   const analysisScope = document.getElementById('inbox-analysis-window');
   const analysisWindow = D.analysis_window;
-  if (analysisScope) analysisScope.textContent = analysisWindow?.date_from && analysisWindow?.date_to
+  if (analysisScope) analysisScope.textContent = isStaticDemo() ? 'Fixed illustrative sample. Findings and comparisons retain their own linked tasks.' : analysisWindow?.date_from && analysisWindow?.date_to
     ? `Latest analysis window: ${fmtWorkflowDate(analysisWindow.date_from)} — ${fmtWorkflowDate(analysisWindow.date_to)}.`
     : analysisWindow?.days && analysisWindow?.date_to
       ? `Latest analysis window: ${analysisWindow.days} days ending ${fmtWorkflowDate(analysisWindow.date_to)}.`
@@ -145,7 +145,7 @@ const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPRO
     : (IMPROVEMENT_DATA.skills || []).length
       ? 'skills'
       : 'sessions';
-activateTab(requestedInitialTab || defaultProductTab, {
+activateTab(requestedInitialTab || (isStaticDemo() ? 'inbox' : defaultProductTab), {
   view: requestedInitialView || '',
   updateUrl: Boolean(requestedInitialTab || requestedInitialView),
 });
@@ -153,7 +153,9 @@ activateTab(requestedInitialTab || defaultProductTab, {
 /* ── Header ── */
 const headerScope = D.measurements?.scope;
 document.getElementById('hdr-range').textContent = `${fmtWorkflowDate(headerScope?.kind === 'event_window' ? headerScope.date_from : D.first_event_ts)} — ${fmtWorkflowDate(headerScope?.kind === 'event_window' ? headerScope.date_to : D.last_event_ts)}`;
-document.getElementById('hdr-ts').textContent = 'Loaded ' + new Date().toLocaleString();
+document.getElementById('hdr-ts').textContent = isStaticDemo()
+  ? 'Illustrative sample · fixed dates · all sample usage'
+  : 'Loaded ' + new Date().toLocaleString();
 startPreparationStatusPolling();
 window.setTimeout(requestDashboardRefresh, 250);
 document.addEventListener('visibilitychange', () => {

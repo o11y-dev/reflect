@@ -4,13 +4,13 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <meta name="theme-color" content="#000000"/>
-<title>reflect — Behavioral Memory for Developer-Agent Workflow</title>
-<meta name="description" content="reflect is the behavioral memory layer for developer-agent workflow. Turn local session data and OpenTelemetry GenAI spans into patterns about prompts, tools, context, budget burn, and enterprise handoff."/>
+<title>Reflect — Understand the work. Improve the next session.</title>
+<meta name="description" content="Inspect AI coding sessions, review reusable skills, and check their evidence in Reflect. Explore a clearly labeled synthetic example or your local report."/>
 <link rel="canonical" href="https://reflect.o11y.dev/"/>
 <link rel="icon" type="image/svg+xml" href="favicon.svg"/>
 <meta property="og:type" content="website"/>
 <meta property="og:site_name" content="reflect.o11y.dev"/>
-<meta property="og:title" content="reflect — Behavioral Memory for Developer-Agent Workflow"/>
+<meta property="og:title" content="Reflect — Understand the work. Improve the next session."/>
 <meta property="og:description" content="Behavioral memory for developer-agent workflow. Patterns about prompts, tools, context, budget burn, and enterprise handoff."/>
 <meta property="og:url" content="https://reflect.o11y.dev/"/>
 <meta property="og:image" content="https://reflect.o11y.dev/og-image-v2.png"/>
@@ -18,12 +18,12 @@
 <meta property="og:image:type" content="image/png"/>
 <meta property="og:image:width" content="1200"/>
 <meta property="og:image:height" content="630"/>
-<meta property="og:image:alt" content="reflect — See How Agents Work. Improve What Happens Next."/>
+<meta property="og:image:alt" content="Reflect — Keep what your agents figure out."/>
 <meta name="twitter:card" content="summary_large_image"/>
-<meta name="twitter:title" content="reflect — Behavioral Memory for Developer-Agent Workflow"/>
+<meta name="twitter:title" content="Reflect — Understand the work. Improve the next session."/>
 <meta name="twitter:description" content="Behavioral memory for developer-agent workflow. Built on OpenTelemetry GenAI semantic conventions."/>
 <meta name="twitter:image" content="https://reflect.o11y.dev/og-image-v2.png"/>
-<meta name="twitter:image:alt" content="reflect — See How Agents Work. Improve What Happens Next."/>
+<meta name="twitter:image:alt" content="Reflect — Keep what your agents figure out."/>
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -99,6 +99,24 @@
     <div id="hdr-ts"></div>
   </div>
 </header>
+
+<section id="demo-story" class="demo-story" aria-labelledby="demo-title" hidden>
+  <div class="demo-toolbar">
+    <label for="demo-example">Choose an example <select id="demo-example"></select></label>
+    <div class="demo-links"><a href="./#install">Install Reflect</a><a id="demo-github" href="https://github.com/o11y-dev/reflect" target="_blank" rel="noopener noreferrer">Star on GitHub</a></div>
+  </div>
+  <div class="demo-story-grid">
+    <div><h2 id="demo-title"></h2><p id="demo-description"></p><p class="demo-disclosure">Synthetic sessions, fictional projects. Every displayed result links to its supporting sample records.</p></div>
+    <div id="demo-preview" class="demo-preview" aria-label="Example evidence"></div>
+  </div>
+  <div class="demo-steps" role="group" aria-label="Follow the example">
+    <button type="button" data-demo-step="evidence" aria-pressed="true">1. Evidence</button>
+    <button type="button" data-demo-step="reviewed-skill" aria-pressed="false">2. Reviewed skill</button>
+    <button type="button" data-demo-step="later-tasks" aria-pressed="false">3. Later tasks</button>
+  </div>
+  <p id="demo-step-copy" class="demo-step-copy" aria-live="polite"></p>
+  <div class="demo-actions"><button id="demo-inspect" type="button" class="ledger-button primary">Inspect evidence</button><a id="demo-session" href="#main-content">Open source session</a><a href="#tabs">Explore all sample data</a></div>
+</section>
 
 <!-- ── Nav tabs ── -->
 <nav id="tabs" role="tablist" aria-label="Dashboard sections">
@@ -594,7 +612,7 @@
   <div class="ledger-dialog-actions" id="ledger-dialog-actions"></div>
 </dialog>
 
-<footer>Powered by <a href="https://github.com/o11y-dev/reflect" style="color:var(--text-2);text-decoration:none"><code>reflect</code></a> — report data stays local and private</footer>
+<footer>Powered by <a href="https://github.com/o11y-dev/reflect" style="color:var(--text-2);text-decoration:none"><code>reflect</code></a><span id="report-privacy-copy"> — report data stays local and private</span></footer>
 
 <script>
 {{ dashboard_js }}

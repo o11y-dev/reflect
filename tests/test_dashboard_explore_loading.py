@@ -14,6 +14,7 @@ def _run_explore_contract(scenario: str, **data) -> None:
         pytest.skip("Node is required for Explore loading contract checks")
     source = Path("src/reflect/frontend/js_ledger.js").read_text()
     loading = source[source.index("const lazySqlTabRequests ="):]
+    loading = Path("src/reflect/frontend/js_demo.js").read_text() + "\n" + loading
     script = r"""
 const assert = require('node:assert/strict'), vm = require('node:vm');
 const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));

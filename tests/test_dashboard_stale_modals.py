@@ -24,6 +24,7 @@ def _run_modal(scenario: str) -> None:
                         impact.index("function impactMeasurementState(")]
     fragments += impact[impact.index("function impactCohortDetails("):
                         impact.index("function impactScope(")]
+    fragments = Path("src/reflect/frontend/js_demo.js").read_text() + "\n" + fragments
     script = r"""
 const assert=require('node:assert/strict'),vm=require('node:vm');
 const source=JSON.parse(require('node:fs').readFileSync(0,'utf8'));

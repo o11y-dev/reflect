@@ -1,13 +1,13 @@
 /* ── Palette — reflect showcase colors ── */
 const P = {
-  blue:    '#f28a1a',
+  blue:    '#75b8ff',
   indigo:  '#ffb156',
-  purple:  '#d7d1c6',
+  purple:  '#b99aff',
   teal:    '#f6c47b',
-  green:   '#30d158',
+  green:   '#48d597',
   yellow:  '#ffd60a',
   orange:  '#ff9f0a',
-  red:     '#ff453a',
+  red:     '#ff6b5c',
   pink:    '#ff375f',
   mint:    '#66d4cf',
 };
@@ -201,7 +201,7 @@ async function ledgerRequest(url, {method = 'GET', body} = {}){
   const controller = new AbortController();
   const deadline = method === 'GET' ? window.setTimeout(() => controller.abort(), 5000) : null;
   try {
-    const response = await fetch(url, {
+    const response = await reportReadResponse(url, {
       method, signal:controller.signal,
       headers:{Accept:'application/json',...(body === undefined ? {} : {'Content-Type':'application/json'})},
       body:body === undefined ? undefined : JSON.stringify(body),
@@ -543,7 +543,7 @@ async function showObservationEvidence(observationId){
     const ruleLabel = humanizeLedgerLabel(item.category || item.rule_id || 'Improvement');
     presentLedgerRead(request, {
       title:item.title || 'Observation evidence',
-      subtitle:`${ruleLabel} Rule · Version ${item.rule_version} · ${confidence}% confidence`,
+      subtitle:`${ruleLabel} Rule · Version ${item.rule_version} · ${confidence}% detection confidence`,
       body:`${staleEvidenceNotice(item,ledger)}<div class="review-lead">
           <div class="review-eyebrow">Why This Matters</div>
           <p>${escHtml(item.summary || '')}</p>
@@ -552,7 +552,7 @@ async function showObservationEvidence(observationId){
           <div class="review-kpi"><div class="review-kpi-label">Affected Sessions</div><div class="review-kpi-value signal">${fmt(Number(item.affected_session_count || 0))}</div></div>
           <div class="review-kpi"><div class="review-kpi-label">Supporting Tasks</div><div class="review-kpi-value">${fmt(Number(ledger?.support_execution_unit_count || 0))}</div></div>
           <div class="review-kpi"><div class="review-kpi-label">${escHtml(humanizeLedgerLabel(item.metric_name || 'Metric'))}</div><div class="review-kpi-value">${escHtml(metricDisplay)} ${escHtml(item.metric_unit || '')}</div></div>
-          <div class="review-kpi"><div class="review-kpi-label">Impact Score</div><div class="review-kpi-value">${fmt(Number(item.impact_score || 0))} / 100</div></div>
+          <div class="review-kpi"><div class="review-kpi-label">Review Priority</div><div class="review-kpi-value">${fmt(Number(item.impact_score || 0))} / 100</div></div>
         </div>
         <div class="review-grid">
           <section class="review-panel">
@@ -568,7 +568,7 @@ async function showObservationEvidence(observationId){
                 <div class="review-fact"><dt>Rule</dt><dd translate="no">${escHtml(item.rule_id)} v${fmt(Number(item.rule_version || 1))}</dd></div>
                 <div class="review-fact"><dt>Scope</dt><dd>${escHtml(humanizeLedgerLabel(item.scope_type || 'user'))} · ${escHtml(item.scope_id || 'local')}</dd></div>
                 <div class="review-fact"><dt>Metric</dt><dd>${escHtml(humanizeLedgerLabel(item.metric_name || 'Unavailable'))}</dd></div>
-                <div class="review-fact"><dt>Confidence</dt><dd>${confidence}%</dd></div>
+                <div class="review-fact"><dt>Detection confidence</dt><dd>${confidence}%</dd></div>
               </dl>
             </section>
             <details class="advanced-review"><summary>Raw Evidence Links · ${fmt((item.evidence || []).length)}</summary><div class="evidence-list">${rawEvidence || '<div class="session-ledger-empty">No bounded evidence is available.</div>'}</div></details>
@@ -617,7 +617,7 @@ async function showLoopReview(loopId){
     const canBuild = !stale && (loop.status === 'detected' || loop.status === 'acknowledged');
     presentLedgerRead(request, {
       title:loop.title || 'Observed loop',
-      subtitle:`${humanizeLedgerLabel(loop.kind || 'loop')} · ${humanizeLedgerLabel(loop.status || 'detected')} · ${Math.round(Number(loop.confidence || 0) * 100)}% confidence`,
+      subtitle:`${humanizeLedgerLabel(loop.kind || 'loop')} · ${humanizeLedgerLabel(loop.status || 'detected')} · ${Math.round(Number(loop.confidence || 0) * 100)}% detection confidence`,
       body:`${staleEvidenceNotice(detail)}<div class="review-lead">
           <div class="review-eyebrow">Observed Behavior</div>
           <p>${escHtml(loop.summary || '')}</p>
@@ -809,7 +809,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     request.pending = !canReview;
     const evidenceCount = (value, fallback) => value == null && fallback == null ? '—' : fmt(Number(value ?? fallback));
     const unavailableEvidence = '<div class="session-ledger-empty">Evidence references are updating. Their absence has not been established.</div>';
-    const readOnlyNotice = canReview ? '' : `<div class="review-warning" role="status"><strong>Read-only inspection.</strong> ${!candidateStable ? 'The workflow changed while loading. ' : ''}${!evidenceMatches ? 'The evidence belongs to a different workflow revision. ' : ''}Current workflow validation and a fresh project preview are required before editing or applying.${previewRead.status === 'rejected' ? ` Project preview unavailable: ${escHtml(previewRead.reason.message)}.` : ''}${evidenceRead.status === 'rejected' ? ` Evidence unavailable: ${escHtml(evidenceRead.reason.message)}.` : ''}</div>`;
+    const readOnlyNotice = isStaticDemo() ? '<div class="review-warning" role="status"><strong>Illustrative reviewed change.</strong> This is the exact synthetic skill and target shown in the example. Nothing can be edited or installed from this sample.</div>' : canReview ? '' : `<div class="review-warning" role="status"><strong>Read-only inspection.</strong> ${!candidateStable ? 'The workflow changed while loading. ' : ''}${!evidenceMatches ? 'The evidence belongs to a different workflow revision. ' : ''}Current workflow validation and a fresh project preview are required before editing or applying.${previewRead.status === 'rejected' ? ` Project preview unavailable: ${escHtml(previewRead.reason.message)}.` : ''}${evidenceRead.status === 'rejected' ? ` Evidence unavailable: ${escHtml(evidenceRead.reason.message)}.` : ''}</div>`;
     const candidatePublication = ledger.candidate ? ledger : !candidateCurrent ? {publication:{...resource.publication,
       state:resource.publication?.state === 'recorded' || resource.state === 'recorded' ? 'recorded' : 'stale',
       loaded_at:resource.publication?.loaded_at ?? resource.loaded_at}} : {};
@@ -826,7 +826,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     const applyLabel = applyAllowed
       ? (evidenceReady ? 'Approve & Apply to This Project' : 'Apply Unvalidated Draft')
       : 'Choose a Project Folder';
-    const reviewActions = !canReview
+    const reviewActions = isStaticDemo() ? '' : !canReview
       ? `<button type="button" class="ledger-button" data-ledger-action="review-workflow" data-candidate-id="${escHtml(candidateId)}">Retry Review</button>`
       : active
       ? `<button type="button" class="ledger-button danger" data-ledger-action="rollback" data-candidate-id="${escHtml(candidateId)}">Roll Back</button>`
@@ -921,10 +921,10 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
           <div class="workflow-approval-item"><div class="workflow-approval-label">Selected Project</div><div class="workflow-approval-value">${escHtml(projectName)}</div><div class="workflow-approval-copy">${escHtml(relationLabel)}</div></div>
           <div class="workflow-approval-item"><div class="workflow-approval-label">File Change</div><div class="workflow-approval-value">${escHtml(changeLabel)}</div><div class="workflow-approval-copy" translate="no">${escHtml(targetFile || 'Target file unavailable')}</div></div>
         </div>
-        <div class="workflow-scope-note ${escHtml(relationState)}"><div><strong>${escHtml(relationLabel)}.</strong> ${escHtml(relationCopy)} Only the selected project will be changed; this is not a global or multi-project install.</div></div>` : ''}
+        <div class="workflow-scope-note ${escHtml(relationState)}"><div><strong>${escHtml(relationLabel)}.</strong> ${escHtml(relationCopy)} ${isStaticDemo() ? 'The recorded example targets this fictional project only.' : 'Only the selected project will be changed; this is not a global or multi-project install.'}</div></div>` : ''}
         <div class="review-grid">
           <main class="review-stack">
-            ${canReview ? `<section class="review-panel">
+            ${canReview && !isStaticDemo() ? `<section class="review-panel">
               <div class="review-panel-head"><h3 class="review-panel-title">Apply to One Project</h3><span class="ledger-pill">${escHtml(changeLabel)}</span></div>
               <p class="review-panel-copy">Reflect writes one project-local skill file. No other project or global agent folder will be changed.</p>
               <div class="workflow-target">
@@ -949,7 +949,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
               <section class="review-panel review-section"><h3>Verification</h3><ul class="workflow-readable">${(content.verification || []).map(item => `<li>${escHtml(item)}</li>`).join('') || '<li>No verification steps are defined.</li>'}</ul></section>
             </div>
             ${canReview ? `<details class="advanced-review"><summary>Exact File Diff</summary><pre class="ledger-diff">${escHtml(preview.diff || 'No filesystem change; rendered content already matches.')}</pre></details>
-            <details class="advanced-review"><summary>Edit Structured Workflow</summary><label class="review-summary-label" for="workflow-content-editor">Workflow JSON</label><textarea class="ledger-editor" id="workflow-content-editor" name="workflow-content" autocomplete="off" spellcheck="false" ${active ? 'readonly' : ''}>${escHtml(JSON.stringify(content, null, 2))}</textarea></details>` : ''}
+            ${!isStaticDemo() ? `<details class="advanced-review"><summary>Edit Structured Workflow</summary><label class="review-summary-label" for="workflow-content-editor">Workflow JSON</label><textarea class="ledger-editor" id="workflow-content-editor" name="workflow-content" autocomplete="off" spellcheck="false" ${active ? 'readonly' : ''}>${escHtml(JSON.stringify(content, null, 2))}</textarea></details>` : ''}` : ''}
           </main>
           <aside class="review-stack">
             <section class="review-panel">
@@ -974,6 +974,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
 }
 
 async function submitSessionFeedback(sessionId, outcome, button){
+  if (isStaticDemo()) return;
   const reason = ['bad','corrected'].includes(outcome)
     ? window.prompt('Optional local reason (avoid secrets or sensitive source content):', '')
     : null;
@@ -1204,6 +1205,7 @@ function setExploreViewState(viewName, state, errorMessage = ''){
 
 function exploreViewUrl(viewName){
   const url = new URL(`/api/explore/${encodeURIComponent(viewName)}`, window.location.href);
+  if (isStaticDemo()) return {url, sessionId:''};
   const sessionId = viewName === 'context' ? '' : currentParams().get('session') || dashboardSelectedSessionId || '';
   if (sessionId) url.searchParams.set('session', sessionId);
   if (viewName !== 'context') {
@@ -1238,7 +1240,7 @@ if (D._unpublishedNavigation) {
 }
 
 async function loadExploreView(viewName){
-  if (!dashboardDocumentActive || !D.sql_backed || !reportSupportsServerFiltering()) return null;
+  if (!dashboardDocumentActive || !D.sql_backed || (!isStaticDemo() && !reportSupportsServerFiltering())) return null;
   if (!D.sqlite) D.sqlite = {};
   if (!D.sqlite.tabs) D.sqlite.tabs = {};
   const {url} = exploreViewUrl(viewName);
@@ -1246,14 +1248,14 @@ async function loadExploreView(viewName){
   if (lazySqlTabRequests.has(cacheKey)) return lazySqlTabRequests.get(cacheKey);
   const publication = explorePublication;
   const requestUrl = new URL(url);
-  if (viewName === 'usage') {
+  if (viewName === 'usage' && !isStaticDemo()) {
     requestUrl.pathname = '/api/data';
     requestUrl.searchParams.set('tab', 'explore');
     requestUrl.searchParams.set('view', 'usage');
   }
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 30000);
-  const request = fetch(requestUrl.toString(), {headers: {Accept: 'application/json'}, signal: controller.signal, cache:'no-store'})
+  const request = reportReadResponse(requestUrl.toString(), {headers: {Accept: 'application/json'}, signal: controller.signal, cache:'no-store'})
     .then(async response => {
       if (response.status === 409) {
         const payload = await response.json();
@@ -1313,7 +1315,7 @@ async function hydrateExploreView(viewName){
   const publication = explorePublication;
   if (exploreViewStates.get(viewName) === 'ready' && previous?.scope === cacheKey && previous.publication === publication) return;
   if (exploreViewStates.get(viewName) === 'loading' && lazySqlTabRequests.has(cacheKey)) return;
-  if (!D.sql_backed || !reportSupportsServerFiltering()) return;
+  if (!D.sql_backed || (!isStaticDemo() && !reportSupportsServerFiltering())) return;
   setExploreViewState(viewName, 'loading');
   try {
     const payload = await loadExploreView(viewName);

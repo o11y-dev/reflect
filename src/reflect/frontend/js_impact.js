@@ -5,7 +5,7 @@ function renderUsageSummary(){
   const usageTab = sqlTab('usage');
   const statDefs = [
     { label:'Avg Quality',   value:Number(usageTab.avg_quality_score || 0).toFixed(1)+'%', sub:'current selection',              c:Number(usageTab.avg_quality_score || 0) > 70 ? 'var(--green)' : 'var(--yellow)' },
-    { label:'Sessions',      value:fmt(usageTab.unique_sessions || 0),  sub:D.measurements?.scope?.kind === 'event_window' ? String(D.measurements.scope.date_from || '').slice(0,10)+' — '+String(D.measurements.scope.date_to || '').slice(0,10) : String(usageTab.first_event_ts || '').slice(0,10)+' - now',   c:'var(--purple)' },
+    { label:'Sessions',      value:fmt(usageTab.unique_sessions || 0),  sub:isStaticDemo() ? 'Full illustrative sample' : D.measurements?.scope?.kind === 'event_window' ? String(D.measurements.scope.date_from || '').slice(0,10)+' — '+String(D.measurements.scope.date_to || '').slice(0,10) : String(usageTab.first_event_ts || '').slice(0,10)+' - now',   c:'var(--purple)' },
     { label:'Prompts',       value:fmt(usageTab.prompt_submits || 0),   sub:'user prompt submits',                   c:'var(--teal)' },
     { label:'Tool Calls',    value:fmt(usageTab.tool_calls || 0),       sub:String(usageTab.tool_to_prompt_ratio || '0.0')+':1 per prompt',  c:'var(--blue)' },
   ];
@@ -386,7 +386,7 @@ function renderUsageMetrics(){
             <tr><td style="font-weight:600">${escHtml(model)}</td><td style="text-align:right">${fmtCost(cost)} ${escHtml(costUnit)}</td></tr>
           `).join('')
         }</tbody></table>`
-      : `<div style="color:var(--text-3);padding:12px 0">No model cost data available. Run reflect doctor to inspect pricing status.</div>`;
+      : `<div style="color:var(--text-3);padding:12px 0">${isStaticDemo() ? 'Pricing is unavailable in this sample; unknown cost is not zero.' : 'No model cost data available. Run reflect doctor to inspect pricing status.'}</div>`;
   }
 
 }
@@ -820,7 +820,7 @@ function buildImprovementSurfaces(){
       <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-loop" data-loop-id="${escHtml(String(item.id))}">${item.status === 'detected' ? 'Review & Build Instructions' : 'Review Loop Evidence'}</button></div>
     </article>`).join('') : resource('loops').state !== 'ready'
       ? '<div class="session-ledger-empty">No loops in the last loaded data. Updated loops are still pending.</div>'
-      : `<div class="session-ledger-empty">No agent-native or behavioral loop is currently detected. Run <code>reflect loops</code> after more sessions are captured.</div>`;
+      : `<div class="session-ledger-empty">${isStaticDemo() ? 'No additional loops are included in this illustrative sample. Choose another example above.' : 'No agent-native or behavioral loop is currently detected. Run <code>reflect loops</code> after more sessions are captured.'}</div>`;
   }
 
   const skillRegistry = document.getElementById('skill-registry');
@@ -863,7 +863,7 @@ function buildImprovementSurfaces(){
         ? `<div class="session-ledger-empty">No skills match <strong>${escHtml(query.trim())}</strong>. Clear the search to return to the full registry.</div>`
         : resource('skills').state !== 'ready'
           ? '<div class="session-ledger-empty">No skills in the last loaded registry. Updated records are still pending.</div>'
-          : `<div class="session-ledger-empty">No skill records are registered. Run <code>reflect skills sync</code> to reconcile installed skills or <code>reflect skills discover</code> to stage evidence-backed drafts.</div>`;
+          : `<div class="session-ledger-empty">${isStaticDemo() ? 'No skills match this selection. Clear the filters to explore the sample skills.' : 'No skill records are registered. Run <code>reflect skills sync</code> to reconcile installed skills or <code>reflect skills discover</code> to stage evidence-backed drafts.'}</div>`;
     };
     if (searchInput) searchInput.oninput = renderSkillRegistry;
     renderSkillRegistry();
@@ -916,7 +916,7 @@ function buildImprovementSurfaces(){
         </article>`;
       }).join('') : resource('workflows').state !== 'ready'
         ? '<div class="panel"><div class="panel-title">Workflow analysis is updating</div><div class="workflow-copy">No stored workflows are available for these filters. New results will appear here when ready.</div></div>'
-        : `<div class="panel"><div class="panel-title">No workflows match these filters</div><div class="workflow-copy">Clear the behavior or state filter, run <code>reflect improve</code> for deterministic proposals, build one reviewed loop with <code>reflect loops build LOOP_ID</code>, or import an existing procedure with <code>reflect workflows add SKILL.md</code>.</div></div>`;
+        : `<div class="panel"><div class="panel-title">No workflows match these filters</div><div class="workflow-copy">${isStaticDemo() ? 'Clear the behavior or state filter to explore the sample workflows.' : 'Clear the behavior or state filter, run <code>reflect improve</code> for deterministic proposals, build one reviewed loop with <code>reflect loops build LOOP_ID</code>, or import an existing procedure with <code>reflect workflows add SKILL.md</code>.'}</div></div>`;
     };
     if (typeFilter) typeFilter.onchange = renderWorkflowLedger;
     if (statusFilter) statusFilter.onchange = renderWorkflowLedger;

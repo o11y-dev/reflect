@@ -36,7 +36,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://o11y.dev"
+Homepage = "https://reflect.o11y.dev/"
 Repository = "https://github.com/o11y-dev/reflect"
 Documentation = "https://github.com/o11y-dev/reflect#readme"
 Issues = "https://github.com/o11y-dev/reflect/issues"

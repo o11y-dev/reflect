@@ -15,6 +15,7 @@ def _run_loader_contract(scenario: str, **inputs) -> None:
     source = Path("src/reflect/frontend/js_bootstrap.js").read_text()
     loader = source[source.index("async function loadImprovementData("):
                     source.index("\nfunction updateUrlParams(")]
+    loader = Path("src/reflect/frontend/js_demo.js").read_text() + "\n" + loader
     script = r"""
 const assert = require('node:assert/strict'), vm = require('node:vm');
 const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));

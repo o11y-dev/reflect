@@ -12,6 +12,7 @@ def _run_contract(source: str, scenario: str) -> None:
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node is required for Skills browser contracts")
+    source = Path("src/reflect/frontend/js_demo.js").read_text() + "\n" + source
     script = r"""
 const assert = require('node:assert/strict'), vm = require('node:vm');
 const source = JSON.parse(require('node:fs').readFileSync(0,'utf8'));
