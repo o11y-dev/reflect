@@ -13,6 +13,7 @@ from reflect.store.pending_refresh import PendingRefreshState
 from reflect.store.provenance import (
     apply_origin_kind,
     classify_origin_kind,
+    is_codex_otel_service,
     telemetry_agent_name,
     telemetry_session_id,
     unassigned_codex_classification,
@@ -86,10 +87,27 @@ def _first_text(attrs: dict[str, Any], *keys: str) -> str | None:
 
 def _logical_tool_call_id(attrs: dict[str, Any], fallback: object) -> str:
     """Return the provider-neutral identity shared by invocation and result events."""
+    if _is_codex_dispatch(attrs):
+        return str(attrs["call_id"]).strip()
     return (
         DEFAULT_MCP_CLASSIFIER.call_id(attrs)
         or recorded_tool_call_id(attrs)
         or str(fallback)
+    )
+
+
+def _is_codex_dispatch(attrs: dict[str, Any]) -> bool:
+    call_id = attrs.get("call_id")
+    return bool(
+        attrs.get("reflect.telemetry.origin") == "native_otlp_trace"
+        and is_codex_otel_service(attrs.get("service.name"))
+        and attrs.get("code.module.name") == "codex_core::tools::parallel"
+        and attrs.get("codex.tool.phase") == "dispatch"
+        and telemetry_session_id(attrs)
+        and _first_text(attrs, "turn.id", "turn_id")
+        and isinstance(call_id, str)
+        and call_id.strip()
+        and recorded_tool_name(attrs)
     )
 
 
@@ -570,6 +588,28 @@ def _upsert_tool_call(
     duration_ms: int | None,
 ) -> str:
     logical_call_id = _logical_tool_call_id(attrs, raw_event["id"])
+    if _is_codex_dispatch(attrs):
+        # A generic Codex call_id is scoped by its session, but old/corrupt
+        # captures can still reuse it across turns or names. Keep that
+        # observation separate rather than joining incompatible invocations.
+        existing = conn.execute(
+            "SELECT raw_attrs_json,tool_name,tool_type FROM tool_calls WHERE session_id=? AND logical_call_id=?",
+            (session_id, logical_call_id),
+        ).fetchone()
+        if existing:
+            prior_attrs = _load_json(existing[0])
+            prior_turn = _first_text(prior_attrs, "turn.id", "turn_id")
+            current_turn = _first_text(attrs, "turn.id", "turn_id")
+            prior_name = recorded_tool_name(prior_attrs) or existing[1]
+            current_name = recorded_tool_name(attrs)
+            if (
+                prior_turn != current_turn
+                or (
+                    prior_name != current_name
+                    and existing[2] != "mcp"
+                )
+            ):
+                logical_call_id = str(raw_event["id"])
     tool_name = _canonical_tool_name(attrs, raw_event["event_type"])
     identity = DEFAULT_MCP_CLASSIFIER.identify(attrs)
     input_preview = _first_text(attrs, "gen_ai.client.tool.input", "tool.input")
@@ -587,7 +627,9 @@ def _upsert_tool_call(
         ON CONFLICT(session_id, logical_call_id)
           WHERE logical_call_id IS NOT NULL AND logical_call_id <> ''
         DO UPDATE SET
-          tool_name = CASE WHEN ? OR (? AND {recorded_name_sql} IS NULL AND tool_calls.tool_type IS NOT 'mcp')
+          tool_name = CASE WHEN ? AND tool_calls.tool_name IS NOT excluded.tool_name
+            THEN tool_calls.tool_name
+            WHEN ? OR (? AND {recorded_name_sql} IS NULL AND tool_calls.tool_type IS NOT 'mcp')
             THEN excluded.tool_name ELSE tool_calls.tool_name END,
           tool_type = COALESCE(excluded.tool_type, tool_calls.tool_type),
           status = CASE
@@ -596,10 +638,11 @@ def _upsert_tool_call(
             WHEN excluded.status = 'ok' OR tool_calls.status = 'ok' THEN 'ok'
             ELSE excluded.status
           END,
-          duration_ms = MAX(
-            COALESCE(tool_calls.duration_ms, 0),
-            COALESCE(excluded.duration_ms, 0)
-          ),
+          duration_ms = CASE WHEN ? AND tool_calls.duration_ms IS NOT NULL
+            THEN tool_calls.duration_ms ELSE MAX(
+              COALESCE(tool_calls.duration_ms, 0),
+              COALESCE(excluded.duration_ms, 0)
+            ) END,
           input_hash = COALESCE(tool_calls.input_hash, excluded.input_hash),
           output_hash = COALESCE(excluded.output_hash, tool_calls.output_hash),
           input_preview_redacted = COALESCE(
@@ -648,8 +691,10 @@ def _upsert_tool_call(
             json.dumps(attrs, sort_keys=True),
             timestamp,
             timestamp,
+            _is_codex_dispatch(attrs),
             bool(recorded_tool_name(attrs) or identity.server_name and identity.tool_name),
             bool(attrs.get("gen_ai.client.command")),
+            _is_codex_dispatch(attrs),
         ),
     )
     row = conn.execute(

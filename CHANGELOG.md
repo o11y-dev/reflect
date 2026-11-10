@@ -34,6 +34,7 @@
 
 ### Fixed
 - Memory searches preserve caller-owned read transactions and fall back to canonical records when the search index is empty, keeping guidance available during concurrent refreshes.
+- OTLP span identity survives file rotation, and Codex dispatch calls reconcile by session-scoped call ID without replacing richer result names or durations.
 - Static report inventories and evidence drill-downs use a versioned, read-only sample source. Sample dates stay fixed, unavailable evidence is explicit, and local report navigation never loads public conversion analytics.
 - Dashboard tab styling follows the accessible selected state; closing a review with Escape clears its deep link, and a collapsed desktop session rail can reopen on mobile.
 - Subagent reports use recorded launches and lifecycle evidence across harnesses, preserve role and child identity, and exclude prompt mentions from launch counts. Recorded stops no longer imply verified task success.

@@ -190,6 +190,161 @@ def _classify_retained_event_spans(conn: sqlite3.Connection) -> int:
     return changed
 
 
+def _repair_codex_span_identity(conn: sqlite3.Connection) -> dict[str, int]:
+    """Collapse exact Codex dispatch copies and restore their canonical calls."""
+    from collections import defaultdict
+
+    from reflect.store.normalize import (
+        _first_text,
+        _insert_call_record,
+        _load_json,
+        _stable_id,
+        _step_type,
+    )
+    from reflect.store.pending_refresh import PendingRefreshState
+    from reflect.telemetry_facts import recorded_tool_name
+
+    timestamp = datetime.now(UTC).isoformat()
+    call_reference_tables: list[tuple[str, str]] = []
+    for table_row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'"):
+        table = table_row[0]
+        for foreign_key in conn.execute(f'PRAGMA foreign_key_list("{table}")'):
+            if foreign_key[2] == "tool_calls":
+                call_reference_tables.append((table, foreign_key[3]))
+    groups: dict[tuple[str, str, str, str], list[str]] = defaultdict(list)
+    for event_id, session_id, trace_id, span_id, content_hash in conn.execute(
+        """SELECT id,session_id,trace_id,span_id,content_hash FROM raw_events
+        WHERE source_type='otlp_traces_json' AND trace_id<>'' AND span_id<>''
+          AND COALESCE(json_extract(attrs_json,'$.\"service.name\"'),'') IN
+              ('codex-app-server','codex-exec-server','codex_exec')
+          AND json_extract(attrs_json,'$.\"code.module.name\"')='codex_core::tools::parallel'
+          AND json_extract(attrs_json,'$.\"codex.tool.phase\"')='dispatch'
+          AND COALESCE(json_extract(attrs_json,'$.\"call_id\"'),'')<>''
+          AND COALESCE(session_id,'')<>''"""
+    ):
+        groups[(session_id, trace_id, span_id, content_hash)].append(event_id)
+
+    pairs = []
+    for (session_id, _, _, _), event_ids in groups.items():
+        if len(event_ids) < 2:
+            continue
+        step_ids = sorted(_stable_id("step", event_id) for event_id in event_ids)
+        keeper = step_ids[0]
+        pairs.extend((loser, keeper, session_id) for loser in step_ids[1:])
+
+    removed_steps = 0
+    if pairs:
+        conn.execute("CREATE TEMP TABLE codex_span_duplicates(loser TEXT PRIMARY KEY, keeper TEXT NOT NULL, session_id TEXT NOT NULL)")
+        conn.executemany("INSERT INTO codex_span_duplicates VALUES (?,?,?)", pairs)
+        unsafe = set()
+        tables = [row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+        for table in tables:
+            for foreign_key in conn.execute(f'PRAGMA foreign_key_list("{table}")'):
+                if foreign_key[2] != "steps" or table == "execution_unit_steps":
+                    continue
+                column = foreign_key[3]
+                unsafe.update(row[0] for row in conn.execute(
+                    f"SELECT d.loser FROM codex_span_duplicates d JOIN \"{table}\" c ON c.\"{column}\"=d.loser"
+                ))
+        for loser, keeper in conn.execute("SELECT loser,keeper FROM codex_span_duplicates"):
+            keeper_units = {r[0] for r in conn.execute("SELECT execution_unit_id FROM execution_unit_steps WHERE step_id=?", (keeper,))}
+            loser_units = {r[0] for r in conn.execute("SELECT execution_unit_id FROM execution_unit_steps WHERE step_id=?", (loser,))}
+            if loser in unsafe or keeper_units != loser_units:
+                unsafe.add(loser)
+        safe = [loser for loser, _, _ in pairs if loser not in unsafe]
+        conn.executemany("DELETE FROM steps WHERE id=?", ((step_id,) for step_id in safe))
+        removed_steps = len(safe)
+        conn.execute("DROP TABLE codex_span_duplicates")
+
+    changed: dict[str, set[str]] = defaultdict(set)
+    classified = 0
+    rows = conn.execute(
+        """SELECT id,source_id,source_type,event_type,session_id,observed_at,received_at,
+                  origin_kind,attrs_json,content_hash
+        FROM raw_events WHERE source_type='otlp_traces_json'
+          AND json_extract(attrs_json,'$.\"code.module.name\"')='codex_core::tools::parallel'
+          AND json_extract(attrs_json,'$.\"codex.tool.phase\"')='dispatch'
+          AND COALESCE(json_extract(attrs_json,'$.\"call_id\"'),'')<>''
+          AND COALESCE(session_id,'')<>'' ORDER BY id"""
+    )
+    for raw in rows:
+        event = dict(zip(("id","source_id","source_type","event_type","session_id","observed_at","received_at","origin_kind","attrs_json","content_hash"), raw, strict=True))
+        attrs = _load_json(event["attrs_json"])
+        step_id = _stable_id("step", event["id"])
+        step = conn.execute("SELECT type,summary FROM steps WHERE id=?", (step_id,)).fetchone()
+        if not step:
+            continue
+        category = _step_type(str(step[1] or event["event_type"]), attrs)
+        if category != "tool_call":
+            continue
+
+        call_id = str(attrs["call_id"]).strip()
+        turn_id = _first_text(attrs, "turn.id", "turn_id")
+        dispatch_name = recorded_tool_name(attrs)
+        own_call = conn.execute(
+            """SELECT id,logical_call_id,tool_name,status,input_hash,output_hash,
+                      input_preview_redacted,output_preview_redacted,error_type,error_message_redacted,
+                      raw_attrs_json
+               FROM tool_calls WHERE step_id=? AND session_id=?""",
+            (step_id, event["session_id"]),
+        ).fetchone()
+        canonical_call = conn.execute(
+            """SELECT id,tool_name,tool_type,raw_attrs_json FROM tool_calls
+               WHERE session_id=? AND logical_call_id=?""",
+            (event["session_id"], call_id),
+        ).fetchone()
+        if own_call and own_call[1] != call_id:
+            own_attrs = _load_json(own_call[10])
+            own_turn = _first_text(own_attrs, "turn.id", "turn_id")
+            own_name = recorded_tool_name(own_attrs) or own_call[2]
+            own_is_empty_dispatch = (
+                own_call[3] == "unknown"
+                and not any(own_call[index] for index in range(4, 10))
+            )
+            if canonical_call:
+                canonical_attrs = _load_json(canonical_call[3])
+                canonical_turn = _first_text(canonical_attrs, "turn.id", "turn_id")
+                canonical_name = recorded_tool_name(canonical_attrs) or canonical_call[1]
+                same_turn = bool(turn_id and canonical_turn == turn_id)
+                same_name = (
+                    canonical_name == dispatch_name
+                    or canonical_call[2] == "mcp"
+                )
+                dependents = []
+                for table, column in call_reference_tables:
+                    if conn.execute(
+                        f'SELECT 1 FROM "{table}" WHERE "{column}"=? LIMIT 1',
+                        (own_call[0],),
+                    ).fetchone():
+                        dependents.append(table)
+                if not (
+                    same_turn and own_turn == turn_id and same_name
+                    and own_is_empty_dispatch and not dependents
+                ):
+                    # Ambiguous collisions remain visible as raw evidence and
+                    # are not promoted into another canonical invocation.
+                    continue
+                conn.execute("DELETE FROM tool_calls WHERE id=?", (own_call[0],))
+            elif own_turn == turn_id and own_name == dispatch_name:
+                conn.execute(
+                    "UPDATE tool_calls SET logical_call_id=?,updated_at=? WHERE id=?",
+                    (call_id, timestamp, own_call[0]),
+                )
+            else:
+                continue
+        if step[0] != "tool_call":
+            conn.execute("UPDATE steps SET type='tool_call',updated_at=? WHERE id=?", (timestamp, step_id))
+        _insert_call_record(conn, raw_event=event, attrs=attrs, session_id=event["session_id"],
+                            step_id=step_id, step_type="tool_call", timestamp=timestamp)
+        changed[event["session_id"]].add(step_id)
+        classified += int(step[0] != "tool_call")
+
+    pending = PendingRefreshState(conn)
+    for session_id, step_ids in changed.items():
+        pending.mark_steps(session_id, step_ids, phases=("rollup", "graph", "improvements"))
+    return {"duplicate_steps_removed": removed_steps, "dispatch_steps_classified": classified}
+
+
 def migrate(conn: sqlite3.Connection, *, commit: bool = True) -> list[int]:
     """Apply pending migrations, optionally inside a caller-owned transaction."""
     from reflect.improvements.workflow_identity import workflow_identity_from_json
@@ -279,6 +434,8 @@ def migrate(conn: sqlite3.Connection, *, commit: bool = True) -> list[int]:
                 _repair_tool_evidence(conn)
             if migration.version == 51:
                 _classify_retained_event_spans(conn)
+            if migration.version == 52:
+                _repair_codex_span_identity(conn)
             conn.execute(
                 "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
                 (migration.version, migration.name, datetime.now(UTC).isoformat()),

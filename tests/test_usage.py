@@ -690,7 +690,7 @@ def test_usage_requires_explicit_refresh_for_pending_rollup_rebuild(
         conn.close()
     conn = connect_sqlite(db_path)
     try:
-        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51]
+        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52]
     finally:
         conn.close()
     monkeypatch.setattr("reflect.core.default_otlp_traces", lambda: None)
@@ -921,7 +921,7 @@ def test_window_activity_covering_migration_preserves_deduplicated_facts(tmp_pat
             return [row for row in bytecode if row[1] == "Column" and row[2] in table_cursors]
 
         assert table_reads(), "The old index must reproduce the wide step-table reads"
-        assert migrate(conn) == [42, 43, 44, 45, 46, 47, 48, 49, 50, 51]
+        assert migrate(conn) == [42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52]
         plan = conn.execute("EXPLAIN QUERY PLAN " + scope_sql, scope_params).fetchall()
         assert any("COVERING INDEX idx_steps_measurement_times" in row[-1] for row in plan)
         assert table_reads() == []

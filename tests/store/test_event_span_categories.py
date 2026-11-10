@@ -73,7 +73,7 @@ def test_event_category_backfill_is_bounded_idempotent_and_preserves_accounting(
         tables = ("raw_events", "sessions", "llm_calls", "tool_calls", "pending_refresh", "session_rollups")
         before = {name: conn.execute(f"SELECT * FROM {name}").fetchall() for name in tables}
         attrs_before = conn.execute("SELECT id,raw_attrs_json FROM steps ORDER BY id").fetchall()
-        assert migrate(conn) == [51]
+        assert migrate(conn) == [51, 52]
         categories = dict(conn.execute("SELECT type,COUNT(*) FROM steps GROUP BY type"))
         assert categories == {"runtime_span": 600, "session_span": 1, "generation_span": 1, "unknown": 3}
         assert {name: conn.execute(f"SELECT * FROM {name}").fetchall() for name in tables} == before

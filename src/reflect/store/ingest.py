@@ -360,10 +360,18 @@ def _prepare_raw_span(span: dict, source: str, source_type: str) -> _PreparedRaw
     if classification:
         attrs["reflect.telemetry.classification"] = classification
     content_hash = _event_hash({**span, "attributes": attrs})
-    return _PreparedRawSpan(
-        attrs, origin_kind, classification, content_hash,
-        hashlib.sha1(f"{source}:{content_hash}".encode()).hexdigest(),
-    )
+    if (
+        source_type == "otlp_traces_json"
+        and span.get("traceId")
+        and span.get("spanId")
+    ):
+        # Segment rotation changes the file path, not the identity of an OTLP span.
+        event_id = hashlib.sha1(
+            f"otlp-span:{span['traceId']}:{span['spanId']}:{content_hash}".encode()
+        ).hexdigest()
+    else:
+        event_id = hashlib.sha1(f"{source}:{content_hash}".encode()).hexdigest()
+    return _PreparedRawSpan(attrs, origin_kind, classification, content_hash, event_id)
 
 
 def _insert_raw_span(

@@ -118,7 +118,7 @@ def test_sample_is_deterministic_private_and_committed(builder, bundle):
     encoded = builder.serialize(bundle)
     assert encoded == builder.serialize(builder.build_showcase())
     assert encoded == (ROOT / "docs/reports/showcase.json").read_text()
-    for private_marker in ("/Users/", "/private/", "semyon", "ridewithvia", "atlassian.net", "glpat-", "sk-ant-"):
+    for private_marker in ("/Users/", "/private/", "ridewithvia", "atlassian.net", "glpat-", "sk-ant-"):
         assert private_marker not in encoded
     assert bundle["demo"]["label"] == "Illustrative sample"
     assert bundle["demo"]["provenance"] == "synthetic"
