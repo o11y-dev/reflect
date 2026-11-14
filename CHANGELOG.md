@@ -28,6 +28,8 @@
 
 ### Changed
 
+- Added internal groundwork for immutable report snapshots and separate workflow user state, with migration recovery and concurrency tests. Runtime migration and publication routing remain disabled; refresh-time availability is not yet complete.
+
 - Workflow recommendations show at most five eligible procedures with expandable decisions and evidence. A clear Enable workflow panel puts project selection and exact file changes before explicit enablement; changed projects or drafts require a fresh preview.
 
 - Workflows and Impact use compact analytical tables with expandable evidence, linked rows, preserved filters, explicit cohort dates, and retired suggestions in History. Observed changes and evidence gaps replace prominent heuristic confidence claims.

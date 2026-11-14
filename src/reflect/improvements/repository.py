@@ -36,6 +36,7 @@ from reflect.improvements.scope import session_scope_predicate
 from reflect.improvements.workflow_identity import WorkflowIdentity
 from reflect.store.pending_refresh import analysis_coverage, derived_analysis_state
 from reflect.store.sqlite import snapshot_incomplete
+from reflect.store.user_state import UserStateSnapshot
 
 _ACTIVE_OBSERVATION_STATUSES = {
     ObservationStatus.NEW.value,
@@ -99,8 +100,9 @@ def _observation_id(draft: ObservationDraft) -> str:
 class ImprovementRepository:
     """SQLite persistence for the versioned improvement ledger."""
 
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn: sqlite3.Connection, *, review_state: UserStateSnapshot | None = None):
         self.conn = conn
+        self.review_state = review_state
 
     def sync_rule_definitions(self, definitions: Iterable[RuleDefinition], *, now: str) -> None:
         for definition in definitions:
@@ -920,6 +922,9 @@ class ImprovementRepository:
         self,
         contract_signature: str,
     ) -> list[WorkflowCandidateRecord]:
+        if self.review_state is not None:
+            return [candidate for candidate in self.iter_candidates()
+                    if candidate.contract_signature == contract_signature]
         rows = self.conn.execute(
             f"""
             {_CANDIDATE_SELECT_SQL}
@@ -1600,7 +1605,7 @@ class ImprovementRepository:
             ).fetchall()
         }
         lifecycle = self._workflow_lifecycle(str(row[0]), WorkflowStatus(row[14]))
-        return WorkflowCandidateRecord(
+        candidate = WorkflowCandidateRecord(
             id=row[0],
             observation_id=row[1],
             action_type=row[2],
@@ -1625,6 +1630,8 @@ class ImprovementRepository:
             active_intervention_id=row[20],
             lifecycle=lifecycle,
         )
+
+        return self.review_state.overlay(candidate) if self.review_state else candidate
 
     def _workflow_lifecycle(
         self,

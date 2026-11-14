@@ -16,6 +16,7 @@ from typing import Any
 from reflect.improvements.models import WorkflowCandidateRecord, WorkflowEvidenceLedger
 from reflect.improvements.repository import ImprovementRepository, utc_now
 from reflect.improvements.workflow_identity import WorkflowIdentity
+from reflect.store.user_state import StoredWorkflowDraft, UserStateStore
 
 _SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
@@ -30,6 +31,22 @@ class WorkflowService:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
         self.repository = ImprovementRepository(conn)
+
+    @staticmethod
+    def create_draft(
+        state: UserStateStore, *, title: str, content: dict[str, Any],
+    ) -> StoredWorkflowDraft:
+        """Save authored instructions without requiring an analysis writer.
+
+        Manual instructions carry no claim of observed support or measured
+        benefit. The same content validator is used before preview and apply.
+        """
+        normalized = WorkflowService._validate_content(content)
+        return state.save_draft(
+            f"draft_{uuid.uuid4().hex}", title=title, content=normalized,
+            evidence={"origin": "manual", "verification": "unverified"},
+            expected_revision=0,
+        )
 
     @staticmethod
     def suggestion_assessment(candidate: WorkflowCandidateRecord) -> dict:

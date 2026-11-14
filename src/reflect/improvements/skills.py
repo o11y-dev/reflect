@@ -5,6 +5,7 @@ import json
 import re
 import sqlite3
 from collections.abc import Iterable
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -60,11 +61,67 @@ class SkillRegistryService:
 
     def __init__(self, conn: sqlite3.Connection, *, initialize_schema: bool = True):
         self.conn = conn
+        self._registry_connection = None
+        attached = {row[1]: row[2] for row in conn.execute('PRAGMA database_list')}
+        self._state_path = Path(attached['user_state']) if attached.get('user_state') else None
         if initialize_schema:
             migrate(conn)
         self.repository = ImprovementRepository(conn)
         self.workflows = WorkflowService(conn)
         self.execution_units = ExecutionUnitRepository(conn)
+
+    @property
+    def registry_conn(self):
+        return self._registry_connection if self._registry_connection is not None else self.conn
+
+    @staticmethod
+    def _review_fingerprint(conn, schema, candidate_id):
+        review = conn.execute(f"""SELECT c.revision_hash,c.status,c.content_json,o.evidence_revision_hash
+            FROM {schema}.workflow_candidates c LEFT JOIN {schema}.workflow_review_ownership o ON o.candidate_id=c.id
+            WHERE c.id=?""", (candidate_id,)).fetchone()
+        installations = tuple(conn.execute(f"""SELECT i.id,i.status,i.applied_hash FROM {schema}.interventions i
+            JOIN {schema}.workflow_versions v ON v.id=i.workflow_version_id WHERE v.candidate_id=? ORDER BY i.id""",
+            (candidate_id,)))
+        return review, installations
+
+    @contextmanager
+    def _registry_transaction(self, candidate=None):
+        if self._state_path is None:
+            yield self.conn
+            return
+        from reflect.store.sqlite import connect_sqlite
+        from reflect.store.user_state_migration import _quoted
+
+        expected = self._review_fingerprint(self.conn, 'user_state', candidate.id) if candidate else None
+        context_rows = []
+        if candidate:
+            for table, predicate, params in (
+                ('rule_definitions', 'id IN (SELECT rule_id FROM observations WHERE id=?)', (candidate.observation_id,)),
+                ('task_archetypes', 'id=?', (candidate.task_archetype_id,)),
+                ('observations', 'id=?', (candidate.observation_id,)),
+                ('workflow_candidates', 'id=?', (candidate.id,)),
+            ):
+                names = [row[1] for row in self.conn.execute(f'PRAGMA main.table_info({_quoted(table)})')]
+                rows = self.conn.execute(f'SELECT * FROM main.{_quoted(table)} WHERE {predicate}', params).fetchall()
+                context_rows.append((table, names, rows))
+        with closing(connect_sqlite(self._state_path, strict_durability=True, timeout_ms=1000)) as registry:
+            registry.execute('BEGIN IMMEDIATE')
+            if candidate and self._review_fingerprint(registry, 'main', candidate.id) != expected:
+                yield None
+                return
+            for table, names, rows in context_rows:
+                registry.executemany(f'INSERT OR IGNORE INTO {_quoted(table)} ('
+                                     + ','.join(_quoted(name) for name in names) + ') VALUES ('
+                                     + ','.join('?' for _ in names) + ')', rows)
+            self._registry_connection = registry
+            try:
+                yield registry
+                registry.commit()
+            except BaseException:
+                registry.rollback()
+                raise
+            finally:
+                self._registry_connection = None
 
     def refresh(
         self,
@@ -115,74 +172,77 @@ class SkillRegistryService:
             origin = self._origin_for(source_kind)
             rendered = self.workflows._render_skill(candidate)
             version_status, lifecycle = self._candidate_status(candidate)
-            skill_id, version_id, created = self._track_version(
-                identity_key=f"workflow:{candidate.contract_signature}",
-                slug=str(candidate.content.get("slug") or candidate.id),
-                name=str(candidate.content.get("slug") or candidate.title),
-                description=str(candidate.content.get("description") or candidate.hypothesis),
-                origin=origin,
-                content=rendered,
-                workflow=candidate.content,
-                source_kind=source_kind,
-                source_agent=source.get("agent"),
-                source_loop_id=source.get("loop_id"),
-                source_workflow_id=source.get("workflow_id"),
-                workflow_candidate_id=candidate.id,
-                version_status=version_status,
-                lifecycle=lifecycle,
-                now=candidate.updated_at,
-            )
-            tracked += 1
-            versions += int(created)
             ledger = self.repository.workflow_evidence_ledger(candidate.id, limit=200)
-            for observation_id in ledger.observation_ids or [candidate.observation_id]:
-                self._link_evidence(version_id, "observation", observation_id)
-            if source.get("loop_id"):
-                self._link_evidence(version_id, "loop", str(source["loop_id"]))
-            if source.get("workflow_id"):
-                self._link_evidence(version_id, "workflow", str(source["workflow_id"]))
-            for execution_unit in ledger.support_execution_units:
-                self._link_evidence(
-                    version_id,
-                    "execution_unit",
-                    execution_unit.execution_unit_id,
+            with self._registry_transaction(candidate) as registry:
+                if registry is None:
+                    continue
+                skill_id, version_id, created = self._track_version(
+                    identity_key=f"workflow:{candidate.contract_signature}",
+                    slug=str(candidate.content.get("slug") or candidate.id),
+                    name=str(candidate.content.get("slug") or candidate.title),
+                    description=str(candidate.content.get("description") or candidate.hypothesis),
+                    origin=origin,
+                    content=rendered,
+                    workflow=candidate.content,
+                    source_kind=source_kind,
+                    source_agent=source.get("agent"),
+                    source_loop_id=source.get("loop_id"),
+                    source_workflow_id=source.get("workflow_id"),
+                    workflow_candidate_id=candidate.id,
+                    version_status=version_status,
+                    lifecycle=lifecycle,
+                    now=candidate.updated_at,
                 )
-            installation_rows = self.conn.execute(
-                """
-                SELECT i.target_path, i.applied_hash, i.status, i.created_at, i.updated_at
-                FROM interventions i
-                JOIN workflow_versions wv ON wv.id = i.workflow_version_id
-                WHERE wv.candidate_id = ?
-                ORDER BY i.created_at
-                """,
-                (candidate.id,),
-            ).fetchall()
-            for install in installation_rows:
-                installed_version = self.conn.execute(
-                    "SELECT id FROM skill_versions WHERE skill_id=? AND content_hash=?",
-                    (skill_id, install[1]),
-                ).fetchone()
-                self._upsert_installation(
-                    skill_id=skill_id,
-                    version_id=str(installed_version[0]) if installed_version else None,
-                    path=Path(str(install[0])),
-                    installed_hash=install[1],
-                    status=str(install[2]),
-                    now=str(install[4] or install[3]),
-                )
-            if lifecycle != SkillLifecycleState.ACTIVE:
-                self.conn.execute(
+                tracked += 1
+                versions += int(created)
+                for observation_id in ledger.observation_ids or [candidate.observation_id]:
+                    self._link_evidence(version_id, "observation", observation_id)
+                if source.get("loop_id"):
+                    self._link_evidence(version_id, "loop", str(source["loop_id"]))
+                if source.get("workflow_id"):
+                    self._link_evidence(version_id, "workflow", str(source["workflow_id"]))
+                for execution_unit in ledger.support_execution_units:
+                    self._link_evidence(
+                        version_id,
+                        "execution_unit",
+                        execution_unit.execution_unit_id,
+                    )
+                installation_rows = self.registry_conn.execute(
                     """
-                    UPDATE skills
-                    SET lifecycle_state = ?, updated_at = ?
-                    WHERE id = ?
-                      AND NOT EXISTS (
-                        SELECT 1 FROM skill_installations
-                        WHERE skill_id = ? AND status = 'active'
-                      )
+                    SELECT i.target_path, i.applied_hash, i.status, i.created_at, i.updated_at
+                    FROM interventions i
+                    JOIN workflow_versions wv ON wv.id = i.workflow_version_id
+                    WHERE wv.candidate_id = ?
+                    ORDER BY i.created_at
                     """,
-                    (lifecycle.value, candidate.updated_at, skill_id, skill_id),
-                )
+                    (candidate.id,),
+                ).fetchall()
+                for install in installation_rows:
+                    installed_version = self.registry_conn.execute(
+                        "SELECT id FROM skill_versions WHERE skill_id=? AND content_hash=?",
+                        (skill_id, install[1]),
+                    ).fetchone()
+                    self._upsert_installation(
+                        skill_id=skill_id,
+                        version_id=str(installed_version[0]) if installed_version else None,
+                        path=Path(str(install[0])),
+                        installed_hash=install[1],
+                        status=str(install[2]),
+                        now=str(install[4] or install[3]),
+                    )
+                if lifecycle != SkillLifecycleState.ACTIVE:
+                    self.registry_conn.execute(
+                        """
+                        UPDATE skills
+                        SET lifecycle_state = ?, updated_at = ?
+                        WHERE id = ?
+                          AND NOT EXISTS (
+                            SELECT 1 FROM skill_installations
+                            WHERE skill_id = ? AND status = 'active'
+                          )
+                        """,
+                        (lifecycle.value, candidate.updated_at, skill_id, skill_id),
+                    )
         return {"skills": tracked, "versions_created": versions}
 
     def _captured_skill_paths(self, *, scope: AnalysisScope | None, step_ids: set[str] | None) -> set[Path]:
@@ -227,87 +287,55 @@ class SkillRegistryService:
                 files.update(path for path in root.glob("*/SKILL.md") if path.is_file())
         now = utc_now()
         seen_paths: set[str] = set()
-        skills = 0
-        installations = 0
+        skills = installations = missing = 0
         for path in sorted(files):
+            # Filesystem work happens before reserving the action-store writer.
             parsed = self._parse_skill_file(path)
             if parsed is None:
                 continue
             slug, description, content = parsed
-            # An exact installed generated version is already source-owned.
-            # Matching bytes preserve that linkage; identical copies elsewhere
-            # do not establish shared lineage.
-            generated = self.conn.execute(
-                """SELECT s.id, v.id FROM skill_installations i
-                   JOIN skills s ON s.id=i.skill_id
-                   LEFT JOIN skill_versions v ON v.skill_id=s.id AND v.content_hash=i.installed_hash
-                   WHERE i.path=? AND s.identity_key LIKE 'workflow:%'
-                     AND i.installed_hash=?""",
-                (str(path.resolve()), _hash(content)),
-            ).fetchone()
-            if generated:
-                skill_id = str(generated[0])
-                version_id = str(generated[1]) if generated[1] else None
-            else:
-                skill_id, version_id, _created = self._track_version(
-                    identity_key=f"filesystem:{path.resolve()}",
-                    slug=slug,
-                    name=slug,
-                    description=description,
-                    origin=SkillOrigin.IMPORTED,
-                    content=content,
-                    workflow={},
-                    source_kind="filesystem",
-                    source_agent=None,
-                    source_loop_id=None,
-                    source_workflow_id=None,
-                    workflow_candidate_id=None,
-                    version_status=SkillVersionStatus.ACTIVE,
-                    lifecycle=SkillLifecycleState.ACTIVE,
-                    now=now,
-                )
             resolved = str(path.resolve())
             seen_paths.add(resolved)
-            self._upsert_installation(
-                skill_id=skill_id,
-                version_id=version_id,
-                path=path,
-                installed_hash=_hash(content),
-                status="active",
-                now=now,
-            )
-            skills += 1
-            installations += 1
-        missing = 0
-        for row in self.conn.execute(
-            "SELECT id, path FROM skill_installations WHERE status = 'active'"
-        ).fetchall():
-            installation_path = Path(str(row[1])).expanduser().resolve()
-            in_scan_scope = any(
-                installation_path == root or installation_path.is_relative_to(root)
-                for root in roots
-            )
-            if in_scan_scope and str(installation_path) not in seen_paths:
-                self.conn.execute(
-                    "UPDATE skill_installations SET status = 'missing', updated_at = ? WHERE id = ?",
-                    (now, row[0]),
-                )
-                missing += 1
-        self.conn.execute(
-            """
-            UPDATE skills
-            SET lifecycle_state = 'stale', updated_at = ?
-            WHERE origin = 'imported' AND lifecycle_state = 'active'
-              AND EXISTS (
-                SELECT 1 FROM skill_installations WHERE skill_id = skills.id
-              )
-              AND NOT EXISTS (
-                SELECT 1 FROM skill_installations
-                WHERE skill_id = skills.id AND status = 'active'
-              )
-            """,
-            (now,),
-        )
+            with self._registry_transaction() as registry:
+                generated = registry.execute("""SELECT s.id,v.id,i.installed_hash
+                    FROM skill_installations i JOIN skills s ON s.id=i.skill_id
+                    LEFT JOIN skill_versions v ON v.skill_id=s.id AND v.content_hash=i.installed_hash
+                    WHERE i.path=? AND s.identity_key LIKE 'workflow:%'""", (resolved,)).fetchone()
+                if generated and generated[2] != _hash(content) and self._state_path:
+                    # Drift is evidence, not permission to replace installation
+                    # intent. Workflow integrity analysis records it separately.
+                    continue
+                if generated and generated[2] == _hash(content):
+                    skill_id, version_id = str(generated[0]), generated[1]
+                else:
+                    skill_id, version_id, _ = self._track_version(
+                        identity_key=f"filesystem:{path.resolve()}", slug=slug, name=slug,
+                        description=description, origin=SkillOrigin.IMPORTED, content=content,
+                        workflow={}, source_kind="filesystem", source_agent=None,
+                        source_loop_id=None, source_workflow_id=None, workflow_candidate_id=None,
+                        version_status=SkillVersionStatus.ACTIVE, lifecycle=SkillLifecycleState.ACTIVE, now=now,
+                    )
+                self._upsert_installation(skill_id=skill_id, version_id=version_id, path=path,
+                                          installed_hash=_hash(content), status="active", now=now)
+                skills += 1
+                installations += 1
+        candidates = self.conn.execute("""SELECT i.id,i.path,i.installed_hash,s.identity_key
+            FROM skill_installations i JOIN skills s ON s.id=i.skill_id WHERE i.status='active'""").fetchall()
+        for installation_id, raw_path, expected_hash, identity in candidates:
+            path = Path(raw_path).expanduser().resolve()
+            if not any(path == root or path.is_relative_to(root) for root in roots) or str(path) in seen_paths:
+                continue
+            if self._state_path and str(identity).startswith('workflow:'):
+                continue
+            with self._registry_transaction() as registry:
+                result = registry.execute("""UPDATE skill_installations SET status='missing',updated_at=?
+                    WHERE id=? AND status='active' AND installed_hash IS ?""", (now, installation_id, expected_hash))
+                missing += result.rowcount
+        with self._registry_transaction() as registry:
+            registry.execute("""UPDATE skills SET lifecycle_state='stale',updated_at=?
+                WHERE origin='imported' AND lifecycle_state='active'
+                  AND EXISTS(SELECT 1 FROM skill_installations WHERE skill_id=skills.id)
+                  AND NOT EXISTS(SELECT 1 FROM skill_installations WHERE skill_id=skills.id AND status='active')""", (now,))
         return {"skills": skills, "installations": installations, "missing": missing}
 
     def sync_usage(self, *, scope: AnalysisScope | None = None, step_ids: set[str] | None = None) -> int:
@@ -707,7 +735,7 @@ class SkillRegistryService:
         # Source-specific callers supply their canonical identity. The internal
         # blueprint helper without a candidate uses its semantic procedure.
         identity_key = identity_key or f"{source_kind}:{_hash(self._semantic_version_key(_json(workflow), _hash(content)))}"
-        existing_skill = self.conn.execute(
+        existing_skill = self.registry_conn.execute(
             "SELECT id FROM skills WHERE identity_key=?", (identity_key,)
         ).fetchone()
         skill_id = str(existing_skill[0]) if existing_skill else _skill_id(identity_key)
@@ -726,13 +754,13 @@ class SkillRegistryService:
             current_version_id=None,
             now=now,
         )
-        existing = self.conn.execute(
+        existing = self.registry_conn.execute(
             "SELECT id FROM skill_versions WHERE skill_id = ? AND content_hash = ?",
             (skill_id, content_hash),
         ).fetchone()
         if existing:
             version_id = str(existing[0])
-            self.conn.execute(
+            self.registry_conn.execute(
                 """
                 UPDATE skill_versions
                 SET workflow_json = CASE WHEN ? <> '{}' THEN ? ELSE workflow_json END,
@@ -764,13 +792,13 @@ class SkillRegistryService:
             created = False
         else:
             version = int(
-                self.conn.execute(
+                self.registry_conn.execute(
                     "SELECT COALESCE(MAX(version), 0) + 1 FROM skill_versions WHERE skill_id = ?",
                     (skill_id,),
                 ).fetchone()[0]
             )
             version_id = f"skill_version_{_hash(f'{skill_id}:{content_hash}')[:24]}"
-            self.conn.execute(
+            self.registry_conn.execute(
                 """
                 INSERT INTO skill_versions(
                   id, skill_id, version, content_markdown, content_hash, workflow_json,
@@ -796,7 +824,7 @@ class SkillRegistryService:
                 ),
             )
             created = True
-        current_row = self.conn.execute(
+        current_row = self.registry_conn.execute(
             """
             SELECT s.current_version_id, sv.status
             FROM skills s LEFT JOIN skill_versions sv ON sv.id = s.current_version_id
@@ -846,7 +874,7 @@ class SkillRegistryService:
         current_version_id: str | None,
         now: str,
     ) -> None:
-        self.conn.execute(
+        self.registry_conn.execute(
             """
             INSERT INTO skills(
               id, identity_key, slug, name, description, origin, lifecycle_state,
@@ -897,7 +925,7 @@ class SkillRegistryService:
         evidence_id = (
             f"skill_evidence_{_hash(f'{version_id}:{entity_type}:{entity_id}:{relationship}')[:24]}"
         )
-        self.conn.execute(
+        self.registry_conn.execute(
             """
             INSERT INTO skill_evidence(
               id, skill_version_id, entity_type, entity_id, relationship, confidence, created_at
@@ -921,7 +949,7 @@ class SkillRegistryService:
         resolved = path.expanduser().resolve()
         target_kind, target_ref = self._installation_target(resolved)
         installation_id = f"skill_installation_{_hash(str(resolved))[:24]}"
-        self.conn.execute(
+        self.registry_conn.execute(
             """
             INSERT INTO skill_installations(
               id, skill_id, skill_version_id, target_kind, target_ref, path,
@@ -995,6 +1023,8 @@ class SkillRegistryService:
 
     @staticmethod
     def _origin_for(source_kind: str) -> SkillOrigin:
+        if source_kind == "user_authored":
+            return SkillOrigin.USER_AUTHORED
         if source_kind in {"agent_authored", "skill_extraction"}:
             return SkillOrigin.AGENT_AUTHORED
         if source_kind in {"manual_skill_file", "filesystem"}:

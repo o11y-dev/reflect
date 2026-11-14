@@ -130,6 +130,7 @@ def advance_snapshot_revision(conn: sqlite3.Connection) -> None:
 
 def connect_sqlite(
     db_path: str | Path, *, strict_durability: bool = False, timeout_ms: int | None = None,
+    attach_user_state: bool = True,
 ) -> sqlite3.Connection:
     """Open a SQLite connection configured for Reflect runtime defaults."""
     path = Path(db_path)
@@ -140,26 +141,45 @@ def connect_sqlite(
         conn = sqlite3.connect(path, timeout=timeout / 1000, isolation_level="IMMEDIATE")
         try:
             _apply_runtime_pragmas(conn, strict_durability=strict_durability, timeout_ms=timeout)
+            if attach_user_state:
+                _attach_user_state(conn)
         except Exception:
             conn.close()
             raise
     return conn
 
 
+class SharedReadConnection(sqlite3.Connection):
+    """A request owns closing; nested read helpers borrow the pinned connection."""
+
+    shared = False
+
+    def close(self) -> None:
+        if not self.shared:
+            super().close()
+
+
 def connect_sqlite_read_only(
-    db_path: str | Path, *, profile: str | None = "snapshot",
+    db_path: str | Path, *, profile: str | None = "snapshot", immutable: bool = False,
 ) -> sqlite3.Connection:
     """Open an existing Reflect store without creating or mutating it."""
     path = Path(db_path).expanduser().resolve()
+    from reflect.store.snapshots import active_read_connection
+
+    shared = active_read_connection(path)
+    if shared is not None:
+        return shared
     conn = sqlite3.connect(
-        f"{path.as_uri()}?mode=ro",
+        f"{path.as_uri()}?mode=ro" + ("&immutable=1" if immutable else ""),
         uri=True,
         timeout=busy_timeout_ms() / 1000,
+        factory=SharedReadConnection,
     )
     try:
         conn.execute("PRAGMA foreign_keys = ON;")
         conn.execute(f"PRAGMA busy_timeout = {busy_timeout_ms()};")
         conn.execute("PRAGMA query_only = ON;")
+        _attach_user_state(conn)
         # Pin one generation for the readiness check and all subsequent queries.
         conn.execute("BEGIN")
         if profile is not None and snapshot_incomplete(conn, profile):
@@ -172,6 +192,20 @@ def connect_sqlite_read_only(
         conn.close()
         raise
     return conn
+
+
+def _attach_user_state(conn: sqlite3.Connection) -> None:
+    """Canonical evidence may reference, but never write, human-owned state."""
+    if not conn.execute("SELECT 1 FROM main.sqlite_master WHERE type='table' AND name='store_metadata'").fetchone():
+        return
+    row = conn.execute("SELECT value FROM main.store_metadata WHERE key='user_state_cutover_v1'").fetchone()
+    if row is None:
+        return
+    path = Path(row[0]).expanduser().resolve()
+    conn.execute('ATTACH DATABASE ? AS user_state', (path.as_uri() + '?mode=ro',))
+    ready = conn.execute("SELECT value FROM user_state.user_state_metadata WHERE key='cutover_complete'").fetchone()
+    if not ready or ready[0] != 1:
+        raise SnapshotNotReadyError('The user-state cutover must finish before evidence reads resume')
 
 
 class SQLiteBackupService:
