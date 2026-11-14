@@ -18,7 +18,6 @@ _SKILL_CONVERSATION_CONTEXT_LIMIT = 8
 _SKILL_SPAN_CONTEXT_LIMIT = 10
 _SKILL_PATTERN_LIMIT = 8
 _SKILL_GRAPH_PATTERN_LIMIT = 10
-_SKILL_GRAPH_SESSION_INSERT_CHUNK = 300
 
 
 def _strip_json_fences(text: str) -> str:
@@ -628,17 +627,6 @@ def _graph_tables_exist(conn: sqlite3.Connection) -> bool:
     return bool(row and int(row[0]) == 2)
 
 
-def _populate_skill_scope_table(conn: sqlite3.Connection, session_ids: list[str]) -> None:
-    conn.execute("DROP TABLE IF EXISTS temp.skill_scope_sessions")
-    conn.execute("CREATE TEMP TABLE skill_scope_sessions(session_id TEXT PRIMARY KEY)")
-    for offset in range(0, len(session_ids), _SKILL_GRAPH_SESSION_INSERT_CHUNK):
-        chunk = [(sid,) for sid in session_ids[offset:offset + _SKILL_GRAPH_SESSION_INSERT_CHUNK]]
-        conn.executemany(
-            "INSERT OR IGNORE INTO temp.skill_scope_sessions(session_id) VALUES (?)",
-            chunk,
-        )
-
-
 def _build_graph_evidence(
     conn: sqlite3.Connection,
     *,
@@ -656,103 +644,100 @@ def _build_graph_evidence(
 
     scoped = sorted({sid for sid in (session_ids or set()) if sid})
     scope_clause = ""
-    if scoped:
-        _populate_skill_scope_table(conn, scoped)
-        scope_clause = "AND ge.session_id IN (SELECT session_id FROM temp.skill_scope_sessions)"
+    scope_params = []
+    if session_ids is not None:
+        scope_clause = "AND ge.session_id IN (SELECT value FROM json_each(?))"
+        scope_params = [json.dumps(scoped)]
 
-    try:
-        pattern_rows = conn.execute(
-            f"""
-            WITH edge_scope AS (
-              SELECT
-                ge.kind AS edge_kind,
-                sn.kind AS source_kind,
-                CASE
-                  WHEN sn.kind IN ('Session', 'ToolCall', 'Path', 'Folder') THEN sn.kind
-                  ELSE sn.label
-                END AS source_pattern,
-                tn.kind AS target_kind,
-                CASE
-                  WHEN tn.kind IN ('Session', 'ToolCall', 'Path', 'Folder') THEN tn.kind
-                  ELSE tn.label
-                END AS target_pattern,
-                ge.session_id AS session_id
-              FROM graph_edges ge
-              JOIN graph_nodes sn ON sn.id = ge.source_node_id
-              JOIN graph_nodes tn ON tn.id = ge.target_node_id
-              WHERE ge.session_id IS NOT NULL
-                AND ge.kind IN (
-                  'used_skill',
-                  'drove_tool_call',
-                  'used_tool',
-                  'spawned_subagent',
-                  'launched_by_tool_call',
-                  'suggests_outcome',
-                  'touched_folder',
-                  'touched_path'
-                )
-                {scope_clause}
+    pattern_rows = conn.execute(
+        f"""
+        WITH edge_scope AS (
+          SELECT
+            ge.kind AS edge_kind,
+            sn.kind AS source_kind,
+            CASE
+              WHEN sn.kind IN ('Session', 'ToolCall', 'Path', 'Folder') THEN sn.kind
+              ELSE sn.label
+            END AS source_pattern,
+            tn.kind AS target_kind,
+            CASE
+              WHEN tn.kind IN ('Session', 'ToolCall', 'Path', 'Folder') THEN tn.kind
+              ELSE tn.label
+            END AS target_pattern,
+            ge.session_id AS session_id
+          FROM graph_edges ge
+          JOIN graph_nodes sn ON sn.id = ge.source_node_id
+          JOIN graph_nodes tn ON tn.id = ge.target_node_id
+          WHERE ge.session_id IS NOT NULL
+            AND ge.kind IN (
+              'used_skill',
+              'drove_tool_call',
+              'used_tool',
+              'spawned_subagent',
+              'launched_by_tool_call',
+              'suggests_outcome',
+              'touched_folder',
+              'touched_path'
             )
-            SELECT
-              edge_kind,
-              source_kind,
-              source_pattern,
-              target_kind,
-              target_pattern,
-              COUNT(*) AS occurrences,
-              COUNT(DISTINCT session_id) AS session_support,
-              GROUP_CONCAT(DISTINCT session_id) AS session_ids_csv
-            FROM edge_scope
-            GROUP BY edge_kind, source_kind, source_pattern, target_kind, target_pattern
-            HAVING COUNT(DISTINCT session_id) >= 2
-            ORDER BY session_support DESC, occurrences DESC, source_pattern ASC, target_pattern ASC
-            LIMIT ?
-            """,
-            (_SKILL_GRAPH_PATTERN_LIMIT,),
-        ).fetchall()
+            {scope_clause}
+        )
+        SELECT
+          edge_kind,
+          source_kind,
+          source_pattern,
+          target_kind,
+          target_pattern,
+          COUNT(*) AS occurrences,
+          COUNT(DISTINCT session_id) AS session_support,
+          GROUP_CONCAT(DISTINCT session_id) AS session_ids_csv
+        FROM edge_scope
+        GROUP BY edge_kind, source_kind, source_pattern, target_kind, target_pattern
+        HAVING COUNT(DISTINCT session_id) >= 2
+        ORDER BY session_support DESC, occurrences DESC, source_pattern ASC, target_pattern ASC
+        LIMIT ?
+        """,
+        [*scope_params, _SKILL_GRAPH_PATTERN_LIMIT],
+    ).fetchall()
 
-        skill_rows = conn.execute(
-            f"""
-            SELECT
-              gn.label AS skill_name,
-              COUNT(DISTINCT ge.session_id) AS session_support,
-              COUNT(*) AS uses
-            FROM graph_edges ge
-            JOIN graph_nodes gn ON gn.id = ge.target_node_id
-            WHERE ge.kind = 'used_skill'
-              AND gn.kind = 'Skill'
-              AND ge.session_id IS NOT NULL
-              {scope_clause}
-            GROUP BY gn.label
-            HAVING COUNT(DISTINCT ge.session_id) >= 2
-            ORDER BY session_support DESC, uses DESC, skill_name ASC
-            LIMIT ?
-            """,
-            (_SKILL_PATTERN_LIMIT,),
-        ).fetchall()
+    skill_rows = conn.execute(
+        f"""
+        SELECT
+          gn.label AS skill_name,
+          COUNT(DISTINCT ge.session_id) AS session_support,
+          COUNT(*) AS uses
+        FROM graph_edges ge
+        JOIN graph_nodes gn ON gn.id = ge.target_node_id
+        WHERE ge.kind = 'used_skill'
+          AND gn.kind = 'Skill'
+          AND ge.session_id IS NOT NULL
+          {scope_clause}
+        GROUP BY gn.label
+        HAVING COUNT(DISTINCT ge.session_id) >= 2
+        ORDER BY session_support DESC, uses DESC, skill_name ASC
+        LIMIT ?
+        """,
+        [*scope_params, _SKILL_PATTERN_LIMIT],
+    ).fetchall()
 
-        subagent_rows = conn.execute(
-            f"""
-            SELECT
-              gn.label AS subagent_name,
-              COUNT(DISTINCT ge.session_id) AS session_support,
-              COUNT(*) AS events
-            FROM graph_edges ge
-            JOIN graph_nodes gn ON gn.id = ge.target_node_id
-            WHERE ge.kind IN ('spawned_subagent', 'stopped_subagent')
-              AND gn.kind = 'Subagent'
-              AND ge.session_id IS NOT NULL
-              {scope_clause}
-            GROUP BY gn.label
-            HAVING COUNT(DISTINCT ge.session_id) >= 2
-            ORDER BY session_support DESC, events DESC, subagent_name ASC
-            LIMIT ?
-            """,
-            (_SKILL_PATTERN_LIMIT,),
-        ).fetchall()
-    finally:
-        if scoped:
-            conn.execute("DROP TABLE IF EXISTS temp.skill_scope_sessions")
+    subagent_rows = conn.execute(
+        f"""
+        SELECT
+          gn.label AS subagent_name,
+          COUNT(DISTINCT ge.session_id) AS session_support,
+          COUNT(*) AS events
+        FROM graph_edges ge
+        JOIN graph_nodes gn ON gn.id = ge.target_node_id
+        WHERE ge.kind IN ('spawned_subagent', 'stopped_subagent')
+          AND gn.kind = 'Subagent'
+          AND ge.session_id IS NOT NULL
+          {scope_clause}
+        GROUP BY gn.label
+        HAVING COUNT(DISTINCT ge.session_id) >= 2
+        ORDER BY session_support DESC, events DESC, subagent_name ASC
+        LIMIT ?
+        """,
+        [*scope_params, _SKILL_PATTERN_LIMIT],
+    ).fetchall()
 
     recurring_patterns: list[dict] = []
     for index, row in enumerate(pattern_rows, start=1):
@@ -808,18 +793,15 @@ def _sql_scope_session_ids(conn: sqlite3.Connection, session_ids: set[str] | Non
         return []
     if session_ids:
         scoped = sorted({sid for sid in session_ids if sid})
-        _populate_skill_scope_table(conn, scoped)
-        try:
-            rows = conn.execute(
-                """
-                SELECT s.id
-                FROM sessions s
-                JOIN temp.skill_scope_sessions scope ON scope.session_id = s.id
-                ORDER BY COALESCE(s.started_at, s.created_at, ''), s.id
-                """
-            ).fetchall()
-        finally:
-            conn.execute("DROP TABLE IF EXISTS temp.skill_scope_sessions")
+        rows = conn.execute(
+            """
+            SELECT s.id
+            FROM sessions s
+            WHERE s.id IN (SELECT value FROM json_each(?))
+            ORDER BY COALESCE(s.started_at, s.created_at, ''), s.id
+            """,
+            (json.dumps(scoped),),
+        ).fetchall()
         return [str(row[0]) for row in rows]
 
     rows = conn.execute(

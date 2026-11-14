@@ -229,6 +229,14 @@ class DashboardImprovementAdapter:
         with self._service() as service:
             return service.workflows.preview(candidate_id, project_root=project_root)
 
+    def finding_workflow_context(self, finding_id: str) -> dict[str, object]:
+        with self._service() as service:
+            return service.finding_workflow_context(finding_id)
+
+    def create_workflow(self, *, content: dict, finding_id: str | None = None) -> dict[str, object]:
+        with self._service(writable=True) as service:
+            return service.create_workflow(content=content, finding_id=finding_id)
+
     def edit_workflow(self, candidate_id: str, *, content: dict) -> dict[str, object]:
         with self._service(writable=True) as service:
             candidate = service.workflows.edit(candidate_id, content=content)

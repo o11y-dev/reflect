@@ -27,6 +27,7 @@ from reflect.improvements.models import (
     RuleDefinition,
     Severity,
     WorkflowCandidateRecord,
+    WorkflowProposal,
     WorkflowSourceKind,
 )
 from reflect.improvements.repository import ImprovementRepository, utc_now
@@ -38,6 +39,12 @@ from reflect.improvements.workflows import WorkflowService
 from reflect.store.migrate import migrate
 from reflect.utils import _json_dumps
 from reflect.views.measurements import build_measurements
+
+
+class FindingWorkflowConflict(RuntimeError):
+    def __init__(self, candidate_id: str):
+        super().__init__("This finding already has a different workflow. Your instructions are kept; open the linked workflow to review or edit it.")
+        self.candidate_id = candidate_id
 
 
 class ImprovementService:
@@ -815,6 +822,99 @@ class ImprovementService:
             if requested == target_root or target_root in requested.parents or requested in target_root.parents:
                 return True
         return False
+
+    def finding_workflow_context(self, finding_id: str) -> dict:
+        """Resolve a finding on the server; never accept client evidence or metrics."""
+        ids = self.resolve_finding_observation_ids(finding_id)
+        observation = self.repository.get_observation(finding_id)
+        linked = [candidate for candidate in self.repository.iter_candidates()
+                  if candidate.observation_id in ids
+                  or finding_id in candidate.provenance.get("finding_observation_ids", [])]
+        candidate = min(linked, key=self.workflows._representative_sort_key) if linked else None
+        ledger = self.repository.finding_evidence_ledger(finding_id, [finding_id], limit=50)
+        roots = sorted({item.workspace for item in ledger.provenance_sessions if item.workspace})
+        if observation.repo_id:
+            roots = sorted({str(row[0]) for row in self.conn.execute(
+                "SELECT root_path FROM workspaces WHERE repo_id=? AND root_path IS NOT NULL",
+                (observation.repo_id,),
+            )})
+        slug = re.sub(r"[^a-z0-9]+", "-", observation.title.lower()).strip("-")[:48] or "finding"
+        return {
+            "finding_id": finding_id, "observation_ids": ids,
+            "candidate_id": candidate.id if candidate else None,
+            "title": observation.title, "summary": observation.summary,
+            "scope": f"{observation.scope_type}:{observation.scope_id}",
+            "target_metric": observation.metric_name, "project_roots": roots,
+            "content": {
+                "slug": slug + "-" + hashlib.sha256(finding_id.encode()).hexdigest()[:8],
+                "description": f"Address this finding: {observation.title}",
+                "steps": ["Inspect the linked task evidence and confirm the affected project and task scope.",
+                          "Choose and perform a corrective step supported by that evidence.",
+                          "Run the relevant verification and record its actual result."],
+                "verification": ["Report observed results separately from expected improvement."],
+                "abstain_when": ["The task or project differs from the finding, or the evidence is insufficient."],
+            },
+        }
+
+    def create_workflow(self, *, content: dict, finding_id: str | None = None) -> dict:
+        """Stage user-authored instructions, without claiming observed support."""
+        allowed = {"slug", "description", "steps", "verification", "abstain_when"}
+        if set(content) - allowed:
+            raise ValueError("Provide workflow instructions only; evidence is assigned by Reflect")
+        for key in ("steps", "verification", "abstain_when"):
+            values = content.get(key, [])
+            if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+                raise ValueError(f"Workflow {key} must be a list of instructions")
+            if len(values) > 100 or any(len(value) > 4000 for value in values):
+                raise ValueError("Workflow instructions exceed the draft size limit")
+        normalized = self.workflows._validate_content(content)
+        if not normalized["steps"]:
+            raise ValueError("Workflow requires at least one nonempty instruction")
+        description = normalized.get("description", "")
+        if not isinstance(description, str) or len(description) > 2000:
+            raise ValueError("Workflow description must be text up to 2000 characters")
+        if finding_id is not None:
+            context = self.finding_workflow_context(finding_id)
+            if context["candidate_id"]:
+                existing = self.workflows.show(context["candidate_id"])
+                if any(existing.content.get(key, [] if key in {"steps", "verification", "abstain_when"} else "")
+                       != normalized.get(key, [] if key in {"steps", "verification", "abstain_when"} else "")
+                       for key in allowed):
+                    raise FindingWorkflowConflict(existing.id)
+                return existing.model_dump(mode="json")
+            observation = self.repository.get_observation(finding_id)
+            normalized["source"] = {"kind": WorkflowSourceKind.USER_AUTHORED.value,
+                                    "rule_id": observation.rule_id, "observation_id": finding_id}
+            normalized["evidence"] = {"status": "unverified_draft",
+                                      "note": "Finding evidence supports the problem, not these proposed instructions."}
+            candidate_id = self.repository.ensure_candidate(finding_id, proposal=WorkflowProposal(
+                title=f"Workflow: {normalized['slug']}",
+                hypothesis="A user-proposed response to the linked finding; improvement is unmeasured.",
+                risk="low", content=normalized, target_metric=observation.metric_name,
+            ), now=utc_now())
+            candidate = self.workflows.show(candidate_id)
+            provenance = {**candidate.provenance, "finding_observation_ids": context["observation_ids"],
+                          "finding_project_roots": context["project_roots"], "finding_repo_id": observation.repo_id}
+            if not observation.repo_id:
+                workspaces = {str(row[0]) for root in context["project_roots"] for row in self.conn.execute(
+                    "SELECT id FROM workspaces WHERE root_path=? AND repo_id IS NULL", (root,),
+                )}
+                unique_scope = len(context["project_roots"]) == 1 and len(workspaces) == 1
+                provenance["finding_workspace_id"] = next(iter(workspaces)) if unique_scope else None
+                provenance["finding_scope_unavailable"] = not unique_scope
+            self.conn.execute("UPDATE workflow_candidates SET provenance_json=?, task_archetype_id=? WHERE id=?",
+                              (_json_dumps(provenance), self.archetypes.dominant_for_observation(finding_id), candidate_id))
+            self.conn.commit()
+            self.skills.sync_workflow_candidates([candidate_id])
+            self.conn.commit()
+            return self.workflows.show(candidate_id).model_dump(mode="json")
+        candidate_id = self.stage_extracted_skills([{
+            "name": normalized["slug"], "description": description,
+            "steps": normalized["steps"], "verification": normalized["verification"],
+            "abstain_when": normalized["abstain_when"],
+            "source_kind": WorkflowSourceKind.USER_AUTHORED.value,
+        }], session_ids=[])[0]
+        return self.workflows.show(candidate_id).model_dump(mode="json")
 
     def stage_extracted_skills(
         self,

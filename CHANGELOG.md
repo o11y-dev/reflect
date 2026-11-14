@@ -8,6 +8,10 @@
 
 ### Added
 
+- Create a workflow directly from an Inbox finding, retaining its server-resolved evidence, repository scope and measurement metric through preview and enablement. Existing linked workflows are reused; proposed instructions remain explicitly unverified.
+
+- Create a workflow from editable instructions in the dashboard, save an explicitly unverified draft, preview exact project changes, and enable it through the existing review flow. Draft instructions survive request failures, and unavailable previews explain how to continue.
+
 - Source-backed workflow procedures distinguish captured operations from proposed safeguards, abstain on missing task intent, and count independent session roots.
 
 - A reproducible synthetic public demo with linked findings, reviewed skills, source sessions, and comparison evidence, built through the existing telemetry pipeline and SQL views.
@@ -39,6 +43,14 @@
 - Simplified CLI service contexts, removed duplicate MCP migration checks and an unreachable cost-repair fallback, and clarified the shared writer lock's scope.
 
 ### Fixed
+
+- Unknown workflow measurement metrics remain unavailable instead of incorrectly falling back to tool-failure counts. Finding-linked workflows cannot be enabled in an unrelated repository against the original baseline.
+
+- Automatic report refresh waits a full configured interval after completion or failure, preventing long refreshes from being followed immediately by another scheduled run.
+
+- Skill discovery stops before invoking an extraction agent when an existing snapshot is incomplete, instead of presenting partial-evidence results as no reusable candidates.
+
+- Skill discovery builds scoped SQL and graph evidence without temporary-table writes, so prepared read-only snapshots no longer fail with a readonly-database error.
 
 - Skill-usage refresh uses the step index, streams captured payloads, and skips decoding unrelated command results. Historical Git repair no longer queues raw-event replay.
 - Explore shows automatic loading while preparation is busy. Skill reads and Git operations inside literal tool wrappers retain individual result evidence; captured local skills are discovered without a global scan.

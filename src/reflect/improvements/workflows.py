@@ -927,7 +927,13 @@ class WorkflowService:
                 (candidate.id, candidate.contract_signature),
             ).fetchall()
         ]
+        finding_roots = candidate.provenance.get("finding_project_roots", [])
+        finding_scope_matches = (not finding_roots and not candidate.provenance.get("finding_repo_id")) or any(
+            self._normalize_project_root(Path(path))[0] == root for path in finding_roots
+        )
         issues: list[str] = []
+        if not finding_scope_matches:
+            issues.append("Choose a project folder from this finding's repository evidence; another project cannot use its impact baseline.")
         if not root.exists():
             issues.append(f"Target project folder does not exist: {root}")
         elif not root.is_dir():
@@ -954,6 +960,7 @@ class WorkflowService:
             "target_available": not conflict_list,
             "apply_allowed": (
                 project_directory
+                and finding_scope_matches
                 and not unsafe_project_root
                 and invalid_parent is None
                 and target_supported

@@ -1067,6 +1067,50 @@ class TestSkillsSubcommand:
         assert '"graph_evidence"' in prompt
         assert '"source": "sql-graph"' in prompt
 
+    def test_skills_discovery_reads_real_sql_evidence_after_refresh_and_from_snapshot(
+        self, runner, otlp_file, tmp_path,
+    ):
+        args = [
+            "skills", "discover", "--yes", "--agent", "codex",
+            "--otlp-traces", str(otlp_file),
+            "--sessions-dir", str(tmp_path / "sessions"),
+            "--spans-dir", str(tmp_path / "spans"),
+            "--db-path", str(tmp_path / "discovery.db"),
+        ]
+        # Only the external agent is stubbed: preparation, read-only connection,
+        # SQL selection, graph queries, and prompt assembly use production code.
+        with patch("subprocess.run", return_value=_R(0, "[]")) as agent:
+            for refresh_args in (["--refresh"], []):
+                result = runner.invoke(main, [*args, *refresh_args])
+                assert result.exit_code == 0, result.output
+                assert "SQL graph evidence unavailable" not in result.output
+                prompt = agent.call_args[0][0][-1]
+                assert '"evidence_source": "sql"' in prompt
+                assert '"procedure_evidence"' in prompt
+                assert '"graph_evidence"' in prompt
+        assert agent.call_count == 2
+        from reflect.store.sqlite import SnapshotNotReadyError, connect_sqlite, mark_snapshot
+        # A readiness error during evidence loading must also stop extraction.
+        with patch("reflect.core._build_skill_evidence_bundle_from_sql",
+                   side_effect=SnapshotNotReadyError("The snapshot is incomplete. Wait for the active refresh.")), \
+             patch("subprocess.run", return_value=_R(0, "[]")) as agent:
+            result = runner.invoke(main, args)
+        assert result.exit_code != 0
+        assert "No reusable skill candidates" not in result.output
+        agent.assert_not_called()
+        conn = connect_sqlite(tmp_path / "discovery.db")
+        try:
+            mark_snapshot(conn, ready=False)
+            conn.commit()
+        finally:
+            conn.close()
+        with patch("subprocess.run", return_value=_R(0, "[]")) as agent:
+            result = runner.invoke(main, args)
+        assert result.exit_code != 0
+        assert "snapshot is incomplete" in result.output
+        assert "No reusable skill candidates" not in result.output
+        agent.assert_not_called()
+
     def test_skills_partial_selection_stages_only_selected(self, runner, otlp_file, tmp_path):
         """User selects only skill #1 from a list of 3."""
         skill_dest = tmp_path / "skills"

@@ -357,7 +357,7 @@ class ImprovementRepository:
         rule_id, occurrence_count, affected_session_count, confidence, scope_type, scope_id = row
         existing = self.conn.execute(
             """
-            SELECT id, status, checks_json
+            SELECT id, status, checks_json, provenance_json
             FROM workflow_candidates
             WHERE observation_id = ? AND action_type = ?
             """,
@@ -371,6 +371,9 @@ class ImprovementRepository:
             "source": source_kind,
         }
         if existing:
+            if _loads(existing[3], {}).get("source") == "user_authored":
+                # A later detector proposal cannot replace explicit user instructions.
+                return str(existing[0])
             checks = _loads(existing[2], {})
             if existing[1] == WorkflowStatus.STALE.value and checks.get("stale_reason") == "source_observation_resolved":
                 checks.pop("stale_reason", None)
@@ -1000,6 +1003,13 @@ class ImprovementRepository:
         evidence_candidates = current_candidates or grouped_candidates or [candidate]
         candidate_ids = [item.id for item in evidence_candidates]
         observation_ids = [item.observation_id for item in evidence_candidates]
+        # Server-owned provenance retains the grouped finding's context. It does
+        # not widen the observation/cohort used for impact measurement.
+        observation_ids = sorted(set(observation_ids) | {
+            observation_id for item in evidence_candidates
+            for observation_id in item.provenance.get("finding_observation_ids", [])
+            if self.get_observation(observation_id) is not None
+        })
         observation_placeholders = ", ".join("?" for _ in observation_ids)
         candidate_placeholders = ", ".join("?" for _ in candidate_ids)
         bounded_limit = max(1, min(limit, 200))

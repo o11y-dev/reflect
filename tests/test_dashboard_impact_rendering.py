@@ -21,7 +21,7 @@ const source=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
 const ledger={innerHTML:''},children=[],classes=new Set();
 const panel={classList:{toggle:(name,on)=>on?classes.add(name):classes.delete(name)},
   querySelector:()=>children[0],prepend:child=>children.unshift(child)};
-const context={escHtml:value=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;'),fmt:String,
+const context={isStaticDemo:()=>false,escHtml:value=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;'),fmt:String,
   humanizeLedgerLabel:value=>String(value).replaceAll('_',' '),fmtWorkflowDate:String,
   sortObservedLoops:items=>items,currentParams:()=>new URLSearchParams(),window:{},
   document:{getElementById:id=>({'tab-impact':panel,'measurement-ledger':ledger}[id]||null),

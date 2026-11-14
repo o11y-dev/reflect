@@ -568,7 +568,7 @@ class PreparationScheduleSnapshot:
 
 
 class PreparationScheduler:
-    """Run one coordinator immediately and then on a fixed non-overlapping cadence."""
+    """Run one coordinator with a full quiet interval after each completed run."""
 
     def __init__(
         self,
@@ -625,10 +625,22 @@ class PreparationScheduler:
         return scheduler_stopped and preparation_stopped
 
     def _run(self) -> None:
-        while not self._stop.wait(self.interval_seconds):
-            self.coordinator.start()
+        deadline = datetime.now(tz=UTC) + timedelta(seconds=self.interval_seconds)
+        observed_finish = ""
+        while not self._stop.wait(min(self.interval_seconds, 0.05)):
+            snapshot = self.coordinator.snapshot()
+            if snapshot.state is PreparationState.RUNNING:
+                with self._lock:
+                    self._next_run_at = ""
+                continue
+            if snapshot.finished_at and snapshot.finished_at != observed_finish:
+                observed_finish = snapshot.finished_at
+                deadline = datetime.fromisoformat(observed_finish) + timedelta(seconds=self.interval_seconds)
             with self._lock:
-                self._next_run_at = self._next_timestamp()
+                self._next_run_at = deadline.isoformat()
+            if datetime.now(tz=UTC) >= deadline:
+                self.coordinator.start()
+                deadline = datetime.now(tz=UTC) + timedelta(seconds=self.interval_seconds)
 
     def _next_timestamp(self) -> str:
         return (

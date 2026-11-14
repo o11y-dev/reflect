@@ -138,6 +138,8 @@ context.buildImprovementSurfaces();
 assert.match(findings.innerHTML,/>Priority 86\/100</);
 assert.match(findings.innerHTML,/>95% detection confidence</);
 assert.match(findings.innerHTML,/not a measured outcome/);
+assert.match(findings.innerHTML,/Create workflow from finding/);
+assert.match(findings.innerHTML,/data-observation-id="finding-one"/);
 assert.ok(!findings.innerHTML.includes('impact 86'));
 Object.assign(context.IMPROVEMENT_DATA.observations[0],{impact_score:null,confidence:null});
 context.buildImprovementSurfaces();

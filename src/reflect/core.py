@@ -2583,7 +2583,7 @@ def _discover_skills(
     try:
         from sqlite3 import Error as _SQLiteError
 
-        from reflect.store.sqlite import connect_sqlite_read_only
+        from reflect.store.sqlite import SnapshotNotReadyError, connect_sqlite_read_only
 
         include_native_sessions = False
         sql_otlp_traces = otlp_traces
@@ -2611,6 +2611,13 @@ def _discover_skills(
                 include_native_sessions=include_native_sessions,
             )
         elif not snapshot.ready:
+            if snapshot.exists:
+                raise click.ClickException(
+                    "Skill discovery paused: the prepared snapshot is incomplete or out of date. "
+                    "Wait for the active dashboard refresh to finish, then retry "
+                    "`reflect skills discover`. If no refresh is running, use "
+                    "`reflect skills discover --refresh`. No extraction was run and no skills were staged."
+                )
             raise _SQLiteError(
                 "prepared snapshot unavailable; run `reflect skills discover --refresh` "
                 "to include SQL graph evidence"
@@ -2627,6 +2634,10 @@ def _discover_skills(
             bundle = sql_bundle
             sql_bundle_used = True
             graph_evidence_attached = bool((sql_bundle.get("graph_evidence") or {}).get("recurring_patterns"))
+    except SnapshotNotReadyError as exc:
+        raise click.ClickException(
+            f"Skill discovery paused: {exc} No extraction was run and no skills were staged."
+        ) from exc
     except (_SQLiteError, OSError, ValueError) as exc:
         click.echo(
             f"SQL graph evidence unavailable for skills extraction: {exc}",

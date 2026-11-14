@@ -700,6 +700,11 @@ function impactLimitations(item){
 
 /* Product operating surfaces */
 function buildImprovementSurfaces(){
+  const createButton = document.querySelector?.('[data-ledger-action="create-workflow"]');
+  if (createButton && isStaticDemo()) {
+    createButton.disabled = true;
+    createButton.title = 'Create workflows in your local Reflect dashboard.';
+  }
   const resource = name => IMPROVEMENT_DATA.resources?.[name] || {state:'ready'};
   const hasLoaded = name => ['ready','stale'].includes(resource(name).state) || Boolean(resource(name).loaded || resource(name).loaded_at);
   const skillAnalysisPending = ['pending','stale'].includes(IMPROVEMENT_DATA.skill_analysis_state) || resource('skills').state !== 'ready';
@@ -873,7 +878,7 @@ function buildImprovementSurfaces(){
           ${proposedWorkflow ? `<span class="ledger-pill">Linked workflow · ${escHtml(workflowState)}</span>` : ''}
         </div>
         <div class="inbox-copy">Priority ranks this finding for review. Detection confidence describes the evidence pattern, not a measured outcome or likelihood of improvement.</div>
-        <div class="ledger-actions"><button type="button" class="ledger-button" data-ledger-action="evidence" data-observation-id="${escHtml(String(item.id))}">View Task Evidence</button>${proposedWorkflow ? `<button type="button" class="ledger-button primary" data-ledger-action="open-workflow" data-candidate-id="${escHtml(String(proposedWorkflow.id))}">Open Linked Workflow</button>` : ''}</div>
+        <div class="ledger-actions"><button type="button" class="ledger-button" data-ledger-action="evidence" data-observation-id="${escHtml(String(item.id))}">View Task Evidence</button>${proposedWorkflow ? `<button type="button" class="ledger-button primary" data-ledger-action="open-workflow" data-candidate-id="${escHtml(String(proposedWorkflow.id))}">Open Linked Workflow</button>` : isStaticDemo() ? '' : `<button type="button" class="ledger-button primary" data-ledger-action="create-from-finding" data-observation-id="${escHtml(String(item.id))}">Create workflow from finding</button>`}</div>
       </article>`;
     }).join('') : resource('findings').state !== 'ready'
       ? '<div class="session-ledger-empty">No findings in the last loaded data. Updated findings are still pending.</div>'

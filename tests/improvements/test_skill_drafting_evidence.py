@@ -168,7 +168,7 @@ def test_discover_empty_array_succeeds_without_opening_write_service(tmp_path):
     from reflect.models import TelemetryStats
     with patch('reflect.core._resolve_skills_agent', return_value=('claude', [])), \
         patch('reflect.core._resolve_and_analyze', return_value=TelemetryStats(session_files=[], span_files=[], total_events=0, events_by_type={}, events_by_file={})), \
-        patch('reflect.core._improvement_snapshot_status', return_value=SimpleNamespace(ready=False)), \
+        patch('reflect.core._improvement_snapshot_status', return_value=SimpleNamespace(ready=False, exists=False)), \
         patch('subprocess.run', return_value=SimpleNamespace(returncode=0, stdout='[]', stderr='')), \
         patch('reflect.core._open_improvement_service') as opened:
         result = CliRunner().invoke(main, ['skills', 'discover', '--yes', '--db-path', str(tmp_path / 'missing.db')])
@@ -402,3 +402,21 @@ def test_internal_discovery_only_accepts_refreshed_ids_with_current_inputs(evide
     assert group['verification_counts']['passed'] == expected_checked
     unrelated = ProcedureEvidenceRepository(conn).bundle(current_execution_ids=frozenset({'u1'}))['procedures'][0]
     assert unrelated['verification_counts']['passed'] == 2
+
+
+def test_discovery_packet_works_through_runtime_read_only_connection(evidence_service):
+    from contextlib import closing
+
+    from reflect.skill_extraction import _build_skill_evidence_bundle_from_sql
+    from reflect.store.sqlite import connect_sqlite_read_only
+
+    _, writer, _ = evidence_service
+    path = writer.execute('PRAGMA database_list').fetchone()[2]
+    with closing(connect_sqlite_read_only(path, profile=None)) as reader:
+        packet = _build_skill_evidence_bundle_from_sql(reader, session_ids={'s0','s1','s2'})
+        assert {row['id'] for row in packet['sessions']} == {'s0','s1','s2'}
+        assert packet['procedure_evidence']['procedures'][0]['candidate_ready']
+        assert reader.execute('PRAGMA query_only').fetchone()[0] == 1
+        assert reader.in_transaction  # Discovery preserves the caller's snapshot.
+        assert reader.total_changes == 0
+        assert reader.execute('SELECT name FROM sqlite_temp_master').fetchall() == []

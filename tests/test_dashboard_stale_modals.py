@@ -157,7 +157,7 @@ assert.match(dialog.body,/Stored procedure/);assert.match(dialog.body,/7 linked/
 assert.match(dialog.body,/Provenance Sessions · —/);
 assert.match(dialog.body,/Evidence references are updating/);
 assert.ok(!dialog.body.includes('No comparable execution units'));
-assert.match(dialog.actions,/Retry Review/);
+assert.match(dialog.actions,/Reload project preview/);
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """)
 

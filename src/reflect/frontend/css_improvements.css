@@ -100,3 +100,5 @@
 
 .review-grid.workflow-enable-layout{grid-template-columns:minmax(0,1fr)}
 .workflow-enable-layout .review-panel{padding:14px}
+
+.workflow-create-form{display:grid;gap:20px;max-width:720px}.workflow-create-field{display:grid;gap:8px}.workflow-create-field label{color:var(--text);font-weight:650}.workflow-create-field .ledger-editor{min-height:90px}.workflow-create-field .review-panel-copy{margin:0}

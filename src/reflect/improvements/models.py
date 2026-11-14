@@ -64,6 +64,7 @@ class WorkflowSourceKind(StrEnum):
 
     RULE_BLUEPRINT = "rule_blueprint"
     AGENT_AUTHORED = "agent_authored"
+    USER_AUTHORED = "user_authored"
     MANUAL_SKILL_FILE = "manual_skill_file"
 
 
@@ -76,6 +77,7 @@ class WorkflowArtifactKind(StrEnum):
 class SkillOrigin(StrEnum):
     RULE_BLUEPRINT = "rule_blueprint"
     AGENT_AUTHORED = "agent_authored"
+    USER_AUTHORED = "user_authored"
     IMPORTED = "imported"
 
 

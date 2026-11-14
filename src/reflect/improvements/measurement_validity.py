@@ -103,6 +103,8 @@ class MeasurementValidity:
         self, cohort: dict[str, Any], cutoff: str, *, before: bool,
         limit: int, newest_first: bool = False,
     ) -> list[str]:
+        if cohort.get("scope_unavailable"):
+            return []
         order = "DESC" if newest_first else "ASC"
         started = "julianday(eu.started_at)" if cohort.get("policy_version", 1) >= COMPARISON_POLICY_VERSION else "eu.started_at"
         rows = self.conn.execute(
@@ -117,6 +119,9 @@ class MeasurementValidity:
 
     def diagnostics(self, cohort: dict[str, Any], cutoff: str, *, before: bool) -> dict[str, Any]:
         """Count active canonical candidates without loading their telemetry JSON."""
+        if cohort.get("scope_unavailable"):
+            return {"candidate_count": 0, "eligible_count": 0, "excluded_count": 0,
+                    "exclusion_reasons": {}, "scope_unavailable": True}
         cases = " ".join(
             f"WHEN NOT COALESCE(({predicate}), 0) THEN '{reason}'"
             for reason, predicate in _policy_gates(cohort)

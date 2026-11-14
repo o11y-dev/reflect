@@ -3129,3 +3129,100 @@ def test_history_exposes_restore_without_resurrecting_manual_rejections(tmp_path
         assert service.workflows.show(second.id).status == WorkflowStatus.REJECTED
     finally:
         conn.close()
+
+
+def test_finding_creation_keeps_repo_baseline_and_collects_future_tasks(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        service.archetypes.refresh()
+        for index in range(5):
+            _insert_contract_execution(conn, f'finding-pre-{index}',
+                started_at=f'2026-07-0{index + 3}T10:00:00+00:00', sequence_base=500 + index * 4)
+        rule = RuleDefinition(id='manual-finding', version=1, category='verification',
+                              title='Verification finding', description='Recorded checks')
+        service.repository.sync_rule_definitions([rule], now=NOW)
+        finding_id = service.repository.upsert_observation(ObservationDraft(
+            rule_id=rule.id, rule_version=1, scope_type='repo', scope_id='repo-1', repo_id='repo-1',
+            fingerprint='finding-baseline', category='verification', title='Review checks',
+            summary='Review verification behavior', metric_name='unverified_change_sessions',
+            metric_value=1, metric_unit='executions', metric_direction='lower_is_better',
+            baseline_query={'repo_id':'repo-1'}, impact_score=20, severity=Severity.LOW, confidence=0.8,
+            evidence=[EvidenceRef(entity_type='execution_unit', entity_id=f'finding-pre-{i}',
+                                  session_id='session-1', summary_redacted='Recorded check') for i in range(5)],
+        ), now=NOW)
+        conn.commit()
+        context = service.finding_workflow_context(finding_id)
+        candidate = service.create_workflow(content=context['content'], finding_id=finding_id)
+        other = tmp_path / 'other-project'
+        other.mkdir()
+        assert not service.workflows.preview(candidate['id'], project_root=other)['checks']['apply_allowed']
+        with pytest.raises(RuntimeError, match='baseline'):
+            service.workflows.apply(candidate['id'], project_root=other)
+        assert not (other / '.agents').exists()
+        preview = service.workflows.preview(candidate['id'], project_root=tmp_path)
+        assert preview['checks']['apply_allowed']
+        applied = service.workflows.apply(candidate['id'], project_root=tmp_path)
+        result = service.measurements.measure(candidate['id'])
+        assert result['cohort']['baseline_state'] == 'frozen'
+        assert result['cohort']['measurement_state'] == 'collecting'
+        assert result['before_count'] == 5 and result['after_count'] == 0
+        assert result['cohort']['repo_id'] == 'repo-1'
+        assert result['metric_name'] == 'unverified_change_sessions'
+        assert applied['status'] == 'active'
+        assert service.measurements._execution_unit_metric_values('unsupported_metric', ['finding-pre-0']) == {}
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize('known_workspace', [True, False, 'mixed'])
+def test_repoless_finding_never_uses_an_unrelated_global_baseline(tmp_path, known_workspace):
+    service, conn = _service(tmp_path)
+    try:
+        service.archetypes.refresh()
+        conn.execute("UPDATE sessions SET repo_id=NULL, workspace_id=?", ('workspace-1' if known_workspace else None,))
+        conn.execute("UPDATE workspaces SET repo_id=NULL WHERE id='workspace-1'")
+        for index in range(5):
+            _insert_contract_execution(conn, f'unrelated-{index}',
+                started_at=f'2026-07-0{index + 3}T10:00:00+00:00', sequence_base=600 + index * 4)
+        conn.execute('UPDATE execution_units SET repo_id=NULL, workspace_id=NULL')
+        extra_evidence = []
+        alternate_root = tmp_path / 'second-source-project'
+        if known_workspace == 'mixed':
+            alternate_root.mkdir()
+            conn.execute("UPDATE execution_units SET workspace_id='workspace-1'")
+            conn.execute("INSERT INTO workspaces(id,root_path,path_hash,label,repo_id,source_key,confidence,raw_json,created_at,updated_at) VALUES ('workspace-2',?,'other-root','other','repo-1','test',1,'{}',?,?)",
+                         (str(alternate_root), NOW, NOW))
+            conn.execute("UPDATE sessions SET workspace_id='workspace-2' WHERE id='session-2'")
+            extra_evidence = [EvidenceRef(entity_type='session', entity_id='session-2', session_id='session-2', summary_redacted='Other project')]
+        rule = RuleDefinition(id='repoless-finding', version=1, category='verification',
+                              title='Verification finding', description='Recorded checks')
+        service.repository.sync_rule_definitions([rule], now=NOW)
+        finding = service.repository.upsert_observation(ObservationDraft(
+            rule_id=rule.id, rule_version=1, scope_type='user', scope_id='local',
+            fingerprint='repoless', category='verification', title='Review checks', summary='Check finding',
+            metric_name='unverified_change_sessions', metric_value=1, metric_unit='executions',
+            metric_direction='lower_is_better', impact_score=20, severity=Severity.LOW, confidence=0.8,
+            evidence=[EvidenceRef(entity_type='session', entity_id='session-1', session_id='session-1',
+                                  summary_redacted='Observed checks'), *extra_evidence],
+        ), now=NOW)
+        conn.commit()
+        context = service.finding_workflow_context(finding)
+        if known_workspace == 'mixed':
+            assert context['project_roots'] == sorted([str(tmp_path), str(alternate_root)])
+        candidate = service.create_workflow(content=context['content'], finding_id=finding)
+        if known_workspace is True:
+            assert candidate['provenance']['finding_workspace_id'] == 'workspace-1'
+            other = tmp_path / 'unrelated-project'
+            other.mkdir()
+            assert not service.workflows.preview(candidate['id'], project_root=other)['checks']['apply_allowed']
+            with pytest.raises(RuntimeError, match='baseline'):
+                service.workflows.apply(candidate['id'], project_root=other)
+        service.workflows.apply(candidate['id'], project_root=alternate_root if known_workspace == 'mixed' else tmp_path)
+        measured = service.measurements.measure(candidate['id'])
+        assert measured['before_count'] == 0
+        assert measured['cohort']['before_execution_unit_ids'] == []
+        assert measured['cohort']['measurement_state'] == 'not_measurable'
+        if known_workspace is not True:
+            assert measured['cohort']['scope_unavailable'] is True
+    finally:
+        conn.close()

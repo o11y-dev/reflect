@@ -28,6 +28,7 @@ from reflect.dashboard_read_executor import (
     read_revision,
 )
 from reflect.dashboard_sessions import build_session_payload, load_session_detail
+from reflect.improvements.service import FindingWorkflowConflict
 from reflect.preparation import (
     PreparationCoordinator,
     PreparationProfile,
@@ -1088,6 +1089,32 @@ def build_dashboard_app(
         except KeyError as exc:
             return JSONResponse({"error": str(exc)}, status_code=404)
         except (OSError, RuntimeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+
+    @app.get("/api/findings/{finding_id}/workflow-draft")
+    def api_finding_workflow_draft(finding_id: str):
+        try:
+            return JSONResponse(improvement_adapter.finding_workflow_context(finding_id))
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+
+    @app.post("/api/workflows")
+    def api_workflow_create(body: dict):
+        content = body.get("content")
+        if not isinstance(content, dict):
+            return JSONResponse({"error": "Workflow instructions are required"}, status_code=422)
+        finding_id = body.get("finding_id")
+        if finding_id is not None and (not isinstance(finding_id, str) or not finding_id.strip()):
+            return JSONResponse({"error": "finding_id must be a nonempty identifier"}, status_code=422)
+        try:
+            return JSONResponse(improvement_adapter.create_workflow(content=content, finding_id=finding_id), status_code=201)
+        except FindingWorkflowConflict as exc:
+            return JSONResponse({"error": str(exc), "candidate_id": exc.candidate_id}, status_code=409)
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
+        except RuntimeError as exc:
             return JSONResponse({"error": str(exc)}, status_code=409)
 
     @app.put("/api/workflows/{candidate_id}")

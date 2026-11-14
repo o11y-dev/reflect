@@ -405,3 +405,33 @@ def test_schema_only_policy_allows_an_empty_current_registry():
         requested_refresh=None,
         snapshot=status,
     ) is SnapshotAction.READ
+
+
+def test_scheduler_waits_full_interval_after_long_refresh():
+    started = threading.Event()
+    release = threading.Event()
+    second = threading.Event()
+    finishes = []
+    starts = []
+
+    def prepare(_progress):
+        starts.append(time.monotonic())
+        if len(starts) == 1:
+            started.set()
+            release.wait(2)
+            finishes.append(time.monotonic())
+        else:
+            second.set()
+        return {}
+
+    scheduler = PreparationScheduler(PreparationCoordinator(prepare), interval_seconds=0.15)
+    scheduler.start()
+    try:
+        assert started.wait(1)
+        time.sleep(0.22)
+        release.set()
+        assert second.wait(1)
+        assert starts[1] - finishes[0] >= 0.15
+    finally:
+        release.set()
+        scheduler.close(1)

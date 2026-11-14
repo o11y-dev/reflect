@@ -83,7 +83,7 @@ class MeasurementService:
             """
             SELECT i.id, i.exposure_started_at, o.repo_id, wc.target_metric,
                    wc.task_archetype_id, o.metric_direction, wc.content_json,
-                   wc.measurement_window
+                   wc.measurement_window, wc.provenance_json
             FROM interventions i
             JOIN workflow_versions wv ON wv.id = i.workflow_version_id
             JOIN workflow_candidates wc ON wc.id = wv.candidate_id
@@ -104,6 +104,7 @@ class MeasurementService:
             metric_direction,
             content_json,
             measurement_window,
+            provenance_json,
         ) = row
         content = json.loads(str(content_json or "{}"))
         contract = WorkflowContract.from_raw(content.get("workflow_contract"))
@@ -125,7 +126,8 @@ class MeasurementService:
         latest = previous if previous_cohort.get("policy_version") == COMPARISON_POLICY_VERSION else None
         latest_cohort = previous_cohort if latest else {}
         quality: dict[str, Any] | None = None
-        workspace_id = contract.applicability.workspace_id if contract is not None else None
+        provenance = json.loads(str(provenance_json or "{}"))
+        workspace_id = (contract.applicability.workspace_id if contract is not None else None) or provenance.get("finding_workspace_id")
         minimum_before = (
             contract.validation.baseline_minimum if contract is not None else 5
         )
@@ -137,6 +139,7 @@ class MeasurementService:
             "assessment_version": 1, "policy_version": COMPARISON_POLICY_VERSION,
             "repo_id": repo_id, "workspace_id": workspace_id,
             "task_archetype_id": archetype_id, "metric": str(metric_name),
+            "scope_unavailable": bool(provenance.get("finding_scope_unavailable")),
         }
         eligibility = {
             side: self.validity.diagnostics(cohort_scope, exposed_at, before=side == "before")
@@ -265,6 +268,8 @@ class MeasurementService:
         if baseline_state == "historical_unavailable":
             measurement_state = "not_measurable"
         reasons = list(quality["reasons"]) if quality is not None else []
+        if cohort_scope["scope_unavailable"]:
+            reasons.append("The finding has no resolved repository or unique workspace; impact cannot be measured across unrelated tasks.")
         if baseline_state == "historical_unavailable":
             reasons.append("Selected pre-activation evidence does not currently supply the required baseline; future post-activation tasks cannot fill it.")
         elif baseline_state == "analysis_pending":
@@ -303,6 +308,7 @@ class MeasurementService:
         now = utc_now()
         cohort = {
             "unit": "execution_units",
+            **({"scope_unavailable": True} if cohort_scope["scope_unavailable"] else {}),
             "policy_version": COMPARISON_POLICY_VERSION,
             "previous_policy_measurement_id": latest_cohort.get("previous_policy_measurement_id")
             if latest else previous[0] if previous else None,
@@ -856,6 +862,7 @@ class MeasurementService:
                     continue
                 value = float(outcome == "success" and bool(row[10]))
             else:
-                value = float(row[4])
+                # Unknown finding metrics have no execution-unit measurement.
+                continue
             values[execution_unit_id] = value
         return values

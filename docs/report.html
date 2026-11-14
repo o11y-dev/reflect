@@ -734,6 +734,8 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 
 .review-grid.workflow-enable-layout{grid-template-columns:minmax(0,1fr)}
 .workflow-enable-layout .review-panel{padding:14px}
+
+.workflow-create-form{display:grid;gap:20px;max-width:720px}.workflow-create-field{display:grid;gap:8px}.workflow-create-field label{color:var(--text);font-weight:650}.workflow-create-field .ledger-editor{min-height:90px}.workflow-create-field .review-panel-copy{margin:0}
 /* ── Chart wrappers ──────────────────────────────────────── */
 .chart-box{position:relative}
 .explore-view-status{padding:18px;border-color:rgba(242,138,26,.28);background:rgba(242,138,26,.055);color:var(--text-2);font-size:13px;line-height:1.5}
@@ -3322,6 +3324,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   <section class="panel product-section" id="workflow-candidates-section">
   <div class="product-section-head">
     <div><h3 class="product-section-title">Current workflows</h3><p class="product-section-copy">Expand a row for evidence and decisions. Enable workflow previews the project and exact file changes.</p></div>
+    <button type="button" class="ledger-button primary" data-ledger-action="create-workflow">Create workflow</button>
     <div class="product-section-count" id="workflow-count">0<small>reviewable workflows</small></div>
   </div>
   <div class="workflow-toolbar" aria-label="Workflow filters">
@@ -4517,7 +4520,11 @@ async function ledgerRequest(url, {method = 'GET', body} = {}){
       body:body === undefined ? undefined : JSON.stringify(body),
     });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+    if (!response.ok) {
+      const error = new Error(payload.error || `Request failed (${response.status})`);
+      error.candidateId = payload.candidate_id;
+      throw error;
+    }
     return payload;
   } catch (error) {
     if (error.name === 'AbortError') throw new Error('Evidence is taking longer to load. Retry while analysis continues.');
@@ -4675,6 +4682,11 @@ function workflowSourcePresentation(content, provenance = {}){
   const source = content?.source || {};
   const rawKind = String(source.kind || provenance.source || '');
   const kind = rawKind === 'skill_extraction' ? 'agent_authored' : rawKind;
+  if (kind === 'user_authored') {
+    return {kind, label:'Your workflow draft',
+      detail:'You supplied these instructions. No observed task support or measured improvement is claimed.',
+      reviewLabel:'Preview & Enable', sectionLabel:'Your Workflow'};
+  }
   if (kind === 'agent_authored' || source.rule_id === 'discovered_reusable_workflow') {
     const agent = source.agent ? ` · ${humanizeLedgerLabel(source.agent)}` : '';
     return {
@@ -5075,9 +5087,101 @@ async function showSkillReview(skillId){
     const graphContainer = ledgerDialog.querySelector?.('[data-skill-usage-graph]');
     if (graphContainer && typeof loadSkillUsageGraph === 'function') loadSkillUsageGraph(skillId, graphContainer);
   } catch (error) {
-    failLedgerRead(request, {title:'Skill history unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`,
+    failLedgerRead(request, {title:'Skill history unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div><p class="review-panel-copy">Your saved workflow is unchanged. Wait for refresh to finish if one is running, then reload the project preview to continue enabling it.</p>`,
       actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><button type="button" class="ledger-button primary" data-ledger-action="review-skill" data-skill-id="${escHtml(skillId)}">Retry</button>`});
   }
+}
+
+// Keep unsaved instructions when preview or server availability fails.
+let workflowCreationDraft = {};
+let workflowCreationContext = null;
+const workflowCreationDrafts = new Map();
+async function showFindingWorkflowCreate(findingId){
+  const request = beginLedgerRead('finding-workflow', findingId, 'Loading finding context…');
+  try {
+    const context = await ledgerRequest(`/api/findings/${encodeURIComponent(findingId)}/workflow-draft`);
+    if (ledgerDialog.inspection !== request || !ledgerDialog.open) return;
+    if (context.candidate_id) return showWorkflowReview(context.candidate_id);
+    showWorkflowCreate(context);
+  } catch (error) {
+    failLedgerRead(request, {title:'Finding context unavailable',
+      body:`<p class="review-panel-copy">${escHtml(error.message)} No workflow was created. Reload the finding after preparation finishes.</p>`,
+      actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><button type="button" class="ledger-button" data-ledger-action="create-from-finding" data-observation-id="${escHtml(findingId)}">Reload finding context</button>`});
+  }
+}
+function showWorkflowCreate(context = null){
+  if (isStaticDemo()) return;
+  workflowCreationDrafts.set(workflowCreationContext?.finding_id || '', workflowCreationDraft);
+  workflowCreationContext = context;
+  const contextKey = context?.finding_id || '';
+  workflowCreationDraft = workflowCreationDrafts.get(contextKey) || (context ? {
+    ...context.content,
+    steps:(context.content.steps || []).join('\n'),
+    verification:(context.content.verification || []).join('\n'),
+    abstain_when:(context.content.abstain_when || []).join('\n'),
+    project_root:context.project_roots?.length === 1 ? context.project_roots[0] : '',
+  } : {});
+  clearLedgerDialogSelection();
+  const creation = {kind:'create-workflow', findingId:context?.finding_id};
+  ledgerDialog.inspection = creation;
+  const field = (name, label, {multiline = false, required = false, hint = ''} = {}) => `<div class="workflow-create-field"><label for="create-workflow-${name}">${label}${required ? ' (required)' : ''}</label>${multiline
+    ? `<textarea class="ledger-editor" id="create-workflow-${name}" name="${name}" rows="${name === 'steps' ? 6 : 3}" ${required ? 'required' : ''}>${escHtml(workflowCreationDraft[name] || '')}</textarea>`
+    : `<input class="workflow-target-input" id="create-workflow-${name}" name="${name}" value="${escHtml(workflowCreationDraft[name] || '')}" ${required ? 'required' : ''} ${name === 'slug' ? 'pattern="[a-z0-9][a-z0-9-]{0,62}" maxlength="63"' : ''}>`}${hint ? `<p class="review-panel-copy">${hint}</p>` : ''}</div>`;
+  openLedgerDialog({title:'Create workflow', subtitle:'Write instructions → preview project changes → enable',
+    body:`${context ? `<section class="review-panel"><h3>${escHtml(context.title)}</h3><p class="review-panel-copy">${escHtml(context.summary)}</p><p class="review-panel-copy">Finding scope: ${escHtml(context.scope)} · Target metric: ${escHtml(context.target_metric)}. Linked evidence describes the problem; these proposed instructions and their impact remain unverified.</p><p class="review-panel-copy">The draft starts with a review checklist. Replace it with the corrective procedure you want the agent to follow.</p></section>` : '<p class="review-panel-copy">Save a reusable procedure for your agent. This draft has no observed task evidence or measured impact yet.</p>'}
+      <form id="workflow-create-form" class="workflow-create-form">
+      ${field('slug', 'Workflow name', {required:true, hint:'Use lowercase letters, numbers, and hyphens. This names the skill folder.'})}
+      ${field('description', 'When should the agent use it?', {required:true})}
+      ${field('steps', 'Procedure', {multiline:true, required:true, hint:'One concrete instruction per line.'})}
+      ${field('verification', 'How to verify completion', {multiline:true})}
+      ${field('abstain_when', 'When to stop or ask for help', {multiline:true})}
+      ${field('project_root', 'Project folder', {required:true, hint:'Absolute local path. The next screen shows the exact file and changes before you enable anything.'})}
+      <p id="workflow-create-status" class="review-panel-copy" role="status" aria-live="polite"></p></form>`,
+    actions:'<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div><button type="submit" form="workflow-create-form" class="ledger-button primary">Save draft and preview</button>',
+  });
+  const form = document.getElementById('workflow-create-form');
+  form.addEventListener('input', () => { workflowCreationDraft = Object.fromEntries(new FormData(form)); });
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!form.reportValidity()) return;
+    workflowCreationDraft = Object.fromEntries(new FormData(form));
+    const submitted = {...workflowCreationDraft};
+    const button = ledgerDialogActions.querySelector('[type="submit"]');
+    const status = document.getElementById('workflow-create-status');
+    const lines = key => String(submitted[key] || '').split('\n').map(value => value.trim()).filter(Boolean);
+    for (const field of form.elements) field.disabled = true;
+    button.disabled = true;
+    button.textContent = 'Saving draft…';
+    status.textContent = 'Saving locally. No project files have been changed.';
+    try {
+      const candidate = await ledgerRequest('/api/workflows', {method:'POST', body:{...(creation.findingId ? {finding_id:creation.findingId} : {}),content:{
+        slug:submitted.slug.trim(), description:submitted.description.trim(),
+        steps:lines('steps'), verification:lines('verification'), abstain_when:lines('abstain_when'),
+      }}});
+      IMPROVEMENT_DATA.workflows = [candidate, ...(IMPROVEMENT_DATA.workflows || []).filter(item => item.id !== candidate.id)];
+      buildImprovementSurfaces();
+      if (ledgerDialog.inspection !== creation || !ledgerDialog.open) return;
+      workflowCreationDraft = {};
+      workflowCreationDrafts.delete(contextKey);
+      await showWorkflowReview(candidate.id, submitted.project_root.trim());
+    } catch (error) {
+      if (ledgerDialog.inspection !== creation || !ledgerDialog.open) return;
+      for (const field of form.elements) field.disabled = false;
+      status.textContent = error.candidateId ? error.message : `${error.message} Your instructions are kept here. When the server is ready, save again.`;
+      if (error.candidateId) {
+        const link = document.createElement('button');
+        link.type = 'button';
+        link.className = 'ledger-button';
+        link.dataset.ledgerAction = 'review-workflow';
+        link.dataset.candidateId = error.candidateId;
+        link.textContent = 'Open linked workflow';
+        status.append(link);
+      }
+      button.disabled = false;
+      button.textContent = 'Save draft and preview';
+    }
+  });
+  form.querySelector('input')?.focus();
 }
 
 async function showWorkflowReview(candidateId, requestedRoot = ''){
@@ -5137,7 +5241,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
       ? 'Enable workflow'
       : 'Choose a Project Folder';
     const reviewActions = workflowSuggestionAction(candidate) + (isStaticDemo() ? '' : !canReview
-      ? `<button type="button" class="ledger-button" data-ledger-action="review-workflow" data-candidate-id="${escHtml(candidateId)}">Retry Review</button>`
+      ? `<button type="button" class="ledger-button" data-ledger-action="review-workflow" data-candidate-id="${escHtml(candidateId)}">Reload project preview</button>`
       : active
       ? `<button type="button" class="ledger-button danger" data-ledger-action="rollback" data-candidate-id="${escHtml(candidateId)}">Roll Back</button>`
       : !reviewable
@@ -5275,8 +5379,8 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
       actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div>${reviewActions}`,
     });
   } catch (error) {
-    failLedgerRead(request, {title:'Workflow review unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`,
-      actions:`<button type="button" class="ledger-button" data-ledger-action="review-workflow" data-candidate-id="${escHtml(candidateId)}">Retry Review</button>`});
+    failLedgerRead(request, {title:'Workflow review unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div><p class="review-panel-copy">Your saved workflow is unchanged. Wait for refresh to finish if one is running, then reload the project preview to continue enabling it.</p>`,
+      actions:`<button type="button" class="ledger-button" data-ledger-action="review-workflow" data-candidate-id="${escHtml(candidateId)}">Reload project preview</button>`});
   }
 }
 
@@ -5353,7 +5457,7 @@ async function showImpactSessions(measurementId){
       actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div><button type="button" class="ledger-button" data-ledger-action="review-impact-sessions" data-measurement-id="${escHtml(measurementId)}">Retry Evidence</button><button type="button" class="ledger-button primary" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(ledger.candidate_id || ''))}">Inspect Applied Workflow</button>`,
     });
   } catch (error) {
-    failLedgerRead(request, {title:'Comparison sessions unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`,
+    failLedgerRead(request, {title:'Comparison sessions unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div><p class="review-panel-copy">Your saved workflow is unchanged. Wait for refresh to finish if one is running, then reload the project preview to continue enabling it.</p>`,
       actions:`<button type="button" class="ledger-button" data-ledger-action="review-impact-sessions" data-measurement-id="${escHtml(measurementId)}">Retry Evidence</button>`});
   }
 }
@@ -5397,6 +5501,8 @@ document.addEventListener('click', async event => {
     activateTab('workflows');
     return buildImprovementSurfaces();
   }
+  if (action === 'create-from-finding') return showFindingWorkflowCreate(trigger.dataset.observationId || '');
+  if (action === 'create-workflow') return showWorkflowCreate();
   if (action === 'close') return closeLedgerDialog();
   if (action === 'evidence') return showObservationEvidence(trigger.dataset.observationId || '');
   if (action === 'review-loop') return showLoopReview(trigger.dataset.loopId || '');
@@ -8857,6 +8963,11 @@ function impactLimitations(item){
 
 /* Product operating surfaces */
 function buildImprovementSurfaces(){
+  const createButton = document.querySelector?.('[data-ledger-action="create-workflow"]');
+  if (createButton && isStaticDemo()) {
+    createButton.disabled = true;
+    createButton.title = 'Create workflows in your local Reflect dashboard.';
+  }
   const resource = name => IMPROVEMENT_DATA.resources?.[name] || {state:'ready'};
   const hasLoaded = name => ['ready','stale'].includes(resource(name).state) || Boolean(resource(name).loaded || resource(name).loaded_at);
   const skillAnalysisPending = ['pending','stale'].includes(IMPROVEMENT_DATA.skill_analysis_state) || resource('skills').state !== 'ready';
@@ -9030,7 +9141,7 @@ function buildImprovementSurfaces(){
           ${proposedWorkflow ? `<span class="ledger-pill">Linked workflow · ${escHtml(workflowState)}</span>` : ''}
         </div>
         <div class="inbox-copy">Priority ranks this finding for review. Detection confidence describes the evidence pattern, not a measured outcome or likelihood of improvement.</div>
-        <div class="ledger-actions"><button type="button" class="ledger-button" data-ledger-action="evidence" data-observation-id="${escHtml(String(item.id))}">View Task Evidence</button>${proposedWorkflow ? `<button type="button" class="ledger-button primary" data-ledger-action="open-workflow" data-candidate-id="${escHtml(String(proposedWorkflow.id))}">Open Linked Workflow</button>` : ''}</div>
+        <div class="ledger-actions"><button type="button" class="ledger-button" data-ledger-action="evidence" data-observation-id="${escHtml(String(item.id))}">View Task Evidence</button>${proposedWorkflow ? `<button type="button" class="ledger-button primary" data-ledger-action="open-workflow" data-candidate-id="${escHtml(String(proposedWorkflow.id))}">Open Linked Workflow</button>` : isStaticDemo() ? '' : `<button type="button" class="ledger-button primary" data-ledger-action="create-from-finding" data-observation-id="${escHtml(String(item.id))}">Create workflow from finding</button>`}</div>
       </article>`;
     }).join('') : resource('findings').state !== 'ready'
       ? '<div class="session-ledger-empty">No findings in the last loaded data. Updated findings are still pending.</div>'
