@@ -211,3 +211,61 @@ def test_completed_exact_evidence_cache_precedes_recorded_reads_and_schema_still
         conn.execute("DELETE FROM schema_migrations WHERE version=(SELECT MAX(version) FROM schema_migrations)")
         conn.commit()
     assert client.get(path).status_code == 503
+
+
+def test_new_recorded_impact_supersedes_older_published_cache_during_refresh(evidence, monkeypatch):
+    from reflect.dashboard_improvements import DashboardImprovementAdapter
+    from reflect.improvements.measurement_validity import MeasurementValidity
+
+    db, _, _ = evidence
+    with closing(connect_sqlite(db)) as conn:
+        mark_snapshot(conn, ready=True)
+    client = _client(db)
+    old = client.get('/api/impact').json()
+    with closing(connect_sqlite(db)) as conn:
+        conn.execute("""INSERT INTO measurements
+            (id,intervention_id,metric_name,cohort_json,before_value,after_value,
+             before_count,after_count,verdict,confidence,measured_at,created_at,updated_at)
+            SELECT 'new-recorded',intervention_id,metric_name,
+                json_set(cohort_json,'$.measurement_state','measured'),1.25,0,
+                20,10,'improved',0.75,'2026-12-01','2026-12-01','2026-12-01'
+            FROM measurements LIMIT 1""")
+        mark_snapshot(conn, ready=False)
+    monkeypatch.setattr(MeasurementValidity, 'apply', lambda *_a, **_k: pytest.fail('pending validation'))
+    response = client.get('/api/impact')
+    payload = response.json()
+    assert payload != old
+    assert payload['impact_checks'][0]['id'] == 'new-recorded'
+    assert payload['impact_checks'][0]['before_value'] == 1.25
+    assert payload['analysis_state'] == 'pending'
+    assert payload['publication']['state'] == 'recorded'
+    assert payload['evidence_state'] == 'recorded'
+    original = DashboardImprovementAdapter.impact
+    monkeypatch.setattr(DashboardImprovementAdapter, 'impact', lambda *_a, **_k: pytest.fail('unchanged recorded cache'))
+    assert client.get('/api/impact').json() == payload
+    monkeypatch.setattr(DashboardImprovementAdapter, 'impact', original)
+    restarted = _client(db).get('/api/impact').json()
+    assert restarted['impact_checks'] == payload['impact_checks']
+    assert restarted['publication']['state'] == 'recorded'
+
+
+def test_token_coverage_migration_withdraws_old_claim_but_preserves_audit(evidence):
+    from reflect.improvements.measurement import MeasurementService
+    from reflect.store.migrate import migrate
+
+    db, _, _ = evidence
+    with closing(connect_sqlite(db)) as conn:
+        conn.execute("DELETE FROM schema_migrations WHERE version=55")
+        conn.execute("UPDATE measurements SET metric_name='context_outlier_sessions', verdict='unchanged', before_value=0, after_value=0 WHERE id='exact'")
+        assert migrate(conn) == [55]
+        row = conn.execute("SELECT cohort_json, before_value, after_value, verdict FROM measurements WHERE id='exact'").fetchone()
+        cohort = json.loads(row[0])
+        assert row[1:] == (None, None, "insufficient_data")
+        assert cohort["measurement_state"] == "not_measurable"
+        assert cohort["superseded_token_comparison"]["verdict"] == "unchanged"
+        assert cohort["superseded_token_comparison"]["snapshots"]["before"][0]["title"] == "Frozen title"
+        public = MeasurementService(conn).list(measurement_id="exact", recorded_only=True)[0]
+        assert public["before_value"] is None
+        assert "superseded_token_comparison" not in public["cohort"]
+        details = MeasurementService(conn).sessions("exact", recorded_only=True)
+        assert details["before_execution_units"][0]["metric_value"] is None

@@ -527,6 +527,26 @@ class ImprovementRepository:
             """,
             (now, observation_id),
         )
+        # A new evidence variant must not resurrect a dismissed inventory row.
+        dismissal = self.conn.execute(
+            """SELECT json_extract(checks_json, '$.dismissal.batch') FROM workflow_candidates
+               WHERE contract_signature=? AND status='rejected'
+                 AND json_extract(checks_json, '$.dismissal.batch') IS NOT NULL LIMIT 1""",
+            (identity.contract_signature,),
+        ).fetchone()
+        if dismissal:
+            observation_status = self.conn.execute(
+                "SELECT status FROM observations WHERE id=?", (observation_id,),
+            ).fetchone()[0]
+            changed = self.conn.execute(
+                """UPDATE workflow_candidates SET status='rejected',
+                   checks_json=json_set(checks_json, '$.dismissal', json(?))
+                   WHERE id=? AND status='pending'""",
+                (_json({"batch": dismissal[0], "previous_status": "pending",
+                        "observation_status": observation_status}), candidate_id),
+            ).rowcount
+            if changed:
+                self.conn.execute("UPDATE observations SET status='rejected' WHERE id=?", (observation_id,))
         return candidate_id
 
     def list_observations(

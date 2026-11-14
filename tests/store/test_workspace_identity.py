@@ -248,3 +248,23 @@ def test_preview_path_extraction_does_not_turn_shell_globs_into_folders(tmp_path
         assert "UI" not in labels
     finally:
         conn.close()
+
+
+def test_file_path_recovers_only_verified_repository(tmp_path):
+    repo = tmp_path / 'project'
+    (repo / '.git').mkdir(parents=True)
+    resolver = WorkspaceResolver()
+    identity = resolver.resolve({'gen_ai.client.file_path': str(repo / 'src' / 'app.py')})
+    assert identity is not None
+    assert identity.repo_root == str(repo)
+    assert identity.root_path == str(repo)
+    assert resolver.resolve({'gen_ai.client.file_path': str(tmp_path / 'notes.txt')}) is None
+
+
+def test_file_paths_from_multiple_repositories_remain_ambiguous(tmp_path):
+    roots = [tmp_path / name for name in ('one', 'two')]
+    for root in roots:
+        (root / '.git').mkdir(parents=True)
+    assert WorkspaceResolver().resolve_candidates(
+        [('gen_ai.client.file_path', str(root / 'app.py')) for root in roots]
+    ) is None

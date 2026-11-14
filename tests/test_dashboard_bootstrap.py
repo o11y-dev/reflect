@@ -462,7 +462,7 @@ vm.createContext(context);vm.runInContext(bundle,context);
         assert.ok(!/data-ledger-action="(?:apply|rollback|reject|save-edit)"/.test(element('ledger-dialog-actions').innerHTML));
         if(name==='review-workflow'){
           assert.match(element('ledger-dialog-body').innerHTML,/Illustrative reviewed change/);
-          assert.match(element('ledger-dialog-body').innerHTML,/Exact File Diff/);
+          assert.match(element('ledger-dialog-body').innerHTML,/2. Review file changes/);
           assert.ok(!/id="workflow-(?:content-editor|project-root|name)"/.test(element('ledger-dialog-body').innerHTML));
         }
       }
@@ -503,7 +503,7 @@ vm.createContext(context);vm.runInContext(bundle,context);
   assert.match(element('global-filter-meta').textContent,/published navigation not loaded/);
   for(const view of ['usage','tools','graph','context']) {
     assert.equal(element(view+'-content').hidden,true);
-    assert.match(element(view+'-view-status').textContent,/No published report loaded/);
+    assert.match(element(view+'-view-status').textContent,/Loading .*This view updates automatically/);
   }
   for(const name of ['workflows','impact']) {
     assert.equal(element('tab-'+name).classList.contains('evidence-unavailable'),true);

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -167,6 +167,32 @@ class EvidenceRef(ReflectModel):
     memory_id: str | None = None
     confidence: float = Field(default=1.0, ge=0, le=1)
     attrs: dict[str, Any] = Field(default_factory=dict)
+
+
+class TaskIntent(ReflectModel):
+    family: str | None = None
+    source_refs: list[EvidenceRef] = Field(default_factory=list)
+    target_refs: list[str] = Field(default_factory=list)
+    state: Literal["identified", "mixed", "unknown"] = "unknown"
+    reason: str
+
+
+class ProcedureStep(ReflectModel):
+    action: str
+    target_parameter: str
+    evidence_required: str
+    decision: str = ""
+    source_kind: Literal["observed", "user_instruction", "proposed"]
+    source_refs: list[EvidenceRef] = Field(default_factory=list)
+
+
+class ProcedureDefinition(ReflectModel):
+    task_intent: TaskIntent
+    applicability: dict[str, str]
+    inputs: list[str]
+    steps: list[ProcedureStep]
+    stop_conditions: list[str]
+    expected_output: str
 
 
 class ObservationSessionRef(ReflectModel):

@@ -138,3 +138,43 @@ def test_event_window_and_undated_coverage(tmp_path):
     assert result["total_operations"] == 1
     assert result["undated_operations"] == 1
     conn.close()
+
+
+def test_wrapped_git_operations_keep_separate_results_and_canonical_owner(tmp_path):
+    conn = connect_sqlite(tmp_path / 'test.db')
+    migrate(conn)
+    add_call(conn, 's1', 'call1', 'unused')
+    code = 'text(await tools.exec_command({cmd:"git status"})); text(await tools.exec_command({cmd:"git commit -m done"}));'
+    results = '\n'.join(json.dumps(item) for item in [
+        {'exit_code':0,'output':'clean'}, {'exit_code':1,'output':'commit failed'}])
+    conn.execute("UPDATE tool_calls SET tool_name='exec',input_preview_redacted=?,output_preview_redacted=?", (code,results))
+    assert refresh_git_activity(conn)['operations'] == 2
+    operations = git_activity(conn)['operations']
+    assert {(o['operation'],o['state']) for o in operations} == {('status','confirmed'),('commit','failed')}
+    assert {o['tool_call_id'] for o in operations} == {'call1'}
+    assert git_activity(conn)['distinct_commits'] == 0
+    assert refresh_git_activity(conn)['operations'] == 2
+    conn.close()
+
+
+def test_gitlab_mr_iid_is_preserved_for_captured_mcp_reads():
+    result = operation_for_tool({'tool_name':'mcp__gitlab_mcp__get_merge_request_details',
+        'input_preview_redacted':'{"project_id":123,"mr_iid":42}'})
+    assert result.artifact_id == '42'
+    assert result.repository == '123'
+    assert result.state == 'attempted'
+
+
+def test_captured_input_migration_repairs_git_without_queuing_raw_replay(tmp_path):
+    conn = connect_sqlite(tmp_path / 'migration.db')
+    migrate(conn)
+    add_call(conn, 's1', 'call1', 'unused')
+    conn.execute("UPDATE tool_calls SET tool_name='exec',input_preview_redacted=?,output_preview_redacted=?", (
+        'text(await tools.exec_command({cmd:"git status"}));', json.dumps({'exit_code':0,'output':'clean'})))
+    conn.execute('DELETE FROM pending_refresh')
+    conn.execute('DELETE FROM schema_migrations WHERE version=56')
+    assert migrate(conn) == [56]
+    assert git_activity(conn)['operations'][0]['operation'] == 'status'
+    assert conn.execute('SELECT phase FROM pending_refresh').fetchall() == [('improvements',)]
+    assert migrate(conn) == []
+    conn.close()

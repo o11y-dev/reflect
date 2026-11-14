@@ -139,6 +139,8 @@ def build_measurements(
     coverage: dict[str, Any] = {"observed_usage": 0, "priced_usage": 0, "complete_priced_usage": 0, "partially_priced_usage": 0, "known_model_usage": 0, "complete_input_usage": 0, "undated_usage": 0, "estimated_usage": 0, "legacy_cost_usage": 0, "unattributed_usage": 0, "undated_cost_usd": 0.0}
     bucket_records = dict.fromkeys(("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"), 0)
     coverage["token_bucket_records"] = bucket_records
+    retained_buckets = dict.fromkeys(bucket_records, 0)
+    coverage["retained_token_bucket_records"] = retained_buckets
     grains: Counter = Counter()
     by_model: dict[str, dict] = {}
     session_agents = {row["id"]: row["agent"] for row in session_rows}
@@ -247,6 +249,8 @@ def build_measurements(
         coverage["unattributed_usage"] += 1
         if start or end:
             continue
+        for key in retained_buckets:
+            retained_buckets[key] += int((row.get(key) or 0) > 0)
         grains["session_estimate" if estimated else "session"] += 1
         coverage["observed_usage"] += 1
         info = per_session[row["id"]]

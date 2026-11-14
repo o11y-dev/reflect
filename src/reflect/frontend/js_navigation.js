@@ -145,8 +145,6 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
       if (activeTab !== 'workflows') {
         params.delete('workflow');
         params.delete('workflow_root');
-        params.delete('workflow_type');
-        params.delete('workflow_status');
       }
       if (activeTab !== 'inbox') {
         params.delete('inbox_view');

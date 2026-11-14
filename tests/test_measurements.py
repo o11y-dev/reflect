@@ -282,12 +282,14 @@ def test_session_only_usage_is_preserved_lifetime_but_never_dated(conn, provenan
     session(conn, input_tokens=500, estimated_cost_usd=2.0, token_provenance=provenance)
     lifetime = build_measurements(conn)
     assert lifetime.totals["input_tokens"] == 500
+    assert lifetime.coverage["retained_token_bucket_records"]["input_tokens"] == 1
     assert lifetime.totals["estimated_cost_usd"] == 2.0
     assert lifetime.coverage["unattributed_usage"] == 1
     assert lifetime.coverage["cost_status"] == "partial"
     period = build_measurements(conn, date_from="2026-11-01T00:00:00Z")
     assert period.totals["input_tokens"] == 0
     assert period.coverage["undated_usage"] == 1
+    assert period.coverage["retained_token_bucket_records"]["input_tokens"] == 0
 
 
 def test_stale_session_aggregates_never_override_corrected_canonical_usage(conn):

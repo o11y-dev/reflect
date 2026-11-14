@@ -360,23 +360,23 @@ def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(p
     assert "Agent-authored draft" in text
     assert "Imported skill" in text
     assert "suggested_artifact" in text
-    assert "Exact File Diff" in text
-    assert "Edit Structured Workflow" in text
+    assert "2. Review file changes" in text
+    assert "Edit workflow draft" in text
     assert 'id="workflow-project-root"' in text
     assert "Choose a Project Folder" in text
     assert "Selected Project Folder" in text
-    assert "Verify Folder" in text
+    assert "Preview project" in text
     assert 'id="workflow-type-filter"' in text
     assert 'id="workflow-status-filter"' in text
-    assert '<option value="reviewable">Reviewable</option>' in text
+    assert '<option value="reviewable">Current suggestions &amp; active</option>' in text
     assert "workflowParams.get('workflow_status') || 'reviewable'" in text
     assert "reviewableWorkflowStates.has(String(item.status || 'pending'))" in text
     assert "String(reviewableWorkflows.length)" in text
     assert "not a Git or filesystem lock" in text
-    assert "Hypothesis to test" in text
+    assert "What this workflow helps with" in text
     assert "Proposed benefit; this is not a measured outcome." in text
     assert 'aria-label="Workflow approval summary"' in text
-    assert "Apply to One Project" in text
+    assert "1. Choose project" in text
     assert "Linked to source evidence" in text
     assert "Different from source evidence" in text
     assert "Only the selected project will be changed" in text
@@ -384,7 +384,7 @@ def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(p
     assert "content.behavior_type" in text
     assert "workflow_type" in text
     assert 'class="review-kpi-strip"' in text
-    assert 'class="review-grid"' in text
+    assert 'class="review-grid workflow-enable-layout"' in text
     assert 'class="ledger-action-spacer"' in text
     assert "/api/workflows/${encodeURIComponent(candidateId)}/evidence" in text
     assert "function sessionInspectionUrl(session)" in text
@@ -467,7 +467,7 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert '<th style="text-align:right">Outcome</th>' in text
     assert "const exploreViewStates = new Map([['usage', 'ready']])" in text
     assert "panel.setAttribute('aria-busy', loading ? 'true' : 'false')" in text
-    assert "This view is refreshing. Retry after telemetry refresh completes." in text
+    assert "This view updates automatically." in text
     for view in ("usage", "tools", "graph", "context"):
         assert f'id="{view}-view-status" role="status" aria-live="polite"' in text
     assert "/api/improvements" not in text
@@ -522,11 +522,11 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "Save the renamed draft and review its updated target path before applying." in text
     assert "submitSessionFeedback(sessionId, outcome, button)" in text
     assert 'data-session-feedback="no-change-correct"' in text
-    assert "trigger.textContent = 'Applying…'" in text
-    assert "Apply Unvalidated Draft" in text
+    assert "trigger.textContent = 'Enabling…'" in text
+    assert "Enable workflow" in text
     assert 'data-evidence-ready="${evidenceReady ? \'true\' : \'false\'}"' in text
     assert "No comparable task evidence supports this workflow yet." in text
-    assert "trigger.textContent = trigger.dataset.idleLabel || 'Apply Workflow'" in text
+    assert "trigger.textContent = trigger.dataset.idleLabel || 'Enable workflow'" in text
     assert "function sessionTokenTotal(session, estimatedTokens = null)" in text
     assert "function sessionCostPresentation(session, estimatedTokens = null)" in text
     assert "Tokens not captured" in text
@@ -539,10 +539,9 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert ": fmtTokenShort(sessionTokenTotal(session))" in text
     assert "['Evidence Coverage', `${coverage.toFixed(0)}%`]" in text
     assert "fmtWorkflowDate(headerScope?.kind === 'event_window' ? headerScope.date_from : D.first_event_ts)" in text
-    assert "linked sessions</div>" in text
-    assert "comparable tasks · ${evidenceReady ? 'task-bounded evidence' : 'unvalidated draft'}" in text
+    assert "comparable tasks. Only the selected project will be changed." in text
     assert "create:'New file'" in text
-    assert "Exact File Diff" in text
+    assert "2. Review file changes" in text
     assert "Review &amp; Roll Back" in text
     assert "const defaultProductTab =" in text
     assert "(IMPROVEMENT_DATA.workflows || []).length" in text
@@ -571,10 +570,10 @@ def test_dashboard_report_copy_matches_canonical_asset():
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
-def test_dashboard_workflows_and_skills_use_responsive_tiles(path: Path):
+def test_dashboard_workflows_use_tables_and_skills_use_responsive_tiles(path: Path):
     text = path.read_text(encoding="utf-8")
 
-    assert 'class="workflow-list workflow-tile-grid" id="workflow-ledger"' in text
+    assert 'class="workflow-list" id="workflow-ledger"' in text
     assert 'class="workflow-list skill-tile-grid" id="skill-registry"' in text
     assert 'id="skill-search" type="search"' in text
     assert 'id="skill-filter-summary" aria-live="polite"' in text
@@ -586,7 +585,9 @@ def test_dashboard_workflows_and_skills_use_responsive_tiles(path: Path):
     assert "function renderWorkflowSteps(steps, {limit = 0, compact = false} = {})" in text
     assert 'class="workflow-step-number" aria-hidden="true"' in text
     assert "renderWorkflowSteps(content.steps)" in text
-    assert "renderWorkflowSteps(steps, {limit:4, compact:true})" in text
+    assert "renderWorkflowSteps(steps)" in text
+    assert 'class="analysis-table"' in text
+    assert 'data-ledger-action="toggle-analysis-row"' in text
     assert '<dl class="tile-metric-grid">' in text
     assert 'class="skill-detail-grid"' in text
     assert 'class="tile-card-title"' in text
@@ -643,7 +644,7 @@ def test_dashboard_usage_separates_source_provenance_from_event_semantics(path: 
     assert "Stops depend on harness capture and do not verify task success" in text
     assert "const wt = (sqlTab('activity').weekly_trends || []).slice(-12);" in text
     assert 'title="${escHtml(String(m.value))}"' in text
-    assert "params.delete('workflow_type');" in text
+    assert "params.delete('workflow_type');" not in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)

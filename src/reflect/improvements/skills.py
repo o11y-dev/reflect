@@ -76,7 +76,9 @@ class SkillRegistryService:
         usage_step_ids: set[str] | None = None,
     ) -> dict[str, int]:
         workflow_result = self.sync_workflow_candidates()
-        filesystem_result = self.sync_paths(scan_paths)
+        captured_paths = self._captured_skill_paths(
+            scope=usage_scope if usage_scope is not None else scope, step_ids=usage_step_ids)
+        filesystem_result = self.sync_paths([*scan_paths, *captured_paths])
         usage = self.sync_usage(scope=usage_scope if usage_scope is not None else scope, step_ids=usage_step_ids)
         measurements = self.sync_measurements()
         if commit:
@@ -182,6 +184,36 @@ class SkillRegistryService:
                     (lifecycle.value, candidate.updated_at, skill_id, skill_id),
                 )
         return {"skills": tracked, "versions_created": versions}
+
+    def _captured_skill_paths(self, *, scope: AnalysisScope | None, step_ids: set[str] | None) -> set[Path]:
+        """Discover exact skill files read by captured calls, including plugin paths."""
+        from reflect.tool_inputs import resolve_skill_path, skill_read_paths, tool_invocations
+        if (scope is not None and scope.session_ids == set()) or step_ids == set():
+            return set()
+        clauses, params = [], []
+        for column, values in (("tc.session_id", scope.session_ids if scope else None), ("tc.step_id", step_ids)):
+            if values is not None:
+                clauses.append(f"{column} IN ({','.join('?' for _ in values)})")
+                params.extend(sorted(values))
+        clauses.append("(tc.raw_attrs_json LIKE '%SKILL.md%' OR tc.input_preview_redacted LIKE '%SKILL.md%')")
+        rows = self.conn.execute(f"""SELECT tc.tool_name,tc.raw_attrs_json,tc.input_preview_redacted,
+            tc.output_preview_redacted,COALESCE(w.root_path,'') FROM tool_calls tc
+            JOIN sessions s ON s.id=tc.session_id LEFT JOIN workspaces w ON w.id=s.workspace_id
+            WHERE {' AND '.join(clauses)}""", params)
+        paths = set()
+        for name, raw, preview, output, workspace in rows:
+            for call in tool_invocations({"tool_name":name, "raw_attrs_json":raw,
+                                              "input_preview_redacted":preview, "output_preview_redacted":output}):
+                attrs = call['raw_attrs_json']
+                if not isinstance(attrs, dict):
+                    attrs = json.loads(attrs or '{}')
+                if not attrs.get('gen_ai.client.tool.input') and call.get('input_preview_redacted'):
+                    attrs = {**attrs, 'gen_ai.client.tool.input': call['input_preview_redacted']}
+                for path, _ in skill_read_paths(attrs, call['tool_name']):
+                    resolved = resolve_skill_path(path, attrs, workspace)
+                    if resolved and Path(resolved).is_file():
+                        paths.add(Path(resolved))
+        return paths
 
     def sync_paths(self, paths: Iterable[Path]) -> dict[str, int]:
         roots = [Path(item).expanduser().resolve() for item in paths]

@@ -127,6 +127,7 @@ class DashboardImprovementAdapter:
             serialized = []
             for candidate in candidates:
                 item = candidate.model_dump(mode="json")
+                item["suggestion_assessment"] = service.workflows.suggestion_assessment(candidate)
                 try:
                     item["skill_id"] = service.skills.skill_for_candidate(candidate.id).id
                 except KeyError:
@@ -245,6 +246,15 @@ class DashboardImprovementAdapter:
         with self._service(writable=True) as service:
             candidate = service.workflows.reject(candidate_id, reason=reason[:200])
         return candidate.model_dump(mode="json")
+
+    def dismiss_suggestion(self, candidate_id: str, *, restore: bool = False) -> dict[str, object]:
+        # Review metadata needs no analysis snapshot or filesystem preparation lock.
+        # Reserve SQLite's writer before reading state; busy errors stay retryable.
+        with closing(connect_sqlite(self.db_path, timeout_ms=1000)) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            service = ImprovementService(conn, initialize_schema=False)
+            return (service.workflows.restore_suggestion(candidate_id) if restore
+                    else service.workflows.dismiss_suggestion(candidate_id))
 
     def record_feedback(
         self,

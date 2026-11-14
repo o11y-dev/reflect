@@ -830,3 +830,21 @@ class TestLoadJsonLines:
         )
         result = list(_load_json_lines(p))
         assert len(result) == 1
+
+
+def test_codex_mcp_namespace_survives_ingestion_and_conversation(tmp_path):
+    from reflect.conversation_adapters import CodexConversationAdapter
+    path = tmp_path / 'session.jsonl'
+    records = [
+        {'type':'session_meta','payload':{'id':'namespace-session'},'timestamp':'2026-11-01T00:00:00Z'},
+        {'type':'response_item','payload':{'type':'function_call','name':'js','namespace':'mcp__cua_repl','call_id':'call1','arguments':'{}'},'timestamp':'2026-11-01T00:00:01Z'},
+        {'type':'response_item','payload':{'type':'function_call_output','call_id':'call1','output':'ok'},'timestamp':'2026-11-01T00:00:02Z'},
+    ]
+    path.write_text('\n'.join(json.dumps(record) for record in records))
+    spans = list(_iter_codex_session_spans(path))
+    tools = [s['attributes'] for s in spans if s['attributes'].get('gen_ai.client.tool_use_id') == 'call1']
+    assert len(tools) == 2
+    assert {attrs['gen_ai.client.tool_name'] for attrs in tools} == {'mcp__cua_repl__js'}
+    assert tools[0]['gen_ai.client.mcp_server'] == 'cua_repl'
+    events = CodexConversationAdapter().load('namespace-session', path).events
+    assert {e.tool_name for e in events if e.type in {'tool_call','tool_result'}} == {'mcp__cua_repl__js'}

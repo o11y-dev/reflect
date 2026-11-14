@@ -11,6 +11,7 @@ from typing import Any
 from reflect.improvements.contracts import ContractEvaluationService, WorkflowContract
 from reflect.improvements.measurement_validity import COMPARISON_POLICY_VERSION, MeasurementValidity
 from reflect.improvements.repository import utc_now
+from reflect.usage_facts import usage_facts
 
 _RECOVERY_METRICS = {"tool_failure_rate", "identical_retry_calls"}
 _MINIMUM_SIGNAL_COVERAGE = 0.9
@@ -21,7 +22,20 @@ def _public_cohort(raw: str) -> dict[str, Any]:
     cohort.pop("before_execution_unit_ids", None)
     cohort.pop("after_execution_unit_ids", None)
     cohort.pop("fingerprint", None)
-    cohort.pop("execution_unit_snapshots", None)
+    snapshots = cohort.pop("execution_unit_snapshots", None) or cohort.get("superseded_token_comparison", {}).get("snapshots") or {}
+    cohort.pop("superseded_token_comparison", None)
+    cohort["periods"] = {}
+    cohort["metric_distribution"] = {}
+    for side in ("before", "after"):
+        units = snapshots.get(side, [])
+        starts = [str(unit["started_at"]) for unit in units if unit.get("started_at")]
+        ends = [str(unit.get("ended_at") or unit.get("started_at")) for unit in units
+                if unit.get("ended_at") or unit.get("started_at")]
+        cohort["periods"][side] = {"start": min(starts) if starts else None, "end": max(ends) if ends else None}
+        values = [unit["metric_value"] for unit in units if unit.get("metric_value") is not None]
+        cohort["metric_distribution"][side] = {
+            "metric_count": len(values), "nonzero_count": sum(value != 0 for value in values),
+        }
     return cohort
 
 
@@ -58,7 +72,13 @@ class MeasurementService:
         self.contracts = ContractEvaluationService(conn)
         self.validity = MeasurementValidity(conn)
 
-    def measure(self, candidate_id: str, *, skip_unchanged: bool = False) -> dict[str, Any]:
+    def measure(self, candidate_id: str, *, skip_unchanged: bool = False,
+                reassess: bool = False, commit: bool = True) -> dict[str, Any]:
+        """Append a comparison; explicit reassessment renews evidence, never membership.
+
+        Reassessment is used by numbered assessment migrations. Ordinary refreshes
+        continue to validate the pinned evidence and cannot silently renew it.
+        """
         row = self.conn.execute(
             """
             SELECT i.id, i.exposure_started_at, o.repo_id, wc.target_metric,
@@ -146,7 +166,7 @@ class MeasurementService:
             **cohort_scope,
             "evidence_digests": {
                 unit_id: digest for unit_id, digest in latest_cohort.get("evidence_digests", {}).items()
-                if unit_id in {*frozen_before_ids, *frozen_after_ids}
+                if not reassess and unit_id in {*frozen_before_ids, *frozen_after_ids}
             },
             "before_execution_unit_ids": frozen_before_ids or [
                 item["execution_unit_id"] for item in before_units
@@ -186,7 +206,7 @@ class MeasurementService:
                  if item["execution_unit_id"] in metric_values else ["Required execution-unit telemetry is unavailable"]}
                 for item in [*before_units, *after_units]
             ]
-            if recovery_mode:
+            if recovery_mode or metric_name == "context_outlier_sessions":
                 before_coverage = len(before) / len(before_units) if before_units else 0.0
                 after_coverage = len(after) / len(after_units) if after_units else 0.0
                 reasons = []
@@ -324,6 +344,10 @@ class MeasurementService:
             cohort["quality"] = quality
         if reasons:
             cohort["measurement_reasons"] = reasons
+        if reassess and latest:
+            cohort["reassessed_from_measurement_id"] = latest[0]
+        elif latest_cohort.get("reassessed_from_measurement_id"):
+            cohort["reassessed_from_measurement_id"] = latest_cohort["reassessed_from_measurement_id"]
         cohort["fingerprint"] = _cohort_fingerprint(
             cohort,
             before_values=before,
@@ -384,7 +408,8 @@ class MeasurementService:
                 """,
                 (observation_status, now, candidate_id),
             )
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return {
             "id": measurement_id,
             "candidate_id": candidate_id,
@@ -452,7 +477,7 @@ class MeasurementService:
             """
             SELECT m.id, wv.candidate_id, m.metric_name, m.cohort_json,
                    m.before_value, m.after_value, m.before_count, m.after_count,
-                   m.delta, m.verdict, m.confidence, m.measured_at, i.exposure_started_at
+                   m.delta, m.verdict, m.confidence, m.measured_at, i.exposure_started_at, wv.id, wv.version, i.id
             FROM measurements m
             JOIN interventions i ON i.id = m.intervention_id
             JOIN workflow_versions wv ON wv.id = i.workflow_version_id
@@ -477,6 +502,9 @@ class MeasurementService:
                 "verdict": row[9],
                 "confidence": row[10],
                 "measured_at": row[11],
+                "workflow_version_id": row[13],
+                "workflow_version": row[14],
+                "intervention_id": row[15],
             }
             yield result if recorded_only else self.validity.apply(result, json.loads(row[3]), row[12])
 
@@ -679,9 +707,52 @@ class MeasurementService:
     ) -> dict[str, float]:
         """Calculate a metric only from signals bounded to each execution unit."""
 
-        if not execution_unit_ids:
+        # Adherence requires the contract evaluator; tool failures are not a proxy.
+        if not execution_unit_ids or metric_name == "workflow_adherence":
             return {}
         placeholders = ", ".join("?" for _ in execution_unit_ids)
+        if metric_name == "context_outlier_sessions":
+            totals: dict[str, float] = {}
+            missing: set[str] = set()
+            seen: set[tuple[str, tuple[Any, ...]]] = set()
+            cursor = self.conn.execute(
+                f"""SELECT eus.execution_unit_id, llm.*
+                    FROM execution_unit_steps eus
+                    JOIN llm_calls llm ON llm.step_id = eus.step_id
+                    WHERE eus.execution_unit_id IN ({placeholders})""",
+                execution_unit_ids,
+            )
+            columns = [column[0] for column in cursor.description]
+            for row in cursor:
+                record = dict(zip(columns, row, strict=True))
+                unit_id = str(record["execution_unit_id"])
+                attrs = json.loads(record["raw_attrs_json"] or "{}")
+                facts = usage_facts(record, attrs)
+                # Legacy positive buckets are observed; default zero columns are not.
+                # Inclusive input cannot fall back when its cache split is unknown.
+                complete = all(
+                    facts.buckets[bucket] is not None or (
+                        attrs.get("reflect.usage.input_semantics") != "inclusive"
+                        and (record[column] or 0) > 0
+                    )
+                    for bucket, column in (
+                        ("input_tokens", "input_tokens"), ("output_tokens", "output_tokens"),
+                        ("cache_read_tokens", "cache_read_input_tokens"),
+                        ("cache_write_tokens", "cache_creation_input_tokens"),
+                    )
+                )
+                if not complete:
+                    missing.add(unit_id)
+                    continue
+                identity = (unit_id, facts.identity)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                totals[unit_id] = totals.get(unit_id, 0.0) + sum(
+                    value for bucket, value in facts.tokens.items()
+                    if bucket != "reasoning_output_tokens"
+                )
+            return {unit_id: value for unit_id, value in totals.items() if unit_id not in missing}
         rows = self.conn.execute(
             f"""
             WITH tool_summary AS (
@@ -737,32 +808,19 @@ class MeasurementService:
                 HAVING COUNT(*) >= 3
               )
               GROUP BY execution_unit_id
-            ), token_summary AS (
-              SELECT eus.execution_unit_id,
-                     SUM(COALESCE(llm.input_tokens, 0)
-                         + COALESCE(llm.output_tokens, 0)
-                         + COALESCE(llm.cache_read_input_tokens, 0)
-                         + COALESCE(llm.cache_creation_input_tokens, 0))
-                       AS tokens
-              FROM execution_unit_steps eus
-              JOIN llm_calls llm ON llm.step_id = eus.step_id
-              WHERE eus.execution_unit_id IN ({placeholders})
-              GROUP BY eus.execution_unit_id
             )
             SELECT eu.id, lower(COALESCE(eu.status, '')), eu.outcome,
                    COALESCE(ts.tool_calls, 0), COALESCE(ts.failed_calls, 0),
                    COALESCE(ts.read_calls, 0), COALESCE(ts.mutation_calls, 0),
                    COALESCE(ts.verification_calls, 0),
                    COALESCE(ts.constraint_violations, 0),
-                   COALESCE(rs.identical_retry_calls, 0), toks.tokens, eu.verification_passed, eu.boundary_json
+                   COALESCE(rs.identical_retry_calls, 0), eu.verification_passed, eu.boundary_json
             FROM execution_units eu
             LEFT JOIN tool_summary ts ON ts.execution_unit_id = eu.id
             LEFT JOIN retry_summary rs ON rs.execution_unit_id = eu.id
-            LEFT JOIN token_summary toks ON toks.execution_unit_id = eu.id
             WHERE eu.id IN ({placeholders})
             """,
             [
-                *execution_unit_ids,
                 *execution_unit_ids,
                 *execution_unit_ids,
                 *execution_unit_ids,
@@ -777,14 +835,10 @@ class MeasurementService:
                 if not tool_calls:
                     continue
                 value = float(row[4]) / tool_calls
-            elif metric_name == "context_outlier_sessions":
-                if row[10] is None:
-                    continue
-                value = float(row[10])
             elif metric_name == "identical_retry_calls":
                 value = float(row[9])
             elif metric_name == "unverified_change_sessions":
-                value = float(bool(row[6]) and row[11] is not True and row[11] != 1)
+                value = float(bool(row[6]) and row[10] is not True and row[10] != 1)
             elif metric_name == "read_only_exploration_calls":
                 value = float(row[5]) if int(row[5]) >= 8 and not row[6] else 0.0
             elif metric_name == "operator_correction_rate":
@@ -794,13 +848,13 @@ class MeasurementService:
             elif metric_name == "constraint_violation_rate":
                 value = float(row[8])
             elif metric_name == "recovered_failure_sessions":
-                if outcome not in {"success", "failure"} or row[11] is None:
+                if outcome not in {"success", "failure"} or row[10] is None:
                     continue
-                value = float(int(row[4]) > 0 and outcome == "success" and bool(row[11]))
+                value = float(int(row[4]) > 0 and outcome == "success" and bool(row[10]))
             elif metric_name == "successful_workflow_sessions":
-                if outcome not in {"success", "failure"} or row[11] is None:
+                if outcome not in {"success", "failure"} or row[10] is None:
                     continue
-                value = float(outcome == "success" and bool(row[11]))
+                value = float(outcome == "success" and bool(row[10]))
             else:
                 value = float(row[4])
             values[execution_unit_id] = value

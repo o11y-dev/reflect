@@ -447,6 +447,8 @@ def test_cached_workflow_evidence_never_enables_a_new_review():
                     source.index("async function showObservationEvidence(")]
     review += source[source.index("async function showWorkflowReview("):
                      source.index("async function submitSessionFeedback(")]
+    impact = Path("src/reflect/frontend/js_impact.js").read_text()
+    review += impact[impact.index("function workflowTableName("):impact.index("function impactOutcome(")]
     _run_browser_contract(r"""
 const dialogs=[];
 context.openLedgerDialog=dialog=>dialogs.push(dialog);

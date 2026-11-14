@@ -23,6 +23,7 @@ from reflect.improvements.models import (
     WorkflowDefinition,
     WorkflowProposal,
 )
+from reflect.improvements.review_workflows import RepeatedChangeReviewRule
 from reflect.improvements.session_insights import session_insight_rules
 
 _stable_fingerprint = stable_fingerprint
@@ -1114,6 +1115,7 @@ class HighPerformingWorkflowRule(BaseImprovementRule):
                 "behavior_type": WorkflowBehaviorType.PROVEN_PATTERN.value,
                 "suggested_artifact": "skill", "description": f"Use for matching {archetype} work and artifact scope.",
                 "steps": steps, "procedure": procedure,
+                "procedure_definition": procedure["procedure_definition"],
                 "abstain_when": ["The task, artifact areas, or check scope differs from the linked executions.",
                     "Required inputs are missing or the procedure evidence is incomplete.",
                     "A check fails repeatedly without a relevant state change; stop and report the blocker."],
@@ -1244,6 +1246,7 @@ DEFAULT_RULE_REGISTRY = RuleRegistry(
         IgnoredConstraintRule(),
         SuccessfulRecoveryRule(),
         HighPerformingWorkflowRule(),
+        RepeatedChangeReviewRule(),
         CorrectNoChangeRule(),
         *session_insight_rules(),
     )

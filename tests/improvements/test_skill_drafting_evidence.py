@@ -32,7 +32,7 @@ def evidence_service(tmp_path):
     migrate(conn)
     conn.execute("INSERT INTO agents(id,name,created_at,updated_at) VALUES ('a','codex',?,?)", (NOW, NOW))
     conn.execute("INSERT INTO repos(id,full_name,created_at,updated_at) VALUES ('r','example/repo',?,?)", (NOW, NOW))
-    conn.execute("INSERT INTO task_archetypes(id,name,description,created_at,updated_at) VALUES ('code-change','code-change','Build a change',?,?)", (NOW, NOW))
+    conn.execute("INSERT INTO task_archetypes(id,name,description,created_at,updated_at) VALUES ('implementation','implementation','Build a change',?,?)", (NOW, NOW))
     conn.execute("""INSERT INTO workspaces(id,root_path,path_hash,label,repo_id,source_key,confidence,
         raw_json,created_at,updated_at) VALUES ('w','/repo','hash','repo','r','test',1,'{}',?,?)""", (NOW, NOW))
     for index, verification in enumerate(('passed', 'passed', 'passed', 'failed', 'unknown')):
@@ -46,7 +46,11 @@ def evidence_service(tmp_path):
             agent_id,started_at,status,outcome,eligible,boundary_json,created_at,updated_at)
             VALUES (?,?,'test',1,'w','r','a',?,'completed','unknown',1,?,?,?)""",
             (uid, sid, NOW, json.dumps({'assessment': assessment}), NOW, NOW))
-        conn.execute("INSERT INTO execution_unit_archetypes VALUES (?,'code-change',0.9,0,'{}',?,?)", (uid, NOW, NOW))
+        conn.execute("INSERT INTO execution_unit_archetypes VALUES (?,'implementation',0.9,0,'{}',?,?)", (uid, NOW, NOW))
+        prompt = f'{uid}-prompt'
+        conn.execute("INSERT INTO steps(id,session_id,seq,type,status,started_at,raw_attrs_json,created_at,updated_at) VALUES (?,?,-1,'prompt','ok',?,?,?,?)",
+            (prompt,sid,NOW,json.dumps({'gen_ai.client.prompt.text':'Implement this change.'}),NOW,NOW))
+        conn.execute('INSERT INTO execution_unit_steps VALUES (?,?,?,?)',(uid,prompt,sid,NOW))
         for seq, name in enumerate(('Read', 'Edit', 'Bash')):
             step = f'{uid}-{seq}'
             payload = {'file_path': '/repo/src/worker.py'} if seq < 2 else {'command': 'pytest tests'}
@@ -234,7 +238,7 @@ def test_rendered_draft_keeps_all_structured_guards(evidence_service):
     for key in ('preconditions', 'checkpoints', 'verification', 'abstain_when'):
         for instruction in candidate.content[key]:
             assert instruction in rendered
-    assert 'repo_id=r, workspace_id=w, task_archetype_id=code-change' in rendered
+    assert 'repo_id=r, workspace_id=w, task_archetype_id=implementation' in rendered
     registered = service.skills.show(service.skills.skill_for_candidate(cid).id)
     assert all(instruction in registered.versions[0].content_markdown for instruction in candidate.content['abstain_when'])
 

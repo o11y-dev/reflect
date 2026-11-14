@@ -17,7 +17,7 @@ assert.ok(!visible.includes('22 candidates'));
 assert.ok(!visible.includes('missing verification'));
 assert.ok(!visible.includes('Collecting comparable evidence'));
 assert.ok(!visible.includes('<progress'));
-assert.equal((visible.match(/<button\b/g)||[]).length,1);
+assert.equal((visible.match(/<button\b/g)||[]).length,3);
 assert.match(visible,/data-ledger-action="review-impact-sessions"/);
 assert.match(html,/<details class="impact-history"><summary>Comparison evidence and exclusions<\/summary>/);
 assert.match(html,/22 candidates · 0 eligible · 5 required/);
@@ -40,7 +40,7 @@ assert.match(visible,/Next step:/);
 assert.match(visible,/Inspect Recorded Tasks/);
 assert.ok(!visible.includes('Collecting comparable evidence'));
 assert.ok(!visible.includes('<progress'));
-assert.equal((visible.match(/<button\b/g)||[]).length,1);
+assert.equal((visible.match(/<button\b/g)||[]).length,3);
 """)
 
 
@@ -56,7 +56,7 @@ assert.match(visible,/comparable tasks/);
 assert.match(visible,/data-ledger-action="review-workflow"/);
 assert.match(visible,/Review Applied Workflow/);
 assert.match(visible,/<progress value="2" max="5"/);
-assert.equal((visible.match(/<button\b/g)||[]).length,1);
+assert.equal((visible.match(/<button\b/g)||[]).length,3);
 """)
 
 
@@ -67,9 +67,9 @@ item.cohort.measurement_reasons=['Archetype Low Confidence <example>'];
 context.buildImprovementSurfaces();
 const html=ledger.innerHTML;
 const visible=html.replace(/<details\b[\s\S]*?<\/details>/g,'');
-assert.match(visible,/Comparison Blocked/);
+assert.match(visible,/Not measurable/);
 assert.match(visible,/Inspect Task Evidence/);
-assert.ok(!visible.includes('Archetype Low Confidence'));
+assert.ok(visible.includes('Archetype Low Confidence'));
 assert.ok(!visible.includes('<progress'));
 assert.ok(!visible.includes('Collecting'));
 assert.match(html,/Archetype Low Confidence &lt;example/);
@@ -104,7 +104,7 @@ assert.ok(!visible.includes('Next step:'));
 assert.match(visible,/do not establish that the workflow caused the change/);
 context.IMPROVEMENT_DATA.resources.impact={state:'error',loaded:true};
 context.buildImprovementSurfaces();
-assert.match(ledger.innerHTML,/Stored check · Improved/);
+assert.match(ledger.innerHTML,/Stored check · Observed decrease/);
 assert.match(ledger.innerHTML,/40%/);assert.match(ledger.innerHTML,/20%/);
 assert.match(ledger.innerHTML,/current validation is pending/);
 """)
@@ -119,7 +119,7 @@ def test_measured_state_cannot_override_missing_or_invalid_measurement(missing_v
         + r"""
 context.buildImprovementSurfaces();
 const visible=ledger.innerHTML.replace(/<details\b[\s\S]*?<\/details>/g,'');
-assert.match(visible,/Comparison Blocked/);
+assert.match(visible,/Not measurable/);
 assert.match(visible,/Inspect Task Evidence/);
 assert.ok(!visible.includes('Improved'));
 assert.ok(!visible.includes('Comparison available'));

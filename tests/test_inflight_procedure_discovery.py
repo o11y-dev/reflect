@@ -14,7 +14,7 @@ def test_report_discovers_fresh_checked_procedure_before_phase_ack(tmp_path, mon
     for session in range(3):
         records = []
         events = [
-            ("Implement feature build feature add feature", {"gen_ai.client.hook.event": "UserPromptSubmit"}),
+            ("Implement feature build feature add feature", {"gen_ai.client.hook.event": "UserPromptSubmit", "gen_ai.client.prompt.text": "Implement this feature."}),
             ("PostToolUse", {"gen_ai.client.tool_name": "Read", "gen_ai.client.file_path": "src/payments.py"}),
             ("PostToolUse", {"gen_ai.client.tool_name": "Edit", "gen_ai.client.file_path": "src/payments.py"}),
             ("PostToolUse", {"gen_ai.client.tool_name": "exec_command", "gen_ai.client.command": "pytest tests/payments",

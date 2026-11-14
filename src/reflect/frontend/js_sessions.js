@@ -1282,6 +1282,7 @@ class SessionConversationPlayhead {
     return {
       tools: Array.from(toolMap.values()).sort((a,b) => b.count - a.count || a.name.localeCompare(b.name)),
       skills: Array.from(skillMap.values()).sort((a,b) => b.count - a.count || a.name.localeCompare(b.name)),
+      skill_attempts: provided.skill_attempts || [],
       mcp_tools: Array.from(mcpMap.values()).sort((a,b) => b.count - a.count || a.name.localeCompare(b.name)),
       subagents: Array.from(subagentMap.values()).sort((a,b) => b.count - a.count || a.name.localeCompare(b.name)),
     };
@@ -1308,6 +1309,7 @@ class SessionConversationPlayhead {
       <tr><td><div class="tool-inventory-name">${escHtml(row.name || 'unknown')}</div>${row.source ? `<div class="tool-inventory-example">${escHtml(row.source)}</div>` : ''}</td><td style="text-align:right">${fmt(row.count || 0)}</td></tr>
     `).join('') : '<tr><td colspan="2" style="color:var(--text-3);text-align:center">No entries captured for this session.</td></tr>';
     return `<div class="tool-inventory-shell">
+      <p class="inbox-copy">Captured session lifetime. Counts use the normalized report snapshot; newer transcript activity can appear before the next refresh. <a class="usage-link" href="?report=api%2Fdata&amp;tab=explore&amp;view=tools&amp;range=all&amp;session=${encodeURIComponent(session.full_id || session.id || '')}">Explore this session’s tools →</a></p>
       <div class="tool-inventory-summary">
         <div class="tool-inventory-card"><div class="tool-inventory-num">${fmt(toolTotal)}</div><div class="tool-inventory-label">Tool calls</div></div>
         <div class="tool-inventory-card"><div class="tool-inventory-num">${fmt(inventory.tools.length)}</div><div class="tool-inventory-label">Distinct tools</div></div>
@@ -1322,6 +1324,7 @@ class SessionConversationPlayhead {
       <section class="tool-inventory-section">
         <h4>Skills</h4>
         <table class="tool-inventory-table"><thead><tr><th>Skill</th><th style="text-align:right">Uses</th></tr></thead><tbody>${renderSimpleRows(inventory.skills)}</tbody></table>
+        ${inventory.skill_attempts.length ? `<h4>Skill read attempts</h4><table class="tool-inventory-table"><thead><tr><th>Skill</th><th style="text-align:right">Attempts</th></tr></thead><tbody>${renderSimpleRows(inventory.skill_attempts)}</tbody></table>` : ''}
       </section>
       <section class="tool-inventory-section">
         <h4>Subagents</h4>

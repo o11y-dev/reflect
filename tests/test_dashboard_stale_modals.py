@@ -24,6 +24,7 @@ def _run_modal(scenario: str) -> None:
                         impact.index("function impactMeasurementState(")]
     fragments += impact[impact.index("function impactCohortDetails("):
                         impact.index("function impactScope(")]
+    fragments += impact[impact.index("function workflowTableName("):impact.index("function impactOutcome(")]
     fragments = Path("src/reflect/frontend/js_demo.js").read_text() + "\n" + fragments
     script = r"""
 const assert=require('node:assert/strict'),vm=require('node:vm');
@@ -277,3 +278,23 @@ assert.equal(dialogs.at(-1).title,'Newest selection');
 assert.equal(params.get('workflow'),null,'late result cannot change navigation');
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """)
+
+
+def test_enable_panel_leads_with_project_and_exact_change():
+    _run_modal(r'''
+(async()=>{
+const candidate={id:'workflow',status:'pending',content:{slug:'review-change',steps:['Inspect diff']}};
+context.IMPROVEMENT_DATA={workflows:[candidate],resources:{workflows:{state:'ready'}}};
+context.ledgerRequest=async url=>url.includes('/preview')
+ ? {checks:{apply_allowed:true},project_root:'/test',target_path:'/test/.agents/skills/review-change/SKILL.md',diff:'+ Inspect diff',change_kind:'create'}
+ : {support_execution_unit_count:3};
+await context.showWorkflowReview('workflow');
+const panel=dialogs.at(-1);
+assert.match(panel.actions,/>Enable workflow<\/button>/);
+assert.match(panel.body,/1\. Choose project/);
+assert.match(panel.body,/2\. Review file changes/);
+assert.ok(panel.body.indexOf('+ Inspect diff')<panel.body.indexOf('Supporting Tasks'));
+assert.ok(!panel.actions.includes('Save Draft'),'editing belongs in advanced section');
+assert.ok(!panel.body.includes('<summary>Exact File Diff</summary>'),'file changes must be visible');
+})().catch(error=>{console.error(error);process.exitCode=1;});
+''')

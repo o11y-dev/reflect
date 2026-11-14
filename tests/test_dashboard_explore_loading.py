@@ -112,16 +112,21 @@ context.fetch = async (url,options)=>{
 await context.hydrateExploreView('tools').catch(()=>{});
 assert.equal(renders.length, 0);
 assert.equal(statuses.tools.hidden, false);
-assert.equal(panels.tools.attributes['aria-busy'], 'false');
+assert.equal(panels.tools.attributes['aria-busy'], input.status === 503 ? 'true' : 'false');
 assert.equal(panels.tools.children[1].hidden, true);
 assert.match(statuses.tools.textContent, input.status === 503
-  ? /refresh|prepar/i : /not found|could not|server|404|500/i);
+  ? /loading|prepar/i : /not found|could not|server|404|500/i);
 assert.ok(timers.some(timer=>timer.ms === 30000));
 assert.ok(cleared.length > 0);
 context.fetch = async url=>{requests.push(url);return response(200,payload('A','tools'));};
 const retry = statuses.tools.children.find(child=>child.textContent === 'Retry');
-assert.ok(retry, 'inline error must expose an explicit retry action');
-await retry.listeners.click();
+if (input.status === 503) {
+  assert.ok(!retry, 'background preparation must not ask the user to retry');
+  await context.hydrateExploreView('tools'); // the existing polling loop
+} else {
+  assert.ok(retry, 'genuine errors retain recovery');
+  await retry.listeners.click();
+}
 assert.equal(requests.length, 2, 'failed request must remain retryable');
 assert.equal(statuses.tools.hidden, true);
 assert.equal(panels.tools.children[1].hidden, false);
@@ -245,7 +250,7 @@ assert.equal(context.D.focused_session_id, '', 'incomplete response must not rep
 assert.equal(context.D.sessions, navSessions);
 assert.equal(statuses.usage.hidden, false);
 assert.equal(panels.usage.children[1].hidden, true);
-assert.match(statuses.usage.textContent, /prepar|refresh/i);
+assert.match(statuses.usage.textContent, /loading|prepar/i);
 """)
 
 
@@ -401,7 +406,7 @@ assert.match(statuses.tools.textContent,/Showing data from/);
 resolveNext(response(503,{state:'preparing'}));await loading;
 assert.equal(panels.tools.children[1].hidden,false);
 assert.equal(context.D.sqlite.tabs.tools.scope,'A');
-assert.match(statuses.tools.textContent,/Showing data from.*refresh/);
+assert.match(statuses.tools.textContent,/Showing data from.*Loading/);
 params.set('session','B');const changed=context.hydrateExploreView('tools');
 assert.equal(panels.tools.children[1].hidden,true,'old scope must not appear below new filters');
 resolveNext(response(503,{state:'preparing'}));await changed;
@@ -451,7 +456,7 @@ context.fetch=async url=>{
   return response(200,payload('A','tools'));
 };
 await context.hydrateExploreView('tools');
-assert.match(statuses.tools.textContent,/Tool inventory is preparing in the background/);
+assert.match(statuses.tools.textContent,/Loading command and tool patterns/);
 assert.equal(vm.runInContext("exploreViewStates.get('tools')",context),'preparing');
 assert.equal(statuses.tools.classList.contains('error'),false);
 assert.equal(panels.tools.children[1].hidden,true);
@@ -498,7 +503,7 @@ assert.ok(statuses[input.view].textContent.includes(new Date(readAt).toLocaleStr
 assert.ok(!statuses[input.view].textContent.includes('2020'));
 assert.ok(!statuses[input.view].textContent.includes('last published'));
 assert.match(statuses[input.view].textContent,/Analysis is pending/);
-assert.ok(statuses[input.view].children.some(child=>child.textContent === 'Retry'));
+assert.ok(!statuses[input.view].children.some(child=>child.textContent === 'Retry'));
 context.fetch=async url=>{requests.push(url);return response(503,{state:'preparing'});};
 await context.hydrateExploreView(input.view);
 assert.equal(requests.length,2,'recorded data must not stop revalidation');

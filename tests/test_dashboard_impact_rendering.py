@@ -142,3 +142,114 @@ context.buildImprovementSurfaces();
 assert.match(ledger.innerHTML,/20 selected · Unknown with metric values · Unknown missing metric values/);
 assert.ok(!ledger.innerHTML.includes('<progress'),'explicitly unknown metric coverage cannot use a legacy sample count');
 """)
+
+
+def test_impact_table_keeps_uncertainty_and_dates_visible_without_confidence_claims():
+    _run_impact_contract(r"""
+item.cohort.baseline_state='frozen';item.measurement_state='measured';item.verdict='improved';
+item.before_value=1.25;item.after_value=0;item.before_count=20;item.after_count=10;item.confidence=.75;
+item.cohort.periods={before:{start:'2026-08-30',end:'2026-09-10'},after:{start:'2026-09-11',end:'2026-09-28'}};
+context.buildImprovementSurfaces();
+const html=ledger.innerHTML;
+assert.match(html,/<table/);assert.match(html,/<th scope="col">Outcome/);
+assert.match(html,/aria-expanded="false"/);assert.match(html,/data-ledger-action="toggle-analysis-row"/);
+assert.match(html,/Observed decrease/);assert.match(html,/2026-08-30/);assert.match(html,/2026-09-28/);
+assert.match(html,/Adherence unknown/);assert.ok(!html.includes('75% confidence'));
+assert.match(html,/data-ledger-action="navigate-analysis-row"/);
+item.measurement_state='not_measurable';item.before_value=null;item.after_value=null;
+item.cohort.measurement_reasons=['Token telemetry missing'];
+context.buildImprovementSurfaces();
+assert.match(ledger.innerHTML,/Not measurable/);assert.match(ledger.innerHTML,/Token telemetry missing/);
+""")
+
+
+def test_linked_rows_preserve_filters_and_expansion_across_refresh():
+    _run_impact_contract(r"""
+const workflowLedger={innerHTML:''},statusFilter={value:'pending'},typeFilter={value:'all'};
+const params=new URLSearchParams('workflow_status=pending&range=7d');
+const button={setAttribute:(key,value)=>{button[key]=value},focus:()=>{},scrollIntoView:()=>{}};
+const detail={hidden:true};
+const originalGet=context.document.getElementById;
+context.document.getElementById=id=>({'workflow-ledger':workflowLedger,
+  'workflow-status-filter':statusFilter,'workflow-type-filter':typeFilter,
+  'toggle-workflow-workflow-one':button,'detail-workflow-workflow-one':detail}[id]||originalGet(id));
+context.currentParams=()=>new URLSearchParams(params);
+context.updateUrlParams=fn=>fn(params);context.activateTab=tab=>params.set('tab',tab);
+context.isStaticDemo=()=>false;
+context.workflowSourcePresentation=()=>({label:'Observed procedure',reviewLabel:'Review'});
+context.renderWorkflowSteps=()=>'<ol><li>Verify change</li></ol>';
+context.IMPROVEMENT_DATA.workflows=[{id:'workflow-one',title:'Verify completion',status:'stale',
+  content:{steps:[]},checks:{stale_reason:'source_observation_resolved'}}];
+context.buildImprovementSurfaces();
+assert.ok(!workflowLedger.innerHTML.includes('Verify completion'));
+context.navigateAnalysisRow('workflow','workflow-one');
+assert.equal(params.get('workflow_status'),'pending');assert.equal(params.get('range'),'7d');
+assert.match(workflowLedger.innerHTML,/Verify completion/);assert.match(workflowLedger.innerHTML,/Retired suggestion/);
+assert.match(workflowLedger.innerHTML,/aria-expanded="true"/);
+context.toggleAnalysisRow('workflow','workflow-one');assert.equal(button['aria-expanded'],'false');assert.equal(detail.hidden,true);
+context.buildImprovementSurfaces();assert.match(workflowLedger.innerHTML,/aria-expanded="false"/);
+assert.ok(!workflowLedger.innerHTML.includes('Evidence Confidence'));
+let inspected=null;context.showWorkflowReview=id=>{inspected=id};
+context.navigateAnalysisRow('workflow','non-representative-variant');
+assert.equal(inspected,'non-representative-variant');
+""")
+
+
+def test_impact_history_separates_activations_and_keeps_concentration_visible():
+    _run_impact_contract(r"""
+const checks=[{id:'a',candidate_id:'w',workflow_version_id:'v',intervention_id:'first',measured_at:'2026-10-01'},
+ {id:'b',candidate_id:'w',workflow_version_id:'v',intervention_id:'second',measured_at:'2026-11-01'}];
+assert.equal(context.groupImpactMeasurements(checks).length,2);
+item.cohort.metric_distribution={before:{nonzero_count:1,metric_count:20}};
+assert.match(context.impactLimitations(item),/One of 20 baseline tasks/);
+item.cohort.exposure.after.followed=3;
+assert.match(context.impactLimitations(item),/One of 20 baseline tasks/);
+assert.match(context.impactLimitations(item),/3 followed tasks/);
+""")
+
+
+def test_suggestions_expose_dismiss_and_restore_without_requiring_fresh_analysis():
+    _run_impact_contract(r"""
+context.isStaticDemo=()=>false;
+const suggestion={id:'suggestion-one',status:'pending',title:'Verify completion',lifecycle:{deployment:'not_deployed'}};
+assert.match(context.workflowSuggestionAction(suggestion),/data-ledger-action="dismiss-suggestion"/);
+suggestion.status='rejected';suggestion.checks={dismissal:{batch:'one'}};
+assert.match(context.workflowSuggestionAction(suggestion),/>Restore<\/button>/);
+suggestion.lifecycle.deployment='active';
+assert.equal(context.workflowSuggestionAction(suggestion),'');
+suggestion.lifecycle.deployment='not_deployed';context.isStaticDemo=()=>true;
+assert.equal(context.workflowSuggestionAction(suggestion),'');
+""")
+
+
+def test_workflow_observed_steps_are_separate_from_proposed_safeguards():
+    _run_impact_contract(r"""
+const html=context.workflowProcedureEvidence({observed_steps:['read <diff>'],proposed_steps:['check head']});
+assert.match(html,/Observed in source executions/);
+assert.match(html,/Proposed safeguards · benefit unmeasured/);
+assert.match(html,/read &lt;diff>/);
+assert.equal(context.workflowProcedureEvidence({}), '');
+""")
+
+
+def test_recommendations_limit_five_keep_enable_and_allow_show_all():
+    _run_impact_contract(r'''
+const workflowLedger={innerHTML:'',insertAdjacentHTML:(_,html)=>{workflowLedger.innerHTML+=html}},showAll={};
+const params=new URLSearchParams();
+context.document.getElementById=id=>({'workflow-ledger':workflowLedger,'workflow-show-all':showAll}[id]||null);
+context.currentParams=()=>new URLSearchParams(params);context.updateUrlParams=fn=>fn(params);
+context.isStaticDemo=()=>false;context.workflowSourcePresentation=()=>({label:'Observed procedure'});
+context.renderWorkflowSteps=()=>'';
+context.IMPROVEMENT_DATA.resources.workflows={state:'ready',loaded:true};
+context.IMPROVEMENT_DATA.workflows=Array.from({length:7},(_,i)=>({id:`w${i}`,title:`Procedure ${i}`,status:'pending',content:{steps:[]},suggestion_assessment:{eligible:i<6}}));
+context.buildImprovementSurfaces();
+assert.match(workflowLedger.innerHTML,/Show all 6 workflows/);
+assert.ok(!workflowLedger.innerHTML.includes('Procedure 5'));
+assert.ok(!workflowLedger.innerHTML.includes('Procedure 6'));
+assert.equal((workflowLedger.innerHTML.match(/class="analysis-summary"/g)||[]).length,5);
+assert.match(workflowLedger.innerHTML,/>Enable workflow<\/button>/);
+showAll.onclick();
+assert.match(workflowLedger.innerHTML,/Procedure 5/);
+assert.equal(params.get('workflow_show'),'all');
+context.buildImprovementSurfaces();assert.match(workflowLedger.innerHTML,/Procedure 5/);
+''')

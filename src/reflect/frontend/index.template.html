@@ -294,14 +294,15 @@
 <!-- ════════════════════ IMPACT ════════════════════ -->
 <div class="tab-panel" id="tab-impact" role="tabpanel" aria-labelledby="tab-button-impact" hidden>
   <div class="product-hero view-intro">
-    <div><h2>Impact</h2><p>Check whether later, comparable tasks support a workflow improvement.</p><p class="view-scope">Each check uses its recorded before/after task cohorts. Session filters do not apply.</p></div>
+    <div><h2>Impact</h2><p>Check whether later, comparable tasks support a workflow improvement.</p><p class="view-scope">Historical comparisons use their recorded cohort dates, not the selected activity date range. Expand a row to inspect the evidence.</p></div>
     <div class="product-count" id="measurement-count">0<small>impact checks</small></div>
   </div>
-  <div class="impact-explainer" aria-label="How impact checks work">
+  <details class="impact-help"><summary>How comparisons work</summary><div class="impact-explainer" aria-label="How impact checks work">
     <div class="impact-step"><strong>1. Install</strong><span>Review the exact workflow, then explicitly install its versioned skill.</span></div>
     <div class="impact-step"><strong>2. Collect</strong><span>Capture the required comparable task executions after activation.</span></div>
     <div class="impact-step"><strong>3. Compare</strong><span>Review improvement, regression, or no clear change.</span></div>
   </div>
+  </details>
   <div class="measurement-list" id="measurement-ledger"></div>
 </div>
 
@@ -336,20 +337,21 @@
 <!-- ════════════════════ WORKFLOWS ════════════════════ -->
 <div class="tab-panel" id="tab-workflows" role="tabpanel" aria-labelledby="tab-button-workflows" hidden>
   <div class="product-hero view-intro">
-    <div><h2>Workflows</h2><p>Review a procedure and its evidence before applying it.</p><p class="view-scope">Stored workflow inventory. Each workflow shows its supporting task scope; session filters do not apply.</p></div>
+    <div><h2>Workflows</h2><p>Choose a useful procedure, inspect the changes, and enable it for one project.</p><p class="view-scope">Stored workflow inventory. Each workflow shows its supporting task scope; session filters do not apply.</p></div>
     <div class="product-count" id="workflow-total-count">0<small>workflow contracts</small></div>
   </div>
   <section class="panel product-section" id="workflow-candidates-section">
   <div class="product-section-head">
-    <div><h3 class="product-section-title">Reviewable Workflows</h3><p class="product-section-copy">Review the contract, exact steps, stop conditions, verification, source task evidence, installation target, and diff before anything changes.</p></div>
+    <div><h3 class="product-section-title">Current workflows</h3><p class="product-section-copy">Expand a row for evidence and decisions. Enable workflow previews the project and exact file changes.</p></div>
     <div class="product-section-count" id="workflow-count">0<small>reviewable workflows</small></div>
   </div>
   <div class="workflow-toolbar" aria-label="Workflow filters">
     <div class="workflow-filter-field"><label for="workflow-type-filter">Behavior</label><select id="workflow-type-filter"><option value="all">All behavior types</option><option value="recovery">Recovery</option><option value="verification">Verification</option><option value="exploration">Exploration</option><option value="proven_pattern">Proven Pattern</option></select></div>
-    <div class="workflow-filter-field"><label for="workflow-status-filter">State</label><select id="workflow-status-filter"><option value="reviewable">Reviewable</option><option value="all">All states</option><option value="pending">Pending Review</option><option value="approved">Approved</option><option value="active">Active Deployment</option><option value="rolled_back">Rolled Back</option><option value="stale">Stale</option><option value="rejected">Rejected</option></select></div>
+    <div class="workflow-filter-field"><label for="workflow-status-filter">State</label><select id="workflow-status-filter"><option value="reviewable">Current suggestions &amp; active</option><option value="history">History</option><option value="all">All states</option><option value="pending">Suggestions</option><option value="approved">Approved</option><option value="active">Active</option><option value="rolled_back">Rolled Back</option><option value="stale">Retired suggestions</option><option value="rejected">Dismissed / rejected</option></select></div>
     <div class="workflow-filter-summary" id="workflow-filter-summary" aria-live="polite"></div>
   </div>
-  <div class="workflow-list workflow-tile-grid" id="workflow-ledger" aria-live="polite"></div>
+  <div id="workflow-action-status" class="workflow-action-status" role="status" aria-live="polite"></div>
+  <div class="workflow-list" id="workflow-ledger" aria-live="polite"></div>
   </section>
 </div>
 

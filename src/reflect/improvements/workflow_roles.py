@@ -116,6 +116,10 @@ def workflow_role(signal: WorkflowSignal, *, acted: bool) -> str | None:
         )
         if any(term in value for term in approval_terms):
             return "authorize"
+    from reflect.execution_assessment import attrs_dict
+    review = review_operation(signal.name, attrs_dict(signal.preview))
+    if review and signal.successful_result and not signal.failed:
+        return review[1]
     name = signal.name.lower().rsplit("__", 1)[-1]
     if any(term in name for term in ("approve", "authorize", "confirm")):
         return "authorize"
@@ -150,3 +154,24 @@ __all__ = [
     "workflow_role",
     "workflow_roles",
 ]
+
+
+def review_operation(tool_name: str, arguments: dict) -> tuple[str, str] | None:
+    """Map supported provider reads to an identified change and semantic role."""
+    name = str(tool_name).rsplit('__', 1)[-1].rsplit('/', 1)[-1]
+    operations = {
+        'get_merge_request_details': ('gitlab','review_metadata'),
+        'get_merge_request_changes': ('gitlab','review_diff'),
+        'get_pull_request': ('github','review_metadata'),
+        'get_pull_request_diff': ('github','review_diff'),
+    }
+    if name not in operations:
+        return None
+    provider, role = operations[name]
+    project = arguments.get('project_id') if provider=='gitlab' else '/'.join(str(arguments.get(k) or '') for k in ('owner','repo'))
+    number = arguments.get('merge_request_iid') or arguments.get('mr_iid') or arguments.get('pull_number') or arguments.get('iid')
+    if not project or project=='/' or not number:
+        return None
+    revision = arguments.get('head_sha') or arguments.get('commit_sha')
+    target = f'{provider}:{project}:{number}'
+    return target + (f'@{revision}' if revision else ''), role

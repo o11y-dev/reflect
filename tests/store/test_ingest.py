@@ -1107,3 +1107,31 @@ def test_ingest_local_spans_dedupes(tmp_path):
         assert json.loads(row[3])["gen_ai.client.tool_name"] == "Read"
     finally:
         conn.close()
+
+
+def test_native_decoder_upgrade_repairs_dropped_mcp_namespace(tmp_path, monkeypatch):
+    import reflect.parsing as parsing
+    import reflect.store.ingest as ingestion
+    path = tmp_path / 'namespace.jsonl'
+    path.write_text('\n'.join(json.dumps(record) for record in [
+        {'type':'session_meta','payload':{'id':'namespace-session'},'timestamp':'2026-11-01T00:00:00Z'},
+        {'type':'response_item','payload':{'type':'function_call','name':'js','namespace':'mcp__cua_repl','call_id':'call1','arguments':'{}'},'timestamp':'2026-11-01T00:00:01Z'},
+        {'type':'response_item','payload':{'type':'function_call_output','call_id':'call1','output':'ok'},'timestamp':'2026-11-01T00:00:02Z'},
+    ]))
+    conn = connect_sqlite(tmp_path / 'db.sqlite')
+    try:
+        migrate(conn)
+        with monkeypatch.context() as old:
+            old.setattr(ingestion, 'NATIVE_DECODER_VERSION', 4)
+            old.setattr(parsing, 'qualify_mcp_tool_name', lambda name, namespace: name)
+            ingest_native_session_file(conn, file_path=path, agent='codex', skip_unchanged=True)
+            normalize_pending_raw_events(conn)
+        assert conn.execute('SELECT COUNT(*) FROM mcp_calls').fetchone()[0] == 0
+        repaired = ingest_native_session_file(conn, file_path=path, agent='codex', skip_unchanged=True)
+        assert repaired['replaced_native_events'] > 0
+        normalize_pending_raw_events(conn)
+        assert [row[0] for row in conn.execute('SELECT tool_name FROM tool_calls')] == ['mcp__cua_repl__js']
+        assert tuple(conn.execute('SELECT server_name,tool_name FROM mcp_calls').fetchone()) == ('cua_repl', 'js')
+        assert ingest_native_session_file(conn, file_path=path, agent='codex', skip_unchanged=True)['unchanged'] == 1
+    finally:
+        conn.close()

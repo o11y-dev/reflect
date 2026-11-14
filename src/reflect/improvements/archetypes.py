@@ -12,6 +12,7 @@ from reflect.improvements.contracts import (
     ContractEvaluationService,
     WorkflowContract,
 )
+from reflect.improvements.models import EvidenceRef, TaskIntent
 from reflect.improvements.repository import utc_now
 
 _ARCHETYPES: dict[str, dict[str, Any]] = {
@@ -96,6 +97,49 @@ class TaskArchetypeService:
 
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
+
+    def intent_for_execution(self, execution_unit_id: str) -> TaskIntent:
+        """Use this execution's captured requests; never borrow neighboring intent."""
+        rows = self.conn.execute("""SELECT st.id,st.session_id,COALESCE(
+              (SELECT cf.content_preview_redacted FROM conversation_facts cf
+               WHERE cf.step_id=st.id AND cf.kind='prompt' AND cf.role='user'
+               ORDER BY cf.id LIMIT 1),
+              json_extract(st.raw_attrs_json,'$."gen_ai.client.prompt.text"'),
+              json_extract(st.raw_attrs_json,'$."gen_ai.client.prompt"'))
+            FROM execution_unit_steps us JOIN steps st ON st.id=us.step_id
+            WHERE us.execution_unit_id=? ORDER BY st.seq LIMIT 24""", (execution_unit_id,)).fetchall()
+        actions = {
+            'review': r'review|inspect (?:this |the )?(?:pull|merge) request',
+            'implementation': r'implement|build|refactor|add (?:a |the )?(?:feature|support)',
+            'debugging': r'debug|fix|diagnose|investigate (?:this |the |an? )?(?:incident|failure|outage)',
+            'testing': r'test|run (?:the )?tests',
+            'release': r'release|deploy|validate (?:this |the )?rollout',
+            'documentation': r'document|write (?:the |a )?(?:guide|documentation)',
+            'research': r'research|explore',
+            'ticket_creation': r'(?:create|draft|file|open) (?:the |a )?(?:ticket|issue)',
+        }
+        families, refs = set(), []
+        for step_id, session_id, text in rows:
+            if not text:
+                continue
+            clean = re.sub(r'```.*?```', '', str(text), flags=re.S)
+            clean = re.sub(r'(?m)^\s*>.*$', '', clean)
+            clean = re.sub(r'"[^"\n]*"', '', clean)
+            matched = {family for family, verbs in actions.items() if re.search(
+                rf'(?:^|[.!?]\s+|\b(?:and|then)\s+)(?:please\s+|can you\s+|could you\s+|help me\s+)*(?:{verbs})\b',
+                clean, re.I)}
+            if matched:
+                families.update(matched)
+                refs.append(EvidenceRef(entity_type='step',entity_id=step_id,step_id=step_id,
+                                        session_id=session_id,summary_redacted='Captured user task instruction.'))
+        # Validation is commonly a step within another explicitly requested task.
+        if len(families)>1:
+            families.discard('testing')
+        state = 'identified' if len(families)==1 else 'mixed' if families else 'unknown'
+        return TaskIntent(family=next(iter(families)) if state=='identified' else None,
+                          state=state,source_refs=refs,
+                          reason='Captured task instruction' if state=='identified' else
+                          'Multiple requested task families' if state=='mixed' else 'No explicit task instruction captured')
 
     def refresh(self, *, session_ids: set[str] | None = None,
                 execution_unit_ids: set[str] | None = None) -> dict[str, int]:
@@ -187,7 +231,14 @@ class TaskArchetypeService:
                        (
                          SELECT GROUP_CONCAT(step_excerpt, ' ')
                          FROM (
-                           SELECT substr(COALESCE(st.summary, ''), 1, 1000) AS step_excerpt
+                           SELECT substr(COALESCE(
+                             (SELECT NULLIF(cf.content_preview_redacted, '')
+                              FROM conversation_facts cf WHERE cf.step_id=st.id
+                                AND cf.kind='prompt' AND cf.role='user'
+                              ORDER BY cf.id LIMIT 1),
+                             NULLIF(json_extract(st.raw_attrs_json, '$."gen_ai.client.prompt.text"'), ''),
+                             NULLIF(json_extract(st.raw_attrs_json, '$."gen_ai.client.prompt"'), ''),
+                             st.summary, ''), 1, 1000) AS step_excerpt
                            FROM execution_unit_steps tus
                            JOIN steps st ON st.id = tus.step_id
                            WHERE tus.execution_unit_id = tu.id
@@ -254,6 +305,7 @@ class TaskArchetypeService:
                             "matched_terms": sorted(set(match.matched_terms)),
                             "runner_up_score": match.runner_up_score,
                             "source_confidence": source_confidence,
+                            "task_intent": self.intent_for_execution(execution_unit_id).model_dump(mode="json"),
                         },
                         sort_keys=True,
                     ),

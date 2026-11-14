@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shlex
 import sqlite3
 from collections import defaultdict
-from dataclasses import dataclass
-from pathlib import PurePosixPath
+from dataclasses import dataclass, replace
+from pathlib import Path, PurePosixPath
 
 from reflect.telemetry_facts import extract_skill_names_from_text, first_attr
+from reflect.tool_inputs import resolve_skill_path, skill_read_paths, tool_invocations
 from reflect.utils import _json_loads
 
 
@@ -30,6 +30,7 @@ class SkillOccurrence:
     relationship: str
     state: str
     path: str | None
+    invocation_index: int | None = None
 
 
 class SkillUsageProjector:
@@ -54,39 +55,38 @@ class SkillUsageProjector:
         event = str(first_attr(attrs, "gen_ai.client.hook.event", "ide.hook.event") or "").lower().rsplit(".", 1)[-1]
         if not name and event == "beforereadfile":
             name, status = "read", "unknown"
-        command = first_attr(attrs, "gen_ai.client.command", "command", "shell.command") or payload.get("cmd") or payload.get("command")
-        if name in {"exec_command", "bash", "shell", "exec"} and isinstance(command, str):
-            # A single read invocation is evidence; a filename mentioned in an
-            # arbitrary script, search, echo, or composite command is not.
-            if len(command) > 32_768 or any(char in command for char in ";&|<>\n`") or "$(" in command:
+        if name.rsplit('.', 1)[-1] == "exec":
+            captured = first_attr(attrs, "gen_ai.client.tool.input", "tool.input")
+            if isinstance(captured, str) and "skill" not in captured.lower():
                 return []
-            try:
-                tokens = shlex.split(command)
-            except ValueError:
-                return []
-            if not tokens or PurePosixPath(tokens[0]).name not in {"cat", "head", "tail", "sed", "bat"}:
+        row = {"tool_name": tool_name, "status": status, "raw_attrs_json": attrs}
+        invocations = tool_invocations(row)
+        if invocations != [row]:
+            return [replace(item, invocation_index=call['wrapper_index'])
+                    for call in invocations
+                    for item in self.occurrences(call['raw_attrs_json'], call['tool_name'], call['status'], workspace)]
+        if name in {"exec_command", "bash", "shell", "exec"}:
+            paths = skill_read_paths(attrs, name)
+            if not paths:
                 return []
             from reflect.execution_assessment import explicit_exit
             code = explicit_exit({"raw_attrs_json": attrs})
             result = []
-            for candidate in tokens[1:]:
-                if candidate.endswith("/SKILL.md"):
-                    read_attrs = {**attrs, "gen_ai.client.file_path": candidate}
-                    result.extend(self.occurrences(read_attrs, "read", "ok" if code == 0 else "unknown", workspace))
+            for candidate, single in paths:
+                read_attrs = {**attrs, "gen_ai.client.file_path": candidate}
+                result.extend(self.occurrences(read_attrs, "read", "ok" if single and code == 0 else "unknown", workspace))
             return result
         explicit_id = str(first_attr(attrs, "reflect.skill.id", "skill.id") or payload.get("skill_id") or "")
         path = str(first_attr(attrs, "gen_ai.client.file_path", "gen_ai.client.tool.input.file_path", "gen_ai.client.tool.input.path", "tool.input.file_path", "tool.input.path", "file.path", "path")
                    or payload.get("file_path") or payload.get("path") or "")
-        if path and not path.startswith("/") and workspace:
-            path = str(PurePosixPath(workspace) / path)
-        path = str(PurePosixPath(path)) if path else ""
+        path = resolve_skill_path(path, attrs, workspace)
         version = str(first_attr(attrs, "reflect.skill.version_id", "skill.version_id") or payload.get("version_id") or "")
         if explicit_id:
             # An unknown captured identity cannot be reassigned by its name or
             # by a path that happens to be installed now.
             candidates = {explicit_id} if explicit_id in self.skills else set()
         elif path:
-            candidates = self.paths.get(path, set())
+            candidates = self.paths.get(path, set()) or self.paths.get(str(Path(path).expanduser().resolve()), set())
         elif version in self.versions:
             candidates = {self.versions[version][0]}
         else:
@@ -130,25 +130,32 @@ class SkillUsageProjector:
             clauses.append(f"st.id IN ({','.join('?' for _ in step_ids)})")
             params.extend(sorted(step_ids))
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        # Stream captured payloads; stable evidence IDs do not require sorting
+        # potentially large input/output JSON into a temporary table.
         rows = self.conn.execute(f"""
             SELECT st.id, st.session_id, COALESCE(st.started_at,st.created_at), st.raw_attrs_json,
                    tc.id, tc.tool_name, tc.status, tc.raw_attrs_json, tc.input_preview_redacted,
-                   w.root_path, eus.execution_unit_id
+                   w.root_path, eus.execution_unit_id, tc.output_preview_redacted
             FROM steps st
             JOIN sessions s ON s.id=st.session_id
             LEFT JOIN workspaces w ON w.id=s.workspace_id
-            LEFT JOIN tool_calls tc ON tc.step_id=st.id AND tc.session_id=st.session_id
+            LEFT JOIN tool_calls tc INDEXED BY idx_tool_calls_step
+              ON tc.step_id=st.id AND tc.session_id=st.session_id
             LEFT JOIN execution_unit_steps eus ON eus.step_id=st.id AND eus.session_id=st.session_id
-            {where} ORDER BY st.id,tc.id
+            {where}
         """, params)
         seen: set[str] = set()
         count = 0
-        for step_id, session_id, at, raw, tool_id, name, status, tool_raw, preview, workspace, execution_id in rows:
+        for step_id, session_id, at, raw, tool_id, name, status, tool_raw, preview, workspace, execution_id, output in rows:
             attrs = {**_dict(raw), **_dict(tool_raw)}
             if preview and not attrs.get("gen_ai.client.tool.input"):
                 attrs["gen_ai.client.tool.input"] = preview
+            if output and not attrs.get("gen_ai.client.tool.output"):
+                attrs["gen_ai.client.tool.output"] = output
             for occurrence in self.occurrences(attrs, name or "", status or "unknown", workspace or ""):
                 source_id = f"{step_id}:{tool_id or 'step'}:{occurrence.relationship}"
+                if occurrence.invocation_index is not None:
+                    source_id += f":invocation:{occurrence.invocation_index}"
                 identity = f"{occurrence.skill_id}:canonical_step:{source_id}"
                 usage_id = "skill_usage_" + hashlib.sha256(identity.encode()).hexdigest()[:24]
                 if usage_id in seen:
@@ -156,7 +163,7 @@ class SkillUsageProjector:
                 seen.add(usage_id)
                 evidence = json.dumps({"source": "canonical_step", "step_id": step_id,
                                       "tool_call_id": tool_id, "relationship": occurrence.relationship,
-                                      "path": occurrence.path, "version_attribution": "captured" if occurrence.version_id else "unknown",
+                                      "path": occurrence.path, "invocation_index": occurrence.invocation_index, "version_attribution": "captured" if occurrence.version_id else "unknown",
                                       "execution_attribution": "step_membership" if execution_id else "unknown"}, sort_keys=True)
                 values = (occurrence.version_id, session_id, execution_id, occurrence.state, evidence, at)
                 self.conn.execute("""INSERT INTO skill_usage(

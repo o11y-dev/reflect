@@ -40,6 +40,7 @@ from reflect.store.sqlite import (
     SnapshotNotReadyError,
     connect_sqlite_read_only,
     consistent_snapshot,
+    is_sqlite_busy,
     snapshot_incomplete,
 )
 from reflect.utils import _json_dumps, _json_loads, logger
@@ -58,6 +59,11 @@ def _persist_dashboard_json(path: Path, document: dict[str, object]) -> None:
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+def _impact_recorded_at(payload: dict | None) -> str:
+    return max((str(item.get("measured_at") or "")
+                for item in (payload or {}).get("impact_checks", [])), default="")
 
 
 class DashboardResponseCache:
@@ -83,6 +89,7 @@ class DashboardResponseCache:
         self._read_orders: dict[str, int] = {}
         self._jobs: dict[str, Future] = {}
         self._sequence = 0
+        self._invalidated_before: dict[str, int] = {}
         self._size = 0
         try:
             if cache_path.stat().st_size > max_bytes + 4096:
@@ -105,6 +112,31 @@ class DashboardResponseCache:
         with self._lock:
             self._sequence += 1
             return self._sequence
+
+    def invalidate(self) -> None:
+        """Review edits supersede workflow/finding reads, not retained telemetry."""
+        prefixes = ("/api/workflows", "/api/findings")
+
+        def affected(key: str) -> bool:
+            path = _json_loads(key.removeprefix("recorded:"))[0]
+            return any(path == prefix or path.startswith(prefix + "/") for prefix in prefixes)
+
+        with self._lock:
+            self._sequence += 1
+            self._invalidated_before.update(dict.fromkeys(prefixes, self._sequence))
+            for key in list(self._entries):
+                if affected(key):
+                    encoded = self._entries.pop(key)
+                    self._size -= len(key.encode()) + len(encoded.encode())
+                    self._read_orders.pop(key, None)
+            for key in list(self._jobs):
+                if affected(key):
+                    self._jobs.pop(key)
+            _persist_dashboard_json(self._path, {
+                "format": 1, "key": self._key,
+                "entries": {key: entry for key, value in self._entries.items()
+                            if not (entry := _json_loads(value)).get("memory_only")},
+            })
 
     def key(self, path: str, params, *, method: str = "GET") -> str | None:
         if method != "GET" or not self._READ_PATH.fullmatch(path):
@@ -143,6 +175,11 @@ class DashboardResponseCache:
             return
         read_order = self.start_read() if read_order is None else read_order
         with self._lock:
+            if self._invalidated_before:
+                path = _json_loads(key)[0]
+                if any(read_order < order and (path == prefix or path.startswith(prefix + "/"))
+                       for prefix, order in self._invalidated_before.items()):
+                    return
             recorded_key = f"recorded:{key}"
             if read_order < max(self._read_orders.get(key, 0), self._read_orders.get(recorded_key, 0)):
                 return
@@ -228,7 +265,11 @@ class DashboardResponseCache:
     ) -> dict[str, object] | None:
         with self._lock:
             encoded = self._entries.get(key) if key is not None else None
-            recorded = self._entries.get(f"recorded:{key}") if allow_recorded and key is not None and encoded is None else None
+            recorded = self._entries.get(f"recorded:{key}") if allow_recorded and key is not None else None
+        if (encoded is not None and recorded is not None
+                and _impact_recorded_at(_json_loads(recorded)["payload"])
+                > _impact_recorded_at(_json_loads(encoded)["payload"])):
+            encoded = None
         if encoded is None and recorded is not None and fallback is None:
             # A cold visit can retain a schema-ready evidence read until the
             # current refresh publishes. Keep its pending/recorded semantics.
@@ -594,6 +635,7 @@ def build_dashboard_app(
                         or request.url.path in {"/api/skills", "/api/impact", "/api/workflows"}
                         or request.url.path in {"/api/explore/tools", "/api/explore/graph", "/api/explore/context"}
                         or bool(re.fullmatch(r"/api/(?:workflows|impact)/[^/]+/evidence", request.url.path))
+                        or bool(re.fullmatch(r"/api/workflows/[^/]+/(?:dismiss|restore)", request.url.path))
                     ),
                     usage_only=request.url.path in {"/api/data", "/api/explore/usage"},
                 )
@@ -609,6 +651,11 @@ def build_dashboard_app(
                 if pending:
                     key = response_cache.key(request.url.path, request.query_params)
                     cached = response_cache.stale(key, reason="preparing", allow_recorded=True)
+                    if cached is not None and request.url.path == "/api/impact":
+                        with closing(connect_sqlite_read_only(db_path, profile=None)) as conn:
+                            latest = conn.execute("SELECT MAX(measured_at) FROM measurements").fetchone()[0]
+                        if str(latest or "") > _impact_recorded_at(cached):
+                            cached = None
                     if cached is not None:
                         return JSONResponse(cached, headers={"X-Reflect-Publication": cached.get("publication", {}).get("state", "stale")})
         return await call_next(request)
@@ -638,6 +685,9 @@ def build_dashboard_app(
                 r"/api/(?:(?:workflows|impact)(?:/[^/]+/evidence)?|skills/[^/]+/usage-graph)", request.url.path,
             ))
             retained = response_cache.stale(key, reason="preparing", allow_recorded=recorded_inspection)
+            if (request.url.path == "/api/impact"
+                    and _impact_recorded_at(payload) > _impact_recorded_at(retained)):
+                retained = None
             skill_registry = request.url.path.startswith("/api/skills") and not request.url.path.endswith("/usage-graph")
             payload = _retain_skill_analysis(payload, retained) if skill_registry else retained or payload
             if (retained is None and recorded_inspection
@@ -1091,6 +1141,29 @@ def build_dashboard_app(
             return JSONResponse({"error": str(exc)}, status_code=404)
         except (RuntimeError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=409)
+
+    def change_suggestion_disposition(candidate_id: str, *, restore: bool = False):
+        try:
+            result = improvement_adapter.dismiss_suggestion(candidate_id, restore=restore)
+            response_cache.invalidate()
+            return JSONResponse(result)
+        except KeyError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        except (RuntimeError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        except sqlite3.OperationalError as exc:
+            if not is_sqlite_busy(exc):
+                raise
+            return JSONResponse({"error": "The database is busy. Please retry shortly."},
+                                status_code=503, headers={"Retry-After": "2"})
+
+    @app.post("/api/workflows/{candidate_id}/dismiss")
+    def api_workflow_dismiss(candidate_id: str):
+        return change_suggestion_disposition(candidate_id)
+
+    @app.post("/api/workflows/{candidate_id}/restore")
+    def api_workflow_restore(candidate_id: str):
+        return change_suggestion_disposition(candidate_id, restore=True)
 
     @app.post("/api/feedback/{session_id:path}")
     def api_session_feedback(session_id: str, body: dict):

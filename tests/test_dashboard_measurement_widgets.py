@@ -144,3 +144,22 @@ def test_usage_layout_integrates_existing_charts_before_legacy_diagnostics():
         assert usage.index(f'id="{name}"') < diagnostics
     for name in ("cohort-comparison-panel", "obs-badges", "stat-row", "metric-row", "source-provenance"):
         assert usage.index(f'id="{name}"') > diagnostics
+
+
+def test_retained_tokens_are_visible_and_undated_window_exclusion_is_explained():
+    _run_widgets(r"""
+context.D={measurements:{scope:{kind:'session_lifetime'},totals:{input_tokens:702,output_tokens:269},
+ coverage:{observed_usage:1,estimated_usage:1,undated_usage:1,token_bucket_records:{input_tokens:0,output_tokens:0},
+ retained_token_bucket_records:{input_tokens:1,output_tokens:1}},metrics:{}}};
+context.renderMeasurementCoverage();
+assert.match(element('measurement-summary').innerHTML,/971/);
+assert.match(element('measurement-summary').innerHTML,/Captured \+ retained tokens/);
+assert.match(element('measurement-scope').textContent,/transcript estimates are not exact/);
+context.D.measurements.scope.kind='event_window';
+context.D.measurements.coverage.retained_token_bucket_records={};
+context.D.measurements.totals={};
+context.renderMeasurementCoverage();
+assert.match(element('measurement-scope').textContent,/1 undated session totals are excluded/);
+assert.match(element('measurement-scope').textContent,/Select All time/);
+assert.ok(!element('measurement-summary').innerHTML.includes('>971</strong>'));
+""")

@@ -22,6 +22,7 @@ WORKSPACE_ATTRIBUTE_KEYS = (
     "workspace_path",
     "workspace",
     "cwd",
+    "gen_ai.client.file_path",
 )
 PARENT_SESSION_ATTRIBUTE_KEYS = (
     "gen_ai.client.parent_session_id",
@@ -146,9 +147,21 @@ class WorkspaceResolver:
         if not counts:
             return None
 
+        file_repos = {self._discover_repo_root(path) for path, sources in counts.items()
+                      if "gen_ai.client.file_path" in sources}
+        file_repos.discard("")
+        if len(file_repos) > 1:
+            for sources in counts.values():
+                sources.pop("gen_ai.client.file_path", None)
+
         resolved: list[tuple[int, str, str, int, str]] = []
         for path, source_counts in counts.items():
+            if not source_counts:
+                continue
             repo_root = self._discover_repo_root(path)
+            # A file is a repository hint, never a workspace directory itself.
+            if set(source_counts) == {"gen_ai.client.file_path"} and not repo_root:
+                continue
             if "gen_ai.client.repository_root" in source_counts:
                 repo_root = path
             if (_is_agent_state_path(path) or _is_generic_workspace_root(path)) and not repo_root:

@@ -31,6 +31,42 @@ class WorkflowService:
         self.conn = conn
         self.repository = ImprovementRepository(conn)
 
+    @staticmethod
+    def suggestion_assessment(candidate: WorkflowCandidateRecord) -> dict:
+        """Assess stored procedure evidence without re-running discovery in a request."""
+        from pydantic import ValidationError
+
+        from reflect.improvements.models import ProcedureDefinition
+
+        content = candidate.content
+        reasons = []
+        try:
+            definition = ProcedureDefinition.model_validate(content.get('procedure_definition'))
+        except (ValidationError, TypeError):
+            definition = None
+            reasons.append('No source-backed task procedure; inspect the finding in Inbox.')
+        procedure = content.get('procedure') if isinstance(content.get('procedure'), dict) else {}
+        roots = procedure.get('checked_independent_sessions') or []
+        independent = content.get('independent_session_count', len(roots) if isinstance(roots, list) else 0)
+        if not isinstance(independent, int) or isinstance(independent, bool) or independent < 0:
+            independent = 0
+        if definition:
+            if definition.task_intent.state != 'identified' or not definition.task_intent.source_refs:
+                reasons.append('Task intent is missing or mixed.')
+            observed = [step for step in definition.steps if step.source_kind == 'observed']
+            if len(observed) < 2 or any(not step.source_refs for step in observed):
+                reasons.append('Fewer than two source-backed operations.')
+            if not definition.inputs or not definition.expected_output or any(not step.decision for step in definition.steps):
+                reasons.append('Inputs, decisions, or expected output are incomplete.')
+        if independent < 3:
+            reasons.append('Fewer than three independent source sessions.')
+        return {'eligible':not reasons, 'reasons':reasons,
+                'group_key':candidate.contract_signature,
+                'independent_session_count':independent,
+                'rank_reasons':(['Explicit task, ordered procedure, and decision points',
+                                  f'{independent} independent source sessions'] if not reasons else []),
+                'label':'Observed procedure — benefit unmeasured' if not reasons else 'Evidence incomplete'}
+
     def list(
         self,
         *,
@@ -113,7 +149,7 @@ class WorkflowService:
         )
 
     @staticmethod
-    def _representative_sort_key(candidate: WorkflowCandidateRecord) -> tuple[int, float, int, str]:
+    def _representative_sort_key(candidate: WorkflowCandidateRecord) -> tuple[int, int, int, int, str]:
         status_priority = {
             "approved": 0,
             "pending": 1,
@@ -121,9 +157,11 @@ class WorkflowService:
             "rejected": 3,
         }
         return (
-            status_priority.get(candidate.status.value, 9),
-            -candidate.confidence,
-            -candidate.support_execution_unit_count,
+            (4 if candidate.status.value == "rejected" and not candidate.checks.get("dismissal")
+             else status_priority.get(candidate.status.value, 9)),
+            0 if candidate.content.get("procedure") or candidate.content.get("observed_steps") else 1,
+            0 if WorkflowService.suggestion_assessment(candidate)['eligible'] else 1,
+            -WorkflowService.suggestion_assessment(candidate)['independent_session_count'],
             candidate.id,
         )
 
@@ -515,6 +553,71 @@ class WorkflowService:
         )
         self.conn.commit()
         return self.show(candidate_id)
+
+    def dismiss_suggestion(self, candidate_id: str) -> dict[str, Any]:
+        """Dismiss the uninstalled variants represented by one inventory row."""
+        candidate = self.repository.get_candidate(candidate_id)
+        if candidate is None:
+            raise KeyError(candidate_id)
+        if candidate.lifecycle.deployment.value == "active":
+            raise RuntimeError("An active workflow must be rolled back, not dismissed")
+        now, batch = utc_now(), uuid.uuid4().hex
+        affected = []
+        for member in self.repository.list_candidates_by_contract(candidate.contract_signature):
+            if member.lifecycle.deployment.value == "active" or member.status.value not in {"pending", "stale"}:
+                continue
+            observation_status = self.conn.execute(
+                "SELECT status FROM observations WHERE id=?", (member.observation_id,),
+            ).fetchone()[0]
+            self.conn.execute(
+                """UPDATE workflow_candidates SET status='rejected', reviewer='local_operator',
+                   reviewed_at=?, updated_at=?, checks_json=json_set(checks_json,
+                   '$.dismissal', json(?)) WHERE id=?""",
+                (now, now, json.dumps({"batch": batch, "previous_status": member.status.value,
+                                      "observation_status": observation_status}), member.id),
+            )
+            self.conn.execute("UPDATE observations SET status='rejected', updated_at=? WHERE id=?",
+                              (now, member.observation_id))
+            self.repository.record_event(entity_type="workflow_candidate", entity_id=member.id,
+                                         event_type="dismissed", actor="local_operator",
+                                         details={"batch": batch}, now=now)
+            affected.append(member.id)
+        self.conn.commit()
+        return {"candidate_id": candidate_id, "affected_ids": affected, "status": "rejected"}
+
+    def restore_suggestion(self, candidate_id: str) -> dict[str, Any]:
+        """Undo one dismissal batch; do not resurrect unrelated rejected work."""
+        row = self.conn.execute(
+            "SELECT json_extract(checks_json, '$.dismissal.batch') FROM workflow_candidates WHERE id=?",
+            (candidate_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(candidate_id)
+        if not row[0]:
+            raise ValueError("This workflow has no reversible dismissal")
+        now, affected = utc_now(), []
+        members = self.conn.execute(
+            """SELECT id, observation_id, json_extract(checks_json, '$.dismissal')
+               FROM workflow_candidates WHERE status='rejected'
+               AND json_extract(checks_json, '$.dismissal.batch')=?""", (row[0],),
+        ).fetchall()
+        for member_id, observation_id, raw in members:
+            previous = json.loads(raw)
+            self.conn.execute(
+                """UPDATE workflow_candidates SET status=?, reviewer=NULL, reviewed_at=NULL,
+                   updated_at=?, checks_json=json_remove(checks_json, '$.dismissal') WHERE id=?""",
+                (previous["previous_status"], now, member_id),
+            )
+            self.conn.execute(
+                "UPDATE observations SET status=?, updated_at=? WHERE id=? AND status='rejected'",
+                (previous["observation_status"], now, observation_id),
+            )
+            self.repository.record_event(entity_type="workflow_candidate", entity_id=member_id,
+                                         event_type="restored", actor="local_operator",
+                                         details={"batch": row[0]}, now=now)
+            affected.append(member_id)
+        self.conn.commit()
+        return {"candidate_id": candidate_id, "affected_ids": affected, "status": "restored"}
 
     def refresh_integrity(self) -> dict[str, int]:
         """Mark active workflows stale when their rendered artifact drifts or disappears."""

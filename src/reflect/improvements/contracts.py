@@ -84,6 +84,7 @@ class WorkflowEvidence(ReflectModel):
     verification_passed: bool | None = None
     workflow_slug_observed: bool = False
     procedure_signature: str | None = None
+    review_target_consistent: bool = False
 
 
 class ContractEvaluation(ReflectModel):
@@ -124,6 +125,8 @@ def evaluate_contract(
     required_ids = [milestone.id for milestone in required]
     coverage = ordered_role_coverage(evidence.observed_roles, required_roles)
     if contract.procedure_signature and evidence.procedure_signature != contract.procedure_signature:
+        coverage = 0.0
+    if any(role.startswith('review_') for role in required_roles) and not evidence.review_target_consistent:
         coverage = 0.0
     status_ok = evidence.status.lower() in {"completed", "ok", "success"}
     outcome_ok = evidence.outcome == "success"
@@ -177,6 +180,10 @@ class ContractEvaluationService:
             execution_unit_id = str(unit["execution_unit_id"])
             signals = signals_by_execution.get(execution_unit_id, [])
             observed_roles = workflow_roles(signals)
+            from reflect.execution_assessment import attrs_dict
+            from reflect.improvements.workflow_roles import review_operation
+            review_targets = {operation[0] for signal in signals if signal.kind == 'tool'
+                              if (operation := review_operation(signal.name, attrs_dict(signal.preview)))}
             evaluation = evaluate_contract(
                 contract,
                 WorkflowEvidence(
@@ -187,6 +194,7 @@ class ContractEvaluationService:
                     verification_passed=unit.get("verification_passed"),
                     workflow_slug_observed=bool(unit.get("workflow_slug_observed")),
                     procedure_signature=signatures.get(execution_unit_id),
+                    review_target_consistent=len(review_targets) == 1,
                 ),
             )
             evaluated[execution_unit_id] = EvaluatedContractEvidence(

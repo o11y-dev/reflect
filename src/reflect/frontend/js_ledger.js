@@ -561,7 +561,7 @@ async function showObservationEvidence(observationId){
             ${supportingTasks}
             <details class="advanced-review"><summary>Provenance Sessions · ${fmt(Number(ledger?.provenance_session_count || 0))}</summary>${provenanceSessions}</details>
           </section>
-          <aside class="review-stack">
+          <aside class="review-stack"><details class="advanced-review"><summary>Supporting evidence and usage</summary>
             <section class="review-panel">
               <div class="review-panel-head"><h3 class="review-panel-title">Finding Details</h3><span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.status || 'new'))}</span></div>
               <dl class="review-facts">
@@ -572,7 +572,7 @@ async function showObservationEvidence(observationId){
               </dl>
             </section>
             <details class="advanced-review"><summary>Raw Evidence Links · ${fmt((item.evidence || []).length)}</summary><div class="evidence-list">${rawEvidence || '<div class="session-ledger-empty">No bounded evidence is available.</div>'}</div></details>
-          </aside>
+          </details></aside>
         </div>`,
       actions:'<div class="ledger-action-spacer"></div><button type="button" class="ledger-button primary" data-ledger-action="close">Done</button>',
     });
@@ -634,7 +634,7 @@ async function showLoopReview(loopId){
             <p class="review-panel-copy">Inspect the repeated behavior in context before deciding whether it deserves a reusable workflow.</p>
             ${sourceSessions}
           </section>
-          <aside class="review-stack">
+          <aside class="review-stack"><details class="advanced-review"><summary>Supporting evidence and usage</summary>
             <section class="review-panel">
               <div class="review-panel-head"><h3 class="review-panel-title">Loop Details</h3><span class="ledger-pill">${escHtml(humanizeLedgerLabel(loop.scope_type || 'user'))}</span></div>
               <dl class="review-facts">
@@ -648,7 +648,7 @@ async function showLoopReview(loopId){
               <p class="review-panel-copy">A loop is evidence, not yet a workflow. Build stages one bounded workflow for review. After explicit installation, Reflect monitors comparable future task executions in Impact.</p>
               ${canBuild ? `<div class="ledger-command">reflect loops build ${escHtml(loopId)} --agent codex</div><div class="ledger-command">reflect workflows apply WORKFLOW_ID</div>` : '<p class="review-panel-copy">Current loop evidence is required before building a workflow.</p>'}
             </section>
-          </aside>
+          </details></aside>
         </div>`,
       actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div>${canBuild ? `<span class="ledger-status">Next: build a workflow, review it, then apply it to start monitoring.</span>` : ''}`,
     });
@@ -741,12 +741,12 @@ async function showSkillReview(skillId){
         </div>
         <section class="review-panel skill-usage-section"><div class="review-panel-head"><h3 class="review-panel-title">Where used</h3></div><div class="skill-usage-graph" data-skill-usage-graph><div class="session-ledger-empty" role="status">Loading captured usage…</div></div></section>
         ${versions[0]?.workflow?.procedure ? renderProcedureEvidence(versions[0].workflow) : ''}
-        <div class="review-grid">
+        <div class="review-grid workflow-enable-layout">
           <main class="review-stack">
             <section class="review-panel"><div class="review-panel-head"><h3 class="review-panel-title">Version History</h3><span class="ledger-pill signal">${fmt(versions.length)} semantic versions</span></div><div class="skill-detail-grid">${versionRows || '<div class="session-ledger-empty">No versions are registered.</div>'}</div></section>
             <section class="review-panel"><div class="review-panel-head"><h3 class="review-panel-title">Installations</h3><span class="ledger-pill">${fmt(installations.length)} tracked</span></div><p class="review-panel-copy">Only active filesystem packages are available to an agent. Registry history and observed usage do not install a skill.</p><div class="skill-detail-grid">${installationRows || `<div class="session-ledger-empty">${escHtml(availability.detail)}.</div>`}</div></section>
           </main>
-          <aside class="review-stack">
+          <aside class="review-stack"><details class="advanced-review"><summary>Supporting evidence and usage</summary>
             <section class="review-panel">
               <div class="review-panel-head"><h3 class="review-panel-title">Captured References</h3><span class="ledger-pill signal">${analysisCount(skill.usage_count)} references</span></div>
               <p class="review-panel-copy">All-time registry history. Each row is one captured reference; several can link to the same session. The graph above follows your selected date, agent, and repository filters.</p>
@@ -757,7 +757,7 @@ async function showSkillReview(skillId){
               ${sessionEvidence.length > 20 ? `<div class="ledger-status">Showing 20 of ${fmt(sessionEvidence.length)} source sessions.</div>` : ''}
             </section>
             <section class="review-panel"><div class="review-panel-head"><h3 class="review-panel-title">Impact Results</h3><span class="ledger-pill">${analysisUnavailable ? '—' : fmt(measurements.length)} checks</span></div><div class="skill-detail-grid">${analysisUnavailable ? pendingAnalysis : measurementRows || `<div class="session-ledger-empty">${recordedEvidence ? 'No stored impact checks are linked. Current validation is pending.' : analysisStale ? 'No before/after impact check in the last published analysis.' : 'No before/after impact check is available yet.'}</div>`}</div></section>
-          </aside>
+          </details></aside>
         </div>`,
       actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div>${analysisPending || analysisStale ? `<button type="button" class="ledger-button" data-ledger-action="review-skill" data-skill-id="${escHtml(skillId)}">Retry Analysis</button>` : ''}${workflowCandidateId ? `<button type="button" class="ledger-button primary" data-ledger-action="review-workflow" data-candidate-id="${escHtml(workflowCandidateId)}">Review Source Workflow</button>` : ''}`,
     });
@@ -771,7 +771,7 @@ async function showSkillReview(skillId){
 }
 
 async function showWorkflowReview(candidateId, requestedRoot = ''){
-  const request = beginLedgerRead('workflow', candidateId, 'Preparing workflow review…');
+  const request = beginLedgerRead('workflow', candidateId, 'Preparing workflow preview…');
   requestedRoot = request.projectRoot = requestedRoot || request.projectRoot || '';
   try {
     const sourceCandidate = (IMPROVEMENT_DATA.workflows || []).find(item => item.id === candidateId);
@@ -824,15 +824,15 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     const applyAllowed = Boolean(preview.checks?.apply_allowed);
     const evidenceReady = Number(ledger.support_execution_unit_count || 0) > 0;
     const applyLabel = applyAllowed
-      ? (evidenceReady ? 'Approve & Apply to This Project' : 'Apply Unvalidated Draft')
+      ? 'Enable workflow'
       : 'Choose a Project Folder';
-    const reviewActions = isStaticDemo() ? '' : !canReview
+    const reviewActions = workflowSuggestionAction(candidate) + (isStaticDemo() ? '' : !canReview
       ? `<button type="button" class="ledger-button" data-ledger-action="review-workflow" data-candidate-id="${escHtml(candidateId)}">Retry Review</button>`
       : active
       ? `<button type="button" class="ledger-button danger" data-ledger-action="rollback" data-candidate-id="${escHtml(candidateId)}">Roll Back</button>`
       : !reviewable
         ? ''
-        : `<button type="button" class="ledger-button" data-ledger-action="save-edit" data-candidate-id="${escHtml(candidateId)}">Save Draft</button><button type="button" class="ledger-button danger" data-ledger-action="reject" data-candidate-id="${escHtml(candidateId)}">Reject</button><button type="button" class="ledger-button${evidenceReady ? ' primary' : ''}" data-ledger-action="apply" data-candidate-id="${escHtml(candidateId)}" data-evidence-ready="${evidenceReady ? 'true' : 'false'}" data-idle-label="${escHtml(applyLabel)}" ${applyAllowed ? '' : 'disabled'}>${escHtml(applyLabel)}</button>`;
+        : `<button type="button" class="ledger-button primary" data-ledger-action="apply" data-candidate-id="${escHtml(candidateId)}" data-evidence-ready="${evidenceReady ? 'true' : 'false'}" data-idle-label="${escHtml(applyLabel)}" ${applyAllowed ? '' : 'disabled'}>${escHtml(applyLabel)}</button>`);
     const content = candidate.content || {};
     const suggestions = (preview.suggested_project_roots || []).map(item => `<option value="${escHtml(item.path)}">${fmt(Number(item.provenance_sessions || 0))} provenance sessions${item.is_repository ? ' · Git repository' : item.is_directory ? ' · project folder' : ' · unavailable'}</option>`).join('');
     const issues = preview.checks?.issues || [];
@@ -895,8 +895,6 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
         : 'The source sessions do not contain a reliable project folder.';
     const projectName = ledgerWorkspaceName(projectRoot) || projectRoot || 'Project not selected';
     const reviewTitle = humanizeLedgerLabel(content.slug || candidate.title || candidate.id);
-    const behaviorType = humanizeLedgerLabel(content.behavior_type || 'proven_pattern');
-    const sourceRule = content.source?.rule_id || candidate.provenance?.source || 'manual';
     const origin = workflowSourcePresentation(content, candidate.provenance || {});
     const sourceMarkdown = String(content.source_markdown || '').trim();
     const proposedWorkflow = sourceMarkdown
@@ -906,40 +904,35 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     ledgerDialog.dataset.projectRoot = preview.project_root || '';
     ledgerDialog.dataset.targetPath = preview.target_path || '';
     ledgerDialog.dataset.workflowSlug = String(content.slug || '');
+    ledgerDialog.dataset.previewContent = JSON.stringify(content);
     presentLedgerRead(request, {
       title:reviewTitle,
-      subtitle:`${origin.label} · ${behaviorType} · ${humanizeLedgerLabel(candidate.lifecycle?.display || candidate.status)} · Rule ${humanizeLedgerLabel(sourceRule)}`,
+      subtitle:active ? 'Enabled · project-local skill' : 'Enable workflow · choose project, review changes, enable',
       body:`${staleEvidenceNotice(candidatePublication,ledger)}${readOnlyNotice}<div class="review-lead">
-          <h3 class="review-panel-title">Hypothesis to test</h3>
+          <h3 class="review-panel-title">What this workflow helps with</h3>
           <p>${escHtml(humanizeLedgerText(candidate.hypothesis || 'Review the linked evidence and proposed workflow before applying it.'))}</p>
           <p class="review-panel-copy">Proposed benefit; this is not a measured outcome.</p>
-          <p class="review-panel-copy">${escHtml(origin.detail)}</p>
         </div>
-        ${content.procedure ? renderProcedureEvidence(content) : ''}
-        ${canReview ? `<div class="workflow-approval-summary" aria-label="Workflow approval summary">
-          <div class="workflow-approval-item"><div class="workflow-approval-label">Evidence</div><div class="workflow-approval-value signal">${fmt(Number(ledger.provenance_session_count || 0))} linked sessions</div><div class="workflow-approval-copy">${fmt(Number(ledger.support_execution_unit_count || 0))} comparable tasks · ${evidenceReady ? 'task-bounded evidence' : 'unvalidated draft'}</div></div>
-          <div class="workflow-approval-item"><div class="workflow-approval-label">Selected Project</div><div class="workflow-approval-value">${escHtml(projectName)}</div><div class="workflow-approval-copy">${escHtml(relationLabel)}</div></div>
-          <div class="workflow-approval-item"><div class="workflow-approval-label">File Change</div><div class="workflow-approval-value">${escHtml(changeLabel)}</div><div class="workflow-approval-copy" translate="no">${escHtml(targetFile || 'Target file unavailable')}</div></div>
-        </div>
-        <div class="workflow-scope-note ${escHtml(relationState)}"><div><strong>${escHtml(relationLabel)}.</strong> ${escHtml(relationCopy)} ${isStaticDemo() ? 'The recorded example targets this fictional project only.' : 'Only the selected project will be changed; this is not a global or multi-project install.'}</div></div>` : ''}
-        <div class="review-grid">
+        ${canReview ? `<p class="review-panel-copy" aria-label="Workflow approval summary">${escHtml(projectName)} · ${escHtml(changeLabel)} · ${fmt(Number(ledger.support_execution_unit_count || 0))} comparable tasks. Only the selected project will be changed.</p>` : ''}
+        <div class="review-grid workflow-enable-layout">
           <main class="review-stack">
             ${canReview && !isStaticDemo() ? `<section class="review-panel">
-              <div class="review-panel-head"><h3 class="review-panel-title">Apply to One Project</h3><span class="ledger-pill">${escHtml(changeLabel)}</span></div>
-              <p class="review-panel-copy">Reflect writes one project-local skill file. No other project or global agent folder will be changed.</p>
+              <div class="review-panel-head"><h3 class="review-panel-title">1. Choose project</h3><span class="ledger-pill">${escHtml(changeLabel)}</span></div>
+              <p class="review-panel-copy">${escHtml(relationLabel)}. ${escHtml(relationCopy)}</p>
               <div class="workflow-target">
-                <label for="workflow-name">Workflow Name</label>
-                <div class="workflow-target-row"><input class="workflow-target-input" id="workflow-name" name="workflow-name" value="${escHtml(content.slug || '')}" autocomplete="off" spellcheck="false" maxlength="63" pattern="[a-z0-9][a-z0-9-]{0,62}">${suggestedUniqueSlug ? `<button type="button" class="ledger-button" data-ledger-action="use-unique-name" data-suggested-slug="${escHtml(suggestedUniqueSlug)}">Use ${escHtml(suggestedUniqueSlug)}</button>` : ''}</div>
-                <p class="review-panel-copy">Use lowercase letters, numbers, and hyphens. Save the draft to review the updated target path before applying.</p>
                 <label for="workflow-project-root">Selected Project Folder</label>
-                <div class="workflow-target-row"><input class="workflow-target-input" id="workflow-project-root" name="workflow-project-root" value="${escHtml(preview.project_root || '')}" list="workflow-project-root-options" autocomplete="off" spellcheck="false"><button type="button" class="ledger-button" data-ledger-action="review-target" data-candidate-id="${escHtml(candidateId)}">Verify Folder</button></div>
+                <div class="workflow-target-row"><input class="workflow-target-input" id="workflow-project-root" name="workflow-project-root" value="${escHtml(preview.project_root || '')}" list="workflow-project-root-options" autocomplete="off" spellcheck="false"><button type="button" class="ledger-button" data-ledger-action="review-target" data-candidate-id="${escHtml(candidateId)}">Preview project</button></div>
                 <datalist id="workflow-project-root-options">${suggestions}</datalist>
                 <div class="workflow-target-file" title="${escHtml(preview.target_path || '')}" translate="no">${escHtml(targetFile || 'Target file unavailable')}</div>
               </div>
               <div class="${checkClass}" aria-live="polite">${escHtml(checkCopy)}</div>${evidenceReadinessNotice}${advisoryNotice}${evidenceVariantNotice}${ownerNotice}
             </section>` : ''}
+            ${canReview ? `<section class="review-panel workflow-enable-diff"><h3 class="review-panel-title">2. Review file changes</h3><p class="review-panel-copy" translate="no">${escHtml(preview.target_path || '')}</p><pre class="ledger-diff">${escHtml(preview.diff || 'No filesystem change; rendered content already matches.')}</pre><p class="review-panel-copy">${active ? 'This workflow is enabled in the selected project.' : '3. Select Enable workflow below to write this file. Benefit remains unmeasured until comparable work is captured.'}</p></section>` : ''}
+            <details class="advanced-review"><summary>Procedure and evidence</summary>
+            ${content.procedure ? renderProcedureEvidence(content) : ''}
             <section class="review-panel review-section">
               <div class="review-panel-head"><h3 class="review-panel-title">${escHtml(origin.sectionLabel)}</h3><span class="ledger-pill signal">${escHtml(proposedSize)}</span></div>
+              ${workflowProcedureEvidence(content)}
               ${proposedWorkflow}
             </section>
             <div class="workflow-support-grid">
@@ -948,10 +941,14 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
               <section class="review-panel review-section"><h3>Stop Conditions</h3><ul class="workflow-readable">${(content.abstain_when || []).map(item => `<li>${escHtml(item)}</li>`).join('') || '<li>No stop conditions are defined.</li>'}</ul></section>
               <section class="review-panel review-section"><h3>Verification</h3><ul class="workflow-readable">${(content.verification || []).map(item => `<li>${escHtml(item)}</li>`).join('') || '<li>No verification steps are defined.</li>'}</ul></section>
             </div>
-            ${canReview ? `<details class="advanced-review"><summary>Exact File Diff</summary><pre class="ledger-diff">${escHtml(preview.diff || 'No filesystem change; rendered content already matches.')}</pre></details>
-            ${!isStaticDemo() ? `<details class="advanced-review"><summary>Edit Structured Workflow</summary><label class="review-summary-label" for="workflow-content-editor">Workflow JSON</label><textarea class="ledger-editor" id="workflow-content-editor" name="workflow-content" autocomplete="off" spellcheck="false" ${active ? 'readonly' : ''}>${escHtml(JSON.stringify(content, null, 2))}</textarea></details>` : ''}` : ''}
+            </details>
+            ${canReview ? `
+            ${!isStaticDemo() ? `<details class="advanced-review"><summary>Edit workflow draft</summary>                <label for="workflow-name">Workflow Name</label>
+                <div class="workflow-target-row"><input class="workflow-target-input" id="workflow-name" name="workflow-name" value="${escHtml(content.slug || '')}" autocomplete="off" spellcheck="false" maxlength="63" pattern="[a-z0-9][a-z0-9-]{0,62}">${suggestedUniqueSlug ? `<button type="button" class="ledger-button" data-ledger-action="use-unique-name" data-suggested-slug="${escHtml(suggestedUniqueSlug)}">Use ${escHtml(suggestedUniqueSlug)}</button>` : ''}</div>
+                <p class="review-panel-copy">Use lowercase letters, numbers, and hyphens. Save the draft to review the updated target path before applying.</p>
+<label class="review-summary-label" for="workflow-content-editor">Workflow JSON</label><textarea class="ledger-editor" id="workflow-content-editor" name="workflow-content" autocomplete="off" spellcheck="false" ${active ? 'readonly' : ''}>${escHtml(JSON.stringify(content, null, 2))}</textarea>${!active ? `<button type="button" class="ledger-button" data-ledger-action="save-edit" data-candidate-id="${escHtml(candidateId)}">Save draft and preview</button>` : ''}</details>` : ''}` : ''}
           </main>
-          <aside class="review-stack">
+          <aside class="review-stack"><details class="advanced-review"><summary>Supporting evidence and usage</summary>
             <section class="review-panel">
               <div class="review-panel-head"><h3 class="review-panel-title">${canReview ? 'Supporting Tasks' : 'Recorded Task References'}</h3><span class="ledger-pill signal">${evidenceCount(ledger.support_execution_unit_count,candidate.support_execution_unit_count)} ${canReview ? 'comparable' : 'linked'}</span></div>
               <p class="review-panel-copy">${canReview ? 'Task-bounded evidence behind this contract. Provenance sessions are retained separately and never counted as comparable executions.' : 'Stored references are available for inspection. Current comparability and verification have not been established.'}</p>
@@ -963,7 +960,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
               <p class="review-panel-copy">${canReview ? 'Comparable execution units where Reflect observed this workflow after it was applied.' : 'Stored workflow exposure references; current applicability and outcomes remain unverified.'}</p>
               ${exposedTasks}
             </section>
-          </aside>
+          </details></aside>
         </div>`,
       actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div>${reviewActions}`,
     });
@@ -1051,11 +1048,45 @@ async function showImpactSessions(measurementId){
   }
 }
 
+async function changeSuggestionDisposition(candidateId, restore, trigger){
+  trigger.disabled = true;
+  const label = trigger.textContent;
+  trigger.textContent = restore ? 'Restoring…' : 'Dismissing…';
+  const status = document.getElementById('workflow-action-status');
+  try {
+    const result = await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/${restore ? 'restore' : 'dismiss'}`, {method:'POST'});
+    const affected = new Set(result.affected_ids || []);
+    updateUrlParams(params => {
+      if (affected.has(params.get('workflow_row'))) params.delete('workflow_row');
+    });
+    closeLedgerDialog();
+    // A read started before the mutation must settle before requesting the new inventory.
+    if (improvementRequest) await improvementRequest;
+    await refreshImprovementSurfaces();
+    if (status) status.innerHTML = `${restore ? 'Suggestion restored. Its previous review state is preserved.' : 'Suggestion dismissed. It remains in History and can be restored.'} <button type="button" class="ledger-button" data-ledger-action="show-workflow-state" data-state="${restore ? 'reviewable' : 'history'}">${restore ? 'View current workflows' : 'View History'}</button>`;
+  } catch (error) {
+    if (ledgerDialog?.open) window.alert(error.message);
+    else if (status) status.textContent = `Could not ${restore ? 'restore' : 'dismiss'} this suggestion: ${error.message}`;
+    else window.alert(error.message);
+  } finally {
+    trigger.disabled = false;
+    trigger.textContent = label;
+  }
+}
+
 document.addEventListener('click', async event => {
   const trigger = event.target.closest('[data-ledger-action]');
   if (!trigger) return;
   const action = trigger.dataset.ledgerAction;
   const candidateId = trigger.dataset.candidateId || '';
+  if (action === 'toggle-analysis-row') return toggleAnalysisRow(trigger.dataset.rowKind, trigger.dataset.rowId);
+  if (action === 'navigate-analysis-row') return navigateAnalysisRow(trigger.dataset.rowKind, trigger.dataset.rowId);
+  if (action === 'dismiss-suggestion' || action === 'restore-suggestion') return changeSuggestionDisposition(candidateId, action === 'restore-suggestion', trigger);
+  if (action === 'show-workflow-state') {
+    updateUrlParams(params => { params.set('workflow_status', trigger.dataset.state); params.delete('workflow_row'); });
+    activateTab('workflows');
+    return buildImprovementSurfaces();
+  }
   if (action === 'close') return closeLedgerDialog();
   if (action === 'evidence') return showObservationEvidence(trigger.dataset.observationId || '');
   if (action === 'review-loop') return showLoopReview(trigger.dataset.loopId || '');
@@ -1087,6 +1118,7 @@ document.addEventListener('click', async event => {
     window.location.assign(url.toString());
     return;
   }
+  let enabledPath = '';
   try {
     if (action === 'save-edit') {
       const content = JSON.parse(document.getElementById('workflow-content-editor')?.value || '{}');
@@ -1098,13 +1130,18 @@ document.addEventListener('click', async event => {
       if (workflowName !== String(ledgerDialog.dataset.workflowSlug || '')) {
         throw new Error('Save the renamed draft and review its updated target path before applying.');
       }
-      if (trigger.dataset.evidenceReady === 'false' && !window.confirm('No comparable task evidence supports this workflow yet. Apply this unvalidated draft to the selected project?')) return;
+      if (projectRoot !== ledgerDialog.dataset.projectRoot) {
+        throw new Error('Select Preview project to review the file changes for this folder before enabling.');
+      }
+      const edited = JSON.parse(document.getElementById('workflow-content-editor')?.value || '{}');
+      if (JSON.stringify(edited) !== ledgerDialog.dataset.previewContent) {
+        throw new Error('Save draft and preview to review your edits before enabling.');
+      }
       trigger.disabled = true;
-      trigger.textContent = 'Applying…';
-      await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/apply`, {method:'POST', body:{project_root:projectRoot}});
-    } else if (action === 'reject') {
-      if (!window.confirm('Reject this workflow proposal?')) return;
-      await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/reject`, {method:'POST', body:{reason:'browser_review'}});
+      trigger.textContent = 'Enabling…';
+      const applied = await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/apply`, {method:'POST', body:{project_root:projectRoot}});
+      if (applied.status !== 'active') throw new Error('Enablement could not be confirmed. Inspect the workflow before trying again.');
+      enabledPath = applied.target_path || ledgerDialog.dataset.targetPath;
     } else if (action === 'rollback') {
       if (!window.confirm('Roll back the active workflow to its previous file state?')) return;
       await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/rollback`, {method:'POST'});
@@ -1113,10 +1150,14 @@ document.addEventListener('click', async event => {
     }
     closeLedgerDialog();
     await refreshImprovementSurfaces();
+    if (enabledPath) {
+      const status = document.getElementById('workflow-action-status');
+      if (status) status.textContent = `Enabled · ${enabledPath}. Future matching sessions can use this skill; impact is not measured yet.`;
+    }
   } catch (error) {
     if (action === 'apply') {
       trigger.disabled = false;
-      trigger.textContent = trigger.dataset.idleLabel || 'Apply Workflow';
+      trigger.textContent = trigger.dataset.idleLabel || 'Enable workflow';
       const status = document.querySelector('#ledger-dialog .review-check');
       if (status) {
         status.classList.add('blocked');
@@ -1177,19 +1218,21 @@ function setExploreViewState(viewName, state, errorMessage = ''){
   const panel = document.getElementById(`tab-explore-${viewName}`);
   const status = document.getElementById(`${viewName}-view-status`);
   if (!panel || !status) return;
-  const loading = state === 'loading';
+  const loading = state === 'loading' || state === 'preparing';
   const previous = exploreViewScopes.get(viewName);
   const retained = previous?.scope === exploreViewUrl(viewName).url.toString();
   panel.setAttribute('aria-busy', loading ? 'true' : 'false');
   status.classList.toggle('error', state === 'error');
-  const message = loading ? exploreViewLoadingCopy[viewName] : errorMessage;
+  status.classList.toggle('loading', loading);
+  status.setAttribute('role', state === 'error' ? 'alert' : 'status');
+  const message = loading ? `${exploreViewLoadingCopy[viewName]} This view updates automatically.` : errorMessage;
   status.textContent = retained && state !== 'ready'
     ? `${previous.publication_state === 'recorded'
       ? `Showing stored telemetry${previous.loaded_at ? ` read ${new Date(previous.loaded_at).toLocaleString()}` : '; read time unavailable'}.`
       : previous.loaded_at ? `Showing data from ${new Date(previous.loaded_at).toLocaleString()}.` : 'Showing last published data; timestamp unavailable.'} ${message || 'Updating in the background.'}`
     : message;
   status.hidden = state === 'ready';
-  if (['error','preparing','stale','recorded'].includes(state)) {
+  if (state === 'error') {
     const retry = document.createElement('button');
     retry.type = 'button';
     retry.className = 'ledger-button';
@@ -1264,7 +1307,7 @@ async function loadExploreView(viewName){
       if (response.status === 503) {
         const pending = await response.json();
         if (pending.state === 'preparing' || (pending.state === 'busy' && pending.reason === 'reading')) {
-          const error = new Error(pending.error || 'This view is refreshing. Retry after telemetry refresh completes.');
+          const error = new Error(pending.error || 'This view is preparing and will update automatically.');
           error.preparing = true;
           throw error;
         }
@@ -1280,7 +1323,7 @@ async function loadExploreView(viewName){
         });
       } else if (viewName === 'usage') {
         if (!Object.hasOwn(payload.sqlite?.tabs?.usage || {}, 'unique_sessions')) {
-          const error = new Error('Usage details are preparing. Retry after telemetry refresh completes.');
+          const error = new Error('Usage details are preparing and will update automatically.');
           error.preparing = true;
           throw error;
         }

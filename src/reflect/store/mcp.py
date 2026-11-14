@@ -10,6 +10,15 @@ from typing import Any, Protocol
 from reflect.store.pending_refresh import PendingRefreshState
 
 
+def qualify_mcp_tool_name(name: object, namespace: object = None) -> str:
+    """Preserve an explicitly recorded MCP namespace on native tool calls."""
+    tool = str(name or "").strip()
+    scope = str(namespace or "").strip()
+    if tool and scope.startswith("mcp__") and scope.removeprefix("mcp__") and not tool.startswith("mcp__"):
+        return f"{scope}__{tool}"
+    return tool
+
+
 def _first_text(attrs: dict[str, Any], *keys: str) -> str | None:
     for key in keys:
         value = attrs.get(key)

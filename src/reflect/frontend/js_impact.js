@@ -418,7 +418,7 @@ function impactMetricPresentation(metricName){
 function groupImpactMeasurements(measurements){
   const groups = new Map();
   (measurements || []).forEach(item => {
-    const key = String(item.candidate_id || item.id || 'unknown');
+    const key = String(item.intervention_id || item.workflow_version_id || item.candidate_id || item.id || 'unknown');
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(item);
   });
@@ -477,7 +477,7 @@ function impactBlockedGuidance(item = {}){
       && item.before_value != null && item.after_value != null
       && Number.isFinite(Number(item.before_value)) && Number.isFinite(Number(item.after_value))) return null;
   if (state === 'not_measurable' || state === 'measured') return {
-    ...inspect, label:'Comparison Blocked',
+    ...inspect, label:'Not measurable',
     summary:'The recorded tasks do not provide a reliable before-and-after comparison. No outcome change can be established.',
     nextStep:'Inspect the task evidence and exclusions to understand what prevents this comparison.',
   };
@@ -629,6 +629,75 @@ function impactScope(item){
   return `${task} · ${repository}`;
 }
 
+// Expanded rows survive background renders; explicit URL targets open on arrival.
+const analysisExpandedRows = new Map();
+function analysisRowOpen(kind, id){
+  const key = `${kind}:${id}`;
+  return analysisExpandedRows.has(key) ? analysisExpandedRows.get(key) : currentParams().get(`${kind}_row`) === String(id);
+}
+function analysisTable(headers, rows){
+  return `<div class="analysis-table-scroll" tabindex="0" role="region" aria-label="${escHtml(headers[0])} evidence table"><table class="analysis-table"><thead><tr>${headers.map(label => `<th scope="col">${escHtml(label)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function analysisToggle(kind, id, label){
+  const key = `${kind}-${id}`;
+  return `<button type="button" id="toggle-${escHtml(key)}" class="analysis-toggle" data-ledger-action="toggle-analysis-row" data-row-kind="${kind}" data-row-id="${escHtml(id)}" aria-expanded="${analysisRowOpen(kind,id)}" aria-controls="detail-${escHtml(key)}"><span class="analysis-chevron" aria-hidden="true">›</span><span>${escHtml(label)}</span></button>`;
+}
+function toggleAnalysisRow(kind, id){
+  const open = !analysisRowOpen(kind,id);
+  analysisExpandedRows.set(`${kind}:${id}`, open);
+  const button = document.getElementById(`toggle-${kind}-${id}`);
+  const detail = document.getElementById(`detail-${kind}-${id}`);
+  if (button) button.setAttribute('aria-expanded', String(open));
+  if (detail) detail.hidden = !open;
+}
+function navigateAnalysisRow(kind, id){
+  analysisExpandedRows.set(`${kind}:${id}`, true);
+  updateUrlParams(params => params.set(`${kind}_row`, id));
+  activateTab(kind === 'workflow' ? 'workflows' : 'impact');
+  buildImprovementSurfaces();
+  if (kind === 'workflow' && !(IMPROVEMENT_DATA.workflows || []).some(item => String(item.id) === String(id))) return showWorkflowReview(id);
+  const button = document.getElementById(`toggle-${kind}-${id}`);
+  button?.focus();
+  button?.scrollIntoView({block:'center',behavior:'smooth'});
+}
+function workflowTableName(item){
+  return String(item?.title || humanizeLedgerLabel(item?.content?.slug || item?.id || 'Workflow')).replace(/^Workflow:\s*/i,'').replace(/-[a-f0-9]{6}$/,'');
+}
+function workflowSuggestionAction(item){
+  if (isStaticDemo() || item.lifecycle?.deployment === 'active') return '';
+  const dismissed = item.status === 'rejected' && item.checks?.dismissal;
+  if (!dismissed && !['pending','stale'].includes(item.status)) return '';
+  return `<button type="button" class="ledger-button suggestion-action" data-ledger-action="${dismissed ? 'restore-suggestion' : 'dismiss-suggestion'}" data-candidate-id="${escHtml(item.id)}" aria-label="${dismissed ? 'Restore' : 'Dismiss'} ${escHtml(workflowTableName(item))}" title="${dismissed ? 'Restore this suggestion from History' : 'Move this suggestion and its uninstalled variants to History'}">${dismissed ? 'Restore' : 'Dismiss'}</button>`;
+}
+function workflowProcedureEvidence(content){
+  const definition = content?.procedure_definition;
+  if (definition?.steps?.length) return `<section class="workflow-step-preview"><p><strong>Use for:</strong> ${escHtml(definition.task_intent?.family || 'Unclassified task')}</p><p><strong>Inputs:</strong> ${escHtml((definition.inputs || []).join(' · '))}</p><ol class="workflow-readable">${definition.steps.map(step => `<li><strong>${escHtml(step.action)}</strong> · ${escHtml(step.target_parameter)}<span class="analysis-subline">${escHtml(step.source_kind === 'observed' ? 'Observed in source executions' : 'Proposed safeguard · benefit unmeasured')}</span><p>${escHtml(step.decision)}</p></li>`).join('')}</ol><p><strong>Expected output:</strong> ${escHtml(definition.expected_output)}</p></section>`;
+  const rows = [['Observed in source executions', content?.observed_steps], ['Proposed safeguards · benefit unmeasured', content?.proposed_steps]];
+  return rows.filter(([, steps]) => Array.isArray(steps) && steps.length).map(([label, steps]) => `<section class="workflow-step-preview"><div class="workflow-step-preview-head">${escHtml(label)}</div><ul class="workflow-readable">${steps.map(step => `<li>${escHtml(step)}</li>`).join('')}</ul></section>`).join('');
+}
+function impactOutcome(item){
+  const guidance = impactBlockedGuidance(item);
+  if (guidance) return guidance.label;
+  const before = Number(item.before_value), after = Number(item.after_value);
+  return after < before ? 'Observed decrease' : after > before ? 'Observed increase' : 'No observed change';
+}
+function impactDates(item){
+  const period = side => {
+    const dates = item.cohort?.periods?.[side];
+    return dates?.start && dates?.end ? `${String(dates.start).slice(0,10)} – ${String(dates.end).slice(0,10)}` : 'Dates unavailable';
+  };
+  return `<span class="analysis-subline">Before: ${escHtml(period('before'))}</span><span class="analysis-subline">After: ${escHtml(period('after'))}</span>`;
+}
+function impactLimitations(item){
+  const reasons = item.cohort?.measurement_reasons || [];
+  if (reasons.length) return reasons.join(' ');
+  const exposure = item.cohort?.exposure?.after;
+  const distribution = item.cohort?.metric_distribution?.before;
+  const concentration = distribution?.nonzero_count === 1 && distribution.metric_count > 1 ? `One of ${fmt(distribution.metric_count)} baseline tasks accounts for the nonzero value. ` : '';
+  if (!exposure || !exposure.followed) return `${concentration}Adherence unknown · causal impact unproven`;
+  return `${concentration}${fmt(exposure.followed)} followed tasks · causal impact unproven`;
+}
+
 /* Product operating surfaces */
 function buildImprovementSurfaces(){
   const resource = name => IMPROVEMENT_DATA.resources?.[name] || {state:'ready'};
@@ -711,7 +780,9 @@ function buildImprovementSurfaces(){
   const workflowDisplay = item => String(item.lifecycle?.display || item.status || 'pending');
   const workflowMatchesState = (item, state) => {
     if (state === 'all') return true;
-    if (state === 'reviewable') return reviewableWorkflowStates.has(String(item.status || 'pending'));
+    if (state === 'history') return ['stale','rejected'].includes(item.status) || workflowDeployment(item) === 'rolled_back';
+    if (!isStaticDemo() && state === 'reviewable' && item.suggestion_assessment?.eligible === false && workflowDeployment(item) !== 'active') return false;
+    if (state === 'reviewable') return reviewableWorkflowStates.has(String(item.status || 'pending')) && workflowDeployment(item) !== 'rolled_back';
     if (state === 'active' || state === 'rolled_back') return workflowDeployment(item) === state;
     return String(item.status || 'pending') === state;
   };
@@ -877,20 +948,25 @@ function buildImprovementSurfaces(){
     const workflowParams = currentParams();
     if (typeFilter) typeFilter.value = workflowParams.get('workflow_type') || 'all';
     if (statusFilter) statusFilter.value = workflowParams.get('workflow_status') || 'reviewable';
+    let showAllSuggestions = workflowParams.get('workflow_show') === 'all';
     const renderWorkflowLedger = () => {
       const selectedType = typeFilter?.value || 'all';
-      const selectedStatus = statusFilter?.value || 'all';
-      const visible = workflows.filter(item => {
+      const selectedStatus = statusFilter?.value || 'reviewable';
+      const matching = workflows.filter(item => {
         const behavior = String((item.content || {}).behavior_type || 'proven_pattern');
-        return (selectedType === 'all' || behavior === selectedType)
-          && workflowMatchesState(item, selectedStatus);
+        return String(item.id) === workflowParams.get('workflow_row') || (selectedType === 'all' || behavior === selectedType)
+          && workflowMatchesState(item, selectedStatus)
+;
       });
       updateUrlParams(params => {
         selectedType === 'all' ? params.delete('workflow_type') : params.set('workflow_type', selectedType);
         selectedStatus === 'reviewable' ? params.delete('workflow_status') : params.set('workflow_status', selectedStatus);
       });
-      if (filterSummary) filterSummary.textContent = `Showing ${fmt(visible.length)} of ${fmt(workflows.length)} workflows · ${fmt(reviewableWorkflows.length)} reviewable`;
-      workflowLedger.innerHTML = visible.length ? visible.map(item => {
+      const visible = selectedStatus === 'reviewable' && !showAllSuggestions ? matching.slice(0,5) : matching;
+      const linked = matching.find(item => String(item.id) === workflowParams.get('workflow_row'));
+      if (linked && !visible.includes(linked)) visible.splice(visible.length - 1, 1, linked);
+      if (filterSummary) filterSummary.textContent = `Showing ${fmt(visible.length)} of ${fmt(matching.length)} matching workflows`;
+      workflowLedger.innerHTML = visible.length ? analysisTable(['Task / use case','Procedure','Evidence','State','Why suggested','Next action'], visible.map(item => {
         const content = item.content || {};
         const steps = Array.isArray(content.steps) ? content.steps : [];
         const slug = String(content.slug || item.id);
@@ -899,39 +975,52 @@ function buildImprovementSurfaces(){
         const origin = workflowSourcePresentation(content, item.provenance || {});
         const artifact = humanizeLedgerLabel(content.suggested_artifact || 'skill');
         const command = `reflect workflows show ${String(item.id)}`;
-        const status = humanizeLedgerLabel(workflowDisplay(item));
-        return `<article class="workflow-card workflow-tile" data-state="${escHtml(workflowDisplay(item))}">
+        const status = item.status === 'rejected' && item.checks?.dismissal ? 'Dismissed' : item.status === 'stale' ? 'Retired suggestion' : workflowDeployment(item) === 'active' ? 'Enabled' : item.status === 'pending' ? 'Suggested' : humanizeLedgerLabel(workflowDeployment(item) === 'rolled_back' ? 'rolled_back' : item.status);
+        const comparison = measurementGroups.map(group => group[0]).find(check => check.candidate_id === item.id && (!check.intervention_id || check.intervention_id === item.active_intervention_id));
+        const name = workflowTableName(item);
+        const detailId = `detail-workflow-${item.id}`;
+        const focus = content.procedure_definition?.expected_output || impactMetricPresentation(item.target_metric).measure;
+        const summary = `<tr class="analysis-summary"><th scope="row">${analysisToggle('workflow',item.id,name)}<span class="analysis-subline">${escHtml(origin.label)}</span></th><td>${escHtml(focus)}</td><td>${item.support_execution_unit_count == null ? '—' : fmt(Number(item.support_execution_unit_count))} tasks<span class="analysis-subline">${fmt(Number(item.supporting_observation_count || 1))} evidence patterns</span></td><td><span class="ledger-pill">${escHtml(status)}</span>${item.lifecycle?.installation === 'stale' ? '<span class="analysis-subline">Installation changed</span>' : ''}</td><td>${escHtml(item.suggestion_assessment?.label || 'Benefit unmeasured')}<span class="analysis-subline">${escHtml((item.suggestion_assessment?.rank_reasons || []).join(' · '))}</span></td><td><button type="button" class="ledger-button${['pending','approved'].includes(item.status) && workflowDeployment(item) !== 'active' ? ' primary' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(item.id)}">${['pending','approved'].includes(item.status) && workflowDeployment(item) !== 'active' ? 'Enable workflow' : 'Inspect workflow'}</button><span class="analysis-subline">${comparison ? 'Recorded comparison available' : workflowDeployment(item) === 'active' ? 'No recorded comparison' : 'Not measured'}</span>${comparison ? `<button type="button" class="ledger-button" data-ledger-action="navigate-analysis-row" data-row-kind="impact" data-row-id="${escHtml(comparison.id)}">View impact</button>` : ''}${workflowSuggestionAction(item)}</td></tr>`;
+        return `${summary}<tr class="analysis-detail" id="${escHtml(detailId)}"${analysisRowOpen('workflow',item.id) ? '' : ' hidden'}><td colspan="6"><article class="workflow-card workflow-tile" data-state="${escHtml(workflowDisplay(item))}">
           <div class="tile-card-main">
             <div class="tile-card-kicker"><span>${escHtml(origin.label)}</span><span>${escHtml(humanizeLedgerLabel(behaviorType))}</span></div>
             <div class="tile-card-head"><div class="tile-card-heading"><h3 class="tile-card-title">${escHtml(humanizeLedgerLabel(slug))}</h3><p class="tile-card-description">${escHtml(String(content.description || item.hypothesis || 'No description is available yet.'))}</p></div><span class="ledger-pill signal tile-card-status">${escHtml(status)}</span></div>
             <dl class="tile-metric-grid">
               <div class="tile-metric"><dt>${resource('workflows').state === 'ready' ? 'Supporting Tasks' : 'Recorded Task Links'}</dt><dd>${item.support_execution_unit_count == null ? '—' : fmt(Number(item.support_execution_unit_count))}</dd></div>
               <div class="tile-metric"><dt>Evidence Patterns</dt><dd>${fmt(Number(item.supporting_observation_count || 1))}</dd></div>
-              <div class="tile-metric signal"><dt>Evidence Confidence</dt><dd>${resource('workflows').state === 'ready' ? `${Math.round(Number(item.confidence || 0) * 100)}% confidence` : 'Updating'}</dd></div>
+              <div class="tile-metric"><dt>Evidence status</dt><dd>${resource('workflows').state === 'ready' ? 'Current analysis' : 'Stored analysis'}</dd></div>
             </dl>
-            <section class="workflow-step-preview" aria-label="Workflow Step Preview"><div class="workflow-step-preview-head"><span>Workflow Steps</span><span>${fmt(steps.length)} total</span></div>${renderWorkflowSteps(steps, {limit:4, compact:true})}</section>
+            ${item.status === 'stale' ? `<p class="impact-scope">Retired: ${escHtml(humanizeLedgerLabel(item.checks?.stale_reason || 'Original observation is no longer current'))}</p>` : ''}${workflowProcedureEvidence(item.content)}<section class="workflow-step-preview" aria-label="Workflow Step Preview"><div class="workflow-step-preview-head"><span>Workflow Steps</span><span>${fmt(steps.length)} total</span></div>${renderWorkflowSteps(steps)}</section>
             <div class="tile-card-meta"><span class="ledger-pill">Suggested ${escHtml(artifact)}</span><span class="ledger-pill">Rule ${escHtml(humanizeLedgerLabel(sourceRule))}</span><span class="ledger-pill">${fmt((item.source_scopes || []).length)} scopes</span></div>
           </div>
-          <footer class="tile-card-footer"><code class="tile-card-command" title="${escHtml(command)}" translate="no">${escHtml(command)}</code><button type="button" class="ledger-button${item.status === 'pending' ? ' primary' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.id))}">${resource('workflows').state !== 'ready' ? 'Inspect Workflow' : workflowDeployment(item) === 'active' ? 'Review Application' : escHtml(origin.reviewLabel)}</button></footer>
-        </article>`;
-      }).join('') : resource('workflows').state !== 'ready'
+          <footer class="tile-card-footer"><code class="tile-card-command" title="${escHtml(command)}" translate="no">${escHtml(command)}</code><button type="button" class="ledger-button${item.status === 'pending' ? ' primary' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.id))}">${resource('workflows').state !== 'ready' ? 'Inspect Workflow' : workflowDeployment(item) === 'active' ? 'Inspect enabled workflow' : ['pending','approved'].includes(item.status) ? 'Enable workflow' : 'Inspect workflow'}</button></footer>
+        </article></td></tr>`;
+      }).join('')) : resource('workflows').state !== 'ready'
         ? '<div class="panel"><div class="panel-title">Workflow analysis is updating</div><div class="workflow-copy">No stored workflows are available for these filters. New results will appear here when ready.</div></div>'
-        : `<div class="panel"><div class="panel-title">No workflows match these filters</div><div class="workflow-copy">${isStaticDemo() ? 'Clear the behavior or state filter to explore the sample workflows.' : 'Clear the behavior or state filter, run <code>reflect improve</code> for deterministic proposals, build one reviewed loop with <code>reflect loops build LOOP_ID</code>, or import an existing procedure with <code>reflect workflows add SKILL.md</code>.'}</div></div>`;
+        : `<div class="panel"><div class="panel-title">No eligible workflow suggestions</div><div class="workflow-copy">${isStaticDemo() ? 'Clear the behavior or state filter to explore the sample workflows.' : 'A suggestion needs a clear task, source-backed steps, and three independent sessions. Generic findings remain in Inbox. Choose All states to inspect drafts, or History for dismissed suggestions.'}</div></div>`;
+      if (selectedStatus === 'reviewable' && matching.length > 5) {
+        workflowLedger.insertAdjacentHTML('beforeend', `<button type="button" class="ledger-button" id="workflow-show-all" aria-expanded="${showAllSuggestions}">${showAllSuggestions ? 'Show top five' : `Show all ${fmt(matching.length)} workflows`}</button>`);
+        document.getElementById('workflow-show-all').onclick = () => {
+          showAllSuggestions = !showAllSuggestions;
+          updateUrlParams(params => showAllSuggestions ? params.set('workflow_show','all') : params.delete('workflow_show'));
+          renderWorkflowLedger();
+        };
+      }
     };
-    if (typeFilter) typeFilter.onchange = renderWorkflowLedger;
-    if (statusFilter) statusFilter.onchange = renderWorkflowLedger;
+    if (typeFilter) typeFilter.onchange = () => { workflowParams.delete('workflow_row'); updateUrlParams(params => params.delete('workflow_row')); renderWorkflowLedger(); };
+    if (statusFilter) statusFilter.onchange = () => { workflowParams.delete('workflow_row'); updateUrlParams(params => params.delete('workflow_row')); renderWorkflowLedger(); };
     renderWorkflowLedger();
   }
 
   const measurementLedger = document.getElementById('measurement-ledger');
   if (measurementLedger) {
-    measurementLedger.innerHTML = measurementGroups.length ? measurementGroups.map(history => {
+    measurementLedger.innerHTML = measurementGroups.length ? analysisTable(['Workflow / metric','Outcome','Before → After','Tasks / dates','Evidence limits','Navigate'], measurementGroups.map(history => {
       const item = history[0];
       const metric = impactMetricPresentation(item.metric_name);
       const measurementState = impactMeasurementState(item);
       const verdict = impactVerdictPresentation(item.verdict, measurementState);
       const workflow = workflows.find(candidate => candidate.id === item.candidate_id);
-      const workflowName = humanizeLedgerLabel(workflow?.content?.slug || 'Applied workflow');
+      const workflowName = workflow ? workflowTableName(workflow) : `Workflow ${String(item.candidate_id || '').slice(-8)}`;
       const minimumAfter = item.cohort?.minimum_after_execution_units;
       const afterCount = item.cohort?.eligibility?.after?.metric_count;
       const count = value => value == null || !Number.isFinite(Number(value)) ? 'Unknown' : fmt(Number(value));
@@ -947,10 +1036,11 @@ function buildImprovementSurfaces(){
       const progressGraph = impactProgressGraph(history, metric);
       const reasons = item.cohort?.measurement_reasons || [];
       const historyRows = history.slice(1).map(previousItem => `<li class="impact-history-item"><span>${escHtml(fmtWorkflowDate(previousItem.measured_at))}</span><span>${escHtml(formatImpactValue(metric, previousItem.after_value))} · ${escHtml(impactVerdictPresentation(previousItem.verdict, impactMeasurementState(previousItem)).label)}</span></li>`).join('');
-      return `<article class="measurement-card impact-card" data-verdict="${escHtml(String(item.verdict || 'insufficient_data'))}" data-trend="${escHtml(trend?.kind || 'unknown')}">
+      const summary = `<tr class="analysis-summary"><th scope="row">${analysisToggle('impact',item.id,workflowName)}<span class="analysis-subline">${escHtml(metric.measure)}${item.workflow_version != null ? ` · v${escHtml(item.workflow_version)}` : ''}</span></th><td><span class="impact-status ${guidance ? 'unchanged' : verdict.className}">${escHtml(impactOutcome(item))}</span>${retained ? '<span class="analysis-subline">Stored check · validation pending</span>' : ''}</td><td class="analysis-values">${ready ? `${escHtml(formatImpactValue(metric,item.before_value))}<span aria-hidden="true"> → </span>${escHtml(formatImpactValue(metric,item.after_value))}` : '—'}</td><td>${count(item.cohort?.eligibility?.before?.selected_count ?? item.before_count)} before / ${count(item.cohort?.eligibility?.after?.selected_count ?? item.after_count)} after${impactDates(item)}</td><td class="analysis-limitations">${escHtml(impactLimitations(item))}</td><td><button type="button" class="ledger-button" data-ledger-action="navigate-analysis-row" data-row-kind="workflow" data-row-id="${escHtml(item.candidate_id)}">View workflow</button></td></tr>`;
+      return `${summary}<tr class="analysis-detail" id="detail-impact-${escHtml(item.id)}"${analysisRowOpen('impact',item.id) ? '' : ' hidden'}><td colspan="6"><article class="measurement-card impact-card" data-verdict="${escHtml(String(item.verdict || 'insufficient_data'))}" data-trend="${escHtml(trend?.kind || 'unknown')}">
         <div class="impact-head">
           <div class="impact-head-main"><div class="impact-eyebrow">Applied Workflow · ${escHtml(workflowName)}</div><h3 class="impact-title">${escHtml(metric.goal)}</h3></div>
-          <div class="impact-status-stack"><span class="impact-status ${escHtml(guidance ? guidance.collecting ? 'collecting' : 'unchanged' : verdict.className)}">${retained ? 'Stored check · ' : ''}${escHtml(guidance?.label || verdict.label)}</span>${trend ? `<span class="impact-trend-status ${escHtml(trend.kind)}">${escHtml(trend.label)}</span>` : ''}</div>
+          <div class="impact-status-stack"><span class="impact-status ${escHtml(guidance ? guidance.collecting ? 'collecting' : 'unchanged' : verdict.className)}">${retained ? 'Stored check · ' : ''}${escHtml(impactOutcome(item))}</span>${trend ? `<span class="impact-trend-status ${escHtml(trend.kind)}">${escHtml(trend.label)}</span>` : ''}</div>
         </div>
         <p class="impact-summary">${escHtml(impactSummary(item, metric, trend))}</p>
         ${guidance ? `<p class="impact-summary"><strong>Next step:</strong> ${escHtml(guidance.nextStep)}</p>` : `<div class="impact-readiness" aria-label="Comparison readiness">
@@ -965,7 +1055,7 @@ function buildImprovementSurfaces(){
           <div class="impact-period"><div class="impact-period-label">After Activation</div><div class="impact-period-value">${escHtml(formatImpactValue(metric, item.after_value))}</div></div>
         </div>` : ''}
         ${progressGraph}
-        <div class="impact-scope">${escHtml(impactScope(item))}${ready && item.confidence != null && Number.isFinite(Number(item.confidence)) ? ` · ${Math.round(Number(item.confidence) * 100)}% confidence` : ''}</div>
+        <div class="impact-scope">${escHtml(impactScope(item))}</div>
         <div class="impact-scope">${retained ? `Stored check ${escHtml(item.measured_at ? fmtWorkflowDate(item.measured_at) : 'date unknown')}; current validation is pending. ` : ''}Observed cohort differences do not establish that the workflow caused the change.</div>
         <div class="ledger-actions">${guidance ? `<button type="button" class="ledger-button primary" data-ledger-action="${guidance.action}" data-measurement-id="${escHtml(String(item.id))}" data-candidate-id="${escHtml(String(item.candidate_id))}">${guidance.actionLabel}</button>` : `<button type="button" class="ledger-button primary" data-ledger-action="review-impact-sessions" data-measurement-id="${escHtml(String(item.id))}">View Compared Tasks</button><button type="button" class="ledger-button${item.verdict === 'regressed' && !regressedButImproving ? ' danger' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.candidate_id))}">${reviewLabel}</button>`}</div>
         <details class="impact-history"><summary>Comparison evidence and exclusions</summary>
@@ -977,8 +1067,8 @@ function buildImprovementSurfaces(){
           ${reasons.length ? `<p class="impact-scope">${escHtml(reasons.join(' '))}</p>` : ''}
         </details>
         ${historyRows ? `<details class="impact-history"><summary>${fmt(history.length - 1)} Previous Check${history.length === 2 ? '' : 's'}</summary><ol class="impact-history-list">${historyRows}</ol></details>` : ''}
-      </article>`;
-    }).join('') : resource('impact').state !== 'ready'
+      </article></td></tr>`;
+    }).join('')) : resource('impact').state !== 'ready'
       ? `<div class="panel"><div class="panel-title">Impact analysis is pending</div><div class="measurement-copy">${hasLoaded('impact') ? 'No checks were available in the last loaded result. Current results are unknown until refresh completes.' : 'Checks and baseline eligibility are unknown until analysis is available.'}</div></div>`
       : `<div class="panel"><div class="panel-title">No Impact Checks Yet</div><div class="measurement-copy">Install a reviewed workflow to start a bounded validation window. Reflect reports a result only when both task cohorts and their required signals are complete.</div></div>`;
   }

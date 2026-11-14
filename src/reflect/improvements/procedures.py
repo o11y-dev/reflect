@@ -17,10 +17,12 @@ from typing import TYPE_CHECKING
 
 from reflect.execution_assessment import attrs_dict, check_command, command_from_tool
 from reflect.improvements.analysis_scope import AnalysisScope
+from reflect.improvements.archetypes import TaskArchetypeService
 from reflect.improvements.measurement_validity import (
     EXECUTION_EVIDENCE_CURRENT_SQL,
     EXECUTION_INPUTS_CURRENT_SQL,
 )
+from reflect.improvements.models import EvidenceRef, ProcedureDefinition, ProcedureStep
 from reflect.improvements.workflow_roles import (
     WorkflowEvidenceRepository,
     WorkflowSignal,
@@ -210,8 +212,11 @@ class ProcedureEvidenceRepository:
         signals = WorkflowEvidenceRepository(self.conn).signals_for_execution_units(
             [str(row[0]) for row in eligible], limit_per_execution=SIGNAL_LIMIT + 1)
         groups: dict[tuple, dict] = {}
+        intents = TaskArchetypeService(self.conn)
         for row in eligible:
             unit_id, session_id, repo_id, workspace_id = row[:4]
+            intent = intents.intent_for_execution(str(unit_id))
+            root = independent_session(self.conn, str(session_id))
             unit_signals = signals.get(str(unit_id), [])
             truncated = len(unit_signals) > SIGNAL_LIMIT
             unit_signals = unit_signals[:SIGNAL_LIMIT]
@@ -220,14 +225,15 @@ class ProcedureEvidenceRepository:
             if not operations:
                 continue
             signature = procedure_signature(unit_signals, assessment, workspace_root=row[10])
-            key = (repo_id, workspace_id, row[7], signature)
+            key = (repo_id, workspace_id, row[7], intent.family, signature)
             group = groups.setdefault(key, {
                 'signature': signature, 'repo_id': repo_id, 'workspace_id': workspace_id,
                 'task_archetype_id': row[7], 'operations': operations, 'execution_ids': [],
                 'milestone_roles': workflow_roles([signal for signal in unit_signals if signal.kind == 'tool']),
                 'session_ids': [], 'verification_counts': Counter(), 'outcome_counts': Counter(),
                 'supporting_examples': [], 'counterexamples': [], 'checked_session_ids': [],
-                'signals_truncated': False,
+                'signals_truncated': False, 'independent_sessions': [], 'checked_independent_sessions': [],
+                'intent_complete': True, 'procedure_definition': None,
                 'match_explanation': 'Same task scope, ordered operations, artifact areas, and recorded check scope.',
             })
             verification = str(assessment.get('verification') or 'unknown')
@@ -248,6 +254,29 @@ class ProcedureEvidenceRepository:
                        'verification': verification, 'outcome': outcome, 'checks': checks[:10],
                        'assessment_fingerprint': assessment_fingerprint(assessment),
                        'signals_truncated': truncated}
+            group['intent_complete'] &= intent.state == 'identified' and intent.family == row[7]
+            if root:
+                group['independent_sessions'].append(root)
+                if verification == 'passed' and not truncated:
+                    group['checked_independent_sessions'].append(root)
+            if group['procedure_definition'] is None and intent.state == 'identified':
+                observed = []
+                for operation in operations:
+                    refs = [EvidenceRef(entity_type='step',entity_id=signal.step_id,step_id=signal.step_id,
+                        session_id=str(session_id),summary_redacted='Captured scoped operation.')
+                        for signal in unit_signals if signal.step_id and
+                        operation in procedure_operations([signal], workspace_root=row[10])]
+                    observed.append(ProcedureStep(action=operation['operation'].capitalize(),
+                        target_parameter=operation['target'], evidence_required='Captured operation and its result',
+                        decision='Stop on a failed or missing result; keep check results separate from task acceptance.',
+                        source_kind='observed',source_refs=refs))
+                definition = ProcedureDefinition(task_intent=intent,
+                    applicability={'repo_id':str(repo_id or ''),'workspace_id':str(workspace_id or ''),
+                                   'task_family':str(intent.family)},
+                    inputs=['Requested task', 'Artifact scope', 'Recorded check selection'],steps=observed,
+                    stop_conditions=['Task or artifact scope differs','Required result is unavailable'],
+                    expected_output='Scoped changes with recorded check results and explicit unresolved task outcomes.')
+                group['procedure_definition'] = definition.model_dump(mode='json')
             group['execution_ids'].append(unit_id)
             group['session_ids'].append(session_id)
             group['verification_counts'][verification] += 1
@@ -275,7 +304,9 @@ class ProcedureEvidenceRepository:
             group['checked_ratio'] = group['verification_counts']['passed'] / group['execution_count']
             group['verification_counts'] = dict(group['verification_counts'])
             group['outcome_counts'] = dict(group['outcome_counts'])
-            group['candidate_ready'] = (len(group['checked_session_ids']) >= 3
+            group['independent_sessions'] = sorted(set(group['independent_sessions']))
+            group['checked_independent_sessions'] = sorted(set(group['checked_independent_sessions']))
+            group['candidate_ready'] = (group['intent_complete'] and len(group['checked_independent_sessions']) >= 3
                 and group['checked_ratio'] >= .6 and not group['signals_truncated']
                 and len(group['operations']) >= 2
                 and any(item['operation'] == 'check' for item in group['operations'])
@@ -283,3 +314,57 @@ class ProcedureEvidenceRepository:
             result['procedures'].append(group)
         result['procedures'].sort(key=lambda group: (-group['session_count'], group['signature'], str(group['workspace_id'])))
         return result
+
+
+def review_procedure_definition(finding):
+    """A bounded review procedure; additional safeguards are explicitly proposed."""
+    from reflect.improvements.models import (
+        EvidenceRef,
+        ProcedureDefinition,
+        ProcedureStep,
+        TaskIntent,
+    )
+    intent = TaskIntent.model_validate(finding.baseline_query['task_intent'])
+    steps = []
+    for role, action, decision in (
+        ('metadata','Inspect the requested change metadata','Stop if the target or current revision cannot be identified.'),
+        ('diff','Inspect the diff for that same change','Report inaccessible or mismatched diff evidence before drawing conclusions.'),
+    ):
+        refs = []
+        for evidence in finding.evidence:
+            call = evidence.attrs['observed_calls'][role]
+            refs.append(EvidenceRef(entity_type='tool_call',entity_id=call['tool_call_id'],
+                tool_call_id=call['tool_call_id'],step_id=call['step_id'],session_id=evidence.session_id,
+                summary_redacted=f'Captured change {role} read.'))
+        steps.append(ProcedureStep(action=action,target_parameter='requested_change',
+            evidence_required=f'Successful {role} read for the identified change',decision=decision,
+            source_kind='observed',source_refs=refs))
+    for action, evidence, decision in (
+        ('Inspect checks for the reviewed revision','Check results pinned to the current head','If missing, state that readiness is unverified.'),
+        ('Trace material dependencies and rollout conditions','Relevant callers, configuration and runtime evidence','Separate passing checks from deployed/runtime proof.'),
+        ('Write findings and remaining gates','Evidence references, reviewed revision and next actions','Report unknown task outcome; do not claim acceptance.'),
+        ('Approve and read back any publication','Approval for exact text and captured publication read-back','Keep the review local unless posting is authorized.'),
+    ):
+        steps.append(ProcedureStep(action=action,target_parameter='requested_change',evidence_required=evidence,
+                                   decision=decision,source_kind='proposed'))
+    return ProcedureDefinition(task_intent=intent,
+        applicability={'repo_id':str(finding.repo_id),'task_family':'review'},
+        inputs=['Requested PR/MR identity','Repository','Current head revision','Requested review scope'],steps=steps,
+        stop_conditions=['Target identity is ambiguous','Required diff evidence is unavailable'],
+        expected_output='Findings tied to the reviewed revision, supporting evidence, and unresolved gates.')
+
+
+def independent_session(conn: sqlite3.Connection, session_id: str) -> str | None:
+    """Resolve a bounded parent chain; cycles and excessive depth cannot add support."""
+    seen = set()
+    for _ in range(32):
+        if session_id in seen:
+            return None
+        seen.add(session_id)
+        row = conn.execute('SELECT parent_session_id FROM sessions WHERE id=?', (session_id,)).fetchone()
+        if row is None:
+            return None
+        if not row[0]:
+            return session_id
+        session_id = str(row[0])
+    return None

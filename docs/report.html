@@ -691,6 +691,49 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .skill-availability.installed,.skill-availability.available{color:var(--skill)}
 .ledger-button[data-ledger-action="evidence"],.ledger-button[data-ledger-action="open-session"]{color:var(--evidence)}
 .ledger-button[data-ledger-action="review-skill"]{color:var(--skill)}
+
+/* Scan first; inspect the evidence only when a row is expanded. */
+.analysis-table-scroll{width:100%;overflow-x:auto;border:1px solid var(--glass-border);border-radius:7px;background:var(--panel)}
+.analysis-table{width:100%;border-collapse:collapse;text-align:left;font-size:12px;line-height:1.5}
+.analysis-table th,.analysis-table td{padding:13px 14px;vertical-align:top;border-bottom:1px solid var(--glass-border)}
+.analysis-table thead th{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600;white-space:nowrap;background:rgba(128,128,128,.04)}
+.analysis-table tbody th{font-weight:500;min-width:230px;max-width:330px}
+.analysis-table tbody td{min-width:105px}
+.analysis-table tbody tr:last-child td,.analysis-table tbody tr:last-child th{border-bottom:0}
+.analysis-summary:hover{background:rgba(242,138,26,.035)}
+.analysis-summary:has([aria-expanded="true"]){background:rgba(242,138,26,.065)}
+.analysis-toggle{display:flex;align-items:flex-start;gap:8px;width:100%;padding:0;border:0;background:none;color:var(--text);text-align:left;font:inherit;font-weight:600;cursor:pointer;line-height:1.5}
+.analysis-toggle:hover{color:#F28A1A}
+.analysis-toggle:focus-visible,.analysis-table-scroll:focus-visible{outline:2px solid #F28A1A;outline-offset:3px}
+.analysis-chevron{display:inline-block;color:#F28A1A;font-size:19px;line-height:1.1;transition:transform .15s}
+.analysis-toggle[aria-expanded="true"] .analysis-chevron{transform:rotate(90deg)}
+.analysis-subline{display:block;font-size:11px;color:var(--muted);font-weight:400;margin-top:5px}
+.analysis-summary th>.analysis-subline{margin-left:18px}
+.analysis-values{font-variant-numeric:tabular-nums;min-width:150px!important}
+.analysis-limitations{min-width:180px!important;max-width:280px;color:var(--text-2)}
+.analysis-table .impact-status{font-size:11px;white-space:normal;line-height:1.4}
+.analysis-table .ledger-button{font-size:11px;white-space:nowrap}
+.analysis-detail[hidden]{display:none!important}
+.analysis-detail>td{padding:0 18px 18px;background:rgba(128,128,128,.025)}
+.analysis-detail .workflow-card,.analysis-detail .impact-card{border:0;border-radius:0;box-shadow:none;background:transparent;max-width:1100px;margin:auto;padding:18px 0 0}
+.analysis-detail .tile-metric-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+.impact-help{margin-bottom:16px;color:var(--muted);font-size:12px}
+.impact-help>summary{cursor:pointer;width:fit-content;padding:4px 0}
+.impact-help .impact-explainer{margin-top:12px}
+@media(max-width:800px){.analysis-table{min-width:1000px}.analysis-table th,.analysis-table td{padding:10px}.analysis-detail>td{padding:0 12px 12px}}
+@media(prefers-reduced-motion:reduce){.analysis-chevron{transition:none}}
+.workflow-action-status:empty{display:none}
+.workflow-action-status{margin:12px 0;padding:12px 14px;border:1px solid var(--signal);border-radius:6px;color:var(--text-2);font-size:12px}
+.workflow-action-status .ledger-button{margin-left:8px}
+.analysis-table .suggestion-action{display:block;margin-top:8px;color:var(--muted)}
+.analysis-table .suggestion-action:hover{color:var(--signal)}
+
+/* Keep the enable decision compact; the exact change stays visible. */
+.workflow-enable-diff .ledger-diff{max-height:280px;overflow:auto}
+.workflow-enable-diff .review-panel-copy{overflow-wrap:anywhere}
+
+.review-grid.workflow-enable-layout{grid-template-columns:minmax(0,1fr)}
+.workflow-enable-layout .review-panel{padding:14px}
 /* ── Chart wrappers ──────────────────────────────────────── */
 .chart-box{position:relative}
 .explore-view-status{padding:18px;border-color:rgba(242,138,26,.28);background:rgba(242,138,26,.055);color:var(--text-2);font-size:13px;line-height:1.5}
@@ -868,6 +911,11 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .usage-legacy-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:12px 0}
 @container(max-width:550px){.usage-headlines,.usage-widget-grid,.usage-model-grid{grid-template-columns:1fr}.usage-model-grid>.chart-box{height:200px}.usage-delivery-counts{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:700px){.usage-headlines,.usage-widget-grid{grid-template-columns:1fr}.usage-model-grid{grid-template-columns:1fr}.usage-model-grid>.chart-box{height:200px}.usage-delivery-counts{grid-template-columns:repeat(3,minmax(0,1fr))}.usage-big{font-size:32px}.usage-heading h2{font-size:24px}.usage-widget{padding:16px}}
+
+.explore-view-status.loading{display:flex;align-items:center;gap:10px}
+.explore-view-status.loading::before{content:"";width:14px;height:14px;flex:0 0 14px;border:2px solid rgba(242,138,26,.25);border-top-color:var(--orange);border-radius:50%;animation:explore-loading 1s linear infinite}
+@keyframes explore-loading{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.explore-view-status.loading::before{animation:none}}
 /* ── Persistent report shell ─────────────────────────────── */
 .report-shell{
   display:grid;
@@ -3225,14 +3273,15 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <!-- ════════════════════ IMPACT ════════════════════ -->
 <div class="tab-panel" id="tab-impact" role="tabpanel" aria-labelledby="tab-button-impact" hidden>
   <div class="product-hero view-intro">
-    <div><h2>Impact</h2><p>Check whether later, comparable tasks support a workflow improvement.</p><p class="view-scope">Each check uses its recorded before/after task cohorts. Session filters do not apply.</p></div>
+    <div><h2>Impact</h2><p>Check whether later, comparable tasks support a workflow improvement.</p><p class="view-scope">Historical comparisons use their recorded cohort dates, not the selected activity date range. Expand a row to inspect the evidence.</p></div>
     <div class="product-count" id="measurement-count">0<small>impact checks</small></div>
   </div>
-  <div class="impact-explainer" aria-label="How impact checks work">
+  <details class="impact-help"><summary>How comparisons work</summary><div class="impact-explainer" aria-label="How impact checks work">
     <div class="impact-step"><strong>1. Install</strong><span>Review the exact workflow, then explicitly install its versioned skill.</span></div>
     <div class="impact-step"><strong>2. Collect</strong><span>Capture the required comparable task executions after activation.</span></div>
     <div class="impact-step"><strong>3. Compare</strong><span>Review improvement, regression, or no clear change.</span></div>
   </div>
+  </details>
   <div class="measurement-list" id="measurement-ledger"></div>
 </div>
 
@@ -3267,20 +3316,21 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <!-- ════════════════════ WORKFLOWS ════════════════════ -->
 <div class="tab-panel" id="tab-workflows" role="tabpanel" aria-labelledby="tab-button-workflows" hidden>
   <div class="product-hero view-intro">
-    <div><h2>Workflows</h2><p>Review a procedure and its evidence before applying it.</p><p class="view-scope">Stored workflow inventory. Each workflow shows its supporting task scope; session filters do not apply.</p></div>
+    <div><h2>Workflows</h2><p>Choose a useful procedure, inspect the changes, and enable it for one project.</p><p class="view-scope">Stored workflow inventory. Each workflow shows its supporting task scope; session filters do not apply.</p></div>
     <div class="product-count" id="workflow-total-count">0<small>workflow contracts</small></div>
   </div>
   <section class="panel product-section" id="workflow-candidates-section">
   <div class="product-section-head">
-    <div><h3 class="product-section-title">Reviewable Workflows</h3><p class="product-section-copy">Review the contract, exact steps, stop conditions, verification, source task evidence, installation target, and diff before anything changes.</p></div>
+    <div><h3 class="product-section-title">Current workflows</h3><p class="product-section-copy">Expand a row for evidence and decisions. Enable workflow previews the project and exact file changes.</p></div>
     <div class="product-section-count" id="workflow-count">0<small>reviewable workflows</small></div>
   </div>
   <div class="workflow-toolbar" aria-label="Workflow filters">
     <div class="workflow-filter-field"><label for="workflow-type-filter">Behavior</label><select id="workflow-type-filter"><option value="all">All behavior types</option><option value="recovery">Recovery</option><option value="verification">Verification</option><option value="exploration">Exploration</option><option value="proven_pattern">Proven Pattern</option></select></div>
-    <div class="workflow-filter-field"><label for="workflow-status-filter">State</label><select id="workflow-status-filter"><option value="reviewable">Reviewable</option><option value="all">All states</option><option value="pending">Pending Review</option><option value="approved">Approved</option><option value="active">Active Deployment</option><option value="rolled_back">Rolled Back</option><option value="stale">Stale</option><option value="rejected">Rejected</option></select></div>
+    <div class="workflow-filter-field"><label for="workflow-status-filter">State</label><select id="workflow-status-filter"><option value="reviewable">Current suggestions &amp; active</option><option value="history">History</option><option value="all">All states</option><option value="pending">Suggestions</option><option value="approved">Approved</option><option value="active">Active</option><option value="rolled_back">Rolled Back</option><option value="stale">Retired suggestions</option><option value="rejected">Dismissed / rejected</option></select></div>
     <div class="workflow-filter-summary" id="workflow-filter-summary" aria-live="polite"></div>
   </div>
-  <div class="workflow-list workflow-tile-grid" id="workflow-ledger" aria-live="polite"></div>
+  <div id="workflow-action-status" class="workflow-action-status" role="status" aria-live="polite"></div>
+  <div class="workflow-list" id="workflow-ledger" aria-live="polite"></div>
   </section>
 </div>
 
@@ -4821,7 +4871,7 @@ async function showObservationEvidence(observationId){
             ${supportingTasks}
             <details class="advanced-review"><summary>Provenance Sessions · ${fmt(Number(ledger?.provenance_session_count || 0))}</summary>${provenanceSessions}</details>
           </section>
-          <aside class="review-stack">
+          <aside class="review-stack"><details class="advanced-review"><summary>Supporting evidence and usage</summary>
             <section class="review-panel">
               <div class="review-panel-head"><h3 class="review-panel-title">Finding Details</h3><span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.status || 'new'))}</span></div>
               <dl class="review-facts">
@@ -4832,7 +4882,7 @@ async function showObservationEvidence(observationId){
               </dl>
             </section>
             <details class="advanced-review"><summary>Raw Evidence Links · ${fmt((item.evidence || []).length)}</summary><div class="evidence-list">${rawEvidence || '<div class="session-ledger-empty">No bounded evidence is available.</div>'}</div></details>
-          </aside>
+          </details></aside>
         </div>`,
       actions:'<div class="ledger-action-spacer"></div><button type="button" class="ledger-button primary" data-ledger-action="close">Done</button>',
     });
@@ -4894,7 +4944,7 @@ async function showLoopReview(loopId){
             <p class="review-panel-copy">Inspect the repeated behavior in context before deciding whether it deserves a reusable workflow.</p>
             ${sourceSessions}
           </section>
-          <aside class="review-stack">
+          <aside class="review-stack"><details class="advanced-review"><summary>Supporting evidence and usage</summary>
             <section class="review-panel">
               <div class="review-panel-head"><h3 class="review-panel-title">Loop Details</h3><span class="ledger-pill">${escHtml(humanizeLedgerLabel(loop.scope_type || 'user'))}</span></div>
               <dl class="review-facts">
@@ -4908,7 +4958,7 @@ async function showLoopReview(loopId){
               <p class="review-panel-copy">A loop is evidence, not yet a workflow. Build stages one bounded workflow for review. After explicit installation, Reflect monitors comparable future task executions in Impact.</p>
               ${canBuild ? `<div class="ledger-command">reflect loops build ${escHtml(loopId)} --agent codex</div><div class="ledger-command">reflect workflows apply WORKFLOW_ID</div>` : '<p class="review-panel-copy">Current loop evidence is required before building a workflow.</p>'}
             </section>
-          </aside>
+          </details></aside>
         </div>`,
       actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div>${canBuild ? `<span class="ledger-status">Next: build a workflow, review it, then apply it to start monitoring.</span>` : ''}`,
     });
@@ -5001,12 +5051,12 @@ async function showSkillReview(skillId){
         </div>
         <section class="review-panel skill-usage-section"><div class="review-panel-head"><h3 class="review-panel-title">Where used</h3></div><div class="skill-usage-graph" data-skill-usage-graph><div class="session-ledger-empty" role="status">Loading captured usage…</div></div></section>
         ${versions[0]?.workflow?.procedure ? renderProcedureEvidence(versions[0].workflow) : ''}
-        <div class="review-grid">
+        <div class="review-grid workflow-enable-layout">
           <main class="review-stack">
             <section class="review-panel"><div class="review-panel-head"><h3 class="review-panel-title">Version History</h3><span class="ledger-pill signal">${fmt(versions.length)} semantic versions</span></div><div class="skill-detail-grid">${versionRows || '<div class="session-ledger-empty">No versions are registered.</div>'}</div></section>
             <section class="review-panel"><div class="review-panel-head"><h3 class="review-panel-title">Installations</h3><span class="ledger-pill">${fmt(installations.length)} tracked</span></div><p class="review-panel-copy">Only active filesystem packages are available to an agent. Registry history and observed usage do not install a skill.</p><div class="skill-detail-grid">${installationRows || `<div class="session-ledger-empty">${escHtml(availability.detail)}.</div>`}</div></section>
           </main>
-          <aside class="review-stack">
+          <aside class="review-stack"><details class="advanced-review"><summary>Supporting evidence and usage</summary>
             <section class="review-panel">
               <div class="review-panel-head"><h3 class="review-panel-title">Captured References</h3><span class="ledger-pill signal">${analysisCount(skill.usage_count)} references</span></div>
               <p class="review-panel-copy">All-time registry history. Each row is one captured reference; several can link to the same session. The graph above follows your selected date, agent, and repository filters.</p>
@@ -5017,7 +5067,7 @@ async function showSkillReview(skillId){
               ${sessionEvidence.length > 20 ? `<div class="ledger-status">Showing 20 of ${fmt(sessionEvidence.length)} source sessions.</div>` : ''}
             </section>
             <section class="review-panel"><div class="review-panel-head"><h3 class="review-panel-title">Impact Results</h3><span class="ledger-pill">${analysisUnavailable ? '—' : fmt(measurements.length)} checks</span></div><div class="skill-detail-grid">${analysisUnavailable ? pendingAnalysis : measurementRows || `<div class="session-ledger-empty">${recordedEvidence ? 'No stored impact checks are linked. Current validation is pending.' : analysisStale ? 'No before/after impact check in the last published analysis.' : 'No before/after impact check is available yet.'}</div>`}</div></section>
-          </aside>
+          </details></aside>
         </div>`,
       actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div>${analysisPending || analysisStale ? `<button type="button" class="ledger-button" data-ledger-action="review-skill" data-skill-id="${escHtml(skillId)}">Retry Analysis</button>` : ''}${workflowCandidateId ? `<button type="button" class="ledger-button primary" data-ledger-action="review-workflow" data-candidate-id="${escHtml(workflowCandidateId)}">Review Source Workflow</button>` : ''}`,
     });
@@ -5031,7 +5081,7 @@ async function showSkillReview(skillId){
 }
 
 async function showWorkflowReview(candidateId, requestedRoot = ''){
-  const request = beginLedgerRead('workflow', candidateId, 'Preparing workflow review…');
+  const request = beginLedgerRead('workflow', candidateId, 'Preparing workflow preview…');
   requestedRoot = request.projectRoot = requestedRoot || request.projectRoot || '';
   try {
     const sourceCandidate = (IMPROVEMENT_DATA.workflows || []).find(item => item.id === candidateId);
@@ -5084,15 +5134,15 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     const applyAllowed = Boolean(preview.checks?.apply_allowed);
     const evidenceReady = Number(ledger.support_execution_unit_count || 0) > 0;
     const applyLabel = applyAllowed
-      ? (evidenceReady ? 'Approve & Apply to This Project' : 'Apply Unvalidated Draft')
+      ? 'Enable workflow'
       : 'Choose a Project Folder';
-    const reviewActions = isStaticDemo() ? '' : !canReview
+    const reviewActions = workflowSuggestionAction(candidate) + (isStaticDemo() ? '' : !canReview
       ? `<button type="button" class="ledger-button" data-ledger-action="review-workflow" data-candidate-id="${escHtml(candidateId)}">Retry Review</button>`
       : active
       ? `<button type="button" class="ledger-button danger" data-ledger-action="rollback" data-candidate-id="${escHtml(candidateId)}">Roll Back</button>`
       : !reviewable
         ? ''
-        : `<button type="button" class="ledger-button" data-ledger-action="save-edit" data-candidate-id="${escHtml(candidateId)}">Save Draft</button><button type="button" class="ledger-button danger" data-ledger-action="reject" data-candidate-id="${escHtml(candidateId)}">Reject</button><button type="button" class="ledger-button${evidenceReady ? ' primary' : ''}" data-ledger-action="apply" data-candidate-id="${escHtml(candidateId)}" data-evidence-ready="${evidenceReady ? 'true' : 'false'}" data-idle-label="${escHtml(applyLabel)}" ${applyAllowed ? '' : 'disabled'}>${escHtml(applyLabel)}</button>`;
+        : `<button type="button" class="ledger-button primary" data-ledger-action="apply" data-candidate-id="${escHtml(candidateId)}" data-evidence-ready="${evidenceReady ? 'true' : 'false'}" data-idle-label="${escHtml(applyLabel)}" ${applyAllowed ? '' : 'disabled'}>${escHtml(applyLabel)}</button>`);
     const content = candidate.content || {};
     const suggestions = (preview.suggested_project_roots || []).map(item => `<option value="${escHtml(item.path)}">${fmt(Number(item.provenance_sessions || 0))} provenance sessions${item.is_repository ? ' · Git repository' : item.is_directory ? ' · project folder' : ' · unavailable'}</option>`).join('');
     const issues = preview.checks?.issues || [];
@@ -5155,8 +5205,6 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
         : 'The source sessions do not contain a reliable project folder.';
     const projectName = ledgerWorkspaceName(projectRoot) || projectRoot || 'Project not selected';
     const reviewTitle = humanizeLedgerLabel(content.slug || candidate.title || candidate.id);
-    const behaviorType = humanizeLedgerLabel(content.behavior_type || 'proven_pattern');
-    const sourceRule = content.source?.rule_id || candidate.provenance?.source || 'manual';
     const origin = workflowSourcePresentation(content, candidate.provenance || {});
     const sourceMarkdown = String(content.source_markdown || '').trim();
     const proposedWorkflow = sourceMarkdown
@@ -5166,40 +5214,35 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     ledgerDialog.dataset.projectRoot = preview.project_root || '';
     ledgerDialog.dataset.targetPath = preview.target_path || '';
     ledgerDialog.dataset.workflowSlug = String(content.slug || '');
+    ledgerDialog.dataset.previewContent = JSON.stringify(content);
     presentLedgerRead(request, {
       title:reviewTitle,
-      subtitle:`${origin.label} · ${behaviorType} · ${humanizeLedgerLabel(candidate.lifecycle?.display || candidate.status)} · Rule ${humanizeLedgerLabel(sourceRule)}`,
+      subtitle:active ? 'Enabled · project-local skill' : 'Enable workflow · choose project, review changes, enable',
       body:`${staleEvidenceNotice(candidatePublication,ledger)}${readOnlyNotice}<div class="review-lead">
-          <h3 class="review-panel-title">Hypothesis to test</h3>
+          <h3 class="review-panel-title">What this workflow helps with</h3>
           <p>${escHtml(humanizeLedgerText(candidate.hypothesis || 'Review the linked evidence and proposed workflow before applying it.'))}</p>
           <p class="review-panel-copy">Proposed benefit; this is not a measured outcome.</p>
-          <p class="review-panel-copy">${escHtml(origin.detail)}</p>
         </div>
-        ${content.procedure ? renderProcedureEvidence(content) : ''}
-        ${canReview ? `<div class="workflow-approval-summary" aria-label="Workflow approval summary">
-          <div class="workflow-approval-item"><div class="workflow-approval-label">Evidence</div><div class="workflow-approval-value signal">${fmt(Number(ledger.provenance_session_count || 0))} linked sessions</div><div class="workflow-approval-copy">${fmt(Number(ledger.support_execution_unit_count || 0))} comparable tasks · ${evidenceReady ? 'task-bounded evidence' : 'unvalidated draft'}</div></div>
-          <div class="workflow-approval-item"><div class="workflow-approval-label">Selected Project</div><div class="workflow-approval-value">${escHtml(projectName)}</div><div class="workflow-approval-copy">${escHtml(relationLabel)}</div></div>
-          <div class="workflow-approval-item"><div class="workflow-approval-label">File Change</div><div class="workflow-approval-value">${escHtml(changeLabel)}</div><div class="workflow-approval-copy" translate="no">${escHtml(targetFile || 'Target file unavailable')}</div></div>
-        </div>
-        <div class="workflow-scope-note ${escHtml(relationState)}"><div><strong>${escHtml(relationLabel)}.</strong> ${escHtml(relationCopy)} ${isStaticDemo() ? 'The recorded example targets this fictional project only.' : 'Only the selected project will be changed; this is not a global or multi-project install.'}</div></div>` : ''}
-        <div class="review-grid">
+        ${canReview ? `<p class="review-panel-copy" aria-label="Workflow approval summary">${escHtml(projectName)} · ${escHtml(changeLabel)} · ${fmt(Number(ledger.support_execution_unit_count || 0))} comparable tasks. Only the selected project will be changed.</p>` : ''}
+        <div class="review-grid workflow-enable-layout">
           <main class="review-stack">
             ${canReview && !isStaticDemo() ? `<section class="review-panel">
-              <div class="review-panel-head"><h3 class="review-panel-title">Apply to One Project</h3><span class="ledger-pill">${escHtml(changeLabel)}</span></div>
-              <p class="review-panel-copy">Reflect writes one project-local skill file. No other project or global agent folder will be changed.</p>
+              <div class="review-panel-head"><h3 class="review-panel-title">1. Choose project</h3><span class="ledger-pill">${escHtml(changeLabel)}</span></div>
+              <p class="review-panel-copy">${escHtml(relationLabel)}. ${escHtml(relationCopy)}</p>
               <div class="workflow-target">
-                <label for="workflow-name">Workflow Name</label>
-                <div class="workflow-target-row"><input class="workflow-target-input" id="workflow-name" name="workflow-name" value="${escHtml(content.slug || '')}" autocomplete="off" spellcheck="false" maxlength="63" pattern="[a-z0-9][a-z0-9-]{0,62}">${suggestedUniqueSlug ? `<button type="button" class="ledger-button" data-ledger-action="use-unique-name" data-suggested-slug="${escHtml(suggestedUniqueSlug)}">Use ${escHtml(suggestedUniqueSlug)}</button>` : ''}</div>
-                <p class="review-panel-copy">Use lowercase letters, numbers, and hyphens. Save the draft to review the updated target path before applying.</p>
                 <label for="workflow-project-root">Selected Project Folder</label>
-                <div class="workflow-target-row"><input class="workflow-target-input" id="workflow-project-root" name="workflow-project-root" value="${escHtml(preview.project_root || '')}" list="workflow-project-root-options" autocomplete="off" spellcheck="false"><button type="button" class="ledger-button" data-ledger-action="review-target" data-candidate-id="${escHtml(candidateId)}">Verify Folder</button></div>
+                <div class="workflow-target-row"><input class="workflow-target-input" id="workflow-project-root" name="workflow-project-root" value="${escHtml(preview.project_root || '')}" list="workflow-project-root-options" autocomplete="off" spellcheck="false"><button type="button" class="ledger-button" data-ledger-action="review-target" data-candidate-id="${escHtml(candidateId)}">Preview project</button></div>
                 <datalist id="workflow-project-root-options">${suggestions}</datalist>
                 <div class="workflow-target-file" title="${escHtml(preview.target_path || '')}" translate="no">${escHtml(targetFile || 'Target file unavailable')}</div>
               </div>
               <div class="${checkClass}" aria-live="polite">${escHtml(checkCopy)}</div>${evidenceReadinessNotice}${advisoryNotice}${evidenceVariantNotice}${ownerNotice}
             </section>` : ''}
+            ${canReview ? `<section class="review-panel workflow-enable-diff"><h3 class="review-panel-title">2. Review file changes</h3><p class="review-panel-copy" translate="no">${escHtml(preview.target_path || '')}</p><pre class="ledger-diff">${escHtml(preview.diff || 'No filesystem change; rendered content already matches.')}</pre><p class="review-panel-copy">${active ? 'This workflow is enabled in the selected project.' : '3. Select Enable workflow below to write this file. Benefit remains unmeasured until comparable work is captured.'}</p></section>` : ''}
+            <details class="advanced-review"><summary>Procedure and evidence</summary>
+            ${content.procedure ? renderProcedureEvidence(content) : ''}
             <section class="review-panel review-section">
               <div class="review-panel-head"><h3 class="review-panel-title">${escHtml(origin.sectionLabel)}</h3><span class="ledger-pill signal">${escHtml(proposedSize)}</span></div>
+              ${workflowProcedureEvidence(content)}
               ${proposedWorkflow}
             </section>
             <div class="workflow-support-grid">
@@ -5208,10 +5251,14 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
               <section class="review-panel review-section"><h3>Stop Conditions</h3><ul class="workflow-readable">${(content.abstain_when || []).map(item => `<li>${escHtml(item)}</li>`).join('') || '<li>No stop conditions are defined.</li>'}</ul></section>
               <section class="review-panel review-section"><h3>Verification</h3><ul class="workflow-readable">${(content.verification || []).map(item => `<li>${escHtml(item)}</li>`).join('') || '<li>No verification steps are defined.</li>'}</ul></section>
             </div>
-            ${canReview ? `<details class="advanced-review"><summary>Exact File Diff</summary><pre class="ledger-diff">${escHtml(preview.diff || 'No filesystem change; rendered content already matches.')}</pre></details>
-            ${!isStaticDemo() ? `<details class="advanced-review"><summary>Edit Structured Workflow</summary><label class="review-summary-label" for="workflow-content-editor">Workflow JSON</label><textarea class="ledger-editor" id="workflow-content-editor" name="workflow-content" autocomplete="off" spellcheck="false" ${active ? 'readonly' : ''}>${escHtml(JSON.stringify(content, null, 2))}</textarea></details>` : ''}` : ''}
+            </details>
+            ${canReview ? `
+            ${!isStaticDemo() ? `<details class="advanced-review"><summary>Edit workflow draft</summary>                <label for="workflow-name">Workflow Name</label>
+                <div class="workflow-target-row"><input class="workflow-target-input" id="workflow-name" name="workflow-name" value="${escHtml(content.slug || '')}" autocomplete="off" spellcheck="false" maxlength="63" pattern="[a-z0-9][a-z0-9-]{0,62}">${suggestedUniqueSlug ? `<button type="button" class="ledger-button" data-ledger-action="use-unique-name" data-suggested-slug="${escHtml(suggestedUniqueSlug)}">Use ${escHtml(suggestedUniqueSlug)}</button>` : ''}</div>
+                <p class="review-panel-copy">Use lowercase letters, numbers, and hyphens. Save the draft to review the updated target path before applying.</p>
+<label class="review-summary-label" for="workflow-content-editor">Workflow JSON</label><textarea class="ledger-editor" id="workflow-content-editor" name="workflow-content" autocomplete="off" spellcheck="false" ${active ? 'readonly' : ''}>${escHtml(JSON.stringify(content, null, 2))}</textarea>${!active ? `<button type="button" class="ledger-button" data-ledger-action="save-edit" data-candidate-id="${escHtml(candidateId)}">Save draft and preview</button>` : ''}</details>` : ''}` : ''}
           </main>
-          <aside class="review-stack">
+          <aside class="review-stack"><details class="advanced-review"><summary>Supporting evidence and usage</summary>
             <section class="review-panel">
               <div class="review-panel-head"><h3 class="review-panel-title">${canReview ? 'Supporting Tasks' : 'Recorded Task References'}</h3><span class="ledger-pill signal">${evidenceCount(ledger.support_execution_unit_count,candidate.support_execution_unit_count)} ${canReview ? 'comparable' : 'linked'}</span></div>
               <p class="review-panel-copy">${canReview ? 'Task-bounded evidence behind this contract. Provenance sessions are retained separately and never counted as comparable executions.' : 'Stored references are available for inspection. Current comparability and verification have not been established.'}</p>
@@ -5223,7 +5270,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
               <p class="review-panel-copy">${canReview ? 'Comparable execution units where Reflect observed this workflow after it was applied.' : 'Stored workflow exposure references; current applicability and outcomes remain unverified.'}</p>
               ${exposedTasks}
             </section>
-          </aside>
+          </details></aside>
         </div>`,
       actions:`<button type="button" class="ledger-button" data-ledger-action="close">Close</button><div class="ledger-action-spacer"></div>${reviewActions}`,
     });
@@ -5311,11 +5358,45 @@ async function showImpactSessions(measurementId){
   }
 }
 
+async function changeSuggestionDisposition(candidateId, restore, trigger){
+  trigger.disabled = true;
+  const label = trigger.textContent;
+  trigger.textContent = restore ? 'Restoring…' : 'Dismissing…';
+  const status = document.getElementById('workflow-action-status');
+  try {
+    const result = await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/${restore ? 'restore' : 'dismiss'}`, {method:'POST'});
+    const affected = new Set(result.affected_ids || []);
+    updateUrlParams(params => {
+      if (affected.has(params.get('workflow_row'))) params.delete('workflow_row');
+    });
+    closeLedgerDialog();
+    // A read started before the mutation must settle before requesting the new inventory.
+    if (improvementRequest) await improvementRequest;
+    await refreshImprovementSurfaces();
+    if (status) status.innerHTML = `${restore ? 'Suggestion restored. Its previous review state is preserved.' : 'Suggestion dismissed. It remains in History and can be restored.'} <button type="button" class="ledger-button" data-ledger-action="show-workflow-state" data-state="${restore ? 'reviewable' : 'history'}">${restore ? 'View current workflows' : 'View History'}</button>`;
+  } catch (error) {
+    if (ledgerDialog?.open) window.alert(error.message);
+    else if (status) status.textContent = `Could not ${restore ? 'restore' : 'dismiss'} this suggestion: ${error.message}`;
+    else window.alert(error.message);
+  } finally {
+    trigger.disabled = false;
+    trigger.textContent = label;
+  }
+}
+
 document.addEventListener('click', async event => {
   const trigger = event.target.closest('[data-ledger-action]');
   if (!trigger) return;
   const action = trigger.dataset.ledgerAction;
   const candidateId = trigger.dataset.candidateId || '';
+  if (action === 'toggle-analysis-row') return toggleAnalysisRow(trigger.dataset.rowKind, trigger.dataset.rowId);
+  if (action === 'navigate-analysis-row') return navigateAnalysisRow(trigger.dataset.rowKind, trigger.dataset.rowId);
+  if (action === 'dismiss-suggestion' || action === 'restore-suggestion') return changeSuggestionDisposition(candidateId, action === 'restore-suggestion', trigger);
+  if (action === 'show-workflow-state') {
+    updateUrlParams(params => { params.set('workflow_status', trigger.dataset.state); params.delete('workflow_row'); });
+    activateTab('workflows');
+    return buildImprovementSurfaces();
+  }
   if (action === 'close') return closeLedgerDialog();
   if (action === 'evidence') return showObservationEvidence(trigger.dataset.observationId || '');
   if (action === 'review-loop') return showLoopReview(trigger.dataset.loopId || '');
@@ -5347,6 +5428,7 @@ document.addEventListener('click', async event => {
     window.location.assign(url.toString());
     return;
   }
+  let enabledPath = '';
   try {
     if (action === 'save-edit') {
       const content = JSON.parse(document.getElementById('workflow-content-editor')?.value || '{}');
@@ -5358,13 +5440,18 @@ document.addEventListener('click', async event => {
       if (workflowName !== String(ledgerDialog.dataset.workflowSlug || '')) {
         throw new Error('Save the renamed draft and review its updated target path before applying.');
       }
-      if (trigger.dataset.evidenceReady === 'false' && !window.confirm('No comparable task evidence supports this workflow yet. Apply this unvalidated draft to the selected project?')) return;
+      if (projectRoot !== ledgerDialog.dataset.projectRoot) {
+        throw new Error('Select Preview project to review the file changes for this folder before enabling.');
+      }
+      const edited = JSON.parse(document.getElementById('workflow-content-editor')?.value || '{}');
+      if (JSON.stringify(edited) !== ledgerDialog.dataset.previewContent) {
+        throw new Error('Save draft and preview to review your edits before enabling.');
+      }
       trigger.disabled = true;
-      trigger.textContent = 'Applying…';
-      await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/apply`, {method:'POST', body:{project_root:projectRoot}});
-    } else if (action === 'reject') {
-      if (!window.confirm('Reject this workflow proposal?')) return;
-      await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/reject`, {method:'POST', body:{reason:'browser_review'}});
+      trigger.textContent = 'Enabling…';
+      const applied = await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/apply`, {method:'POST', body:{project_root:projectRoot}});
+      if (applied.status !== 'active') throw new Error('Enablement could not be confirmed. Inspect the workflow before trying again.');
+      enabledPath = applied.target_path || ledgerDialog.dataset.targetPath;
     } else if (action === 'rollback') {
       if (!window.confirm('Roll back the active workflow to its previous file state?')) return;
       await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/rollback`, {method:'POST'});
@@ -5373,10 +5460,14 @@ document.addEventListener('click', async event => {
     }
     closeLedgerDialog();
     await refreshImprovementSurfaces();
+    if (enabledPath) {
+      const status = document.getElementById('workflow-action-status');
+      if (status) status.textContent = `Enabled · ${enabledPath}. Future matching sessions can use this skill; impact is not measured yet.`;
+    }
   } catch (error) {
     if (action === 'apply') {
       trigger.disabled = false;
-      trigger.textContent = trigger.dataset.idleLabel || 'Apply Workflow';
+      trigger.textContent = trigger.dataset.idleLabel || 'Enable workflow';
       const status = document.querySelector('#ledger-dialog .review-check');
       if (status) {
         status.classList.add('blocked');
@@ -5437,19 +5528,21 @@ function setExploreViewState(viewName, state, errorMessage = ''){
   const panel = document.getElementById(`tab-explore-${viewName}`);
   const status = document.getElementById(`${viewName}-view-status`);
   if (!panel || !status) return;
-  const loading = state === 'loading';
+  const loading = state === 'loading' || state === 'preparing';
   const previous = exploreViewScopes.get(viewName);
   const retained = previous?.scope === exploreViewUrl(viewName).url.toString();
   panel.setAttribute('aria-busy', loading ? 'true' : 'false');
   status.classList.toggle('error', state === 'error');
-  const message = loading ? exploreViewLoadingCopy[viewName] : errorMessage;
+  status.classList.toggle('loading', loading);
+  status.setAttribute('role', state === 'error' ? 'alert' : 'status');
+  const message = loading ? `${exploreViewLoadingCopy[viewName]} This view updates automatically.` : errorMessage;
   status.textContent = retained && state !== 'ready'
     ? `${previous.publication_state === 'recorded'
       ? `Showing stored telemetry${previous.loaded_at ? ` read ${new Date(previous.loaded_at).toLocaleString()}` : '; read time unavailable'}.`
       : previous.loaded_at ? `Showing data from ${new Date(previous.loaded_at).toLocaleString()}.` : 'Showing last published data; timestamp unavailable.'} ${message || 'Updating in the background.'}`
     : message;
   status.hidden = state === 'ready';
-  if (['error','preparing','stale','recorded'].includes(state)) {
+  if (state === 'error') {
     const retry = document.createElement('button');
     retry.type = 'button';
     retry.className = 'ledger-button';
@@ -5524,7 +5617,7 @@ async function loadExploreView(viewName){
       if (response.status === 503) {
         const pending = await response.json();
         if (pending.state === 'preparing' || (pending.state === 'busy' && pending.reason === 'reading')) {
-          const error = new Error(pending.error || 'This view is refreshing. Retry after telemetry refresh completes.');
+          const error = new Error(pending.error || 'This view is preparing and will update automatically.');
           error.preparing = true;
           throw error;
         }
@@ -5540,7 +5633,7 @@ async function loadExploreView(viewName){
         });
       } else if (viewName === 'usage') {
         if (!Object.hasOwn(payload.sqlite?.tabs?.usage || {}, 'unique_sessions')) {
-          const error = new Error('Usage details are preparing. Retry after telemetry refresh completes.');
+          const error = new Error('Usage details are preparing and will update automatically.');
           error.preparing = true;
           throw error;
         }
@@ -5858,8 +5951,6 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
       if (activeTab !== 'workflows') {
         params.delete('workflow');
         params.delete('workflow_root');
-        params.delete('workflow_type');
-        params.delete('workflow_status');
       }
       if (activeTab !== 'inbox') {
         params.delete('inbox_view');
@@ -7202,6 +7293,7 @@ class SessionConversationPlayhead {
     return {
       tools: Array.from(toolMap.values()).sort((a,b) => b.count - a.count || a.name.localeCompare(b.name)),
       skills: Array.from(skillMap.values()).sort((a,b) => b.count - a.count || a.name.localeCompare(b.name)),
+      skill_attempts: provided.skill_attempts || [],
       mcp_tools: Array.from(mcpMap.values()).sort((a,b) => b.count - a.count || a.name.localeCompare(b.name)),
       subagents: Array.from(subagentMap.values()).sort((a,b) => b.count - a.count || a.name.localeCompare(b.name)),
     };
@@ -7228,6 +7320,7 @@ class SessionConversationPlayhead {
       <tr><td><div class="tool-inventory-name">${escHtml(row.name || 'unknown')}</div>${row.source ? `<div class="tool-inventory-example">${escHtml(row.source)}</div>` : ''}</td><td style="text-align:right">${fmt(row.count || 0)}</td></tr>
     `).join('') : '<tr><td colspan="2" style="color:var(--text-3);text-align:center">No entries captured for this session.</td></tr>';
     return `<div class="tool-inventory-shell">
+      <p class="inbox-copy">Captured session lifetime. Counts use the normalized report snapshot; newer transcript activity can appear before the next refresh. <a class="usage-link" href="?report=api%2Fdata&amp;tab=explore&amp;view=tools&amp;range=all&amp;session=${encodeURIComponent(session.full_id || session.id || '')}">Explore this session’s tools →</a></p>
       <div class="tool-inventory-summary">
         <div class="tool-inventory-card"><div class="tool-inventory-num">${fmt(toolTotal)}</div><div class="tool-inventory-label">Tool calls</div></div>
         <div class="tool-inventory-card"><div class="tool-inventory-num">${fmt(inventory.tools.length)}</div><div class="tool-inventory-label">Distinct tools</div></div>
@@ -7242,6 +7335,7 @@ class SessionConversationPlayhead {
       <section class="tool-inventory-section">
         <h4>Skills</h4>
         <table class="tool-inventory-table"><thead><tr><th>Skill</th><th style="text-align:right">Uses</th></tr></thead><tbody>${renderSimpleRows(inventory.skills)}</tbody></table>
+        ${inventory.skill_attempts.length ? `<h4>Skill read attempts</h4><table class="tool-inventory-table"><thead><tr><th>Skill</th><th style="text-align:right">Attempts</th></tr></thead><tbody>${renderSimpleRows(inventory.skill_attempts)}</tbody></table>` : ''}
       </section>
       <section class="tool-inventory-section">
         <h4>Subagents</h4>
@@ -8481,7 +8575,7 @@ function impactMetricPresentation(metricName){
 function groupImpactMeasurements(measurements){
   const groups = new Map();
   (measurements || []).forEach(item => {
-    const key = String(item.candidate_id || item.id || 'unknown');
+    const key = String(item.intervention_id || item.workflow_version_id || item.candidate_id || item.id || 'unknown');
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(item);
   });
@@ -8540,7 +8634,7 @@ function impactBlockedGuidance(item = {}){
       && item.before_value != null && item.after_value != null
       && Number.isFinite(Number(item.before_value)) && Number.isFinite(Number(item.after_value))) return null;
   if (state === 'not_measurable' || state === 'measured') return {
-    ...inspect, label:'Comparison Blocked',
+    ...inspect, label:'Not measurable',
     summary:'The recorded tasks do not provide a reliable before-and-after comparison. No outcome change can be established.',
     nextStep:'Inspect the task evidence and exclusions to understand what prevents this comparison.',
   };
@@ -8692,6 +8786,75 @@ function impactScope(item){
   return `${task} · ${repository}`;
 }
 
+// Expanded rows survive background renders; explicit URL targets open on arrival.
+const analysisExpandedRows = new Map();
+function analysisRowOpen(kind, id){
+  const key = `${kind}:${id}`;
+  return analysisExpandedRows.has(key) ? analysisExpandedRows.get(key) : currentParams().get(`${kind}_row`) === String(id);
+}
+function analysisTable(headers, rows){
+  return `<div class="analysis-table-scroll" tabindex="0" role="region" aria-label="${escHtml(headers[0])} evidence table"><table class="analysis-table"><thead><tr>${headers.map(label => `<th scope="col">${escHtml(label)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function analysisToggle(kind, id, label){
+  const key = `${kind}-${id}`;
+  return `<button type="button" id="toggle-${escHtml(key)}" class="analysis-toggle" data-ledger-action="toggle-analysis-row" data-row-kind="${kind}" data-row-id="${escHtml(id)}" aria-expanded="${analysisRowOpen(kind,id)}" aria-controls="detail-${escHtml(key)}"><span class="analysis-chevron" aria-hidden="true">›</span><span>${escHtml(label)}</span></button>`;
+}
+function toggleAnalysisRow(kind, id){
+  const open = !analysisRowOpen(kind,id);
+  analysisExpandedRows.set(`${kind}:${id}`, open);
+  const button = document.getElementById(`toggle-${kind}-${id}`);
+  const detail = document.getElementById(`detail-${kind}-${id}`);
+  if (button) button.setAttribute('aria-expanded', String(open));
+  if (detail) detail.hidden = !open;
+}
+function navigateAnalysisRow(kind, id){
+  analysisExpandedRows.set(`${kind}:${id}`, true);
+  updateUrlParams(params => params.set(`${kind}_row`, id));
+  activateTab(kind === 'workflow' ? 'workflows' : 'impact');
+  buildImprovementSurfaces();
+  if (kind === 'workflow' && !(IMPROVEMENT_DATA.workflows || []).some(item => String(item.id) === String(id))) return showWorkflowReview(id);
+  const button = document.getElementById(`toggle-${kind}-${id}`);
+  button?.focus();
+  button?.scrollIntoView({block:'center',behavior:'smooth'});
+}
+function workflowTableName(item){
+  return String(item?.title || humanizeLedgerLabel(item?.content?.slug || item?.id || 'Workflow')).replace(/^Workflow:\s*/i,'').replace(/-[a-f0-9]{6}$/,'');
+}
+function workflowSuggestionAction(item){
+  if (isStaticDemo() || item.lifecycle?.deployment === 'active') return '';
+  const dismissed = item.status === 'rejected' && item.checks?.dismissal;
+  if (!dismissed && !['pending','stale'].includes(item.status)) return '';
+  return `<button type="button" class="ledger-button suggestion-action" data-ledger-action="${dismissed ? 'restore-suggestion' : 'dismiss-suggestion'}" data-candidate-id="${escHtml(item.id)}" aria-label="${dismissed ? 'Restore' : 'Dismiss'} ${escHtml(workflowTableName(item))}" title="${dismissed ? 'Restore this suggestion from History' : 'Move this suggestion and its uninstalled variants to History'}">${dismissed ? 'Restore' : 'Dismiss'}</button>`;
+}
+function workflowProcedureEvidence(content){
+  const definition = content?.procedure_definition;
+  if (definition?.steps?.length) return `<section class="workflow-step-preview"><p><strong>Use for:</strong> ${escHtml(definition.task_intent?.family || 'Unclassified task')}</p><p><strong>Inputs:</strong> ${escHtml((definition.inputs || []).join(' · '))}</p><ol class="workflow-readable">${definition.steps.map(step => `<li><strong>${escHtml(step.action)}</strong> · ${escHtml(step.target_parameter)}<span class="analysis-subline">${escHtml(step.source_kind === 'observed' ? 'Observed in source executions' : 'Proposed safeguard · benefit unmeasured')}</span><p>${escHtml(step.decision)}</p></li>`).join('')}</ol><p><strong>Expected output:</strong> ${escHtml(definition.expected_output)}</p></section>`;
+  const rows = [['Observed in source executions', content?.observed_steps], ['Proposed safeguards · benefit unmeasured', content?.proposed_steps]];
+  return rows.filter(([, steps]) => Array.isArray(steps) && steps.length).map(([label, steps]) => `<section class="workflow-step-preview"><div class="workflow-step-preview-head">${escHtml(label)}</div><ul class="workflow-readable">${steps.map(step => `<li>${escHtml(step)}</li>`).join('')}</ul></section>`).join('');
+}
+function impactOutcome(item){
+  const guidance = impactBlockedGuidance(item);
+  if (guidance) return guidance.label;
+  const before = Number(item.before_value), after = Number(item.after_value);
+  return after < before ? 'Observed decrease' : after > before ? 'Observed increase' : 'No observed change';
+}
+function impactDates(item){
+  const period = side => {
+    const dates = item.cohort?.periods?.[side];
+    return dates?.start && dates?.end ? `${String(dates.start).slice(0,10)} – ${String(dates.end).slice(0,10)}` : 'Dates unavailable';
+  };
+  return `<span class="analysis-subline">Before: ${escHtml(period('before'))}</span><span class="analysis-subline">After: ${escHtml(period('after'))}</span>`;
+}
+function impactLimitations(item){
+  const reasons = item.cohort?.measurement_reasons || [];
+  if (reasons.length) return reasons.join(' ');
+  const exposure = item.cohort?.exposure?.after;
+  const distribution = item.cohort?.metric_distribution?.before;
+  const concentration = distribution?.nonzero_count === 1 && distribution.metric_count > 1 ? `One of ${fmt(distribution.metric_count)} baseline tasks accounts for the nonzero value. ` : '';
+  if (!exposure || !exposure.followed) return `${concentration}Adherence unknown · causal impact unproven`;
+  return `${concentration}${fmt(exposure.followed)} followed tasks · causal impact unproven`;
+}
+
 /* Product operating surfaces */
 function buildImprovementSurfaces(){
   const resource = name => IMPROVEMENT_DATA.resources?.[name] || {state:'ready'};
@@ -8774,7 +8937,9 @@ function buildImprovementSurfaces(){
   const workflowDisplay = item => String(item.lifecycle?.display || item.status || 'pending');
   const workflowMatchesState = (item, state) => {
     if (state === 'all') return true;
-    if (state === 'reviewable') return reviewableWorkflowStates.has(String(item.status || 'pending'));
+    if (state === 'history') return ['stale','rejected'].includes(item.status) || workflowDeployment(item) === 'rolled_back';
+    if (!isStaticDemo() && state === 'reviewable' && item.suggestion_assessment?.eligible === false && workflowDeployment(item) !== 'active') return false;
+    if (state === 'reviewable') return reviewableWorkflowStates.has(String(item.status || 'pending')) && workflowDeployment(item) !== 'rolled_back';
     if (state === 'active' || state === 'rolled_back') return workflowDeployment(item) === state;
     return String(item.status || 'pending') === state;
   };
@@ -8940,20 +9105,25 @@ function buildImprovementSurfaces(){
     const workflowParams = currentParams();
     if (typeFilter) typeFilter.value = workflowParams.get('workflow_type') || 'all';
     if (statusFilter) statusFilter.value = workflowParams.get('workflow_status') || 'reviewable';
+    let showAllSuggestions = workflowParams.get('workflow_show') === 'all';
     const renderWorkflowLedger = () => {
       const selectedType = typeFilter?.value || 'all';
-      const selectedStatus = statusFilter?.value || 'all';
-      const visible = workflows.filter(item => {
+      const selectedStatus = statusFilter?.value || 'reviewable';
+      const matching = workflows.filter(item => {
         const behavior = String((item.content || {}).behavior_type || 'proven_pattern');
-        return (selectedType === 'all' || behavior === selectedType)
-          && workflowMatchesState(item, selectedStatus);
+        return String(item.id) === workflowParams.get('workflow_row') || (selectedType === 'all' || behavior === selectedType)
+          && workflowMatchesState(item, selectedStatus)
+;
       });
       updateUrlParams(params => {
         selectedType === 'all' ? params.delete('workflow_type') : params.set('workflow_type', selectedType);
         selectedStatus === 'reviewable' ? params.delete('workflow_status') : params.set('workflow_status', selectedStatus);
       });
-      if (filterSummary) filterSummary.textContent = `Showing ${fmt(visible.length)} of ${fmt(workflows.length)} workflows · ${fmt(reviewableWorkflows.length)} reviewable`;
-      workflowLedger.innerHTML = visible.length ? visible.map(item => {
+      const visible = selectedStatus === 'reviewable' && !showAllSuggestions ? matching.slice(0,5) : matching;
+      const linked = matching.find(item => String(item.id) === workflowParams.get('workflow_row'));
+      if (linked && !visible.includes(linked)) visible.splice(visible.length - 1, 1, linked);
+      if (filterSummary) filterSummary.textContent = `Showing ${fmt(visible.length)} of ${fmt(matching.length)} matching workflows`;
+      workflowLedger.innerHTML = visible.length ? analysisTable(['Task / use case','Procedure','Evidence','State','Why suggested','Next action'], visible.map(item => {
         const content = item.content || {};
         const steps = Array.isArray(content.steps) ? content.steps : [];
         const slug = String(content.slug || item.id);
@@ -8962,39 +9132,52 @@ function buildImprovementSurfaces(){
         const origin = workflowSourcePresentation(content, item.provenance || {});
         const artifact = humanizeLedgerLabel(content.suggested_artifact || 'skill');
         const command = `reflect workflows show ${String(item.id)}`;
-        const status = humanizeLedgerLabel(workflowDisplay(item));
-        return `<article class="workflow-card workflow-tile" data-state="${escHtml(workflowDisplay(item))}">
+        const status = item.status === 'rejected' && item.checks?.dismissal ? 'Dismissed' : item.status === 'stale' ? 'Retired suggestion' : workflowDeployment(item) === 'active' ? 'Enabled' : item.status === 'pending' ? 'Suggested' : humanizeLedgerLabel(workflowDeployment(item) === 'rolled_back' ? 'rolled_back' : item.status);
+        const comparison = measurementGroups.map(group => group[0]).find(check => check.candidate_id === item.id && (!check.intervention_id || check.intervention_id === item.active_intervention_id));
+        const name = workflowTableName(item);
+        const detailId = `detail-workflow-${item.id}`;
+        const focus = content.procedure_definition?.expected_output || impactMetricPresentation(item.target_metric).measure;
+        const summary = `<tr class="analysis-summary"><th scope="row">${analysisToggle('workflow',item.id,name)}<span class="analysis-subline">${escHtml(origin.label)}</span></th><td>${escHtml(focus)}</td><td>${item.support_execution_unit_count == null ? '—' : fmt(Number(item.support_execution_unit_count))} tasks<span class="analysis-subline">${fmt(Number(item.supporting_observation_count || 1))} evidence patterns</span></td><td><span class="ledger-pill">${escHtml(status)}</span>${item.lifecycle?.installation === 'stale' ? '<span class="analysis-subline">Installation changed</span>' : ''}</td><td>${escHtml(item.suggestion_assessment?.label || 'Benefit unmeasured')}<span class="analysis-subline">${escHtml((item.suggestion_assessment?.rank_reasons || []).join(' · '))}</span></td><td><button type="button" class="ledger-button${['pending','approved'].includes(item.status) && workflowDeployment(item) !== 'active' ? ' primary' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(item.id)}">${['pending','approved'].includes(item.status) && workflowDeployment(item) !== 'active' ? 'Enable workflow' : 'Inspect workflow'}</button><span class="analysis-subline">${comparison ? 'Recorded comparison available' : workflowDeployment(item) === 'active' ? 'No recorded comparison' : 'Not measured'}</span>${comparison ? `<button type="button" class="ledger-button" data-ledger-action="navigate-analysis-row" data-row-kind="impact" data-row-id="${escHtml(comparison.id)}">View impact</button>` : ''}${workflowSuggestionAction(item)}</td></tr>`;
+        return `${summary}<tr class="analysis-detail" id="${escHtml(detailId)}"${analysisRowOpen('workflow',item.id) ? '' : ' hidden'}><td colspan="6"><article class="workflow-card workflow-tile" data-state="${escHtml(workflowDisplay(item))}">
           <div class="tile-card-main">
             <div class="tile-card-kicker"><span>${escHtml(origin.label)}</span><span>${escHtml(humanizeLedgerLabel(behaviorType))}</span></div>
             <div class="tile-card-head"><div class="tile-card-heading"><h3 class="tile-card-title">${escHtml(humanizeLedgerLabel(slug))}</h3><p class="tile-card-description">${escHtml(String(content.description || item.hypothesis || 'No description is available yet.'))}</p></div><span class="ledger-pill signal tile-card-status">${escHtml(status)}</span></div>
             <dl class="tile-metric-grid">
               <div class="tile-metric"><dt>${resource('workflows').state === 'ready' ? 'Supporting Tasks' : 'Recorded Task Links'}</dt><dd>${item.support_execution_unit_count == null ? '—' : fmt(Number(item.support_execution_unit_count))}</dd></div>
               <div class="tile-metric"><dt>Evidence Patterns</dt><dd>${fmt(Number(item.supporting_observation_count || 1))}</dd></div>
-              <div class="tile-metric signal"><dt>Evidence Confidence</dt><dd>${resource('workflows').state === 'ready' ? `${Math.round(Number(item.confidence || 0) * 100)}% confidence` : 'Updating'}</dd></div>
+              <div class="tile-metric"><dt>Evidence status</dt><dd>${resource('workflows').state === 'ready' ? 'Current analysis' : 'Stored analysis'}</dd></div>
             </dl>
-            <section class="workflow-step-preview" aria-label="Workflow Step Preview"><div class="workflow-step-preview-head"><span>Workflow Steps</span><span>${fmt(steps.length)} total</span></div>${renderWorkflowSteps(steps, {limit:4, compact:true})}</section>
+            ${item.status === 'stale' ? `<p class="impact-scope">Retired: ${escHtml(humanizeLedgerLabel(item.checks?.stale_reason || 'Original observation is no longer current'))}</p>` : ''}${workflowProcedureEvidence(item.content)}<section class="workflow-step-preview" aria-label="Workflow Step Preview"><div class="workflow-step-preview-head"><span>Workflow Steps</span><span>${fmt(steps.length)} total</span></div>${renderWorkflowSteps(steps)}</section>
             <div class="tile-card-meta"><span class="ledger-pill">Suggested ${escHtml(artifact)}</span><span class="ledger-pill">Rule ${escHtml(humanizeLedgerLabel(sourceRule))}</span><span class="ledger-pill">${fmt((item.source_scopes || []).length)} scopes</span></div>
           </div>
-          <footer class="tile-card-footer"><code class="tile-card-command" title="${escHtml(command)}" translate="no">${escHtml(command)}</code><button type="button" class="ledger-button${item.status === 'pending' ? ' primary' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.id))}">${resource('workflows').state !== 'ready' ? 'Inspect Workflow' : workflowDeployment(item) === 'active' ? 'Review Application' : escHtml(origin.reviewLabel)}</button></footer>
-        </article>`;
-      }).join('') : resource('workflows').state !== 'ready'
+          <footer class="tile-card-footer"><code class="tile-card-command" title="${escHtml(command)}" translate="no">${escHtml(command)}</code><button type="button" class="ledger-button${item.status === 'pending' ? ' primary' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.id))}">${resource('workflows').state !== 'ready' ? 'Inspect Workflow' : workflowDeployment(item) === 'active' ? 'Inspect enabled workflow' : ['pending','approved'].includes(item.status) ? 'Enable workflow' : 'Inspect workflow'}</button></footer>
+        </article></td></tr>`;
+      }).join('')) : resource('workflows').state !== 'ready'
         ? '<div class="panel"><div class="panel-title">Workflow analysis is updating</div><div class="workflow-copy">No stored workflows are available for these filters. New results will appear here when ready.</div></div>'
-        : `<div class="panel"><div class="panel-title">No workflows match these filters</div><div class="workflow-copy">${isStaticDemo() ? 'Clear the behavior or state filter to explore the sample workflows.' : 'Clear the behavior or state filter, run <code>reflect improve</code> for deterministic proposals, build one reviewed loop with <code>reflect loops build LOOP_ID</code>, or import an existing procedure with <code>reflect workflows add SKILL.md</code>.'}</div></div>`;
+        : `<div class="panel"><div class="panel-title">No eligible workflow suggestions</div><div class="workflow-copy">${isStaticDemo() ? 'Clear the behavior or state filter to explore the sample workflows.' : 'A suggestion needs a clear task, source-backed steps, and three independent sessions. Generic findings remain in Inbox. Choose All states to inspect drafts, or History for dismissed suggestions.'}</div></div>`;
+      if (selectedStatus === 'reviewable' && matching.length > 5) {
+        workflowLedger.insertAdjacentHTML('beforeend', `<button type="button" class="ledger-button" id="workflow-show-all" aria-expanded="${showAllSuggestions}">${showAllSuggestions ? 'Show top five' : `Show all ${fmt(matching.length)} workflows`}</button>`);
+        document.getElementById('workflow-show-all').onclick = () => {
+          showAllSuggestions = !showAllSuggestions;
+          updateUrlParams(params => showAllSuggestions ? params.set('workflow_show','all') : params.delete('workflow_show'));
+          renderWorkflowLedger();
+        };
+      }
     };
-    if (typeFilter) typeFilter.onchange = renderWorkflowLedger;
-    if (statusFilter) statusFilter.onchange = renderWorkflowLedger;
+    if (typeFilter) typeFilter.onchange = () => { workflowParams.delete('workflow_row'); updateUrlParams(params => params.delete('workflow_row')); renderWorkflowLedger(); };
+    if (statusFilter) statusFilter.onchange = () => { workflowParams.delete('workflow_row'); updateUrlParams(params => params.delete('workflow_row')); renderWorkflowLedger(); };
     renderWorkflowLedger();
   }
 
   const measurementLedger = document.getElementById('measurement-ledger');
   if (measurementLedger) {
-    measurementLedger.innerHTML = measurementGroups.length ? measurementGroups.map(history => {
+    measurementLedger.innerHTML = measurementGroups.length ? analysisTable(['Workflow / metric','Outcome','Before → After','Tasks / dates','Evidence limits','Navigate'], measurementGroups.map(history => {
       const item = history[0];
       const metric = impactMetricPresentation(item.metric_name);
       const measurementState = impactMeasurementState(item);
       const verdict = impactVerdictPresentation(item.verdict, measurementState);
       const workflow = workflows.find(candidate => candidate.id === item.candidate_id);
-      const workflowName = humanizeLedgerLabel(workflow?.content?.slug || 'Applied workflow');
+      const workflowName = workflow ? workflowTableName(workflow) : `Workflow ${String(item.candidate_id || '').slice(-8)}`;
       const minimumAfter = item.cohort?.minimum_after_execution_units;
       const afterCount = item.cohort?.eligibility?.after?.metric_count;
       const count = value => value == null || !Number.isFinite(Number(value)) ? 'Unknown' : fmt(Number(value));
@@ -9010,10 +9193,11 @@ function buildImprovementSurfaces(){
       const progressGraph = impactProgressGraph(history, metric);
       const reasons = item.cohort?.measurement_reasons || [];
       const historyRows = history.slice(1).map(previousItem => `<li class="impact-history-item"><span>${escHtml(fmtWorkflowDate(previousItem.measured_at))}</span><span>${escHtml(formatImpactValue(metric, previousItem.after_value))} · ${escHtml(impactVerdictPresentation(previousItem.verdict, impactMeasurementState(previousItem)).label)}</span></li>`).join('');
-      return `<article class="measurement-card impact-card" data-verdict="${escHtml(String(item.verdict || 'insufficient_data'))}" data-trend="${escHtml(trend?.kind || 'unknown')}">
+      const summary = `<tr class="analysis-summary"><th scope="row">${analysisToggle('impact',item.id,workflowName)}<span class="analysis-subline">${escHtml(metric.measure)}${item.workflow_version != null ? ` · v${escHtml(item.workflow_version)}` : ''}</span></th><td><span class="impact-status ${guidance ? 'unchanged' : verdict.className}">${escHtml(impactOutcome(item))}</span>${retained ? '<span class="analysis-subline">Stored check · validation pending</span>' : ''}</td><td class="analysis-values">${ready ? `${escHtml(formatImpactValue(metric,item.before_value))}<span aria-hidden="true"> → </span>${escHtml(formatImpactValue(metric,item.after_value))}` : '—'}</td><td>${count(item.cohort?.eligibility?.before?.selected_count ?? item.before_count)} before / ${count(item.cohort?.eligibility?.after?.selected_count ?? item.after_count)} after${impactDates(item)}</td><td class="analysis-limitations">${escHtml(impactLimitations(item))}</td><td><button type="button" class="ledger-button" data-ledger-action="navigate-analysis-row" data-row-kind="workflow" data-row-id="${escHtml(item.candidate_id)}">View workflow</button></td></tr>`;
+      return `${summary}<tr class="analysis-detail" id="detail-impact-${escHtml(item.id)}"${analysisRowOpen('impact',item.id) ? '' : ' hidden'}><td colspan="6"><article class="measurement-card impact-card" data-verdict="${escHtml(String(item.verdict || 'insufficient_data'))}" data-trend="${escHtml(trend?.kind || 'unknown')}">
         <div class="impact-head">
           <div class="impact-head-main"><div class="impact-eyebrow">Applied Workflow · ${escHtml(workflowName)}</div><h3 class="impact-title">${escHtml(metric.goal)}</h3></div>
-          <div class="impact-status-stack"><span class="impact-status ${escHtml(guidance ? guidance.collecting ? 'collecting' : 'unchanged' : verdict.className)}">${retained ? 'Stored check · ' : ''}${escHtml(guidance?.label || verdict.label)}</span>${trend ? `<span class="impact-trend-status ${escHtml(trend.kind)}">${escHtml(trend.label)}</span>` : ''}</div>
+          <div class="impact-status-stack"><span class="impact-status ${escHtml(guidance ? guidance.collecting ? 'collecting' : 'unchanged' : verdict.className)}">${retained ? 'Stored check · ' : ''}${escHtml(impactOutcome(item))}</span>${trend ? `<span class="impact-trend-status ${escHtml(trend.kind)}">${escHtml(trend.label)}</span>` : ''}</div>
         </div>
         <p class="impact-summary">${escHtml(impactSummary(item, metric, trend))}</p>
         ${guidance ? `<p class="impact-summary"><strong>Next step:</strong> ${escHtml(guidance.nextStep)}</p>` : `<div class="impact-readiness" aria-label="Comparison readiness">
@@ -9028,7 +9212,7 @@ function buildImprovementSurfaces(){
           <div class="impact-period"><div class="impact-period-label">After Activation</div><div class="impact-period-value">${escHtml(formatImpactValue(metric, item.after_value))}</div></div>
         </div>` : ''}
         ${progressGraph}
-        <div class="impact-scope">${escHtml(impactScope(item))}${ready && item.confidence != null && Number.isFinite(Number(item.confidence)) ? ` · ${Math.round(Number(item.confidence) * 100)}% confidence` : ''}</div>
+        <div class="impact-scope">${escHtml(impactScope(item))}</div>
         <div class="impact-scope">${retained ? `Stored check ${escHtml(item.measured_at ? fmtWorkflowDate(item.measured_at) : 'date unknown')}; current validation is pending. ` : ''}Observed cohort differences do not establish that the workflow caused the change.</div>
         <div class="ledger-actions">${guidance ? `<button type="button" class="ledger-button primary" data-ledger-action="${guidance.action}" data-measurement-id="${escHtml(String(item.id))}" data-candidate-id="${escHtml(String(item.candidate_id))}">${guidance.actionLabel}</button>` : `<button type="button" class="ledger-button primary" data-ledger-action="review-impact-sessions" data-measurement-id="${escHtml(String(item.id))}">View Compared Tasks</button><button type="button" class="ledger-button${item.verdict === 'regressed' && !regressedButImproving ? ' danger' : ''}" data-ledger-action="review-workflow" data-candidate-id="${escHtml(String(item.candidate_id))}">${reviewLabel}</button>`}</div>
         <details class="impact-history"><summary>Comparison evidence and exclusions</summary>
@@ -9040,8 +9224,8 @@ function buildImprovementSurfaces(){
           ${reasons.length ? `<p class="impact-scope">${escHtml(reasons.join(' '))}</p>` : ''}
         </details>
         ${historyRows ? `<details class="impact-history"><summary>${fmt(history.length - 1)} Previous Check${history.length === 2 ? '' : 's'}</summary><ol class="impact-history-list">${historyRows}</ol></details>` : ''}
-      </article>`;
-    }).join('') : resource('impact').state !== 'ready'
+      </article></td></tr>`;
+    }).join('')) : resource('impact').state !== 'ready'
       ? `<div class="panel"><div class="panel-title">Impact analysis is pending</div><div class="measurement-copy">${hasLoaded('impact') ? 'No checks were available in the last loaded result. Current results are unknown until refresh completes.' : 'Checks and baseline eligibility are unknown until analysis is available.'}</div></div>`
       : `<div class="panel"><div class="panel-title">No Impact Checks Yet</div><div class="measurement-copy">Install a reviewed workflow to start a bounded validation window. Reflect reports a result only when both task cohorts and their required signals are complete.</div></div>`;
   }
@@ -9108,6 +9292,8 @@ function renderMeasurementCoverage(){
   if (!el) return;
   const data = D.measurements || {}, c = data.coverage || {}, m = data.metrics || {}, totals = data.totals || {};
   const git = D.git_activity || {}, buckets = c.token_bucket_records || {};
+  const retained = c.retained_token_bucket_records || {};
+  const hasRetained = Object.values(retained).some(value => Number(value)>0);
   const known = v => v != null && Number.isFinite(Number(v));
   const compact = v => !known(v) ? 'Unknown' : Number(v).toLocaleString(undefined, {notation:'compact', maximumFractionDigits:1});
   const decimal = v => !known(v) ? 'Unknown' : Number(v).toLocaleString(undefined, {maximumFractionDigits:2});
@@ -9126,16 +9312,16 @@ function renderMeasurementCoverage(){
   const tokenBuckets = [
     ['U','Uncached input','input_tokens'],['R','Cache read','cache_read_tokens'],
     ['W','Cache write','cache_creation_tokens'],['O','Output','output_tokens'],
-  ].map(([code,label,key])=>({code,label,key,records:buckets[key],value:Number(buckets[key])>0 && known(totals[key]) ? totals[key] : null}));
+  ].map(([code,label,key])=>({code,label,key,records:buckets[key],retained:Number(retained[key] || 0),value:(Number(buckets[key])>0 || Number(retained[key])>0) && known(totals[key]) ? totals[key] : null}));
   const tokenTotal = tokenBuckets.some(item=>known(item.value)) ? tokenBuckets.reduce((sum,item)=>sum+Number(item.value || 0),0) : null;
   const tokenComplete = tokenBuckets.every(item=>known(item.value) && item.records === observed);
   const completedTurns = m.completed_turns === 0 && !known(c.observed_prompt_turns) ? null : m.completed_turns;
   const scope = data.scope || {};
   const scopeEl = document.getElementById('measurement-scope');
-  if (scopeEl) scopeEl.textContent = `${D.focused_session_id ? 'Selected session · ' : ''}${scope.kind === 'event_window' ? 'Selected event window' : 'Captured session lifetimes'}${scope.date_from || scope.date_to ? ` · ${scope.date_from ? fmtWorkflowDate(scope.date_from) : 'First event'} — ${scope.date_to ? fmtWorkflowDate(scope.date_to) : 'Latest event'} (local time)` : ''}. Coverage travels with every measurement.`;
+  if (scopeEl) scopeEl.textContent = `${D.focused_session_id ? 'Selected session · ' : ''}${scope.kind === 'event_window' ? 'Selected event window' : 'Captured session lifetimes'}${scope.date_from || scope.date_to ? ` · ${scope.date_from ? fmtWorkflowDate(scope.date_from) : 'First event'} — ${scope.date_to ? fmtWorkflowDate(scope.date_to) : 'Latest event'} (local time)` : ''}. Coverage travels with every measurement.${scope.kind === 'event_window' && Number(c.undated_usage)>0 ? ` ${decimal(c.undated_usage)} undated session totals are excluded. Select All time to inspect them.` : ''}${hasRetained ? ' Retained session totals are included; transcript estimates are not exact provider usage.' : ''}`;
   el.innerHTML = `
-    <article class="usage-widget usage-headline usage-cost"><div class="usage-widget-head"><h3><span class="usage-code">M1</span> ${escHtml(costLabel)}</h3><span class="usage-unit">USD</span></div><div class="usage-big">${number(cost,amount,'USD')}</div><div class="usage-coverage"><span>${known(observed) && observed>0 ? `${decimal(fullyPriced)} / ${decimal(observed)} fully priced` : 'Pricing coverage unknown'}</span><b>${percent(observed>0 && known(fullyPriced) ? fullyPriced/observed : null)}</b></div>${ratioBar(fullyPriced,observed,'Fully priced usage coverage')}<p class="usage-copy">${c.cost_status === 'complete' ? 'All observed usage records are fully priced.' : costKnown ? 'Unpriced usage is excluded from this subtotal.' : 'Model or pricing evidence is missing.'} Estimates are not provider invoices.</p></article>
-    <article class="usage-widget usage-headline"><div class="usage-widget-head"><h3><span class="usage-code">M2</span> Captured tokens</h3><span class="usage-unit">${tokenComplete ? 'Complete buckets' : 'Known buckets'}</span></div><div class="usage-big">${number(tokenTotal,compact,'tokens')}</div><dl class="usage-token-buckets">${tokenBuckets.map(item=>`<div title="${escHtml(item.label)} · ${escHtml(decimal(item.records))} of ${escHtml(decimal(observed))} records"><dt><b>${item.code}</b> ${escHtml(item.label)}</dt><dd>${number(item.value,compact,'tokens')}</dd><small>${decimal(item.records)} / ${decimal(observed)} records</small></div>`).join('')}</dl><div class="usage-inline-metric"><span>Cache-read share</span>${number(m.cache_read_ratio,percent)}</div>${ratioBar(m.cache_read_ratio,1,'Cache-read token share')}<p class="usage-copy">R / (U + R + W), from ${decimal(c.complete_input_usage)} complete-input records. A token share, not a provider cache hit rate.</p></article>
+    <article class="usage-widget usage-headline usage-cost"><div class="usage-widget-head"><h3><span class="usage-code">M1</span> ${escHtml(costLabel)}</h3><span class="usage-unit">USD</span></div><div class="usage-big">${number(cost,amount,'USD')}</div><div class="usage-coverage"><span>${known(observed) && observed>0 ? `${decimal(fullyPriced)} / ${decimal(observed)} fully priced` : 'Pricing coverage unknown'}</span><b>${percent(observed>0 && known(fullyPriced) ? fullyPriced/observed : null)}</b></div>${ratioBar(fullyPriced,observed,'Fully priced usage coverage')}<p class="usage-copy">${c.cost_status === 'complete' ? 'All observed usage records are fully priced.' : costKnown ? 'Unpriced usage is excluded from this subtotal.' : Number(c.known_model_usage)>0 ? 'Captured models have no priced usage. Run reflect doctor cost to check model aliases and pricing.' : 'No priced usage was captured for this scope.'} Estimates are not provider invoices.</p></article>
+    <article class="usage-widget usage-headline"><div class="usage-widget-head"><h3><span class="usage-code">M2</span> ${hasRetained ? 'Captured + retained tokens' : 'Captured tokens'}</h3><span class="usage-unit">${tokenComplete ? 'Complete buckets' : 'Known buckets'}</span></div><div class="usage-big">${number(tokenTotal,compact,'tokens')}</div><dl class="usage-token-buckets">${tokenBuckets.map(item=>`<div title="${escHtml(item.label)} · ${escHtml(decimal(item.records))} of ${escHtml(decimal(observed))} records"><dt><b>${item.code}</b> ${escHtml(item.label)}</dt><dd>${number(item.value,compact,'tokens')}</dd><small>${decimal(item.records)} / ${decimal(observed)} records${item.retained ? ` · ${item.retained} retained totals` : ''}</small></div>`).join('')}</dl><div class="usage-inline-metric"><span>Cache-read share</span>${number(m.cache_read_ratio,percent)}</div>${ratioBar(m.cache_read_ratio,1,'Cache-read token share')}<p class="usage-copy">R / (U + R + W), from ${decimal(c.complete_input_usage)} complete-input records. A token share, not a provider cache hit rate.</p></article>
     <article class="usage-widget usage-headline"><div class="usage-widget-head"><h3><span class="usage-code">M3</span> Completed turns</h3></div><div class="usage-big">${number(completedTurns)}</div><dl class="usage-facts">${fact('Mean inclusive input',m.mean_input_tokens,compact,'tokens')}${fact('Eligible usage turns',c.eligible_usage_turns)}</dl><p class="usage-copy">Input includes U + R + W. A recorded turn ending is not verified task success.</p></article>
     <article class="usage-widget usage-headline"><div class="usage-widget-head"><h3><span class="usage-code">M4</span> Paired tool calls</h3></div><div class="usage-big">${number(m.completed_tool_calls)}</div><dl class="usage-facts">${fact('Mean per eligible turn',m.mean_tool_calls_per_turn,decimal)}${fact('Maximum in a turn',m.max_tool_calls_per_turn)}</dl><p class="usage-copy">Calls with results across ${decimal(c.eligible_tool_turns)} eligible completed turns.</p><button type="button" class="usage-link" data-usage-view="tools">Inspect tool activity <span aria-hidden="true">→</span></button></article>`;
   el.onclick = event => {
@@ -9751,7 +9937,26 @@ function svgWidth(el) {
   return el.clientWidth > 0 ? el.clientWidth : (window.innerWidth - 96);
 }
 
+class ExploreGraphLifecycle {
+  constructor(){ this.key = ''; this.cleanups = []; }
+  begin(data, scope){
+    const key = JSON.stringify([scope, data.graph_tool_transitions, data.graph_dep,
+      data.graph_semantic, data.graph_session_timeline, data.graph_cooccurrence]);
+    if (key === this.key) return false;
+    this.cleanups.splice(0).forEach(cleanup => cleanup());
+    for (const id of ['sankey-svg','dep-svg','semantic-graph-svg']) {
+      const el = document.getElementById(id);
+      if (el) { d3.select(el).interrupt(); el.replaceChildren(); }
+    }
+    this.key = key;
+    return true;
+  }
+  onDispose(cleanup){ this.cleanups.push(cleanup); }
+}
+const exploreGraphLifecycle = new ExploreGraphLifecycle();
+
 function initGraphs() {
+  if (!exploreGraphLifecycle.begin(sqlTab('graph'), exploreViewUrl('graph').url.toString())) return;
 
 /* ── 1. Tool Flow — manual arc diagram ── */
 (function buildSankey(){
@@ -9859,8 +10064,8 @@ function initGraphs() {
   }
 
   if (!dep.nodes.length || !dep.links.length) {
-    document.getElementById('dep-svg').outerHTML =
-      '<div style="height:440px;display:flex;align-items:center;justify-content:center;color:var(--text-3);font-size:13px">No agent-to-tool activity captured for this report.</div>';
+    document.getElementById('dep-svg').style.height = '0px';
+    noteEl.textContent = 'No agent-to-tool activity captured for this report.';
     return;
   }
 
@@ -10037,13 +10242,17 @@ function initGraphs() {
   const tip = document.getElementById('semantic-graph-tip');
   if (!shell || !svgEl || !filter || !mode || !context || !legend || !tip) return;
   if (!initialGraph.nodes.length) {
-    shell.outerHTML = '<div class="semantic-graph-empty">No semantic graph rows found. Run reflect, then use reflect memory sync . to add local folder memories.</div>';
+    shell.hidden = true;
+    context.textContent = 'No semantic graph rows found for this selection.';
     filter.innerHTML = '<option value="">All sessions</option>';
     mode.disabled = true;
     legend.innerHTML = '';
     return;
   }
 
+  shell.hidden = false;
+  tip.classList.remove('is-visible');
+  const savedSession = filter.value, savedMode = mode.value;
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   let allNodes = [];
   let allEdges = [];
@@ -10102,7 +10311,7 @@ function initGraphs() {
     ).join('');
   }
 
-  useGraphData(initialGraph);
+  useGraphData(initialGraph, savedSession);
 
   function workspaceSessionIds(sessionId) {
     const sessionIds = new Set([sessionId]);
@@ -10208,16 +10417,29 @@ function initGraphs() {
   const viewport = svg.append('g');
   const linkLayer = viewport.append('g');
   const nodeLayer = viewport.append('g');
+  let disposed = false, fitTimer = null, userAdjusted = false;
   const zoom = d3.zoom()
     .scaleExtent([.18, 3.5])
-    .on('zoom', event => viewport.attr('transform', event.transform));
+    .on('zoom', event => {
+      if (event.sourceEvent) userAdjusted = true;
+      viewport.attr('transform', event.transform);
+    });
   svg.call(zoom);
 
   let simulation = null;
   let activeSession = '';
-  let activeMode = 'workspace';
+  let activeMode = savedMode || 'workspace';
+  exploreGraphLifecycle.onDispose(() => {
+    disposed = true;
+    simulation?.stop();
+    clearTimeout(fitTimer);
+    svg.interrupt().on('.zoom', null);
+    filter.onchange = null;
+    mode.onchange = null;
+  });
 
   function render(sessionId, relationshipMode = activeMode) {
+    if ((sessionId || '') !== activeSession || relationshipMode !== activeMode) userAdjusted = false;
     activeSession = sessionId || '';
     activeMode = relationshipMode || 'workspace';
     const focusedSessionIds = !activeSession
@@ -10323,7 +10545,9 @@ function initGraphs() {
         nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
       });
 
-    setTimeout(() => {
+    clearTimeout(fitTimer);
+    fitTimer = setTimeout(() => {
+      if (disposed || userAdjusted) return;
       const bounds = viewport.node()?.getBBox?.();
       if (!bounds || !Number.isFinite(bounds.width) || !bounds.width) return;
       const scale = Math.min(1.1, .88 / Math.max(bounds.width / W, bounds.height / H));
@@ -10334,7 +10558,7 @@ function initGraphs() {
   }
 
   let workspaceRequest = 0;
-  filter.addEventListener('change', async event => {
+  filter.onchange = async event => {
     const selectedSession = event.target.value;
     const requestId = ++workspaceRequest;
     mode.disabled = !selectedSession;
@@ -10350,26 +10574,29 @@ function initGraphs() {
       const response = await fetch(url.toString(), {headers: {Accept: 'application/json'}});
       if (!response.ok) throw new Error('workspace-graph-fetch-failed');
       const payload = await response.json();
-      if (requestId !== workspaceRequest) return;
+      if (disposed || requestId !== workspaceRequest) return;
       useGraphData(payload.graph_semantic || initialGraph, selectedSession);
       mode.disabled = false;
       render(selectedSession, mode.value);
     } catch (error) {
-      if (requestId !== workspaceRequest) return;
+      if (disposed || requestId !== workspaceRequest) return;
       useGraphData(initialGraph, selectedSession);
       render(selectedSession, mode.value);
       context.textContent = 'Workspace expansion was unavailable; showing the bounded local graph snapshot.';
     }
-  });
-  mode.addEventListener('change', event => render(activeSession, event.target.value));
-  mode.disabled = true;
-  window.addEventListener('resize', () => render(activeSession, activeMode));
-  render('');
+  };
+  mode.onchange = event => render(activeSession, event.target.value);
+  mode.disabled = !filter.value;
+  const resize = () => { if (!disposed) render(activeSession, activeMode); };
+  window.addEventListener('resize', resize);
+  exploreGraphLifecycle.onDispose(() => window.removeEventListener('resize', resize));
+  render(filter.value, activeMode);
 })();
 /* ── 3. Session Timeline ── */
 (function buildTimeline(){
   const sessions = sqlTab('graph').graph_session_timeline || [];
   if (!sessions.length) {
+    document.getElementById('timeline-legend').innerHTML = '';
     document.getElementById('timeline-wrap').innerHTML =
       '<p style="color:var(--text-3);font-size:13px">No timeline data</p>';
     return;
@@ -10426,7 +10653,10 @@ function initGraphs() {
 /* ── 4. Co-occurrence Matrix ── */
 (function buildMatrix(){
   const co = sqlTab('graph').graph_cooccurrence;
-  if (!co || !co.tools.length) return;
+  if (!co || !co.tools.length) {
+    document.getElementById('matrix-table').innerHTML = '';
+    return;
+  }
 
   const tools = co.tools;
   const matrix = co.matrix;

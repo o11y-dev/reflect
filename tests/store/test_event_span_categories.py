@@ -73,7 +73,14 @@ def test_event_category_backfill_is_bounded_idempotent_and_preserves_accounting(
         tables = ("raw_events", "sessions", "llm_calls", "tool_calls", "pending_refresh", "session_rollups")
         before = {name: conn.execute(f"SELECT * FROM {name}").fetchall() for name in tables}
         attrs_before = conn.execute("SELECT id,raw_attrs_json FROM steps ORDER BY id").fetchall()
-        assert migrate(conn) == [51, 52]
+        queries = []
+        conn.set_trace_callback(queries.append)
+        assert migrate(conn) == [51, 52, 53, 54, 55, 56]
+        conn.set_trace_callback(None)
+        batch = next(q for q in queries if q.startswith('SELECT rowid,id,summary,raw_attrs_json FROM steps'))
+        plan = ' '.join(str(row[3]) for row in conn.execute('EXPLAIN QUERY PLAN ' + batch))
+        assert 'INTEGER PRIMARY KEY' in plan
+        assert 'TEMP B-TREE' not in plan
         categories = dict(conn.execute("SELECT type,COUNT(*) FROM steps GROUP BY type"))
         assert categories == {"runtime_span": 600, "session_span": 1, "generation_span": 1, "unknown": 3}
         assert {name: conn.execute(f"SELECT * FROM {name}").fetchall() for name in tables} == before

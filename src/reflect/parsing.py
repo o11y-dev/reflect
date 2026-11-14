@@ -21,7 +21,7 @@ from reflect.opencode_store import (
     opencode_tool_success,
 )
 from reflect.raw_segments import readable_segment_paths
-from reflect.store.mcp import DEFAULT_MCP_CLASSIFIER
+from reflect.store.mcp import DEFAULT_MCP_CLASSIFIER, qualify_mcp_tool_name
 from reflect.store.provenance import (
     is_codex_otel_service,
     telemetry_session_id,
@@ -921,7 +921,7 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
                     )
             elif item_type in {"function_call", "custom_tool_call"}:
                 call_id = str(payload.get("call_id") or payload.get("id") or f"{index}")
-                tool_name = str(payload.get("name") or "")
+                tool_name = qualify_mcp_tool_name(payload.get("name"), payload.get("namespace"))
                 arguments = (
                     payload.get("arguments")
                     if item_type == "function_call"

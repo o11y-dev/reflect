@@ -958,6 +958,19 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
                 for event in hook_facts.agent_events_by_step.values()
             ],
         )
+        # Session Execution and Explore share canonical skill-use evidence.
+        from reflect.views.report_tabs import build_report_tab
+
+        skill_view = build_report_tab(conn, "tools", session_ids={session_id})
+        skill_rows = {row["name"]: row for row in tool_inventory["skills"]}
+        for name, count in skill_view["skills_by_count"].items():
+            skill_rows[name] = {"name": name, "count": count, "tools": {}, "source": "Observed read or invocation"}
+        tool_inventory["skills"] = sorted(skill_rows.values(), key=lambda row: (-row["count"], row["name"]))
+        tool_inventory["total_skill_calls"] = sum(row["count"] for row in skill_rows.values())
+        tool_inventory["skill_attempts"] = [
+            {"name": name, "count": count, "source": "Read attempted; successful load not confirmed"}
+            for name, count in skill_view["skill_attempts_by_count"].items()
+        ]
         derived: dict[str, object] = {}
         if usage_state == "ready":
             from reflect.store.git_activity import git_activity

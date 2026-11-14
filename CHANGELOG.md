@@ -8,6 +8,8 @@
 
 ### Added
 
+- Source-backed workflow procedures distinguish captured operations from proposed safeguards, abstain on missing task intent, and count independent session roots.
+
 - A reproducible synthetic public demo with linked findings, reviewed skills, source sessions, and comparison evidence, built through the existing telemetry pipeline and SQL views.
 - Workflows and skill drafting share bounded execution procedure evidence: ordered operations, artifact areas, exact check scope, independent-session support, and failed or uncertain examples. Both detail views explain why executions match.
 - Skills now includes a bounded “Where used” graph and evidence table, linking observed reads, agent reports, executions, sessions and checks without guessing missing versions or ownership.
@@ -22,6 +24,10 @@
 
 ### Changed
 
+- Workflow recommendations show at most five eligible procedures with expandable decisions and evidence. A clear Enable workflow panel puts project selection and exact file changes before explicit enablement; changed projects or drafts require a fresh preview.
+
+- Workflows and Impact use compact analytical tables with expandable evidence, linked rows, preserved filters, explicit cohort dates, and retired suggestions in History. Observed changes and evidence gaps replace prominent heuristic confidence claims.
+
 - The landing page leads with a worked example, clear installation compatibility and first-use steps. Reports share restrained semantic colors; the public sample adds guided examples and installation/GitHub links without exposing local sessions.
 - Dashboard navigation gives each view its own space and scope: session filters stay with Sessions and Usage, while stored workflows, skills and comparison cohorts are identified separately. Session titles fall back to captured model or harness metadata and a short ID.
 - Finding priority, heuristic scores and workflow hypotheses are labeled separately from measured outcomes. Blocked comparisons explain the evidence gap and next action, with candidate accounting available on demand.
@@ -33,6 +39,27 @@
 - Simplified CLI service contexts, removed duplicate MCP migration checks and an unreachable cost-repair fallback, and clarified the shared writer lock's scope.
 
 ### Fixed
+
+- Skill-usage refresh uses the step index, streams captured payloads, and skips decoding unrelated command results. Historical Git repair no longer queues raw-event replay.
+- Explore shows automatic loading while preparation is busy. Skill reads and Git operations inside literal tool wrappers retain individual result evidence; captured local skills are discovered without a global scan.
+- Repeated identified change reviews produce a concrete review workflow, separating observed procedure steps from proposed safeguards and unmeasured benefits.
+
+
+- Preserve explicit MCP namespaces in Codex native calls and conversation detail; the decoder upgrade reprojects retained native sources so captured MCP calls are correctly classified.
+
+- Explore graph refreshes dispose old simulations and listeners, replace SVG layers, and preserve graph containers through empty results.
+- Usage distinguishes retained lifetime token estimates from captured event usage and explains undated totals excluded by time filters and unavailable model pricing.
+
+- Workflow suggestions expose Dismiss directly in the table and Restore in History, including during analysis refresh. Dismissal persists across grouped evidence variants; successful actions invalidate stale inventory reads and never remove active installations.
+
+- Context impact distinguishes missing usage from explicitly recorded zero tokens and withdraws historical token comparisons whose coverage was never validated, retaining their original evidence for audit.
+
+- Show newly recorded impact comparisons during refresh instead of hiding them behind an older cached result; retain the pending-validation label.
+
+- Keep historical event-category migration batches on the row-ID scan, avoiding repeated index scans and sorts on large local stores.
+
+- Reassess frozen impact cohorts after the execution-assessment upgrade while preserving original measurements and task membership; changed evidence still requires validation.
+- Classify tasks from captured user prompts and recover missing repository identity from unambiguous file-path evidence inside a verified repository. Reprocess retained context once without relaxing eligibility thresholds.
 - Memory searches preserve caller-owned read transactions and fall back to canonical records when the search index is empty, keeping guidance available during concurrent refreshes.
 - OTLP span identity survives file rotation, and Codex dispatch calls reconcile by session-scoped call ID without replacing richer result names or durations.
 - Static report inventories and evidence drill-downs use a versioned, read-only sample source. Sample dates stay fixed, unavailable evidence is explicit, and local report navigation never loads public conversion analytics.

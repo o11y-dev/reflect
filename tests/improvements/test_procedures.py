@@ -46,6 +46,10 @@ def seed_execution(conn, index, *, area='payments', verification='passed', sessi
         conn.execute("""INSERT INTO tool_calls(id,step_id,session_id,tool_name,status,input_preview_redacted,
              raw_attrs_json,created_at,updated_at) VALUES (?,?,?,?,'ok',?,?,?,?)""",
             (f'tool-{step}', step, sid, name, json.dumps(payload), json.dumps(attrs), NOW, NOW))
+    prompt_id = f'{uid}-prompt'
+    conn.execute("INSERT INTO steps(id,session_id,seq,type,status,started_at,raw_attrs_json,created_at,updated_at) VALUES (?,?,?,'prompt','ok',?,?,?,?)",
+                 (prompt_id,sid,index*100-1,NOW,json.dumps({'gen_ai.client.prompt.text':'Please implement the requested change.'}),NOW,NOW))
+    conn.execute("INSERT INTO execution_unit_steps VALUES (?,?,?,?)",(uid,prompt_id,sid,NOW))
     return uid
 
 
@@ -219,3 +223,23 @@ def test_generated_roles_accept_their_own_post_edit_inspection_sequence(conn):
     result = ContractEvaluationService(conn).evaluate_units(contract, [{
         'execution_unit_id':'execution-0','status':'completed','outcome':'success','verification_passed':True}])
     assert result['execution-0'].evaluation.followed
+
+
+def test_definition_has_task_provenance_and_children_do_not_add_support(conn):
+    for index in range(3):
+        seed_execution(conn,index)
+    group = ProcedureEvidenceRepository(conn).bundle()['procedures'][0]
+    assert group['procedure_definition']['task_intent']['source_refs']
+    assert all(step['source_refs'] for step in group['procedure_definition']['steps'])
+    conn.execute("UPDATE sessions SET parent_session_id='session-0' WHERE id!='session-0'")
+    assert not ProcedureEvidenceRepository(conn).bundle()['procedures'][0]['candidate_ready']
+    conn.execute("UPDATE steps SET raw_attrs_json='{}' WHERE type='prompt'")
+    assert not ProcedureEvidenceRepository(conn).bundle()['procedures'][0]['candidate_ready']
+
+
+def test_different_explicit_tasks_cannot_supply_shared_recurrence(conn):
+    for index,prompt in enumerate(('Implement the requested change.','Review this change.','Deploy this change.')):
+        seed_execution(conn,index)
+        conn.execute('UPDATE steps SET raw_attrs_json=? WHERE id=?',
+                     (json.dumps({'gen_ai.client.prompt.text':prompt}),f'execution-{index}-prompt'))
+    assert not any(group['candidate_ready'] for group in ProcedureEvidenceRepository(conn).bundle()['procedures'])

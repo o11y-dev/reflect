@@ -548,3 +548,29 @@ def test_report_only_incremental_refresh_relinks_annotation_without_verifying_it
         assert conn.execute("SELECT eligible FROM execution_units WHERE id=?", (placeholder,)).fetchone()[0] == 0
     finally:
         conn.close()
+
+
+@pytest.mark.parametrize("source", ["raw", "fact"])
+def test_archetype_uses_captured_prompt_instead_of_generic_span_label(tmp_path, source):
+    conn = connect_sqlite(tmp_path / 'prompt.db')
+    try:
+        migrate(conn)
+        _base(conn)
+        _step(conn, 'prompt', 1, NOW, 'codex.turn_input')
+        conn.execute('UPDATE steps SET raw_attrs_json=?', (json.dumps({
+            'gen_ai.client.prompt.text': 'Implement a new feature',
+            'gen_ai.client.turn_id': 'turn-1',
+        }),))
+        if source == 'fact':
+            conn.execute("UPDATE steps SET raw_attrs_json=json_remove(raw_attrs_json, '$.\"gen_ai.client.prompt.text\"')")
+            conn.execute("""INSERT INTO conversation_facts
+                (id,step_id,session_id,kind,role,content_preview_redacted,raw_attrs_json,created_at,updated_at)
+                VALUES ('fact','prompt','session','prompt','user','Implement a new feature','{}',?,?)""", (NOW,NOW))
+        ExecutionUnitService(conn).refresh()
+        TaskArchetypeService(conn).refresh()
+        row = conn.execute('SELECT task_archetype_id,confidence,features_json FROM execution_unit_archetypes').fetchone()
+        assert row[0] == 'implementation'
+        assert row[1] >= 0.65
+        assert json.loads(row[2])['matched_terms'] == ['feature', 'implement']
+    finally:
+        conn.close()

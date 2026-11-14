@@ -223,3 +223,62 @@ def test_detail_contract_names_occurrences_and_keeps_repeated_session_evidence(u
     assert len(payload['usage_occurrences']) == 2
     assert {item['session_id'] for item in payload['usage_occurrences']} == {'s-codex'}
     assert len({item['usage_id'] for item in payload['usage_occurrences']}) == 2
+
+
+def test_refresh_discovers_captured_plugin_skills_and_keeps_read_provenance(usage, tmp_path):
+    conn, registry, _, _ = usage
+    path = tmp_path / 'plugin' / 'skills' / 'review-change' / 'SKILL.md'
+    path.parent.mkdir(parents=True)
+    path.write_text('---\nname: review-change\ndescription: Inspect a change\n---\nRead the diff.\n')
+    wrapped = 'text(await tools.exec_command({cmd:' + json.dumps('cat ' + str(path)) + '}));'
+    add_read(conn, path, 1, tool_name='exec', attrs={
+        'gen_ai.client.tool.input':wrapped,
+        'gen_ai.client.tool.output':json.dumps({'exit_code':0,'output':'skill instructions'})})
+    registry.refresh()
+    record = next(item for item in registry.list() if item.slug == 'review-change')
+    occurrences = registry.show(record.id).usage_occurrences
+    assert len(occurrences) == 1
+    assert occurrences[0].evidence['relationship'] == 'loaded'
+    assert occurrences[0].skill_version_id is None
+    registry.refresh()
+    assert len(registry.show(record.id).usage_occurrences) == 1
+    from reflect.dashboard_sessions import load_session_detail
+    detail = load_session_detail(tmp_path / 'reflect.db', 's-codex')
+    assert any(row['name'] == 'review-change' and row['count'] == 1 for row in detail['tool_inventory']['skills'])
+
+
+def test_compound_skill_read_is_attempted_not_confirmed_by_last_command(usage):
+    conn, registry, skill, path = usage
+    add_read(conn, path, 1, tool_name='exec_command', attrs={
+        'gen_ai.client.tool.input':json.dumps({'cmd':f'cat {path}\ngit status'}),
+        'process.exit.code':0})
+    registry.sync_usage()
+    assert registry.show(skill.id).usage_occurrences[0].evidence['relationship'] == 'load_attempted'
+
+
+def test_skill_projection_does_not_scan_all_session_tools_for_every_step(usage):
+    from reflect.improvements.skill_usage import SkillUsageProjector
+    conn, _, _, path = usage
+    for index in range(1000):
+        add_read(conn, path, index)
+    ticks = 0
+    def bounded_work():
+        nonlocal ticks
+        ticks += 1
+        return ticks > 1000
+    conn.set_progress_handler(bounded_work, 1000)
+    try:
+        assert SkillUsageProjector(conn).refresh(session_ids={'s-codex'}, step_ids=None, now=NOW) == 1000
+    finally:
+        conn.set_progress_handler(None, 0)
+
+
+def test_non_skill_commands_do_not_parse_large_results_for_skill_usage(usage, monkeypatch):
+    from reflect.improvements.skill_usage import SkillUsageProjector
+    def unexpected(*args, **kwargs):
+        raise AssertionError('Unrelated command output must not be decoded for skills')
+    monkeypatch.setattr('reflect.execution_assessment.explicit_exit', unexpected)
+    monkeypatch.setattr('reflect.tool_inputs._results', unexpected)
+    projector = SkillUsageProjector(usage[0])
+    for name, args in [('exec_command', {'cmd':'git status'}), ('exec', 'text(await tools.exec_command({cmd:"git status"}));')]:
+        assert projector.occurrences({'gen_ai.client.tool.input':args}, name, 'ok', '') == []

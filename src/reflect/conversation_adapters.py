@@ -16,6 +16,7 @@ from typing import Any
 
 from reflect.agent_capabilities import normalize_agent_key
 from reflect.opencode_store import OpenCodeSessionStore, opencode_tool_success
+from reflect.store.mcp import qualify_mcp_tool_name
 from reflect.tool_outcomes import tool_failure
 from reflect.utils import _flatten_text_content, _json_dumps, _json_loads, _load_json_lines
 
@@ -247,7 +248,7 @@ class CodexConversationAdapter(SessionConversationAdapter):
                     )
             elif item_type in {"function_call", "custom_tool_call"}:
                 tool_use_id = _bounded(payload.get("call_id") or payload.get("id"), 300)
-                tool_name = _bounded(payload.get("name") or payload.get("tool_name"), 300)
+                tool_name = qualify_mcp_tool_name(_bounded(payload.get("name") or payload.get("tool_name"), 300), payload.get("namespace"))
                 tools[tool_use_id] = tool_name
                 events.append(
                     ConversationEvent(

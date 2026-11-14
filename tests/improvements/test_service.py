@@ -257,6 +257,23 @@ def test_impact_context_tokens_include_cache_without_double_counting_reasoning(t
         assert service.measurements._execution_unit_metric_values(
             "context_outlier_sessions", ["unit-context"]
         ) == {"unit-context": 15.0}
+
+        conn.execute("UPDATE llm_calls SET input_tokens=0, output_tokens=0, cache_read_input_tokens=0, cache_creation_input_tokens=0, reasoning_output_tokens=0")
+        assert service.measurements._execution_unit_metric_values(
+            "context_outlier_sessions", ["unit-context"]
+        ) == {}
+        conn.execute("UPDATE llm_calls SET raw_attrs_json=?", (json.dumps({"gen_ai.usage.output_tokens": 0}),))
+        assert service.measurements._execution_unit_metric_values("context_outlier_sessions", ["unit-context"]) == {}
+        conn.execute("UPDATE llm_calls SET raw_attrs_json='{}', reasoning_output_tokens=5")
+        assert service.measurements._execution_unit_metric_values("context_outlier_sessions", ["unit-context"]) == {}
+        conn.execute("UPDATE llm_calls SET raw_attrs_json=?", (json.dumps({
+            "gen_ai.usage.input_tokens": 0, "gen_ai.usage.output_tokens": 0,
+            "gen_ai.usage.cache_read.input_tokens": 0,
+            "gen_ai.usage.cache_creation.input_tokens": 0,
+        }),))
+        assert service.measurements._execution_unit_metric_values(
+            "context_outlier_sessions", ["unit-context"]
+        ) == {"unit-context": 0.0}
     finally:
         conn.close()
 
@@ -684,7 +701,7 @@ def test_refresh_persists_versioned_observations_and_pending_candidates(tmp_path
         assert "repeated_tool_failure_chain" in first_ids
         assert "retry_loop_without_state_change" not in first_ids
         assert "missing_or_late_verification" in first_ids
-        assert conn.execute("SELECT COUNT(*) FROM rule_definitions").fetchone()[0] == 16
+        assert conn.execute("SELECT COUNT(*) FROM rule_definitions").fetchone()[0] == 17
         assert conn.execute("SELECT COUNT(*) FROM workflow_candidates").fetchone()[0] <= len(first_ids)
         assert conn.execute("SELECT COUNT(*) FROM loop_patterns").fetchone()[0] >= 1
         assert {
@@ -2997,5 +3014,118 @@ def test_adherence_delta_filters_after_global_cohort_limit_and_fills_missing_exp
         writes = conn.total_changes
         assert service.adherence.refresh(execution_unit_ids={'delta-1'})['exposures'] == 1
         assert conn.total_changes == writes
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("ineligible", [False, True])
+@pytest.mark.parametrize("origin_version", [1, 2, None])
+def test_assessment_upgrade_remeasures_same_members_without_rewriting_history(tmp_path, ineligible, origin_version):
+    from reflect.store.impact_reassessment import reassess_upgraded_measurements
+
+    service, conn, candidate_id, _ = _measurement_policy_fixture(tmp_path)
+    try:
+        for index in range(3):
+            _insert_contract_execution(conn, f"pre-{index}",
+                                       started_at=f"2026-07-0{index + 3}T10:00:00+00:00",
+                                       sequence_base=200 + index * 3)
+        conn.execute("""UPDATE execution_units SET boundary_json=json_set(boundary_json,
+            '$.assessment.version',?,'$.assessment.input_digest',id || '-v1')""", (origin_version,))
+        original = service.measurements.measure(candidate_id)
+        original_row = tuple(conn.execute('SELECT * FROM measurements WHERE id=?', (original['id'],)).fetchone())
+        conn.execute("""UPDATE execution_units SET boundary_json=json_set(boundary_json,
+            '$.assessment.version',2,'$.assessment.input_digest',id || '-v2')""")
+        if ineligible:
+            conn.execute("UPDATE execution_units SET eligible=0 WHERE id='pre-0'")
+        # Repeated blocked measurements already contain v2 snapshots but pin v1 hashes.
+        service.measurements.measure(candidate_id)
+        if origin_version != 1:
+            assert reassess_upgraded_measurements(conn) == 0
+            assert tuple(conn.execute('SELECT * FROM measurements WHERE id=?', (original['id'],)).fetchone()) == original_row
+            return
+        if ineligible:
+            assert reassess_upgraded_measurements(conn) == 1
+        else:
+            conn.execute('DELETE FROM schema_migrations WHERE version=53')
+            conn.commit()
+            count = conn.execute('SELECT COUNT(*) FROM measurements').fetchone()[0]
+            conn.execute('BEGIN')
+            assert migrate(conn, commit=False) == [53]
+            conn.rollback()
+            assert conn.execute('SELECT COUNT(*) FROM measurements').fetchone()[0] == count
+            assert migrate(conn) == [53]
+        current = service.measurements.measure(candidate_id, skip_unchanged=True)
+        for side in ('before', 'after'):
+            key = f'{side}_execution_unit_ids'
+            assert current['cohort'][key] == original['cohort'][key]
+        assert current['cohort']['measurement_state'] == ('not_measurable' if ineligible else 'measured')
+        assert tuple(conn.execute('SELECT * FROM measurements WHERE id=?', (original['id'],)).fetchone()) == original_row
+        assert reassess_upgraded_measurements(conn) == 0
+        conn.execute("""UPDATE execution_units SET boundary_json=json_set(boundary_json,
+            '$.assessment.input_digest','later-evidence') WHERE id='pre-1'""")
+        assert reassess_upgraded_measurements(conn) == 0
+        assert service.measurements.measure(candidate_id)['cohort']['measurement_state'] == 'not_measurable'
+    finally:
+        conn.close()
+
+
+def test_dismiss_suggestion_covers_variants_persists_refresh_and_restores(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        service.refresh()
+        first, second = service.workflows.list()[:2]
+        conn.execute("UPDATE workflow_candidates SET contract_signature=? WHERE id=?", (first.contract_signature, second.id))
+        conn.commit()
+        dismissed = service.workflows.dismiss_suggestion(first.id)
+        assert set(dismissed["affected_ids"]) >= {first.id, second.id}
+        service.refresh()
+        assert service.workflows.show(first.id).status == WorkflowStatus.REJECTED
+        assert service.workflows.show(second.id).status == WorkflowStatus.REJECTED
+        cursor = conn.execute("SELECT * FROM observations WHERE id=?", (first.observation_id,))
+        observation = dict(zip([field[0] for field in cursor.description], cursor.fetchone(), strict=True))
+        observation.update(id="future-observation", fingerprint="future-evidence", status="new")
+        conn.execute(f"INSERT INTO observations ({','.join(observation)}) VALUES ({','.join('?' for _ in observation)})", list(observation.values()))
+        new_variant = service.repository.stage_candidate(
+            "future-observation", title=first.title, hypothesis=first.hypothesis,
+            content=first.content, confidence=first.confidence, target_metric=first.target_metric, now=NOW,
+        )
+        assert service.workflows.show(new_variant).status == WorkflowStatus.REJECTED
+        restored = service.workflows.restore_suggestion(first.id)
+        assert set(restored["affected_ids"]) == set(dismissed["affected_ids"]) | {new_variant}
+        assert service.workflows.show(first.id).status == WorkflowStatus.PENDING
+        assert service.workflows.show(second.id).status == WorkflowStatus.PENDING
+    finally:
+        conn.close()
+
+
+def test_dismiss_suggestion_never_modifies_an_active_installation(tmp_path):
+    service, conn = _service(tmp_path)
+    project = tmp_path / "project"
+    (project / ".git").mkdir(parents=True)
+    try:
+        service.refresh()
+        candidate = service.workflows.list()[0]
+        service.workflows.apply(candidate.id, project_root=project)
+        with pytest.raises(RuntimeError, match="active"):
+            service.workflows.dismiss_suggestion(candidate.id)
+        assert service.workflows.show(candidate.id).lifecycle.deployment.value == "active"
+    finally:
+        conn.close()
+
+
+def test_history_exposes_restore_without_resurrecting_manual_rejections(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        service.refresh()
+        first, second = service.workflows.list()[:2]
+        conn.execute("UPDATE workflow_candidates SET contract_signature=?, confidence=1 WHERE id=?", (first.contract_signature, second.id))
+        conn.commit()
+        service.workflows.reject(second.id)
+        service.workflows.dismiss_suggestion(first.id)
+        group = next(item for item in service.workflows.list() if item.contract_signature == first.contract_signature)
+        assert group.id == first.id
+        assert group.checks['dismissal']
+        service.workflows.restore_suggestion(group.id)
+        assert service.workflows.show(second.id).status == WorkflowStatus.REJECTED
     finally:
         conn.close()

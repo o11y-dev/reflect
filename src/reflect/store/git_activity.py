@@ -15,6 +15,8 @@ from pathlib import PurePath
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from reflect.tool_inputs import tool_invocations
+
 try:
     import orjson as _json
 except ImportError:
@@ -211,7 +213,7 @@ def operation_for_tool(row: dict[str, Any]) -> GitOperation | None:
         repo = inputs.get("project_id") or inputs.get("repository") or inputs.get("repo") or repository
         if inputs.get("owner") and inputs.get("repo"):
             repo = f"{inputs['owner']}/{inputs['repo']}"
-        number = inputs.get("merge_request_iid") or inputs.get("pull_number") or inputs.get("number")
+        number = inputs.get("merge_request_iid") or inputs.get("mr_iid") or inputs.get("pull_number") or inputs.get("number")
         op = GitOperation(action, provider, str(repo) if repo else None, kind, str(number) if number else None, source="mcp")
     if op is None:
         return None
@@ -277,16 +279,18 @@ def refresh_git_activity(conn: sqlite3.Connection, *, session_ids: set[str] | No
     columns = [c[0] for c in conn.execute("SELECT tc.*, '' AS observed_at, '' AS repo_id, '' AS repository FROM tool_calls tc LIMIT 0").description]
     now = datetime.now(UTC).isoformat()
     seen: set[str] = set()
-    for raw in rows:
-        row = dict(zip(columns, raw, strict=True))
+    projected = (call for raw in rows for call in tool_invocations(dict(zip(columns, raw, strict=True))))
+    for row in projected:
         op = operation_for_tool(row)
         if op is None:
             continue
         identity = f"{row['session_id']}:{row.get('logical_call_id') or row['id']}"
+        if "wrapper_index" in row:
+            identity += f":invocation:{row['wrapper_index']}"
         evidence_id = "vcs_" + hashlib.sha256(identity.encode()).hexdigest()[:32]
         seen.add(evidence_id)
         observed_at = row["observed_at"] if _object(row["raw_attrs_json"]).get("reflect.time.provenance") not in {"inferred", "synthetic"} else None
-        payload = {"schema_version": 1, **asdict(op), "tool_call_id": row["id"], "logical_call_id": row.get("logical_call_id"), "observed_at": observed_at}
+        payload = {"schema_version": 1, **asdict(op), "tool_call_id": row["id"], "logical_call_id": row.get("logical_call_id"), "invocation_index": row.get("wrapper_index"), "observed_at": observed_at}
         conn.execute("""
             INSERT INTO evidence(id,session_id,step_id,repo_id,kind,summary,confidence,raw_json,created_at,updated_at)
             VALUES(?,?,?,?, 'vcs_operation', ?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET

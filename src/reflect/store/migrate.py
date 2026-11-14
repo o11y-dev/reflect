@@ -176,7 +176,7 @@ def _classify_retained_event_spans(conn: sqlite3.Connection) -> int:
     timestamp = datetime.now(UTC).isoformat()
     last_rowid = changed = 0
     while rows := conn.execute(
-        "SELECT rowid,id,summary,raw_attrs_json FROM steps "
+        "SELECT rowid,id,summary,raw_attrs_json FROM steps NOT INDEXED "
         "WHERE rowid>? AND type='unknown' ORDER BY rowid LIMIT 256", (last_rowid,),
     ).fetchall():
         last_rowid = rows[-1][0]
@@ -436,6 +436,31 @@ def migrate(conn: sqlite3.Connection, *, commit: bool = True) -> list[int]:
                 _classify_retained_event_spans(conn)
             if migration.version == 52:
                 _repair_codex_span_identity(conn)
+            if migration.version == 53:
+                from reflect.store.impact_reassessment import reassess_upgraded_measurements
+
+                reassess_upgraded_measurements(conn)
+            if migration.version == 54:
+                from reflect.store.workspaces import backfill_session_context
+
+                session_ids = {str(row[0]) for row in conn.execute("""
+                    SELECT DISTINCT st.session_id FROM steps st
+                    JOIN sessions s ON s.id=st.session_id
+                    WHERE s.repo_id IS NULL AND NULLIF(json_extract(
+                        st.raw_attrs_json,'$."gen_ai.client.file_path"'),'') IS NOT NULL
+                """)}
+                if session_ids:
+                    backfill_session_context(conn, timestamp=datetime.now(UTC).isoformat(),
+                                             session_ids=session_ids)
+            if migration.version == 56:
+                from reflect.store.git_activity import refresh_git_activity
+
+                # Derived Git evidence needs no raw-event or usage replay.
+                sessions = [str(row[0]) for row in conn.execute(
+                    "SELECT session_id FROM pending_refresh WHERE revision='captured-tool-inputs-v1'"
+                )]
+                for offset in range(0, len(sessions), 20):
+                    refresh_git_activity(conn, session_ids=set(sessions[offset:offset + 20]))
             conn.execute(
                 "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
                 (migration.version, migration.name, datetime.now(UTC).isoformat()),

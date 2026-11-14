@@ -57,3 +57,46 @@
 .skill-availability.installed,.skill-availability.available{color:var(--skill)}
 .ledger-button[data-ledger-action="evidence"],.ledger-button[data-ledger-action="open-session"]{color:var(--evidence)}
 .ledger-button[data-ledger-action="review-skill"]{color:var(--skill)}
+
+/* Scan first; inspect the evidence only when a row is expanded. */
+.analysis-table-scroll{width:100%;overflow-x:auto;border:1px solid var(--glass-border);border-radius:7px;background:var(--panel)}
+.analysis-table{width:100%;border-collapse:collapse;text-align:left;font-size:12px;line-height:1.5}
+.analysis-table th,.analysis-table td{padding:13px 14px;vertical-align:top;border-bottom:1px solid var(--glass-border)}
+.analysis-table thead th{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600;white-space:nowrap;background:rgba(128,128,128,.04)}
+.analysis-table tbody th{font-weight:500;min-width:230px;max-width:330px}
+.analysis-table tbody td{min-width:105px}
+.analysis-table tbody tr:last-child td,.analysis-table tbody tr:last-child th{border-bottom:0}
+.analysis-summary:hover{background:rgba(242,138,26,.035)}
+.analysis-summary:has([aria-expanded="true"]){background:rgba(242,138,26,.065)}
+.analysis-toggle{display:flex;align-items:flex-start;gap:8px;width:100%;padding:0;border:0;background:none;color:var(--text);text-align:left;font:inherit;font-weight:600;cursor:pointer;line-height:1.5}
+.analysis-toggle:hover{color:#F28A1A}
+.analysis-toggle:focus-visible,.analysis-table-scroll:focus-visible{outline:2px solid #F28A1A;outline-offset:3px}
+.analysis-chevron{display:inline-block;color:#F28A1A;font-size:19px;line-height:1.1;transition:transform .15s}
+.analysis-toggle[aria-expanded="true"] .analysis-chevron{transform:rotate(90deg)}
+.analysis-subline{display:block;font-size:11px;color:var(--muted);font-weight:400;margin-top:5px}
+.analysis-summary th>.analysis-subline{margin-left:18px}
+.analysis-values{font-variant-numeric:tabular-nums;min-width:150px!important}
+.analysis-limitations{min-width:180px!important;max-width:280px;color:var(--text-2)}
+.analysis-table .impact-status{font-size:11px;white-space:normal;line-height:1.4}
+.analysis-table .ledger-button{font-size:11px;white-space:nowrap}
+.analysis-detail[hidden]{display:none!important}
+.analysis-detail>td{padding:0 18px 18px;background:rgba(128,128,128,.025)}
+.analysis-detail .workflow-card,.analysis-detail .impact-card{border:0;border-radius:0;box-shadow:none;background:transparent;max-width:1100px;margin:auto;padding:18px 0 0}
+.analysis-detail .tile-metric-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+.impact-help{margin-bottom:16px;color:var(--muted);font-size:12px}
+.impact-help>summary{cursor:pointer;width:fit-content;padding:4px 0}
+.impact-help .impact-explainer{margin-top:12px}
+@media(max-width:800px){.analysis-table{min-width:1000px}.analysis-table th,.analysis-table td{padding:10px}.analysis-detail>td{padding:0 12px 12px}}
+@media(prefers-reduced-motion:reduce){.analysis-chevron{transition:none}}
+.workflow-action-status:empty{display:none}
+.workflow-action-status{margin:12px 0;padding:12px 14px;border:1px solid var(--signal);border-radius:6px;color:var(--text-2);font-size:12px}
+.workflow-action-status .ledger-button{margin-left:8px}
+.analysis-table .suggestion-action{display:block;margin-top:8px;color:var(--muted)}
+.analysis-table .suggestion-action:hover{color:var(--signal)}
+
+/* Keep the enable decision compact; the exact change stays visible. */
+.workflow-enable-diff .ledger-diff{max-height:280px;overflow:auto}
+.workflow-enable-diff .review-panel-copy{overflow-wrap:anywhere}
+
+.review-grid.workflow-enable-layout{grid-template-columns:minmax(0,1fr)}
+.workflow-enable-layout .review-panel{padding:14px}
