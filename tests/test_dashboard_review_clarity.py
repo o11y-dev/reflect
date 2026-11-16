@@ -29,6 +29,8 @@ def test_skill_graph_all_time_keeps_old_evidence_and_pagination(tmp_path):
                      (f"u{i}", skill.id, f"s{i}", f"tool{i}", date, date, date))
     conn.commit()
     conn.close()
+    from test_dashboard_sql_api import _publish_report
+    _publish_report(db)
     client = TestClient(build_dashboard_app(db_path=db, docs_dir=tmp_path))
     url = f"/api/skills/{skill.id}/usage-graph"
     response = client.get(url + "?days=all&limit=1")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 
@@ -238,6 +239,11 @@ def test_improvement_readiness_preserves_findings_and_respects_scope(tmp_path, m
         mark_snapshot(conn, ready=True)
     finally:
         conn.close()
+    from backend_helpers import bind_backend
+
+    from reflect.store.snapshots import PublishedSnapshotStore
+    PublishedSnapshotStore(db, reserve_bytes=0).publish(evidence_revision="scope-fixture")
+    bind_backend(monkeypatch, db)
     monkeypatch.setenv("REFLECT_DB_PATH", str(db))
     if scope_kind == "path":
         cli_scope = ["--path", str(tmp_path / "project-a")]
@@ -250,8 +256,8 @@ def test_improvement_readiness_preserves_findings_and_respects_scope(tmp_path, m
     result = CliRunner().invoke(main, ["improve", *cli_scope, "--json", "--db-path", str(db)])
     assert result.exit_code == 0, result.output
     cli_report = json.loads(result.output)
-    mcp_report = mcp.reflect_improvements(**mcp_scope)
-    assert cli_report["observations"][0]["id"] == mcp_report["findings"][0]["id"] == observation_a
+    mcp_report = asyncio.run(mcp.reflect_improvements(**mcp_scope))
+    assert cli_report["findings"][0]["id"] == mcp_report["findings"][0]["id"] == observation_a
     assert cli_report["analysis_coverage"] == mcp_report["analysis_coverage"]
     for report in (cli_report, mcp_report):
         assert report["analysis_state"] == state
@@ -276,14 +282,20 @@ def test_mcp_reads_recorded_findings_during_refresh_without_writes(tmp_path, mon
     from reflect.store.sqlite import mark_snapshot
 
     _, conn, observation_a, _ = _scoped_service(tmp_path)
-    mark_snapshot(conn, ready=False)
+    mark_snapshot(conn, ready=True)
     conn.close()
+    from backend_helpers import bind_backend
+
+    from reflect.store.snapshots import PublishedSnapshotStore
+    PublishedSnapshotStore(tmp_path / "reflect.db", reserve_bytes=0).publish(evidence_revision="scope-fixture")
+    with connect_sqlite(tmp_path / "reflect.db") as writer:
+        mark_snapshot(writer, ready=False)
+    bind_backend(monkeypatch, tmp_path / "reflect.db")
     monkeypatch.setenv("REFLECT_DB_PATH", str(tmp_path / "reflect.db"))
 
     def forbidden(*_args, **_kwargs):
         pytest.fail("Recorded finding inspection must not migrate or refresh")
 
-    monkeypatch.setattr(mcp, "connect_sqlite", forbidden)
     monkeypatch.setattr("reflect.improvements.service.migrate", forbidden)
     monkeypatch.setattr(ImprovementService, "refresh", forbidden)
     original = ReflectContextService.improvements_summary
@@ -296,19 +308,18 @@ def test_mcp_reads_recorded_findings_during_refresh_without_writes(tmp_path, mon
         return result
 
     monkeypatch.setattr(ReflectContextService, "improvements_summary", inspect_read_only)
-    result = mcp.reflect_improvements(path=str(tmp_path / "project-a"), detail="full")
+    result = asyncio.run(mcp.reflect_improvements(path=str(tmp_path / "project-a"), detail="full"))
     assert [item["id"] for item in result["findings"]] == [observation_a]
     assert result["findings"][0]["evidence"]
-    assert result["analysis_state"] == "preparing"
-    assert result["analysis_pending"] is True
-    assert result["evidence_state"] == "recorded"
-    assert result["freshness"]["safe_for_before_after"] is False
-    assert result["limitations"]
+    assert result["analysis_state"] == "ready"
+    assert result["analysis_pending"] is False
+    assert result["evidence_state"] == "current"
+    assert result["freshness"]["safe_for_before_after"] is False  # No completed analysis timestamp in this fixture.
 
 
 def test_recorded_mcp_findings_still_require_current_schema(tmp_path, monkeypatch):
     from reflect import mcp
-    from reflect.preparation import SnapshotUnavailableError
+    from reflect.backend_client import BackendError
     from reflect.store.sqlite import mark_snapshot
 
     _, conn, _, _ = _scoped_service(tmp_path)
@@ -316,8 +327,10 @@ def test_recorded_mcp_findings_still_require_current_schema(tmp_path, monkeypatc
     mark_snapshot(conn, ready=False)
     conn.close()
     monkeypatch.setenv("REFLECT_DB_PATH", str(tmp_path / "reflect.db"))
-    with pytest.raises(SnapshotUnavailableError, match="pending migrations"):
-        mcp.reflect_improvements(path=str(tmp_path / "project-a"))
+    from backend_helpers import bind_backend
+    bind_backend(monkeypatch, tmp_path / "reflect.db")
+    with pytest.raises(BackendError, match="preparing"):
+        asyncio.run(mcp.reflect_improvements(path=str(tmp_path / "project-a")))
 
 
 def test_context_query_does_not_select_higher_impact_unrelated_project(tmp_path):

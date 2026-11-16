@@ -235,7 +235,7 @@ class MemoryService:
     def validate(self, memory_id: str) -> dict:
         return self.local.validate(memory_id).__dict__
 
-    def candidates(self, *, path: Path | None = None, session_id: str = "", limit: int = 50) -> list[dict]:
+    def candidates(self, *, path: Path | None = None, session_id: str = "", limit: int = 50, generate: bool = True) -> list[dict]:
         scope = ImprovementScopeResolver(self.conn).path(path)
         if not scope.matched:
             return []
@@ -246,7 +246,8 @@ class MemoryService:
         ).fetchone():
             return []
         limit = max(1, min(limit, 100))
-        self._generate_candidates(scope=scope, session_id=session_id, limit=limit)
+        if generate:
+            self._generate_candidates(scope=scope, session_id=session_id, limit=limit)
         rows = self.conn.execute(
             """
             SELECT id, scope, type, content_preview_redacted, confidence,

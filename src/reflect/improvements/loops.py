@@ -428,7 +428,9 @@ class LoopService:
               state_change_count = excluded.state_change_count,
               confidence = excluded.confidence,
               status = CASE WHEN loop_patterns.status = 'resolved' THEN 'detected' ELSE loop_patterns.status END,
-              evidence_json = excluded.evidence_json,
+              evidence_json = CASE WHEN json_extract(loop_patterns.evidence_json, '$.promoted_skill_id') IS NOT NULL
+                THEN json_set(excluded.evidence_json, '$.promoted_skill_id', json_extract(loop_patterns.evidence_json, '$.promoted_skill_id'))
+                ELSE excluded.evidence_json END,
               last_seen_at = excluded.last_seen_at,
               updated_at = excluded.updated_at
             """,

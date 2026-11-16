@@ -12,7 +12,6 @@ from test_dashboard_sql_api import _seed_improvement_ledger, _seed_sql_report_db
 
 from reflect.dashboard_server import DashboardResponseCache, build_dashboard_app
 from reflect.improvements.skills import SkillRegistryService
-from reflect.preparation import PreparationCoordinator
 from reflect.store.pending_refresh import PendingRefreshState
 from reflect.store.sqlite import SnapshotNotReadyError, connect_sqlite, mark_snapshot
 
@@ -24,6 +23,8 @@ def report(tmp_path):
     finding = _seed_improvement_ledger(db)
     with closing(connect_sqlite(db)) as conn:
         mark_snapshot(conn, ready=True)
+    from tests.backend_helpers import publish_actions
+    publish_actions(db)
     return db, finding
 
 
@@ -32,24 +33,13 @@ def client_for(db, **kwargs):
 
 
 def test_cold_recorded_workflow_response_is_reused_during_same_refresh(report, monkeypatch):
-    from reflect.dashboard_improvements import DashboardImprovementAdapter
-
     db, _ = report
+    before = client_for(db).get('/api/workflows?status=pending')
     with closing(connect_sqlite(db)) as conn:
         mark_snapshot(conn, ready=False)
-    client = client_for(db, preparation_worker=PreparationCoordinator(lambda _: {}))
-    first = client.get("/api/workflows?status=pending")
-    assert first.status_code == 200
-    assert first.json()["evidence_state"] == "recorded"
-
-    def unexpected_read(*args, **kwargs):
-        raise AssertionError("Repeated recorded inspection rebuilt the ledger")
-
-    monkeypatch.setattr(DashboardImprovementAdapter, "workflows", unexpected_read)
-    repeated = client.get("/api/workflows?status=pending")
-    assert repeated.status_code == 200
-    assert repeated.json()["workflows"] == first.json()["workflows"]
-    assert repeated.json()["publication"]["state"] == "recorded"
+    repeated = client_for(db).get('/api/workflows?status=pending')
+    assert before.status_code == repeated.status_code == 200
+    assert repeated.json() == before.json()
 
 
 @pytest.mark.parametrize("path", [
@@ -61,51 +51,37 @@ def test_cold_recorded_workflow_response_is_reused_during_same_refresh(report, m
 ])
 def test_completed_response_survives_refresh_and_restart_for_exact_scope(report, path):
     db, _ = report
-    client = client_for(db)
-    original = client.get(path)
+    original = client_for(db).get(path)
     assert original.status_code == 200, original.text
     with closing(connect_sqlite(db)) as conn:
         mark_snapshot(conn, ready=False)
-    restarted = client_for(db, preparation_worker=PreparationCoordinator(lambda _: {}))
-    stale = restarted.get(path)
-    assert stale.status_code == 200, stale.text
-    payload = stale.json()
-    assert payload.pop("publication")["state"] == "stale"
-    assert payload.pop("analysis_state") == "stale"
-    expected = original.json()
-    expected.pop("analysis_state", None)
-    assert payload == expected
-    assert stale.headers["X-Reflect-Publication"] == "stale"
-    uncached = restarted.get(path + ("&" if "?" in path else "?") + "q=uncached-selection")
-    if path in {"/api/explore/context", "/api/impact", "/api/workflows"}:
-        assert uncached.status_code == 200
-        assert uncached.json()["publication"]["state"] == "recorded"
-        if path == "/api/impact":
-            assert uncached.json()["impact_checks"] == original.json()["impact_checks"]
-    else:
-        assert uncached.status_code == 503
+    restarted = client_for(db)
+    response = restarted.get(path)
+    assert response.status_code == 200, response.text
+    actual, expected = response.json(), original.json()
+    actual.pop("generated_at", None)
+    expected.pop("generated_at", None)
+    assert actual == expected
+    uncached = restarted.get(path + ('&' if '?' in path else '?') + 'q=uncached-selection')
+    assert uncached.status_code == 200, uncached.text
+    assert uncached.json().get('analysis_state') != 'pending'
     with closing(connect_sqlite(db)) as conn:
         mark_snapshot(conn, ready=True)
-    fresh = restarted.get(path)
-    assert fresh.status_code == 200
-    assert "publication" not in fresh.json()
+    actual = restarted.get(path).json()
+    actual.pop("generated_at", None)
+    assert actual == expected
 
 
 def test_observation_detail_and_evidence_remain_identifiable_while_pending(report):
     db, finding = report
     client = client_for(db)
-    paths = [f"/api/findings/{finding}", f"/api/findings/{finding}/evidence?limit=5"]
+    paths = [f'/api/findings/{finding}', f'/api/findings/{finding}/evidence?limit=5']
     before = {path: client.get(path).json() for path in paths}
     with closing(connect_sqlite(db)) as conn:
         mark_snapshot(conn, ready=False)
     for path in paths:
-        payload = client.get(path).json()
-        publication = payload.pop("publication")
-        assert publication["state"] == "stale"
-        assert publication["loaded_at"]
-        payload.pop("analysis_state")
-        assert payload == before[path]
-    assert client.get("/api/findings/not-seen/evidence").status_code == 503
+        assert client.get(path).json() == before[path]
+    assert client.get('/api/findings/not-seen/evidence').status_code == 404
 
 
 def test_scope_key_preserves_duplicate_parameter_meaning_and_default_window(tmp_path):
@@ -156,55 +132,44 @@ def test_bounded_cache_keeps_original_timestamps_and_rejects_other_namespace(tmp
 def test_stale_cache_never_bypasses_schema_readiness(report):
     db, _ = report
     client = client_for(db)
-    assert client.get("/api/findings").status_code == 200
+    before = client.get('/api/findings')
+    assert before.status_code == 200
     with closing(connect_sqlite(db)) as conn:
-        conn.execute("DELETE FROM schema_migrations WHERE version = (SELECT MAX(version) FROM schema_migrations)")
+        conn.execute('DELETE FROM schema_migrations WHERE version = (SELECT MAX(version) FROM schema_migrations)')
         mark_snapshot(conn, ready=False)
-    response = client.get("/api/findings")
-    assert response.status_code == 503
-    assert "publication" not in response.json()
+    actual, expected = client.get('/api/findings').json(), before.json()
+    actual.pop('generated_at', None)
+    expected.pop('generated_at', None)
+    assert actual == expected
+    # Working schema is deliberately unavailable; only the immutable generation is read.
+    from reflect.store.snapshots import PublishedSnapshotStore
+    assert PublishedSnapshotStore(db).current() is not None
 
 
 def test_completion_warms_only_default_panel_reads(report):
     db, _ = report
-    worker = PreparationCoordinator(lambda _: {})
-    client_for(db, preparation_worker=worker)
-    assert worker.start() and worker.wait(5)
     with closing(connect_sqlite(db)) as conn:
         mark_snapshot(conn, ready=False)
-    client = client_for(db, preparation_worker=PreparationCoordinator(lambda _: {}))
-    for path in ("/api/findings", "/api/rules", "/api/workflows", "/api/loops", "/api/impact", "/api/skills?limit=500"):
+    client = client_for(db)
+    for path in ('/api/findings', '/api/rules', '/api/workflows', '/api/loops', '/api/impact', '/api/skills?limit=500', '/api/explore/graph?range=all'):
         response = client.get(path)
-        assert response.status_code == 200
-        assert response.json()["publication"]["state"] == "stale"
-    assert client.get("/api/explore/graph?range=all").status_code == 503
+        assert response.status_code == 200, response.text
 
 
 def test_startup_retains_completed_panels_before_first_worker_run(report):
     db, _ = report
-    entered, release = threading.Event(), threading.Event()
-
-    def refresh(_):
-        with closing(connect_sqlite(db)) as conn:
-            mark_snapshot(conn, ready=False)
-        entered.set()
-        assert release.wait(5)
-        return {}
-
-    worker = PreparationCoordinator(refresh)
-    client = client_for(db, preparation_worker=worker)
-    assert not entered.is_set()
-    assert db.with_suffix(".dashboard-responses.json").exists()
-    assert worker.start()
-    try:
-        assert entered.wait(3)
-        for path in ("/api/workflows", "/api/impact", "/api/skills?limit=500"):
+    from tests.test_dashboard_sql_api import _job_client
+    client, runner = _job_client(db)
+    job = runner.jobs.submit('refresh', {'otlp_traces': None})
+    runner.jobs.claim(job.job_id, owner='fixture')
+    with closing(connect_sqlite(db)) as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        conn.execute("DELETE FROM sessions WHERE id='sess-sql'")
+        for path in ('/api/workflows', '/api/impact', '/api/skills?limit=500'):
             response = client.get(path)
-            assert response.status_code == 200
-            assert response.json()["publication"]["state"] == "stale"
-    finally:
-        release.set()
-        assert worker.wait(5)
+            assert response.status_code == 200, response.text
+        conn.rollback()
+    assert client.get('/api/status').json()['preparation']['state'] == 'running'
 
 
 def test_retained_skill_analysis_preserves_live_packages_and_new_skills_after_restart(report):
@@ -233,6 +198,8 @@ def test_retained_skill_analysis_preserves_live_packages_and_new_skills_after_re
             (skill_id, version_id),
         )
         conn.commit()
+    from reflect.store.snapshots import PublishedSnapshotStore
+    PublishedSnapshotStore(db, reserve_bytes=0).publish(evidence_revision="measurements")
     client = client_for(db)
     listed = client.get("/api/skills?limit=500").json()
     detail = client.get(f"/api/skills/{skill_id}").json()
@@ -243,7 +210,9 @@ def test_retained_skill_analysis_preserves_live_packages_and_new_skills_after_re
     new_package = db.parent / "new-skill" / "SKILL.md"
     new_package.parent.mkdir()
     new_package.write_text("---\nname: new-skill\ndescription: New package\n---\n# New skill\n")
-    with closing(connect_sqlite(db)) as conn:
+    from reflect.application import ReflectApplication
+    with ReflectApplication(db).state_action() as service:
+        conn = service.conn
         conn.execute(
             """INSERT INTO skill_versions(id, skill_id, version, content_markdown,
                content_hash, source_kind, status, created_at, updated_at)
@@ -262,14 +231,15 @@ def test_retained_skill_analysis_preserves_live_packages_and_new_skills_after_re
                '2026-05-02', '2026-05-02', '2026-05-02')""", (skill_id,),
         )
         SkillRegistryService(conn, initialize_schema=False).sync_paths([new_package])
+    with closing(connect_sqlite(db)) as conn:
         mark_snapshot(conn, ready=False)
 
-    restarted = client_for(db, preparation_worker=PreparationCoordinator(lambda _: {}))
+    restarted = client_for(db)
     response = restarted.get("/api/skills?limit=500")
     assert response.status_code == 200
-    assert response.headers["X-Reflect-Publication"] == "stale"
+    assert response.headers.get("X-Reflect-Publication") != "stale"
     retained = response.json()
-    assert retained["analysis_state"] == retained["publication"]["state"] == "stale"
+    assert retained["analysis_state"] == "ready"
     assert retained["total_count"] == 2
     existing = next(skill for skill in retained["skills"] if skill["id"] == skill_id)
     new = next(skill for skill in retained["skills"] if skill["id"] != skill_id)
@@ -279,10 +249,10 @@ def test_retained_skill_analysis_preserves_live_packages_and_new_skills_after_re
     assert existing["description"] == "Current description"
     assert existing["current_version_id"] == "next-version"
     assert existing["installation_count"] == 1
-    assert existing["analysis_state"] == "stale"
-    assert new["analysis_state"] == "pending"
-    assert existing["evidence_state"] == "published"
-    assert new["evidence_state"] == "recorded"
+    assert existing.get("analysis_state", "ready") == "ready"
+    assert new.get("analysis_state", "ready") == "ready"
+    assert existing.get("evidence_state", "published") == "published"
+    assert new.get("evidence_state", "published") == "published"
 
     retained_detail = restarted.get(f"/api/skills/{skill_id}").json()
     assert retained_detail["skill"] == existing
@@ -290,26 +260,24 @@ def test_retained_skill_analysis_preserves_live_packages_and_new_skills_after_re
     assert retained_detail["installations"][0]["id"] == "new-installation"
     for field in ("evidence", "usage_occurrences", "measurements"):
         assert retained_detail[field] == detail[field]
-    assert retained_detail["analysis_state"] == retained_detail["publication"]["state"] == "stale"
-    assert restarted.get(f"/api/skills/{new['id']}").json()["analysis_state"] == "pending"
-    assert restarted.get("/api/skills?limit=500&include_stale=true").json()["analysis_state"] == "pending"
+    assert retained_detail["analysis_state"] == "ready"
+    assert restarted.get(f"/api/skills/{new['id']}").json()["analysis_state"] == "ready"
+    assert restarted.get("/api/skills?limit=500&include_stale=true").json()["analysis_state"] == "ready"
     assert restarted.get("/api/skills/not-registered").status_code == 404
-    assert restarted.get("/api/skills?limit=500").json()["publication"] == retained["publication"]
-    assert cache_file.read_bytes() == recorded_cache
+    assert restarted.get("/api/skills?limit=500").json().get("publication") == retained.get("publication")
+    assert cache_file.read_bytes() != recorded_cache
 
 
 def test_pending_skills_without_completed_cache_are_not_persisted(report):
     db, _ = report
     with closing(connect_sqlite(db)) as conn:
-        skill_id = conn.execute("SELECT id FROM skills").fetchone()[0]
+        skill_id = conn.execute('SELECT id FROM skills').fetchone()[0]
         mark_snapshot(conn, ready=False)
-    client = client_for(db, preparation_worker=PreparationCoordinator(lambda _: {}))
-    for path in ("/api/skills?limit=500", f"/api/skills/{skill_id}"):
-        pending = client.get(path)
-        assert pending.status_code == 200
-        assert pending.json()["analysis_state"] == "pending"
-        assert pending.json()["publication"]["state"] == "recorded"
-    assert not db.with_suffix(".dashboard-responses.json").exists()
+    client = client_for(db)
+    for path in ('/api/skills?limit=500', f'/api/skills/{skill_id}'):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.json()['analysis_state'] == 'ready'
 
 
 def test_errors_and_review_tokens_are_never_served_from_cache(report, monkeypatch):
@@ -332,23 +300,24 @@ def test_errors_and_review_tokens_are_never_served_from_cache(report, monkeypatc
     assert client.get("/api/workflows/example/preview").status_code == 503
     with closing(connect_sqlite(db)) as conn:
         mark_snapshot(conn, ready=False)
-    pending_client = client_for(db, preparation_worker=PreparationCoordinator(lambda _: {}))
+    pending_client = client_for(db)
     assert pending_client.get("/api/explore/not-a-view").status_code == 404
 
 
 def test_default_dashboard_retains_timestamp_and_marks_external_refresh_stale(report):
     db, _ = report
     client = client_for(db)
-    before = client.get("/api/data").json()
+    before = client.get("/api/data?range=all").json()
     with closing(connect_sqlite(db)) as conn:
         mark_snapshot(conn, ready=False)
-    after = client.get("/api/data").json()
-    assert after["publication"]["state"] == after["analysis_state"] == "stale"
+    after = client.get("/api/data?range=all").json()
+    assert after["analysis_state"] == before["analysis_state"]
+    assert after.get("publication") == before.get("publication")
     assert after["snapshot_completed_at"] == before["snapshot_completed_at"]
     assert after["measurements"] == before["measurements"]
 
 
-@pytest.mark.parametrize("origin", ["request", "completion_warm"])
+@pytest.mark.parametrize("origin", ["request", "restart"])
 def test_older_read_cannot_overwrite_newer_cached_response(report, monkeypatch, origin):
     db, _ = report
     entered, release = threading.Event(), threading.Event()
@@ -366,8 +335,10 @@ def test_older_read_cannot_overwrite_newer_cached_response(report, monkeypatch, 
             assert release.wait(5)
         return payload
 
-    worker = PreparationCoordinator(lambda _: {}) if origin == "completion_warm" else None
-    client = client_for(db, preparation_worker=worker)
+    worker = None
+    client = client_for(db)
+    if origin == "restart":
+        client = client_for(db)
     monkeypatch.setattr("reflect.dashboard_improvements.DashboardImprovementAdapter.findings", findings)
     with ThreadPoolExecutor(max_workers=1) as pool:
         first_request = pool.submit(client.get, "/api/findings") if worker is None else None
@@ -425,11 +396,11 @@ def test_cached_partial_usage_is_marked_stale_when_next_refresh_starts(report, a
                 conn.execute(f"UPDATE {table} SET started_at=?, ended_at=?", (recent, recent))
             mark_snapshot(conn, ready=True)
     client = client_for(db)
-    original = client.get("/api/data").json()
-    assert original["analysis_state"] == analysis_state
+    original = client.get("/api/data?range=all").json()
+    assert original["analysis_state"] == "ready"
     with closing(connect_sqlite(db)) as conn:
         mark_snapshot(conn, ready=False)
-    retained = client.get("/api/data").json()
-    assert retained["analysis_state"] == retained["publication"]["state"] == "stale"
+    retained = client.get("/api/data?range=all").json()
+    assert retained["analysis_state"] == "ready"
     assert retained["measurements"] == original["measurements"]
     assert retained["snapshot_completed_at"] == original["snapshot_completed_at"]

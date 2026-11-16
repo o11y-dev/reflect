@@ -12,8 +12,9 @@ import pytest
 from fastapi.testclient import TestClient
 from test_dashboard_sql_api import _seed_sql_report_db
 
-from reflect.dashboard_read_executor import _read_payload
+from reflect.dashboard_read_executor import _read_payload, read_revision
 from reflect.dashboard_server import DashboardResponseCache, build_dashboard_app
+from reflect.store.snapshots import PublishedSnapshotStore
 from reflect.store.sqlite import (
     SnapshotNotReadyError,
     advance_snapshot_revision,
@@ -21,6 +22,7 @@ from reflect.store.sqlite import (
     mark_snapshot,
     snapshot_revision,
 )
+from tests.test_dashboard_sql_api import _publish_report
 
 
 @pytest.fixture
@@ -29,6 +31,7 @@ def db(tmp_path):
     _seed_sql_report_db(path)
     with closing(connect_sqlite(path)) as conn:
         mark_snapshot(conn, ready=True)
+    _publish_report(path)
     return path
 
 
@@ -63,7 +66,7 @@ def test_cold_tools_are_bounded_coalesced_and_published_for_exact_scope(db):
         assert time.monotonic() - started < 3
         assert len(reads.jobs) == 1
         assert reads.jobs[0][1:] == ("tools", {
-            "read_revision": snapshot_revision(db, profile="usage"), "session_id": "", "q": "one",
+            "read_revision": read_revision(db, "tools"), "session_id": "", "q": "one",
             "agents": set(), "model": "all", "status": "all", "range_name": "7d",
         })
         reads.jobs[0][0].set_result(result("one"))
@@ -89,6 +92,7 @@ def test_ready_revision_survives_restart_and_maintenance_retains_original_timest
     with closing(connect_sqlite(db)) as conn:
         advance_snapshot_revision(conn)
         conn.commit()
+    PublishedSnapshotStore(db, reserve_bytes=0).publish(evidence_revision="maintenance")
     stale = restarted.get("/api/explore/tools")
     assert stale.status_code == 200
     assert stale.json()["publication"] == {
@@ -109,6 +113,7 @@ def test_revision_change_error_and_cancel_never_publish_current(db):
     with closing(connect_sqlite(db)) as conn:
         advance_snapshot_revision(conn)
         conn.commit()
+    PublishedSnapshotStore(db, reserve_bytes=0).publish(evidence_revision="maintenance")
     reads.jobs[0][0].set_result(result("obsolete"))
     assert client.get("/api/explore/tools").status_code == 503
     assert len(reads.jobs) == 2
@@ -150,18 +155,21 @@ def test_cancelled_http_request_does_not_cancel_the_shared_publication(db):
     asyncio.run(exercise())
 
 
-def test_worker_rejects_maintenance_during_tool_read(db, monkeypatch):
-    expected = snapshot_revision(db, profile="usage")
+def test_worker_pins_publication_during_maintenance(db, monkeypatch):
+    publication = PublishedSnapshotStore(db).current()
+    expected = read_revision(db, 'tools')
 
     def changed(*args, **kwargs):
         with closing(connect_sqlite(db)) as conn:
             advance_snapshot_revision(conn)
             conn.commit()
-        return result("obsolete")
+        PublishedSnapshotStore(db, reserve_bytes=0).publish(evidence_revision='maintenance')
+        return result('pinned')
 
-    monkeypatch.setattr("reflect.dashboard_explore.build_explore_payload", changed)
-    with pytest.raises(SnapshotNotReadyError, match="during"):
-        _read_payload("tools", db, (), {"read_revision": expected, "range_name": "7d"})
+    monkeypatch.setattr('reflect.dashboard_explore.build_explore_payload', changed)
+    payload = _read_payload('tools', db, (), {'read_revision': expected, 'publication': publication, 'range_name': '7d'})
+    assert payload == result('pinned')
+    assert read_revision(db, 'tools') != expected
 
 
 def test_late_job_cannot_overwrite_newer_cache_and_identical_result_retains_read_time(tmp_path):
@@ -209,6 +217,7 @@ def test_filtered_data_invalidates_when_only_derived_snapshot_finishes(db):
     assert client.get(path).json() == partial
     assert len(reads.jobs) == 1
     snapshot_only(db, "ready", "derived-complete")
+    PublishedSnapshotStore(db, reserve_bytes=0).publish(evidence_revision="derived-complete")
     assert snapshot_revision(db, profile="usage") == usage
     stale = client.get(path)
     assert stale.status_code == 200 and stale.json()["publication"]["state"] == "stale"
@@ -237,6 +246,7 @@ def test_cold_graph_retains_recorded_result_only_in_memory_for_its_generation(db
     assert client_for(db, restarted_reads).get("/api/explore/graph").status_code == 503
     restarted_reads.jobs[0][0].cancel()
     snapshot_only(db, "ready", "derived-complete")
+    PublishedSnapshotStore(db, reserve_bytes=0).publish(evidence_revision="derived-complete")
     pending = client.get("/api/explore/graph")
     assert pending.status_code == 503 and pending.json()["reason"] == "reading"
     reads.jobs[2][0].set_result(result("complete-graph"))
@@ -250,8 +260,8 @@ def test_completed_graph_is_preferred_without_recomputing_during_pending_snapsho
     reads.jobs[0][0].set_result(result("complete-graph"))
     snapshot_only(db, "incomplete", "deriving")
     retained = client.get("/api/explore/graph").json()
-    assert retained["analysis_state"] == "stale"
-    assert retained["publication"]["reason"] == "preparing"
+    assert retained["analysis_state"] == "ready"
+    assert "publication" not in retained
     assert retained["label"] == "complete-graph"
     assert len(reads.jobs) == 1
 
@@ -284,7 +294,7 @@ def test_real_session_builder_publishes_populated_and_empty_results(db, session_
             self.calls += 1
             future = Future()
             try:
-                future.set_result(_read_payload(operation, db_path, args, kwargs))
+                future.set_result(_read_payload(operation, db_path, args, {**kwargs, "publication": PublishedSnapshotStore(db_path).current()}))
             except Exception as exc:
                 future.set_exception(exc)
             return future

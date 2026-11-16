@@ -33,6 +33,7 @@ const params = new URLSearchParams('agents=cursor&session=one');
 const sessions = [{id:'short-one', full_id:'one'}, {id:'short-two', full_id:'two'}];
 const response = (status, body) => ({status, ok:status === 200, json:async () => body});
 const context = {
+  refreshSessionNavigation:async()=>{},
   sessions, selectedIdx:0, dashboardSelectedSessionId:'one', AbortController,dashboardDocumentActive:true,
   filterState:{range:'7d'},
   D:{sessions, _navigationCompletedAt:'2026-01-01T00:00:00Z'},
@@ -421,7 +422,7 @@ let tick, resolveLoad, calls=0, rendered=0;
 const retryParams=new URLSearchParams('tab=inbox');
 context.currentParams=()=>retryParams;
 context.document.visibilityState='visible';
-context.window.setInterval=(fn,ms)=>{tick=fn;assert.equal(ms,15000);};
+context.document.addEventListener=(name,fn)=>{assert.equal(name,'reflect-status-polled');tick=fn;};
 context.IMPROVEMENT_DATA={resources:{findings:{state:'error',loaded_at:null}}};
 context.loadImprovementData=()=>{calls+=1;return new Promise(resolve=>{resolveLoad=resolve;});};
 context.buildImprovementSurfaces=()=>{rendered+=1;};
@@ -471,3 +472,80 @@ assert.match(dialogs.at(-1).body,/Retained evidence/);
 assert.ok(!dialogs.at(-1).actions.includes('data-ledger-action="apply"'));
 assert.ok(!dialogs.at(-1).body.includes('workflow-content-editor'));
 """, review=review)
+
+
+def test_navigation_refresh_preserves_selection_and_discards_old_scope():
+    source = Path('src/reflect/frontend/js_sessions.js').read_text()
+    refresh = source[source.index('  let sessionPublicationRequest ='):source.index('  function isMobileShell()')]
+    _run_browser_contract(r'''
+let url='http://localhost/api/data?agents=cursor', resolveOld, renders=0;
+context.reportUrlWithCurrentFilters=()=>url;
+context.hideReportLoader=()=>{};
+context.renderSessionList=()=>{renders++;};
+context.reportReadResponse=()=>new Promise(resolve=>{resolveOld=resolve;});
+vm.runInContext(input.refresh,context);
+const old=context.refreshSessionNavigation();
+await Promise.resolve();
+url='http://localhost/api/data?agents=codex';
+context.reportReadResponse=async()=>response(200,{sessions:[{id:'short-two',full_id:'two'},{id:'short-one',full_id:'one',agent:'codex'}]});
+await context.refreshSessionNavigation();
+assert.equal(context.selectedIdx,1,'selection follows stable session identity');
+assert.equal(context.D.sessions,sessions,'navigation retains the shared array');
+resolveOld(response(200,{sessions:[{id:'wrong',full_id:'wrong'}]}));
+await old;
+assert.equal(sessions.length,2);assert.equal(sessions[1].agent,'codex');
+assert.equal(renders,1,'late scope cannot replace the current navigation');
+''', refresh=refresh)
+
+
+def test_delayed_detail_resolves_identity_after_navigation_reorders_rows():
+    source = Path('src/reflect/frontend/js_sessions.js').read_text()
+    refresh = source[source.index('  let sessionPublicationRequest ='):source.index('  function isMobileShell()')]
+    _run_browser_contract(r'''
+let resolveDetail;
+context.fetch=()=>new Promise(resolve=>{resolveDetail=resolve;});
+const detail=context.tryLoadFullDetail('one',null);
+context.reportUrlWithCurrentFilters=()=> 'http://localhost/api/data';
+context.hideReportLoader=()=>{};
+context.reportReadResponse=async()=>response(200,{sessions:[{id:'short-two',full_id:'two'},{id:'short-one',full_id:'one'}]});
+vm.runInContext(input.refresh,context);
+await context.refreshSessionNavigation();
+assert.equal(context.selectedIdx,1);
+resolveDetail(response(200,{session:{id:'one',agent:'codex'},conversation:[{type:'response',preview:'Only one'}],measurements:{tokens:9}}));
+await detail;
+assert.equal(sessions[1].full_id,'one');assert.equal(sessions[1].conversation[0].preview,'Only one');
+assert.equal(sessions[1].measurements.tokens,9);
+assert.ok(!Object.hasOwn(sessions[0],'conversation'),'details cannot move to the row now occupying the old index');
+assert.equal(rendered.at(-1),sessions[1]);
+''', refresh=refresh)
+
+
+@pytest.mark.parametrize('first_state', ['preparing', 'stale'])
+def test_navigation_retries_same_revision_and_preserves_loaded_detail(first_state):
+    source = Path('src/reflect/frontend/js_sessions.js').read_text()
+    refresh = source[source.index('  let sessionPublicationRequest ='):source.index('  function isMobileShell()')]
+    _run_browser_contract(r'''
+let calls=0;
+context.reportUrlWithCurrentFilters=()=> 'http://localhost/api/data?agents=cursor';
+context.hideReportLoader=()=>{};
+sessions[0].conversation=[{preview:'Keep detail'}];sessions[0].telemetry={spans:[{id:'one'}]};
+sessions[0]._activityLoaded=true;sessions[0]._fullLoaded=true;
+const ready={sessions:[{id:'short-one',full_id:'one',conversation:[],telemetry:{spans:[]}}]};
+context.reportReadResponse=async()=>{
+ calls++;
+ if(calls===1)return input.first_state==='preparing' ? response(503,{state:'preparing'}) : response(200,{...ready,publication:{state:'stale'}});
+ return response(200,ready);
+};
+vm.runInContext(input.refresh,context);
+await context.refreshSessionNavigation();
+assert.equal(context.D._navigationRefreshPending,true);
+listeners.get('reflect-status-polled')({});
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(calls,2,'unchanged publication status retries incomplete navigation');
+assert.equal(context.D._navigationRefreshPending,false);
+assert.equal(sessions[0].conversation[0].preview,'Keep detail');
+assert.equal(sessions[0].telemetry.spans[0].id,'one');
+assert.equal(sessions[0]._activityLoaded,true);assert.equal(sessions[0]._fullLoaded,true);
+listeners.get('reflect-status-polled')({});
+await Promise.resolve();assert.equal(calls,2,'completed navigation no longer retries');
+''', refresh=refresh, first_state=first_state)

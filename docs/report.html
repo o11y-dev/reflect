@@ -3802,7 +3802,8 @@ window.addEventListener('pageshow', event => {
   dashboardDocumentActive = true;
   if (event.persisted) startPreparationStatusPolling();
 });
-const DASHBOARD_REFRESH_MIN_INTERVAL_MS = 30000;
+const DASHBOARD_REFRESH_MIN_INTERVAL_MS = 10000;
+let lastPublishedRevision = null;
 const PREPARATION_PHASES = Object.freeze({
   opening_store: 1,
   backing_up_store: 1,
@@ -3915,21 +3916,6 @@ function renderPreparationStatus(preparation, automaticRefresh){
   const phase = PREPARATION_PHASES[preparation?.stage] || 0;
   const phaseLabel = PREPARATION_PHASE_LABELS[phase - 1] || 'Ready';
   if (state === 'running') {
-    const usageCompletion = preparation.usage_completed_at;
-    if (usageCompletion && Date.parse(usageCompletion) > Date.parse(D.snapshot_completed_at || '1970-01-01')) {
-      let seen = '';
-      try {
-        seen = window.sessionStorage.getItem('reflect.preparation.usage_completed_at') || '';
-        window.sessionStorage.setItem('reflect.preparation.usage_completed_at', usageCompletion);
-      } catch {}
-      if (seen !== usageCompletion) {
-        const published = new CustomEvent('reflect-snapshot-published', {cancelable:true, detail:{completion:usageCompletion}});
-        if (document.dispatchEvent(published)) {
-          suspendDashboardReads();
-          window.setTimeout(() => window.location.reload(), 450);
-        }
-      }
-    }
     const elapsed = formatPreparationElapsed(preparation.started_at);
     updatePreparationStatus({
       tone: 'running',
@@ -3975,14 +3961,6 @@ function renderPreparationStatus(preparation, automaticRefresh){
       detail: formatNextRefresh(automaticRefresh),
       phase: 5,
     });
-    if (previousCompletion !== completion) {
-      const published = new CustomEvent('reflect-snapshot-published', {cancelable:true, detail:{completion, profile:'snapshot'}});
-      if (document.dispatchEvent(published)) {
-        suspendDashboardReads();
-        window.setTimeout(() => window.location.reload(), 450);
-      }
-      return false;
-    }
     return false;
   }
   if (D?._unpublishedNavigation) {
@@ -4020,10 +3998,19 @@ async function pollPreparationStatus(){
       payload.automatic_refresh,
     );
     renderRawStorageStatus(payload.raw_storage);
+    const revision = payload.publication
+      ? `${payload.publication.generation}:${payload.user_state_revision || 0}` : null;
+    if (revision && revision !== lastPublishedRevision) {
+      lastPublishedRevision = revision;
+      document.dispatchEvent(new CustomEvent('reflect-snapshot-published', {
+        cancelable:true, detail:{completion:payload.publication.completed_at, profile:'snapshot', revision},
+      }));
+    }
+    document.dispatchEvent(new CustomEvent('reflect-status-polled', {detail:payload}));
     if (!dashboardDocumentActive) return;
     preparationStatusPollTimer = window.setTimeout(
       pollPreparationStatus,
-      preparationRunning ? 750 : DASHBOARD_REFRESH_MIN_INTERVAL_MS,
+      preparationRunning ? 1000 : DASHBOARD_REFRESH_MIN_INTERVAL_MS,
     );
   } catch {
     if (!dashboardDocumentActive) return;
@@ -4031,7 +4018,7 @@ async function pollPreparationStatus(){
       tone: 'warning',
       kicker: 'Status unavailable',
       message: 'Dashboard data remains available while Reflect reconnects.',
-      detail: 'Retrying in 30s',
+      detail: 'Reconnecting in 10s',
     });
     preparationStatusPollTimer = window.setTimeout(
       pollPreparationStatus,
@@ -4049,36 +4036,8 @@ function startPreparationStatusPolling(){
 }
 
 async function requestDashboardRefresh(){
-  if (!dashboardDocumentActive || !D?.sql_backed || !reportSupportsServerFiltering()) return;
-  try {
-    const statusResponse = await fetch('/api/status', {
-      headers: {Accept: 'application/json'},
-      cache: 'no-store',
-    });
-    if (!statusResponse.ok) return;
-    const statusPayload = await statusResponse.json();
-    if (!dashboardDocumentActive) return;
-    if (!statusPayload.refresh_available) return;
-    const preparation = statusPayload.preparation || {};
-    if (statusPayload.automatic_refresh?.enabled) {
-      if (preparation.state === 'running') startPreparationStatusPolling();
-      return;
-    }
-    if (preparation.state === 'running') {
-      startPreparationStatusPolling();
-      return;
-    }
-    const finishedAt = Date.parse(preparation.finished_at || '');
-    if (Number.isFinite(finishedAt) && Date.now() - finishedAt < DASHBOARD_REFRESH_MIN_INTERVAL_MS) return;
-    const refreshResponse = await fetch('/api/refresh', {
-      method: 'POST',
-      headers: {Accept: 'application/json'},
-      cache: 'no-store',
-    });
-    if (!refreshResponse.ok) return;
-    const refreshPayload = await refreshResponse.json();
-    if (refreshPayload.preparation?.state === 'running') startPreparationStatusPolling();
-  } catch {}
+  // The backend owns scheduling; visiting or focusing a tab never starts a refresh.
+  startPreparationStatusPolling();
 }
 
 async function loadDashboardData(){
@@ -4549,7 +4508,7 @@ async function refreshImprovementSurfaces(){
 }
 
 const improvementTabs = new Set(['inbox', 'workflows', 'skills', 'impact']);
-window.setInterval(() => {
+document.addEventListener('reflect-status-polled', () => {
   if (!dashboardDocumentActive || document.visibilityState === 'hidden') return;
   if (currentParams().get('tab') === 'explore') {
     hydrateExploreView(activeExploreView).catch(() => {});
@@ -4559,7 +4518,7 @@ window.setInterval(() => {
   if (IMPROVEMENT_DATA.skill_analysis_state === 'pending' || Object.values(IMPROVEMENT_DATA.resources || {}).some(resource => resource.state !== 'ready')) {
     refreshImprovementSurfaces().catch(() => {});
   }
-}, 15000);
+});
 
 const workflowDateFormatter = new Intl.DateTimeFormat(navigator.language || undefined, {
   dateStyle:'medium',
@@ -5319,6 +5278,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     ledgerDialog.dataset.targetPath = preview.target_path || '';
     ledgerDialog.dataset.workflowSlug = String(content.slug || '');
     ledgerDialog.dataset.previewContent = JSON.stringify(content);
+    ledgerDialog.dataset.reviewBinding = JSON.stringify({revision_hash:preview.revision_hash, target_path:preview.target_path, previous_hash:preview.previous_hash, proposed_hash:preview.proposed_hash});
     presentLedgerRead(request, {
       title:reviewTitle,
       subtitle:active ? 'Enabled · project-local skill' : 'Enable workflow · choose project, review changes, enable',
@@ -5555,7 +5515,7 @@ document.addEventListener('click', async event => {
       }
       trigger.disabled = true;
       trigger.textContent = 'Enabling…';
-      const applied = await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/apply`, {method:'POST', body:{project_root:projectRoot}});
+      const applied = await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/apply`, {method:'POST', body:{project_root:projectRoot, review:JSON.parse(ledgerDialog.dataset.reviewBinding || '{}')}});
       if (applied.status !== 'active') throw new Error('Enablement could not be confirmed. Inspect the workflow before trying again.');
       enabledPath = applied.target_path || ledgerDialog.dataset.targetPath;
     } else if (action === 'rollback') {
@@ -5601,7 +5561,6 @@ let explorePublication = 0;
 document.addEventListener('reflect-snapshot-published', event => {
   // The first publication fills missing navigation through the existing URL-
   // preserving reload. Later publications retain independent section data.
-  if (D._unpublishedNavigation) return;
   explorePublication += 1;
   if (currentParams().get('tab') === 'explore') {
     event.preventDefault();
@@ -6544,14 +6503,62 @@ class SessionConversationPlayhead {
     });
   }
 
+  let sessionPublicationRequest = 0;
+  let sessionNavigationFlight = null;
+  async function refreshSessionNavigation(){
+    const url = reportUrlWithCurrentFilters();
+    const scopeRevision = D._sessionScopeRevision || 0;
+    if (sessionNavigationFlight?.url === url && sessionNavigationFlight.revision === scopeRevision) return sessionNavigationFlight.promise;
+    const request = ++sessionPublicationRequest;
+    D._navigationRefreshPending = true;
+    const promise = Promise.resolve().then(async () => {
+      try {
+        const response = await reportReadResponse(url, {headers:{Accept:'application/json'}, cache:'no-store'});
+        if (!response.ok) return;
+        const payload = await response.json();
+        if (!dashboardDocumentActive || request !== sessionPublicationRequest || scopeRevision !== (D._sessionScopeRevision || 0) || url !== reportUrlWithCurrentFilters()) return;
+        const selectedId = selectedIdx === null ? '' : (sessions[selectedIdx]?.full_id || sessions[selectedIdx]?.id || '');
+        const retained = new Map(sessions.map(item => [item.full_id || item.id, item]));
+        const detailKeys = ['conversation','telemetry','tool_inventory','measurements','git_activity',
+          'pricing_coverage','cost_scope','total_cost_usd','insights','assessments','derived_state','usage_state'];
+        const next = (payload.sessions || []).map(item => {
+          const existing = retained.get(item.full_id || item.id);
+          if (!existing) return item;
+          const summary = {...item};
+          if (existing._activityLoaded || existing._fullLoaded || existing._loadingDetail || existing.conversation?.length) {
+            for (const key of detailKeys) delete summary[key];
+          }
+          return Object.assign(existing, summary);
+        });
+        const pending = ['stale','recorded'].includes(payload.publication?.state);
+        sessions.splice(0, sessions.length, ...next);
+        Object.assign(D, payload, {sessions, _unpublishedNavigation:false,
+          _navigationScope:url, _navigationRefreshPending:pending});
+        const index = sessions.findIndex(item => (item.full_id || item.id) === selectedId);
+        selectedIdx = index >= 0 ? index : null;
+        renderSessionList();
+        if (pending) markNavigationCached();
+        hideReportLoader();
+      } finally {
+        if (sessionNavigationFlight?.request === request) sessionNavigationFlight = null;
+      }
+    });
+    sessionNavigationFlight = {url, request, revision:scopeRevision, promise};
+    return promise;
+  }
+
   function scheduleDashboardReload(){
     if (!reportSupportsServerFiltering()) return false;
     if (reloadTimer) window.clearTimeout(reloadTimer);
-    showReportLoader('Filtering sessions...');
-    suspendDashboardReads();
-    reloadTimer = window.setTimeout(() => window.location.reload(), 120);
+    D._sessionScopeRevision = (D._sessionScopeRevision || 0) + 1;
+    showReportLoader('Loading selected sessions…');
+    reloadTimer = window.setTimeout(() => refreshSessionNavigation().catch(() => {}), 120);
     return true;
   }
+
+  document.addEventListener('reflect-status-polled', () => {
+    if (dashboardDocumentActive && D._navigationRefreshPending) refreshSessionNavigation().catch(() => {});
+  });
 
   function isMobileShell(){
     return window.matchMedia('(max-width: 900px)').matches;
@@ -8128,10 +8135,15 @@ class SessionConversationPlayhead {
   function tryLoadFullDetail(sessionId, btn){
     if (!dashboardDocumentActive) return;
     const idx = sessions.findIndex(s => (s.full_id || s.id) === sessionId);
+    const requestedSession = idx >= 0 ? sessions[idx] : null;
+    const requestRevision = D._sessionScopeRevision || 0;
+    const requestToken = {};
+    const resolveIndex = () => sessions.findIndex(item => (item.full_id || item.id) === sessionId && item._detailRequest === requestToken);
     if (idx >= 0) {
       if (sessions[idx]._loadingDetail) return;
       delete sessions[idx]._refreshDetailAfterLoad;
       sessions[idx]._loadingDetail = true;
+      sessions[idx]._detailRequest = requestToken;
       sessions[idx]._detailLoadError = '';
     }
     if (btn) {
@@ -8155,6 +8167,8 @@ class SessionConversationPlayhead {
         return r.json();
       })
       .then(data => {
+        const idx = resolveIndex();
+        if (!dashboardDocumentActive || idx < 0 || requestRevision !== (D._sessionScopeRevision || 0)) return;
         const events = data.events || data.conversation || [];
         const telemetry = data.telemetry || null;
         const toolInventory = data.tool_inventory || null;
@@ -8193,6 +8207,8 @@ class SessionConversationPlayhead {
         }
       })
       .catch(err => {
+        const idx = resolveIndex();
+        if (!dashboardDocumentActive || requestRevision !== (D._sessionScopeRevision || 0)) return;
         if (idx >= 0) {
           sessions[idx]._loadingDetail = false;
           sessions[idx]._detailLoadError = err.name === 'AbortError'
@@ -8207,6 +8223,9 @@ class SessionConversationPlayhead {
       })
       .finally(() => {
         window.clearTimeout(timeout);
+        const idx = resolveIndex();
+        if (requestedSession?._detailRequest === requestToken) requestedSession._loadingDetail = false;
+        if (idx >= 0 && requestRevision !== (D._sessionScopeRevision || 0)) sessions[idx]._refreshDetailAfterLoad = true;
         if (dashboardDocumentActive && idx >= 0 && sessions[idx]._refreshDetailAfterLoad) {
           delete sessions[idx]._refreshDetailAfterLoad;
           sessions[idx]._activityLoaded = false;
@@ -8236,8 +8255,9 @@ class SessionConversationPlayhead {
   }
 
   document.addEventListener('reflect-snapshot-published', event => {
-    if (D._unpublishedNavigation) return;
     if (!dashboardDocumentActive) return;
+    D._sessionScopeRevision = (D._sessionScopeRevision || 0) + 1;
+    if (document.getElementById('tab-sessions')?.classList.contains('active')) refreshSessionNavigation().catch(() => {});
     if (!document.getElementById('tab-sessions')?.classList.contains('active') || selectedIdx === null) return;
     event.preventDefault();
     markNavigationCached();

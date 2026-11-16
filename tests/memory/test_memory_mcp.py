@@ -87,29 +87,23 @@ def test_context_service_reads_current_validated_project_instruction(tmp_path):
 
 
 def test_mcp_read_service_factory_does_not_run_migrations(tmp_path, monkeypatch):
-    from reflect.mcp import _with_service
+    from reflect.mcp import reflect_skills
+    from tests.backend_helpers import bind_backend, publish_actions
 
-    db_path = tmp_path / "reflect.db"
+    db_path = tmp_path / 'reflect.db'
     conn = connect_sqlite(db_path)
-    try:
-        migrate(conn)
-    finally:
-        conn.close()
-    monkeypatch.setenv("REFLECT_DB_PATH", str(db_path))
-
+    migrate(conn)
+    conn.close()
+    publish_actions(db_path)
+    bind_backend(monkeypatch, db_path)
+    monkeypatch.setenv('REFLECT_DB_PATH', str(db_path))
     with (
-        patch("reflect.mcp.migrate") as mcp_migrate,
-        patch("reflect.improvements.service.migrate") as improvement_migrate,
-        patch("reflect.improvements.loops.migrate") as loop_migrate,
-        patch("reflect.improvements.skills.migrate") as skill_migrate,
+        patch('reflect.improvements.service.migrate') as improvement_migrate,
+        patch('reflect.improvements.loops.migrate') as loop_migrate,
+        patch('reflect.improvements.skills.migrate') as skill_migrate,
     ):
-        count = _with_service(
-            lambda service: service.skills_search(limit=1).count,
-            read_only=True,
-        )
-
-    assert count == 0
-    mcp_migrate.assert_not_called()
+        payload = asyncio.run(reflect_skills(limit=1))
+    assert payload['count'] == 0
     improvement_migrate.assert_not_called()
     loop_migrate.assert_not_called()
     skill_migrate.assert_not_called()
@@ -439,6 +433,9 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
     finally:
         conn.close()
 
+    from tests.backend_helpers import publish_actions
+    publish_actions(db_path)
+
     async def exercise_server():
         runtime_keys = {
             "REFLECT_SESSION_ID",
@@ -452,7 +449,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
         }
         params = StdioServerParameters(
             command=sys.executable,
-            args=["-m", "reflect.mcp"],
+            args=['-c', "from pathlib import Path; import os, pytest; from tests.backend_helpers import bind_backend; from reflect.mcp import main; patcher=pytest.MonkeyPatch(); bind_backend(patcher, Path(os.environ['REFLECT_DB_PATH'])); main()"],
             env={
                 **{key: value for key, value in os.environ.items() if key not in runtime_keys},
                 "REFLECT_DB_PATH": str(db_path),
@@ -557,6 +554,7 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
         "reflect_skills",
         "reflect_task_status",
         "reflect_usage",
+        "reflect_jobs",
     }
     assert not result.isError
     assert result.structuredContent is not None
@@ -608,6 +606,12 @@ def test_reflect_mcp_supports_initialize_list_and_call(tmp_path):
         if name != "reflect_apply_change"
     )
 
+    from reflect.backend_runtime import BackendJobRunner
+    from tests.backend_helpers import execute_job
+    backend = BackendJobRunner(db_path)
+    for job in backend.jobs.list():
+        if job.kind == 'task_projection' and job.state == 'queued':
+            execute_job(backend, job.job_id)
     conn = connect_sqlite(db_path)
     try:
         assert tuple(

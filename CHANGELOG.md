@@ -4,9 +4,13 @@
 
 ### Dependencies
 
+- Declare httpx as a runtime dependency for the shared asynchronous local backend client.
+
 - Accept OpenTelemetry hooks 0.15 alongside 0.14; telemetry tests preserve source-specific capability and provenance differences.
 
 ### Added
+
+- Durable local backend jobs and authenticated loopback API, with process-isolated refresh, crash recovery, and published evidence generations.
 
 - Create a workflow directly from an Inbox finding, retaining its server-resolved evidence, repository scope and measurement metric through preview and enablement. Existing linked workflows are reused; proposed instructions remain explicitly unverified.
 
@@ -28,7 +32,12 @@
 
 ### Changed
 
-- Added internal groundwork for immutable report snapshots and separate workflow user state, with migration recovery and concurrency tests. Runtime migration and publication routing remain disabled; refresh-time availability is not yet complete.
+- Route product CLI and MCP operations through the shared local FastAPI backend. Reads lease completed evidence during refresh; workflow reviews commit independently. Long operations return durable job IDs with optional `--wait`, and `reflect jobs` inspects progress.
+
+### Fixed
+
+- Run asynchronous skill discovery and loop builds from the invoking project directory so Codex CLI trust checks use the user's repository instead of the backend server's working directory.
+- Retain accepted task receipts until their completed evidence generation is published, and journal workflow file changes for crash recovery.
 
 - Workflow recommendations show at most five eligible procedures with expandable decisions and evidence. A clear Enable workflow panel puts project selection and exact file changes before explicit enablement; changed projects or drafts require a fresh preview.
 
@@ -45,6 +54,14 @@
 - Simplified CLI service contexts, removed duplicate MCP migration checks and an unreachable cost-repair fallback, and clarified the shared writer lock's scope.
 
 ### Fixed
+
+- Add compact graph ranking indexes so cold graph reads fetch evidence payloads only after node and edge limits, preserving selection and ordering.
+
+- Load Explore Usage directly from its displayed SQL views and rank recent graph call IDs before fetching details, preserving exact evidence while avoiding unused overview work and full payload sorts.
+
+- Preserve scoped usage refresh, workflow type filters and imported workflow provenance through the shared API. Cold skill discovery queues its scoped preparation dependency; repeat submissions do not create extra work.
+- Keep feedback durable during refresh and project outcomes before publication. Preserve loop promotion identity and skill detail rendering after backend refreshes.
+- Keep retention previews read-only and back up the original schema before applying retention migrations. CLI/MCP regression tests now exercise published snapshots and durable jobs through isolated HTTP transports.
 
 - Unknown workflow measurement metrics remain unavailable instead of incorrectly falling back to tool-failure counts. Finding-linked workflows cannot be enabled in an unrelated repository against the original baseline.
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -495,8 +496,11 @@ def test_usage_cli_emits_json(tmp_path, monkeypatch):
         _seed_session(conn)
     finally:
         conn.close()
-    monkeypatch.setattr("reflect.core.prepare_usage_db", lambda *_args, **_kwargs: None)
 
+    from backend_helpers import bind_backend
+    from test_dashboard_sql_api import _publish_report
+    _publish_report(db_path)
+    bind_backend(monkeypatch, db_path)
     result = CliRunner().invoke(
         main,
         ["usage", "--session", "session-current", "--json", "--db-path", str(db_path)],
@@ -507,6 +511,7 @@ def test_usage_cli_emits_json(tmp_path, monkeypatch):
     assert payload["scope"] == "session"
     assert payload["session"]["id"] == "session-current"
     assert payload["totals"]["estimated_cost_usd"] == 1.25
+
 
 
 def test_refresh_command_explicitly_prepares_a_missing_snapshot(
@@ -527,6 +532,8 @@ def test_refresh_command_explicitly_prepares_a_missing_snapshot(
         lambda: [("codex", native_session)],
     )
 
+    from tests.backend_helpers import bind_backend, execute_job
+    backend = bind_backend(monkeypatch, db_path)
     result = CliRunner().invoke(
         main,
         [
@@ -538,8 +545,8 @@ def test_refresh_command_explicitly_prepares_a_missing_snapshot(
     )
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout)["sessions"] == 1
-    assert "Opening the local telemetry store" in result.stderr
+    job_id = json.loads(result.stdout)["job_id"]
+    execute_job(backend, job_id)
     assert db_path.exists()
 
 
@@ -590,17 +597,17 @@ def test_usage_refresh_ingests_only_the_runtime_native_session(tmp_path, monkeyp
     monkeypatch.setenv("REFLECT_SESSION_ID", "session-stale")
     monkeypatch.setenv("CODEX_THREAD_ID", "session-runtime")
 
+    from tests.backend_helpers import bind_backend, execute_job
+    backend = bind_backend(monkeypatch, db_path)
     result = CliRunner().invoke(
         main,
-        ["usage", "--refresh", "--json", "--db-path", str(db_path)],
+        ["usage", "--session", "session-runtime", "--refresh", "--json", "--db-path", str(db_path)],
     )
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
-    assert payload["session"]["id"] == "session-runtime"
-    assert "Reading local agent sessions..." in result.stderr
-    assert "Normalizing usage telemetry..." in result.stderr
-    assert "Usage refresh complete." in result.stderr
+    assert backend.jobs.get(payload['job_id']).arguments['native_session_ids'] == ['session-runtime']
+    execute_job(backend, payload['job_id'])
     conn = connect_sqlite(db_path)
     try:
         assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 1
@@ -690,12 +697,16 @@ def test_usage_requires_explicit_refresh_for_pending_rollup_rebuild(
         conn.close()
     conn = connect_sqlite(db_path)
     try:
-        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56]
+        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57]
     finally:
         conn.close()
     monkeypatch.setattr("reflect.core.default_otlp_traces", lambda: None)
     monkeypatch.setattr("reflect.preparation_pipeline._discover_rich_session_files", lambda: [])
 
+    from tests.backend_helpers import bind_backend, execute_job
+    from tests.test_dashboard_sql_api import _publish_report
+    _publish_report(db_path)
+    backend = bind_backend(monkeypatch, db_path)
     read_result = CliRunner().invoke(
         main,
         ["usage", "--session", "session-current", "--json", "--db-path", str(db_path)],
@@ -731,6 +742,7 @@ def test_usage_requires_explicit_refresh_for_pending_rollup_rebuild(
     )
 
     assert refresh_result.exit_code == 0, refresh_result.output
+    execute_job(backend, json.loads(refresh_result.stdout)["job_id"])
     conn = connect_sqlite(db_path)
     try:
         assert conn.execute(
@@ -749,7 +761,7 @@ def test_usage_requires_explicit_refresh_for_pending_rollup_rebuild(
         conn.close()
 
 
-def test_usage_rejects_structurally_incomplete_rollups(tmp_path):
+def test_usage_rejects_structurally_incomplete_rollups(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     conn = _open_db(db_path)
     try:
@@ -761,6 +773,10 @@ def test_usage_rejects_structurally_incomplete_rollups(tmp_path):
     finally:
         conn.close()
 
+    from backend_helpers import bind_backend
+    from test_dashboard_sql_api import _publish_report
+    _publish_report(db_path)
+    bind_backend(monkeypatch, db_path)
     result = CliRunner().invoke(
         main,
         [
@@ -777,7 +793,8 @@ def test_usage_rejects_structurally_incomplete_rollups(tmp_path):
     assert "usage rollups are stale: 1 session(s) are missing rollups" in result.output
 
 
-def test_usage_session_ignores_an_unrelated_missing_rollup(tmp_path):
+
+def test_usage_session_ignores_an_unrelated_missing_rollup(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     conn = _open_db(db_path)
     try:
@@ -790,6 +807,10 @@ def test_usage_session_ignores_an_unrelated_missing_rollup(tmp_path):
     finally:
         conn.close()
 
+    from backend_helpers import bind_backend
+    from test_dashboard_sql_api import _publish_report
+    _publish_report(db_path)
+    bind_backend(monkeypatch, db_path)
     result = CliRunner().invoke(
         main,
         [
@@ -808,6 +829,7 @@ def test_usage_session_ignores_an_unrelated_missing_rollup(tmp_path):
     assert payload["totals"]["sessions"] == 1
 
 
+
 def test_usage_cli_rejects_conflicting_scopes():
     result = CliRunner().invoke(main, ["usage", "--session", "session", "--global"])
 
@@ -815,7 +837,7 @@ def test_usage_cli_rejects_conflicting_scopes():
     assert "cannot be used together" in result.output
 
 
-def test_usage_cli_uses_period_option(tmp_path):
+def test_usage_cli_uses_period_option(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     conn = _open_db(db_path)
     try:
@@ -823,6 +845,10 @@ def test_usage_cli_uses_period_option(tmp_path):
     finally:
         conn.close()
 
+    from backend_helpers import bind_backend
+    from test_dashboard_sql_api import _publish_report
+    _publish_report(db_path)
+    bind_backend(monkeypatch, db_path)
     runner = CliRunner()
     current = runner.invoke(
         main,
@@ -830,6 +856,7 @@ def test_usage_cli_uses_period_option(tmp_path):
     )
     assert current.exit_code == 0, current.output
     assert json.loads(current.stdout)["period"] == "all"
+
 
 
 def test_period_activity_counts_events_not_lifetime_session_rollups(tmp_path, monkeypatch):
@@ -921,7 +948,7 @@ def test_window_activity_covering_migration_preserves_deduplicated_facts(tmp_pat
             return [row for row in bytecode if row[1] == "Column" and row[2] in table_cursors]
 
         assert table_reads(), "The old index must reproduce the wide step-table reads"
-        assert migrate(conn) == [42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56]
+        assert migrate(conn) == [42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57]
         plan = conn.execute("EXPLAIN QUERY PLAN " + scope_sql, scope_params).fetchall()
         assert any("COVERING INDEX idx_steps_measurement_times" in row[-1] for row in plan)
         assert table_reads() == []
@@ -960,9 +987,13 @@ def test_cli_and_mcp_preserve_usage_and_withhold_pending_insights(tmp_path, monk
 
     monkeypatch.setattr("reflect.improvements.session_insights.read_session_insights", insights)
     monkeypatch.setenv("REFLECT_DB_PATH", str(db))
+    from backend_helpers import bind_backend
+    from test_dashboard_sql_api import _publish_report
+    _publish_report(db)
+    bind_backend(monkeypatch, db)
     result = CliRunner().invoke(main, ["usage", "--session", "session-current", "--json", "--db-path", str(db)])
     assert result.exit_code == 0, result.output
-    reports = [json.loads(result.output), mcp.reflect_usage(session_id="session-current")]
+    reports = [json.loads(result.output), asyncio.run(mcp.reflect_usage(session_id="session-current"))]
     for report in reports:
         assert report["analysis_state"] == state
         assert report["totals"]["input_tokens"] == 1000

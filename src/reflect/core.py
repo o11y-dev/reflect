@@ -33,34 +33,28 @@ import json as _json_stdlib
 import os
 import re
 import shutil
-import sqlite3
 import subprocess
 import sys
-import time
 import tomllib
 import zipfile
-from collections.abc import Callable, Iterator
-from contextlib import closing, contextmanager, nullcontext
 from datetime import UTC, datetime
 from importlib import metadata as importlib_metadata
-from importlib import resources as importlib_resources
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+from urllib.parse import quote
 
 import click
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from reflect.cli.backend import request as backend_request
+from reflect.cli.backend import submit as backend_submit
+
 if TYPE_CHECKING:
-    from reflect.improvements.service import ImprovementService
-    from reflect.preparation import (
-        SnapshotPreparationResult,
-        SnapshotReadinessProbe,
-        SnapshotStatus,
-    )
+    pass
 
 from reflect.agent_capabilities import (
     AgentCapability,
@@ -71,7 +65,8 @@ from reflect.agent_capabilities import (
     setup_agent_capabilities,
     skill_agent_capabilities,
 )
-from reflect.cli.common import REFLECT_HOME, echo_json, require_snapshot_schema
+from reflect.cli.backend import inspect_segment_preparation
+from reflect.cli.common import REFLECT_HOME, echo_json
 from reflect.cli.database import db as database_commands
 from reflect.cli.database import ingest as ingest_command
 from reflect.cli.impact import impact as impact_command
@@ -87,18 +82,11 @@ from reflect.instrumentation import (
     _run_setup as _instrumentation_run_setup,
 )
 from reflect.mcp_clients import get_mcp_client_capability
-from reflect.models import TelemetryStats
 from reflect.parsing import (
     _canonical_otlp_traces_path,
     _default_sessions_dir,
     _default_spans_dir,
 )
-from reflect.preparation_pipeline import (
-    ensure_sql_costs,
-    prepare_sql_report_db,
-    prepare_usage_db,
-)
-from reflect.processing import analyze_telemetry
 from reflect.raw_segments import (
     closed_segment_paths,
     readable_segment_paths,
@@ -120,13 +108,6 @@ from reflect.shell_completion import (
     complete_skill_id,
     complete_workflow_id,
 )
-from reflect.skill_extraction import (
-    _build_skill_evidence_bundle,
-    _build_skill_evidence_bundle_from_sql,
-    _build_skills_extraction_prompt_from_bundle,
-    _load_extracted_skills,
-)
-from reflect.store.doctor import inspect_segment_preparation
 from reflect.utils import _json_loads, logger
 
 # ---------------------------------------------------------------------------
@@ -670,44 +651,6 @@ def _render_update_advisor_panel(console, advisor: dict) -> None:
     console.print(Panel(table, title="Update advisor", border_style="cyan"))
 
 
-def _resolve_and_analyze(
-    *,
-    otlp_traces: Path | None,
-    sessions_dir: Path | None,
-    spans_dir: Path | None,
-    demo: bool,
-    time_range: str,
-) -> TelemetryStats:
-    """Load the bounded native evidence used by agent-assisted skill discovery."""
-    if demo:
-        _demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
-        if not _demo_traces.exists():
-            _demo_traces = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
-        if not _demo_traces.exists():
-            click.echo("Demo data not found. Re-install the package or run from the repo root.", err=True)
-            raise SystemExit(1)
-        otlp_traces = _demo_traces
-        sessions_dir = sessions_dir or Path(os.devnull)
-        spans_dir = spans_dir or Path(os.devnull)
-        time_range = "all"
-
-    since: datetime | None = None
-    if time_range != "all":
-        from datetime import timedelta
-        now = datetime.now(tz=UTC)
-        deltas = {"day": timedelta(days=1), "week": timedelta(days=7), "month": timedelta(days=30)}
-        since = now - deltas[time_range]
-
-    if sessions_dir is None:
-        sessions_dir = _default_sessions_dir()
-    if spans_dir is None:
-        spans_dir = _default_spans_dir()
-    if otlp_traces is None:
-        otlp_traces = default_otlp_traces()
-
-    return analyze_telemetry(sessions_dir, spans_dir, otlp_traces, since=since)
-
-
 @click.group(invoke_without_command=True)
 @click.option(
     "--otlp-traces",
@@ -765,6 +708,9 @@ main.add_command(ingest_command)
 main.add_command(impact_command)
 main.add_command(memory_commands)
 main.add_command(schema_commands)
+from reflect.cli.backend import jobs as jobs_commands
+
+main.add_command(jobs_commands)
 
 
 def _completion_plan_lines(plan: CompletionInstallPlan) -> tuple[str, ...]:
@@ -829,116 +775,12 @@ def _demo_otlp_traces() -> Path:
     return bundled
 
 
-@contextmanager
-def _open_improvement_service(
-    db_path: Path,
-    *,
-    read_only: bool = False,
-    profile: str | None = "snapshot",
-) -> Iterator[ImprovementService]:
-    from reflect.improvements.service import ImprovementService
-    from reflect.preparation import PreparationLock
-    from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only
-
-    with (
-        nullcontext() if read_only else PreparationLock(db_path),
-        closing(connect_sqlite_read_only(db_path, profile=profile) if read_only else connect_sqlite(db_path)) as conn,
-    ):
-        yield ImprovementService(conn, initialize_schema=not read_only)
 
 
-def _improvement_snapshot_status(db_path: Path) -> SnapshotStatus:
-    from reflect.preparation import SQLiteSnapshotInspector
-
-    return SQLiteSnapshotInspector(db_path).inspect()
 
 
-def _prepare_sql_snapshot_with_progress(
-    db_path: Path,
-    *,
-    otlp_traces: Path | None,
-    include_native_sessions: bool,
-    spans_dir: Path | None = None,
-    keep_processed_raw: bool = False,
-    analysis_days: int | None = None,
-    analysis_session_ids: set[str] | None = None,
-) -> dict[str, object]:
-    from reflect.cli.progress import TerminalPreparationProgress
-
-    return TerminalPreparationProgress().run(
-        lambda progress: prepare_sql_report_db(
-            db_path,
-            otlp_traces=otlp_traces,
-            include_native_sessions=include_native_sessions,
-            spans_dir=spans_dir,
-            progress=progress,
-            keep_processed_raw=keep_processed_raw,
-            analysis_days=analysis_days,
-            analysis_session_ids=analysis_session_ids,
-        )
-    )
 
 
-def _ensure_command_snapshot(
-    db_path: Path,
-    *,
-    refresh: bool | None,
-    otlp_traces: Path | None = None,
-    include_native_sessions: bool = True,
-    spans_dir: Path | None = None,
-    keep_processed_raw: bool = False,
-    prepare: Callable[[], dict[str, object]] | None = None,
-    readiness_probes: tuple[SnapshotReadinessProbe, ...] = (),
-    profile: str = "snapshot",
-) -> SnapshotPreparationResult:
-    from reflect.config import analysis_window_days
-    from reflect.preparation import (
-        CallableSnapshotRefresher,
-        PreparationProfile,
-        SnapshotLifecycleService,
-        SnapshotUnavailableError,
-        SQLiteSnapshotInspector,
-    )
-
-    refresh_operation = prepare or (
-        lambda: _prepare_sql_snapshot_with_progress(
-            db_path,
-            otlp_traces=(
-                otlp_traces
-                if otlp_traces is not None
-                else default_otlp_traces()
-            ),
-            include_native_sessions=include_native_sessions,
-            spans_dir=spans_dir,
-            keep_processed_raw=keep_processed_raw,
-            analysis_days=analysis_window_days(),
-        )
-    )
-    lifecycle = SnapshotLifecycleService(
-        SQLiteSnapshotInspector(
-            db_path,
-            readiness_probes=readiness_probes,
-            profile=PreparationProfile(profile),
-        ),
-        refresher=CallableSnapshotRefresher(refresh_operation),
-        refresh_hint=(
-            f"Run `reflect refresh --db-path {db_path}` or re-run this command "
-            "with `--refresh`."
-        ),
-    )
-    try:
-        return lifecycle.prepare(requested_refresh=refresh)
-    except SnapshotUnavailableError as exc:
-        raise click.ClickException(str(exc)) from exc
-    except sqlite3.OperationalError as exc:
-        from reflect.store.sqlite import is_sqlite_busy
-
-        if is_sqlite_busy(exc):
-            raise click.ClickException(
-                "The telemetry store is busy with another writer. Let the active "
-                "operation finish, then run `reflect refresh` again."
-            ) from exc
-        raise
 
 
 def _format_usage_duration(duration_ms: int) -> str:
@@ -1049,24 +891,6 @@ def _render_usage_report(console: Console, report) -> None:
         console.print(f"[yellow]Note:[/yellow] {limitation}")
 
 
-def _prepare_usage_db_with_progress(
-    db_path: Path,
-    *,
-    otlp_traces: Path | None,
-    include_native_sessions: bool,
-    native_session_ids: tuple[str, ...] = (),
-) -> dict[str, object]:
-    from reflect.cli.progress import TerminalPreparationProgress
-
-    return TerminalPreparationProgress().run(
-        lambda progress: prepare_usage_db(
-            db_path,
-            otlp_traces=otlp_traces,
-            include_native_sessions=include_native_sessions,
-            native_session_ids=native_session_ids,
-            progress=progress,
-        )
-    )
 
 
 @main.command("refresh")
@@ -1104,6 +928,7 @@ def _prepare_usage_db_with_progress(
     default=REFLECT_HOME / "state" / "reflect.db",
     help="SQLite telemetry store.",
 )
+@click.option("--wait", is_flag=True, help="Wait for the durable background job.")
 def refresh_snapshot(
     analysis_days: int | None,
     all_history: bool,
@@ -1114,40 +939,12 @@ def refresh_snapshot(
     keep_processed_raw: bool,
     as_json: bool,
     db_path: Path,
-) -> None:
-    """Explicitly ingest telemetry and rebuild the prepared local snapshot."""
-    if spans_dir is not None and not spans_dir.is_dir():
-        raise click.ClickException(f"Hook spans directory not found: {spans_dir}")
+    wait: bool = False) -> None:
+    'Explicitly ingest telemetry and rebuild the prepared local snapshot.'
     if all_history and (analysis_days is not None or analysis_sessions):
-        raise click.UsageError("--all-history cannot be combined with --analysis-days or --session")
+        raise click.UsageError('--all-history cannot be combined with --analysis-days or --session')
     from reflect.config import analysis_window_days
-
-    selected_days = None if all_history else analysis_days or analysis_window_days()
-    result = _ensure_command_snapshot(
-        db_path,
-        refresh=True,
-        otlp_traces=otlp_traces,
-        include_native_sessions=native_sessions,
-        spans_dir=spans_dir or _default_spans_dir(),
-        keep_processed_raw=keep_processed_raw,
-        prepare=lambda: _prepare_sql_snapshot_with_progress(
-            db_path,
-            otlp_traces=otlp_traces or default_otlp_traces(),
-            include_native_sessions=native_sessions,
-            spans_dir=spans_dir or _default_spans_dir(),
-            keep_processed_raw=keep_processed_raw,
-            analysis_days=selected_days,
-            analysis_session_ids=set(analysis_sessions) if analysis_sessions else None,
-        ),
-    )
-    payload = result.refresh_result or {}
-    if as_json:
-        echo_json(payload)
-        return
-    click.echo(
-        "Refreshed local snapshot "
-        f"(sessions={payload.get('sessions', 'unknown')}, db={db_path})"
-    )
+    backend_submit(db_path, '/api/refresh', {'otlp_traces': str((otlp_traces or default_otlp_traces()).resolve()) if (otlp_traces or default_otlp_traces()) else None, 'include_native_sessions': native_sessions, 'spans_dir': str(spans_dir.resolve()) if spans_dir else None, 'keep_processed_raw': keep_processed_raw, 'analysis_days': None if all_history else analysis_days or analysis_window_days(), 'analysis_session_ids': list(analysis_sessions) or None}, wait=wait, as_json=as_json)
 
 
 @main.command("usage")
@@ -1180,56 +977,29 @@ def usage(
     as_json: bool,
     db_path: Path,
 ) -> None:
-    """Show exact local usage for the current session or a global period."""
-    from reflect.store.rollups import UsageRollupReadinessProbe
-    from reflect.store.sqlite import connect_sqlite_read_only
-    from reflect.usage import UsageService
-
+    'Show exact local usage for the current session or a global period.'
     if session_id and global_scope:
-        raise click.UsageError("--session and --global cannot be used together")
+        raise click.UsageError('--session and --global cannot be used together')
     if agent and not global_scope:
-        raise click.UsageError("--agent is only valid with --global")
-    selected_period = period or "week"
-
-    runtime_hints = UsageService.environment_session_hints()
-    _ensure_command_snapshot(
-        db_path,
-        refresh=refresh,
-        profile="usage",
-        readiness_probes=(
-            UsageRollupReadinessProbe(
-                session_ids=(session_id,) if session_id and not global_scope else None
-            ),
-        ),
-        prepare=lambda: _prepare_usage_db_with_progress(
-            db_path,
-            otlp_traces=default_otlp_traces(),
-            include_native_sessions=True,
-            native_session_ids=(
-                ()
-                if global_scope
-                else (session_id,) if session_id
-                else tuple(hint.session_id for hint in runtime_hints)
-            ),
-        ),
-    )
-
-    conn = connect_sqlite_read_only(db_path, profile="usage")
-    try:
-        report = UsageService(conn).report(
-            session_id=session_id,
-            global_scope=global_scope,
-            period=selected_period,
-            agent=agent,
-        )
-    except (LookupError, ValueError) as exc:
-        raise click.ClickException(str(exc)) from exc
-    finally:
-        conn.close()
-    if as_json:
-        echo_json(report.model_dump(mode="json"))
+        raise click.UsageError('--agent is only valid with --global')
+    from reflect.usage import UsageReport, UsageService
+    if not session_id and not global_scope:
+        hints = UsageService.environment_session_hints()
+        if len(hints) != 1:
+            raise click.ClickException('Pass --session ID or --global when the runtime session is unavailable or ambiguous')
+        session_id = hints[0].session_id
+    if refresh:
+        traces = default_otlp_traces()
+        body = {'otlp_traces': str(traces.expanduser().resolve()) if traces else None,
+                'include_native_sessions': True, 'native_session_ids': [session_id] if session_id else [],
+                'analysis_session_ids': [session_id] if session_id else None}
+        backend_submit(db_path, '/api/refresh', body, as_json=as_json)
         return
-    _render_usage_report(Console(), report)
+    payload = backend_request(db_path, 'POST', '/api/usage', body={'session_id': session_id, 'global_scope': global_scope, 'period': period or 'week', 'agent': agent})
+    if as_json:
+        echo_json(payload)
+    else:
+        _render_usage_report(Console(), UsageReport.model_validate(payload))
 
 
 @main.command("improve")
@@ -1275,120 +1045,44 @@ def improve(
     refresh: bool | None,
     db_path: Path,
 ) -> None:
-    """Show scoped actionable improvements or inspect OBSERVATION_ID."""
-    import tempfile
-
-    from reflect.improvements.scope import ImprovementScopeResolver
-
+    'Show scoped actionable improvements or inspect OBSERVATION_ID.'
     selectors = int(scope_path is not None) + int(session_id is not None) + int(global_scope)
+    if period and not global_scope:
+        raise click.UsageError('--period requires --global')
+    if global_scope and not period:
+        raise click.UsageError('--global requires --period')
     if selectors > 1:
-        raise click.UsageError("--path, --session, and --global are mutually exclusive")
-    selected_period = period
-    if selected_period and not global_scope:
-        raise click.UsageError("--period requires --global")
-    if global_scope and selected_period is None:
-        raise click.UsageError("--global requires --period day|week|month|all")
-
-    temporary: tempfile.TemporaryDirectory[str] | None = None
+        raise click.UsageError('Select --path, --session, or --global --period')
+    if refresh and not demo:
+        backend_submit(db_path, '/api/refresh', as_json=as_json)
+        return
     if demo:
-        temporary = tempfile.TemporaryDirectory(prefix="reflect-improve-demo-")
-        db_path = Path(temporary.name) / "reflect.db"
-        refresh = True
-    try:
-        _ensure_command_snapshot(
-            db_path,
-            refresh=refresh,
-            otlp_traces=_demo_otlp_traces() if demo else default_otlp_traces(),
-            include_native_sessions=not demo,
-        )
-        with _open_improvement_service(db_path, read_only=True) as service:
-            resolver = ImprovementScopeResolver(service.conn)
-            explicit_scope = bool(scope_path is not None or session_id is not None or global_scope)
-            if global_scope:
-                scope = resolver.global_period(selected_period or "week")
-            elif session_id:
-                scope = resolver.session(session_id)
-            elif observation_id and not explicit_scope:
-                scope = None
-            elif demo:
-                scope = resolver.global_period("all")
-            else:
-                scope = resolver.path(scope_path)
-            result = service.improve(observation_id, refresh=False, scope=scope)
-            ledger = (
-                service.finding_evidence_ledger(observation_id, scope=scope, limit=50)
-                if observation_id
-                else None
-            )
-            if as_json:
-                if ledger is not None:
-                    payload = result.model_dump(mode="json")
-                    payload["evidence_ledger"] = ledger.model_dump(mode="json")
-                    echo_json(payload)
-                else:
-                    echo_json(result.model_dump(mode="json"))
-                return
-            console = Console(force_terminal=True)
-            if observation_id:
-                _render_improvement_detail(console, result, ledger=ledger)
-                return
-            for limitation in result.limitations:
-                console.print(f"[yellow]{limitation}[/yellow]")
-            if not result.observations:
-                label = result.resolved_scope.label if result.resolved_scope else "the selected scope"
-                console.print(
-                    f"[green]No actionable recurring observations found for {label}.[/green]"
-                )
-                if result.resolved_scope and not result.resolved_scope.matched:
-                    console.print(
-                        "[dim]Reflect did not fall back to global data. "
-                        "Use --global --period day|week|month|all.[/dim]"
-                    )
-                if not result.attribution_complete:
-                    console.print(
-                        "[yellow]Some legacy findings still have capped source-session "
-                        "attribution. Run with --refresh to rebuild supported detectors.[/yellow]"
-                    )
-                return
-            scope_label = result.resolved_scope.label if result.resolved_scope else "local"
-            table = Table(
-                title=f"Observed Improvements · {scope_label}",
-                border_style="orange3",
-            )
-            table.add_column("ID", style="cyan", no_wrap=True)
-            table.add_column("Finding")
-            table.add_column("Impact", justify="right")
-            table.add_column("Sessions", justify="right")
-            table.add_column("Latest")
-            table.add_column("State")
-            for observation in result.observations[:10]:
-                affected = (
-                    observation.scope_affected_session_count
-                    if observation.scope_affected_session_count is not None
-                    else observation.affected_session_count
-                )
-                eligible = observation.eligible_session_count
-                table.add_row(
-                    observation.id,
-                    observation.title,
-                    f"{observation.impact_score:.0f}",
-                    f"{affected}/{eligible}" if eligible is not None else str(affected),
-                    (observation.latest_source_at or observation.last_seen_at)[:10],
-                    observation.status.value.replace("_", " "),
-                )
-            console.print(table)
-            if not result.attribution_complete:
-                console.print(
-                    "[yellow]Some reviewable workflows do not yet have eligible "
-                    "execution-unit evidence. Refresh after their source tasks are captured.[/yellow]"
-                )
-            console.print(
-                f"[dim]{result.pending_workflows} pending workflow(s). "
-                "Inspect one with: reflect improve <ID>[/dim]"
-            )
-    finally:
-        if temporary is not None:
-            temporary.cleanup()
+        resource = '/api/demo/improvements'
+        params = {'observation_id': observation_id} if observation_id else {}
+    elif observation_id:
+        resource = '/api/findings/' + quote(observation_id, safe='')
+        params = {}
+    else:
+        resource = '/api/improvements'
+        params = {k: v for k,v in {'path': str((scope_path or Path.cwd()).resolve()) if not (session_id or global_scope) else None, 'session_id': session_id, 'global_scope': global_scope, 'period': period, 'detail': 'full' if as_json else 'summary'}.items() if v is not None}
+    payload = backend_request(db_path, 'GET', resource, params=params)
+    if as_json:
+        echo_json(payload)
+    elif observation_id:
+        click.echo(payload.get('title', observation_id))
+        click.echo(payload.get('summary', ''))
+        for item in payload.get('evidence', []):
+            click.echo('  - ' + item.get('summary_redacted', ''))
+    else:
+        table = Table(title='Observed Improvements', border_style='orange3')
+        for column in ('ID', 'Finding', 'Impact', 'Confidence', 'State'):
+            table.add_column(column)
+        for item in payload.get('findings', payload.get('observations', [])):
+            table.add_row(item['id'], item['title'], str(item['impact_score']),
+                          f"{item['confidence']:.0%}", item['status'])
+        Console(force_terminal=True).print(table)
+        for limitation in payload.get('limitations', []):
+            click.echo(f'Note: {limitation}')
 
 
 def _render_improvement_detail(console: Console, observation, *, ledger=None) -> None:
@@ -1475,46 +1169,19 @@ def ask(
     refresh: bool | None,
     db_path: Path,
 ) -> None:
-    """Answer QUESTION from reviewed workflows, linked evidence, and scoped memory."""
-    _ensure_command_snapshot(db_path, refresh=refresh)
-    from reflect.context import ReflectContextService
-    from reflect.store.sqlite import connect_sqlite_read_only
-
-    conn = connect_sqlite_read_only(db_path)
-    try:
-        service = ReflectContextService(conn, initialize_schema=False)
-        answer = service.ask(question, task_file=task_file, path=context_path)
-    finally:
-        conn.close()
-    if as_json:
-        echo_json(answer.model_dump(mode="json"))
+    'Answer QUESTION from reviewed workflows, linked evidence, and scoped memory.'
+    if refresh:
+        backend_submit(db_path, '/api/refresh', as_json=as_json)
         return
-    click.echo(answer.answer)
-    if answer.guidance:
-        click.echo("\nGuidance")
-        for index, step in enumerate(answer.guidance, start=1):
-            click.echo(f"  {index}. {step}")
-    if answer.evidence:
-        click.echo("\nEvidence")
-        for item in answer.evidence:
-            click.echo(f"  {item.kind}:{item.id} — {item.summary}")
-    if answer.memories:
-        click.echo("\nMemory Context")
-        for item in answer.memories:
-            status = item.validation_status or item.provenance
-            click.echo(f"  {item.provider}:{item.id} [{status}] — {item.content}")
-    if answer.constraints:
-        click.echo("\nConstraints")
-        for item in answer.constraints:
-            click.echo(f"  - {item}")
-    if answer.verification:
-        click.echo("\nVerification")
-        for item in answer.verification:
-            click.echo(f"  - {item}")
-    if answer.fallback:
-        click.echo(f"\nFallback: {answer.fallback}")
-    for limitation in answer.limitations:
-        click.echo(f"\nNote: {limitation}")
+    payload = backend_request(db_path, 'POST', '/api/answers', body={'question': question, 'path': str((context_path or Path.cwd()).resolve()), 'task_file': str(task_file.resolve()) if task_file else None})
+    if as_json:
+        echo_json(payload)
+    else:
+        click.echo(payload['answer'])
+        for step in payload.get('guidance', []):
+            click.echo(f'  - {step}')
+        for limitation in payload.get('limitations', []):
+            click.echo(f'Note: {limitation}')
 
 
 @main.group("workflows")
@@ -1574,26 +1241,17 @@ def workflows_list(
     refresh: bool | None,
     db_path: Path,
 ) -> None:
-    """List pending, active, and rolled-back workflows."""
-    if refresh is True:
-        _ensure_command_snapshot(db_path, refresh=True)
-    else:
-        require_snapshot_schema(
-            db_path,
-            refresh_hint=(
-                f"Run `reflect refresh --db-path {db_path}` to prepare telemetry "
-                "or `reflect workflows add SKILL.md` to create a manual workflow."
-            ),
-        )
-    with _open_improvement_service(db_path, read_only=True) as service:
-        candidates = service.workflows.list(
-            behavior_types={behavior_type} if behavior_type else None,
-            statuses={status} if status else None,
-        )
-    if as_json:
-        echo_json([candidate.model_dump(mode="json") for candidate in candidates])
+    'List pending, active, and rolled-back workflows.'
+    if refresh:
+        backend_submit(db_path, '/api/refresh', as_json=as_json)
         return
-    _print_workflow_table(candidates)
+    from reflect.improvements.models import WorkflowCandidateRecord
+    payload = backend_request(db_path, 'GET', '/api/workflows', params={k:v for k,v in {'type': behavior_type, 'status': status, 'limit': 500}.items() if v is not None})
+    records = payload.get('workflows', payload.get('candidates', []))
+    if as_json:
+        echo_json(records)
+    else:
+        _print_workflow_table([WorkflowCandidateRecord.model_validate(item) for item in records])
 
 
 def _read_workflow_skill(path: Path, behavior_type: str) -> dict[str, str]:
@@ -1628,7 +1286,8 @@ def _read_workflow_skill(path: Path, behavior_type: str) -> dict[str, str]:
 
 
 @workflows.command("add")
-@click.argument("skill_file", type=click.Path(path_type=Path, exists=True, dir_okay=False))
+@click.argument("skill_file", required=False, type=click.Path(path_type=Path, exists=True, dir_okay=False))
+@click.option("--finding", "finding_id", help="Create a draft from a finding and preserve its measurement provenance.")
 @click.option("--type", "behavior_type", type=click.Choice(_WORKFLOW_BEHAVIOR_TYPES), default="proven_pattern", show_default=True)
 @click.option(
     "--source-agent",
@@ -1645,46 +1304,27 @@ def _read_workflow_skill(path: Path, behavior_type: str) -> dict[str, str]:
 )
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def workflows_add(
-    skill_file: Path,
+    skill_file: Path | None,
+    finding_id: str | None,
     behavior_type: str,
     source_agent: str | None,
     source_workflow_id: str | None,
     db_path: Path,
 ) -> None:
-    """Stage an existing SKILL.md as a pending workflow; do not install it."""
-    skill = _read_workflow_skill(skill_file, behavior_type)
-    normalized_agent = " ".join((source_agent or "").split())[:80]
-    if normalized_agent:
-        skill["source_kind"] = "agent_authored"
-    if source_workflow_id:
-        skill["source_workflow_id"] = source_workflow_id
-    with _open_improvement_service(db_path) as service:
-        source_session_ids: list[str] = []
-        if source_workflow_id:
-            try:
-                source_ledger = service.repository.workflow_evidence_ledger(
-                    source_workflow_id,
-                    limit=200,
-                )
-            except KeyError as exc:
-                raise click.ClickException(str(exc)) from exc
-            source_session_ids = [
-                item.session_id for item in source_ledger.provenance_sessions
-            ]
-        candidate_id = service.stage_extracted_skills(
-            [skill],
-            session_ids=source_session_ids,
-            source_agent=normalized_agent or None,
-        )[0]
-    click.echo(f"Staged {candidate_id} from {skill_file}")
-    if normalized_agent:
-        click.echo(f"Authorship: agent draft ({normalized_agent})")
-    if source_workflow_id:
-        click.echo(
-            f"Evidence: {len(source_session_ids)} source session(s) from {source_workflow_id}"
-        )
-    click.echo(f"Review: reflect workflows show {candidate_id}")
-    click.echo("Nothing was installed. Apply it from the target Git repository after review.")
+    'Stage an existing SKILL.md as a pending workflow; do not install it.'
+    if finding_id:
+        if skill_file or source_workflow_id:
+            raise click.UsageError('--finding cannot be combined with SKILL_FILE or --from-workflow')
+        context = backend_request(db_path, 'GET', '/api/findings/' + quote(finding_id, safe='') + '/workflow-draft')
+        result = backend_request(db_path, 'POST', '/api/workflows', body={'finding_id': finding_id, 'content': context['content']})
+    else:
+        if skill_file is None:
+            raise click.UsageError('Pass SKILL_FILE or --finding ID')
+        result = backend_request(db_path, 'POST', '/api/workflow-imports', body={'skill': _read_workflow_skill(skill_file, behavior_type), 'source_agent': source_agent, 'source_workflow_id': source_workflow_id})
+    echo_json(result)
+    if source_agent:
+        click.echo(f'Authorship: agent draft ({source_agent})' + (f' from {source_workflow_id}' if source_workflow_id else ''))
+    click.echo('Nothing was installed. Review the exact project preview before applying.')
 
 
 @workflows.command("show")
@@ -1692,73 +1332,43 @@ def workflows_add(
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def workflows_show(candidate_id: str, as_json: bool, db_path: Path) -> None:
-    """Show a workflow proposal and its review state."""
-    require_snapshot_schema(
-        db_path,
-        refresh_hint=(
-            f"Run `reflect refresh --db-path {db_path}` to prepare the workflow ledger."
-        ),
-    )
-    with _open_improvement_service(db_path, read_only=True) as service:
-        try:
-            candidate = service.workflows.show(candidate_id)
-            preview = service.workflows.preview(candidate_id, project_root=Path.cwd())
-        except KeyError as exc:
-            raise click.ClickException(str(exc)) from exc
+    'Show a workflow proposal and its review state.'
+    candidate = backend_request(db_path, 'GET', '/api/workflows/' + quote(candidate_id, safe=''))
+    candidate['preview'] = backend_request(db_path, 'GET', '/api/workflows/' + quote(candidate_id, safe='') + '/preview', params={'project_root': str(Path.cwd())})
     if as_json:
-        payload = candidate.model_dump(mode="json")
-        payload["preview"] = preview
-        echo_json(payload)
-        return
-    console = Console(force_terminal=True)
-    steps = "\n".join(
-        f"{index}. {step}" for index, step in enumerate(candidate.content.get("steps", []), start=1)
-    )
-    console.print(
-        Panel(
-            f"[bold]{candidate.title}[/bold]\n{candidate.hypothesis}\n\n"
-            f"State: {candidate.status.value}  •  Risk: {candidate.risk}  •  "
-            f"Support: {candidate.support_execution_unit_count} execution units\n\n{steps}\n\n"
-            f"Target: {candidate.target_metric} over {candidate.measurement_window} comparable execution units",
-            title=candidate.id,
-            border_style="orange3",
-        )
-    )
-    console.print(
-        Panel(
-            preview["diff"] or "No filesystem change: the rendered workflow already matches.",
-            title=f"Exact diff · {preview['target_path']}",
-            border_style="dim",
-        )
-    )
+        echo_json(candidate)
+    else:
+        click.echo(candidate['title'])
+        click.echo(candidate['preview'].get('target_path', ''))
+        click.echo(candidate['preview'].get('diff', ''))
+        for risk in candidate['preview'].get('warnings', []):
+            click.echo(f'Note: {risk}')
+        click.echo(f'Enable: reflect workflows apply {candidate_id}')
 
 
 @workflows.command("apply")
 @click.argument("candidate_id", shell_complete=complete_workflow_id)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def workflows_apply(candidate_id: str, db_path: Path) -> None:
-    """Approve and apply CANDIDATE_ID as a repo-local skill."""
-    with _open_improvement_service(db_path) as service:
-        try:
-            result = service.workflows.apply(candidate_id, project_root=Path.cwd())
-        except (KeyError, RuntimeError, ValueError) as exc:
-            raise click.ClickException(str(exc)) from exc
-    action = "Already active" if result.get("idempotent") else "Applied"
-    click.echo(f"{action} {candidate_id} at {result['target_path']}")
-    click.echo(f"Rollback: reflect workflows rollback {candidate_id}")
+    'Approve and apply CANDIDATE_ID as a repo-local skill.'
+    preview = backend_request(db_path, 'GET', '/api/workflows/' + quote(candidate_id, safe='') + '/preview', params={'project_root': str(Path.cwd())})
+    result = backend_request(db_path, 'POST', '/api/workflows/' + quote(candidate_id, safe='') + '/apply', body={'project_root': str(Path.cwd()), 'review': {key:preview[key] for key in ('revision_hash','target_path','previous_hash','proposed_hash')}})
+    click.echo(f"Applied {candidate_id} at {result['target_path']}")
+    click.echo(f'Rollback: reflect workflows rollback {candidate_id}')
 
 
 @workflows.command("rollback")
 @click.argument("candidate_id", shell_complete=complete_workflow_id)
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def workflows_rollback(candidate_id: str, db_path: Path) -> None:
-    """Roll back the active application of CANDIDATE_ID."""
-    with _open_improvement_service(db_path) as service:
-        try:
-            result = service.workflows.rollback(candidate_id)
-        except (KeyError, RuntimeError, ValueError) as exc:
-            raise click.ClickException(str(exc)) from exc
+    'Roll back the active application of CANDIDATE_ID.'
+    result = backend_request(db_path, 'POST', '/api/workflows/' + quote(candidate_id, safe='') + '/rollback', body={})
     click.echo(f"Rolled back {candidate_id} at {result['target_path']}")
+
+
+from reflect.cli.backend import register_workflow_dispositions
+
+register_workflow_dispositions(workflows)
 
 
 @main.group("loops", invoke_without_command=True)
@@ -1787,31 +1397,18 @@ def loops(
     refresh: bool | None,
     db_path: Path,
 ) -> None:
-    """Inspect agent-native continuations and observed behavioral loops."""
+    'Inspect agent-native continuations and observed behavioral loops.'
     if ctx.invoked_subcommand:
         return
-    from reflect.improvements.models import LoopKind, LoopStatus
-
-    preparation = _ensure_command_snapshot(db_path, refresh=refresh)
-    with _open_improvement_service(db_path, read_only=True) as improvement_service:
-        records = improvement_service.loops.list(
-            kind=LoopKind(kind) if kind else None,
-            status=LoopStatus(status) if status else None,
-            limit=500,
-        )
-    if as_json:
-        echo_json(
-            {
-                "refresh": {"prepared": 1} if preparation.refreshed else None,
-                "prepared": preparation.refreshed,
-                "loops": [item.model_dump(mode="json") for item in records],
-            }
-        )
+    if refresh:
+        backend_submit(db_path, '/api/refresh', as_json=as_json)
         return
-    _print_loops(
-        records,
-        refresh={"prepared": 1} if preparation.refreshed else None,
-    )
+    payload = backend_request(db_path, 'GET', '/api/loops', params={k:v for k,v in {'kind': kind, 'status': status, 'limit': 500}.items() if v is not None})
+    if as_json:
+        echo_json(payload)
+    else:
+        from reflect.improvements.models import LoopRecord
+        _print_loops([LoopRecord.model_validate(item) for item in payload['loops']])
 
 
 def _print_loops(records, *, refresh: dict[str, int] | None = None) -> None:
@@ -1845,9 +1442,6 @@ def _print_loops(records, *, refresh: dict[str, int] | None = None) -> None:
         )
 
 
-def _require_improvement_snapshot(db_path: Path) -> None:
-    """Require an existing prepared snapshot without mutating it."""
-    _ensure_command_snapshot(db_path, refresh=False)
 
 
 @loops.command("show")
@@ -1859,13 +1453,10 @@ def _require_improvement_snapshot(db_path: Path) -> None:
     default=REFLECT_HOME / "state" / "reflect.db",
 )
 def loops_show(loop_id: str, as_json: bool, db_path: Path) -> None:
-    """Show one loop's classification and bounded source-session evidence."""
-    _require_improvement_snapshot(db_path)
-    with _open_improvement_service(db_path, read_only=True) as improvement_service:
-        try:
-            detail = improvement_service.loops.show(loop_id)
-        except KeyError as exc:
-            raise click.ClickException(str(exc)) from exc
+    "Show one loop's classification and bounded source-session evidence."
+    from reflect.improvements.models import LoopDetail
+    payload = backend_request(db_path, 'GET', '/api/loops/' + quote(loop_id, safe=''))
+    detail = LoopDetail.model_validate(payload)
     if as_json:
         echo_json(detail.model_dump(mode="json"))
         return
@@ -1909,85 +1500,12 @@ def loops_show(loop_id: str, as_json: bool, db_path: Path) -> None:
     type=click.Path(path_type=Path),
     default=REFLECT_HOME / "state" / "reflect.db",
 )
-def loops_build(loop_id: str, agent: str | None, as_json: bool, db_path: Path) -> None:
-    """Ask an agent to draft one pending skill from a selected loop."""
-    import json as _json
-    import subprocess
-
-    _require_improvement_snapshot(db_path)
-    with _open_improvement_service(db_path, read_only=True) as improvement_service:
-        try:
-            detail = improvement_service.loops.show(loop_id, limit=50)
-            evidence_bundle = improvement_service.loops.evidence_bundle(loop_id)
-        except KeyError as exc:
-            raise click.ClickException(str(exc)) from exc
-    agent_bin, agent_flags = _resolve_skills_agent(agent)
-    try:
-        prompt_template = (
-            importlib_resources.files("reflect") / "data" / "loop-skill-prompt.md"
-        ).read_text(encoding="utf-8")
-    except (FileNotFoundError, TypeError) as exc:
-        raise click.ClickException(f"Could not load loop skill prompt: {exc}") from exc
-    prompt = prompt_template.replace(
-        "{{EVIDENCE_JSON}}",
-        _json.dumps(evidence_bundle, sort_keys=True, indent=2),
-    )
-    try:
-        result = subprocess.run(
-            [agent_bin, *agent_flags, prompt],
-            capture_output=True,
-            text=True,
-        )
-    except OSError as exc:
-        raise click.ClickException(f"Could not run agent CLI '{agent_bin}': {exc}") from exc
-    if result.returncode != 0:
-        raise click.ClickException(
-            f"Agent exited with code {result.returncode}: "
-            f"{_format_agent_failure(result.stderr, result.stdout)}"
-        )
-    try:
-        extracted = _load_extracted_skills(result.stdout)
-    except _json.JSONDecodeError as exc:
-        raise click.ClickException(f"Could not parse agent output as JSON: {exc}") from exc
-    if not extracted:
-        click.echo("No reusable skill draft is supported by this loop evidence. Nothing was staged.")
-        return
-    if len(extracted) != 1:
-        raise click.ClickException("Loop build must return exactly one skill draft")
-    skill = extracted[0]
-    try:
-        skill_name = _validate_skill_name(skill.get("name"))
-    except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
-    staged = {
-        **skill,
-        "name": skill_name,
-        "behavior_type": "loop",
-        "source_kind": "agent_authored",
-        "source_loop_id": loop_id,
-    }
-    session_ids = sorted({item.session_id for item in detail.occurrences})
-    with _open_improvement_service(db_path) as improvement_service:
-        candidate_id = improvement_service.stage_extracted_skills(
-            [staged],
-            session_ids=session_ids,
-            source_agent=agent_bin,
-        )[0]
-        registered = improvement_service.skills.skill_for_candidate(candidate_id)
-        improvement_service.loops.mark_promoted(loop_id, registered.id)
-    payload = {
-        "loop_id": loop_id,
-        "skill_id": registered.id,
-        "skill_slug": registered.slug,
-        "source_agent": agent_bin,
-        "status": "pending",
-    }
-    if as_json:
-        echo_json(payload)
-        return
-    click.echo(f"Staged {registered.slug} ({registered.id}) from {loop_id}")
-    click.echo(f"Review: reflect skills show {registered.id}")
-    click.echo("Nothing was installed. Apply only after review with reflect skills apply <ID>.")
+@click.option("--wait", is_flag=True, help="Wait for the durable background job.")
+def loops_build(loop_id: str, agent: str | None, as_json: bool, db_path: Path, wait: bool = False) -> None:
+    'Ask an agent to draft one pending skill from a selected loop.'
+    selected, _ = _resolve_skills_agent(agent)
+    backend_submit(db_path, '/api/loops/' + quote(loop_id, safe='') + '/build',
+                   {'agent': selected, 'project_root': str(Path.cwd().resolve())}, wait=wait, as_json=as_json)
 
 
 @main.command("feedback")
@@ -2011,26 +1529,11 @@ def feedback(
     refresh: bool,
     db_path: Path,
 ) -> None:
-    """Record an explicit outcome for SESSION_ID."""
+    'Record an explicit outcome for SESSION_ID.'
     if refresh:
-        _ensure_command_snapshot(db_path, refresh=True)
-    elif not db_path.exists() or db_path.stat().st_size == 0:
-        raise click.ClickException(
-            f"Session {session_id} is not available in the local snapshot. "
-            "Run this command with --refresh after telemetry ingestion."
-        )
-    with _open_improvement_service(db_path) as service:
-        try:
-            feedback_id = service.repository.record_feedback(
-                session_id,
-                outcome.lower(),
-                reason_redacted=reason,
-            )
-        except KeyError as exc:
-            raise click.ClickException(
-                f"{exc}. Re-run with --refresh if this session has not been ingested yet."
-            ) from exc
-    click.echo(f"Recorded {outcome.lower()} feedback for {session_id} ({feedback_id})")
+        backend_submit(db_path, '/api/refresh')
+        return
+    echo_json(backend_request(db_path, 'POST', '/api/feedback/' + quote(session_id, safe=''), body={'outcome': outcome.lower(), 'reason': reason}))
 
 
 def _report_server_daemon(
@@ -2122,19 +1625,8 @@ _SKILL_AGENT_SPECS: list[tuple[str, list[str]]] = [
     if capability.skill_cli is not None
 ]
 _SKILL_AGENT_NAMES = ", ".join(name for name, _ in _SKILL_AGENT_SPECS)
-_AGENT_ERROR_LIMIT = 1500
 
 
-def _format_agent_failure(stderr: str, stdout: str = "") -> str:
-    text = (stderr or stdout or "").strip()
-    if not text:
-        return "(no output)"
-    if len(text) <= _AGENT_ERROR_LIMIT:
-        return text
-    return (
-        text[:_AGENT_ERROR_LIMIT]
-        + f"\n... truncated {len(text) - _AGENT_ERROR_LIMIT} characters ..."
-    )
 
 
 def _skill_agent_ready(agent: str) -> bool:
@@ -2291,7 +1783,7 @@ def _resolve_skills_agent(agent: str | None) -> tuple[str, list[str]]:
         for name, flags in _SKILL_AGENT_SPECS:
             if name == agent:
                 return agent, flags
-        return agent, ["--print"]
+        raise click.ClickException(f"Unsupported skill agent CLI: {agent}. Choose one of: {_SKILL_AGENT_NAMES}")
 
     # Probe all supported CLIs
     available = [
@@ -2319,95 +1811,8 @@ def _resolve_skills_agent(agent: str | None) -> tuple[str, list[str]]:
     return available[chosen]
 
 
-def _select_skills(
-    skill_defs: list[dict],
-    console: object,
-    *,
-    yes: bool,
-) -> list[dict]:
-    """Let the user pick which extracted skills to stage for review.
-
-    In an interactive terminal: renders a space-to-toggle checkbox list
-    (↑↓ navigate, Space toggle, a=all, n=none, Enter confirm).
-
-    In non-interactive mode (piped / --yes): returns all skills or prompts
-    for a comma-separated index list as a fallback.
-    """
-    import sys
-
-    console.print(f"\nExtracted [bold]{len(skill_defs)}[/bold] skill(s):\n")
-
-    if yes:
-        for s in skill_defs:
-            console.print(f"  [green]✓[/green] [cyan]{s['name']:<22}[/cyan] {s['description']}")
-        return skill_defs
-
-    if not sys.stdin.isatty():
-        # Non-interactive fallback: numbered list + comma prompt
-        for i, s in enumerate(skill_defs, 1):
-            console.print(f"  [bold]{i}.[/bold] [cyan]{s['name']:<22}[/cyan] {s['description']}")
-        console.print()
-        raw = click.prompt(
-            "Select skills to stage (e.g. 1,3) or press Enter for all",
-            default="all",
-            show_default=True,
-        ).strip()
-        if raw.lower() in ("all", ""):
-            return skill_defs
-        chosen: list[dict] = []
-        for token in raw.split(","):
-            token = token.strip()
-            if not token:
-                continue
-            try:
-                idx = int(token)
-                if 1 <= idx <= len(skill_defs):
-                    chosen.append(skill_defs[idx - 1])
-                else:
-                    console.print(f"  [yellow]Skipping out-of-range index {idx}[/yellow]")
-            except ValueError:
-                console.print(f"  [yellow]Ignoring non-numeric token '{token}'[/yellow]")
-        if not chosen:
-            console.print("No valid skills selected. Aborted.")
-            raise SystemExit(0)
-        return chosen
-
-    # Interactive terminal: space-toggleable checkboxes
-    labels = [
-        f"[cyan]{s['name']:<22}[/cyan] {s['description']}"
-        for s in skill_defs
-    ]
-    indices = _interactive_pick(labels, multi=True)
-    if not indices:
-        console.print("\n[yellow]No skills selected. Aborted.[/yellow]")
-        raise SystemExit(0)
-    return [skill_defs[i] for i in indices]
 
 
-def _select_skill_install_agents(
-    agents: list[dict],
-    console: object,
-    *,
-    yes: bool,
-) -> list[dict]:
-    """Choose which detected agents should receive extracted skills."""
-    import sys
-
-    if not agents:
-        return []
-    if yes or len(agents) == 1 or not sys.stdin.isatty():
-        return agents
-
-    console.print("\nInstall extracted skills to which agent(s)?\n")
-    labels = [
-        f"[cyan]{agent['name']:<22}[/cyan] {agent.get('global_path', '')}"
-        for agent in agents
-    ]
-    indices = _interactive_pick(labels, multi=True)
-    if not indices:
-        console.print("\n[yellow]No agents selected. Aborted.[/yellow]")
-        raise SystemExit(0)
-    return [agents[i] for i in indices]
 
 # Strict kebab-case: lowercase letters, digits, and hyphens only; 1-64 chars.
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$")
@@ -2446,39 +1851,15 @@ def skills(
     as_json: bool,
     lifecycle: str | None,
 ) -> None:
-    """Inspect the durable Skills v2 registry without reconciling sources."""
+    'Inspect the durable Skills v2 registry without reconciling sources.'
     if ctx.invoked_subcommand:
         return
-    from reflect.improvements.models import SkillLifecycleState
-    from reflect.store.sqlite import snapshot_incomplete
-
-    require_snapshot_schema(
-        db_path,
-        refresh_hint=(
-            f"Run `reflect skills sync --db-path {db_path}` to create or "
-            "reconcile the skill registry."
-        ),
-    )
-    with _open_improvement_service(db_path, read_only=True, profile=None) as improvement_service:
-        pending = snapshot_incomplete(improvement_service.conn)
-        records = improvement_service.skills.list(
-            lifecycle=SkillLifecycleState(lifecycle) if lifecycle else None,
-            limit=500,
-        )
+    payload = backend_request(db_path, 'GET', '/api/skills', params={k:v for k,v in {'status': lifecycle, 'limit': 500}.items() if v is not None})
     if as_json:
-        echo_json(
-            {
-                "refresh": None,
-                "analysis_state": "pending" if pending else "ready",
-                "analysis_pending": pending,
-                "evidence_state": "recorded" if pending else "current",
-                "skills": [item.model_dump(mode="json") for item in records],
-            }
-        )
-        return
-    if pending:
-        click.echo("Recorded evidence; current analysis and impact validation is pending.")
-    _print_skill_registry(records)
+        echo_json(payload)
+    else:
+        from reflect.improvements.models import SkillRecord
+        _print_skill_registry([SkillRecord.model_validate(item) for item in payload['skills']])
 
 
 @skills.command("sync")
@@ -2501,220 +1882,17 @@ def skills(
     type=click.Path(path_type=Path),
     default=REFLECT_HOME / "state" / "reflect.db",
 )
+@click.option("--wait", is_flag=True, help="Wait for the durable background job.")
 def skills_sync(
     scan_paths: tuple[Path, ...],
     lifecycle: str | None,
     as_json: bool,
     db_path: Path,
-) -> None:
-    """Reconcile skill files, workflow drafts, usage, and measurements."""
-    from reflect.improvements.models import SkillLifecycleState
-    from reflect.store.sqlite import is_sqlite_busy
-
-    click.echo("Waiting for the local store before syncing skills...", err=True)
-    try:
-        with _open_improvement_service(db_path) as improvement_service:
-            roots = list(scan_paths) or _default_skill_scan_paths()
-            refresh_result = improvement_service.skills.refresh(scan_paths=roots)
-            records = improvement_service.skills.list(
-                lifecycle=SkillLifecycleState(lifecycle) if lifecycle else None,
-                limit=500,
-            )
-    except sqlite3.OperationalError as exc:
-        if not is_sqlite_busy(exc):
-            raise
-        raise click.ClickException(
-            "Another writer is using the local store. Wait for it to finish, "
-            "then retry `reflect skills sync`."
-        ) from exc
-    if as_json:
-        echo_json(
-            {
-                "refresh": refresh_result,
-                "skills": [item.model_dump(mode="json") for item in records],
-            }
-        )
-        return
-    _print_skill_registry(records, refresh=refresh_result)
+    wait: bool = False) -> None:
+    'Reconcile skill files, workflow drafts, usage, and measurements.'
+    backend_submit(db_path, '/api/skills/sync', {'scan_paths': [str(p.resolve()) for p in (scan_paths or _default_skill_scan_paths())], 'lifecycle': lifecycle}, wait=wait, as_json=as_json)
 
 
-def _discover_skills(
-    *,
-    otlp_traces: Path | None,
-    sessions_dir: Path | None,
-    spans_dir: Path | None,
-    time_range: str,
-    demo: bool,
-    agent: str | None,
-    yes: bool,
-    db_path: Path,
-    refresh: bool | None,
-) -> None:
-    """Run bounded agent-assisted discovery and stage versioned skill drafts."""
-    import json as _json
-    import subprocess
-
-    from rich.console import Console
-    console = Console(force_terminal=True)
-
-    agent_bin, agent_flags = _resolve_skills_agent(agent)
-
-    with console.status("[bold orange3]reflecting...[/bold orange3]", spinner="dots"):
-        stats = _resolve_and_analyze(
-            otlp_traces=otlp_traces,
-            sessions_dir=sessions_dir,
-            spans_dir=spans_dir,
-            demo=demo,
-            time_range=time_range,
-        )
-
-        try:
-            prompt_pkg = importlib_resources.files("reflect") / "data" / "skills-extraction-prompt.md"
-            prompt_text = prompt_pkg.read_text(encoding="utf-8")
-        except (FileNotFoundError, TypeError) as exc:
-            click.echo(
-                f"Could not load skills extraction prompt: {exc}",
-                err=True,
-            )
-            raise SystemExit(1) from exc
-    bundle = _build_skill_evidence_bundle(stats)
-    sql_bundle_used = False
-    graph_evidence_attached = False
-    try:
-        from sqlite3 import Error as _SQLiteError
-
-        from reflect.store.sqlite import SnapshotNotReadyError, connect_sqlite_read_only
-
-        include_native_sessions = False
-        sql_otlp_traces = otlp_traces
-        if demo:
-            demo_traces = Path(__file__).parent / "data" / "demo-traces.json"
-            if not demo_traces.exists():
-                demo_traces = Path(__file__).resolve().parents[2] / "state" / "demo-traces.json"
-            sql_otlp_traces = demo_traces if demo_traces.exists() else otlp_traces
-        elif sql_otlp_traces is None:
-            sql_otlp_traces = default_otlp_traces()
-            include_native_sessions = True
-        else:
-            default_otlp = default_otlp_traces()
-            include_native_sessions = (
-                default_otlp is not None
-                and sql_otlp_traces.expanduser().resolve() == default_otlp.expanduser().resolve()
-            )
-
-        snapshot = _improvement_snapshot_status(db_path)
-        if demo or refresh is True:
-            _ensure_command_snapshot(
-                db_path,
-                refresh=True,
-                otlp_traces=sql_otlp_traces,
-                include_native_sessions=include_native_sessions,
-            )
-        elif not snapshot.ready:
-            if snapshot.exists:
-                raise click.ClickException(
-                    "Skill discovery paused: the prepared snapshot is incomplete or out of date. "
-                    "Wait for the active dashboard refresh to finish, then retry "
-                    "`reflect skills discover`. If no refresh is running, use "
-                    "`reflect skills discover --refresh`. No extraction was run and no skills were staged."
-                )
-            raise _SQLiteError(
-                "prepared snapshot unavailable; run `reflect skills discover --refresh` "
-                "to include SQL graph evidence"
-            )
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            sql_bundle = _build_skill_evidence_bundle_from_sql(
-                conn,
-                session_ids=set(stats.sessions_seen),
-            )
-        finally:
-            conn.close()
-        if sql_bundle and sql_bundle.get("sessions"):
-            bundle = sql_bundle
-            sql_bundle_used = True
-            graph_evidence_attached = bool((sql_bundle.get("graph_evidence") or {}).get("recurring_patterns"))
-    except SnapshotNotReadyError as exc:
-        raise click.ClickException(
-            f"Skill discovery paused: {exc} No extraction was run and no skills were staged."
-        ) from exc
-    except (_SQLiteError, OSError, ValueError) as exc:
-        click.echo(
-            f"SQL graph evidence unavailable for skills extraction: {exc}",
-            err=True,
-        )
-
-    prompt = _build_skills_extraction_prompt_from_bundle(prompt_text, bundle)
-
-    with console.status(
-        f"[bold]Extracting skills with {agent_bin}...[/bold]",
-        spinner="dots",
-    ):
-        try:
-            result = subprocess.run(
-                [agent_bin, *agent_flags, prompt],
-                capture_output=True,
-                text=True,
-            )
-        except OSError as exc:
-            raise click.ClickException(
-                f"Could not run agent CLI '{agent_bin}': {exc}"
-            ) from exc
-    if result.returncode != 0:
-        click.echo(
-            f"Agent exited with code {result.returncode}:\n"
-            f"{_format_agent_failure(result.stderr, result.stdout)}",
-            err=True,
-        )
-        raise SystemExit(1)
-
-    try:
-        skill_defs = _load_extracted_skills(result.stdout)
-    except _json.JSONDecodeError as exc:
-        click.echo(
-            f"Could not parse agent output as JSON: {exc}\n\nOutput:\n{result.stdout[:500]}",
-            err=True,
-        )
-        raise SystemExit(1) from exc
-
-    if not skill_defs:
-        console.print("No reusable skill candidates are supported by the evidence. Nothing was staged.")
-        return
-    selected = _select_skills(skill_defs, console, yes=yes)
-    valid_selected: list[dict] = []
-    for skill in selected:
-        try:
-            safe_name = _validate_skill_name(skill.get("name"))
-        except ValueError as exc:
-            click.echo(f"Skipping invalid skill name: {exc}", err=True)
-            continue
-        valid_selected.append({**skill, "name": safe_name})
-    if not valid_selected:
-        raise click.ClickException("No valid workflow candidates were extracted")
-
-    with _open_improvement_service(db_path) as improvement_service:
-        try:
-            candidate_ids = improvement_service.stage_extracted_skills(
-                valid_selected,
-                session_ids=sorted(stats.sessions_seen),
-                source_agent=agent_bin,
-                evidence_bundle=bundle,
-            )
-        except ValueError as exc:
-            raise click.ClickException(f"Invalid draft evidence: {exc}") from exc
-        registered_skills = [
-            improvement_service.skills.skill_for_candidate(candidate_id)
-            for candidate_id in candidate_ids
-        ]
-
-    if sql_bundle_used:
-        console.print("[dim]Included SQL stats + Behavioral Memory Graph evidence in extraction prompt.[/dim]")
-    elif graph_evidence_attached:
-        console.print("[dim]Included SQL Behavioral Memory Graph evidence in extraction prompt.[/dim]")
-    console.print(f"\n[bold green]{len(registered_skills)} skill candidate(s) available in Skills v2.[/bold green]")
-    for skill in registered_skills:
-        console.print(f"  [cyan]{skill.id}[/cyan]  {skill.slug}  reflect skills show {skill.id}")
-    console.print("[dim]Nothing was installed. Apply a reviewed draft with reflect skills apply <ID>.[/dim]")
 
 
 def _default_skill_scan_paths() -> list[Path]:
@@ -2797,6 +1975,7 @@ def _print_skill_registry(records, *, refresh: dict[str, int] | None = None) -> 
     type=click.Path(path_type=Path),
     default=REFLECT_HOME / "state" / "reflect.db",
 )
+@click.option("--wait", is_flag=True, help="Wait for the durable background job.")
 def skills_discover(
     otlp_traces: Path | None,
     sessions_dir: Path | None,
@@ -2807,19 +1986,16 @@ def skills_discover(
     agent: str | None,
     yes: bool,
     db_path: Path,
-) -> None:
-    """Use a coding agent to discover evidence-backed pending skill drafts."""
-    _discover_skills(
-        otlp_traces=otlp_traces,
-        sessions_dir=sessions_dir,
-        spans_dir=spans_dir,
-        time_range=period,
-        demo=demo,
-        agent=agent,
-        yes=yes,
-        db_path=db_path,
-        refresh=refresh,
-    )
+    wait: bool = False) -> None:
+    'Use a coding agent to discover evidence-backed pending skill drafts.'
+    selected, _ = _resolve_skills_agent(agent)
+    backend_submit(db_path, '/api/skills/discover', {
+        'agent': selected, 'project_root': str(Path.cwd().resolve()), 'period': period,
+        'refresh': bool(refresh),
+        'otlp_traces': str(otlp_traces.resolve()) if otlp_traces else None,
+        'sessions_dir': str(sessions_dir.resolve()) if sessions_dir else None,
+        'spans_dir': str(spans_dir.resolve()) if spans_dir else None, 'demo': demo,
+    }, wait=wait)
 
 
 @skills.command("show")
@@ -2831,19 +2007,11 @@ def skills_discover(
     default=REFLECT_HOME / "state" / "reflect.db",
 )
 def skills_show(skill_id: str, as_json: bool, db_path: Path) -> None:
-    """Show a skill's versions, evidence, installations, and usage summary."""
-    from reflect.store.sqlite import snapshot_incomplete
-
-    require_snapshot_schema(
-        db_path,
-        refresh_hint=f"Run `reflect skills sync --db-path {db_path}` first.",
-    )
-    with _open_improvement_service(db_path, read_only=True, profile=None) as improvement_service:
-        pending = snapshot_incomplete(improvement_service.conn)
-        try:
-            detail = improvement_service.skills.show(skill_id, recorded_only=pending)
-        except KeyError as exc:
-            raise click.ClickException(str(exc)) from exc
+    "Show a skill's versions, evidence, installations, and usage summary."
+    from reflect.improvements.models import SkillDetail
+    payload = backend_request(db_path, 'GET', '/api/skills/' + quote(skill_id, safe=''))
+    detail = SkillDetail.model_validate({key: value for key, value in payload.items() if key in SkillDetail.model_fields})
+    pending = payload.get('analysis_pending', False)
     if as_json:
         echo_json({**detail.model_dump(mode="json"),
                    "analysis_state": "pending" if pending else "ready",
@@ -2878,17 +2046,8 @@ def skills_show(skill_id: str, as_json: bool, db_path: Path) -> None:
     default=REFLECT_HOME / "state" / "reflect.db",
 )
 def skills_apply(skill_id: str, project_root: Path, db_path: Path) -> None:
-    """Apply a reviewed pending skill version to a Git repository."""
-    with _open_improvement_service(db_path) as improvement_service:
-        try:
-            candidate_id = improvement_service.skills.workflow_candidate_for(skill_id)
-            result = improvement_service.workflows.apply(candidate_id, project_root=project_root)
-            improvement_service.skills.sync_workflow_candidates([candidate_id])
-            improvement_service.conn.commit()
-            skill = improvement_service.skills.skill_for_candidate(candidate_id)
-        except (KeyError, RuntimeError, ValueError) as exc:
-            raise click.ClickException(str(exc)) from exc
-    click.echo(f"Applied {skill.slug} to {result['target_path']}")
+    'Apply a reviewed pending skill version to a Git repository.'
+    echo_json(backend_request(db_path, 'POST', '/api/skills/' + quote(skill_id, safe='') + '/apply', body={'project_root': str(project_root.resolve())}))
 
 
 @skills.command("rollback")
@@ -2899,16 +2058,8 @@ def skills_apply(skill_id: str, project_root: Path, db_path: Path) -> None:
     default=REFLECT_HOME / "state" / "reflect.db",
 )
 def skills_rollback(skill_id: str, db_path: Path) -> None:
-    """Roll back the active installation owned by a Reflect skill version."""
-    with _open_improvement_service(db_path) as improvement_service:
-        try:
-            candidate_id = improvement_service.skills.workflow_candidate_for(skill_id)
-            result = improvement_service.workflows.rollback(candidate_id)
-            improvement_service.skills.sync_workflow_candidates([candidate_id])
-            improvement_service.conn.commit()
-        except (KeyError, RuntimeError, ValueError) as exc:
-            raise click.ClickException(str(exc)) from exc
-    click.echo(f"Rolled back {skill_id}; restored {result['target_path']}")
+    'Roll back the active installation owned by a Reflect skill version.'
+    echo_json(backend_request(db_path, 'POST', '/api/skills/' + quote(skill_id, safe='') + '/rollback', body={}))
 
 
 # ---------------------------------------------------------------------------
@@ -3315,39 +2466,10 @@ def _delivery_agent_key(value: object) -> str:
 
 
 def _load_agent_delivery(db_path: Path) -> dict[str, tuple[str, int]]:
-    """Read the latest non-native event received for each normalized agent."""
-
-    if not db_path.is_file():
-        return {}
-    from reflect.store.sqlite import connect_sqlite_read_only
-
     try:
-        conn = connect_sqlite_read_only(db_path)
-        try:
-            rows = conn.execute(
-                """
-                SELECT
-                  COALESCE(
-                    NULLIF(json_extract(attrs_json, '$."gen_ai.client.name"'), ''),
-                    NULLIF(json_extract(attrs_json, '$."agent.name"'), ''),
-                    NULLIF(json_extract(attrs_json, '$."service.name"'), '')
-                  ) AS agent,
-                  MAX(observed_at) AS last_observed_at,
-                  COUNT(*) AS event_count
-                FROM raw_events
-                WHERE source_type NOT LIKE 'native_%'
-                GROUP BY agent
-                HAVING agent IS NOT NULL AND agent <> ''
-                """
-            ).fetchall()
-        finally:
-            conn.close()
-    except (OSError, sqlite3.DatabaseError):
+        return backend_request(db_path, "GET", "/api/delivery")
+    except click.ClickException:
         return {}
-    return {
-        _delivery_agent_key(agent): (str(last_observed_at or ""), int(event_count or 0))
-        for agent, last_observed_at, event_count in rows
-    }
 
 
 def _delivery_timestamp(value: str) -> str:
@@ -3775,67 +2897,10 @@ def _run_doctor() -> None:
 @doctor.command("cost")
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 @click.option("--alias-path", type=click.Path(path_type=Path), default=None, help="Override model alias JSON path.")
-def doctor_cost(db_path: Path, alias_path: Path | None) -> None:
-    """Append missing model aliases from SQL data and refresh cost estimates."""
-    from rich import box
-    from rich.console import Console
-    from rich.table import Table
-
-    from reflect.preparation import PreparationLock
-    from reflect.store.cost_refresh import CostRefreshState
-    from reflect.store.migrate import migrate
-    from reflect.store.rollups import rebuild_rollups
-    from reflect.store.sqlite import connect_sqlite, mark_snapshot
-
-    console = Console(force_terminal=True)
-    max_attempts = 3
-    with PreparationLock(db_path):
-        for attempt in range(1, max_attempts + 1):
-            conn = connect_sqlite(db_path)
-            try:
-                migrate(conn)
-                mark_snapshot(conn, ready=False)
-                cost_state = CostRefreshState(conn)
-                cost_inputs = cost_state.inspect(alias_path=alias_path)
-                alias_result = ensure_sql_costs(
-                    conn,
-                    alias_path=alias_path,
-                    refresh_inputs=cost_inputs,
-                )
-                rebuild_rollups(conn)
-                if cost_inputs.requires_full_refresh:
-                    cost_state.mark_current(cost_inputs)
-                break
-            except sqlite3.OperationalError as exc:
-                if "database is locked" not in str(exc).lower() or attempt >= max_attempts:
-                    raise click.ClickException(str(exc)) from exc
-                time.sleep(1.5 * attempt)
-            finally:
-                conn.close()
-
-    click.echo("Run `reflect refresh` to publish the updated costs with all derived views.")
-    table = Table(box=box.SIMPLE_HEAVY, expand=True)
-    table.add_column("Check", style="bold cyan")
-    table.add_column("Result", overflow="fold")
-    table.add_row("SQLite DB", str(db_path))
-    table.add_row("Alias file", str(alias_result.alias_path))
-    table.add_row("Observed models", str(alias_result.observed_models))
-    table.add_row("Resolved models", str(alias_result.resolved_models))
-    table.add_row("New aliases", str(len(alias_result.added_aliases)))
-    console.print(table)
-
-    if alias_result.added_aliases:
-        alias_table = Table(box=box.SIMPLE, expand=True)
-        alias_table.add_column("Observed model", style="cyan", overflow="fold")
-        alias_table.add_column("Pricing key", style="green", overflow="fold")
-        for observed, target in alias_result.added_aliases.items():
-            alias_table.add_row(observed, target)
-        console.print(alias_table)
-    if alias_result.unresolved_models:
-        unresolved = ", ".join(alias_result.unresolved_models[:10])
-        if len(alias_result.unresolved_models) > 10:
-            unresolved += f", +{len(alias_result.unresolved_models) - 10} more"
-        console.print(f"[yellow]Unresolved models:[/] {unresolved}")
+@click.option("--wait", is_flag=True, help="Wait for the durable background job.")
+def doctor_cost(db_path: Path, alias_path: Path | None, wait: bool = False) -> None:
+    'Append missing model aliases from SQL data and refresh cost estimates.'
+    backend_submit(db_path, '/api/maintenance/cost', {'alias_path': str(alias_path.resolve()) if alias_path else None}, wait=wait)
 
 
 def _pipx_upgrade_package(pipx: str, package: str, *, force: bool = False) -> None:

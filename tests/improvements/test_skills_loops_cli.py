@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -61,7 +60,7 @@ def _seed_loop(db_path):
     return loop_id
 
 
-def test_skills_sync_is_explicit_and_read_only_list_does_not_reconcile(tmp_path):
+def test_skills_sync_is_explicit_and_read_only_list_does_not_reconcile(tmp_path, monkeypatch):
     root = tmp_path / ".agents" / "skills" / "bounded-recovery"
     root.mkdir(parents=True)
     (root / "SKILL.md").write_text(
@@ -73,6 +72,8 @@ def test_skills_sync_is_explicit_and_read_only_list_does_not_reconcile(tmp_path)
         encoding="utf-8",
     )
     db_path = tmp_path / "reflect.db"
+    from tests.backend_helpers import bind_backend, execute_job
+    backend = bind_backend(monkeypatch, db_path)
 
     synced = CliRunner().invoke(
         main,
@@ -88,8 +89,9 @@ def test_skills_sync_is_explicit_and_read_only_list_does_not_reconcile(tmp_path)
     )
 
     assert synced.exit_code == 0, synced.output
-    payload = json.loads(synced.stdout)
-    assert payload["refresh"]["filesystem_skills"] == 1
+    job_result = execute_job(backend, json.loads(synced.stdout)["job_id"])
+    assert job_result["filesystem_skills"] == 1
+    payload = json.loads(CliRunner().invoke(main, ["skills", "--json", "--db-path", str(db_path)]).output)
     assert payload["skills"][0]["slug"] == "bounded-recovery"
     assert payload["skills"][0]["version_count"] == 1
     skill_id = payload["skills"][0]["id"]
@@ -106,7 +108,7 @@ def test_skills_sync_is_explicit_and_read_only_list_does_not_reconcile(tmp_path)
     )
     assert listed.exit_code == 0, listed.output
     listed_payload = json.loads(listed.output)
-    assert listed_payload["refresh"] is None
+    assert listed_payload.get("refresh") is None
     assert listed_payload["skills"][0]["version_count"] == 1
 
     shown = CliRunner().invoke(
@@ -131,53 +133,44 @@ def test_skills_sync_is_explicit_and_read_only_list_does_not_reconcile(tmp_path)
         ],
     )
     assert resynced.exit_code == 0, resynced.output
-    assert json.loads(resynced.stdout)["skills"][0]["version_count"] == 2
+    execute_job(backend, json.loads(resynced.stdout)["job_id"])
+    assert json.loads(CliRunner().invoke(main, ["skills", "--json", "--db-path", str(db_path)]).output)["skills"][0]["version_count"] == 2
 
 
 @pytest.mark.parametrize("initialized", [False, True])
 def test_skills_sync_reports_external_writer_and_recovers(tmp_path, monkeypatch, initialized):
-    from reflect.store import sqlite
-
-    monkeypatch.setenv("REFLECT_SQLITE_BUSY_TIMEOUT_MS", "50")
-    db_path = tmp_path / "reflect.db"
-    root = tmp_path / "skills"
+    from tests.backend_helpers import bind_backend, execute_job
+    db_path = tmp_path / 'reflect.db'
+    root = tmp_path / 'skills'
     root.mkdir()
     writer = connect_sqlite(db_path)
     if initialized:
         migrate(writer)
-    opened = []
-
-    def track_connection(*args, **kwargs):
-        conn = connect_sqlite(*args, **kwargs)
-        opened.append(conn)
-        return conn
-
-    monkeypatch.setattr(sqlite, "connect_sqlite", track_connection)
-    args = ["skills", "sync", "--json", "--path", str(root), "--db-path", str(db_path)]
+    backend = bind_backend(monkeypatch, db_path)
+    args = ['skills', 'sync', '--json', '--path', str(root), '--db-path', str(db_path)]
     try:
-        writer.execute("BEGIN IMMEDIATE")
-        blocked = CliRunner().invoke(main, args)
-        assert blocked.exit_code == 1
-        assert "Another writer is using the local store" in blocked.stderr
-        assert blocked.stdout == ""
-        # Covers initialization failure as well as failure during reconciliation.
-        assert len(opened) == 1
-        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
-            opened[0].execute("SELECT 1")
+        writer.execute('BEGIN IMMEDIATE')
+        queued = CliRunner().invoke(main, args)
+        assert queued.exit_code == 0, queued.output
+        job = backend.jobs.get(json.loads(queued.stdout)['job_id'])
+        assert job.state == 'queued'
+        assert job.arguments['scan_paths'] == [str(root)]
         writer.rollback()
-        recovered = CliRunner().invoke(main, args)
-        assert recovered.exit_code == 0, recovered.output
-        assert json.loads(recovered.stdout)["refresh"]["filesystem_skills"] == 0
+        result = execute_job(backend, job.job_id)
+        assert result['filesystem_skills'] == 0
     finally:
         writer.close()
 
 
-def test_loops_list_show_and_build_promote_selected_evidence_to_pending_skill(tmp_path):
+def test_loops_list_show_and_build_promote_selected_evidence_to_pending_skill(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     loop_id = _seed_loop(db_path)
+    from tests.backend_helpers import bind_backend, execute_job, publish_actions
+    publish_actions(db_path)
+    backend = bind_backend(monkeypatch, db_path)
     runner = CliRunner()
 
-    with patch("reflect.core.prepare_sql_report_db"):
+    with patch("reflect.preparation_pipeline.prepare_sql_report_db"):
         listed = runner.invoke(main, ["loops", "--json", "--db-path", str(db_path)])
         shown = runner.invoke(
             main,
@@ -202,7 +195,7 @@ def test_loops_list_show_and_build_promote_selected_evidence_to_pending_skill(tm
         ),
         stderr="",
     )
-    with patch("reflect.core.prepare_sql_report_db"), patch(
+    with patch("reflect.preparation_pipeline.prepare_sql_report_db"), patch(
         "reflect.core.shutil.which", return_value="/usr/bin/codex"
     ), patch("subprocess.run", return_value=agent_result):
         built = runner.invoke(
@@ -219,10 +212,10 @@ def test_loops_list_show_and_build_promote_selected_evidence_to_pending_skill(tm
             ],
         )
 
-    assert built.exit_code == 0, built.output
-    built_payload = json.loads(built.output)
-    assert built_payload["loop_id"] == loop_id
-    assert built_payload["status"] == "pending"
+        assert built.exit_code == 0, built.output
+        built_result = execute_job(backend, json.loads(built.output)['job_id'])
+    execute_job(backend, built_result['projection_job_id'])
+    built_payload = {'skill_id': built_result['skill_ids'][0]}
 
     conn = connect_sqlite(db_path)
     try:
@@ -240,9 +233,12 @@ def test_loops_list_show_and_build_promote_selected_evidence_to_pending_skill(tm
     assert tuple(loop) == ("promoted", built_payload["skill_id"])
 
 
-def test_loop_build_empty_array_leaves_pattern_and_registry_unchanged(tmp_path):
+def test_loop_build_empty_array_leaves_pattern_and_registry_unchanged(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     loop_id = _seed_loop(db_path)
+    from tests.backend_helpers import bind_backend, execute_job, publish_actions
+    publish_actions(db_path)
+    backend = bind_backend(monkeypatch, db_path)
     conn = connect_sqlite(db_path)
     before = tuple(conn.execute("SELECT status,evidence_json FROM loop_patterns WHERE id=?", (loop_id,)).fetchone())
     conn.close()
@@ -250,8 +246,10 @@ def test_loop_build_empty_array_leaves_pattern_and_registry_unchanged(tmp_path):
         "subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="[]", stderr="")
     ):
         result = CliRunner().invoke(main, ["loops", "build", loop_id, "--agent", "codex", "--db-path", str(db_path)])
-    assert result.exit_code == 0, result.output
-    assert "Nothing was staged" in result.output
+        assert result.exit_code == 0, result.output
+        job_id = result.output.split()[0]
+        outcome = execute_job(backend, job_id)
+    assert outcome['candidate_ids'] == []
     conn = connect_sqlite(db_path)
     try:
         assert tuple(conn.execute("SELECT status,evidence_json FROM loop_patterns WHERE id=?", (loop_id,)).fetchone()) == before
@@ -261,12 +259,19 @@ def test_loop_build_empty_array_leaves_pattern_and_registry_unchanged(tmp_path):
         conn.close()
 
 
-def test_loop_build_rejects_multiple_drafts(tmp_path):
+def test_loop_build_rejects_multiple_drafts(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     loop_id = _seed_loop(db_path)
+    from tests.backend_helpers import bind_backend, publish_actions
+    publish_actions(db_path)
+    backend = bind_backend(monkeypatch, db_path)
     with patch("reflect.core.shutil.which", return_value="/usr/bin/codex"), patch(
         "subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="[{}, {}]", stderr="")
     ):
         result = CliRunner().invoke(main, ["loops", "build", loop_id, "--agent", "codex", "--db-path", str(db_path)])
-    assert result.exit_code != 0
-    assert "exactly one" in result.output
+        from reflect.backend_runtime import _execute_job
+        job_id = result.output.split()[0]
+        backend.jobs.claim(job_id, owner='fixture')
+        _execute_job(db_path, backend.jobs.path, job_id, 'fixture')
+    assert backend.jobs.get(job_id).state == 'failed'
+    assert 'exactly one' in backend.jobs.get(job_id).error

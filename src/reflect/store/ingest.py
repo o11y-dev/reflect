@@ -903,14 +903,16 @@ def ingest_opencode_session_store(
     file_path: Path,
     source_id: str | None = None,
     skip_unchanged: bool = False,
+    session_ids: tuple[str, ...] = (),
 ) -> IngestionResult:
     """Ingest only OpenCode sessions beyond the durable relational cursor."""
 
     source = source_id or f"native_session:opencode:{file_path}"
+    checkpoint_source = source + (":sessions:" + ",".join(sorted(session_ids)) if session_ids else "")
     source_type = "native_session"
     fingerprint = SourceFingerprint.from_path(file_path)
     state = SourceIngestionState(db_conn)
-    if skip_unchanged and state.matches(source, source_type, fingerprint):
+    if skip_unchanged and state.matches(checkpoint_source, source_type, fingerprint):
         return {
             "inserted": 0,
             "skipped": 0,
@@ -918,7 +920,7 @@ def ingest_opencode_session_store(
             "scanned_sessions": 0,
         }
 
-    checkpoint = state.load(source, source_type)
+    checkpoint = state.load(checkpoint_source, source_type)
     cursor_time = 0
     cursor_id = ""
     if (
@@ -930,7 +932,7 @@ def ingest_opencode_session_store(
         cursor_id = checkpoint.record_cursor_id
 
     try:
-        sessions = OpenCodeSessionStore(file_path).load(
+        sessions = tuple(record for session_id in session_ids for record in OpenCodeSessionStore(file_path).load(session_id)) if session_ids else OpenCodeSessionStore(file_path).load(
             after_updated_ms=cursor_time,
             after_session_id=cursor_id,
         )
@@ -954,7 +956,7 @@ def ingest_opencode_session_store(
         cursor_time = sessions[-1].updated_ms
         cursor_id = sessions[-1].id
     state.record(
-        source,
+        checkpoint_source,
         source_type,
         fingerprint,
         processed_offset_bytes=fingerprint.size_bytes,
@@ -1044,6 +1046,7 @@ def ingest_native_session_file(
     source_id: str | None = None,
     skip_existing_sessions: bool = False,
     skip_unchanged: bool = False,
+    session_ids: tuple[str, ...] = (),
 ) -> IngestionResult:
     source = source_id or f"native_session:{agent}:{file_path}"
     if agent == "opencode":
@@ -1052,6 +1055,7 @@ def ingest_native_session_file(
             file_path=file_path,
             source_id=source,
             skip_unchanged=skip_unchanged,
+            session_ids=session_ids,
         )
     fingerprint = SourceFingerprint.from_path(file_path)
     state = SourceIngestionState(db_conn)

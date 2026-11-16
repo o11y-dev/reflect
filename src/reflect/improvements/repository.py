@@ -102,7 +102,11 @@ class ImprovementRepository:
 
     def __init__(self, conn: sqlite3.Connection, *, review_state: UserStateSnapshot | None = None):
         self.conn = conn
-        self.review_state = review_state
+        from reflect.store.snapshots import active_review_state
+        self.review_state = review_state if review_state is not None else active_review_state(conn)
+        self._has_state_attachment = self.review_state is not None and any(
+            row[1] == 'user_state' for row in conn.execute('PRAGMA database_list')
+        )
 
     def sync_rule_definitions(self, definitions: Iterable[RuleDefinition], *, now: str) -> None:
         for definition in definitions:
@@ -663,8 +667,7 @@ class ImprovementRepository:
         return scoped
 
     def get_observation(self, observation_id: str) -> ObservationRecord | None:
-        rows = self.conn.execute(
-            """
+        query = """
             SELECT o.id, o.rule_id, o.rule_version, o.scope_type, o.scope_id, o.repo_id,
                    o.fingerprint, o.category, o.title, o.summary, o.metric_name,
                    o.metric_value, o.metric_unit, o.metric_direction, o.baseline_value,
@@ -675,9 +678,12 @@ class ImprovementRepository:
             FROM observations o
             LEFT JOIN workflow_candidates wc ON wc.observation_id = o.id
             WHERE o.id = ?
-            """,
-            (observation_id,),
-        ).fetchall()
+            """
+        rows = self.conn.execute(query, (observation_id,)).fetchall()
+        if not rows and self._has_state_attachment:
+            query = query.replace('FROM observations o', 'FROM user_state.observations o').replace(
+                'LEFT JOIN workflow_candidates wc', 'LEFT JOIN user_state.workflow_candidates wc')
+            rows = self.conn.execute(query, (observation_id,)).fetchall()
         return self._observation_from_row(rows[0]) if rows else None
 
     def observation_provenance_session_count(self, observation_ids: Iterable[str]) -> int:
@@ -895,6 +901,19 @@ class ImprovementRepository:
             for row in rows
         ]
 
+    def _candidate_select(self) -> str:
+        if not self._has_state_attachment:
+            return _CANDIDATE_SELECT_SQL
+        # Saved candidates survive source pruning. This union is deliberately
+        # restricted to workflow navigation, never canonical aggregate queries.
+        return _CANDIDATE_SELECT_SQL.replace('FROM workflow_candidates wc', '''FROM (
+            SELECT * FROM main.workflow_candidates
+            UNION ALL
+            SELECT saved.* FROM user_state.workflow_candidates saved
+            JOIN user_state.workflow_review_ownership owned ON owned.candidate_id=saved.id
+            WHERE NOT EXISTS (SELECT 1 FROM main.workflow_candidates current WHERE current.id=saved.id)
+        ) wc''')
+
     def list_candidates(
         self,
         *,
@@ -902,7 +921,7 @@ class ImprovementRepository:
         offset: int = 0,
     ) -> list[WorkflowCandidateRecord]:
         rows = self.conn.execute(
-            f"{_CANDIDATE_SELECT_SQL} {_CANDIDATE_ORDER_SQL} LIMIT ? OFFSET ?",
+            f"{self._candidate_select()} {_CANDIDATE_ORDER_SQL} LIMIT ? OFFSET ?",
             (max(1, min(limit, 500)), max(0, offset)),
         ).fetchall()
         return [self._candidate_from_row(row) for row in rows]
@@ -927,7 +946,7 @@ class ImprovementRepository:
                     if candidate.contract_signature == contract_signature]
         rows = self.conn.execute(
             f"""
-            {_CANDIDATE_SELECT_SQL}
+            {self._candidate_select()}
             WHERE wc.contract_signature = ?
             {_CANDIDATE_ORDER_SQL}
             """,
@@ -937,7 +956,7 @@ class ImprovementRepository:
 
     def get_candidate(self, candidate_id: str) -> WorkflowCandidateRecord | None:
         row = self.conn.execute(
-            f"{_CANDIDATE_SELECT_SQL} WHERE wc.id = ?",
+            f"{self._candidate_select()} WHERE wc.id = ?",
             (candidate_id,),
         ).fetchone()
         return self._candidate_from_row(row) if row else None
@@ -1126,26 +1145,10 @@ class ImprovementRepository:
             """,
             (feedback_id, session_id, outcome, reason_redacted, actor, timestamp),
         )
-        self.conn.execute(
-            """
-            INSERT INTO session_outcomes(
-              id, session_id, outcome, source, confidence, verification_json, created_at, updated_at
-            ) VALUES (?, ?, ?, 'operator_feedback', 1, ?, ?, ?)
-            ON CONFLICT(session_id, source) DO UPDATE SET
-              outcome = excluded.outcome,
-              confidence = excluded.confidence,
-              verification_json = excluded.verification_json,
-              updated_at = excluded.updated_at
-            """,
-            (
-                f"outcome_{hashlib.sha256((session_id + ':operator').encode()).hexdigest()[:24]}",
-                session_id,
-                outcome,
-                _json({"feedback_id": feedback_id, "has_reason": bool(reason_redacted)}),
-                timestamp,
-                timestamp,
-            ),
-        )
+        # Human feedback is durable here; canonical outcomes are projected by
+        # the evidence writer, never through an immutable attached publication.
+        if self.conn.execute("SELECT 1 FROM main.sqlite_master WHERE type='table' AND name='session_outcomes'").fetchone():
+            self.project_feedback_outcome(session_id, outcome, feedback_id, reason_redacted, timestamp)
         self.record_event(
             entity_type="session",
             entity_id=session_id,
@@ -1156,6 +1159,29 @@ class ImprovementRepository:
         )
         self.conn.commit()
         return feedback_id
+
+    def project_feedback_outcome(self, session_id, outcome, feedback_id, reason_redacted, timestamp):
+        self.conn.execute(
+            """
+            INSERT INTO session_outcomes(
+              id, session_id, outcome, source, confidence, verification_json, created_at, updated_at
+            ) VALUES (?, ?, ?, 'operator_feedback', 1, ?, ?, ?)
+            ON CONFLICT(session_id, source) DO UPDATE SET
+              outcome = excluded.outcome,
+              confidence = excluded.confidence,
+              verification_json = excluded.verification_json,
+              updated_at = excluded.updated_at
+            WHERE session_outcomes.verification_json != excluded.verification_json
+            """,
+            (
+                f"outcome_{hashlib.sha256((session_id + ':operator').encode()).hexdigest()[:24]}",
+                session_id,
+                outcome,
+                _json({"feedback_id": feedback_id, "has_reason": bool(reason_redacted)}),
+                timestamp,
+                timestamp,
+            ),
+        )
 
     def analysis_readiness(
         self, scope: ImprovementScope | None = None,

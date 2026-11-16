@@ -423,6 +423,27 @@ def _build_tools(
     )
 
 
+def period_tool_activity(
+    conn: sqlite3.Connection, *, session_ids: set[str], date_from: str, date_to: str,
+) -> tuple[int, int]:
+    """Count only displayed period activity, without materializing unrelated steps."""
+    if not session_ids:
+        return 0, 0
+    scope, params = _scope_clause("st.session_id", sorted(session_ids))
+    observed_window = """julianday(st.started_at) >= julianday(?)
+        AND julianday(st.started_at) < julianday(?)
+        AND COALESCE(json_extract(st.raw_attrs_json, '$."reflect.time.provenance"'), 'observed') != 'inferred'"""
+    mcp = conn.execute(f"""SELECT COUNT(*) FROM mcp_calls mc
+        JOIN tool_calls tc ON tc.id=mc.tool_call_id JOIN steps st ON st.id=tc.step_id
+        {scope} AND {observed_window}""", [*params, date_from, date_to]).fetchone()[0]
+    subagents = conn.execute(f"""SELECT COUNT(*) FROM (
+        SELECT ae.session_id,COALESCE(NULLIF(ae.agent_id,''),ae.event_id,ae.step_id)
+        FROM agent_events ae JOIN steps st ON st.id=ae.step_id
+        {scope} AND {observed_window} AND ae.event_name='SubagentStart'
+        GROUP BY 1,2)""", [*params, date_from, date_to]).fetchone()[0]
+    return int(mcp), int(subagents)
+
+
 def _build_usage_tool_summary(
     conn: sqlite3.Connection,
     scoped_ids: list[str] | None,
@@ -948,8 +969,8 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
     node_rows = _dict_rows(conn.execute(
         f"""
         WITH filtered AS (
-          SELECT id, kind, label, first_seen_at, last_seen_at
-          FROM graph_nodes INDEXED BY idx_graph_nodes_session_kind
+          SELECT id, kind, label, first_seen_at, last_seen_at, session_id, rowid AS rank_rowid
+          FROM graph_nodes INDEXED BY idx_graph_nodes_rank
           {where}
         ),
         ranked AS (
@@ -957,7 +978,7 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
             *,
             ROW_NUMBER() OVER (
               PARTITION BY kind
-              ORDER BY COALESCE(last_seen_at, first_seen_at, '') DESC, label ASC
+              ORDER BY COALESCE(last_seen_at, first_seen_at, '') DESC, label ASC, session_id ASC, rank_rowid ASC
             ) AS kind_rank
           FROM filtered
         )
@@ -1019,12 +1040,17 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
         placeholders = ", ".join("?" for _ in graph_scoped_ids)
         edge_filters.append(f"(session_id IS NULL OR session_id IN ({placeholders}))")
         edge_params.extend(graph_scoped_ids)
+    # Probe displayed sources rather than every edge in workspace peer sessions.
+    # Explicit ties retain the scoped session-index traversal order even when
+    # the planner uses the much smaller displayed-node population.
+    edge_index = "INDEXED BY idx_graph_edges_source" if graph_scoped_ids is not None else ""
+    edge_ties = ", session_id ASC, rowid ASC" if graph_scoped_ids is not None else ""
     edge_rows = _dict_rows(conn.execute(
         f"""
         SELECT source_node_id, target_node_id, kind, session_id, weight, attrs_json, first_seen_at, last_seen_at
-        FROM graph_edges
+        FROM graph_edges {edge_index}
         WHERE {' AND '.join(edge_filters)}
-        ORDER BY weight DESC, kind ASC
+        ORDER BY weight DESC, kind ASC{edge_ties}
         LIMIT 900
         """,
         edge_params,
@@ -1054,22 +1080,25 @@ def _semantic_graph(conn: sqlite3.Connection, scoped_ids: list[str] | None) -> d
         ))
         scoped_bridge_rows = _dict_rows(conn.execute(
             f"""
-            SELECT source_node_id, target_node_id, kind, session_id, weight,
-                   attrs_json, first_seen_at, last_seen_at
-            FROM graph_edges
-            WHERE session_id IN ({scope_placeholders})
-              AND kind IN (
-                'touched_folder', 'touched_path', 'used_skill',
-                'suggests_outcome', 'recorded_memory', 'has_execution', 'checked_by'
-              )
-            ORDER BY
-              CASE kind
-                WHEN 'touched_folder' THEN 0
-                ELSE 1
-              END,
-              weight DESC,
-              COALESCE(last_seen_at, first_seen_at, '') DESC
-            LIMIT 600
+            WITH ranked AS MATERIALIZED (
+              SELECT id, kind, weight, first_seen_at, last_seen_at, session_id, rowid AS rank_rowid
+              FROM graph_edges INDEXED BY idx_graph_edges_rank
+              WHERE session_id IN ({scope_placeholders})
+                AND kind IN (
+                  'touched_folder', 'touched_path', 'used_skill',
+                  'suggests_outcome', 'recorded_memory', 'has_execution', 'checked_by'
+                )
+              ORDER BY CASE kind WHEN 'touched_folder' THEN 0 ELSE 1 END,
+                weight DESC, COALESCE(last_seen_at, first_seen_at, '') DESC,
+                session_id ASC, kind ASC, rank_rowid ASC
+              LIMIT 600
+            )
+            SELECT edge.source_node_id, edge.target_node_id, edge.kind, edge.session_id,
+                   edge.weight, edge.attrs_json, edge.first_seen_at, edge.last_seen_at
+            FROM ranked JOIN graph_edges edge ON edge.id=ranked.id
+            ORDER BY CASE ranked.kind WHEN 'touched_folder' THEN 0 ELSE 1 END,
+              ranked.weight DESC, COALESCE(ranked.last_seen_at, ranked.first_seen_at, '') DESC,
+              ranked.session_id ASC, ranked.kind ASC, ranked.rank_rowid ASC
             """,
             graph_scoped_ids,
         ))

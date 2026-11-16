@@ -62,8 +62,8 @@ def test_dashboard_html_surfaces_cost_controls(path: Path):
 def test_dashboard_html_requests_bounded_background_refresh(path: Path):
     text = path.read_text(encoding="utf-8")
 
-    assert "DASHBOARD_REFRESH_MIN_INTERVAL_MS = 30000" in text
-    assert "fetch('/api/refresh'" in text
+    assert "DASHBOARD_REFRESH_MIN_INTERVAL_MS = 10000" in text
+    assert "fetch('/api/refresh'" not in text
     assert "document.addEventListener('visibilitychange'" in text
 
 
@@ -130,10 +130,10 @@ def test_dashboard_html_surfaces_background_refresh_progress(path: Path):
     assert "'Refresh complete. Updating displayed results…'" in text
     assert "`Step ${phase || 1} of 5`" in text
     assert "Usage available · analysis pending" in text
-    assert "preparation.usage_completed_at" in text
+    assert "payload.publication.generation" in text
     assert "animation:preparation-sweep" in text
     assert "@media(prefers-reduced-motion:reduce)" in text
-    assert "window.location.reload()" in text
+    assert "window.location.reload()" not in text
     assert "startPreparationStatusPolling();" in text
     assert "'Loaded ' + new Date().toLocaleString()" in text
     assert "Telemetry capture is paused. Refresh to reclaim processed segments." in text
@@ -181,12 +181,13 @@ def test_dashboard_semantic_graph_exposes_workspace_relationship_mode(path: Path
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_session_filters_reload_sql_reports(path: Path):
     text = path.read_text(encoding="utf-8")
-    match = re.search(r"function scheduleDashboardReload\(\)\{\s*(.*?)\s*\}", text, re.S)
+    match = re.search(r"function scheduleDashboardReload\(\)\{(.*?)\n  \}", text, re.S)
 
     assert match is not None
     assert "if (!reportSupportsServerFiltering()) return false;" in match.group(1)
-    assert "showReportLoader('Filtering sessions...');" in match.group(1)
-    assert "window.location.reload()" in match.group(1)
+    assert "showReportLoader('Loading selected sessions…');" in match.group(1)
+    assert "refreshSessionNavigation()" in match.group(1)
+    assert "window.location.reload()" not in match.group(1)
     assert "return true;" in match.group(1)
 
 

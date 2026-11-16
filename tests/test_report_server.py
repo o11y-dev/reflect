@@ -326,3 +326,26 @@ def test_server_commands_are_exposed():
     for args in (["server", "--help"], ["server", "start", "--help"], ["server", "stop", "--help"], ["server", "status", "--help"]):
         result = runner.invoke(main, args)
         assert result.exit_code == 0
+
+
+def test_snapshot_only_start_uses_completed_publication_when_working_refresh_interrupted(tmp_path, monkeypatch):
+    from contextlib import closing
+
+    from test_dashboard_sql_api import _seed_sql_report_db
+
+    from reflect.report_server import run_browser_report
+    from reflect.store.snapshots import PublishedSnapshotStore
+    from reflect.store.sqlite import connect_sqlite, mark_snapshot
+
+    db = tmp_path / 'reflect.db'
+    _seed_sql_report_db(db)
+    with closing(connect_sqlite(db)) as conn:
+        mark_snapshot(conn, ready=True)
+    PublishedSnapshotStore(db, reserve_bytes=0).publish(evidence_revision='complete')
+    with closing(connect_sqlite(db)) as conn:
+        mark_snapshot(conn, ready=False)
+    starts = []
+    monkeypatch.setattr('reflect.report_server.start_publish_server', lambda **kwargs: starts.append(kwargs))
+    run_browser_report(db_path=db, otlp_traces=None, demo=False, refresh=False, open_browser=False)
+    assert len(starts) == 1
+    assert starts[0]['backend_runner'].refresh_arguments is None

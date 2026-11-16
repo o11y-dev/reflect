@@ -2,28 +2,16 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from reflect.models import SegmentPreparationStatus
 from reflect.store.migrate import load_migrations
 from reflect.store.sqlite import (
     DEFAULT_WAL_AUTOCHECKPOINT,
     busy_timeout_ms,
     connect_sqlite_read_only,
 )
-
-
-@dataclass(frozen=True)
-class SegmentPreparationStatus:
-    pending_count: int
-    pending_bytes: int
-    processed_on_disk_count: int
-    processed_on_disk_bytes: int
-    unclassified_count: int
-    unclassified_bytes: int
-    last_normalized_at: str | None
-    store_available: bool
 
 
 def inspect_segment_preparation(

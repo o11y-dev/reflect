@@ -11,8 +11,10 @@ from reflect.preparation import PreparationLock
 from reflect.store.sqlite import connect_sqlite, mark_snapshot
 
 WRITE_OPERATION = """
+import asyncio
 import json
 import sys
+import pytest
 from pathlib import Path
 from reflect.core import main
 from reflect import mcp
@@ -20,9 +22,12 @@ from reflect.dashboard_improvements import DashboardImprovementAdapter
 
 operation, db, root = sys.argv[1:]
 root = Path(root)
+from tests.backend_helpers import bind_backend
+patcher = pytest.MonkeyPatch()
+bind_backend(patcher, Path(db))
 print('started', flush=True)
 if operation == 'mcp_review':
-    result = mcp.reflect_review_change('apply_workflow', 'safe-review', project_root=str(root))
+    result = asyncio.run(mcp.reflect_review_change('apply_workflow', 'safe-review', project_root=str(root)))
     print(json.dumps({'state': result['state']}))
 elif operation == 'dashboard_feedback':
     result = DashboardImprovementAdapter(Path(db)).record_feedback('session', outcome='good', reason=None)
@@ -40,7 +45,7 @@ else:
 @pytest.mark.parametrize("operation", [
     "memory_sync", "workflow_add", "feedback", "mcp_review", "dashboard_feedback",
 ])
-def test_mutations_wait_for_refresh_and_commit_after_release(tmp_path, operation):
+def test_actions_and_job_submission_remain_available_during_refresh(tmp_path, operation):
     db = tmp_path / "reflect.db"
     root = tmp_path / "project"
     (root / ".git").mkdir(parents=True)
@@ -61,6 +66,11 @@ def test_mutations_wait_for_refresh_and_commit_after_release(tmp_path, operation
          "behavior_type": "verification"},
     ], session_ids=[])
     mark_snapshot(writer, ready=True)
+    writer.close()
+    from reflect.backend_runtime import BackendJobRunner, action_store_path
+    from tests.backend_helpers import execute_job, publish_actions
+    publish_actions(db)
+    writer = connect_sqlite(db)
     process = None
     try:
         with PreparationLock(db):
@@ -75,24 +85,24 @@ def test_mutations_wait_for_refresh_and_commit_after_release(tmp_path, operation
                 selector.register(process.stdout, selectors.EVENT_READ)
                 assert selector.select(10), "writer process did not start"
             assert process.stdout.readline().strip() == b"started"
-            try:
-                stdout, stderr = process.communicate(timeout=0.3)
-            except subprocess.TimeoutExpired:
-                pass
-            else:
-                pytest.fail(f"Mutation bypassed the refresh lock: {stdout.decode()} {stderr.decode()}")
+            stdout, stderr = process.communicate(timeout=10)
+            assert process.returncode == 0, stderr.decode()
             writer.rollback()
         stdout, stderr = process.communicate(timeout=15)
         assert process.returncode == 0, stderr.decode()
         if operation == "memory_sync":
-            assert json.loads(stdout)["inserted"] >= 1
+            backend = BackendJobRunner(db)
+            assert json.loads(stdout)["state"] == "queued"
+            assert execute_job(backend, json.loads(stdout)["job_id"])["inserted"] >= 1
         elif operation == "workflow_add":
-            assert b"Staged" in stdout
+            assert b"Nothing was installed" in stdout
         elif operation == "mcp_review":
             assert json.loads(stdout)["state"] == "pending"
             assert not (root / ".agents").exists()
         else:
-            assert writer.execute("SELECT COUNT(*) FROM operator_feedback").fetchone()[0] == 1
+            import sqlite3
+            with sqlite3.connect(action_store_path(db)) as actions:
+                assert actions.execute("SELECT COUNT(*) FROM operator_feedback").fetchone()[0] == 1
     finally:
         writer.close()
         if process is not None:

@@ -427,14 +427,62 @@ class SessionConversationPlayhead {
     });
   }
 
+  let sessionPublicationRequest = 0;
+  let sessionNavigationFlight = null;
+  async function refreshSessionNavigation(){
+    const url = reportUrlWithCurrentFilters();
+    const scopeRevision = D._sessionScopeRevision || 0;
+    if (sessionNavigationFlight?.url === url && sessionNavigationFlight.revision === scopeRevision) return sessionNavigationFlight.promise;
+    const request = ++sessionPublicationRequest;
+    D._navigationRefreshPending = true;
+    const promise = Promise.resolve().then(async () => {
+      try {
+        const response = await reportReadResponse(url, {headers:{Accept:'application/json'}, cache:'no-store'});
+        if (!response.ok) return;
+        const payload = await response.json();
+        if (!dashboardDocumentActive || request !== sessionPublicationRequest || scopeRevision !== (D._sessionScopeRevision || 0) || url !== reportUrlWithCurrentFilters()) return;
+        const selectedId = selectedIdx === null ? '' : (sessions[selectedIdx]?.full_id || sessions[selectedIdx]?.id || '');
+        const retained = new Map(sessions.map(item => [item.full_id || item.id, item]));
+        const detailKeys = ['conversation','telemetry','tool_inventory','measurements','git_activity',
+          'pricing_coverage','cost_scope','total_cost_usd','insights','assessments','derived_state','usage_state'];
+        const next = (payload.sessions || []).map(item => {
+          const existing = retained.get(item.full_id || item.id);
+          if (!existing) return item;
+          const summary = {...item};
+          if (existing._activityLoaded || existing._fullLoaded || existing._loadingDetail || existing.conversation?.length) {
+            for (const key of detailKeys) delete summary[key];
+          }
+          return Object.assign(existing, summary);
+        });
+        const pending = ['stale','recorded'].includes(payload.publication?.state);
+        sessions.splice(0, sessions.length, ...next);
+        Object.assign(D, payload, {sessions, _unpublishedNavigation:false,
+          _navigationScope:url, _navigationRefreshPending:pending});
+        const index = sessions.findIndex(item => (item.full_id || item.id) === selectedId);
+        selectedIdx = index >= 0 ? index : null;
+        renderSessionList();
+        if (pending) markNavigationCached();
+        hideReportLoader();
+      } finally {
+        if (sessionNavigationFlight?.request === request) sessionNavigationFlight = null;
+      }
+    });
+    sessionNavigationFlight = {url, request, revision:scopeRevision, promise};
+    return promise;
+  }
+
   function scheduleDashboardReload(){
     if (!reportSupportsServerFiltering()) return false;
     if (reloadTimer) window.clearTimeout(reloadTimer);
-    showReportLoader('Filtering sessions...');
-    suspendDashboardReads();
-    reloadTimer = window.setTimeout(() => window.location.reload(), 120);
+    D._sessionScopeRevision = (D._sessionScopeRevision || 0) + 1;
+    showReportLoader('Loading selected sessions…');
+    reloadTimer = window.setTimeout(() => refreshSessionNavigation().catch(() => {}), 120);
     return true;
   }
+
+  document.addEventListener('reflect-status-polled', () => {
+    if (dashboardDocumentActive && D._navigationRefreshPending) refreshSessionNavigation().catch(() => {});
+  });
 
   function isMobileShell(){
     return window.matchMedia('(max-width: 900px)').matches;
@@ -2011,10 +2059,15 @@ class SessionConversationPlayhead {
   function tryLoadFullDetail(sessionId, btn){
     if (!dashboardDocumentActive) return;
     const idx = sessions.findIndex(s => (s.full_id || s.id) === sessionId);
+    const requestedSession = idx >= 0 ? sessions[idx] : null;
+    const requestRevision = D._sessionScopeRevision || 0;
+    const requestToken = {};
+    const resolveIndex = () => sessions.findIndex(item => (item.full_id || item.id) === sessionId && item._detailRequest === requestToken);
     if (idx >= 0) {
       if (sessions[idx]._loadingDetail) return;
       delete sessions[idx]._refreshDetailAfterLoad;
       sessions[idx]._loadingDetail = true;
+      sessions[idx]._detailRequest = requestToken;
       sessions[idx]._detailLoadError = '';
     }
     if (btn) {
@@ -2038,6 +2091,8 @@ class SessionConversationPlayhead {
         return r.json();
       })
       .then(data => {
+        const idx = resolveIndex();
+        if (!dashboardDocumentActive || idx < 0 || requestRevision !== (D._sessionScopeRevision || 0)) return;
         const events = data.events || data.conversation || [];
         const telemetry = data.telemetry || null;
         const toolInventory = data.tool_inventory || null;
@@ -2076,6 +2131,8 @@ class SessionConversationPlayhead {
         }
       })
       .catch(err => {
+        const idx = resolveIndex();
+        if (!dashboardDocumentActive || requestRevision !== (D._sessionScopeRevision || 0)) return;
         if (idx >= 0) {
           sessions[idx]._loadingDetail = false;
           sessions[idx]._detailLoadError = err.name === 'AbortError'
@@ -2090,6 +2147,9 @@ class SessionConversationPlayhead {
       })
       .finally(() => {
         window.clearTimeout(timeout);
+        const idx = resolveIndex();
+        if (requestedSession?._detailRequest === requestToken) requestedSession._loadingDetail = false;
+        if (idx >= 0 && requestRevision !== (D._sessionScopeRevision || 0)) sessions[idx]._refreshDetailAfterLoad = true;
         if (dashboardDocumentActive && idx >= 0 && sessions[idx]._refreshDetailAfterLoad) {
           delete sessions[idx]._refreshDetailAfterLoad;
           sessions[idx]._activityLoaded = false;
@@ -2119,8 +2179,9 @@ class SessionConversationPlayhead {
   }
 
   document.addEventListener('reflect-snapshot-published', event => {
-    if (D._unpublishedNavigation) return;
     if (!dashboardDocumentActive) return;
+    D._sessionScopeRevision = (D._sessionScopeRevision || 0) + 1;
+    if (document.getElementById('tab-sessions')?.classList.contains('active')) refreshSessionNavigation().catch(() => {});
     if (!document.getElementById('tab-sessions')?.classList.contains('active') || selectedIdx === null) return;
     event.preventDefault();
     markNavigationCached();

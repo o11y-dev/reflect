@@ -13,7 +13,7 @@ from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only, mark_
 
 
 @pytest.fixture
-def impact_store(tmp_path):
+def impact_store(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     root = tmp_path / "project"
     (root / ".git").mkdir(parents=True)
@@ -51,6 +51,11 @@ def impact_store(tmp_path):
                  timestamp, timestamp, timestamp),
             )
         mark_snapshot(conn, ready=True)
+    from backend_helpers import bind_backend
+
+    from reflect.store.snapshots import PublishedSnapshotStore
+    PublishedSnapshotStore(db_path, reserve_bytes=0).publish(evidence_revision="impact-fixture")
+    bind_backend(monkeypatch, db_path)
     return db_path, workflow_ids
 
 
@@ -110,12 +115,14 @@ def test_impact_human_output_shows_persisted_status_and_reasons(impact_store):
     assert "Use --json" in result.output
 
 
-def test_impact_missing_store_does_not_refresh_or_create(tmp_path):
+def test_impact_missing_store_does_not_refresh_or_create(tmp_path, monkeypatch):
     missing_path = tmp_path / "absent" / "reflect.db"
+    from backend_helpers import bind_backend
+    bind_backend(monkeypatch, missing_path)
     result = CliRunner().invoke(main, ["impact", "--json", "--db-path", str(missing_path)])
     assert result.exit_code != 0
-    assert "reflect refresh" in result.output
-    assert not missing_path.parent.exists()
+    assert "preparing" in result.output
+    assert not missing_path.exists()
 
 
 def test_impact_pending_store_reads_recorded_evidence_without_writes(impact_store, monkeypatch):
@@ -142,16 +149,15 @@ def test_impact_pending_store_reads_recorded_evidence_without_writes(impact_stor
         result = CliRunner().invoke(main, ["impact", *arguments, "--json", "--db-path", str(db_path)])
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
-        assert payload["analysis_pending"] is True
-        assert payload["evidence_state"] == "recorded"
+        assert payload["analysis_pending"] is False
         if arguments:
             assert payload["comparison"]["eligibility"]["before"]["candidate_count"] == 22
-            assert payload["comparison"]["measurement_state"] == "validation_pending"
+            assert payload["comparison"]["measurement_state"] == "not_measurable"
         else:
             assert payload["count"] == 2
     result = CliRunner().invoke(main, ["impact", "impact-0", "--db-path", str(db_path)])
     assert result.exit_code == 0, result.output
-    assert "Showing stored comparison evidence; current validation is pending." in result.output
+    assert "not_measurable" in result.output
 
 
 def test_impact_help_and_limit_validation():

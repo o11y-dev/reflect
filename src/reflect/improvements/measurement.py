@@ -72,6 +72,20 @@ class MeasurementService:
         self.contracts = ContractEvaluationService(conn)
         self.validity = MeasurementValidity(conn)
 
+    def _review_relation(self, table: str) -> str:
+        """Read retained review provenance only for an intervention, never aggregates."""
+        if table not in {'workflow_candidates', 'observations'}:
+            raise ValueError('Unsupported review relation')
+        if not any(row[1] == 'user_state' for row in self.conn.execute('PRAGMA database_list')):
+            return table
+        if table == 'workflow_candidates':
+            owned = 'SELECT candidate_id FROM user_state.workflow_review_ownership'
+        else:
+            owned = ('SELECT observation_id FROM user_state.workflow_candidates '
+                     'WHERE id IN (SELECT candidate_id FROM user_state.workflow_review_ownership)')
+        return (f'(SELECT * FROM user_state.{table} WHERE id IN ({owned}) '
+                f'UNION ALL SELECT * FROM main.{table} WHERE id NOT IN ({owned}))')
+
     def measure(self, candidate_id: str, *, skip_unchanged: bool = False,
                 reassess: bool = False, commit: bool = True) -> dict[str, Any]:
         """Append a comparison; explicit reassessment renews evidence, never membership.
@@ -80,14 +94,14 @@ class MeasurementService:
         continue to validate the pinned evidence and cannot silently renew it.
         """
         row = self.conn.execute(
-            """
+            f"""
             SELECT i.id, i.exposure_started_at, o.repo_id, wc.target_metric,
                    wc.task_archetype_id, o.metric_direction, wc.content_json,
                    wc.measurement_window, wc.provenance_json
             FROM interventions i
             JOIN workflow_versions wv ON wv.id = i.workflow_version_id
-            JOIN workflow_candidates wc ON wc.id = wv.candidate_id
-            JOIN observations o ON o.id = wc.observation_id
+            JOIN {self._review_relation('workflow_candidates')} wc ON wc.id = wv.candidate_id
+            JOIN {self._review_relation('observations')} o ON o.id = wc.observation_id
             WHERE wc.id = ? AND i.status = 'active'
             ORDER BY i.created_at DESC LIMIT 1
             """,
@@ -517,15 +531,15 @@ class MeasurementService:
     def sessions(self, measurement_id: str, *, recorded_only: bool = False) -> dict[str, Any]:
         """Return the bounded execution-unit cohorts in a measurement snapshot."""
         row = self.conn.execute(
-            """
+            f"""
             SELECT m.id, wv.candidate_id, m.metric_name, m.cohort_json,
                    m.before_count, m.after_count, i.exposure_started_at,
                    o.repo_id, wc.task_archetype_id, wv.content_json, m.measured_at
             FROM measurements m
             JOIN interventions i ON i.id = m.intervention_id
             JOIN workflow_versions wv ON wv.id = i.workflow_version_id
-            JOIN workflow_candidates wc ON wc.id = wv.candidate_id
-            JOIN observations o ON o.id = wc.observation_id
+            JOIN {self._review_relation('workflow_candidates')} wc ON wc.id = wv.candidate_id
+            JOIN {self._review_relation('observations')} o ON o.id = wc.observation_id
             WHERE m.id = ?
             """,
             (measurement_id,),

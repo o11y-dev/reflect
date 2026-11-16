@@ -23,7 +23,8 @@ USER_TABLES = frozenset({
     'skill_installations', 'skill_evidence', 'operator_feedback',
     'nudge_policies', 'change_reviews', 'evaluations',
 })
-REVIEW_CONTEXT_TABLES = frozenset({'rule_definitions', 'task_archetypes', 'observations', 'workflow_candidates', 'improvement_events'})
+REVIEW_CONTEXT_TABLES = frozenset({'rule_definitions', 'task_archetypes', 'observations', 'workflow_candidates', 'improvement_events',
+                                   'observation_evidence', 'observation_sessions'})
 CUTOVER_KEY = 'user_state_cutover_v1'
 
 
@@ -145,7 +146,7 @@ class UserStateMigration:
                 target.execute("""INSERT OR IGNORE INTO workflow_review_ownership(candidate_id,evidence_revision_hash)
                     SELECT id,revision_hash FROM workflow_candidates WHERE reviewer IS NOT NULL
                        OR json_extract(checks_json,'$.dismissal') IS NOT NULL
-                       OR json_extract(provenance_json,'$.source') IN ('skill_extraction','agent_authored','manual_skill_file')
+                       OR json_extract(provenance_json,'$.source') IN ('skill_extraction','agent_authored','manual_skill_file','user_authored')
                        OR id IN (SELECT entity_id FROM improvement_events WHERE event_type='edited_pending')""")
                 if target.execute('PRAGMA foreign_key_check').fetchone():
                     raise RuntimeError('User-state migration produced broken internal references')

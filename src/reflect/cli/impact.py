@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from contextlib import closing
 from pathlib import Path
 
 import click
 
-from reflect.cli.common import REFLECT_HOME, echo_json, require_snapshot_schema
+from reflect.cli.common import REFLECT_HOME, echo_json
 
 
 @click.command("impact")
@@ -16,14 +15,9 @@ from reflect.cli.common import REFLECT_HOME, echo_json, require_snapshot_schema
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def impact(measurement_id: str | None, workflow_id: str | None, limit: int, as_json: bool, db_path: Path) -> None:
     """List persisted impact checks or inspect MEASUREMENT_ID without refreshing."""
-    from reflect.context import ReflectContextService
-    from reflect.store.sqlite import connect_sqlite_read_only
-
-    require_snapshot_schema(db_path, refresh_hint=f"Run `reflect refresh --db-path {db_path}` first.")
-    with closing(connect_sqlite_read_only(db_path, profile=None)) as conn:
-        payload = ReflectContextService(conn, initialize_schema=False).impact(
-            impact_id=measurement_id, workflow_id=workflow_id, limit=limit,
-        )
+    from reflect.cli.backend import request
+    payload = request(db_path, 'GET', '/api/impact-checks', params={
+        key: value for key, value in {'impact_id': measurement_id, 'workflow_id': workflow_id, 'limit': limit}.items() if value is not None})
     if as_json:
         echo_json(payload)
         return

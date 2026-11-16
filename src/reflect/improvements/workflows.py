@@ -238,6 +238,7 @@ class WorkflowService:
             "candidate_id": candidate_id,
             "contract_signature": candidate.contract_signature,
             "candidate_updated_at": candidate.updated_at,
+            "revision_hash": candidate.revision_hash,
             "project_root": str(root),
             "application_root": str(root),
             "application_repository": str(root),
@@ -402,8 +403,12 @@ class WorkflowService:
                 (version_id, candidate_id, version, json.dumps(candidate.content, sort_keys=True), applied_hash, now),
             )
 
-        self._atomic_write(target, content)
         intervention_id = f"intervention_{uuid.uuid4().hex}"
+        from reflect.workflow_journal import WorkflowFileJournal
+        journal = WorkflowFileJournal.for_connection(self.conn)
+        record = journal.begin(target=target, before=previous_content, after=content,
+                               intervention_id=intervention_id, operation='apply') if journal else None
+        self._atomic_write(target, content)
         try:
             evaluation_id = f"evaluation_{hashlib.sha256((version_id + ':artifact-integrity').encode()).hexdigest()[:24]}"
             self.conn.execute(
@@ -478,7 +483,11 @@ class WorkflowService:
         except Exception:
             self.conn.rollback()
             self._restore_file(target, previous_content)
+            if journal:
+                journal.finish(record)
             raise
+        if journal:
+            journal.finish(record)
         return {
             "candidate_id": candidate_id,
             "intervention_id": intervention_id,
@@ -736,6 +745,10 @@ class WorkflowService:
             raise RuntimeError(
                 "The applied workflow file changed after Reflect wrote it; refusing to overwrite those edits"
             )
+        from reflect.workflow_journal import WorkflowFileJournal
+        journal = WorkflowFileJournal.for_connection(self.conn)
+        record = journal.begin(target=target, before=current_content, after=row['previous_content'],
+                               intervention_id=row['intervention_id'], operation='rollback') if journal else None
         self._restore_file(target, row["previous_content"])
         now = utc_now()
         self.conn.execute(
@@ -759,6 +772,8 @@ class WorkflowService:
             now=now,
         )
         self.conn.commit()
+        if journal:
+            journal.finish(record)
         return {
             "candidate_id": candidate_id,
             "intervention_id": row["intervention_id"],

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import shlex
+from collections import Counter
 from collections.abc import Mapping
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from reflect.dashboard_queries import build_dashboard_payload
 from reflect.store.pending_refresh import analysis_coverage, derived_analysis_state
 from reflect.store.sqlite import connect_sqlite_read_only, snapshot_incomplete
 from reflect.utils import _json_loads
@@ -51,20 +51,6 @@ def build_explore_payload(
         "scoped": has_scope,
         "session_id": session_id,
     }
-    if canonical_view == "usage":
-        dashboard = build_dashboard_payload(
-            db_path, q=q, session_id=session_id, agents=agents, model=model,
-            status=status, range_name=range_name, lazy_heavy_tabs=True,
-            include_comparison=False, base_tab_names=set(tab_names),
-        )
-        payload.update({key: dashboard[key] for key in (
-            "snapshot_completed_at", "analysis_state", "analysis_completed_at", "analysis_window",
-            "analysis_coverage", "inventory_scope", "inventory_scope_label", "range",
-        )})
-        for tab_name in tab_names:
-            payload.update(dashboard["sqlite"]["tabs"]["tools" if tab_name == "usage_tools" else tab_name])
-        return payload
-
     from reflect.views import build_report_tab
     from reflect.views.sessions import select_session_scope
 
@@ -77,12 +63,13 @@ def build_explore_payload(
         days = 1 if range_name == "24h" else (
             int(range_name[:-1]) if range_name.endswith("d") and range_name[:-1].isdigit() else None
         )
-        if has_scope:
-            now = datetime.now(UTC)
+        now = datetime.now(UTC)
+        date_from = (now - timedelta(days=days)).isoformat() if days else None
+        date_to = now.isoformat() if days else None
+        if has_scope or canonical_view == "usage":
             sessions = select_session_scope(
-                conn, q=q, agents=agents, model=model, status=status,
-                date_from=(now - timedelta(days=days)).isoformat() if days else None,
-                date_to=now.isoformat() if days else None,
+                conn, q=q, agents=agents, model=model, status=status, ids_only=True,
+                date_from=date_from, date_to=date_to,
             )
             scoped_ids = {row["id"] for row in sessions if not session_id or row["id"] == session_id}
         coverage = analysis_coverage(conn, scoped_ids)
@@ -109,6 +96,41 @@ def build_explore_payload(
             if canonical_view == "context" else "Tool and graph inventories cover matching sessions in full.",
             range=range_name,
         )
+        if canonical_view == "usage":
+            from reflect.graph import _compute_weekly_trends
+            from reflect.views.measurements import build_measurements
+            from reflect.views.report_tabs import period_tool_activity
+
+            measurement = build_measurements(
+                conn, session_ids=scoped_ids, date_from=date_from, date_to=date_to,
+                usage_only=True,
+            )
+            for tab_name in tab_names:
+                content = build_report_tab(conn, tab_name, session_ids=scoped_ids, measurement=measurement)
+                if tab_name == "usage_tools":
+                    content = {key: value for key, value in content.items()
+                               if key not in {"agents", "agent_comparison", "commands_with_template"}}
+                payload.update(content)
+            payload.update(
+                tools_by_count={}, tool_percentiles=[], skills_by_count={},
+                skill_reports_by_count={}, skill_mentions_by_count={}, skill_attempts_by_count={},
+                weekly_trends=_compute_weekly_trends(Counter(payload["activity_by_day"])),
+                agent_cost_over_time=measurement.agent_cost_over_time,
+                analysis_state=state,
+                snapshot_completed_at=max((value for key, value in metadata.items()
+                    if key in {"last_successful_usage_refresh", "last_successful_refresh"}), default=None),
+                inventory_scope_label=(
+                    "Costs, tokens, and KPI totals use the selected period. Activity charts and tool inventories cover matching sessions in full."
+                    if days else ""
+                ),
+            )
+            if date_from and date_to:
+                mcp_calls, subagent_launches = period_tool_activity(
+                    conn, session_ids=scoped_ids, date_from=date_from, date_to=date_to,
+                )
+                payload.update(mcp_calls=mcp_calls, subagent_launches=subagent_launches,
+                               subagent_total_starts=subagent_launches)
+            return payload
         for tab_name in tab_names:
             content = build_report_tab(conn, tab_name, session_ids=scoped_ids)
             if canonical_view == "context":

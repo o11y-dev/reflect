@@ -89,8 +89,15 @@ def virtual_tool_graph(conn: sqlite3.Connection, session_ids: list[str] | None, 
         return [], []
     scope = "" if session_ids is None else f"WHERE tc.session_id IN ({','.join('?' for _ in session_ids)})"
     fields = "id,step_id,session_id,tool_name,tool_type,status,duration_ms,input_hash,output_hash,error_type,error_message_redacted,created_at,updated_at"
-    cursor = conn.execute(f"""SELECT {','.join('tc.' + field for field in fields.split(','))}
-        FROM tool_calls tc {scope} ORDER BY tc.created_at DESC,tc.id DESC LIMIT ?""",
+    # Rank compact covering-index entries before fetching call details. Selecting
+    # the payload first lets SQLite read every matching call before its top-N sort.
+    index = "idx_tool_calls_graph_recent" if session_ids is None else "idx_tool_calls_graph_session_recent"
+    cursor = conn.execute(f"""WITH recent AS MATERIALIZED (
+        SELECT tc.id,tc.created_at FROM tool_calls tc INDEXED BY {index}
+        {scope} ORDER BY tc.created_at DESC,tc.id DESC LIMIT ?
+    ) SELECT {','.join('tc.' + field for field in fields.split(','))}
+        FROM recent JOIN tool_calls tc ON tc.id=recent.id
+        ORDER BY recent.created_at DESC,recent.id DESC""",
         (*(session_ids or []), min(max(limit, 0), 40)))
     columns = [column[0] for column in cursor.description]
     nodes: dict[str, dict] = {}

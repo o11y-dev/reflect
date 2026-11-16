@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import re
 import shlex
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -162,77 +161,33 @@ class ShellCompletionManager:
         return True
 
 
-@dataclass(frozen=True)
-class CompletionQuery:
-    """A bounded, read-only completion query over the local Reflect store."""
+class BackendCompletionCatalog:
+    """Completion uses an already-running backend; Tab never launches a daemon."""
 
-    table: str
-    value: str
-    label: str
-    order_by: str
-    distinct: bool = False
-
-
-class SqliteCompletionCatalog:
-    """Return privacy-safe completion labels without creating or migrating a DB."""
-
-    _queries = {
-        "observation": CompletionQuery("observations", "id", "title", "updated_at DESC"),
-        "workflow": CompletionQuery("workflow_candidates", "id", "title", "updated_at DESC"),
-        "loop": CompletionQuery("loop_patterns", "id", "title", "updated_at DESC"),
-        "session": CompletionQuery(
-            "sessions",
-            "id",
-            "status || ' · ' || started_at",
-            "started_at DESC",
-        ),
-        "skill": CompletionQuery("skills", "id", "slug", "updated_at DESC"),
-        "memory": CompletionQuery("memories", "id", "type || ' · ' || scope", "updated_at DESC"),
-        "memory_candidate": CompletionQuery(
-            "memory_candidates",
-            "id",
-            "type || ' · ' || scope",
-            "updated_at DESC",
-        ),
-        "memory_type": CompletionQuery("memories", "type", "type", "type", distinct=True),
-        "memory_scope": CompletionQuery("memories", "scope", "scope", "scope", distinct=True),
-        "memory_source": CompletionQuery("memories", "source", "source", "source", distinct=True),
-        "memory_provider": CompletionQuery("memories", "provider", "provider", "provider", distinct=True),
-    }
-
-    def __init__(self, *, limit: int = 100) -> None:
+    def __init__(self, *, limit: int = 100):
         self.limit = limit
 
     def complete(self, entity: str, incomplete: str, db_path: Path) -> list[CompletionItem]:
-        query = self._queries[entity]
-        if not db_path.is_file():
+        import asyncio
+
+        import httpx
+
+        from reflect.backend_client import BackendClient
+        from reflect.backend_lifecycle import BackendLocator
+        endpoint = BackendLocator(db_path).existing()
+        if endpoint is None:
             return []
-        prefix = self._escape_like(incomplete) + "%"
-        distinct = "DISTINCT " if query.distinct else ""
-        sql = (
-            f"SELECT {distinct}{query.value}, {query.label} "
-            f"FROM {query.table} "
-            f"WHERE {query.value} LIKE ? ESCAPE '\\' "
-            f"ORDER BY {query.order_by} LIMIT ?"
-        )
-        uri = f"file:{quote(str(db_path.resolve()))}?mode=ro"
+        async def fetch():
+            async with asyncio.timeout(.3):
+                return await BackendClient(endpoint).request('GET', '/api/completions/' + quote(entity, safe=''),
+                    params={'prefix': incomplete, 'limit': self.limit})
         try:
-            with sqlite3.connect(uri, uri=True) as conn:
-                rows = conn.execute(sql, (prefix, self.limit)).fetchall()
-        except (OSError, sqlite3.Error):
+            return [CompletionItem(item['value'], help=item['help']) for item in asyncio.run(fetch())]
+        except (OSError, RuntimeError, TimeoutError, httpx.HTTPError):
             return []
-        return [
-            CompletionItem(str(value), help=str(label or ""))
-            for value, label in rows
-            if value is not None
-        ]
-
-    @staticmethod
-    def _escape_like(value: str) -> str:
-        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-_SQLITE_COMPLETIONS = SqliteCompletionCatalog()
+_COMPLETIONS = BackendCompletionCatalog()
 
 
 def _db_path_from_context(ctx: click.Context) -> Path:
@@ -246,25 +201,25 @@ def _db_path_from_context(ctx: click.Context) -> Path:
     return reflect_home / "state" / "reflect.db"
 
 
-def sqlite_completer(entity: str) -> Callable[[click.Context, click.Parameter, str], list[CompletionItem]]:
+def backend_completer(entity: str) -> Callable[[click.Context, click.Parameter, str], list[CompletionItem]]:
     """Build a Click callback for one registered SQLite-backed entity."""
 
     def complete(ctx: click.Context, _param: click.Parameter, incomplete: str) -> list[CompletionItem]:
-        return _SQLITE_COMPLETIONS.complete(entity, incomplete, _db_path_from_context(ctx))
+        return _COMPLETIONS.complete(entity, incomplete, _db_path_from_context(ctx))
 
     return complete
 
 
-complete_observation_id = sqlite_completer("observation")
-complete_workflow_id = sqlite_completer("workflow")
-complete_loop_id = sqlite_completer("loop")
-complete_session_id = sqlite_completer("session")
-complete_skill_id = sqlite_completer("skill")
-complete_memory_id = sqlite_completer("memory")
-complete_memory_candidate_id = sqlite_completer("memory_candidate")
-complete_memory_type = sqlite_completer("memory_type")
-complete_memory_scope = sqlite_completer("memory_scope")
-complete_memory_source = sqlite_completer("memory_source")
+complete_observation_id = backend_completer("observation")
+complete_workflow_id = backend_completer("workflow")
+complete_loop_id = backend_completer("loop")
+complete_session_id = backend_completer("session")
+complete_skill_id = backend_completer("skill")
+complete_memory_id = backend_completer("memory")
+complete_memory_candidate_id = backend_completer("memory_candidate")
+complete_memory_type = backend_completer("memory_type")
+complete_memory_scope = backend_completer("memory_scope")
+complete_memory_source = backend_completer("memory_source")
 
 
 def complete_memory_provider(
@@ -273,7 +228,7 @@ def complete_memory_provider(
     incomplete: str,
 ) -> list[CompletionItem]:
     """Complete built-in provider names plus providers observed in local memory rows."""
-    observed = _SQLITE_COMPLETIONS.complete(
+    observed = _COMPLETIONS.complete(
         "memory_provider",
         incomplete,
         _db_path_from_context(ctx),

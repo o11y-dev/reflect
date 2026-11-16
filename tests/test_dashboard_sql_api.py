@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 
 import pytest
@@ -17,14 +16,29 @@ from reflect.improvements.models import (
 )
 from reflect.improvements.repository import ImprovementRepository
 from reflect.improvements.skills import SkillRegistryService
-from reflect.preparation import (
-    PreparationCoordinator,
-    PreparationProgress,
-    PreparationScheduler,
-    PreparationStage,
-)
 from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite
+
+
+def _job_client(db_path, *, refresh=True):
+    from reflect.backend_api import install_backend
+    from reflect.backend_runtime import BackendJobRunner
+    runner = BackendJobRunner(db_path, refresh_arguments={'otlp_traces': None, 'include_native_sessions': False} if refresh else None)
+    runner.jobs.initialize()
+    app = build_dashboard_app(docs_dir=db_path.parent, db_path=db_path)
+    install_backend(app, runner, token='fixture', port=8765)
+    client = TestClient(app, base_url='http://127.0.0.1:8765', headers={'Authorization': 'Bearer fixture'})
+    return client, runner
+
+
+def _publish_report(db_path):
+    from contextlib import closing
+
+    from reflect.store.snapshots import PublishedSnapshotStore
+    from reflect.store.sqlite import mark_snapshot
+    with closing(connect_sqlite(db_path)) as conn:
+        mark_snapshot(conn, ready=True)
+    PublishedSnapshotStore(db_path, reserve_bytes=0).publish(evidence_revision="fixture")
 
 
 def test_session_cards_explain_why_cost_is_unavailable():
@@ -551,6 +565,7 @@ def _add_sql_codex_sibling_session(db_path):
 def test_dashboard_api_embeds_sql_view_models(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
     client = TestClient(app)
 
@@ -578,6 +593,7 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
 
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
     client = TestClient(app)
 
@@ -687,6 +703,14 @@ def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
     observation_id = _seed_improvement_ledger(db_path)
     project_root = tmp_path / "project"
     (project_root / ".git").mkdir(parents=True)
+    from reflect.backend_runtime import action_store_path
+    from reflect.store.sqlite import mark_snapshot
+    from reflect.store.user_state import UserStateStore
+    from reflect.store.user_state_migration import UserStateMigration
+    with connect_sqlite(db_path) as conn:
+        mark_snapshot(conn, ready=True)
+    UserStateMigration(db_path, UserStateStore(action_store_path(db_path))).run()
+    _publish_report(db_path)
     app = build_dashboard_app(
         docs_dir=tmp_path,
         db_path=db_path,
@@ -854,6 +878,7 @@ def test_dashboard_improvement_get_endpoints_are_read_only(tmp_path, monkeypatch
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
     _seed_improvement_ledger(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     def reject_refresh(*_args, **_kwargs):
@@ -877,193 +902,110 @@ def test_dashboard_improvement_get_endpoints_are_read_only(tmp_path, monkeypatch
 
 
 def test_dashboard_api_reports_background_preparation_status(tmp_path):
-    db_path = tmp_path / "reflect.db"
-    _seed_sql_report_db(db_path)
-    worker = PreparationCoordinator(lambda _progress: {"refreshed_sessions": 1})
-    app = build_dashboard_app(
-        docs_dir=tmp_path,
-        db_path=db_path,
-        preparation_worker=worker,
-    )
-    client = TestClient(app)
-
-    initial_status = client.get("/api/status").json()
-    assert initial_status["preparation"]["state"] == "idle"
-    assert initial_status["refresh_available"] is True
-    assert worker.start() is True
-    assert worker.wait(timeout=2) is True
-
-    status = client.get("/api/status").json()["preparation"]
-    assert status["state"] == "complete"
-    assert status["generation"] == 1
-    assert status["result"]["details"] == {"refreshed_sessions": 1}
+    client, runner = _job_client(tmp_path / 'reflect.db')
+    assert client.get('/api/status').json()['preparation']['state'] == 'idle'
+    job = client.post('/api/refresh').json()
+    assert client.get('/api/status').json()['job']['job_id'] == job['job_id']
+    runner.jobs.claim(job['job_id'], owner='fixture')
+    runner.jobs.update(job['job_id'], owner='fixture', progress={'stage': 'ingest'})
+    assert client.get('/api/status').json()['job']['progress']['stage'] == 'ingest'
+    runner.jobs.update(job['job_id'], owner='fixture', state='succeeded', result={'refreshed_sessions': 1})
+    assert client.get('/api/status').json()['preparation']['state'] == 'complete'
+    assert client.get('/api/status').json()['job']['result'] == {'refreshed_sessions': 1}
 
 
 @pytest.mark.parametrize("initial_store", ["missing", "empty", "outdated", "incomplete"])
 def test_dashboard_starts_before_initial_snapshot_and_recovers(tmp_path, initial_store):
+    from reflect.backend_runtime import _execute_job
     from reflect.store.sqlite import mark_snapshot
-
-    db_path = tmp_path / "reflect.db"
-    if initial_store == "empty":
+    db_path = tmp_path / 'reflect.db'
+    if initial_store == 'empty':
         db_path.touch()
-    elif initial_store == "outdated":
-        conn = connect_sqlite(db_path)
-        conn.execute("CREATE TABLE old_schema (id INTEGER)")
-        conn.commit()
-        conn.close()
-    elif initial_store == "incomplete":
+    elif initial_store == 'outdated':
+        with connect_sqlite(db_path) as conn:
+            conn.execute('CREATE TABLE old_schema(id INTEGER)')
+    elif initial_store == 'incomplete':
         _seed_sql_report_db(db_path)
-        conn = connect_sqlite(db_path)
-        mark_snapshot(conn, ready=False)
-        conn.close()
-    (tmp_path / "report.html").write_text("Preparing report...")
-    started, release = threading.Event(), threading.Event()
-
-    def prepare(progress):
-        progress(PreparationProgress(PreparationStage.WAITING_FOR_STORE, "Waiting for the store..."))
-        started.set()
-        assert release.wait(timeout=5)
-        if initial_store != "incomplete":
-            _seed_sql_report_db(db_path)
-        conn = connect_sqlite(db_path)
-        mark_snapshot(conn, ready=True)
-        conn.close()
-        return {"refreshed_sessions": 1}
-
-    worker = PreparationCoordinator(prepare)
-    client = TestClient(build_dashboard_app(docs_dir=tmp_path, db_path=db_path, preparation_worker=worker))
-    assert client.get("/").status_code == 200
-    assert client.post("/api/refresh").status_code == 202
-    assert started.wait(timeout=1)
-    try:
-        assert client.get("/api/status").json()["preparation"]["stage"] == "waiting_for_store"
-        for url in ("/api/data", "/api/data?agents=cursor", "/api/explore/usage", "/api/findings"):
-            response = client.get(url)
-            assert response.status_code == 503
-            assert response.json()["state"] == "preparing"
-            assert response.headers["Retry-After"] == "2"
-    finally:
-        release.set()
-        assert worker.wait(timeout=5)
-    assert worker.snapshot().state == "complete", worker.snapshot().error
-    assert client.get("/api/data?range=all").status_code == 200
-    assert client.get("/api/data?range=all").json()["sessions"][0]["id"] == "sess-sql"
+        with connect_sqlite(db_path) as conn:
+            mark_snapshot(conn, ready=False)
+    client, runner = _job_client(db_path)
+    response = client.post('/api/refresh')
+    assert response.status_code == 202
+    for url in ('/api/data', '/api/data?agents=cursor', '/api/explore/usage', '/api/findings'):
+        pending = client.get(url)
+        assert pending.status_code == 503
+        assert pending.json()['state'] == 'preparing'
+        assert pending.headers['Retry-After'] == '2'
+    job = response.json()
+    assert runner.jobs.claim(job['job_id'], owner='fixture')
+    _execute_job(db_path, runner.jobs.path, job['job_id'], 'fixture')
+    assert runner.jobs.get(job['job_id']).state == 'succeeded'
+    assert client.get('/api/data?range=all').status_code == 200
+    assert client.get('/api/status').json()['publication']['generation']
 
 
 def test_dashboard_without_optional_server_dependencies_prepares_artifact(tmp_path, monkeypatch):
-    import json
     import sys
 
     from reflect.dashboard_server import _serve_dashboard
-
-    db_path = tmp_path / "reflect.db"
-    worker = PreparationCoordinator(lambda _progress: _seed_sql_report_db(db_path) or {})
-    scheduler = PreparationScheduler(worker, interval_seconds=300)
-    monkeypatch.setitem(sys.modules, "uvicorn", None)
-    _serve_dashboard(8765, tmp_path, db_path=db_path, preparation_scheduler=scheduler, open_browser=False)
-    assert worker.snapshot().state == "complete"
-    assert not scheduler.snapshot().enabled
-    assert json.loads((tmp_path / "_reflect_data.json").read_text())["sessions"][0]["id"] == "sess-sql"
+    monkeypatch.setitem(sys.modules, 'uvicorn', None)
+    with pytest.raises(RuntimeError, match='requires FastAPI and uvicorn'):
+        _serve_dashboard(8765, tmp_path, db_path=tmp_path / 'reflect.db', open_browser=False)
+    assert not (tmp_path / '_reflect_data.json').exists()
+    assert not (tmp_path / 'reflect.db').exists()
 
 
 def test_dashboard_initial_preparation_can_publish_an_empty_report(tmp_path):
-    from reflect.store.sqlite import mark_snapshot
-
-    db_path = tmp_path / "reflect.db"
-
-    def prepare(_progress):
-        conn = connect_sqlite(db_path)
-        migrate(conn)
-        mark_snapshot(conn, ready=True)
-        conn.close()
-        return {"refreshed_sessions": 0}
-
-    worker = PreparationCoordinator(prepare)
-    client = TestClient(build_dashboard_app(docs_dir=tmp_path, db_path=db_path, preparation_worker=worker))
-    assert client.get("/api/data").status_code == 503
-    assert worker.start()
-    assert worker.wait(timeout=5)
-    assert worker.snapshot().state == "complete", worker.snapshot().error
-    assert client.get("/api/data").status_code == 200
-    assert client.get("/api/data").json()["sessions"] == []
+    from reflect.backend_runtime import _execute_job
+    db_path = tmp_path / 'reflect.db'
+    client, runner = _job_client(db_path)
+    assert client.get('/api/data').status_code == 503
+    job = client.post('/api/refresh').json()
+    runner.jobs.claim(job['job_id'], owner='fixture')
+    _execute_job(db_path, runner.jobs.path, job['job_id'], 'fixture')
+    assert runner.jobs.get(job['job_id']).state == 'succeeded'
+    assert client.get('/api/data').status_code == 200
+    assert client.get('/api/data').json()['sessions'] == []
 
 
-def test_dashboard_artifact_fallback_surfaces_preparation_failure(tmp_path, monkeypatch):
-    import sys
-
-    from reflect.dashboard_server import _serve_dashboard
-
-    def fail(_progress):
-        raise RuntimeError("source is unavailable")
-
-    monkeypatch.setitem(sys.modules, "uvicorn", None)
-    worker = PreparationCoordinator(fail)
-    with pytest.raises(RuntimeError, match="Report preparation failed: source is unavailable"):
-        _serve_dashboard(8765, tmp_path, db_path=tmp_path / "missing.db", preparation_worker=worker)
-    assert not (tmp_path / "_reflect_data.json").exists()
+def test_dashboard_artifact_fallback_surfaces_preparation_failure(tmp_path):
+    client, runner = _job_client(tmp_path / 'reflect.db')
+    job = client.post('/api/refresh').json()
+    runner.jobs.claim(job['job_id'], owner='fixture')
+    runner.jobs.update(job['job_id'], owner='fixture', state='failed', error='source is unavailable')
+    status = client.get('/api/status').json()
+    assert status['preparation']['state'] == 'failed'
+    assert status['job']['error'] == 'source is unavailable'
+    assert client.get('/api/data').status_code == 503
+    assert not (tmp_path / '_reflect_data.json').exists()
 
 
 def test_dashboard_status_exposes_automatic_refresh_and_raw_storage(tmp_path):
-    db_path = tmp_path / "reflect.db"
-    _seed_sql_report_db(db_path)
-    scheduler = PreparationScheduler(
-        PreparationCoordinator(lambda _progress: {"refreshed_sessions": 1}),
-        interval_seconds=300,
-        run_immediately=False,
-    )
-    app = build_dashboard_app(
-        docs_dir=tmp_path,
-        db_path=db_path,
-        preparation_scheduler=scheduler,
-        raw_storage_status_loader=lambda: {
-            "accepting_telemetry": False,
-            "raw_bytes": 4_294_967_296,
-            "raw_limit_bytes": 4_294_967_296,
-            "usage_ratio": 1.0,
-        },
-    )
-    client = TestClient(app)
-
-    assert scheduler.start() is True
-    status = client.get("/api/status").json()
-
-    assert status["automatic_refresh"]["enabled"] is True
-    assert status["automatic_refresh"]["interval_seconds"] == 300
-    assert status["automatic_refresh"]["next_run_at"]
-    assert status["raw_storage"]["accepting_telemetry"] is False
-    assert status["raw_storage"]["raw_limit_bytes"] == 4_294_967_296
-    assert scheduler.close(timeout=1) is True
+    client, runner = _job_client(tmp_path / 'reflect.db')
+    runner.raw_storage_status_loader = lambda: {'accepting_telemetry': False, 'raw_bytes': 4294967296, 'raw_limit_bytes': 4294967296, 'usage_ratio': 1.0}
+    status = client.get('/api/status').json()
+    assert status['automatic_refresh']['enabled'] is True
+    assert status['automatic_refresh']['interval_seconds'] == 300
+    assert status['raw_storage']['accepting_telemetry'] is False
+    assert status['raw_storage']['raw_limit_bytes'] == 4294967296
 
 
 def test_dashboard_refresh_endpoint_starts_background_preparation(tmp_path):
-    db_path = tmp_path / "reflect.db"
-    _seed_sql_report_db(db_path)
-    worker = PreparationCoordinator(lambda _progress: {"refreshed_sessions": 1})
-    app = build_dashboard_app(
-        docs_dir=tmp_path,
-        db_path=db_path,
-        preparation_worker=worker,
-    )
-    client = TestClient(app)
-
-    response = client.post("/api/refresh")
-
-    assert response.status_code in {200, 202}
-    assert response.json()["refresh_available"] is True
-    assert worker.wait(timeout=2) is True
-    assert worker.snapshot().generation == 1
+    client, runner = _job_client(tmp_path / 'reflect.db')
+    response = client.post('/api/refresh')
+    assert response.status_code == 202
+    job = response.json()
+    assert job['state'] == 'queued'
+    assert runner.jobs.get(job['job_id']).kind == 'refresh'
+    assert client.post('/api/refresh').json()['job_id'] == job['job_id']
 
 
 def test_dashboard_refresh_endpoint_rejects_snapshot_only_server(tmp_path):
-    db_path = tmp_path / "reflect.db"
-    _seed_sql_report_db(db_path)
-    app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
-    client = TestClient(app)
-
-    response = client.post("/api/refresh")
-
+    client, runner = _job_client(tmp_path / 'reflect.db', refresh=False)
+    response = client.post('/api/refresh')
     assert response.status_code == 409
-    assert response.json()["refresh_available"] is False
+    assert 'disabled' in response.json()['detail']
+    assert runner.jobs.list() == []
 
 
 def test_dashboard_does_not_create_exporters_from_agent_environment(tmp_path, monkeypatch):
@@ -1081,6 +1023,7 @@ def test_dashboard_does_not_create_exporters_from_agent_environment(tmp_path, mo
     monkeypatch.setattr(OTLPMetricExporter, "__init__", unexpected_exporter)
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
+    _publish_report(db_path)
     with TestClient(build_dashboard_app(docs_dir=tmp_path, db_path=db_path)) as client:
         assert client.get("/api/data").status_code == 200
     assert calls == []
@@ -1179,92 +1122,55 @@ def test_snapshot_server_defers_heavy_graph_cache(tmp_path, monkeypatch):
 
     monkeypatch.setattr("reflect.views.report_tabs.build_report_tabs", fail_if_built)
     monkeypatch.setattr("reflect.views.report_tabs._build_tools", fail_if_built)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     assert TestClient(app).get("/api/data").status_code == 200
 
 
 def test_dashboard_api_serves_current_snapshot_during_background_preparation(tmp_path):
-    db_path = tmp_path / "reflect.db"
+    db_path = tmp_path / 'reflect.db'
     _seed_sql_report_db(db_path)
-    started = threading.Event()
-    release = threading.Event()
-
-    def prepare(report_progress):
-        report_progress(
-            PreparationProgress(
-                stage=PreparationStage.REFRESHING_GRAPH,
-                message="Refreshing the evidence graph...",
-            )
-        )
-        started.set()
-        release.wait(timeout=2)
-        return {"refreshed_sessions": 1}
-
-    worker = PreparationCoordinator(prepare)
-    app = build_dashboard_app(
-        docs_dir=tmp_path,
-        db_path=db_path,
-        preparation_worker=worker,
-    )
-    client = TestClient(app)
-
-    assert worker.start() is True
-    assert started.wait(timeout=1) is True
-    response = client.get("/api/data?range=all")
-
-    assert response.status_code == 200
-    assert response.json()["sessions"][0]["id"] == "sess-sql"
-    preparation = client.get("/api/status").json()["preparation"]
-    assert preparation["state"] == "running"
-    assert preparation["stage"] == "refreshing_graph"
-    assert preparation["message"] == "Refreshing the evidence graph..."
-    release.set()
-    assert worker.wait(timeout=2) is True
+    _publish_report(db_path)
+    client, runner = _job_client(db_path)
+    job = client.post('/api/refresh').json()
+    runner.jobs.claim(job['job_id'], owner='fixture')
+    runner.jobs.update(job['job_id'], owner='fixture', progress={'stage': 'refreshing_graph', 'message': 'Refreshing the evidence graph...'})
+    with connect_sqlite(db_path) as writer:
+        writer.execute('BEGIN IMMEDIATE')
+        writer.execute("DELETE FROM sessions WHERE id='sess-sql'")
+        response = client.get('/api/data?range=all')
+        assert response.status_code == 200
+        assert response.json()['sessions'][0]['id'] == 'sess-sql'
+        status = client.get('/api/status').json()
+        assert status['preparation']['state'] == 'running'
+        assert status['job']['progress']['stage'] == 'refreshing_graph'
+        assert status['job']['progress']['message'] == 'Refreshing the evidence graph...'
+        writer.rollback()
 
 
 def test_initial_data_requests_wait_for_the_single_completion_cache_load(tmp_path, monkeypatch):
-    db_path = tmp_path / "reflect.db"
-    sql_ready, allow_callback = threading.Event(), threading.Event()
-    loading, publish = threading.Event(), threading.Event()
+    db_path = tmp_path / 'reflect.db'
+    _seed_sql_report_db(db_path)
     calls = []
-
-    def prepare(_progress):
-        _seed_sql_report_db(db_path)
-        sql_ready.set()
-        assert allow_callback.wait(timeout=5)
-        return {}
-
-    def load(*_args, **_kwargs):
+    def load(*args, **kwargs):
         calls.append(1)
-        loading.set()
-        assert publish.wait(timeout=5)
-        return {"sessions": [{"id": "prepared"}]}
-
-    monkeypatch.setattr("reflect.dashboard_server.build_dashboard_payload", load)
-    worker = PreparationCoordinator(prepare)
-    client = TestClient(build_dashboard_app(docs_dir=tmp_path, db_path=db_path, preparation_worker=worker))
-    worker.start()
-    try:
-        assert sql_ready.wait(timeout=2)
-        assert client.get("/api/data").status_code == 503
-        assert calls == []
-        allow_callback.set()
-        assert loading.wait(timeout=2)
-        assert client.get("/api/data").status_code == 503
-        assert client.get("/api/status").json()["preparation"]["state"] == "running"
-        assert calls == [1]
-    finally:
-        allow_callback.set()
-        publish.set()
-        assert worker.wait(timeout=5)
-    assert client.get("/api/data").json()["sessions"][0]["id"] == "prepared"
+        return {'sessions': [{'id': 'prepared'}]}
+    monkeypatch.setattr('reflect.dashboard_server.build_dashboard_payload', load)
+    client, runner = _job_client(db_path)
+    for _ in range(2):
+        assert client.get('/api/data').status_code == 503
+    assert calls == []
+    assert client.get('/api/status').status_code == 200
+    _publish_report(db_path)
+    assert client.get('/api/data').json()['sessions'][0]['id'] == 'prepared'
     assert calls == [1]
 
 
 def test_dashboard_filtered_bootstrap_skips_heavy_tabs(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     original = __import__("reflect.dashboard_queries", fromlist=["build_dashboard_payload"]).build_dashboard_payload
@@ -1318,6 +1224,7 @@ def test_dashboard_session_filter_uses_focused_fast_path(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
     _add_sql_codex_sibling_session(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     def _raise_broad_payload(*args, **kwargs):
@@ -1369,6 +1276,7 @@ def test_dashboard_session_filter_uses_focused_fast_path(tmp_path, monkeypatch):
 def test_dashboard_explore_api_uses_product_view_names(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
     client = TestClient(app)
 
@@ -1451,6 +1359,7 @@ def test_dashboard_session_detail_keeps_llm_input_tokens_on_response_turns(tmp_p
         conn.commit()
     finally:
         conn.close()
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     detail = TestClient(app).get("/api/session/sess-sql")
@@ -1488,6 +1397,7 @@ def test_dashboard_session_detail_keeps_one_placeholder_for_explicit_prompt_even
         conn.commit()
     finally:
         conn.close()
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     detail = TestClient(app).get("/api/session/sess-sql")
@@ -1504,6 +1414,7 @@ def test_dashboard_session_filter_navigation_cards_include_first_prompts(tmp_pat
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
     _add_sql_codex_sibling_session(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     response = TestClient(app).get("/api/data", params={"session": "sess-codex-2"})
@@ -1552,6 +1463,7 @@ def test_dashboard_session_detail_shows_tokenless_stop_response_turns(tmp_path):
         conn.commit()
     finally:
         conn.close()
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     detail = TestClient(app).get("/api/session/sess-sql")
@@ -1612,6 +1524,7 @@ def test_dashboard_session_detail_reads_hook_fact_contract(tmp_path):
         conn.commit()
     finally:
         conn.close()
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     detail = TestClient(app).get("/api/session/sess-sql")
@@ -1683,6 +1596,7 @@ def test_observation_sessions_endpoint_populates_ledger_without_candidate(tmp_pa
         conn.commit()
     finally:
         conn.close()
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
     client = TestClient(app)
 
@@ -1765,6 +1679,7 @@ def test_observation_sessions_endpoint_reflects_grouped_finding(tmp_path):
         conn.commit()
     finally:
         conn.close()
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
     client = TestClient(app)
 
@@ -1807,6 +1722,7 @@ def test_dashboard_sql_session_detail_prefers_native_assistant_responses(tmp_pat
         conn.commit()
     finally:
         conn.close()
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     response = TestClient(app).get("/api/session/sess-sql")
@@ -1826,6 +1742,7 @@ def test_dashboard_sql_session_detail_prefers_native_assistant_responses(tmp_pat
 def test_dashboard_api_filters_by_session_param_from_sql(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     response = TestClient(app).get("/api/data", params={"session": "sess-sql"})
@@ -1848,6 +1765,7 @@ def test_dashboard_api_uses_canonical_events_when_rollup_is_missing(tmp_path):
         conn.commit()
     finally:
         conn.close()
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     payload = TestClient(app).get("/api/data", params={"session": "sess-sql"}).json()
@@ -1869,6 +1787,7 @@ def test_dashboard_api_applies_sql_filters_and_comparison(tmp_path, monkeypatch)
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
     _add_sql_baseline_session(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
     dashboard_module = __import__("reflect.dashboard_queries", fromlist=["_sql_dashboard_metrics"])
     original_metrics = dashboard_module._sql_dashboard_metrics
@@ -1920,6 +1839,7 @@ def test_dashboard_api_session_scope_wins_with_agent_filter(tmp_path):
     _seed_sql_report_db(db_path)
     _add_sql_baseline_session(db_path)
     _add_sql_codex_sibling_session(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     response = TestClient(app).get("/api/data", params={"agents": "codex", "session": "sess-sql"})
@@ -1937,6 +1857,7 @@ def test_dashboard_api_session_scope_wins_with_agent_filter(tmp_path):
 def test_dashboard_api_scopes_sql_tab_view_models(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     response = TestClient(app).get("/api/data", params={"agents": "missing-agent"})
@@ -1956,6 +1877,7 @@ def test_dashboard_api_scopes_sql_tab_view_models(tmp_path):
 def test_dashboard_usage_empty_scope_keeps_widget_contracts_empty(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     response = TestClient(app).get(

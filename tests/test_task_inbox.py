@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import subprocess
@@ -52,23 +53,36 @@ def start(db, **kwargs):
     )
 
 
+def _publish_receipts(db):
+    from uuid import uuid4
+
+    from reflect.store.snapshots import PublishedSnapshotStore
+    with closing(connect_sqlite(db)) as conn:
+        mark_snapshot(conn, ready=True)
+    publication = PublishedSnapshotStore(db, reserve_bytes=0).publish(evidence_revision=uuid4().hex)
+    TaskEventInbox(db).acknowledge_publication(publication.path)
+
+
 def test_busy_mcp_accepts_start_and_completion_then_restart_replays(db, monkeypatch):
     monkeypatch.setenv("CODEX_THREAD_ID", "wrong-server-environment")
+    from backend_helpers import bind_backend
+    _publish_receipts(db)
+    bind_backend(monkeypatch, db)
     contract = db.parent / "task.md"
     contract.write_text("original contract")
     with writer_lock(db):
-        answer = mcp.reflect_context(
+        answer = asyncio.run(mcp.reflect_context(
             "private question must not enter the inbox", path=str(db.parent), task_file=str(contract),
             runtime_session_id="caller-session", runtime_agent="codex",
-        )
+        ))
         task_id = answer["task_run_id"]
         assert answer["tracking_state"] == "accepted_pending"
         assert answer["runtime_session_id"] == "caller-session"
-        completed = mcp.reflect_complete(task_id, "success", verification_passed=True,
-                                         runtime_session_id="caller-session", runtime_agent="codex")
+        completed = asyncio.run(mcp.reflect_complete(task_id, "success", verification_passed=True,
+                                         runtime_session_id="caller-session", runtime_agent="codex"))
         assert completed["tracking_state"] == "accepted_pending"
-        assert mcp.reflect_task_status(task_id)["status"] == "completed"
-        assert mcp.reflect_complete(task_id, "success", verification_passed=True)["idempotent"]
+        assert asyncio.run(mcp.reflect_task_status(task_id))["status"] == "completed"
+        assert asyncio.run(mcp.reflect_complete(task_id, "success", verification_passed=True))["idempotent"]
         health = TaskEventInbox(db).health()
         assert health["pending_count"] == 2
         assert health["oldest_pending_age_seconds"] >= 0
@@ -77,6 +91,7 @@ def test_busy_mcp_accepts_start_and_completion_then_restart_replays(db, monkeypa
     assert "private question" not in inbox._path(task_id).read_text()
     assert inbox._path(task_id).stat().st_mode & 0o777 == 0o600
     inbox.drain()
+    _publish_receipts(db)
     status = inbox.status(task_id)
     assert status.tracking_state == "applied"
     assert status.completed_at == completed["completed_at"]
@@ -92,6 +107,8 @@ def test_refresh_drains_pending_tasks(db):
     inbox.accept(task.task_run_id, "complete", {"outcome": "success"})
     prepare_sql_report_db(db, otlp_traces=None, include_native_sessions=False,
                           spans_dir=db.parent / "no-spans")
+    assert inbox.status(task.task_run_id).tracking_state == "accepted_pending"
+    _publish_receipts(db)
     assert inbox.status(task.task_run_id).tracking_state == "applied"
     assert inbox.status(task.task_run_id).status == "completed"
 
@@ -110,7 +127,9 @@ def test_crash_after_commit_before_cleanup_replays_once(db, monkeypatch):
         patch.setattr(Path, "unlink", interrupted)
         with pytest.raises(OSError, match="simulated crash"):
             inbox.drain()
+            _publish_receipts(db)
     TaskEventInbox(db).drain()
+    _publish_receipts(db)
     with closing(connect_sqlite(db)) as conn:
         assert conn.execute("SELECT COUNT(*) FROM mcp_task_runs").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM task_event_receipts").fetchone()[0] == 2
@@ -127,11 +146,13 @@ def test_projection_and_receipt_roll_back_together(db, monkeypatch):
     with monkeypatch.context() as patch:
         patch.setattr(inbox, "_apply", interrupt)
         inbox.drain()
+        _publish_receipts(db)
     with closing(connect_sqlite(db)) as conn:
         assert conn.execute("SELECT COUNT(*) FROM mcp_task_runs").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM task_event_receipts").fetchone()[0] == 0
     assert inbox.health()["projection_errors"]
     inbox.drain()
+    _publish_receipts(db)
     assert inbox.status(task.task_run_id).tracking_state == "applied"
 
 
@@ -180,6 +201,7 @@ def test_milestone_survives_pending_start_and_projects_before_completion(db):
             inbox.accept(task.task_run_id, "milestone", {**payload, "state": "failed"})
         inbox.accept(task.task_run_id, "complete", {"outcome": "success"})
     inbox.drain()
+    _publish_receipts(db)
     status = inbox.status(task.task_run_id)
     assert status.tracking_state == "applied"
     assert status.milestone_count == 1
@@ -198,6 +220,7 @@ def test_missing_identity_is_visible_and_late_identity_can_be_supplied(db):
     inbox.accept(task.task_run_id, "complete", {"outcome": "success"})
     inbox.accept(task.task_run_id, "complete", {"outcome": "success", "runtime_session_id": "late-id", "runtime_agent": "codex"})
     inbox.drain()
+    _publish_receipts(db)
     assert inbox.status(task.task_run_id).runtime_session_id == "late-id"
 
 
@@ -212,6 +235,7 @@ def test_invalid_event_does_not_block_other_tasks_and_health_reports_it(db):
     data["events"][0]["kind"] = "invalid"
     inbox._write(inbox._path(broken.task_run_id), data)
     inbox.drain()
+    _publish_receipts(db)
     assert inbox.status(healthy.task_run_id).tracking_state == "applied"
     assert inbox.status(broken.task_run_id).projection_error == "Unknown task event"
     with closing(connect_sqlite(db)) as conn:
@@ -230,12 +254,15 @@ def test_milestone_retry_after_late_session_link_is_idempotent(db):
         MCPSelectedSkillRef(skill_id="skill", version_id="skill-version", slug="proven-review")])
     inbox.start(task)
     inbox.drain()
+    _publish_receipts(db)
     payload = {"skill_version_id": "skill-version", "milestone_id": "observe",
                "state": "completed", "idempotency_key": "observe", "evidence": {}}
     inbox.accept(task.task_run_id, "milestone", payload)
     inbox.drain()
+    _publish_receipts(db)
     inbox.accept(task.task_run_id, "complete", {"outcome": "success", "runtime_session_id": "session", "runtime_agent": "codex"})
     inbox.drain()
+    _publish_receipts(db)
     assert inbox.status(task.task_run_id).link_state == "linked"
     assert inbox.accept(task.task_run_id, "milestone", payload)["created"] is False
 
@@ -247,4 +274,5 @@ def test_two_sessions_in_one_workspace_remain_distinct(db):
         inbox.start(task)
         inbox.accept(task.task_run_id, "complete", {"outcome": "success"})
     inbox.drain()
+    _publish_receipts(db)
     assert [inbox.status(task.task_run_id).runtime_session_id for task in tasks] == ["first", "second"]

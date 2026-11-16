@@ -145,13 +145,16 @@ def test_graph_cold_api_read_during_refresh(usage):
     conn, registry, skill, path = usage
     add_read(conn,path,1)
     registry.sync_usage()
-    mark_snapshot(conn,ready=False)
     conn.commit()
     db_path=Path(conn.execute("PRAGMA database_list").fetchone()[2])
+    from test_dashboard_sql_api import _publish_report
+    _publish_report(db_path)
+    mark_snapshot(conn, ready=False)
+    conn.commit()
     client=TestClient(build_dashboard_app(db_path=db_path,docs_dir=path.parent))
     response=client.get(f"/api/skills/{skill.id}/usage-graph?days=3650")
     assert response.status_code == 200
-    assert response.json()["analysis_state"] == "pending"
+    assert response.json()["analysis_state"] == "ready"
     assert client.get(f"/api/skills/{skill.id}/usage-graph?limit=500").status_code == 422
 
 

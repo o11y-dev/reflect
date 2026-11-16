@@ -68,7 +68,8 @@ window.addEventListener('pageshow', event => {
   dashboardDocumentActive = true;
   if (event.persisted) startPreparationStatusPolling();
 });
-const DASHBOARD_REFRESH_MIN_INTERVAL_MS = 30000;
+const DASHBOARD_REFRESH_MIN_INTERVAL_MS = 10000;
+let lastPublishedRevision = null;
 const PREPARATION_PHASES = Object.freeze({
   opening_store: 1,
   backing_up_store: 1,
@@ -181,21 +182,6 @@ function renderPreparationStatus(preparation, automaticRefresh){
   const phase = PREPARATION_PHASES[preparation?.stage] || 0;
   const phaseLabel = PREPARATION_PHASE_LABELS[phase - 1] || 'Ready';
   if (state === 'running') {
-    const usageCompletion = preparation.usage_completed_at;
-    if (usageCompletion && Date.parse(usageCompletion) > Date.parse(D.snapshot_completed_at || '1970-01-01')) {
-      let seen = '';
-      try {
-        seen = window.sessionStorage.getItem('reflect.preparation.usage_completed_at') || '';
-        window.sessionStorage.setItem('reflect.preparation.usage_completed_at', usageCompletion);
-      } catch {}
-      if (seen !== usageCompletion) {
-        const published = new CustomEvent('reflect-snapshot-published', {cancelable:true, detail:{completion:usageCompletion}});
-        if (document.dispatchEvent(published)) {
-          suspendDashboardReads();
-          window.setTimeout(() => window.location.reload(), 450);
-        }
-      }
-    }
     const elapsed = formatPreparationElapsed(preparation.started_at);
     updatePreparationStatus({
       tone: 'running',
@@ -241,14 +227,6 @@ function renderPreparationStatus(preparation, automaticRefresh){
       detail: formatNextRefresh(automaticRefresh),
       phase: 5,
     });
-    if (previousCompletion !== completion) {
-      const published = new CustomEvent('reflect-snapshot-published', {cancelable:true, detail:{completion, profile:'snapshot'}});
-      if (document.dispatchEvent(published)) {
-        suspendDashboardReads();
-        window.setTimeout(() => window.location.reload(), 450);
-      }
-      return false;
-    }
     return false;
   }
   if (D?._unpublishedNavigation) {
@@ -286,10 +264,19 @@ async function pollPreparationStatus(){
       payload.automatic_refresh,
     );
     renderRawStorageStatus(payload.raw_storage);
+    const revision = payload.publication
+      ? `${payload.publication.generation}:${payload.user_state_revision || 0}` : null;
+    if (revision && revision !== lastPublishedRevision) {
+      lastPublishedRevision = revision;
+      document.dispatchEvent(new CustomEvent('reflect-snapshot-published', {
+        cancelable:true, detail:{completion:payload.publication.completed_at, profile:'snapshot', revision},
+      }));
+    }
+    document.dispatchEvent(new CustomEvent('reflect-status-polled', {detail:payload}));
     if (!dashboardDocumentActive) return;
     preparationStatusPollTimer = window.setTimeout(
       pollPreparationStatus,
-      preparationRunning ? 750 : DASHBOARD_REFRESH_MIN_INTERVAL_MS,
+      preparationRunning ? 1000 : DASHBOARD_REFRESH_MIN_INTERVAL_MS,
     );
   } catch {
     if (!dashboardDocumentActive) return;
@@ -297,7 +284,7 @@ async function pollPreparationStatus(){
       tone: 'warning',
       kicker: 'Status unavailable',
       message: 'Dashboard data remains available while Reflect reconnects.',
-      detail: 'Retrying in 30s',
+      detail: 'Reconnecting in 10s',
     });
     preparationStatusPollTimer = window.setTimeout(
       pollPreparationStatus,
@@ -315,36 +302,8 @@ function startPreparationStatusPolling(){
 }
 
 async function requestDashboardRefresh(){
-  if (!dashboardDocumentActive || !D?.sql_backed || !reportSupportsServerFiltering()) return;
-  try {
-    const statusResponse = await fetch('/api/status', {
-      headers: {Accept: 'application/json'},
-      cache: 'no-store',
-    });
-    if (!statusResponse.ok) return;
-    const statusPayload = await statusResponse.json();
-    if (!dashboardDocumentActive) return;
-    if (!statusPayload.refresh_available) return;
-    const preparation = statusPayload.preparation || {};
-    if (statusPayload.automatic_refresh?.enabled) {
-      if (preparation.state === 'running') startPreparationStatusPolling();
-      return;
-    }
-    if (preparation.state === 'running') {
-      startPreparationStatusPolling();
-      return;
-    }
-    const finishedAt = Date.parse(preparation.finished_at || '');
-    if (Number.isFinite(finishedAt) && Date.now() - finishedAt < DASHBOARD_REFRESH_MIN_INTERVAL_MS) return;
-    const refreshResponse = await fetch('/api/refresh', {
-      method: 'POST',
-      headers: {Accept: 'application/json'},
-      cache: 'no-store',
-    });
-    if (!refreshResponse.ok) return;
-    const refreshPayload = await refreshResponse.json();
-    if (refreshPayload.preparation?.state === 'running') startPreparationStatusPolling();
-  } catch {}
+  // The backend owns scheduling; visiting or focusing a tab never starts a refresh.
+  startPreparationStatusPolling();
 }
 
 async function loadDashboardData(){

@@ -1,15 +1,12 @@
 import copy
 import json
-import threading
 from contextlib import closing
 from datetime import UTC, datetime
-from types import SimpleNamespace
 
 import pytest
 from test_dashboard_sql_api import _seed_improvement_ledger, _seed_sql_report_db
 
 import reflect.dashboard_queries as queries
-from reflect.dashboard_server import DashboardDataCache
 from reflect.improvements.models import RuleDefinition
 from reflect.improvements.repository import ImprovementRepository
 from reflect.store.pending_refresh import PendingRefreshState
@@ -134,100 +131,3 @@ def test_finalizer_rejects_another_publication(publication, change):
         conn.commit()
     with pytest.raises(SnapshotNotReadyError):
         queries.finalize_dashboard_analysis(db, payload, usage_completed_at=USAGE_AT, publication_revision=revision)
-
-
-def _result(run=USAGE_AT):
-    return SimpleNamespace(details={"analysis_window": {"date_to": run}, "publication_revision": [["prepared_snapshot", "ready", "final"], ["prepared_usage", "ready", "final"]]})
-
-
-def _details():
-    return {"completed_at": USAGE_AT, "analysis_window": WINDOW}
-
-
-def test_cache_finalizes_only_successful_usage_and_persists(tmp_path):
-    payload = {"snapshot_completed_at": USAGE_AT, "analysis_state": "preparing"}
-    calls = []
-    def load():
-        calls.append("usage")
-        return payload.copy()
-    def analysis(current, **kwargs):
-        calls.append("analysis")
-        assert kwargs["usage_completed_at"] == USAGE_AT
-        return {**current, "analysis_state": "ready"}
-    path = tmp_path / "cache.json"
-    cache = DashboardDataCache(lambda: {}, refresh_loader=load, analysis_loader=analysis, cache_path=path, cache_key="7d")
-    cache.publish_usage(_details())
-    before = cache.get()
-    assert cache.complete(_result())["analysis_state"] == "ready"
-    assert calls == ["usage", "analysis"]
-    assert before["analysis_state"] == "preparing"
-    assert json.loads(path.read_text())["payload"] == cache.get()
-    cache.complete(_result())
-    assert calls == ["usage", "analysis", "usage"]  # no cross-run reuse
-
-
-@pytest.mark.parametrize("condition", ["absent", "different_run", "missing_revision", "failed_usage", "replaced_payload"])
-def test_cache_falls_back_when_this_run_cannot_be_proven(condition):
-    loads = []
-    fail = condition == "failed_usage"
-    def load():
-        loads.append(1)
-        if fail:
-            raise SnapshotNotReadyError("preparing")
-        return {"snapshot_completed_at": USAGE_AT}
-    cache = DashboardDataCache(lambda: {}, refresh_loader=load,
-        analysis_loader=lambda *a, **k: pytest.fail("unproven usage finalized"))
-    result = _result()
-    if condition != "absent":
-        cache.publish_usage(_details())
-    if condition == "different_run":
-        result = _result("another run")
-    elif condition == "missing_revision":
-        result.details.pop("publication_revision")
-    elif condition == "replaced_payload":
-        cache.refresh()
-    fail = False
-    count = len(loads)
-    assert cache.complete(result) == {"snapshot_completed_at": USAGE_AT}
-    assert len(loads) == count + 1
-
-
-def test_analysis_failure_retains_publication_and_retries_full_load(tmp_path):
-    path = tmp_path / "cache.json"
-    payload = {"snapshot_completed_at": USAGE_AT, "analysis_state": "preparing"}
-    cache = DashboardDataCache(lambda: {}, refresh_loader=lambda: payload.copy(),
-        analysis_loader=lambda *a, **k: (_ for _ in ()).throw(ValueError("failed read")),
-        cache_path=path, cache_key="7d")
-    cache.publish_usage(_details())
-    persisted = path.read_bytes()
-    with pytest.raises(ValueError, match="failed read"):
-        cache.complete(_result())
-    assert path.read_bytes() == persisted
-    cache._refresh_loader = lambda: {"recovered": True}
-    assert cache.get() == {"recovered": True}
-
-
-def test_analysis_revision_mismatch_uses_full_loader():
-    cache = DashboardDataCache(lambda: {}, refresh_loader=lambda: {"snapshot_completed_at": USAGE_AT},
-        analysis_loader=lambda *a, **k: (_ for _ in ()).throw(SnapshotNotReadyError("changed")))
-    cache.publish_usage(_details())
-    cache._refresh_loader = lambda: {"new_generation": True}
-    assert cache.complete(_result()) == {"new_generation": True}
-
-
-def test_overlapping_refresh_cannot_be_finalized():
-    entered, release = threading.Event(), threading.Event()
-    def load():
-        entered.set()
-        assert release.wait(3)
-        return {"snapshot_completed_at": USAGE_AT}
-    cache = DashboardDataCache(lambda: {}, refresh_loader=load,
-        analysis_loader=lambda *a, **k: pytest.fail("overlapping read finalized"))
-    worker = threading.Thread(target=cache.publish_usage, args=(_details(),))
-    worker.start()
-    assert entered.wait(3)
-    cache.refresh()
-    release.set()
-    worker.join(3)
-    assert not worker.is_alive()
-    cache.complete(_result())

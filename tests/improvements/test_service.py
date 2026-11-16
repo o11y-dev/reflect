@@ -2658,16 +2658,19 @@ def test_team_bundle_is_signed_aggregate_only_and_idempotent(tmp_path):
         conn.close()
 
 
-def test_simplified_cli_contract_reads_the_durable_ledger(tmp_path):
+def test_simplified_cli_contract_reads_the_durable_ledger(tmp_path, monkeypatch):
     service, conn = _service(tmp_path)
     db_path = tmp_path / "reflect.db"
     try:
         service.refresh()
     finally:
         conn.close()
+    from tests.backend_helpers import bind_backend, publish_actions
+    publish_actions(db_path)
+    bind_backend(monkeypatch, db_path, refresh_arguments={"otlp_traces": None, "include_native_sessions": False})
     runner = CliRunner()
 
-    with patch("reflect.core.prepare_sql_report_db") as prepare:
+    with patch("reflect.preparation_pipeline.prepare_sql_report_db") as prepare:
         improve_result = runner.invoke(
             main,
             ["improve", "--global", "--period", "all", "--json", "--db-path", str(db_path)],
@@ -2688,7 +2691,7 @@ def test_simplified_cli_contract_reads_the_durable_ledger(tmp_path):
         prepare.assert_not_called()
 
     assert improve_result.exit_code == 0
-    assert '"observations"' in improve_result.output
+    assert '"findings"' in improve_result.output
     assert ask_result.exit_code == 0
     assert '"evidence"' in ask_result.output
     assert workflow_result.exit_code == 0
@@ -2699,13 +2702,16 @@ def test_simplified_cli_contract_reads_the_durable_ledger(tmp_path):
     } == {"verification"}
 
 
-def test_improve_labels_cli_table_as_observed_improvements(tmp_path):
+def test_improve_labels_cli_table_as_observed_improvements(tmp_path, monkeypatch):
     service, conn = _service(tmp_path)
     db_path = tmp_path / "reflect.db"
     try:
         service.refresh()
     finally:
         conn.close()
+    from tests.backend_helpers import bind_backend, publish_actions
+    publish_actions(db_path)
+    bind_backend(monkeypatch, db_path, refresh_arguments={"otlp_traces": None, "include_native_sessions": False})
 
     result = CliRunner().invoke(
         main,
@@ -2717,7 +2723,7 @@ def test_improve_labels_cli_table_as_observed_improvements(tmp_path):
     assert "Improvement Inbox" not in result.output
 
 
-def test_improve_reports_progress_on_stderr_without_corrupting_json(tmp_path):
+def test_improve_reports_progress_on_stderr_without_corrupting_json(tmp_path, monkeypatch):
     from reflect.preparation import PreparationProgress, PreparationStage
 
     service, conn = _service(tmp_path)
@@ -2726,6 +2732,9 @@ def test_improve_reports_progress_on_stderr_without_corrupting_json(tmp_path):
         service.refresh()
     finally:
         conn.close()
+    from tests.backend_helpers import bind_backend, publish_actions
+    publish_actions(db_path)
+    backend = bind_backend(monkeypatch, db_path, refresh_arguments={"otlp_traces": None, "include_native_sessions": False})
     runner = CliRunner()
 
     def prepare(*_args, progress=None, **_kwargs):
@@ -2738,7 +2747,7 @@ def test_improve_reports_progress_on_stderr_without_corrupting_json(tmp_path):
         )
         return {}
 
-    with patch("reflect.core.prepare_sql_report_db", side_effect=prepare):
+    with patch("reflect.preparation_pipeline.prepare_sql_report_db", side_effect=prepare):
         result = runner.invoke(
             main,
             [
@@ -2754,18 +2763,22 @@ def test_improve_reports_progress_on_stderr_without_corrupting_json(tmp_path):
         )
 
     assert result.exit_code == 0
-    assert json.loads(result.stdout)["observations"]
-    assert "Reading new OTLP traces" in result.stderr
+    job = backend.jobs.get(json.loads(result.stdout)["job_id"])
+    assert job.kind == "refresh" and job.state == "queued"
+    assert not result.stderr
     assert "\x1b" not in result.stderr
 
 
-def test_improve_requires_an_explicit_global_period(tmp_path):
+def test_improve_requires_an_explicit_global_period(tmp_path, monkeypatch):
     service, conn = _service(tmp_path)
     db_path = tmp_path / "reflect.db"
     try:
         service.refresh()
     finally:
         conn.close()
+    from tests.backend_helpers import bind_backend, publish_actions
+    publish_actions(db_path)
+    bind_backend(monkeypatch, db_path, refresh_arguments={"otlp_traces": None, "include_native_sessions": False})
 
     runner = CliRunner()
     missing_period = runner.invoke(
@@ -2783,16 +2796,19 @@ def test_improve_requires_an_explicit_global_period(tmp_path):
     assert "--period requires --global" in unscoped_period.output
 
 
-def test_snapshot_commands_refresh_only_when_explicit(tmp_path):
+def test_snapshot_commands_refresh_only_when_explicit(tmp_path, monkeypatch):
     service, conn = _service(tmp_path)
     db_path = tmp_path / "reflect.db"
     try:
         service.refresh()
     finally:
         conn.close()
+    from tests.backend_helpers import bind_backend, publish_actions
+    publish_actions(db_path)
+    backend = bind_backend(monkeypatch, db_path, refresh_arguments={"otlp_traces": None, "include_native_sessions": False})
 
     runner = CliRunner()
-    with patch("reflect.core.prepare_sql_report_db", return_value={}) as prepare:
+    with patch("reflect.preparation_pipeline.prepare_sql_report_db", return_value={}) as prepare:
         ask_result = runner.invoke(
             main,
             ["ask", "What should I do?", "--json", "--db-path", str(db_path)],
@@ -2823,18 +2839,22 @@ def test_snapshot_commands_refresh_only_when_explicit(tmp_path):
     assert workflow_result.exit_code == 0
     assert loops_result.exit_code == 0
     assert refreshed.exit_code == 0
-    prepare.assert_called_once()
+    prepare.assert_not_called()
+    assert backend.jobs.get(json.loads(refreshed.stdout)["job_id"]).kind == "refresh"
 
 
-def test_feedback_never_refreshes_implicitly(tmp_path):
+def test_feedback_never_refreshes_implicitly(tmp_path, monkeypatch):
     service, conn = _service(tmp_path)
     db_path = tmp_path / "reflect.db"
     try:
         service.refresh()
     finally:
         conn.close()
+    from tests.backend_helpers import bind_backend, publish_actions
+    publish_actions(db_path)
+    backend = bind_backend(monkeypatch, db_path, refresh_arguments={"otlp_traces": None, "include_native_sessions": False})
 
-    with patch("reflect.core.prepare_sql_report_db") as prepare:
+    with patch("reflect.preparation_pipeline.prepare_sql_report_db") as prepare:
         result = CliRunner().invoke(
             main,
             [
@@ -2848,7 +2868,8 @@ def test_feedback_never_refreshes_implicitly(tmp_path):
         )
 
     assert result.exit_code == 1
-    assert "Re-run with --refresh" in result.output
+    assert "session" in result.output.lower()
+    assert not backend.jobs.list()
     prepare.assert_not_called()
 
 
@@ -2856,20 +2877,23 @@ def test_feedback_never_refreshes_implicitly(tmp_path):
 def test_improve_never_prepares_a_missing_snapshot_without_refresh(
     tmp_path,
     refresh_flag,
+    monkeypatch,
 ):
     db_path = tmp_path / "missing.db"
-    with patch("reflect.core.prepare_sql_report_db") as prepare:
+    from tests.backend_helpers import bind_backend
+    bind_backend(monkeypatch, db_path)
+    with patch("reflect.preparation_pipeline.prepare_sql_report_db") as prepare:
         result = CliRunner().invoke(
             main,
             ["improve", *refresh_flag, "--db-path", str(db_path)],
         )
 
     assert result.exit_code == 1
-    assert "reflect refresh" in result.output
+    assert "preparing" in result.output
     prepare.assert_not_called()
 
 
-def test_workflows_add_stages_an_existing_skill_without_installing_it(tmp_path):
+def test_workflows_add_stages_an_existing_skill_without_installing_it(tmp_path, monkeypatch):
     skill_file = tmp_path / "SKILL.md"
     skill_file.write_text(
         "---\n"
@@ -2880,6 +2904,11 @@ def test_workflows_add_stages_an_existing_skill_without_installing_it(tmp_path):
         encoding="utf-8",
     )
     db_path = tmp_path / "reflect.db"
+    from tests.backend_helpers import bind_backend, publish_actions
+    from tests.test_dashboard_sql_api import _seed_sql_report_db
+    _seed_sql_report_db(db_path)
+    publish_actions(db_path)
+    bind_backend(monkeypatch, db_path)
 
     result = CliRunner().invoke(
         main,
@@ -2897,8 +2926,9 @@ def test_workflows_add_stages_an_existing_skill_without_installing_it(tmp_path):
     assert result.exit_code == 0
     assert "Nothing was installed" in result.output
     assert not (tmp_path / ".agents").exists()
-    conn = connect_sqlite(db_path)
-    try:
+    from reflect.application import ReflectApplication
+    with ReflectApplication(db_path).state_action() as read_service:
+        conn = read_service.conn
         row = conn.execute(
             """
             SELECT status,
@@ -2918,11 +2948,9 @@ def test_workflows_add_stages_an_existing_skill_without_installing_it(tmp_path):
             "skill",
             "manual_skill_file",
         )
-    finally:
-        conn.close()
 
 
-def test_workflows_add_preserves_agent_and_source_workflow_provenance(tmp_path):
+def test_workflows_add_preserves_agent_and_source_workflow_provenance(tmp_path, monkeypatch):
     service, conn = _service(tmp_path)
     db_path = tmp_path / "reflect.db"
     try:
@@ -2930,6 +2958,9 @@ def test_workflows_add_preserves_agent_and_source_workflow_provenance(tmp_path):
         source = service.workflows.list()[0]
     finally:
         conn.close()
+    from tests.backend_helpers import bind_backend, publish_actions
+    publish_actions(db_path)
+    bind_backend(monkeypatch, db_path, refresh_arguments={"otlp_traces": None, "include_native_sessions": False})
     skill_file = tmp_path / "AGENT-SKILL.md"
     skill_file.write_text(
         "---\n"
@@ -2960,8 +2991,9 @@ def test_workflows_add_preserves_agent_and_source_workflow_provenance(tmp_path):
     assert result.exit_code == 0
     assert "Authorship: agent draft (codex)" in result.output
     assert f"from {source.id}" in result.output
-    conn = connect_sqlite(db_path)
-    try:
+    from reflect.application import ReflectApplication
+    with ReflectApplication(db_path).state_action() as read_service:
+        conn = read_service.conn
         row = conn.execute(
             """
             SELECT json_extract(content_json, '$.source.kind'),
@@ -2980,14 +3012,12 @@ def test_workflows_add_preserves_agent_and_source_workflow_provenance(tmp_path):
         )
         added = next(
             item
-            for item in ImprovementService(conn).workflows.list(limit=500)
+            for item in read_service.workflows.list(limit=500)
             if item.content.get("slug") == "bounded-debug-loop"
         )
         # A source workflow link preserves provenance, not comparable support.
         assert added.support_execution_unit_count == 0
         assert added.content["source"]["workflow_id"] == source.id
-    finally:
-        conn.close()
 
 
 def test_adherence_delta_filters_after_global_cohort_limit_and_fills_missing_exposures(tmp_path):
@@ -3224,5 +3254,45 @@ def test_repoless_finding_never_uses_an_unrelated_global_baseline(tmp_path, know
         assert measured['cohort']['measurement_state'] == 'not_measurable'
         if known_workspace is not True:
             assert measured['cohort']['scope_unavailable'] is True
+    finally:
+        conn.close()
+
+
+def test_post_cutover_finding_retains_project_scope(tmp_path):
+    from reflect.application import ReflectApplication
+    from reflect.backend_runtime import action_store_path
+    from reflect.store.snapshots import PublishedSnapshotStore
+    from reflect.store.sqlite import mark_snapshot
+    from reflect.store.user_state import UserStateStore
+    from reflect.store.user_state_migration import UserStateMigration
+    service, conn = _service(tmp_path)
+    try:
+        db = Path(conn.execute('PRAGMA database_list').fetchone()[2])
+        UserStateMigration(db, UserStateStore(action_store_path(db))).run()
+        rule = RuleDefinition(id='post-cutover', version=1, category='verification',
+                              title='New finding', description='Checks after migration')
+        service.repository.sync_rule_definitions([rule], now=NOW)
+        finding = service.repository.upsert_observation(ObservationDraft(
+            rule_id=rule.id, rule_version=1, scope_type='repo', scope_id='repo-1', repo_id='repo-1',
+            fingerprint='post-cutover', category='verification', title='New finding',
+            summary='Review checks', metric_name='unverified_change_sessions', metric_value=1,
+            metric_unit='executions', metric_direction='lower_is_better', baseline_query={'repo_id':'repo-1'},
+            impact_score=20, severity=Severity.LOW, confidence=0.8,
+            evidence=[EvidenceRef(entity_type='session', entity_id='session-1', session_id='session-1', summary_redacted='Recorded check')],
+        ), now=NOW)
+        conn.commit()
+        mark_snapshot(conn, ready=True)
+        PublishedSnapshotStore(db, reserve_bytes=0).publish(evidence_revision='post-cutover')
+        app = ReflectApplication(db)
+        with app.read() as current:
+            content = current.finding_workflow_context(finding)['content']
+        candidate = app.create_workflow(content=content, finding_id=finding)
+        other = tmp_path / 'other-project'
+        other.mkdir()
+        with app.workflow_action(candidate['id'], action_kind='review') as current:
+            preview = current.workflows.preview(candidate['id'], project_root=other)
+            assert not preview['checks']['apply_allowed']
+            assert current.conn.execute('SELECT count(*) FROM main.observation_sessions WHERE observation_id=?', (finding,)).fetchone()[0] == 1
+            assert current.conn.execute('SELECT count(*) FROM main.observation_evidence WHERE observation_id=?', (finding,)).fetchone()[0] == 1
     finally:
         conn.close()

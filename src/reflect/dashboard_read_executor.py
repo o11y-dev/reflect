@@ -4,7 +4,6 @@ import asyncio
 import multiprocessing
 import threading
 from concurrent.futures import Future, ProcessPoolExecutor
-from contextlib import closing
 from pathlib import Path
 from typing import Any, Literal
 
@@ -12,20 +11,10 @@ ReadOperation = Literal["dashboard", "explore", "tools", "graph", "session", "co
 
 
 def read_revision(db_path: Path, operation: ReadOperation) -> tuple[str, ...]:
-    """Pin the readiness markers required by a prepared interactive read."""
-    from reflect.store.sqlite import SnapshotNotReadyError, connect_sqlite_read_only
-
-    with closing(connect_sqlite_read_only(db_path, profile="usage")) as conn:
-        markers = {
-            row[0]: (row[1], row[2]) for row in conn.execute(
-                "SELECT key,value,updated_at FROM store_metadata "
-                "WHERE key IN ('prepared_usage','prepared_snapshot')"
-            )
-        }
-    profiles = ("prepared_usage",) if operation == "tools" else ("prepared_usage", "prepared_snapshot")
-    if any(profile not in markers for profile in profiles):
-        raise SnapshotNotReadyError("The publication revision is not ready.")
-    return tuple(value for profile in profiles for value in markers[profile])
+    from reflect.store.snapshots import SnapshotReadContext
+    with SnapshotReadContext(db_path) as context:
+        revision = context.review_state.revision if context.review_state else 0
+        return (context.snapshot.generation, str(revision))
 
 
 class DashboardReadBusyError(RuntimeError):
@@ -35,14 +24,18 @@ class DashboardReadBusyError(RuntimeError):
 def _read_payload(operation: ReadOperation, db_path: Path, args: tuple, kwargs: dict):
     # Each worker opens its own existing read-only connections. No SQLite
     # connection, publication cache, preparation worker, or mutation is shared.
+
+    kwargs.pop("read_revision", None)
+    publication = kwargs.pop("publication")
+    from reflect.store.snapshots import SnapshotReadContext
+    with SnapshotReadContext(db_path, snapshot=publication):
+        return _build_payload(operation, db_path, args, kwargs)
+
+
+def _build_payload(operation, db_path, args, kwargs):
     from reflect.dashboard_explore import build_explore_payload
     from reflect.dashboard_queries import build_dashboard_payload
     from reflect.dashboard_sessions import build_session_payload, load_session_detail
-    from reflect.store.sqlite import SnapshotNotReadyError
-
-    expected = kwargs.pop("read_revision", None)
-    if expected is not None and read_revision(db_path, operation) != expected:
-        raise SnapshotNotReadyError("Publication changed before this read.")
 
     builders = {
         "dashboard": build_dashboard_payload,
@@ -54,8 +47,6 @@ def _read_payload(operation: ReadOperation, db_path: Path, args: tuple, kwargs: 
         build_explore_payload(db_path, operation, *args, **kwargs) if operation in {"tools", "graph"}
         else builders[operation](db_path, *args, **kwargs)
     )
-    if expected is not None and read_revision(db_path, operation) != expected:
-        raise SnapshotNotReadyError("Publication changed during this read.")
     if operation == "session":
         # The session builder is full-snapshot guarded, including an empty
         # result for a missing session, but predates explicit analysis metadata.
@@ -90,7 +81,16 @@ class DashboardReadExecutor:
                         max_workers=self._max_workers,
                         mp_context=multiprocessing.get_context("spawn"),
                     )
-                future = self._pool.submit(_read_payload, operation, db_path, args, kwargs)
+                from reflect.store.snapshots import PublishedSnapshotStore
+                lease = PublishedSnapshotStore(db_path).acquire()
+                publication = lease.__enter__()
+                kwargs["publication"] = publication
+                try:
+                    future = self._pool.submit(_read_payload, operation, db_path, args, kwargs)
+                except BaseException:
+                    lease.__exit__(None, None, None)
+                    raise
+                future.add_done_callback(lambda _: lease.__exit__(None, None, None))
                 self._futures.add(future)
         except BaseException:
             self._capacity.release()

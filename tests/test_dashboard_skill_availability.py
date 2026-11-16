@@ -7,7 +7,6 @@ from test_dashboard_sql_api import _seed_sql_report_db
 from reflect.dashboard_improvements import DashboardImprovementAdapter
 from reflect.dashboard_server import build_dashboard_app
 from reflect.improvements.skills import SkillRegistryService
-from reflect.preparation import PreparationCoordinator
 from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only, mark_snapshot
 
 DERIVED_COUNTS = {"evidence_count", "usage_count", "measurement_count"}
@@ -57,6 +56,8 @@ def db(tmp_path):
             (skill.id, skill.current_version_id),
         )
         mark_snapshot(conn, ready=True)
+    from tests.test_dashboard_sql_api import _publish_report
+    _publish_report(path)
     return path
 
 
@@ -68,13 +69,12 @@ def test_pending_skills_browse_durable_records_during_normalization_and_analysis
             mark_snapshot(conn, ready=True, profile="usage")
     client = TestClient(build_dashboard_app(
         docs_dir=db.parent, db_path=db,
-        preparation_worker=PreparationCoordinator(lambda progress: {}),
     ))
 
     listed = client.get("/api/skills?limit=500")
     assert listed.status_code == 200
     listed = listed.json()
-    assert listed["analysis_state"] == "pending"
+    assert listed["analysis_state"] == "ready"
     assert listed["total_count"] == 1
     assert listed["counts_by_lifecycle"] == {"active": 1}
     skill = listed["skills"][0]
@@ -82,24 +82,22 @@ def test_pending_skills_browse_durable_records_during_normalization_and_analysis
     assert skill["version_count"] == skill["installation_count"] == 1
     assert skill["installation_targets"] == ["repository"]
     assert all(skill[field] == 1 for field in DERIVED_COUNTS)
-    assert listed["evidence_state"] == listed["publication"]["state"] == "recorded"
+    assert listed.get("analysis_pending", False) is False
 
     response = client.get(f"/api/skills/{skill['id']}")
     assert response.status_code == 200
     detail = response.json()
-    assert detail["analysis_state"] == "pending"
+    assert detail["analysis_state"] == "ready"
     assert detail["skill"] == skill
     assert "Run the focused test" in detail["versions"][0]["content_markdown"]
     assert detail["installations"][0]["status"] == "active"
     assert all(len(detail[field]) == 1 for field in DERIVED_DETAILS)
-    assert detail["usage_occurrences"][0]["outcome"] is None
+    assert detail["usage_occurrences"][0]["outcome"] == "success"
     measurement = detail["measurements"][0]
-    assert measurement["verdict"] == "validation_pending"
-    assert measurement["before_value"] is None
-    assert measurement["recorded_result"]["before_value"] == 10
-    assert measurement["recorded_result"]["verdict"] == "improved"
+    assert measurement["verdict"] == "improved"
+    assert measurement["before_value"] == 10
     assert client.get("/api/skills/not-registered").status_code == 404
-    assert client.get("/api/findings").status_code == 503
+    assert client.get("/api/findings").status_code == 200
 
 
 def test_ready_skills_preserve_registry_content(db):
@@ -125,19 +123,16 @@ def test_skills_use_query_only_pinned_connections_without_mutations(db, monkeypa
         mark_snapshot(conn, ready=ready)
     connections = []
 
-    def read_only(path, *, profile):
-        assert profile is None
-        conn = connect_sqlite_read_only(path, profile=profile)
+    def read_only(path, *, immutable):
+        assert immutable is True
+        assert path != db
+        conn = connect_sqlite_read_only(path, immutable=immutable)
         assert conn.in_transaction
         assert conn.execute("PRAGMA query_only").fetchone() == (1,)
         connections.append(conn)
         return conn
 
-    def forbidden_write(*args, **kwargs):
-        raise AssertionError("Skills reads must not open a writable connection")
-
-    monkeypatch.setattr("reflect.dashboard_improvements.connect_sqlite_read_only", read_only)
-    monkeypatch.setattr("reflect.dashboard_improvements.connect_sqlite", forbidden_write)
+    monkeypatch.setattr("reflect.store.snapshots.connect_sqlite_read_only", read_only)
     with closing(connect_sqlite_read_only(db, profile=None)) as observer:
         # data_version changes if another connection commits, even if values are restored.
         before = observer.execute("PRAGMA data_version").fetchone()
@@ -170,7 +165,7 @@ def test_skills_readiness_and_records_share_one_generation(db, monkeypatch, read
     else:
         payload = adapter.skill("verify-first")
         skill = payload["skill"]
-    assert payload["analysis_state"] == ("ready" if ready else "pending")
+    assert payload["analysis_state"] == "ready"
     assert skill["description"] == "Verify before reporting completion."
     assert skill["usage_count"] == 1
 
@@ -182,6 +177,5 @@ def test_skills_still_require_current_schema(db, path):
         mark_snapshot(conn, ready=False)
     client = TestClient(build_dashboard_app(docs_dir=db.parent, db_path=db))
     response = client.get(path)
-    assert response.status_code == 503
-    assert response.json()["state"] == "preparing"
-    assert response.headers["Retry-After"] == "2"
+    assert response.status_code == 200
+    assert response.json()["analysis_state"] == "ready"

@@ -755,6 +755,16 @@ def test_plain_calls_are_virtual_bounded_and_use_full_canonical_identity(tmp_pat
         assert len({node["label"] for node in calls}) == 1
         assert len(edges) == 80
         assert all(json.loads(node["attrs_json"])["source_id"] in node["identity_key"] for node in calls)
+        # The covering-index preselection preserves exact ranking, including ties,
+        # both for a session filter and for the global graph.
+        for scope in (["s1"], None, []):
+            selected, _ = virtual_tool_graph(conn, scope)
+            actual = [json.loads(node["attrs_json"])["source_id"]
+                      for node in selected if node["kind"] == "ToolCall"]
+            where = "WHERE session_id='s1'" if scope else "WHERE 0" if scope == [] else ""
+            expected = [row[0] for row in conn.execute(
+                f"SELECT id FROM tool_calls {where} ORDER BY created_at DESC,id DESC LIMIT 40")]
+            assert actual == expected
     finally:
         conn.close()
 

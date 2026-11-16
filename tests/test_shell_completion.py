@@ -8,10 +8,10 @@ from unittest.mock import patch
 
 import click
 import pytest
-from click.shell_completion import CompletionItem
 from click.testing import CliRunner
 
 import reflect.core as core
+from reflect.completion_queries import CompletionCatalog
 from reflect.core import main
 from reflect.shell_completion import (
     MEMORY_PROVIDER_NAMES,
@@ -19,7 +19,6 @@ from reflect.shell_completion import (
     CompletionInstallPlan,
     CompletionInstallResult,
     ShellCompletionManager,
-    SqliteCompletionCatalog,
     complete_memory_provider,
 )
 
@@ -227,16 +226,17 @@ def test_sqlite_catalog_returns_bounded_prefix_matches_without_writes(tmp_path: 
             ],
         )
 
-    items = SqliteCompletionCatalog(limit=10).complete("skill", "skill_a", db_path)
+    with sqlite3.connect(db_path) as conn:
+        items = CompletionCatalog(limit=10).complete("skill", "skill_a", conn)
 
-    assert all(isinstance(item, CompletionItem) for item in items)
-    assert [(item.value, item.help) for item in items] == [("skill_alpha", "alpha")]
+    assert items == [{"value":"skill_alpha", "help":"alpha"}]
 
 
 def test_sqlite_catalog_does_not_create_a_missing_database(tmp_path: Path) -> None:
     db_path = tmp_path / "missing.db"
 
-    items = SqliteCompletionCatalog().complete("workflow", "wf_", db_path)
+    from reflect.shell_completion import BackendCompletionCatalog
+    items = BackendCompletionCatalog().complete("workflow", "wf_", db_path)
 
     assert items == []
     assert not db_path.exists()

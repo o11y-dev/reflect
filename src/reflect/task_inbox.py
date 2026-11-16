@@ -186,13 +186,14 @@ class TaskEventInbox:
                                    (event["id"], path.stem, utc_now()))
                     db.commit()
                     remaining -= len(events)
+                    pending.setdefault('projected_event_ids', []).extend(event['id'] for event in events)
                     pending["events"] = pending["events"][len(events):]
                     if pending["events"]:
                         pending.pop("error", None)
                         self._write(path, pending)
                     else:
-                        path.unlink()
-                        self._sync_directory()
+                        pending.pop('error', None)
+                        self._write(path, pending)
             except sqlite3.OperationalError as exc:
                 if db is not None:
                     db.rollback()
@@ -206,6 +207,20 @@ class TaskEventInbox:
             finally:
                 if owned and db is not None:
                     db.close()
+
+    def acknowledge_publication(self, publication_path: Path) -> None:
+        """Forget pending status only after every accepted event is published."""
+        with closing(connect_sqlite_read_only(publication_path, immutable=True)) as conn:
+            for path in self.root.glob('*.json'):
+                with self._lock(path.stem):
+                    pending = self._load(path)
+                    if not pending or pending.get('events'):
+                        continue
+                    projected = pending.get('projected_event_ids', [])
+                    if projected and all(conn.execute('SELECT 1 FROM task_event_receipts WHERE event_id=?',
+                                                       (event_id,)).fetchone() for event_id in projected):
+                        path.unlink()
+                        self._sync_directory()
 
     def _error(self, path: Path, exc: Exception):
         with self._lock(path.stem):

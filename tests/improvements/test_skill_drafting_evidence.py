@@ -6,9 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from click.testing import CliRunner
 
-from reflect.core import main
 from reflect.improvements.procedures import ProcedureEvidenceRepository, procedure_signature
 from reflect.improvements.service import ImprovementService
 from reflect.improvements.workflow_roles import WorkflowSignal
@@ -165,17 +163,20 @@ def test_matching_workflows_are_suggestions_and_preserve_approved(evidence_servi
 
 
 def test_discover_empty_array_succeeds_without_opening_write_service(tmp_path):
-    from reflect.models import TelemetryStats
-    with patch('reflect.core._resolve_skills_agent', return_value=('claude', [])), \
-        patch('reflect.core._resolve_and_analyze', return_value=TelemetryStats(session_files=[], span_files=[], total_events=0, events_by_type={}, events_by_file={})), \
-        patch('reflect.core._improvement_snapshot_status', return_value=SimpleNamespace(ready=False, exists=False)), \
-        patch('subprocess.run', return_value=SimpleNamespace(returncode=0, stdout='[]', stderr='')), \
-        patch('reflect.core._open_improvement_service') as opened:
-        result = CliRunner().invoke(main, ['skills', 'discover', '--yes', '--db-path', str(tmp_path / 'missing.db')])
-    assert result.exit_code == 0, result.output
-    assert 'No reusable' in result.output
+    from reflect.application import ReflectApplication
+    from reflect.backend_operations import execute_agent_job
+    from tests.backend_helpers import publish_actions
+    from tests.test_dashboard_sql_api import _seed_sql_report_db
+    db = tmp_path / 'reflect.db'
+    _seed_sql_report_db(db)
+    publish_actions(db)
+    with patch('subprocess.run', return_value=SimpleNamespace(returncode=0, stdout='[]', stderr='')), \
+         patch.object(ReflectApplication, 'state_action') as opened:
+        result = execute_agent_job(db, 'skill_discovery', {
+            'agent': 'claude', 'period': 'all', 'project_root': str(tmp_path),
+        })
+    assert result['candidate_ids'] == []
     opened.assert_not_called()
-    assert not (tmp_path / 'missing.db').exists()
 
 
 def test_sql_packet_uses_shared_procedure_repository_and_keeps_empty_scope(evidence_service):

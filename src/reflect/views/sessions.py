@@ -242,7 +242,7 @@ def _clamp_limit(limit: int) -> int:
 def select_session_scope(
     conn: sqlite3.Connection, *, q: str = "", agents: set[str] | None = None,
     model: str = "all", status: str = "all", date_from: str | None = None,
-    date_to: str | None = None,
+    date_to: str | None = None, ids_only: bool = False,
 ) -> list[dict[str, Any]]:
     """Select the full canonical population before navigation pagination.
 
@@ -274,8 +274,8 @@ def select_session_scope(
             date_parts.append(f"julianday(st.started_at){operator}julianday(?)")
             params.append(value)
     if date_parts:
-        predicates.append(f"EXISTS(SELECT 1 FROM steps st WHERE st.session_id=s.id AND {' AND '.join(date_parts)})")
-    return _cursor_dicts(conn.execute(f"""SELECT s.id,s.id AS session_id,
+        predicates.append(f"EXISTS(SELECT 1 FROM steps st INDEXED BY idx_steps_measurement_times WHERE st.session_id=s.id AND {' AND '.join(date_parts)})")
+    projection = "s.id" if ids_only else """s.id,s.id AS session_id,
         COALESCE(a.name,sr.agent,'unknown') AS agent,s.status,s.title,
         s.started_at,s.ended_at,s.token_provenance,
         COALESCE(sr.prompt_count,0) AS prompt_count,
@@ -291,7 +291,8 @@ def select_session_scope(
         s.estimated_cost_usd AS total_cost_usd,
         (SELECT COALESCE(NULLIF(response_model,''),request_model) FROM llm_calls lc
             WHERE lc.session_id=s.id GROUP BY COALESCE(NULLIF(response_model,''),request_model)
-            ORDER BY COUNT(*) DESC LIMIT 1) AS primary_model
+            ORDER BY COUNT(*) DESC LIMIT 1) AS primary_model"""
+    return _cursor_dicts(conn.execute(f"""SELECT {projection}
         FROM sessions s LEFT JOIN agents a ON a.id=s.agent_id
         LEFT JOIN session_rollups sr ON sr.session_id=s.id
         WHERE {' AND '.join(predicates)} ORDER BY s.started_at DESC,s.id""", params))

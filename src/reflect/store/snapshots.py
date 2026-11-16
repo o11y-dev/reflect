@@ -64,10 +64,12 @@ class PublishedSnapshotStore:
                                  str(data['completed_at']), str(data['source_revision']))
 
     @contextmanager
-    def acquire(self) -> Iterator[PublishedSnapshot]:
+    def acquire(self, snapshot: PublishedSnapshot | None = None) -> Iterator[PublishedSnapshot]:
         # Resolve and lease under the same lock used by garbage collection.
         with self._lock():
-            snapshot = self.current()
+            snapshot = snapshot or self.current()
+            if snapshot is not None and snapshot.path != self.directory / f'{snapshot.generation}.db':
+                raise ValueError('Snapshot does not belong to this publication store')
             if snapshot is None:
                 raise sqlite3.OperationalError('No completed snapshot has been published')
             handle = (self.directory / f'{snapshot.generation}.lease').open('a+b')
@@ -194,6 +196,13 @@ class PublishedSnapshotStore:
 _ACTIVE_READ_CONTEXT: ContextVar[SnapshotReadContext | None] = ContextVar('reflect_snapshot_read', default=None)
 
 
+def active_review_state(connection=None):
+    context = _ACTIVE_READ_CONTEXT.get()
+    if context is None or (connection is not None and connection is not context.connection):
+        return None
+    return context.review_state
+
+
 def active_read_connection(path: Path):
     context = _ACTIVE_READ_CONTEXT.get()
     if context is not None and path in {context.db_path, context.snapshot.path}:
@@ -204,8 +213,9 @@ def active_read_connection(path: Path):
 class SnapshotReadContext:
     """Pin evidence and current human state for an entire composed response."""
 
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path, *, snapshot: PublishedSnapshot | None = None):
         self.db_path = Path(db_path).expanduser().resolve()
+        self._requested_snapshot = snapshot
         self._stack = ExitStack()
         self.review_state = None
         self.state_path = None
@@ -216,9 +226,11 @@ class SnapshotReadContext:
         active = _ACTIVE_READ_CONTEXT.get()
         self._borrowed_context = active if active and active.db_path == self.db_path else None
         if self._borrowed_context:
+            if self._requested_snapshot is not None and self._requested_snapshot != active.snapshot:
+                raise ValueError('Nested reads must use the same published generation')
             return self._borrowed_context
         try:
-            self.snapshot = self._stack.enter_context(PublishedSnapshotStore(self.db_path).acquire())
+            self.snapshot = self._stack.enter_context(PublishedSnapshotStore(self.db_path).acquire(self._requested_snapshot))
             self.connection = connect_sqlite_read_only(self.snapshot.path, immutable=True)
             self.connection.shared = True
             row = self.connection.execute("SELECT value FROM main.store_metadata WHERE key='user_state_cutover_v1'").fetchone()

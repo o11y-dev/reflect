@@ -265,7 +265,7 @@ assert.equal(renders.at(-1),'usage');
 assert.equal(panels.usage.children[1].hidden,false);
 const event={detail:{profile:'snapshot'},preventDefault(){this.defaultPrevented=true;}};
 listeners.get('reflect-snapshot-published')(event);
-assert.ok(!event.defaultPrevented,'first publication must recover missing navigation');
+assert.ok(event.defaultPrevented,'first publication refreshes visible Explore in place');
 """)
 
 
@@ -439,11 +439,11 @@ assert.equal(statuses.tools.hidden,true);
 @pytest.mark.parametrize("pending_state", ["preparing", "busy"])
 def test_background_reads_retry_on_visible_explore_until_ready(retained_state, pending_state):
     source = Path("src/reflect/frontend/js_ledger.js").read_text()
-    polling = source[source.index("window.setInterval(() => {"):
+    polling = source[source.index("document.addEventListener('reflect-status-polled', () => {"):
                      source.index("const workflowDateFormatter =")]
     _run_explore_contract(r"""
 context.activeExploreView='tools';context.document.visibilityState='visible';
-let tick;context.window.setInterval=(fn,ms)=>{assert.equal(ms,15000);tick=fn;};
+let tick;context.document.addEventListener=(name,fn)=>{assert.equal(name,'reflect-status-polled');tick=fn;};
 vm.runInContext(input.polling,context);
 const publishedAt='2020-01-01T00:00:00Z';
 context.fetch=async url=>{

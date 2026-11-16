@@ -2443,9 +2443,9 @@ type = ["pytest-mypy (>=1.0.1) ; platform_python_implementation != \"PyPy\""]
 [extras]
 e2e = ["playwright"]
 omega = ["omega-memory"]
-test = ["httpx", "pytest", "pytest-cov"]
+test = ["pytest", "pytest-cov"]
 
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "a0d5091f7ac81802c7329da9653ac13fc7bb490cfd8d04a72f01876b2bdfb37a"
+content-hash = "1a643d698305601cc866099920b8d174de5e8ef7f24bea2bf78a5fa12992b9dd"

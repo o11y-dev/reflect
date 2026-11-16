@@ -398,3 +398,38 @@ def test_filesystem_registry_scan_keeps_action_writer_independent(prepared_actio
         analysis.rollback()
     with closing(connect_sqlite(state.path)) as conn:
         assert conn.execute("SELECT 1 FROM skills WHERE slug='local-check'").fetchone()
+
+
+def test_authored_workflow_survives_source_pruning_without_resurrecting_aggregates(tmp_path):
+    from test_dashboard_sql_api import _seed_sql_report_db
+
+    from reflect.improvements.service import ImprovementService
+    from reflect.store.snapshots import PublishedSnapshotStore, SnapshotReadContext
+    from reflect.store.sqlite import connect_sqlite, mark_snapshot
+    from reflect.store.user_state_migration import UserStateMigration
+
+    path = tmp_path / 'reflect.db'
+    _seed_sql_report_db(path)
+    with closing(connect_sqlite(path)) as conn:
+        created = ImprovementService(conn).create_workflow(content={
+            'slug': 'saved-work', 'description': 'Keep my instructions',
+            'steps': ['Inspect the exact inputs'], 'verification': [], 'abstain_when': [],
+        })
+    state = UserStateStore(tmp_path / 'state.db')
+    UserStateMigration(path, state).run()
+    with closing(connect_sqlite(path, attach_user_state=False)) as writer:
+        writer.execute('PRAGMA foreign_keys=OFF')
+        writer.execute('DELETE FROM workflow_candidates WHERE id=?', (created['id'],))
+        writer.execute('DELETE FROM observations WHERE id=?', (created['observation_id'],))
+        writer.commit()
+        mark_snapshot(writer, ready=True)
+    PublishedSnapshotStore(path, reserve_bytes=0).publish(evidence_revision='pruned')
+    with SnapshotReadContext(path) as read:
+        repository = ImprovementService(read.connection, initialize_schema=False).repository
+        saved = repository.get_candidate(created['id'])
+        assert saved is not None
+        assert saved.content['steps'] == ['Inspect the exact inputs']
+        assert saved.id in {candidate.id for candidate in repository.list_candidates()}
+        assert repository.get_observation(created['observation_id']).id == created['observation_id']
+        assert read.connection.execute('SELECT COUNT(*) FROM main.observations WHERE id=?',
+                                       (created['observation_id'],)).fetchone()[0] == 0

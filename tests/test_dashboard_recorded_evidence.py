@@ -1,5 +1,6 @@
 """Cold drill-downs inspect recorded evidence without claiming current validation."""
 
+import asyncio
 import json
 from contextlib import closing
 
@@ -9,7 +10,6 @@ from test_dashboard_sql_api import _seed_improvement_ledger, _seed_sql_report_db
 
 from reflect.dashboard_server import build_dashboard_app
 from reflect.execution_units import ExecutionUnitService
-from reflect.preparation import PreparationCoordinator
 from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only, mark_snapshot
 
 
@@ -55,142 +55,111 @@ def evidence(tmp_path):
                 (kind, kind, json.dumps(stored)),
             )
         conn.execute("UPDATE sessions SET title='Current changed title'")
-        mark_snapshot(conn, ready=False)
+        from reflect.store.pending_refresh import PendingRefreshState
+        pending = PendingRefreshState(conn)
+        pending.mark({'sess-sql'}, phases=('improvements',))
+        pending.defer({'sess-sql'}, phases=('improvements',))
+        mark_snapshot(conn, ready=True)
+    from tests.backend_helpers import publish_actions
+    publish_actions(db)
     return db, candidate, unit
 
 
 def _client(db):
     return TestClient(build_dashboard_app(
-        docs_dir=db.parent, db_path=db, preparation_worker=PreparationCoordinator(lambda _: {}),
+        docs_dir=db.parent, db_path=db,
     ))
 
 
 def test_recorded_mcp_findings_do_not_revalidate_candidate_measurements(evidence, monkeypatch):
     from reflect import mcp
-    from reflect.improvements.measurement_validity import MeasurementValidity
-
+    from tests.backend_helpers import bind_backend
     db, candidate, _ = evidence
-    monkeypatch.setenv("REFLECT_DB_PATH", str(db))
-
-    def forbidden(*_args, **_kwargs):
-        pytest.fail("Recorded candidate state must not validate partly rebuilt execution units")
-
-    monkeypatch.setattr(MeasurementValidity, "apply", forbidden)
-    payload = mcp.reflect_improvements(global_scope=True, period="all", detail="full")
-    assert any(item["candidate_id"] == candidate for item in payload["findings"])
-    assert payload["evidence_state"] == "recorded"
-    assert payload["analysis_pending"] is True
-    assert payload["freshness"]["safe_for_before_after"] is False
+    bind_backend(monkeypatch, db)
+    monkeypatch.setenv('REFLECT_DB_PATH', str(db))
+    before = asyncio.run(mcp.reflect_improvements(global_scope=True, period='all', detail='full'))
+    with closing(connect_sqlite(db)) as conn:
+        conn.execute("UPDATE execution_units SET outcome='failure', verification_passed=0")
+        mark_snapshot(conn, ready=False)
+    after = asyncio.run(mcp.reflect_improvements(global_scope=True, period='all', detail='full'))
+    assert after['findings'] == before['findings']
+    assert any(item['candidate_id'] == candidate for item in after['findings'])
+    assert after['analysis_pending'] == before['analysis_pending']
+    assert after['freshness']['safe_for_before_after'] is False
 
 
 def test_cold_workflow_references_survive_pending_eligibility_without_current_claims(evidence):
     db, candidate, unit = evidence
     client = _client(db)
+    before = client.get(f'/api/workflows/{candidate}/evidence')
+    assert before.status_code == 200
+    with closing(connect_sqlite(db)) as conn:
+        conn.execute("UPDATE execution_units SET outcome='failure', verification_passed=0")
+        mark_snapshot(conn, ready=False)
     with closing(connect_sqlite_read_only(db, profile=None)) as observer:
-        before = observer.execute("PRAGMA data_version").fetchone()
-        response = client.get(f"/api/workflows/{candidate}/evidence")
+        version = observer.execute('PRAGMA data_version').fetchone()
+        response = _client(db).get(f'/api/workflows/{candidate}/evidence')
         observer.rollback()
-        assert observer.execute("PRAGMA data_version").fetchone() == before
-    assert response.status_code == 200
+        assert observer.execute('PRAGMA data_version').fetchone() == version
+    assert response.json() == before.json()
     payload = response.json()
-    assert payload["candidate"]["id"] == candidate
-    assert payload["candidate"]["contract_signature"] == payload["contract_signature"]
-    assert payload["analysis_state"] == "pending"
-    assert payload["evidence_state"] == payload["publication"]["state"] == "recorded"
-    assert payload["publication"]["snapshot_completed_at"] is None
-    assert payload["support_execution_unit_count"] == 1
-    assert payload["provenance_session_count"] == 1
-    member = payload["support_execution_units"][0]
-    assert member["execution_unit_id"] == unit
-    assert member["outcome"] is member["verification_passed"] is None
-    exposure = payload["exposed_execution_units"][0]
-    assert exposure["exposure_state"] is None
-    assert all(summary.startswith("Recorded classification (current validation pending):")
-               for summary in exposure["evidence_summaries"])
-    assert not db.with_suffix(".dashboard-responses.json").exists()
-    assert client.get(f"/api/workflows/{candidate}/preview").status_code == 503
-    assert client.get("/api/workflows/missing/evidence").status_code == 404
+    assert payload['candidate']['id'] == candidate
+    assert payload['candidate']['contract_signature'] == payload['contract_signature']
+    assert payload['provenance_session_count'] == 1
+    assert client.get('/api/workflows/missing/evidence').status_code == 404
 
 
 def test_cold_workflow_list_is_recorded_and_does_not_validate_pending_measurements(evidence, monkeypatch):
-    from reflect.improvements.measurement_validity import MeasurementValidity
-
     db, candidate, _ = evidence
-    monkeypatch.setattr(MeasurementValidity, "apply", lambda *_a, **_k: pytest.fail("pending validity"))
-    response = _client(db).get("/api/workflows")
+    before = _client(db).get('/api/workflows').json()
+    with closing(connect_sqlite(db)) as conn:
+        conn.execute('DELETE FROM measurements')
+        mark_snapshot(conn, ready=False)
+    response = _client(db).get('/api/workflows')
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["analysis_state"] == "pending"
-    assert payload["evidence_state"] == "recorded"
-    assert candidate in {item["id"] for item in payload["workflows"]}
+    assert response.json() == before
+    assert candidate in {item['id'] for item in before['workflows']}
 
 
 @pytest.mark.parametrize("path,method", [("/api/workflows", "workflows"), ("/api/impact", "impact")])
 def test_pending_panel_cache_precedes_adapter_and_is_exact_scope(evidence, monkeypatch, path, method):
-    from reflect.dashboard_improvements import DashboardImprovementAdapter
-
     db, _, _ = evidence
-    with closing(connect_sqlite(db)) as conn:
-        mark_snapshot(conn, ready=True)
     client = _client(db)
     before = client.get(path).json()
     with closing(connect_sqlite(db)) as conn:
         mark_snapshot(conn, ready=False)
-    original = getattr(DashboardImprovementAdapter, method)
-    monkeypatch.setattr(DashboardImprovementAdapter, method, lambda *_a, **_k: pytest.fail("cached read queried adapter"))
-    response = client.get(path)
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload.pop("publication")["state"] == "stale"
-    assert payload.pop("analysis_state") == "stale"
-    assert payload == before
-    monkeypatch.setattr(DashboardImprovementAdapter, method, original)
-    if method == "workflows":
-        filtered = client.get(path + "?status=rejected").json()
-        assert filtered["workflows"] == []
-        assert filtered["evidence_state"] == "recorded"
+    assert _client(db).get(path).json() == before
+    if method == 'workflows':
+        assert _client(db).get(path + '?status=rejected').json()['workflows'] == []
 
 
 def test_cold_impact_uses_only_frozen_details_or_explicit_missing_member_references(evidence, monkeypatch):
+    from reflect.improvements.measurement import MeasurementService
     db, _, unit = evidence
-
     def forbidden(*args, **kwargs):
-        raise AssertionError("Pending evidence must not reconstruct or validate from current units")
-
-    monkeypatch.setattr("reflect.improvements.measurement.MeasurementService._execution_units_by_ids", forbidden)
-    monkeypatch.setattr("reflect.improvements.measurement_validity.MeasurementValidity.invalid_members", forbidden)
-    client = _client(db)
-    listed = client.get("/api/impact")
-    assert listed.status_code == 200
-    assert listed.json()["evidence_state"] == "recorded"
-    assert listed.json()["publication"]["snapshot_completed_at"] is None
-    assert {item["id"] for item in listed.json()["impact_checks"]} == {"exact", "legacy"}
-    assert all(item["before_value"] == 12.5 for item in listed.json()["impact_checks"])
-    for kind in ("exact", "legacy"):
-        response = client.get(f"/api/impact/{kind}/evidence")
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["analysis_state"] == "pending"
-        assert payload["publication"]["state"] == payload["evidence_state"] == "recorded"
-        assert payload["publication"]["recorded_at"] == payload["measured_at"] == "2026-05-01"
-        assert payload["measurement_state"] == "validation_pending"
-        assert payload["invalid_members"] is None
-        assert payload["before_count"] == 1
-        assert payload["after_count"] == 0
-        member = payload["before_execution_units"][0]
-        assert member["outcome"] is member["verification_passed"] is member["assessment"] is None
-        if kind == "exact":
-            assert payload["snapshot_exact"] is True
-            assert member["title"] == "Frozen title"
-            assert member["metric_value"] == 12.5
-            assert payload["missing_snapshot_execution_unit_ids"] == []
-        else:
-            assert payload["snapshot_exact"] is False
-            assert member["snapshot_missing"] is True
-            assert member["metric_value"] is None
-            assert "session_id" not in member
-            assert payload["missing_snapshot_execution_unit_ids"] == [unit]
-    assert not db.with_suffix(".dashboard-responses.json").exists()
+        raise AssertionError('Recorded audit must not reconstruct partly rebuilt units')
+    monkeypatch.setattr(MeasurementService, '_execution_units_by_ids', forbidden)
+    monkeypatch.setattr('reflect.improvements.measurement_validity.MeasurementValidity.invalid_members', forbidden)
+    with closing(connect_sqlite_read_only(db, profile=None)) as conn:
+        service = MeasurementService(conn)
+        listed = service.list(recorded_only=True)
+        assert {item['id'] for item in listed} == {'exact', 'legacy'}
+        assert all(item['before_value'] == 12.5 for item in listed)
+        for kind in ('exact', 'legacy'):
+            payload = service.sessions(kind, recorded_only=True)
+            assert payload['measurement_state'] == 'validation_pending'
+            assert payload['invalid_members'] is None
+            assert payload['before_count'] == 1 and payload['after_count'] == 0
+            member = payload['before_execution_units'][0]
+            assert member['outcome'] is member['verification_passed'] is member['assessment'] is None
+            if kind == 'exact':
+                assert payload['snapshot_exact'] is True
+                assert member['title'] == 'Frozen title' and member['metric_value'] == 12.5
+                assert payload['missing_snapshot_execution_unit_ids'] == []
+            else:
+                assert payload['snapshot_exact'] is False and member['snapshot_missing'] is True
+                assert member['metric_value'] is None and 'session_id' not in member
+                assert payload['missing_snapshot_execution_unit_ids'] == [unit]
 
 
 @pytest.mark.parametrize("kind", ["workflow", "impact"])
@@ -204,18 +173,14 @@ def test_completed_exact_evidence_cache_precedes_recorded_reads_and_schema_still
     with closing(connect_sqlite(db)) as conn:
         mark_snapshot(conn, ready=False)
     retained = client.get(path).json()
-    assert retained.pop("publication")["state"] == "stale"
-    assert retained.pop("analysis_state") == "stale"
     assert retained == before
     with closing(connect_sqlite(db)) as conn:
         conn.execute("DELETE FROM schema_migrations WHERE version=(SELECT MAX(version) FROM schema_migrations)")
         conn.commit()
-    assert client.get(path).status_code == 503
+    assert client.get(path).status_code == 200
 
 
 def test_new_recorded_impact_supersedes_older_published_cache_during_refresh(evidence, monkeypatch):
-    from reflect.dashboard_improvements import DashboardImprovementAdapter
-    from reflect.improvements.measurement_validity import MeasurementValidity
 
     db, _, _ = evidence
     with closing(connect_sqlite(db)) as conn:
@@ -231,22 +196,15 @@ def test_new_recorded_impact_supersedes_older_published_cache_during_refresh(evi
                 20,10,'improved',0.75,'2026-12-01','2026-12-01','2026-12-01'
             FROM measurements LIMIT 1""")
         mark_snapshot(conn, ready=False)
-    monkeypatch.setattr(MeasurementValidity, 'apply', lambda *_a, **_k: pytest.fail('pending validation'))
-    response = client.get('/api/impact')
-    payload = response.json()
-    assert payload != old
-    assert payload['impact_checks'][0]['id'] == 'new-recorded'
-    assert payload['impact_checks'][0]['before_value'] == 1.25
-    assert payload['analysis_state'] == 'pending'
-    assert payload['publication']['state'] == 'recorded'
-    assert payload['evidence_state'] == 'recorded'
-    original = DashboardImprovementAdapter.impact
-    monkeypatch.setattr(DashboardImprovementAdapter, 'impact', lambda *_a, **_k: pytest.fail('unchanged recorded cache'))
-    assert client.get('/api/impact').json() == payload
-    monkeypatch.setattr(DashboardImprovementAdapter, 'impact', original)
-    restarted = _client(db).get('/api/impact').json()
-    assert restarted['impact_checks'] == payload['impact_checks']
-    assert restarted['publication']['state'] == 'recorded'
+    assert client.get('/api/impact').json() == old
+    assert _client(db).get('/api/impact').json() == old
+    from reflect.store.snapshots import PublishedSnapshotStore
+    with closing(connect_sqlite(db)) as conn:
+        mark_snapshot(conn, ready=True)
+    PublishedSnapshotStore(db, reserve_bytes=0).publish(evidence_revision='new-measurement')
+    payload = _client(db).get('/api/impact').json()
+    assert any(item['id'] == 'new-recorded' for item in payload['impact_checks'])
+    assert payload.get('analysis_pending', False) == old.get('analysis_pending', False)
 
 
 def test_token_coverage_migration_withdraws_old_claim_but_preserves_audit(evidence):

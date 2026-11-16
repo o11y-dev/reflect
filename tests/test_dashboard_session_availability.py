@@ -7,7 +7,6 @@ from test_dashboard_sql_api import _seed_sql_report_db
 
 from reflect.dashboard_server import build_dashboard_app
 from reflect.dashboard_sessions import load_session_detail
-from reflect.preparation import PreparationCoordinator
 from reflect.store.hook_facts import HookFactRepository
 from reflect.store.sqlite import connect_sqlite, mark_snapshot
 
@@ -42,30 +41,26 @@ def test_ready_session_retains_published_derived_contract(db):
     assert detail["conversation"] and detail["telemetry"]["spans"]
 
 
-def test_preparing_serves_capture_without_reading_stale_derived_evidence(db, monkeypatch):
+def test_preparing_serves_published_capture_and_derived_evidence(db, monkeypatch):
+    from tests.test_dashboard_sql_api import _publish_report
+    _publish_report(db)
+    client = TestClient(build_dashboard_app(docs_dir=db.parent, db_path=db))
+    before = client.get('/api/session/sess-sql')
+    assert before.status_code == 200
     with closing(connect_sqlite(db)) as conn:
+        conn.execute("UPDATE execution_units SET outcome='failure', verification_passed=0")
         mark_snapshot(conn, ready=False)
-    app = build_dashboard_app(
-        docs_dir=db.parent, db_path=db,
-        preparation_worker=PreparationCoordinator(lambda progress: {}),
-    )
-
-    def unpublished(*args, **kwargs):
-        raise AssertionError("unpublished derived evidence was queried")
-
-    monkeypatch.setattr("reflect.views.measurements.build_measurements", unpublished)
-    monkeypatch.setattr("reflect.store.git_activity.git_activity", unpublished)
-    monkeypatch.setattr("reflect.improvements.session_insights.read_session_insights", unpublished)
-    client = TestClient(app)
-    response = client.get("/api/session/sess-sql")
+    response = client.get('/api/session/sess-sql')
     assert response.status_code == 200
     detail = response.json()
-    assert detail["derived_state"] == "preparing"
-    assert detail["session"] == {"id": "sess-sql", "agent": "codex"}
-    assert not DERIVED_FIELDS & detail.keys()
-    assert detail["conversation"] and detail["tool_inventory"] and detail["telemetry"]["spans"]
-    assert client.get("/api/session/not-captured").status_code == 404
-    assert client.get("/api/data").status_code == 503
+    assert detail == before.json()
+    assert detail['derived_state'] == 'ready'
+    assert detail['session'] == {'id': 'sess-sql', 'agent': 'codex'}
+    assert detail.keys() >= DERIVED_FIELDS
+    assert detail['assessments'][0]['outcome'] == 'success'
+    assert detail['conversation'] and detail['tool_inventory'] and detail['telemetry']['spans']
+    assert client.get('/api/session/not-captured').status_code == 404
+    assert client.get('/api/data').status_code == 200
 
 
 @pytest.mark.parametrize("status", ["unknown", "ok"])

@@ -58,7 +58,7 @@ def test_graph_selection_ranks_visible_metadata_and_preserves_kind_limits(monkey
             id TEXT PRIMARY KEY, kind TEXT, label TEXT, session_id TEXT,
             attrs_json TEXT, first_seen_at TEXT, last_seen_at TEXT
         );
-        CREATE INDEX idx_graph_nodes_session_kind ON graph_nodes(session_id, kind);
+        CREATE INDEX idx_graph_nodes_rank ON graph_nodes(session_id, kind, last_seen_at, first_seen_at, label, id);
     """)
     rows = [
         (f"{kind}-{idx}", kind, f"{kind}-{idx:03}", session, '{"retained":true}', None, "2026-01-01")
@@ -96,4 +96,4 @@ def test_graph_selection_ranks_visible_metadata_and_preserves_kind_limits(monkey
     )
     assert [row[2] for row in by_kind["Tool"]] == [f"Tool-{idx:03}" for idx in range(50)]
     assert [row[2] for row in by_kind["ToolCall"]] == [f"ToolCall-{idx:03}" for idx in range(40)]
-    assert any("idx_graph_nodes_session_kind" in line for line in query.plan)
+    assert any("COVERING INDEX idx_graph_nodes_rank" in line for line in query.plan)

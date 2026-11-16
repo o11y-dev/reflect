@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import closing, contextmanager, nullcontext
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from reflect.improvements.models import LoopKind, LoopStatus, SkillLifecycleState
 from reflect.improvements.service import ImprovementService
-from reflect.preparation import PreparationLock
-from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only, snapshot_incomplete
+from reflect.store.sqlite import snapshot_incomplete
 
 
 def _recorded_evidence(payload: dict, *, recorded_at: str | None = None) -> dict:
@@ -32,16 +31,12 @@ class DashboardImprovementAdapter:
 
     @contextmanager
     def _service(
-        self, *, writable: bool = False, profile: str | None = "snapshot",
+        self,
     ) -> Iterator[ImprovementService]:
-        with (
-            PreparationLock(self.db_path) if writable else nullcontext(),
-            closing(
-                connect_sqlite(self.db_path) if writable else
-                connect_sqlite_read_only(self.db_path, profile=profile)
-            ) as conn,
-        ):
-            yield ImprovementService(conn, initialize_schema=False)
+        from reflect.application import ReflectApplication
+        application = ReflectApplication(self.db_path)
+        with application.read() as service:
+            yield service
 
     def findings(
         self,
@@ -117,7 +112,7 @@ class DashboardImprovementAdapter:
         behavior_type: str | None,
         status: str | None,
     ) -> dict[str, object]:
-        with self._service(profile=None) as service:
+        with self._service() as service:
             pending = snapshot_incomplete(service.conn)
             candidates = service.workflows.list(
                 behavior_types={behavior_type} if behavior_type else None,
@@ -164,7 +159,7 @@ class DashboardImprovementAdapter:
         limit: int,
     ) -> dict[str, object]:
         lifecycle = SkillLifecycleState(status) if status else None
-        with self._service(profile=None) as service:
+        with self._service() as service:
             # The read-only connection pins readiness and registry rows in one
             # transaction. Package history remains browsable during derivation.
             pending = snapshot_incomplete(service.conn)
@@ -194,7 +189,7 @@ class DashboardImprovementAdapter:
         return _recorded_evidence(payload) if pending else payload
 
     def skill(self, skill_id: str) -> dict[str, object]:
-        with self._service(profile=None) as service:
+        with self._service() as service:
             pending = snapshot_incomplete(service.conn)
             record = service.skills.show(skill_id, recorded_only=pending)
         detail = record.model_dump(mode="json")
@@ -211,7 +206,7 @@ class DashboardImprovementAdapter:
         return detail
 
     def workflow_evidence(self, candidate_id: str, *, limit: int) -> dict[str, object]:
-        with self._service(profile=None) as service:
+        with self._service() as service:
             pending = snapshot_incomplete(service.conn)
             ledger = service.repository.workflow_evidence_ledger(candidate_id, limit=limit, recorded_only=pending)
             candidate = service.workflows.show(candidate_id, recorded_only=pending, evidence_ledger=ledger)
@@ -222,7 +217,7 @@ class DashboardImprovementAdapter:
     def skill_usage_graph(self, skill_id: str, **filters) -> dict[str, object]:
         from reflect.dashboard_skill_graph import build_skill_usage_graph
 
-        with self._service(profile=None) as service:
+        with self._service() as service:
             return build_skill_usage_graph(service.conn, skill_id, **filters)
 
     def workflow_preview(self, candidate_id: str, *, project_root: Path) -> dict[str, object]:
@@ -234,33 +229,39 @@ class DashboardImprovementAdapter:
             return service.finding_workflow_context(finding_id)
 
     def create_workflow(self, *, content: dict, finding_id: str | None = None) -> dict[str, object]:
-        with self._service(writable=True) as service:
-            return service.create_workflow(content=content, finding_id=finding_id)
+        from reflect.application import ReflectApplication
+        return ReflectApplication(self.db_path).create_workflow(content=content, finding_id=finding_id)
 
     def edit_workflow(self, candidate_id: str, *, content: dict) -> dict[str, object]:
-        with self._service(writable=True) as service:
+        from reflect.application import ReflectApplication
+        with ReflectApplication(self.db_path).workflow_action(candidate_id, action_kind="edit") as service:
             candidate = service.workflows.edit(candidate_id, content=content)
         return candidate.model_dump(mode="json")
 
-    def apply_workflow(self, candidate_id: str, *, project_root: Path) -> dict[str, object]:
-        with self._service(writable=True) as service:
+    def apply_workflow(self, candidate_id: str, *, project_root: Path, review: dict | None = None) -> dict[str, object]:
+        from reflect.application import ReflectApplication
+        with ReflectApplication(self.db_path).workflow_action(candidate_id, action_kind="apply", expected_revision=review.get('revision_hash') if review else None) as service:
+            if review is not None:
+                current = service.workflows.preview(candidate_id, project_root=project_root)
+                for key in ('revision_hash', 'target_path', 'previous_hash', 'proposed_hash'):
+                    if key not in review or review[key] != current[key]:
+                        raise RuntimeError('The reviewed workflow or target file changed; load a new preview')
             return service.workflows.apply(candidate_id, project_root=project_root)
 
     def rollback_workflow(self, candidate_id: str) -> dict[str, object]:
-        with self._service(writable=True) as service:
+        from reflect.application import ReflectApplication
+        with ReflectApplication(self.db_path).workflow_action(candidate_id, action_kind="rollback") as service:
             return service.workflows.rollback(candidate_id)
 
     def reject_workflow(self, candidate_id: str, *, reason: str) -> dict[str, object]:
-        with self._service(writable=True) as service:
+        from reflect.application import ReflectApplication
+        with ReflectApplication(self.db_path).workflow_action(candidate_id, action_kind="edit") as service:
             candidate = service.workflows.reject(candidate_id, reason=reason[:200])
         return candidate.model_dump(mode="json")
 
     def dismiss_suggestion(self, candidate_id: str, *, restore: bool = False) -> dict[str, object]:
-        # Review metadata needs no analysis snapshot or filesystem preparation lock.
-        # Reserve SQLite's writer before reading state; busy errors stay retryable.
-        with closing(connect_sqlite(self.db_path, timeout_ms=1000)) as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            service = ImprovementService(conn, initialize_schema=False)
+        from reflect.application import ReflectApplication
+        with ReflectApplication(self.db_path).workflow_action(candidate_id, action_kind="edit") as service:
             return (service.workflows.restore_suggestion(candidate_id) if restore
                     else service.workflows.dismiss_suggestion(candidate_id))
 
@@ -271,23 +272,30 @@ class DashboardImprovementAdapter:
         outcome: str,
         reason: object,
     ) -> dict[str, object]:
-        with self._service(writable=True) as service:
+        from reflect.application import ReflectApplication
+        with ReflectApplication(self.db_path).state_action() as service:
             feedback_id = service.repository.record_feedback(
                 session_id,
                 outcome,
                 reason_redacted=str(reason) if reason is not None else None,
             )
-        return {"id": feedback_id, "session_id": session_id, "outcome": outcome}
+        from reflect.backend_runtime import action_store_path
+        from reflect.jobs import JobRegistry
+        jobs = JobRegistry(action_store_path(self.db_path))
+        jobs.initialize()
+        job = jobs.submit('task_projection', {})
+        return {"id": feedback_id, "session_id": session_id, "outcome": outcome,
+                "tracking_state": "accepted_pending", "job_id": job.job_id}
 
     def impact(self) -> dict[str, object]:
-        with self._service(profile=None) as service:
+        with self._service() as service:
             pending = snapshot_incomplete(service.conn)
             checks = service.measurements.list(recorded_only=pending)
         payload = {"impact_checks": checks}
         return _recorded_evidence(payload, recorded_at=checks[0]["measured_at"] if checks else None) if pending else payload
 
     def impact_evidence(self, impact_id: str) -> dict[str, object]:
-        with self._service(profile=None) as service:
+        with self._service() as service:
             pending = snapshot_incomplete(service.conn)
             payload = service.measurements.sessions(impact_id, recorded_only=pending)
         return _recorded_evidence(payload, recorded_at=payload.get("measured_at")) if pending else payload

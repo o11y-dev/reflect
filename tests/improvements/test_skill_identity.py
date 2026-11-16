@@ -262,6 +262,8 @@ def test_usage_graph_api_rejects_ambiguous_name_and_accepts_exact_ids(tmp_path):
     registry.sync_paths([_skill(tmp_path / repo) for repo in ('one', 'two')])
     skills = registry.list()
     conn.commit()
+    from test_dashboard_sql_api import _publish_report
+    _publish_report(db_path)
     client = TestClient(build_dashboard_app(db_path=db_path, docs_dir=tmp_path))
     ambiguous = client.get('/api/skills/verify-first/usage-graph')
     assert ambiguous.status_code == 422

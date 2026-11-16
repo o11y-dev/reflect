@@ -38,7 +38,11 @@ from reflect.store.ingest import ingest_local_spans_file
 from reflect.store.migrate import migrate
 from reflect.store.normalize import normalize_pending_raw_events
 from reflect.store.rollups import rebuild_rollups
+from reflect.store.snapshots import PublishedSnapshotStore
 from reflect.store.sqlite import connect_sqlite, mark_snapshot
+from reflect.workflow_journal import (
+    WorkflowFileJournal,  # noqa: F401 -- preload fixture ID dependencies
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "docs/reports/showcase.json"
@@ -322,6 +326,7 @@ def build_showcase() -> dict:
         mark_snapshot(conn, ready=True)
         assessments = {row[0]: json.loads(row[1])["assessment"] for row in conn.execute(
             "SELECT session_id,boundary_json FROM execution_units WHERE eligible=1")}
+        PublishedSnapshotStore(temp / "sample.db", reserve_bytes=0).publish(evidence_revision="synthetic-showcase")
         adapter = DashboardImprovementAdapter(temp / "sample.db")
         bundle = build_dashboard_payload(temp / "sample.db", limit=100)
         resources = {

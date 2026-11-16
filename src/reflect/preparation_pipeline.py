@@ -294,6 +294,7 @@ def prepare_sql_report_db(
     *,
     otlp_traces: Path | None,
     include_native_sessions: bool = False,
+    native_session_ids: tuple[str, ...] = (),
     spans_dir: Path | None = None,
     progress: PreparationProgressReporter | None = None,
     defer_otlp_replay: bool = False,
@@ -362,6 +363,9 @@ def prepare_sql_report_db(
             "Checking database migrations...",
         )
         applied = migrate(conn)
+        from reflect.store.evidence_revision import install_evidence_revision_tracking
+        install_evidence_revision_tracking(conn)
+        conn.commit()  # Inbox drain owns its receipt/projection transaction.
         pending_state = PendingRefreshState(conn)
         checkpoint_initialized = pending_state.initialized()
         window = AnalysisWindow.capture(analysis_days)
@@ -448,6 +452,11 @@ def prepare_sql_report_db(
             native_result = {"inserted": 0, "skipped": 0, "unchanged": 0}
             context_result = {"inserted": 0, "skipped": 0, "unchanged": 0}
             for agent, session_file in _discover_rich_session_files():
+                if native_session_ids and agent != 'opencode' and not any(
+                    _native_session_path_matches_id(session_file, candidate)
+                    for candidate in native_session_ids
+                ):
+                    continue
                 source_ref = f"native_session:{agent}:{session_file}"
                 if agent == "codex":
                     context_file_result = ingest_codex_context_file(
@@ -461,6 +470,7 @@ def prepare_sql_report_db(
                     file_path=session_file,
                     agent=agent,
                     source_id=source_ref,
+                    session_ids=native_session_ids,
                     skip_existing_sessions=agent != "opencode",
                     skip_unchanged=True,
                 )

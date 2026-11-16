@@ -106,3 +106,27 @@ def test_generation_directory_is_durable_before_manifest_switch(tmp_path, monkey
     monkeypatch.setattr(snapshots, '_sync_directory', sync)
     second = snapshots.publish(evidence_revision='second')
     assert calls == [first, second]
+
+
+def test_explicit_generation_can_be_acquired_after_new_publication(tmp_path):
+    snapshots = PublishedSnapshotStore(store(tmp_path), reserve_bytes=0)
+    first = snapshots.publish(evidence_revision='first')
+    with snapshots.acquire(first):
+        second = snapshots.publish(evidence_revision='second')
+        with snapshots.acquire(first) as selected:
+            assert selected.generation == first.generation
+            assert selected.generation != second.generation
+
+
+def test_nested_explicit_generation_mismatch_is_rejected(tmp_path):
+    from reflect.store.snapshots import SnapshotReadContext
+
+    path = store(tmp_path)
+    snapshots = PublishedSnapshotStore(path, reserve_bytes=0)
+    first = snapshots.publish(evidence_revision='first')
+    with SnapshotReadContext(path, snapshot=first):
+        second = snapshots.publish(evidence_revision='second')
+        with pytest.raises(ValueError, match='same published generation'), SnapshotReadContext(path, snapshot=second):
+            pass
+        with SnapshotReadContext(path, snapshot=first) as nested:
+            assert nested.snapshot == first

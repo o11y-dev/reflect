@@ -9,6 +9,8 @@ def test_create_preview_enable_user_workflow(tmp_path):
     _seed_sql_report_db(path)
     project = tmp_path / 'project'
     project.mkdir()
+    from backend_helpers import publish_actions
+    publish_actions(path)
     client = TestClient(build_dashboard_app(docs_dir=tmp_path, db_path=path))
     content = {'slug': 'review-changes', 'description': 'Review a bounded change',
                'steps': ['Read the diff', 'Run relevant checks'],
@@ -44,6 +46,8 @@ def test_create_preview_enable_user_workflow(tmp_path):
 def test_create_rejects_invalid_instructions_and_evidence_claims(tmp_path):
     path = tmp_path / 'reflect.db'
     _seed_sql_report_db(path)
+    from backend_helpers import publish_actions
+    publish_actions(path)
     client = TestClient(build_dashboard_app(docs_dir=tmp_path, db_path=path))
     for content in ({'slug': '../escape', 'steps': ['Read']},
                     {'slug': 'empty', 'steps': []},
@@ -165,6 +169,8 @@ def test_finding_workflow_resolves_group_and_keeps_canonical_evidence(tmp_path):
                                                 session_id='sess-sql', summary_redacted=scope)],
         ), now=now))
     conn.commit()
+    from backend_helpers import publish_actions
+    publish_actions(path)
     client = TestClient(build_dashboard_app(docs_dir=tmp_path, db_path=path))
     context = client.get(f'/api/findings/{ids[0]}/workflow-draft')
     assert context.status_code == 200, context.text
@@ -184,7 +190,7 @@ def test_finding_workflow_resolves_group_and_keeps_canonical_evidence(tmp_path):
         content={'slug':'detector', 'steps':['Replace instructions']}, target_metric='tool_failure_rate',
     ), now=now)
     conn.commit()
-    assert repository.get_candidate(candidate['id']).content['steps'] == content['steps']
+    assert client.get(f"/api/workflows/{candidate['id']}/evidence").json()['candidate']['content']['steps'] == content['steps']
     assert repository.get_observation(ids[0]).baseline_value is None
     assert repository.get_observation(ids[0]).baseline_query == {'source_scope': 'first'}
     # After grouping changes, either original member still resolves this workflow.
@@ -195,7 +201,7 @@ def test_finding_workflow_resolves_group_and_keeps_canonical_evidence(tmp_path):
     conflicting = client.post('/api/workflows', json={'finding_id': ids[0], 'content': {**content, 'steps': ['Different instructions']}})
     assert conflicting.status_code == 409
     assert conflicting.json()['candidate_id'] == candidate['id']
-    assert repository.get_candidate(candidate['id']).content['steps'] == content['steps']
+    assert client.get(f"/api/workflows/{candidate['id']}/evidence").json()['candidate']['content']['steps'] == content['steps']
     assert conn.execute('SELECT COUNT(*) FROM workflow_candidates').fetchone()[0] == 1
     ledger = client.get(f"/api/workflows/{candidate['id']}/evidence").json()
     assert set(ledger['observation_ids']) == set(ids)

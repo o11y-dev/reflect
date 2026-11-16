@@ -28,6 +28,7 @@ const input=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
 const listeners=new Map(),timers=new Map(),calls=[],pending=[];
 let timerId=0,replacements=0;
 const context={URL,URLSearchParams,D:{sql_backed:true},reloadTimer:null,
+  document:{addEventListener:()=>{},dispatchEvent:()=>true},CustomEvent:class {},
   window:{location:{href:'http://localhost/?tab=sessions',search:'?tab=sessions',reload:()=>{}},
     addEventListener:(name,listener)=>listeners.set(name,listener),
     setTimeout:(fn,ms)=>{const id=++timerId;timers.set(id,{fn,ms});return id;},
@@ -66,10 +67,8 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
   finish({preparation:{state:'idle'}});await flush();
   assert.equal(calls.length,3);assert.equal(timers.size,1);
   assert.equal(context.scheduleDashboardReload(),true);
-  assert.equal(active(),false,'filter navigation suspends reads before the reload delay');
-  assert.equal(timers.size,1);assert.equal([...timers.values()][0].ms,120);
-  await context.pollPreparationStatus();await context.requestDashboardRefresh();
-  assert.equal(calls.length,3);
+  assert.equal(active(),true,'filter updates keep the dashboard and status poller active');
+  assert.equal(timers.size,2);assert.ok([...timers.values()].some(timer=>timer.ms===120));
 })().then(()=>process.stdout.write('lifecycle-ok\n'))
   .catch(error=>{console.error(error);process.exitCode=1;});
 """
@@ -308,12 +307,8 @@ const context = {PREPARATION_PHASES:{complete:5},PREPARATION_PHASE_LABELS:[],
 vm.createContext(context);vm.runInContext(input.renderer,context);
 context.renderPreparationStatus({state:'complete',finished_at:'2026-02-01'},{});
 context.renderPreparationStatus({state:'complete',finished_at:'2026-02-01'},{});
-assert.equal(events.length,1);
-assert.equal(events[0].type,'reflect-snapshot-published');
-assert.equal(events[0].cancelable,true);
-assert.equal(events[0].detail.completion,'2026-02-01');
-assert.equal(events[0].detail.profile,'snapshot');
-assert.deepEqual(scheduled,input.handled ? [] : [450]);
+assert.equal(events.length,0,'status rendering does not independently publish or reload');
+assert.deepEqual(scheduled,[]);
 context.D={_unpublishedNavigation:true};
 assert.equal(context.renderPreparationStatus({state:'idle'},{}),false);
 assert.equal(notices.at(-1).kicker,'Report not loaded');
@@ -483,12 +478,12 @@ vm.createContext(context);vm.runInContext(bundle,context);
     element('button-impact').listeners.click();
     assert.equal(new URLSearchParams(location.search).get('tab'),'impact');
     const event=new context.CustomEvent('reflect-snapshot-published',{cancelable:true,detail:{completion:'2026-11-09T12:00:00Z'}});
-    assert.equal(context.document.dispatchEvent(event),true,'first publication must recover missing session navigation through normal reload');
+    assert.equal(context.document.dispatchEvent(event),false,'first publication refreshes active analysis in place');
     assert.equal(new URLSearchParams(location.search).get('session'),empty ? null : 'first');
     if(empty){assert.match(element('sb-list').innerHTML,/Session navigation is updating/);assert.ok(!element('sb-list').innerHTML.includes('No sessions match'));}
     element('button-sessions').listeners.click();
     const sessionEvent=new context.CustomEvent('reflect-snapshot-published',{cancelable:true,detail:{completion:'2026-11-09T12:00:01Z'}});
-    assert.equal(context.document.dispatchEvent(sessionEvent),true,'unpublished selected session also permits first publication recovery');
+    context.document.dispatchEvent(sessionEvent); // Session navigation refreshes in place without a document reload.
     return;
   }
   assert.ok(!data._navigationFromCache,'no completed report exists to call cached');
@@ -528,3 +523,38 @@ def test_complete_bootstrap_opens_captured_session_before_first_published_report
 @pytest.mark.parametrize("initial_tab", ["static_demo", "static_session"])
 def test_static_demo_bootstrap_and_all_scenario_evidence_stay_read_only(initial_tab):
     _run_complete_bootstrap_contract(initial_tab)
+
+
+def test_one_status_poller_publishes_only_material_revisions_without_reload():
+    node = shutil.which('node')
+    if node is None:
+        pytest.skip('Node required')
+    source = Path('src/reflect/frontend/js_bootstrap.js').read_text()
+    lifecycle = source[source.index('let preparationStatusPollTimer ='):source.index('const PREPARATION_PHASES')]
+    lifecycle += source[source.index('async function pollPreparationStatus()'):source.index('async function loadDashboardData()')]
+    script = r'''
+const assert=require('node:assert/strict'),vm=require('node:vm');
+const source=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
+const events=[],timers=[]; let calls=0;
+let payload={publication:{generation:'one',completed_at:'first'},user_state_revision:1,preparation:{state:'running'}};
+const context={D:{sql_backed:true},CustomEvent:class {constructor(type,options){this.type=type;Object.assign(this,options);}},
+ document:{dispatchEvent:event=>{events.push(event);return true;}},
+ window:{addEventListener:()=>{},setTimeout:(fn,ms)=>{timers.push(ms);return timers.length;},clearTimeout:()=>{},location:{reload:()=>assert.fail('must not reload')}},
+ renderPreparationStatus:value=>value.state==='running',renderRawStorageStatus:()=>{},updatePreparationStatus:()=>{},
+ reportSupportsServerFiltering:()=>true,
+ fetch:async()=>{calls++;return {ok:true,json:async()=>payload};}};
+vm.createContext(context);vm.runInContext(source,context);
+(async()=>{
+ await Promise.all([context.pollPreparationStatus(),context.pollPreparationStatus()]);
+ assert.equal(calls,1);assert.equal(timers.at(-1),1000);
+ await context.pollPreparationStatus();
+ assert.equal(events.filter(e=>e.type==='reflect-snapshot-published').length,1);
+ payload={...payload,user_state_revision:2};await context.pollPreparationStatus();
+ payload={...payload,publication:{generation:'two',completed_at:'second'},preparation:{state:'complete'}};
+ await context.pollPreparationStatus();
+ assert.equal(events.filter(e=>e.type==='reflect-snapshot-published').length,3);
+ assert.equal(timers.at(-1),10000);
+})().catch(error=>{console.error(error);process.exitCode=1;});
+'''
+    result = subprocess.run([node, '-e', script], input=json.dumps(lifecycle), text=True, capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr

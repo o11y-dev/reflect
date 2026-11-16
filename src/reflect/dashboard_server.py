@@ -9,19 +9,17 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable
 from concurrent.futures import CancelledError, Future
-from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 from reflect.dashboard_explore import (
-    EXPLORE_VIEW_TABS,
     build_explore_payload,
     canonical_explore_view,
     parse_dashboard_scope,
 )
 from reflect.dashboard_improvements import DashboardImprovementAdapter
-from reflect.dashboard_queries import build_dashboard_payload, finalize_dashboard_analysis
+from reflect.dashboard_queries import build_dashboard_payload
 from reflect.dashboard_read_executor import (
     DashboardReadBusyError,
     DashboardReadExecutor,
@@ -29,20 +27,9 @@ from reflect.dashboard_read_executor import (
 )
 from reflect.dashboard_sessions import build_session_payload, load_session_detail
 from reflect.improvements.service import FindingWorkflowConflict
-from reflect.preparation import (
-    PreparationCoordinator,
-    PreparationProfile,
-    PreparationScheduler,
-    PreparationSnapshot,
-    PreparationState,
-    SQLiteSnapshotInspector,
-)
 from reflect.store.sqlite import (
     SnapshotNotReadyError,
-    connect_sqlite_read_only,
-    consistent_snapshot,
     is_sqlite_busy,
-    snapshot_incomplete,
 )
 from reflect.utils import _json_dumps, _json_loads, logger
 
@@ -330,153 +317,6 @@ def _retain_skill_analysis(current: dict, retained: dict | None) -> dict:
     return {**current, "analysis_state": "stale", "evidence_state": "published", "publication": retained["publication"]}
 
 
-class DashboardDataCache:
-    """Publish one immutable dashboard payload at a time."""
-
-    def __init__(
-        self,
-        loader: Callable[[], dict[str, object]],
-        *,
-        refresh_loader: Callable[[], dict[str, object]] | None = None,
-        analysis_loader: Callable[..., dict[str, object]] | None = None,
-        preparation_running: Callable[[], bool] | None = None,
-        cache_path: Path | None = None,
-        cache_key: str = "",
-    ) -> None:
-        self._refresh_loader = refresh_loader or loader
-        self._analysis_loader = analysis_loader
-        self._usage_publication: tuple[str, str, dict[str, object]] | None = None
-        self._preparation_running = preparation_running
-        self._lock = threading.Lock()
-        self._cache_path = cache_path
-        self._cache_key = cache_key
-        self._refresh_pending = False
-        self._refreshing = False
-        self._payload = self._read_published()
-        if self._payload is not None:
-            self._refresh_pending = True
-            return
-        try:
-            self._payload = loader()
-        except SnapshotNotReadyError:
-            # The server can start during another process's refresh. Its routes
-            # report preparing until a coherent generation becomes available.
-            self._payload = None
-
-    @property
-    def has_payload(self) -> bool:
-        with self._lock:
-            return self._payload is not None
-
-    def _read_published(self) -> dict[str, object] | None:
-        if self._cache_path is None:
-            return None
-        try:
-            saved = _json_loads(self._cache_path.read_bytes())
-            if saved.get("format") == 1 and saved.get("key") == self._cache_key:
-                payload = saved.get("payload")
-                return payload if isinstance(payload, dict) else None
-        except (OSError, ValueError, AttributeError):
-            pass
-        return None
-
-    def _persist(self, payload: dict[str, object]) -> None:
-        if self._cache_path is None:
-            return
-        # Disk persistence is best-effort; readers retain the in-memory report.
-        _persist_dashboard_json(self._cache_path, {
-            "format": 1, "key": self._cache_key, "payload": payload,
-        })
-
-    def get(self) -> dict[str, object]:
-        with self._lock:
-            payload = self._payload
-            pending = self._refresh_pending
-            refreshing = self._refreshing
-        preparation_running = self._preparation_running is not None and self._preparation_running()
-        if (payload is None or pending) and not refreshing and not preparation_running:
-            refreshed = self.refresh()
-            if refreshed is not None:
-                return refreshed
-        if payload is None:
-            raise SnapshotNotReadyError("The report is preparing. Retry after the active refresh completes.")
-        return payload
-
-    def refresh(self) -> dict[str, object] | None:
-        with self._lock:
-            self._usage_publication = None
-            if self._refreshing:
-                # Preserve a newer completion request while the current loader
-                # publishes. Readers themselves do not enqueue duplicate loads.
-                self._refresh_pending = True
-                return self._payload
-            self._refreshing = True
-            self._refresh_pending = False
-        try:
-            payload = self._refresh_loader()
-        except SnapshotNotReadyError:
-            # Another process may start refreshing after our pipeline releases
-            # its lock. Retain the completed cache and retry on the next read.
-            with self._lock:
-                self._refresh_pending = True
-            return None
-        else:
-            self._persist(payload)
-            with self._lock:
-                self._payload = payload
-            return payload
-        finally:
-            with self._lock:
-                self._refreshing = False
-
-    def publish_usage(self, details: dict[str, object]) -> None:
-        payload = self.refresh()
-        completed_at = details.get("completed_at")
-        run = (details.get("analysis_window") or {}).get("date_to")
-        with self._lock:
-            if (run and completed_at and payload is self._payload and payload is not None
-                    and payload.get("snapshot_completed_at") == completed_at
-                    and not self._refreshing and not self._refresh_pending):
-                self._usage_publication = (run, completed_at, payload)
-
-    def complete(self, result) -> dict[str, object] | None:
-        """Reuse only this run's successful usage read; otherwise rebuild normally."""
-        details = result.details
-        run = (details.get("analysis_window") or {}).get("date_to")
-        revision = tuple(tuple(row) for row in details.get("publication_revision") or ())
-        with self._lock:
-            publication, self._usage_publication = self._usage_publication, None
-            reuse = (self._analysis_loader is not None and publication is not None
-                     and publication[0] == run and bool(revision)
-                     and publication[2] is self._payload
-                     and not self._refreshing and not self._refresh_pending)
-            if reuse:
-                self._refreshing = True
-        if not reuse:
-            return self.refresh()
-        try:
-            payload = self._analysis_loader(
-                publication[2], usage_completed_at=publication[1], publication_revision=revision,
-            )
-            with self._lock:
-                if self._refresh_pending:
-                    raise SnapshotNotReadyError("Another publication requested a complete refresh.")
-            self._persist(payload)
-            with self._lock:
-                self._payload = payload
-            return payload
-        except SnapshotNotReadyError:
-            pass  # A changed generation requires the ordinary full loader.
-        except BaseException:
-            with self._lock:
-                self._refresh_pending = True
-            raise
-        finally:
-            with self._lock:
-                self._refreshing = False
-        return self.refresh()
-
-
 def _perf_start() -> float:
     return time.perf_counter() if os.environ.get("REFLECT_DEBUG_PERF") else 0.0
 
@@ -513,9 +353,9 @@ def _bounded_query_limit(value: object, *, default: int, maximum: int) -> int:
 def start_publish_server(
     *,
     db_path: Path,
-    preparation_scheduler: PreparationScheduler | None = None,
     raw_storage_status_loader: Callable[[], dict[str, object]] | None = None,
     open_browser: bool = True,
+    backend_runner=None,
 ) -> None:
     """Start a local FastAPI server and open the dashboard in a browser.
 
@@ -528,9 +368,9 @@ def start_publish_server(
         port,
         docs_dir,
         db_path=db_path,
-        preparation_scheduler=preparation_scheduler,
         raw_storage_status_loader=raw_storage_status_loader,
         open_browser=open_browser,
+        backend_runner=backend_runner,
     )
 
 
@@ -538,8 +378,6 @@ def build_dashboard_app(
     *,
     docs_dir: Path,
     db_path: Path,
-    preparation_worker: PreparationCoordinator | None = None,
-    preparation_scheduler: PreparationScheduler | None = None,
     raw_storage_status_loader: Callable[[], dict[str, object]] | None = None,
     project_root: Path | None = None,
     read_executor: DashboardReadExecutor | None = None,
@@ -567,13 +405,16 @@ def build_dashboard_app(
             "session": build_session_payload,
             "conversation": load_session_detail,
         }[operation]
-        return await run_in_threadpool(builder, db_path, *args, **kwargs)
+        def read_pinned():
+            with SnapshotReadContext(db_path):
+                return builder(db_path, *args, **kwargs)
+        return await run_in_threadpool(read_pinned)
 
     @app.exception_handler(DashboardReadBusyError)
     async def read_busy(request, exc):
         key = response_cache.key(request.url.path, request.query_params, method=request.method)
         cached = response_cache.stale(key, reason="busy")
-        if cached is not None and SQLiteSnapshotInspector(db_path, profile=None).inspect().schema_ready:
+        if cached is not None and PublishedSnapshotStore(db_path).current() is not None:
             return JSONResponse(cached, headers={"X-Reflect-Publication": "stale"})
         return JSONResponse(
             {"error": str(exc), "state": "busy", "reason": "reading"},
@@ -584,81 +425,24 @@ def build_dashboard_app(
     async def snapshot_not_ready(request, exc):
         key = response_cache.key(request.url.path, request.query_params, method=request.method)
         cached = response_cache.stale(key, reason=exc.state)
-        if cached is not None and SQLiteSnapshotInspector(db_path, profile=None).inspect().schema_ready:
+        if cached is not None and PublishedSnapshotStore(db_path).current() is not None:
             return JSONResponse(cached, headers={"X-Reflect-Publication": "stale"})
         return JSONResponse(
             {"error": str(exc), "state": exc.state},
             status_code=503 if exc.state == "preparing" else 409,
             headers={"Retry-After": "2"} if exc.state == "preparing" else {},
         )
-    if preparation_worker is not None and preparation_scheduler is not None:
-        raise ValueError("pass a preparation worker or scheduler, not both")
-    active_preparation = (
-        preparation_scheduler.coordinator
-        if preparation_scheduler is not None
-        else preparation_worker
-    )
-    initial_snapshot_pending = active_preparation is not None
-
-    def require_initial_snapshot(*, canonical_only: bool = False, usage_only: bool = False) -> None:
-        nonlocal initial_snapshot_pending
-        if not initial_snapshot_pending and not canonical_only:
-            return
-        snapshot = (
-            SQLiteSnapshotInspector(db_path, profile=None)
-            if canonical_only else SQLiteSnapshotInspector(
-                db_path, profile=PreparationProfile.USAGE if usage_only else PreparationProfile.SNAPSHOT,
-            )
-        ).inspect()
-        if snapshot.error:
-            raise sqlite3.OperationalError(snapshot.error)
-        if not snapshot.schema_ready:
-            raise SnapshotNotReadyError("The first report is preparing. Retry after preparation completes.")
-        if not canonical_only:
-            initial_snapshot_pending = False
-
-    def load_dashboard(**kwargs):
-        require_initial_snapshot(usage_only=True)
-        return build_dashboard_payload(db_path, **kwargs)
+    from reflect.store.snapshots import PublishedSnapshotStore, SnapshotReadContext
 
     @app.middleware("http")
     async def await_initial_snapshot(request, call_next):
         request.state.dashboard_read_order = response_cache.start_read()
-        if request.url.path.startswith("/api/explore/"):
-            view_name = request.url.path.removeprefix("/api/explore/")
-            if canonical_explore_view(view_name) not in EXPLORE_VIEW_TABS:
-                return JSONResponse({"error": f"Unknown Explore view: {view_name}", "view": view_name}, status_code=404)
-        if request.url.path.startswith("/api/") and request.url.path not in {"/api/status", "/api/refresh"}:
-            try:
-                require_initial_snapshot(
-                    canonical_only=(
-                        request.url.path.startswith(("/api/session/", "/api/skills/"))
-                        or request.url.path in {"/api/skills", "/api/impact", "/api/workflows"}
-                        or request.url.path in {"/api/explore/tools", "/api/explore/graph", "/api/explore/context"}
-                        or bool(re.fullmatch(r"/api/(?:workflows|impact)/[^/]+/evidence", request.url.path))
-                        or bool(re.fullmatch(r"/api/workflows/[^/]+/(?:dismiss|restore)", request.url.path))
-                    ),
-                    usage_only=request.url.path in {"/api/data", "/api/explore/usage"},
-                )
-            except SnapshotNotReadyError as exc:
-                return await snapshot_not_ready(request, exc)
-            # Serve completed evidence before doing an expensive read while a
-            # refresh is in progress. Exact path/query keys prevent scope leaks.
-            if request.method == "GET" and re.fullmatch(
-                r"/api/(?:(?:workflows|impact)(?:/[^/]+/evidence)?|skills/[^/]+/usage-graph)", request.url.path,
-            ):
-                with closing(connect_sqlite_read_only(db_path, profile=None)) as conn:
-                    pending = snapshot_incomplete(conn)
-                if pending:
-                    key = response_cache.key(request.url.path, request.query_params)
-                    cached = response_cache.stale(key, reason="preparing", allow_recorded=True)
-                    if cached is not None and request.url.path == "/api/impact":
-                        with closing(connect_sqlite_read_only(db_path, profile=None)) as conn:
-                            latest = conn.execute("SELECT MAX(measured_at) FROM measurements").fetchone()[0]
-                        if str(latest or "") > _impact_recorded_at(cached):
-                            cached = None
-                    if cached is not None:
-                        return JSONResponse(cached, headers={"X-Reflect-Publication": cached.get("publication", {}).get("state", "stale")})
+        operational = request.url.path in {"/api/status", "/api/refresh", "/api/backend", "/api/database/health", "/api/capture/status"} or request.url.path.startswith("/api/jobs")
+        submission = request.method == 'POST' and bool(re.fullmatch(
+            r'/api/(?:skills/(?:discover|sync)|maintenance(?:/[^/]+)+|database/[^/]+|memories/sync|loops/[^/]+/build)', request.url.path))
+        if request.url.path.startswith("/api/") and not operational and not submission and PublishedSnapshotStore(db_path).current() is None:
+            return JSONResponse({"error": "The first completed report is preparing", "state": "preparing", "reason": "initial_publication",
+                                 "status_url": "/api/status"}, status_code=503, headers={"Retry-After": "2"})
         return await call_next(request)
 
     workflow_project_root = (project_root or Path.cwd()).expanduser().resolve()
@@ -700,65 +484,6 @@ def build_dashboard_app(
         headers = {"X-Reflect-Publication": publication_state} if publication_state else {}
         return JSONResponse(payload, headers=headers)
 
-    @consistent_snapshot
-    def completed_panel_responses(_db_path):
-        return {
-            "/api/findings": improvement_adapter.findings(status=None, include_resolved=False, limit=100),
-            "/api/rules": improvement_adapter.rules(),
-            "/api/workflows": improvement_adapter.workflows(behavior_type=None, status=None),
-            "/api/loops": improvement_adapter.loops(kind=None, status=None, limit=100),
-            "/api/impact": improvement_adapter.impact(),
-            "/api/skills": improvement_adapter.skills(status=None, include_stale=False, limit=500),
-        }
-
-    def retain_completed_panels(_result):
-        read_order = response_cache.start_read()
-        try:
-            payloads = completed_panel_responses(db_path)
-        except SnapshotNotReadyError:
-            return
-        except (sqlite3.Error, ValueError):
-            logger.warning("Could not retain completed dashboard panels", exc_info=True)
-            return
-        for path, payload in payloads.items():
-            params = {"limit": "500"} if path == "/api/skills" else {}
-            response_cache.put(response_cache.key(path, params), payload, read_order=read_order)
-
-    if active_preparation is not None:
-        dashboard_cache = DashboardDataCache(
-            lambda: load_dashboard(
-                limit=50,
-                offset=0,
-                lazy_all_tabs=True,
-                range_name=default_range,
-            ),
-            refresh_loader=lambda: load_dashboard(
-                lazy_heavy_tabs=True,
-                base_tab_names=set(EXPLORE_VIEW_TABS["usage"]),
-                range_name=default_range,
-            ),
-            analysis_loader=lambda payload, **kwargs: finalize_dashboard_analysis(db_path, payload, **kwargs),
-            preparation_running=lambda: active_preparation.snapshot().state is PreparationState.RUNNING,
-            cache_path=db_path.with_suffix(".dashboard.json"),
-            cache_key=f"{db_path.resolve()}:{default_range}",
-        )
-    else:
-        dashboard_cache = DashboardDataCache(
-            lambda: build_dashboard_payload(
-                db_path, lazy_heavy_tabs=True, base_tab_names=set(EXPLORE_VIEW_TABS["usage"]),
-                range_name=default_range,
-            )
-        )
-    if active_preparation is not None:
-        active_preparation.add_usage_callback(dashboard_cache.publish_usage)
-        active_preparation.add_completion_callback(dashboard_cache.complete)
-        active_preparation.add_completion_callback(retain_completed_panels)
-        # The server starts its worker after app construction. Retain an
-        # existing completed generation before the first refresh invalidates it.
-        retain_completed_panels(None)
-    if dashboard_cache.has_payload:
-        initial_snapshot_pending = False
-
     def requested_scope(params):
         scope = list(parse_dashboard_scope(params))
         if not params.get("range") and not scope[1]:
@@ -769,9 +494,6 @@ def build_dashboard_app(
         revision = await run_in_threadpool(read_revision, db_path, operation)
         key = response_cache.key(request.url.path, request.query_params)
         retained = response_cache.stale(key, reason="reading")
-        if operation == "graph" and revision[2] != "ready" and retained is not None:
-            retained["publication"]["reason"] = "preparing"
-            return JSONResponse(retained, headers={"X-Reflect-Publication": "stale"})
         current = response_cache.current(key, revision)
         if current is not None:
             return JSONResponse(current)
@@ -814,26 +536,7 @@ def build_dashboard_app(
         }.get((active_tab, explore_view), set())
         if session_id and not usage_view:
             filtered_base_tabs = {"activity", "models", "costs", "tools", "mcp", "agents"}
-        has_filter = any(
-            [q, session_id, agents, model != "all", status != "all", range_name != default_range]
-        )
         try:
-            if not has_filter:
-                perf_kind = "cached"
-                payload = await run_in_threadpool(dashboard_cache.get)
-                try:
-                    with closing(connect_sqlite_read_only(db_path, profile="usage")) as conn:
-                        if payload.get("analysis_state") == "ready" and snapshot_incomplete(conn):
-                            raise SnapshotNotReadyError("Analysis is refreshing; retaining the completed report.")
-                except SnapshotNotReadyError as exc:
-                    if not SQLiteSnapshotInspector(db_path, profile=None).inspect().schema_ready:
-                        raise
-                    retained = response_cache.stale(
-                        response_cache.key(request.url.path, params),
-                        reason=exc.state, fallback=payload,
-                    )
-                    return JSONResponse(retained, headers={"X-Reflect-Publication": "stale"})
-                return read_response(request, payload)
             if session_id and not usage_view and not any(
                 [q, agents, model != "all", status != "all", range_name != "all"]
             ):
@@ -897,57 +600,7 @@ def build_dashboard_app(
         detail = await read_query("conversation", session_id)
         if detail is None:
             return JSONResponse({"error": f"Session {session_id} not found"}, status_code=404)
-        return JSONResponse(detail, headers={"Access-Control-Allow-Origin": "*"})
-
-    @app.get("/api/status")
-    def api_status():
-        snapshot = (
-            active_preparation.snapshot()
-            if active_preparation is not None
-            else PreparationSnapshot(state=PreparationState.IDLE, generation=0)
-        )
-        schedule = (
-            preparation_scheduler.snapshot().as_dict()
-            if preparation_scheduler is not None
-            else {"enabled": False, "interval_seconds": 0, "next_run_at": ""}
-        )
-        raw_storage = None
-        if raw_storage_status_loader is not None:
-            try:
-                raw_storage = raw_storage_status_loader()
-            except OSError as exc:
-                raw_storage = {
-                    "accepting_telemetry": None,
-                    "error": str(exc),
-                }
-        return JSONResponse(
-            {
-                "preparation": snapshot.as_dict(),
-                "automatic_refresh": schedule,
-                "raw_storage": raw_storage,
-                "refresh_available": active_preparation is not None,
-            }
-        )
-
-    @app.post("/api/refresh")
-    def api_refresh():
-        if active_preparation is None:
-            return JSONResponse(
-                {
-                    "error": "This report server is snapshot-only. Start Reflect normally or use `reflect server --refresh start`.",
-                    "refresh_available": False,
-                },
-                status_code=409,
-            )
-        started = active_preparation.start()
-        return JSONResponse(
-            {
-                "started": started,
-                "refresh_available": True,
-                "preparation": active_preparation.snapshot().as_dict(),
-            },
-            status_code=202 if started else 200,
-        )
+        return JSONResponse(detail)
 
     @app.get("/api/findings")
     def api_findings(request: Request):
@@ -1139,6 +792,7 @@ def build_dashboard_app(
                 improvement_adapter.apply_workflow(
                     candidate_id,
                     project_root=resolve_workflow_project_root((body or {}).get("project_root")),
+                    review=(body or {}).get('review'),
                 )
             )
         except KeyError as exc:
@@ -1237,10 +891,9 @@ def _serve_dashboard(
     docs_dir: Path,
     *,
     db_path: Path,
-    preparation_worker: PreparationCoordinator | None = None,
-    preparation_scheduler: PreparationScheduler | None = None,
     raw_storage_status_loader: Callable[[], dict[str, object]] | None = None,
     open_browser: bool = True,
+    backend_runner=None,
 ) -> None:
     """Inline FastAPI server for the local `reflect` browser report."""
     import threading
@@ -1248,46 +901,27 @@ def _serve_dashboard(
 
     try:
         import uvicorn
-
-        __import__("fastapi")
-    except ImportError:
-        logger.warning("FastAPI/uvicorn not installed. Install with: pip install fastapi uvicorn")
-        logger.warning("Falling back to writing artifact file...")
-        preparation = preparation_scheduler.coordinator if preparation_scheduler else preparation_worker
-        if preparation is not None:
-            preparation.start()
-            preparation.wait()
-            snapshot = preparation.snapshot()
-            if snapshot.state is PreparationState.FAILED:
-                raise RuntimeError(f"Report preparation failed: {snapshot.error}") from None
-        artifact = docs_dir / "_reflect_data.json"
-        artifact.write_text(_json_dumps(build_dashboard_payload(db_path)), encoding="utf-8")
-        print(f"Wrote: {artifact}")
-        return
-
+    except ImportError as exc:
+        raise RuntimeError("The Reflect backend requires FastAPI and uvicorn") from exc
+    from reflect.backend_api import install_backend
+    from reflect.backend_lifecycle import instance_token
+    from reflect.backend_runtime import BackendJobRunner
+    backend_runner = backend_runner or BackendJobRunner(db_path)
+    backend_runner.raw_storage_status_loader = raw_storage_status_loader
     read_executor = DashboardReadExecutor()
     try:
         app = build_dashboard_app(
             docs_dir=docs_dir,
             db_path=db_path,
-            preparation_worker=preparation_worker,
-            preparation_scheduler=preparation_scheduler,
-            raw_storage_status_loader=raw_storage_status_loader,
+                raw_storage_status_loader=raw_storage_status_loader,
             read_executor=read_executor,
         )
+        install_backend(app, backend_runner, token=instance_token(db_path), port=port)
         url = f"http://127.0.0.1:{port}/?report=api/data"
         if open_browser:
             threading.Timer(0.5, webbrowser.open, args=[url]).start()
         print(f"\n  Serving at: {url}")
         print("  Press Ctrl-C to stop\n")
-        if preparation_scheduler is not None:
-            preparation_scheduler.start()
-        elif preparation_worker is not None:
-            preparation_worker.start()
         uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
     finally:
         read_executor.close()
-        if preparation_scheduler is not None:
-            preparation_scheduler.close()
-        elif preparation_worker is not None:
-            preparation_worker.close()

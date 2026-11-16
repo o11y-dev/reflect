@@ -584,7 +584,7 @@ def test_valid_source_timestamp_repairs_epoch_session_start(tmp_path):
         conn.close()
 
 
-def test_prune_cli_is_dry_run_first_and_creates_consistent_backup(tmp_path):
+def test_prune_cli_is_dry_run_first_and_creates_consistent_backup(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     conn = connect_sqlite(db_path)
     try:
@@ -595,6 +595,8 @@ def test_prune_cli_is_dry_run_first_and_creates_consistent_backup(tmp_path):
     finally:
         conn.close()
 
+    from tests.backend_helpers import bind_backend, execute_job
+    backend = bind_backend(monkeypatch, db_path)
     runner = CliRunner()
     preview = runner.invoke(
         main,
@@ -609,7 +611,7 @@ def test_prune_cli_is_dry_run_first_and_creates_consistent_backup(tmp_path):
         ],
     )
     assert preview.exit_code == 0, preview.output
-    assert json.loads(preview.output)["candidate_count"] == 1
+    assert execute_job(backend, json.loads(preview.output)["job_id"])["candidate_count"] == 1
     conn = connect_sqlite(db_path)
     try:
         assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 1
@@ -630,7 +632,7 @@ def test_prune_cli_is_dry_run_first_and_creates_consistent_backup(tmp_path):
         ],
     )
     assert applied.exit_code == 0, applied.output
-    payload = json.loads(applied.stdout)
+    payload = execute_job(backend, json.loads(applied.stdout)["job_id"])
     assert payload["pruned_session_ids"] == ["stale-invalid"]
     backup_path = payload["backup_path"]
     assert backup_path
@@ -679,6 +681,8 @@ def test_prune_cli_holds_write_lock_across_backup_and_apply(
         "reflect.store.sqlite.backup_sqlite",
         backup_then_attempt_write,
     )
+    from tests.backend_helpers import bind_backend, execute_job
+    backend = bind_backend(monkeypatch, db_path)
     result = CliRunner().invoke(
         main,
         [
@@ -694,12 +698,10 @@ def test_prune_cli_holds_write_lock_across_backup_and_apply(
     )
 
     assert result.exit_code == 0, result.output
-    payload = json.loads(result.stdout)
+    payload = execute_job(backend, json.loads(result.stdout)["job_id"])
     assert payload["pruned_session_ids"] == ["before-backup"]
     assert writer_errors == ["database is locked"]
-    assert "Backing up the local telemetry store... 100%" in result.stderr
-    assert "Pruning eligible sessions and updating affected derived data..." in result.stderr
-    assert "Session pruning complete." in result.stderr
+    assert backend.jobs.get(json.loads(result.stdout)["job_id"]).state == "succeeded"
     backup_conn = sqlite3.connect(payload["backup_path"])
     conn = sqlite3.connect(db_path)
     try:
@@ -712,7 +714,7 @@ def test_prune_cli_holds_write_lock_across_backup_and_apply(
         backup_conn.close()
 
 
-def test_prune_cli_dry_run_does_not_migrate_an_outdated_store(tmp_path):
+def test_prune_cli_dry_run_does_not_migrate_an_outdated_store(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     conn = connect_sqlite(db_path)
     try:
@@ -720,13 +722,21 @@ def test_prune_cli_dry_run_does_not_migrate_an_outdated_store(tmp_path):
     finally:
         conn.close()
 
+    from tests.backend_helpers import bind_backend
+    backend = bind_backend(monkeypatch, db_path)
     result = CliRunner().invoke(
         main,
         ["db", "prune-sessions", "--json", "--db-path", str(db_path)],
     )
 
-    assert result.exit_code == 1
-    assert "pending migrations: 22, 23, 24" in result.output
+    assert result.exit_code == 0, result.output
+    from reflect.backend_runtime import _execute_job
+    job_id = json.loads(result.stdout)['job_id']
+    backend.jobs.claim(job_id, owner='fixture')
+    _execute_job(db_path, backend.jobs.path, job_id, 'fixture')
+    job = backend.jobs.get(job_id)
+    assert job.state == 'failed'
+    assert 'pending migrations: 22, 23, 24' in job.error
     conn = sqlite3.connect(db_path)
     try:
         assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 21
@@ -734,7 +744,7 @@ def test_prune_cli_dry_run_does_not_migrate_an_outdated_store(tmp_path):
         conn.close()
 
 
-def test_prune_cli_backs_up_before_migrating_for_apply(tmp_path):
+def test_prune_cli_backs_up_before_migrating_for_apply(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     conn = connect_sqlite(db_path)
     try:
@@ -742,6 +752,8 @@ def test_prune_cli_backs_up_before_migrating_for_apply(tmp_path):
     finally:
         conn.close()
 
+    from tests.backend_helpers import bind_backend, execute_job
+    backend = bind_backend(monkeypatch, db_path)
     result = CliRunner().invoke(
         main,
         [
@@ -755,12 +767,12 @@ def test_prune_cli_backs_up_before_migrating_for_apply(tmp_path):
     )
 
     assert result.exit_code == 0, result.output
-    backup_path = json.loads(result.stdout)["backup_path"]
+    backup_path = execute_job(backend, json.loads(result.stdout)["job_id"])["backup_path"]
     assert backup_path
     conn = sqlite3.connect(db_path)
     backup_conn = sqlite3.connect(backup_path)
     try:
-        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 56
+        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 57
         assert backup_conn.execute(
             "SELECT MAX(version) FROM schema_migrations"
         ).fetchone()[0] == 21

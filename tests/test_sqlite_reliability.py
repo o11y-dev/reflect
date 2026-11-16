@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import selectors
@@ -80,20 +81,23 @@ def test_timeout_configuration_is_validated_and_applied(tmp_path, monkeypatch):
 def test_mcp_keeps_memory_available_when_tracking_writer_is_busy(tmp_path, monkeypatch):
     db = tmp_path / "reflect.db"
     memory_id = seed_memory(db, tmp_path)
+    from tests.backend_helpers import bind_backend, execute_job, publish_actions
+    publish_actions(db)
+    backend = bind_backend(monkeypatch, db)
     monkeypatch.setenv("REFLECT_DB_PATH", str(db))
     writer = connect_sqlite(db)
     try:
         writer.execute("BEGIN IMMEDIATE")
-        answer = mcp.reflect_context("release gate", path=str(tmp_path))
+        answer = asyncio.run(mcp.reflect_context("release gate", path=str(tmp_path)))
         assert answer["memories"][0]["id"] == memory_id
         assert answer["task_run_id"]
         assert answer["next_action"]["tool"] == "reflect_complete"
         assert answer["tracking_state"] == "accepted_pending"
         assert writer.execute("SELECT COUNT(*) FROM mcp_task_runs").fetchone()[0] == 0
         writer.rollback()
-        from reflect.task_inbox import TaskEventInbox
-        TaskEventInbox(db).drain()
-        assert mcp.reflect_task_status(answer["task_run_id"])["tracking_state"] == "applied"
+        job = next(job for job in backend.jobs.list() if job.kind == "task_projection")
+        execute_job(backend, job.job_id)
+        assert asyncio.run(mcp.reflect_task_status(answer["task_run_id"]))["tracking_state"] == "applied"
     finally:
         writer.close()
 
@@ -159,6 +163,9 @@ def test_usage_refresh_does_not_publish_stale_dashboard_projections(tmp_path, mo
     db, spans = tmp_path / "reflect.db", tmp_path / "spans"
     write_events(spans, 1)
     preparation_pipeline.prepare_sql_report_db(db, otlp_traces=None, spans_dir=spans)
+    from tests.backend_helpers import bind_backend, publish_actions
+    publish_actions(db)
+    bind_backend(monkeypatch, db)
     from reflect.store.ingest import ingest_local_spans_file
 
     write_events(spans, 2)
@@ -171,7 +178,8 @@ def test_usage_refresh_does_not_publish_stale_dashboard_projections(tmp_path, mo
     assert SQLiteSnapshotInspector(db, profile=PreparationProfile.USAGE).inspect().ready
     assert not SQLiteSnapshotInspector(db).inspect().ready
     monkeypatch.setenv("REFLECT_DB_PATH", str(db))
-    assert mcp.reflect_usage(global_scope=True, period="all")
+    payload = asyncio.run(mcp.reflect_usage(global_scope=True, period="all"))
+    assert payload["totals"]["input_tokens"] == 10
     # A later no-change usage refresh must not publish the still-stale report.
     preparation_pipeline.prepare_usage_db(db, otlp_traces=None, include_native_sessions=False)
     assert not SQLiteSnapshotInspector(db).inspect().ready
@@ -248,114 +256,10 @@ def test_backlog_does_not_repeat_global_hash_repair_per_normalization_batch(tmp_
     assert calls == [1001]
 
 
-@pytest.mark.parametrize("has_cached_report", [False, True])
-def test_cache_publication_race_defers_reload_without_failing_completed_refresh(has_cached_report):
-    from reflect.dashboard_server import DashboardDataCache
-    from reflect.preparation import PreparationCoordinator, PreparationState
-
-    ready = has_cached_report
-    generation = 0
-
-    def load():
-        if not ready:
-            raise SnapshotNotReadyError("another process is refreshing")
-        return {"generation": generation}
-
-    cache = DashboardDataCache(load)
-
-    def prepare(_progress):
-        nonlocal ready, generation
-        generation += 1
-        ready = False  # A queued refresh starts before the cache callback.
-        return {"refreshed": True}
-
-    worker = PreparationCoordinator(prepare)
-    worker.add_completion_callback(lambda _result: cache.refresh())
-    worker.start()
-    assert worker.wait(timeout=2)
-    assert worker.snapshot().state == PreparationState.COMPLETE
-    if has_cached_report:
-        assert cache.get() == {"generation": 0}
-    else:
-        with pytest.raises(SnapshotNotReadyError):
-            cache.get()
-    ready = True
-    assert cache.get() == {"generation": 1}
 
 
-@pytest.mark.parametrize("has_cached_report", [False, True])
-def test_cache_read_during_preparation_or_publication_never_duplicates_load(has_cached_report):
-    import threading
-
-    from reflect.dashboard_server import DashboardDataCache
-
-    running = True
-    started, release = threading.Event(), threading.Event()
-    loads = []
-
-    def initial():
-        if not has_cached_report:
-            raise SnapshotNotReadyError("first snapshot is preparing")
-        return {"generation": 0}
-
-    def load():
-        loads.append(1)
-        started.set()
-        assert release.wait(timeout=2)
-        return {"generation": len(loads)}
-
-    cache = DashboardDataCache(initial, refresh_loader=load, preparation_running=lambda: running)
-
-    def read():
-        if has_cached_report:
-            assert cache.get() == {"generation": 0}
-        else:
-            with pytest.raises(SnapshotNotReadyError):
-                cache.get()
-
-    read()
-    assert loads == []
-    publication = threading.Thread(target=cache.refresh)
-    publication.start()
-    assert started.wait(timeout=1)
-    try:
-        read()
-        running = False  # Single-flight protection also covers uncoordinated readers.
-        read()
-        assert len(loads) == 1
-    finally:
-        release.set()
-        publication.join(timeout=2)
-    assert not publication.is_alive()
-    assert cache.get() == {"generation": 1}
-    assert len(loads) == 1
 
 
-def test_cache_preserves_a_newer_refresh_requested_during_publication():
-    import threading
-
-    from reflect.dashboard_server import DashboardDataCache
-
-    started, release = threading.Event(), threading.Event()
-    loads = []
-
-    def load():
-        loads.append(1)
-        started.set()
-        assert release.wait(timeout=2)
-        return {"generation": len(loads)}
-
-    cache = DashboardDataCache(lambda: {"generation": 0}, refresh_loader=load)
-    first = threading.Thread(target=cache.refresh)
-    first.start()
-    assert started.wait(timeout=1)
-    try:
-        assert cache.refresh() == {"generation": 0}
-        assert len(loads) == 1
-    finally:
-        release.set()
-        first.join(timeout=2)
-    assert cache.get() == {"generation": 2}
 
 
 def test_crashed_process_releases_lock_and_large_backlog_replays_without_duplicates(tmp_path):
@@ -453,13 +357,13 @@ def test_dashboard_reports_preparing_until_snapshot_is_published(tmp_path):
             assert response.status_code == 503
             assert response.headers["Retry-After"] == "2"
             assert response.json()["state"] == "preparing"
-        # Captured activity is independently readable in one pinned transaction;
-        # unpublished analysis must remain unavailable rather than blocking it.
+        # Before the first complete generation, evidence endpoints report
+        # preparing rather than serving provisional canonical rows.
         detail = client.get("/api/session/session-test")
-        assert detail.status_code == 200
-        assert detail.json()["derived_state"] == "preparing"
-        assert "measurements" not in detail.json()
+        assert detail.status_code == 503
         mark_snapshot(conn, ready=True)
+        from reflect.store.snapshots import PublishedSnapshotStore
+        PublishedSnapshotStore(db, reserve_bytes=0).publish(evidence_revision="first")
         published = client.get("/api/data")
         assert published.status_code == 200
         published_at = conn.execute(
@@ -478,6 +382,9 @@ def test_dashboard_reports_preparing_until_snapshot_is_published(tmp_path):
 def test_memory_and_task_writes_interleave_with_cross_process_refresh_batches(tmp_path, monkeypatch):
     db, spans = tmp_path / "reflect.db", tmp_path / "spans"
     memory_id = seed_memory(db, tmp_path)
+    from tests.backend_helpers import bind_backend, execute_job, publish_actions
+    publish_actions(db)
+    backend = bind_backend(monkeypatch, db)
     write_events(spans, 505)
     monkeypatch.setenv("REFLECT_DB_PATH", str(db))
     script = """
@@ -518,17 +425,20 @@ prepare_sql_report_db(Path(sys.argv[1]), otlp_traces=None, spans_dir=Path(sys.ar
 
     try:
         expect(b"writer-held")
-        fallback = mcp.reflect_context("release gate", path=str(tmp_path))
+        fallback = asyncio.run(mcp.reflect_context("release gate", path=str(tmp_path)))
         assert fallback["memories"][0]["id"] == memory_id
         assert fallback["task_run_id"]
         assert fallback["tracking_state"] == "accepted_pending"
         process.stdin.write(b"continue\n")
         expect(b"batch-committed")
-        tracked = mcp.reflect_context("release gate", path=str(tmp_path))
+        tracked = asyncio.run(mcp.reflect_context("release gate", path=str(tmp_path)))
         assert tracked["task_run_id"]
         seed_memory(db, tmp_path)
         _, errors = process.communicate(b"continue\n", timeout=30)
         assert process.returncode == 0, errors.decode()
+        for job in backend.jobs.list():
+            if job.kind == "task_projection" and job.state == "queued":
+                execute_job(backend, job.job_id)
         assert SQLiteSnapshotInspector(db).inspect().ready
         conn = connect_sqlite_read_only(db)
         try:

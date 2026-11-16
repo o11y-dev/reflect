@@ -236,7 +236,7 @@ async function refreshImprovementSurfaces(){
 }
 
 const improvementTabs = new Set(['inbox', 'workflows', 'skills', 'impact']);
-window.setInterval(() => {
+document.addEventListener('reflect-status-polled', () => {
   if (!dashboardDocumentActive || document.visibilityState === 'hidden') return;
   if (currentParams().get('tab') === 'explore') {
     hydrateExploreView(activeExploreView).catch(() => {});
@@ -246,7 +246,7 @@ window.setInterval(() => {
   if (IMPROVEMENT_DATA.skill_analysis_state === 'pending' || Object.values(IMPROVEMENT_DATA.resources || {}).some(resource => resource.state !== 'ready')) {
     refreshImprovementSurfaces().catch(() => {});
   }
-}, 15000);
+});
 
 const workflowDateFormatter = new Intl.DateTimeFormat(navigator.language || undefined, {
   dateStyle:'medium',
@@ -1006,6 +1006,7 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     ledgerDialog.dataset.targetPath = preview.target_path || '';
     ledgerDialog.dataset.workflowSlug = String(content.slug || '');
     ledgerDialog.dataset.previewContent = JSON.stringify(content);
+    ledgerDialog.dataset.reviewBinding = JSON.stringify({revision_hash:preview.revision_hash, target_path:preview.target_path, previous_hash:preview.previous_hash, proposed_hash:preview.proposed_hash});
     presentLedgerRead(request, {
       title:reviewTitle,
       subtitle:active ? 'Enabled · project-local skill' : 'Enable workflow · choose project, review changes, enable',
@@ -1242,7 +1243,7 @@ document.addEventListener('click', async event => {
       }
       trigger.disabled = true;
       trigger.textContent = 'Enabling…';
-      const applied = await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/apply`, {method:'POST', body:{project_root:projectRoot}});
+      const applied = await ledgerRequest(`/api/workflows/${encodeURIComponent(candidateId)}/apply`, {method:'POST', body:{project_root:projectRoot, review:JSON.parse(ledgerDialog.dataset.reviewBinding || '{}')}});
       if (applied.status !== 'active') throw new Error('Enablement could not be confirmed. Inspect the workflow before trying again.');
       enabledPath = applied.target_path || ledgerDialog.dataset.targetPath;
     } else if (action === 'rollback') {
@@ -1288,7 +1289,6 @@ let explorePublication = 0;
 document.addEventListener('reflect-snapshot-published', event => {
   // The first publication fills missing navigation through the existing URL-
   // preserving reload. Later publications retain independent section data.
-  if (D._unpublishedNavigation) return;
   explorePublication += 1;
   if (currentParams().get('tab') === 'explore') {
     event.preventDefault();

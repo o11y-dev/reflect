@@ -149,6 +149,8 @@ def scoped_db(tmp_path, monkeypatch):
 
 
 def test_default_seven_day_sql_scope_counts_activity_before_navigation_pagination(scoped_db):
+    from test_dashboard_sql_api import _publish_report
+    _publish_report(scoped_db)
     client = TestClient(build_dashboard_app(docs_dir=scoped_db.parent, db_path=scoped_db))
     default = client.get("/api/data").json()
     assert default["range"] == "7d"

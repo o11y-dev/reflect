@@ -20,7 +20,8 @@ const params = new URLSearchParams('tab=skills');
 const context = {ledgerDialog:{dataset:{}},escHtml:String, fmt:String, humanizeLedgerLabel:String,dashboardDocumentActive:true,
   currentParams:()=>params, updateUrlParams:fn=>fn(params),
   skillAvailabilityPresentation:()=>({kind:'installed',label:'Recorded installation',detail:'One recorded package'}),
-  window:{setInterval:fn=>{context.tick=fn;}},
+  document:{addEventListener:(event,fn)=>{if(event==='reflect-status-polled')context.tick=fn;}},
+  window:{},
 };
 vm.createContext(context);vm.runInContext(source,context);
 (async()=>{

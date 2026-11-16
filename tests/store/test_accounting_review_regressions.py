@@ -303,6 +303,8 @@ def test_upgrade_duplicate_usage_heals_full_report_rollups_without_new_events(tm
         assert not PendingRefreshState(conn).capture().pending_for()
     payload = build_session_payload(db, "redacted-session")
     assert payload["sqlite"]["sessions"]["rows"][0]["input_tokens"] == 100
+    from tests.test_dashboard_sql_api import _publish_report
+    _publish_report(db)
     client = TestClient(build_dashboard_app(docs_dir=tmp_path, db_path=db))
     response = client.get("/api/data?range=all")
     assert response.status_code == 200

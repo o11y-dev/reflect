@@ -112,6 +112,8 @@ class UserStateStore:
             return
         columns = [row[1] for row in conn.execute('PRAGMA evidence.table_info(workflow_candidates)')]
         values = conn.execute('SELECT * FROM evidence.workflow_candidates WHERE id=?', (candidate_id,)).fetchone()
+        if values is None and owned:
+            return  # Reviewed saved instructions remain authoritative after source pruning.
         if values is None:
             raise UserStateConflict('The workflow source is unavailable; save and review an independent draft first')
         candidate = dict(zip(columns, values, strict=True))

@@ -13,6 +13,8 @@ def test_dismiss_restore_works_during_refresh_and_invalidates_published_inventor
     db = tmp_path / 'reflect.db'
     _seed_sql_report_db(db)
     _seed_improvement_ledger(db)
+    from backend_helpers import publish_actions
+    publish_actions(db)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db)
     with TestClient(app) as client:
         assert client.get('/api/data').status_code == 200
@@ -90,9 +92,12 @@ def test_busy_disposition_returns_retryable_error_without_mutating(tmp_path):
     db = tmp_path / 'reflect.db'
     _seed_sql_report_db(db)
     _seed_improvement_ledger(db)
+    from backend_helpers import publish_actions
+    publish_actions(db)
     with TestClient(build_dashboard_app(docs_dir=tmp_path, db_path=db)) as client:
         candidate = client.get('/api/workflows').json()['workflows'][0]['id']
-        with closing(connect_sqlite(db)) as writer:
+        from reflect.backend_runtime import action_store_path
+        with closing(connect_sqlite(action_store_path(db))) as writer:
             writer.execute('BEGIN IMMEDIATE')
             response = client.post(f'/api/workflows/{candidate}/dismiss')
             assert response.status_code == 503

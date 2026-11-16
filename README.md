@@ -371,6 +371,30 @@ not automatically attach an Inbox finding or its baseline. Use the Inbox action
 when you want to preserve that connection. Conflicting saves keep your edits;
 open the existing linked draft to review the difference.
 
+### Shared local backend and asynchronous work
+
+The dashboard, CLI and MCP use the same authenticated local FastAPI service.
+Product commands start it automatically when needed. Reads use the last completed
+snapshot while a separate worker ingests and derives new evidence. Workflow
+reviews and saved drafts use a separate local state store, so a refresh does not
+block review. Setup, gateway and server administration remain local commands.
+
+Refresh, skill discovery, loop building, memory maintenance and database
+maintenance return a durable job ID. Closing the client does not cancel the job.
+Use `--wait` when a script needs the completed result:
+
+```bash
+reflect refresh --json
+reflect jobs list
+reflect jobs show JOB_ID
+reflect jobs wait JOB_ID
+reflect skills discover --refresh --wait
+```
+
+MCP clients can inspect the same work with `reflect_jobs`. Task completion is
+acknowledged as pending until its receipt appears in a completed publication;
+acceptance alone does not claim that the dashboard already includes it.
+
 ### CLI: inspect, enable and monitor the same workflow
 
 Replace the uppercase IDs with IDs returned by Reflect. Run preview and apply

@@ -82,7 +82,7 @@ def test_refresh_pipelines_share_process_lock_and_release_after_failure(
             process.communicate(timeout=5)
 
 
-def test_skills_sync_waits_for_refresh_while_registry_stays_readable(tmp_path):
+def test_skills_sync_waits_for_refresh_while_registry_stays_readable(tmp_path, monkeypatch):
     import json
 
     from click.testing import CliRunner
@@ -96,6 +96,11 @@ def test_skills_sync_waits_for_refresh_while_registry_stays_readable(tmp_path):
     conn = connect_sqlite(db)
     migrate(conn)
     mark_snapshot(conn, ready=True)
+    conn.close()
+    from tests.backend_helpers import bind_backend, execute_job, publish_actions
+    publish_actions(db)
+    backend = bind_backend(monkeypatch, db)
+    conn = connect_sqlite(db)
     root = tmp_path / "skills" / "bounded-recovery"
     root.mkdir(parents=True)
     (root / "SKILL.md").write_text(
@@ -111,7 +116,7 @@ def test_skills_sync_waits_for_refresh_while_registry_stays_readable(tmp_path):
             process = subprocess.Popen(
                 [
                     sys.executable, "-u", "-c",
-                    "from reflect.core import main; print('started', flush=True); main()",
+                    "import sys, pytest; from pathlib import Path; from tests.backend_helpers import bind_backend; from reflect.core import main; patcher=pytest.MonkeyPatch(); bind_backend(patcher, Path(sys.argv[sys.argv.index('--db-path')+1])); print('started', flush=True); main()",
                     "skills", "sync", "--json", "--path", str(root.parent),
                     "--db-path", str(alias),
                 ],
@@ -120,18 +125,19 @@ def test_skills_sync_waits_for_refresh_while_registry_stays_readable(tmp_path):
                 bufsize=0,
             )
             assert _readline(process) == b"started"
-            # Wait beyond SQLite's timeout: sync must queue on the shared lock.
-            with pytest.raises(subprocess.TimeoutExpired):
-                process.communicate(timeout=0.3)
+            stdout, stderr = process.communicate(timeout=10)
+            assert process.returncode == 0, stderr.decode()
+            assert json.loads(stdout)["state"] == "queued"
             listed = CliRunner().invoke(main, ["skills", "--json", "--db-path", str(db)])
             assert listed.exit_code == 0, listed.output
-            assert json.loads(listed.stdout)["refresh"] is None
+            assert json.loads(listed.stdout).get("refresh") is None
             conn.rollback()
         stdout, stderr = process.communicate(timeout=10)
         assert process.returncode == 0, stderr.decode()
         payload = json.loads(stdout)
-        assert payload["refresh"]["filesystem_skills"] == 1
-        assert payload["skills"][0]["slug"] == "bounded-recovery"
+        assert execute_job(backend, payload["job_id"])["filesystem_skills"] == 1
+        listed = CliRunner().invoke(main, ["skills", "--json", "--db-path", str(db)])
+        assert json.loads(listed.stdout)["skills"][0]["slug"] == "bounded-recovery"
     finally:
         conn.close()
         if process is not None:
