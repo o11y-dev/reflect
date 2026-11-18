@@ -83,6 +83,7 @@ def test_skills_sync_is_explicit_and_read_only_list_does_not_reconcile(tmp_path,
             "--json",
             "--path",
             str(root.parent),
+            "--no-wait",
             "--db-path",
             str(db_path),
         ],
@@ -128,6 +129,7 @@ def test_skills_sync_is_explicit_and_read_only_list_does_not_reconcile(tmp_path,
             "--json",
             "--path",
             str(root.parent),
+            "--no-wait",
             "--db-path",
             str(db_path),
         ],
@@ -147,7 +149,7 @@ def test_skills_sync_reports_external_writer_and_recovers(tmp_path, monkeypatch,
     if initialized:
         migrate(writer)
     backend = bind_backend(monkeypatch, db_path)
-    args = ['skills', 'sync', '--json', '--path', str(root), '--db-path', str(db_path)]
+    args = ['skills', 'sync', '--json', '--path', str(root), '--no-wait', '--db-path', str(db_path)]
     try:
         writer.execute('BEGIN IMMEDIATE')
         queued = CliRunner().invoke(main, args)
@@ -207,6 +209,7 @@ def test_loops_list_show_and_build_promote_selected_evidence_to_pending_skill(tm
                 "--agent",
                 "codex",
                 "--json",
+                "--no-wait",
                 "--db-path",
                 str(db_path),
             ],
@@ -245,7 +248,7 @@ def test_loop_build_empty_array_leaves_pattern_and_registry_unchanged(tmp_path, 
     with patch("reflect.core.shutil.which", return_value="/usr/bin/codex"), patch(
         "subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="[]", stderr="")
     ):
-        result = CliRunner().invoke(main, ["loops", "build", loop_id, "--agent", "codex", "--db-path", str(db_path)])
+        result = CliRunner().invoke(main, ["loops", "build", loop_id, "--agent", "codex", "--no-wait", "--db-path", str(db_path)])
         assert result.exit_code == 0, result.output
         job_id = result.output.split()[0]
         outcome = execute_job(backend, job_id)
@@ -268,7 +271,7 @@ def test_loop_build_rejects_multiple_drafts(tmp_path, monkeypatch):
     with patch("reflect.core.shutil.which", return_value="/usr/bin/codex"), patch(
         "subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="[{}, {}]", stderr="")
     ):
-        result = CliRunner().invoke(main, ["loops", "build", loop_id, "--agent", "codex", "--db-path", str(db_path)])
+        result = CliRunner().invoke(main, ["loops", "build", loop_id, "--agent", "codex", "--no-wait", "--db-path", str(db_path)])
         from reflect.backend_runtime import _execute_job
         job_id = result.output.split()[0]
         backend.jobs.claim(job_id, owner='fixture')

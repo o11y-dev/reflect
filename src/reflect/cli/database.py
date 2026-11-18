@@ -21,8 +21,8 @@ def db() -> None:
 @click.option("--db-path", type=click.Path(path_type=Path), default=DEFAULT_DB_PATH)
 @click.option("--otlp", "otlp_traces", type=click.Path(path_type=Path), default=None, help="Path to OTLP traces JSONL export file.")
 @click.option("--spans-file", type=click.Path(path_type=Path), default=None, help="Path to local hook spans JSONL file.")
-@click.option("--wait", is_flag=True)
-def ingest(db_path: Path, otlp_traces: Path | None, spans_file: Path | None, wait: bool = False) -> None:
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the durable background job.")
+def ingest(db_path: Path, otlp_traces: Path | None, spans_file: Path | None, wait: bool = True) -> None:
     'Ingest telemetry records into raw_events.'
     if bool(otlp_traces) == bool(spans_file):
         raise click.UsageError('Pass exactly one of --otlp or --spans-file')
@@ -32,8 +32,8 @@ def ingest(db_path: Path, otlp_traces: Path | None, spans_file: Path | None, wai
 @db.command("ingest-spans")
 @click.option("--db-path", type=click.Path(path_type=Path), default=DEFAULT_DB_PATH)
 @click.option("--spans-file", type=click.Path(path_type=Path), required=True, help="Path to local hook spans JSONL file.")
-@click.option("--wait", is_flag=True)
-def db_ingest_spans(db_path: Path, spans_file: Path, wait: bool = False) -> None:
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the durable background job.")
+def db_ingest_spans(db_path: Path, spans_file: Path, wait: bool = True) -> None:
     'Ingest local hook spans JSONL into raw_events with source/hash dedupe.'
     submit(db_path, '/api/maintenance/database/ingest', {'spans_file': str(spans_file.resolve())}, wait=wait)
 
@@ -41,32 +41,32 @@ def db_ingest_spans(db_path: Path, spans_file: Path, wait: bool = False) -> None
 @db.command("normalize")
 @click.option("--db-path", type=click.Path(path_type=Path), default=DEFAULT_DB_PATH)
 @click.option("--limit", type=int, default=None, help="Maximum pending raw_events to normalize.")
-@click.option("--wait", is_flag=True)
-def db_normalize(db_path: Path, limit: int | None, wait: bool = False) -> None:
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the durable background job.")
+def db_normalize(db_path: Path, limit: int | None, wait: bool = True) -> None:
     'Normalize pending raw_events into canonical SQLite tables.'
     submit(db_path, '/api/maintenance/database/normalize', {'limit': limit}, wait=wait)
 
 
 @db.command("rebuild-graph")
 @click.option("--db-path", type=click.Path(path_type=Path), default=DEFAULT_DB_PATH)
-@click.option("--wait", is_flag=True)
-def db_rebuild_graph(db_path: Path, wait: bool = False) -> None:
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the durable background job.")
+def db_rebuild_graph(db_path: Path, wait: bool = True) -> None:
     'Rebuild graph_nodes and graph_edges from canonical SQLite tables.'
     submit(db_path, '/api/maintenance/database/graph', {}, wait=wait)
 
 
 @db.command("rebuild-rollups")
 @click.option("--db-path", type=click.Path(path_type=Path), default=DEFAULT_DB_PATH)
-@click.option("--wait", is_flag=True)
-def db_rebuild_rollups(db_path: Path, wait: bool = False) -> None:
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the durable background job.")
+def db_rebuild_rollups(db_path: Path, wait: bool = True) -> None:
     'Rebuild aggregate rollup tables from canonical SQLite tables.'
     submit(db_path, '/api/maintenance/database/rollups', {}, wait=wait)
 
 
 @db.command("migrate")
 @click.option("--db-path", type=click.Path(path_type=Path), default=DEFAULT_DB_PATH)
-@click.option("--wait", is_flag=True)
-def db_migrate(db_path: Path, wait: bool = False) -> None:
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the durable background job.")
+def db_migrate(db_path: Path, wait: bool = True) -> None:
     'Apply pending SQLite migrations.'
     submit(db_path, '/api/maintenance/database/migrate', {}, wait=wait)
 
@@ -111,7 +111,7 @@ def db_doctor(db_path: Path) -> None:
     type=click.Path(path_type=Path),
     default=DEFAULT_DB_PATH,
 )
-@click.option("--wait", is_flag=True)
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the durable background job.")
 def db_prune_sessions(
     older_than_days: int,
     all_inactive_sessions: bool,
@@ -120,6 +120,6 @@ def db_prune_sessions(
     vacuum: bool,
     as_json: bool,
     db_path: Path,
-    wait: bool = False) -> None:
+    wait: bool = True) -> None:
     'Preview or prune inactive sessions selected by the retention policy.'
     submit(db_path, '/api/maintenance/database/prune', {'older_than_days': older_than_days, 'all_inactive_sessions': all_inactive_sessions, 'apply_changes': apply_changes, 'backup': backup, 'vacuum': vacuum}, wait=wait, as_json=as_json)

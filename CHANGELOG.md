@@ -32,7 +32,8 @@
 
 ### Changed
 
-- Route product CLI and MCP operations through the shared local FastAPI backend. Reads lease completed evidence during refresh; workflow reviews commit independently. Long operations return durable job IDs with optional `--wait`, and `reflect jobs` inspects progress.
+- CLI durable operations now wait for completion by default; `--no-wait` returns the queued job ID for asynchronous use. `reflect jobs` continues to inspect and wait on jobs.
+- Route product CLI and MCP operations through the shared local FastAPI backend. Reads lease completed evidence during refresh; workflow reviews commit independently. Long operations use durable jobs and `reflect jobs` inspects progress.
 
 ### Fixed
 

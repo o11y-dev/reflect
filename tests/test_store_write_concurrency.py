@@ -34,7 +34,7 @@ elif operation == 'dashboard_feedback':
     print(json.dumps(result))
 else:
     commands = {
-        'memory_sync': ['memory', 'sync', str(root), '--json'],
+        'memory_sync': ['memory', 'sync', str(root), '--json', '--no-wait'],
         'workflow_add': ['workflows', 'add', str(root / 'SKILL.md')],
         'feedback': ['feedback', 'session', '--outcome', 'good'],
     }

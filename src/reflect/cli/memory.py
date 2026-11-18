@@ -90,8 +90,8 @@ def memory_providers(db_path: Path, as_json: bool) -> None:
     "--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db"
 )
 @click.option("--json", "as_json", is_flag=True, help="Print sync result as JSON.")
-@click.option("--wait", is_flag=True)
-def memory_sync(path: Path | None, db_path: Path, as_json: bool, wait: bool = False) -> None:
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the durable background job.")
+def memory_sync(path: Path | None, db_path: Path, as_json: bool, wait: bool = True) -> None:
     'Sync local folder instruction memories. PATH defaults to the current directory.'
     submit(db_path, '/api/memories/sync', {'path': str((path or Path.cwd()).resolve())}, wait=wait, as_json=as_json)
 
@@ -235,8 +235,8 @@ def memory_inspect(memory_id: str, db_path: Path, as_json: bool) -> None:
 @click.option(
     "--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db"
 )
-@click.option("--wait", is_flag=True)
-def memory_forget(memory_id: str, db_path: Path, wait: bool = False) -> None:
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the durable background job.")
+def memory_forget(memory_id: str, db_path: Path, wait: bool = True) -> None:
     'Delete one local memory by ID.'
     submit(db_path, '/api/memories/' + quote(memory_id, safe='') + '/forget', {}, wait=wait)
 
@@ -254,10 +254,10 @@ def memory_forget(memory_id: str, db_path: Path, wait: bool = False) -> None:
     "--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db"
 )
 @click.option("--json", "as_json", is_flag=True, help="Print validation result as JSON.")
-@click.option("--wait", is_flag=True)
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the durable background job.")
 def memory_validate(
     memory_id: str | None, candidate_id: str | None, db_path: Path, as_json: bool
-, wait: bool = False) -> None:
+, wait: bool = True) -> None:
     'Validate a memory or promote a candidate.'
     submit(db_path, '/api/memories/validate', {'memory_id': memory_id, 'candidate_id': candidate_id}, wait=wait, as_json=as_json)
 

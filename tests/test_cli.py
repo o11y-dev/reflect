@@ -161,7 +161,7 @@ class TestHelp:
             ingest_local_spans_file(writer, file_path=spans)
             writer.execute("BEGIN IMMEDIATE")
             result = runner.invoke(main, [
-                "refresh", "--no-native-sessions", "--db-path", str(db_path),
+                "refresh", "--no-native-sessions", "--no-wait", "--db-path", str(db_path),
                 "--spans-dir", str(empty_spans),
             ])
             assert result.exit_code == 0, result.output

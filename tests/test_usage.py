@@ -601,7 +601,7 @@ def test_usage_refresh_ingests_only_the_runtime_native_session(tmp_path, monkeyp
     backend = bind_backend(monkeypatch, db_path)
     result = CliRunner().invoke(
         main,
-        ["usage", "--session", "session-runtime", "--refresh", "--json", "--db-path", str(db_path)],
+        ["usage", "--session", "session-runtime", "--refresh", "--no-wait", "--json", "--db-path", str(db_path)],
     )
 
     assert result.exit_code == 0, result.output
@@ -735,6 +735,7 @@ def test_usage_requires_explicit_refresh_for_pending_rollup_rebuild(
             "--session",
             "session-current",
             "--refresh",
+            "--no-wait",
             "--json",
             "--db-path",
             str(db_path),

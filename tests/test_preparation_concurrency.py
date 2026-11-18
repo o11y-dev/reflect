@@ -118,6 +118,7 @@ def test_skills_sync_waits_for_refresh_while_registry_stays_readable(tmp_path, m
                     sys.executable, "-u", "-c",
                     "import sys, pytest; from pathlib import Path; from tests.backend_helpers import bind_backend; from reflect.core import main; patcher=pytest.MonkeyPatch(); bind_backend(patcher, Path(sys.argv[sys.argv.index('--db-path')+1])); print('started', flush=True); main()",
                     "skills", "sync", "--json", "--path", str(root.parent),
+                    "--no-wait",
                     "--db-path", str(alias),
                 ],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,

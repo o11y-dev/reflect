@@ -606,6 +606,7 @@ def test_prune_cli_is_dry_run_first_and_creates_consistent_backup(tmp_path, monk
             "--older-than-days",
             "1",
             "--json",
+            "--no-wait",
             "--db-path",
             str(db_path),
         ],
@@ -627,6 +628,7 @@ def test_prune_cli_is_dry_run_first_and_creates_consistent_backup(tmp_path, monk
             "1",
             "--apply",
             "--json",
+            "--no-wait",
             "--db-path",
             str(db_path),
         ],
@@ -692,6 +694,7 @@ def test_prune_cli_holds_write_lock_across_backup_and_apply(
             "60",
             "--apply",
             "--json",
+            "--no-wait",
             "--db-path",
             str(db_path),
         ],
@@ -726,7 +729,7 @@ def test_prune_cli_dry_run_does_not_migrate_an_outdated_store(tmp_path, monkeypa
     backend = bind_backend(monkeypatch, db_path)
     result = CliRunner().invoke(
         main,
-        ["db", "prune-sessions", "--json", "--db-path", str(db_path)],
+        ["db", "prune-sessions", "--json", "--no-wait", "--db-path", str(db_path)],
     )
 
     assert result.exit_code == 0, result.output
@@ -761,6 +764,7 @@ def test_prune_cli_backs_up_before_migrating_for_apply(tmp_path, monkeypatch):
             "prune-sessions",
             "--apply",
             "--json",
+            "--no-wait",
             "--db-path",
             str(db_path),
         ],

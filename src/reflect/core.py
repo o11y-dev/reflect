@@ -928,7 +928,7 @@ def _render_usage_report(console: Console, report) -> None:
     default=REFLECT_HOME / "state" / "reflect.db",
     help="SQLite telemetry store.",
 )
-@click.option("--wait", is_flag=True, help="Wait for the durable background job.")
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the durable background job.")
 def refresh_snapshot(
     analysis_days: int | None,
     all_history: bool,
@@ -939,7 +939,7 @@ def refresh_snapshot(
     keep_processed_raw: bool,
     as_json: bool,
     db_path: Path,
-    wait: bool = False) -> None:
+    wait: bool = True) -> None:
     'Explicitly ingest telemetry and rebuild the prepared local snapshot.'
     if all_history and (analysis_days is not None or analysis_sessions):
         raise click.UsageError('--all-history cannot be combined with --analysis-days or --session')
@@ -961,6 +961,7 @@ def refresh_snapshot(
     is_flag=True,
     help="Ingest local telemetry before reporting. Slower on large native session stores.",
 )
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the refresh job to finish.")
 @click.option("--json", "as_json", is_flag=True, help="Print the usage report as JSON.")
 @click.option(
     "--db-path",
@@ -974,6 +975,7 @@ def usage(
     agent: str | None,
     period: str | None,
     refresh: bool,
+    wait: bool,
     as_json: bool,
     db_path: Path,
 ) -> None:
@@ -993,7 +995,7 @@ def usage(
         body = {'otlp_traces': str(traces.expanduser().resolve()) if traces else None,
                 'include_native_sessions': True, 'native_session_ids': [session_id] if session_id else [],
                 'analysis_session_ids': [session_id] if session_id else None}
-        backend_submit(db_path, '/api/refresh', body, as_json=as_json)
+        backend_submit(db_path, '/api/refresh', body, wait=wait, as_json=as_json)
         return
     payload = backend_request(db_path, 'POST', '/api/usage', body={'session_id': session_id, 'global_scope': global_scope, 'period': period or 'week', 'agent': agent})
     if as_json:
@@ -1028,6 +1030,7 @@ def usage(
     default=None,
     help="Refresh local telemetry before reading; the default reads the existing snapshot.",
 )
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the refresh job to finish.")
 @click.option(
     "--db-path",
     type=click.Path(path_type=Path),
@@ -1043,6 +1046,7 @@ def improve(
     global_scope: bool,
     period: str | None,
     refresh: bool | None,
+    wait: bool,
     db_path: Path,
 ) -> None:
     'Show scoped actionable improvements or inspect OBSERVATION_ID.'
@@ -1054,7 +1058,7 @@ def improve(
     if selectors > 1:
         raise click.UsageError('Select --path, --session, or --global --period')
     if refresh and not demo:
-        backend_submit(db_path, '/api/refresh', as_json=as_json)
+        backend_submit(db_path, '/api/refresh', wait=wait, as_json=as_json)
         return
     if demo:
         resource = '/api/demo/improvements'
@@ -1155,6 +1159,7 @@ def _render_improvement_detail(console: Console, observation, *, ledger=None) ->
     default=None,
     help="Refresh telemetry first; the default reads an existing snapshot.",
 )
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the refresh job to finish.")
 @click.option(
     "--db-path",
     type=click.Path(path_type=Path),
@@ -1167,11 +1172,12 @@ def ask(
     task_file: Path | None,
     context_path: Path | None,
     refresh: bool | None,
+    wait: bool,
     db_path: Path,
 ) -> None:
     'Answer QUESTION from reviewed workflows, linked evidence, and scoped memory.'
     if refresh:
-        backend_submit(db_path, '/api/refresh', as_json=as_json)
+        backend_submit(db_path, '/api/refresh', wait=wait, as_json=as_json)
         return
     payload = backend_request(db_path, 'POST', '/api/answers', body={'question': question, 'path': str((context_path or Path.cwd()).resolve()), 'task_file': str(task_file.resolve()) if task_file else None})
     if as_json:
@@ -1233,17 +1239,19 @@ def _print_workflow_table(candidates, *, title: str = "Workflows") -> None:
     default=None,
     help="Refresh telemetry first; the default reads an existing snapshot.",
 )
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the refresh job to finish.")
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 def workflows_list(
     as_json: bool,
     behavior_type: str | None,
     status: str | None,
     refresh: bool | None,
+    wait: bool,
     db_path: Path,
 ) -> None:
     'List pending, active, and rolled-back workflows.'
     if refresh:
-        backend_submit(db_path, '/api/refresh', as_json=as_json)
+        backend_submit(db_path, '/api/refresh', wait=wait, as_json=as_json)
         return
     from reflect.improvements.models import WorkflowCandidateRecord
     payload = backend_request(db_path, 'GET', '/api/workflows', params={k:v for k,v in {'type': behavior_type, 'status': status, 'limit': 500}.items() if v is not None})
@@ -1383,6 +1391,7 @@ register_workflow_dispositions(workflows)
     default=None,
     help="Refresh loop detection first; the default reads the existing loop registry.",
 )
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the refresh job to finish.")
 @click.option(
     "--db-path",
     type=click.Path(path_type=Path),
@@ -1395,13 +1404,14 @@ def loops(
     kind: str | None,
     status: str | None,
     refresh: bool | None,
+    wait: bool,
     db_path: Path,
 ) -> None:
     'Inspect agent-native continuations and observed behavioral loops.'
     if ctx.invoked_subcommand:
         return
     if refresh:
-        backend_submit(db_path, '/api/refresh', as_json=as_json)
+        backend_submit(db_path, '/api/refresh', wait=wait, as_json=as_json)
         return
     payload = backend_request(db_path, 'GET', '/api/loops', params={k:v for k,v in {'kind': kind, 'status': status, 'limit': 500}.items() if v is not None})
     if as_json:
@@ -1500,8 +1510,8 @@ def loops_show(loop_id: str, as_json: bool, db_path: Path) -> None:
     type=click.Path(path_type=Path),
     default=REFLECT_HOME / "state" / "reflect.db",
 )
-@click.option("--wait", is_flag=True, help="Wait for the durable background job.")
-def loops_build(loop_id: str, agent: str | None, as_json: bool, db_path: Path, wait: bool = False) -> None:
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the durable background job.")
+def loops_build(loop_id: str, agent: str | None, as_json: bool, db_path: Path, wait: bool = True) -> None:
     'Ask an agent to draft one pending skill from a selected loop.'
     selected, _ = _resolve_skills_agent(agent)
     backend_submit(db_path, '/api/loops/' + quote(loop_id, safe='') + '/build',
@@ -1516,6 +1526,7 @@ def loops_build(loop_id: str, agent: str | None, as_json: bool, db_path: Path, w
     required=True,
 )
 @click.option("--reason", default=None, help="Optional concise reason; stored only in the local database.")
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the refresh job to finish.")
 @click.option(
     "--refresh/--no-refresh",
     default=False,
@@ -1526,12 +1537,13 @@ def feedback(
     session_id: str,
     outcome: str,
     reason: str | None,
+    wait: bool,
     refresh: bool,
     db_path: Path,
 ) -> None:
     'Record an explicit outcome for SESSION_ID.'
     if refresh:
-        backend_submit(db_path, '/api/refresh')
+        backend_submit(db_path, '/api/refresh', wait=wait)
         return
     echo_json(backend_request(db_path, 'POST', '/api/feedback/' + quote(session_id, safe=''), body={'outcome': outcome.lower(), 'reason': reason}))
 
@@ -1882,13 +1894,13 @@ def skills(
     type=click.Path(path_type=Path),
     default=REFLECT_HOME / "state" / "reflect.db",
 )
-@click.option("--wait", is_flag=True, help="Wait for the durable background job.")
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the durable background job.")
 def skills_sync(
     scan_paths: tuple[Path, ...],
     lifecycle: str | None,
     as_json: bool,
     db_path: Path,
-    wait: bool = False) -> None:
+    wait: bool = True) -> None:
     'Reconcile skill files, workflow drafts, usage, and measurements.'
     backend_submit(db_path, '/api/skills/sync', {'scan_paths': [str(p.resolve()) for p in (scan_paths or _default_skill_scan_paths())], 'lifecycle': lifecycle}, wait=wait, as_json=as_json)
 
@@ -1975,7 +1987,7 @@ def _print_skill_registry(records, *, refresh: dict[str, int] | None = None) -> 
     type=click.Path(path_type=Path),
     default=REFLECT_HOME / "state" / "reflect.db",
 )
-@click.option("--wait", is_flag=True, help="Wait for the durable background job.")
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the durable background job.")
 def skills_discover(
     otlp_traces: Path | None,
     sessions_dir: Path | None,
@@ -1986,7 +1998,7 @@ def skills_discover(
     agent: str | None,
     yes: bool,
     db_path: Path,
-    wait: bool = False) -> None:
+    wait: bool = True) -> None:
     'Use a coding agent to discover evidence-backed pending skill drafts.'
     selected, _ = _resolve_skills_agent(agent)
     backend_submit(db_path, '/api/skills/discover', {
@@ -2897,8 +2909,8 @@ def _run_doctor() -> None:
 @doctor.command("cost")
 @click.option("--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db")
 @click.option("--alias-path", type=click.Path(path_type=Path), default=None, help="Override model alias JSON path.")
-@click.option("--wait", is_flag=True, help="Wait for the durable background job.")
-def doctor_cost(db_path: Path, alias_path: Path | None, wait: bool = False) -> None:
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the durable background job.")
+def doctor_cost(db_path: Path, alias_path: Path | None, wait: bool = True) -> None:
     'Append missing model aliases from SQL data and refresh cost estimates.'
     backend_submit(db_path, '/api/maintenance/cost', {'alias_path': str(alias_path.resolve()) if alias_path else None}, wait=wait)
 

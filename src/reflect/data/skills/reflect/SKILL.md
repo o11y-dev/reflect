@@ -32,9 +32,9 @@ Use this skill when the user asks for any of the following:
 CLI, MCP and the dashboard share one local backend and completed evidence snapshots.
 `reflect refresh`, `reflect skills discover`, loop builds and maintenance return
 durable job IDs. Use `reflect jobs show JOB_ID`, `reflect jobs wait JOB_ID`, or MCP
-`reflect_jobs` to inspect progress. Add `--wait` to a long CLI operation when its
-completed result is required before continuing. Never repeatedly submit work just
-because the caller disconnected. Accepted task events remain `accepted_pending`
+`reflect_jobs` to inspect progress. CLI job-producing operations wait by default;
+pass `--no-wait` to return immediately with a job ID. Never repeatedly submit work
+just because the caller disconnected. Accepted task events remain `accepted_pending`
 until the publication contains their receipts; inspect the existing task ID.
 
 ## Core workflow

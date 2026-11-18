@@ -25,7 +25,7 @@ def request(db_path: Path, method: str, resource: str, *, params=None, body=None
         raise click.ClickException(str(exc)) from exc
 
 
-def submit(db_path: Path, resource: str, body: dict | None = None, *, wait: bool = False,
+def submit(db_path: Path, resource: str, body: dict | None = None, *, wait: bool = True,
            as_json: bool = False):
     payload = request(db_path, 'POST', resource, body=body)
     if wait:

@@ -61,17 +61,36 @@ def test_usage_cli_mcp_and_api_share_evidence_during_writer(product_backend):
         writer.rollback()
 
 
-def test_refresh_cli_returns_durable_job_and_mcp_can_inspect(product_backend):
+def test_refresh_cli_waits_for_durable_job_by_default(product_backend, monkeypatch):
+    from reflect.mcp import reflect_jobs
+    from reflect.backend_runtime import _execute_job
+    db, runner, _ = product_backend
+    def execute_waiting_job(_db, job_id):
+        assert runner.jobs.claim(job_id, owner='test')
+        _execute_job(db, runner.jobs.path, job_id, 'test')
+        return runner.jobs.get(job_id).response()
+    monkeypatch.setattr('reflect.cli.backend.wait_for_job', execute_waiting_job)
+    result = CliRunner().invoke(main, ['refresh', '--no-native-sessions', '--json', '--db-path', str(db)])
+    assert result.exit_code == 0, result.output
+    import json
+    payload = json.loads(result.output)
+    assert payload['state'] == 'succeeded'
+    assert JobRegistry(runner.jobs.path).get(payload['job_id']).kind == 'refresh'
+    inspected = asyncio.run(reflect_jobs(payload['job_id']))
+    assert inspected['job_id'] == payload['job_id']
+    assert inspected['state'] == 'succeeded'
+
+
+def test_refresh_cli_can_return_queued_job_without_waiting(product_backend):
     from reflect.mcp import reflect_jobs
     db, runner, _ = product_backend
-    result = CliRunner().invoke(main, ['refresh', '--no-native-sessions', '--json', '--db-path', str(db)])
+    result = CliRunner().invoke(main, ['refresh', '--no-wait', '--no-native-sessions', '--json', '--db-path', str(db)])
     assert result.exit_code == 0, result.output
     import json
     payload = json.loads(result.output)
     assert payload['state'] == 'queued'
     assert JobRegistry(runner.jobs.path).get(payload['job_id']).kind == 'refresh'
     inspected = asyncio.run(reflect_jobs(payload['job_id']))
-    assert inspected['job_id'] == payload['job_id']
     assert inspected['state'] == 'queued'
 
 
@@ -421,7 +440,7 @@ def test_usage_refresh_reads_the_default_hook_trace_source(product_backend, monk
     traces.write_text(wrap_otlp([make_span('Stop', session='hook-only', input_tokens=123, output_tokens=45)]) + '\n')
     monkeypatch.setattr('reflect.core.default_otlp_traces', lambda: traces)
     monkeypatch.setattr('reflect.preparation_pipeline._discover_rich_session_files', lambda: [])
-    result = CliRunner().invoke(main, ['usage', '--session', 'hook-only', '--refresh', '--json', '--db-path', str(db)])
+    result = CliRunner().invoke(main, ['usage', '--session', 'hook-only', '--refresh', '--no-wait', '--json', '--db-path', str(db)])
     assert result.exit_code == 0, result.output
     job_id = json.loads(result.stdout)['job_id']
     execute_job(runner, job_id)

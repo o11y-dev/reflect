@@ -380,15 +380,17 @@ reviews and saved drafts use a separate local state store, so a refresh does not
 block review. Setup, gateway and server administration remain local commands.
 
 Refresh, skill discovery, loop building, memory maintenance and database
-maintenance return a durable job ID. Closing the client does not cancel the job.
-Use `--wait` when a script needs the completed result:
+maintenance wait for the durable job to finish and show its completed result.
+Closing the client does not cancel the job. Use `--no-wait` to return a job ID
+immediately when a script needs to continue asynchronously:
 
 ```bash
-reflect refresh --json
+reflect refresh --json --no-wait
 reflect jobs list
 reflect jobs show JOB_ID
 reflect jobs wait JOB_ID
-reflect skills discover --refresh --wait
+reflect skills discover --refresh
+reflect skills discover --refresh --no-wait
 ```
 
 MCP clients can inspect the same work with `reflect_jobs`. Task completion is
