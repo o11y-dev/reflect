@@ -86,6 +86,8 @@
   --panel-2:  #0b0b0a;
 
   /* Layout */
+  --app-rail-width: 62px;
+  --context-rail-width: 224px;
   --radius:   8px;
   --radius-sm: 6px;
   --radius-xs: 6px;
@@ -134,6 +136,8 @@ header{
   align-items:center;
   gap:clamp(16px,3vw,42px);
   min-height:68px;
+  width:calc(100% - var(--app-rail-width));
+  margin-left:var(--app-rail-width);
   position:sticky;
   top:0;
   z-index:100;
@@ -394,106 +398,74 @@ header{
   55%,100%{transform:translateX(240%)}
 }
 
-/* ── Tabs ────────────────────────────────────────────────── */
-nav{
-  background:rgba(10,10,9,.72);
-  backdrop-filter:saturate(180%) blur(var(--glass-blur));
-  -webkit-backdrop-filter:saturate(180%) blur(var(--glass-blur));
-  border-bottom:1px solid var(--glass-border);
-  padding:0 24px;
-  display:flex;
-  gap:0;
-  overflow-x:auto;
-  position:relative;
-  scrollbar-width:none;
+/* ── Persistent application navigation ──────────────────── */
+.app-rail{
+  position:fixed;inset:0 auto 0 0;z-index:120;width:var(--app-rail-width);
+  display:flex;flex-direction:column;align-items:center;gap:20px;
+  padding:14px 7px max(14px,env(safe-area-inset-bottom));
+  background:#050505;border-right:1px solid rgba(245,242,234,.09);
 }
-nav::-webkit-scrollbar{display:none}
-nav::before{
-  content:'';
-  position:absolute;
-  left:24px;
-  right:24px;
-  bottom:0;
-  height:1px;
-  background:linear-gradient(90deg,rgba(242,138,26,.04),rgba(245,242,234,.14),rgba(242,138,26,.04));
-  pointer-events:none;
-}
-nav::after{
-  content:'';
-  position:absolute;
-  left:24px;
-  right:24px;
-  bottom:0;
-  height:2px;
-  border-radius:0;
-  background:linear-gradient(90deg,rgba(242,138,26,.55),rgba(255,177,86,.96) 52%,rgba(242,138,26,.72));
-  box-shadow:0 0 0 1px rgba(242,138,26,.16),0 0 20px rgba(242,138,26,.25);
-  transform:scaleX(1);
-  transform-origin:var(--tab-indicator-origin,50%) 50%;
-  pointer-events:none;
-}
-.tab-rail-animate::after{animation:tabRailBloom .48s cubic-bezier(.22,1,.36,1)}
-@keyframes tabRailBloom{
-  0%{transform:scaleX(.08);opacity:.5}
-  55%{opacity:1}
-  100%{transform:scaleX(1);opacity:1}
-}
+.app-rail-brand{display:grid;place-items:center;width:42px;height:42px;flex:0 0 auto}
+.app-rail-brand .brand-mark{width:30px;height:32px;filter:none}
+.app-rail-brand .brand-mark::after{width:10px;height:10px;border-width:3.5px;box-shadow:none}
+#tabs{display:flex;flex:1;flex-direction:column;align-items:center;gap:7px;width:100%;overflow-y:auto;overflow-x:hidden;padding:2px 0;scrollbar-width:none}
+#tabs::-webkit-scrollbar{display:none}
 .tab{
-  appearance:none;
-  padding:14px 14px 11px;
-  font-size:14px;
-  font-weight:700;
-  color:var(--text-3);
-  cursor:pointer;
-  background:transparent;
-  border:none;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  gap:7px;
-  white-space:nowrap;
-  transition:color .26s ease, background-color .26s ease, transform .26s ease;
-  user-select:none;
-  border-radius:0;
-  touch-action:manipulation;
-  flex:1 1 0;
-  min-width:120px;
-  position:relative;
-  z-index:1;
-  overflow:visible;
+  appearance:none;position:relative;display:grid;place-items:center;flex:0 0 auto;
+  width:46px;height:46px;border:1px solid transparent;border-radius:9px;
+  background:transparent;color:#aaa49a;cursor:pointer;touch-action:manipulation;
+  transition:color .18s ease,background-color .18s ease,border-color .18s ease;
 }
-.tab::before{
-  content:'';
-  position:absolute;
-  inset:12px 4px -2px;
-  border-radius:8px 8px 0 0;
-  background:linear-gradient(180deg,rgba(245,242,234,.025),rgba(245,242,234,.07));
-  opacity:0;
-  transform:scale(.96);
-  transition:opacity .26s ease, transform .34s cubic-bezier(.22,1,.36,1);
-  pointer-events:none;
-  z-index:-1;
-}
-.tab:hover{color:var(--text-2)}
-.tab:hover::before{opacity:.5;transform:scale(1)}
-.tab[aria-selected="true"]{color:var(--signal-2);font-weight:800}
-.tab[aria-selected="true"]::before{
-  opacity:1;
-  transform:scale(1);
-  background:linear-gradient(180deg,rgba(242,138,26,.04) 0%,rgba(242,138,26,.08) 78%,rgba(255,177,86,.16) 100%);
-  box-shadow:0 8px 22px rgba(242,138,26,.1);
-}
-.tab:focus-visible{
-  outline:2px solid rgba(255,177,86,.9);
-  outline-offset:-2px;
-  color:var(--text);
+.tab svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.tab:hover{color:var(--text);background:rgba(245,242,234,.055)}
+.tab[aria-selected="true"]{color:var(--signal-2);background:rgba(242,138,26,.11);border-color:rgba(242,138,26,.25)}
+.tab:focus-visible{outline:2px solid var(--signal-2);outline-offset:2px;color:var(--text)}
+.nav-label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.app-rail-divider{width:26px;height:1px;flex:0 0 auto;margin:4px 0;background:rgba(245,242,234,.14)}
+.app-rail-foot{display:grid;place-items:center;width:46px;height:34px;flex:0 0 auto}
+.app-status-dot{width:7px;height:7px;border-radius:50%;background:var(--signal);box-shadow:0 0 10px rgba(242,138,26,.45)}
+.dashboard-layout{display:grid;grid-template-columns:var(--context-rail-width) minmax(0,1fr);align-items:stretch;flex:1;min-width:0;margin-left:var(--app-rail-width)}
+.section-sidebar{position:sticky;top:68px;align-self:start;display:flex;flex-direction:column;gap:18px;min-width:0;height:calc(100dvh - 68px);padding:22px 17px 18px;background:rgba(9,9,8,.94);border-right:1px solid rgba(245,242,234,.09);overflow-y:auto}
+.section-sidebar-head h2{font-size:17px;line-height:1.25;font-weight:720;letter-spacing:-.02em;color:var(--text)}
+.section-sidebar-head p{margin-top:7px;color:var(--text-3);font-size:11px;line-height:1.45}
+.section-scope-note{margin-top:auto;padding-top:14px;border-top:1px solid rgba(245,242,234,.09);color:var(--text-3);font-size:11px;line-height:1.5}
+.section-subnav{display:grid;gap:4px;margin:0;padding:0;border:0;background:transparent}
+.section-subnav[hidden]{display:none!important}
+.section-subnav::before,.section-subnav::after{display:none}
+.section-subnav .explore-link{justify-content:flex-start;min-height:36px;padding:7px 10px;border:1px solid transparent;border-radius:6px;color:var(--text-3);font-size:12px;font-weight:600;text-align:left}
+.section-subnav .explore-link:hover{color:var(--text);background:rgba(245,242,234,.045)}
+.section-subnav .explore-link.active{color:var(--text);border-color:rgba(242,138,26,.2);background:rgba(242,138,26,.09)}
+.section-subnav .explore-link:focus-visible{outline:2px solid var(--signal-2);outline-offset:2px}
+.dashboard-layout>main{min-width:0;width:auto;margin:0;padding:14px 18px 12px;flex:1}
+.demo-story{margin-left:calc(var(--app-rail-width) + 18px);margin-right:18px}
+footer{margin-left:var(--app-rail-width)}
+
+@media(max-width:1080px){
+  :root{--app-rail-width:56px;--context-rail-width:188px}
+  .section-sidebar{padding:20px 12px}
+  .dashboard-layout>main{padding-inline:12px}
 }
 @media(max-width:720px){
-  .tab{
-    flex:0 0 auto;
-    min-width:max-content;
-    justify-content:flex-start;
-  }
+  body{padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+  .app-rail{inset:auto 0 0;width:100%;height:calc(62px + env(safe-area-inset-bottom));padding:6px max(8px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left));border-right:0;border-top:1px solid rgba(245,242,234,.12);background:rgba(5,5,5,.97)}
+  .app-rail-brand,.app-rail-foot,.app-rail-divider{display:none}
+  #tabs{flex-direction:row;justify-content:space-around;gap:2px;overflow-x:auto;overflow-y:hidden}
+  .tab{width:52px;height:46px}
+  .tab svg{width:19px;height:19px}
+  .nav-label{position:static;width:auto;height:auto;margin:0;overflow:visible;clip:auto;font-size:8px;line-height:1;white-space:nowrap}
+  .tab{display:flex;flex-direction:column;gap:2px}
+  header{width:100%;margin-left:0}
+  .demo-story{margin:12px 12px 16px;padding:16px}
+  .dashboard-layout{grid-template-columns:minmax(0,1fr);margin-left:0}
+  .section-sidebar{position:static;height:auto;max-height:none;gap:10px;padding:12px 14px;border-right:0;border-bottom:1px solid rgba(245,242,234,.1);overflow:visible}
+  .section-sidebar-head h2{font-size:15px}
+  .section-sidebar-head p{margin-top:3px}
+  .section-scope-note{display:none}
+  .section-subnav{display:flex;gap:4px;overflow-x:auto;padding-bottom:2px}
+  .section-subnav[hidden]{display:none!important}
+  .section-subnav .explore-link{flex:0 0 auto;min-height:32px;padding:6px 9px;font-size:10px}
+  .dashboard-layout>main{padding:12px 10px}
+  footer{margin-left:0;padding-bottom:10px}
 }
 
 /* ── Layout ──────────────────────────────────────────────── */
@@ -596,7 +568,7 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .badge-sub{font-size:12px;color:var(--text-3);margin-top:2px}
 /* Public examples remain a small shell around the same local report views. */
 .demo-story[hidden]{display:none}
-.demo-story{max-width:1440px;margin:24px auto;padding:24px 32px;background:var(--panel);border:1px solid var(--glass-border);border-radius:8px}
+.demo-story{max-width:none;margin:18px 18px 18px calc(var(--app-rail-width) + 18px);padding:24px 32px;background:var(--panel);border:1px solid var(--glass-border);border-radius:8px}
 .demo-toolbar,.demo-links,.demo-actions,.demo-steps{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
 .demo-toolbar{justify-content:space-between;margin-bottom:28px}
 .demo-toolbar label{display:flex;align-items:center;gap:12px;font-size:14px;color:var(--text-2)}
@@ -624,7 +596,7 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .synthetic-demo .skill-usage-summary label,.synthetic-demo [data-skill-graph-reset],.synthetic-demo [data-skill-graph-next],.synthetic-demo [data-skill-evidence-next]{display:none}
 .synthetic-demo .demo-scope{color:var(--evidence)}
 @media(max-width:900px){
-  .demo-story{margin:16px;padding:20px}
+  .demo-story{margin:12px 12px 16px calc(var(--app-rail-width) + 12px);padding:20px}
   .demo-story-grid{grid-template-columns:1fr;gap:16px}
   .demo-toolbar{align-items:flex-start;gap:16px;margin-bottom:24px}
   .demo-toolbar label{align-items:flex-start;flex-direction:column;width:100%}
@@ -632,6 +604,7 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
   .demo-actions{gap:16px}
   .demo-evidence-row{font-size:13px}
 }
+@media(max-width:720px){.demo-story{margin:12px;padding:16px}}
 /* ── Improvement product surfaces ────────────────────────── */
 .product-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin-bottom:20px;padding:22px;border:1px solid rgba(242,138,26,.2);border-radius:8px;background:linear-gradient(135deg,rgba(242,138,26,.11),rgba(18,17,15,.78))}
 .product-hero h2{margin:0 0 7px;font-size:25px;letter-spacing:-.03em}.product-hero p{margin:0;color:var(--text-2);max-width:720px;line-height:1.55}
@@ -3049,6 +3022,20 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 <a class="skip-link" href="#main-content">Skip to main content</a>
 
+<aside class="app-rail" aria-label="Reflect navigation">
+  <a class="app-rail-brand" href="https://reflect.o11y.dev/" aria-label="Reflect home"><span class="brand-mark" aria-hidden="true"></span></a>
+  <nav id="tabs" role="tablist" aria-label="Dashboard sections" aria-orientation="vertical">
+    <button class="tab active" id="tab-button-sessions" type="button" role="tab" aria-label="Sessions" title="Sessions" aria-selected="true" aria-controls="tab-sessions" tabindex="0" data-tab="sessions"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></svg><span class="nav-label">Sessions</span></button>
+    <button class="tab" id="tab-button-inbox" type="button" role="tab" aria-label="Inbox" title="Inbox" aria-selected="false" aria-controls="tab-inbox" tabindex="-1" data-tab="inbox"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v13H4z"/><path d="M4 13h4l1.5 2h5L16 13h4"/></svg><span class="nav-label">Inbox</span></button>
+    <button class="tab" id="tab-button-workflows" type="button" role="tab" aria-label="Workflows" title="Workflows" aria-selected="false" aria-controls="tab-workflows" tabindex="-1" data-tab="workflows"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M8 6h8M7.2 7.6l3.6 8.6m6-8.6-3.6 8.6"/></svg><span class="nav-label">Workflows</span></button>
+    <span class="app-rail-divider" aria-hidden="true"></span>
+    <button class="tab" id="tab-button-skills" type="button" role="tab" aria-label="Skills" title="Skills" aria-selected="false" aria-controls="tab-skills" tabindex="-1" data-tab="skills"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5a2 2 0 0 1 2-2h12v16H7a2 2 0 0 0-2 2z"/><path d="M5 5.5v14a2 2 0 0 1 2-2h12M9 8h6m-6 3h6"/></svg><span class="nav-label">Skills</span></button>
+    <button class="tab" id="tab-button-impact" type="button" role="tab" aria-label="Impact" title="Impact" aria-selected="false" aria-controls="tab-impact" tabindex="-1" data-tab="impact"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5h16"/><path d="M6.5 16v-4m5 4V7m5 9v-6"/><circle cx="6.5" cy="10" r="1"/><circle cx="11.5" cy="5" r="1"/><circle cx="16.5" cy="8" r="1"/></svg><span class="nav-label">Impact</span></button>
+    <button class="tab" id="tab-button-explore" type="button" role="tab" aria-label="Explore" title="Explore" aria-selected="false" aria-controls="tab-explore-usage" tabindex="-1" data-tab="explore"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="7" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="18" cy="17" r="2"/><path d="m8 6.5 8 1m-8.5.5 0 8m2 1 6.5.5m1-8v5.5"/></svg><span class="nav-label">Explore</span></button>
+  </nav>
+  <div class="app-rail-foot" aria-hidden="true"><span class="app-status-dot"></span></div>
+</aside>
+
 <!-- ── Header ── -->
 <header>
   <div class="brand-wrap">
@@ -3099,16 +3086,20 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   <div class="demo-actions"><button id="demo-inspect" type="button" class="ledger-button primary">Inspect evidence</button><a id="demo-session" href="#main-content">Open source session</a><a href="#tabs">Explore all sample data</a></div>
 </section>
 
-<!-- ── Nav tabs ── -->
-<nav id="tabs" role="tablist" aria-label="Dashboard sections">
-  <button class="tab active" id="tab-button-sessions" type="button" role="tab" aria-selected="true" aria-controls="tab-sessions" tabindex="0" data-tab="sessions">Sessions</button>
-  <button class="tab" id="tab-button-inbox" type="button" role="tab" aria-selected="false" aria-controls="tab-inbox" tabindex="-1" data-tab="inbox">Inbox</button>
-  <button class="tab" id="tab-button-workflows" type="button" role="tab" aria-selected="false" aria-controls="tab-workflows" tabindex="-1" data-tab="workflows">Workflows</button>
-  <button class="tab" id="tab-button-skills" type="button" role="tab" aria-selected="false" aria-controls="tab-skills" tabindex="-1" data-tab="skills">Skills</button>
-  <button class="tab" id="tab-button-impact" type="button" role="tab" aria-selected="false" aria-controls="tab-impact" tabindex="-1" data-tab="impact">Impact</button>
-  <button class="tab" id="tab-button-explore" type="button" role="tab" aria-selected="false" aria-controls="tab-explore-usage" tabindex="-1" data-tab="explore">Usage &amp; explore</button>
-</nav>
-
+<div class="dashboard-layout">
+<aside class="section-sidebar" id="section-sidebar" aria-label="Current section navigation">
+  <div class="section-sidebar-head">
+    <h2 id="section-nav-title">Sessions</h2>
+    <p id="section-nav-description">Browse captured agent work.</p>
+  </div>
+  <nav class="explore-subnav section-subnav" id="section-explore-nav" aria-label="Explore views" hidden>
+    <button class="explore-link active" type="button" data-explore-view="usage" aria-current="page">Usage &amp; delivery</button>
+    <button class="explore-link" type="button" data-explore-view="tools">Tools &amp; MCP</button>
+    <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
+    <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
+  </nav>
+  <div class="section-scope-note" id="section-scope-note">Local evidence from your captured sessions.</div>
+</aside>
 <main id="main-content">
 
 <div class="report-shell" id="report-shell" data-view="sessions">
@@ -3181,12 +3172,6 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 <!-- ════════════════════ EXPLORE: USAGE ════════════════════ -->
 <div class="tab-panel" id="tab-explore-usage" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
-  <div class="explore-subnav" aria-label="Explore telemetry views">
-    <button class="explore-link active" type="button" data-explore-view="usage">Usage</button>
-    <button class="explore-link" type="button" data-explore-view="tools">Tools</button>
-    <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
-    <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
-  </div>
   <div class="panel explore-view-status" id="usage-view-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
   <section class="usage-measurements" id="measurement-panel" aria-labelledby="usage-heading">
     <div class="usage-heading"><div><span class="usage-eyebrow">Captured telemetry</span><h2 id="usage-heading">Usage &amp; delivery</h2><p id="measurement-scope"></p></div><span class="usage-scope-tag">M1–M7</span></div>
@@ -3357,12 +3342,6 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 <!-- ════════════════════ TOOLS (merged with Latency) ════════════════════ -->
 <div class="tab-panel" id="tab-explore-tools" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
-  <div class="explore-subnav" aria-label="Explore telemetry views">
-    <button class="explore-link" type="button" data-explore-view="usage">Usage</button>
-    <button class="explore-link active" type="button" data-explore-view="tools">Tools</button>
-    <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
-    <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
-  </div>
   <div class="panel explore-view-status" id="tools-view-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
   <div class="tools-summary-grid">
@@ -3421,12 +3400,6 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 <!-- ════════════════════ GRAPHS ════════════════════ -->
 <div class="tab-panel" id="tab-explore-graph" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
-  <div class="explore-subnav" aria-label="Explore telemetry views">
-    <button class="explore-link" type="button" data-explore-view="usage">Usage</button>
-    <button class="explore-link" type="button" data-explore-view="tools">Tools</button>
-    <button class="explore-link active" type="button" data-explore-view="graph">Graph</button>
-    <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
-  </div>
   <div class="panel explore-view-status" id="graph-view-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
   <!-- 1. Behavioral Memory Graph -->
@@ -3485,12 +3458,6 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 <!-- ════════════════════ CONTEXT ════════════════════ -->
 <div class="tab-panel" id="tab-explore-context" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
-  <div class="explore-subnav" aria-label="Explore telemetry views">
-    <button class="explore-link" type="button" data-explore-view="usage">Usage</button>
-    <button class="explore-link" type="button" data-explore-view="tools">Tools</button>
-    <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
-    <button class="explore-link active" type="button" data-explore-view="context">Context &amp; system</button>
-  </div>
   <div class="panel explore-view-status" id="context-view-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
   <div class="stat-row" id="data-stat-row"></div>
 
@@ -3598,6 +3565,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <div class="global-filter-backdrop" id="filter-sheet-backdrop" hidden></div>
 
 </main>
+</div>
 
 <dialog class="ledger-dialog" id="ledger-dialog" aria-labelledby="ledger-dialog-title" aria-describedby="ledger-dialog-subtitle">
   <div class="ledger-dialog-head">
@@ -4216,11 +4184,13 @@ async function loadImprovementData(onResource = null){
   return sequence === loadImprovementData.sequence ? result : IMPROVEMENT_DATA;
 }
 
-function updateUrlParams(mutator){
+function updateUrlParams(mutator, {mode = 'replace'} = {}){
   const url = new URL(window.location.href);
   mutator(url.searchParams);
   const query = url.searchParams.toString();
-  window.history.replaceState({}, '', `${url.pathname}${query ? `?${query}` : ''}${url.hash}`);
+  const target = `${url.pathname}${query ? `?${query}` : ''}${url.hash}`;
+  if (target === `${url.pathname}${url.search}${url.hash}`) return;
+  window.history[mode === 'push' ? 'pushState' : 'replaceState']({}, '', target);
 }
 
 function reportSupportsServerFiltering(){
@@ -5872,7 +5842,6 @@ async function loadSkillUsageGraph(skillId, container, filters = {}) {
 /* ── Tabs ── */
 let _graphsInited = false;
 const tabButtons = Array.from(document.querySelectorAll('.tab'));
-const tabsEl = document.getElementById('tabs');
 const PRODUCT_TABS = new Set(['sessions','inbox','workflows','skills','impact','explore']);
 const EXPLORE_VIEWS = new Set(['usage','tools','graph','context']);
 let activeExploreView = 'usage';
@@ -5885,21 +5854,9 @@ function canonicalDashboardLocation(tabName, viewName = ''){
   return {tab, view: EXPLORE_VIEWS.has(normalizedView) ? normalizedView : 'usage'};
 }
 
-function updateTabIndicator(activeButton){
-  if (!tabsEl || !activeButton) return;
-  const navRect = tabsEl.getBoundingClientRect();
-  const activeRect = activeButton.getBoundingClientRect();
-  const trackWidth = Math.max(1, tabsEl.clientWidth - 48);
-  const center = activeRect.left - navRect.left + tabsEl.scrollLeft + (activeRect.width / 2) - 24;
-  const originPct = Math.max(0, Math.min(100, (center / trackWidth) * 100));
-  tabsEl.style.setProperty('--tab-indicator-origin', `${originPct}%`);
-}
-
-function animateTabIndicator(){
-  if (!tabsEl) return;
-  tabsEl.classList.remove('tab-rail-animate');
-  void tabsEl.offsetWidth;
-  tabsEl.classList.add('tab-rail-animate');
+function updateTabOrientation(){
+  const tabs = document.getElementById('tabs');
+  if (tabs) tabs.setAttribute('aria-orientation', window.matchMedia('(max-width: 720px)').matches ? 'horizontal' : 'vertical');
 }
 
 function updateExploreScope(){
@@ -5943,6 +5900,24 @@ function updateDashboardViewScope(tabName){
   const filtersVisible = sessionsVisible || (tabName === 'explore' && activeExploreView !== 'context' && !isStaticDemo());
   const exploreScope = document.getElementById('explore-scope');
   if (exploreScope) exploreScope.hidden = tabName !== 'explore';
+  const sectionTitle = document.getElementById('section-nav-title');
+  const sectionDescription = document.getElementById('section-nav-description');
+  const sectionScope = document.getElementById('section-scope-note');
+  const sectionExploreNav = document.getElementById('section-explore-nav');
+  const sectionCopy = {
+    sessions: ['Sessions', 'Browse captured agent work.', 'Sessions are navigation and aggregate-usage containers.'],
+    inbox: ['Inbox', 'Investigate evidence that needs a decision.', 'Create a workflow from a finding you want to address.'],
+    workflows: ['Workflows', 'Review and manage reusable procedures.', 'Agent guidance changes only through the reviewed enablement flow.'],
+    skills: ['Skills', 'Browse installed and generated skills.', 'References and measured outcomes are separate evidence.'],
+    impact: ['Impact', 'Compare later work with prior tasks.', 'Results require comparable tasks and eligible outcome evidence.'],
+    explore: ['Explore', 'Analyze usage, tools, and delivery.', 'Follow table rows back to captured evidence.'],
+  }[tabName] || ['Sessions', 'Browse captured agent work.', 'Local evidence from your captured sessions.'];
+  if (sectionTitle) sectionTitle.textContent = sectionCopy[0];
+  if (sectionDescription) sectionDescription.textContent = sectionCopy[1];
+  if (sectionScope) sectionScope.textContent = sectionCopy[2];
+  if (sectionExploreNav) sectionExploreNav.hidden = tabName !== 'explore';
+  const sectionSidebar = document.getElementById('section-sidebar');
+  if (sectionSidebar) sectionSidebar.dataset.view = tabName;
   if (tabName === 'explore') updateExploreScope();
   const shell = document.getElementById('report-shell');
   if (shell) {
@@ -5985,6 +5960,8 @@ function updateDashboardViewScope(tabName){
 }
 
 function activateTab(tabName, {view = '', updateUrl = true, focusButton = false} = {}){
+  const previousTab = tabButtons.find(button => button.getAttribute('aria-selected') === 'true')?.dataset.tab || '';
+  const previousExploreView = activeExploreView;
   const location = canonicalDashboardLocation(tabName, view || activeExploreView);
   const activeTab = location.tab;
   if (activeTab === 'explore') activeExploreView = location.view || 'usage';
@@ -5994,6 +5971,10 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
     const isActive = button === activeButton;
     button.classList.toggle('active', isActive);
     button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    const controlledPanel = button.dataset.tab === 'explore'
+      ? activeTab === 'explore' && isActive ? panelId : 'tab-explore-usage'
+      : `tab-${button.dataset.tab}`;
+    button.setAttribute('aria-controls', controlledPanel);
     button.tabIndex = isActive ? 0 : -1;
     if (focusButton && isActive) button.focus();
   });
@@ -6003,12 +5984,15 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
     panel.hidden = !isActive;
   });
   updateDashboardViewScope(activeTab);
-  updateTabIndicator(activeButton);
-  animateTabIndicator();
   document.querySelectorAll('[data-explore-view]').forEach(button => {
-    button.classList.toggle('active', button.dataset.exploreView === activeExploreView);
+    const active = button.dataset.exploreView === activeExploreView;
+    button.classList.toggle('active', active);
+    if (active) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
   });
   if (updateUrl) {
+    const routeChanged = activeTab !== previousTab
+      || (activeTab === 'explore' && previousExploreView !== activeExploreView);
     updateUrlParams(params => {
       params.set('tab', activeTab);
       if (activeTab === 'explore') params.set('view', activeExploreView);
@@ -6022,7 +6006,7 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
         params.delete('loop');
       }
       if (activeTab !== 'skills') params.delete('skill_q');
-    });
+    }, {mode: routeChanged ? 'push' : 'replace'});
   }
   if (activeTab === 'explore') hydrateExploreView(activeExploreView).catch(() => {});
 }
@@ -6032,7 +6016,9 @@ tabButtons.forEach((button, index) => {
   button.addEventListener('keydown', e => {
     const keyToIndex = {
       ArrowRight: (index + 1) % tabButtons.length,
+      ArrowDown: (index + 1) % tabButtons.length,
       ArrowLeft: (index - 1 + tabButtons.length) % tabButtons.length,
+      ArrowUp: (index - 1 + tabButtons.length) % tabButtons.length,
       Home: 0,
       End: tabButtons.length - 1,
     };
@@ -6042,13 +6028,13 @@ tabButtons.forEach((button, index) => {
     activateTab(nextButton.dataset.tab, {focusButton: true});
   });
 });
+updateTabOrientation();
+window.addEventListener('resize', updateTabOrientation);
 document.getElementById('explore-session-change')?.addEventListener('click', chooseExploreSession);
 document.getElementById('explore-session-clear')?.addEventListener('click', clearExploreSessionScope);
 document.querySelectorAll('[data-explore-view]').forEach(button => {
   button.addEventListener('click', () => activateTab('explore', {view: button.dataset.exploreView || 'usage'}));
 });
-window.addEventListener('resize', () => updateTabIndicator(document.querySelector('.tab[aria-selected="true"]')));
-
 const requestedInitialTab = currentParams().get('tab');
 const requestedInitialView = currentParams().get('view');
 const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length
@@ -6061,6 +6047,13 @@ const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPRO
 activateTab(requestedInitialTab || (isStaticDemo() ? 'inbox' : defaultProductTab), {
   view: requestedInitialView || '',
   updateUrl: Boolean(requestedInitialTab || requestedInitialView),
+});
+window.addEventListener('popstate', () => {
+  const params = currentParams();
+  activateTab(params.get('tab') || (isStaticDemo() ? 'inbox' : defaultProductTab), {
+    view: params.get('view') || '',
+    updateUrl: false,
+  });
 });
 
 /* ── Header ── */

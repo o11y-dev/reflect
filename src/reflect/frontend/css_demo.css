@@ -1,6 +1,6 @@
 /* Public examples remain a small shell around the same local report views. */
 .demo-story[hidden]{display:none}
-.demo-story{max-width:1440px;margin:24px auto;padding:24px 32px;background:var(--panel);border:1px solid var(--glass-border);border-radius:8px}
+.demo-story{max-width:none;margin:18px 18px 18px calc(var(--app-rail-width) + 18px);padding:24px 32px;background:var(--panel);border:1px solid var(--glass-border);border-radius:8px}
 .demo-toolbar,.demo-links,.demo-actions,.demo-steps{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
 .demo-toolbar{justify-content:space-between;margin-bottom:28px}
 .demo-toolbar label{display:flex;align-items:center;gap:12px;font-size:14px;color:var(--text-2)}
@@ -28,7 +28,7 @@
 .synthetic-demo .skill-usage-summary label,.synthetic-demo [data-skill-graph-reset],.synthetic-demo [data-skill-graph-next],.synthetic-demo [data-skill-evidence-next]{display:none}
 .synthetic-demo .demo-scope{color:var(--evidence)}
 @media(max-width:900px){
-  .demo-story{margin:16px;padding:20px}
+  .demo-story{margin:12px 12px 16px calc(var(--app-rail-width) + 12px);padding:20px}
   .demo-story-grid{grid-template-columns:1fr;gap:16px}
   .demo-toolbar{align-items:flex-start;gap:16px;margin-bottom:24px}
   .demo-toolbar label{align-items:flex-start;flex-direction:column;width:100%}
@@ -36,3 +36,4 @@
   .demo-actions{gap:16px}
   .demo-evidence-row{font-size:13px}
 }
+@media(max-width:720px){.demo-story{margin:12px;padding:16px}}

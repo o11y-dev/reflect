@@ -1,7 +1,6 @@
 /* ── Tabs ── */
 let _graphsInited = false;
 const tabButtons = Array.from(document.querySelectorAll('.tab'));
-const tabsEl = document.getElementById('tabs');
 const PRODUCT_TABS = new Set(['sessions','inbox','workflows','skills','impact','explore']);
 const EXPLORE_VIEWS = new Set(['usage','tools','graph','context']);
 let activeExploreView = 'usage';
@@ -14,21 +13,9 @@ function canonicalDashboardLocation(tabName, viewName = ''){
   return {tab, view: EXPLORE_VIEWS.has(normalizedView) ? normalizedView : 'usage'};
 }
 
-function updateTabIndicator(activeButton){
-  if (!tabsEl || !activeButton) return;
-  const navRect = tabsEl.getBoundingClientRect();
-  const activeRect = activeButton.getBoundingClientRect();
-  const trackWidth = Math.max(1, tabsEl.clientWidth - 48);
-  const center = activeRect.left - navRect.left + tabsEl.scrollLeft + (activeRect.width / 2) - 24;
-  const originPct = Math.max(0, Math.min(100, (center / trackWidth) * 100));
-  tabsEl.style.setProperty('--tab-indicator-origin', `${originPct}%`);
-}
-
-function animateTabIndicator(){
-  if (!tabsEl) return;
-  tabsEl.classList.remove('tab-rail-animate');
-  void tabsEl.offsetWidth;
-  tabsEl.classList.add('tab-rail-animate');
+function updateTabOrientation(){
+  const tabs = document.getElementById('tabs');
+  if (tabs) tabs.setAttribute('aria-orientation', window.matchMedia('(max-width: 720px)').matches ? 'horizontal' : 'vertical');
 }
 
 function updateExploreScope(){
@@ -72,6 +59,24 @@ function updateDashboardViewScope(tabName){
   const filtersVisible = sessionsVisible || (tabName === 'explore' && activeExploreView !== 'context' && !isStaticDemo());
   const exploreScope = document.getElementById('explore-scope');
   if (exploreScope) exploreScope.hidden = tabName !== 'explore';
+  const sectionTitle = document.getElementById('section-nav-title');
+  const sectionDescription = document.getElementById('section-nav-description');
+  const sectionScope = document.getElementById('section-scope-note');
+  const sectionExploreNav = document.getElementById('section-explore-nav');
+  const sectionCopy = {
+    sessions: ['Sessions', 'Browse captured agent work.', 'Sessions are navigation and aggregate-usage containers.'],
+    inbox: ['Inbox', 'Investigate evidence that needs a decision.', 'Create a workflow from a finding you want to address.'],
+    workflows: ['Workflows', 'Review and manage reusable procedures.', 'Agent guidance changes only through the reviewed enablement flow.'],
+    skills: ['Skills', 'Browse installed and generated skills.', 'References and measured outcomes are separate evidence.'],
+    impact: ['Impact', 'Compare later work with prior tasks.', 'Results require comparable tasks and eligible outcome evidence.'],
+    explore: ['Explore', 'Analyze usage, tools, and delivery.', 'Follow table rows back to captured evidence.'],
+  }[tabName] || ['Sessions', 'Browse captured agent work.', 'Local evidence from your captured sessions.'];
+  if (sectionTitle) sectionTitle.textContent = sectionCopy[0];
+  if (sectionDescription) sectionDescription.textContent = sectionCopy[1];
+  if (sectionScope) sectionScope.textContent = sectionCopy[2];
+  if (sectionExploreNav) sectionExploreNav.hidden = tabName !== 'explore';
+  const sectionSidebar = document.getElementById('section-sidebar');
+  if (sectionSidebar) sectionSidebar.dataset.view = tabName;
   if (tabName === 'explore') updateExploreScope();
   const shell = document.getElementById('report-shell');
   if (shell) {
@@ -114,6 +119,8 @@ function updateDashboardViewScope(tabName){
 }
 
 function activateTab(tabName, {view = '', updateUrl = true, focusButton = false} = {}){
+  const previousTab = tabButtons.find(button => button.getAttribute('aria-selected') === 'true')?.dataset.tab || '';
+  const previousExploreView = activeExploreView;
   const location = canonicalDashboardLocation(tabName, view || activeExploreView);
   const activeTab = location.tab;
   if (activeTab === 'explore') activeExploreView = location.view || 'usage';
@@ -123,6 +130,10 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
     const isActive = button === activeButton;
     button.classList.toggle('active', isActive);
     button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    const controlledPanel = button.dataset.tab === 'explore'
+      ? activeTab === 'explore' && isActive ? panelId : 'tab-explore-usage'
+      : `tab-${button.dataset.tab}`;
+    button.setAttribute('aria-controls', controlledPanel);
     button.tabIndex = isActive ? 0 : -1;
     if (focusButton && isActive) button.focus();
   });
@@ -132,12 +143,15 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
     panel.hidden = !isActive;
   });
   updateDashboardViewScope(activeTab);
-  updateTabIndicator(activeButton);
-  animateTabIndicator();
   document.querySelectorAll('[data-explore-view]').forEach(button => {
-    button.classList.toggle('active', button.dataset.exploreView === activeExploreView);
+    const active = button.dataset.exploreView === activeExploreView;
+    button.classList.toggle('active', active);
+    if (active) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
   });
   if (updateUrl) {
+    const routeChanged = activeTab !== previousTab
+      || (activeTab === 'explore' && previousExploreView !== activeExploreView);
     updateUrlParams(params => {
       params.set('tab', activeTab);
       if (activeTab === 'explore') params.set('view', activeExploreView);
@@ -151,7 +165,7 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
         params.delete('loop');
       }
       if (activeTab !== 'skills') params.delete('skill_q');
-    });
+    }, {mode: routeChanged ? 'push' : 'replace'});
   }
   if (activeTab === 'explore') hydrateExploreView(activeExploreView).catch(() => {});
 }
@@ -161,7 +175,9 @@ tabButtons.forEach((button, index) => {
   button.addEventListener('keydown', e => {
     const keyToIndex = {
       ArrowRight: (index + 1) % tabButtons.length,
+      ArrowDown: (index + 1) % tabButtons.length,
       ArrowLeft: (index - 1 + tabButtons.length) % tabButtons.length,
+      ArrowUp: (index - 1 + tabButtons.length) % tabButtons.length,
       Home: 0,
       End: tabButtons.length - 1,
     };
@@ -171,13 +187,13 @@ tabButtons.forEach((button, index) => {
     activateTab(nextButton.dataset.tab, {focusButton: true});
   });
 });
+updateTabOrientation();
+window.addEventListener('resize', updateTabOrientation);
 document.getElementById('explore-session-change')?.addEventListener('click', chooseExploreSession);
 document.getElementById('explore-session-clear')?.addEventListener('click', clearExploreSessionScope);
 document.querySelectorAll('[data-explore-view]').forEach(button => {
   button.addEventListener('click', () => activateTab('explore', {view: button.dataset.exploreView || 'usage'}));
 });
-window.addEventListener('resize', () => updateTabIndicator(document.querySelector('.tab[aria-selected="true"]')));
-
 const requestedInitialTab = currentParams().get('tab');
 const requestedInitialView = currentParams().get('view');
 const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length
@@ -190,6 +206,13 @@ const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPRO
 activateTab(requestedInitialTab || (isStaticDemo() ? 'inbox' : defaultProductTab), {
   view: requestedInitialView || '',
   updateUrl: Boolean(requestedInitialTab || requestedInitialView),
+});
+window.addEventListener('popstate', () => {
+  const params = currentParams();
+  activateTab(params.get('tab') || (isStaticDemo() ? 'inbox' : defaultProductTab), {
+    view: params.get('view') || '',
+    updateUrl: false,
+  });
 });
 
 /* ── Header ── */

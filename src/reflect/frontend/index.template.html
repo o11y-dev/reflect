@@ -68,6 +68,20 @@
 
 <a class="skip-link" href="#main-content">Skip to main content</a>
 
+<aside class="app-rail" aria-label="Reflect navigation">
+  <a class="app-rail-brand" href="https://reflect.o11y.dev/" aria-label="Reflect home"><span class="brand-mark" aria-hidden="true"></span></a>
+  <nav id="tabs" role="tablist" aria-label="Dashboard sections" aria-orientation="vertical">
+    <button class="tab active" id="tab-button-sessions" type="button" role="tab" aria-label="Sessions" title="Sessions" aria-selected="true" aria-controls="tab-sessions" tabindex="0" data-tab="sessions"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></svg><span class="nav-label">Sessions</span></button>
+    <button class="tab" id="tab-button-inbox" type="button" role="tab" aria-label="Inbox" title="Inbox" aria-selected="false" aria-controls="tab-inbox" tabindex="-1" data-tab="inbox"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v13H4z"/><path d="M4 13h4l1.5 2h5L16 13h4"/></svg><span class="nav-label">Inbox</span></button>
+    <button class="tab" id="tab-button-workflows" type="button" role="tab" aria-label="Workflows" title="Workflows" aria-selected="false" aria-controls="tab-workflows" tabindex="-1" data-tab="workflows"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M8 6h8M7.2 7.6l3.6 8.6m6-8.6-3.6 8.6"/></svg><span class="nav-label">Workflows</span></button>
+    <span class="app-rail-divider" aria-hidden="true"></span>
+    <button class="tab" id="tab-button-skills" type="button" role="tab" aria-label="Skills" title="Skills" aria-selected="false" aria-controls="tab-skills" tabindex="-1" data-tab="skills"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5a2 2 0 0 1 2-2h12v16H7a2 2 0 0 0-2 2z"/><path d="M5 5.5v14a2 2 0 0 1 2-2h12M9 8h6m-6 3h6"/></svg><span class="nav-label">Skills</span></button>
+    <button class="tab" id="tab-button-impact" type="button" role="tab" aria-label="Impact" title="Impact" aria-selected="false" aria-controls="tab-impact" tabindex="-1" data-tab="impact"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5h16"/><path d="M6.5 16v-4m5 4V7m5 9v-6"/><circle cx="6.5" cy="10" r="1"/><circle cx="11.5" cy="5" r="1"/><circle cx="16.5" cy="8" r="1"/></svg><span class="nav-label">Impact</span></button>
+    <button class="tab" id="tab-button-explore" type="button" role="tab" aria-label="Explore" title="Explore" aria-selected="false" aria-controls="tab-explore-usage" tabindex="-1" data-tab="explore"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="7" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="18" cy="17" r="2"/><path d="m8 6.5 8 1m-8.5.5 0 8m2 1 6.5.5m1-8v5.5"/></svg><span class="nav-label">Explore</span></button>
+  </nav>
+  <div class="app-rail-foot" aria-hidden="true"><span class="app-status-dot"></span></div>
+</aside>
+
 <!-- ── Header ── -->
 <header>
   <div class="brand-wrap">
@@ -118,16 +132,20 @@
   <div class="demo-actions"><button id="demo-inspect" type="button" class="ledger-button primary">Inspect evidence</button><a id="demo-session" href="#main-content">Open source session</a><a href="#tabs">Explore all sample data</a></div>
 </section>
 
-<!-- ── Nav tabs ── -->
-<nav id="tabs" role="tablist" aria-label="Dashboard sections">
-  <button class="tab active" id="tab-button-sessions" type="button" role="tab" aria-selected="true" aria-controls="tab-sessions" tabindex="0" data-tab="sessions">Sessions</button>
-  <button class="tab" id="tab-button-inbox" type="button" role="tab" aria-selected="false" aria-controls="tab-inbox" tabindex="-1" data-tab="inbox">Inbox</button>
-  <button class="tab" id="tab-button-workflows" type="button" role="tab" aria-selected="false" aria-controls="tab-workflows" tabindex="-1" data-tab="workflows">Workflows</button>
-  <button class="tab" id="tab-button-skills" type="button" role="tab" aria-selected="false" aria-controls="tab-skills" tabindex="-1" data-tab="skills">Skills</button>
-  <button class="tab" id="tab-button-impact" type="button" role="tab" aria-selected="false" aria-controls="tab-impact" tabindex="-1" data-tab="impact">Impact</button>
-  <button class="tab" id="tab-button-explore" type="button" role="tab" aria-selected="false" aria-controls="tab-explore-usage" tabindex="-1" data-tab="explore">Usage &amp; explore</button>
-</nav>
-
+<div class="dashboard-layout">
+<aside class="section-sidebar" id="section-sidebar" aria-label="Current section navigation">
+  <div class="section-sidebar-head">
+    <h2 id="section-nav-title">Sessions</h2>
+    <p id="section-nav-description">Browse captured agent work.</p>
+  </div>
+  <nav class="explore-subnav section-subnav" id="section-explore-nav" aria-label="Explore views" hidden>
+    <button class="explore-link active" type="button" data-explore-view="usage" aria-current="page">Usage &amp; delivery</button>
+    <button class="explore-link" type="button" data-explore-view="tools">Tools &amp; MCP</button>
+    <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
+    <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
+  </nav>
+  <div class="section-scope-note" id="section-scope-note">Local evidence from your captured sessions.</div>
+</aside>
 <main id="main-content">
 
 <div class="report-shell" id="report-shell" data-view="sessions">
@@ -200,12 +218,6 @@
 
 <!-- ════════════════════ EXPLORE: USAGE ════════════════════ -->
 <div class="tab-panel" id="tab-explore-usage" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
-  <div class="explore-subnav" aria-label="Explore telemetry views">
-    <button class="explore-link active" type="button" data-explore-view="usage">Usage</button>
-    <button class="explore-link" type="button" data-explore-view="tools">Tools</button>
-    <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
-    <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
-  </div>
   <div class="panel explore-view-status" id="usage-view-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
   <section class="usage-measurements" id="measurement-panel" aria-labelledby="usage-heading">
     <div class="usage-heading"><div><span class="usage-eyebrow">Captured telemetry</span><h2 id="usage-heading">Usage &amp; delivery</h2><p id="measurement-scope"></p></div><span class="usage-scope-tag">M1–M7</span></div>
@@ -376,12 +388,6 @@
 
 <!-- ════════════════════ TOOLS (merged with Latency) ════════════════════ -->
 <div class="tab-panel" id="tab-explore-tools" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
-  <div class="explore-subnav" aria-label="Explore telemetry views">
-    <button class="explore-link" type="button" data-explore-view="usage">Usage</button>
-    <button class="explore-link active" type="button" data-explore-view="tools">Tools</button>
-    <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
-    <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
-  </div>
   <div class="panel explore-view-status" id="tools-view-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
   <div class="tools-summary-grid">
@@ -440,12 +446,6 @@
 
 <!-- ════════════════════ GRAPHS ════════════════════ -->
 <div class="tab-panel" id="tab-explore-graph" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
-  <div class="explore-subnav" aria-label="Explore telemetry views">
-    <button class="explore-link" type="button" data-explore-view="usage">Usage</button>
-    <button class="explore-link" type="button" data-explore-view="tools">Tools</button>
-    <button class="explore-link active" type="button" data-explore-view="graph">Graph</button>
-    <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
-  </div>
   <div class="panel explore-view-status" id="graph-view-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
   <!-- 1. Behavioral Memory Graph -->
@@ -504,12 +504,6 @@
 
 <!-- ════════════════════ CONTEXT ════════════════════ -->
 <div class="tab-panel" id="tab-explore-context" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
-  <div class="explore-subnav" aria-label="Explore telemetry views">
-    <button class="explore-link" type="button" data-explore-view="usage">Usage</button>
-    <button class="explore-link" type="button" data-explore-view="tools">Tools</button>
-    <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
-    <button class="explore-link active" type="button" data-explore-view="context">Context &amp; system</button>
-  </div>
   <div class="panel explore-view-status" id="context-view-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
   <div class="stat-row" id="data-stat-row"></div>
 
@@ -617,6 +611,7 @@
 <div class="global-filter-backdrop" id="filter-sheet-backdrop" hidden></div>
 
 </main>
+</div>
 
 <dialog class="ledger-dialog" id="ledger-dialog" aria-labelledby="ledger-dialog-title" aria-describedby="ledger-dialog-subtitle">
   <div class="ledger-dialog-head">

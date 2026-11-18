@@ -482,11 +482,13 @@ async function loadImprovementData(onResource = null){
   return sequence === loadImprovementData.sequence ? result : IMPROVEMENT_DATA;
 }
 
-function updateUrlParams(mutator){
+function updateUrlParams(mutator, {mode = 'replace'} = {}){
   const url = new URL(window.location.href);
   mutator(url.searchParams);
   const query = url.searchParams.toString();
-  window.history.replaceState({}, '', `${url.pathname}${query ? `?${query}` : ''}${url.hash}`);
+  const target = `${url.pathname}${query ? `?${query}` : ''}${url.hash}`;
+  if (target === `${url.pathname}${url.search}${url.hash}`) return;
+  window.history[mode === 'push' ? 'pushState' : 'replaceState']({}, '', target);
 }
 
 function reportSupportsServerFiltering(){
