@@ -34,6 +34,7 @@
 
 ### Changed
 
+- Keep the Reflect icon in dashboard navigation and use the wordmark in the header.
 - Show saved Claude Code, Codex, Copilot CLI, Cursor, historical Gemini CLI, and OpenCode chat labels in the local dashboard when their session IDs match.
 
 - Use four Explore navigation rows and one scope toolbar with session selection and collapsible filters.
@@ -44,8 +45,19 @@
 
 ### Fixed
 
+- Recover Codex request usage and estimates from OTLP logs when a session’s earlier trace records carry no usage.
+
+- Recognize the current OpenTelemetry cache-write token attribute when normalizing input usage for pricing.
+
 - Keep Explore Graph widgets in place while data loads, with visible refresh status and widget retry controls.
 - Keep the selected project when retrying a workflow preview.
+- Open linked drafts or create workflows directly from Inbox finding details, including when the Workflows list is still loading.
+- Recognize Git and delivery commands inside common wrappers and shell chains. Keep compound results unresolved when they cannot be attributed to an individual command.
+- Show skill loads, read attempts, reported uses, and subagent launches in the Explore tool scope.
+- Keep Explore widgets steady while revalidating retained reports, and preserve open Git examples across data updates.
+- Restore captured prompt previews in the Sessions list and search by saved titles or captured prompts. Group linked child sessions under expandable parent rows and label Codex auto-reviews.
+- Explain missing session costs by distinguishing uncaptured tokens, usage outside the selected dates, and unresolved pricing for Codex auto-reviews.
+- Link Codex subagent and auto-review sessions to their recorded parent threads, including retained sessions and parents imported later.
 - Run asynchronous skill discovery and loop builds from the invoking project directory so Codex CLI trust checks use the user's repository instead of the backend server's working directory.
 - Retain accepted task receipts until their completed evidence generation is published, and journal workflow file changes for crash recovery.
 

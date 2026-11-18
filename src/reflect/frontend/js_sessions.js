@@ -10,6 +10,38 @@ function sessionListIdentity(session){
   return {title:[model || agent || 'Session', id].filter(Boolean).join(' · '), missingPrompt:true};
 }
 
+function sessionTableRows(sessions, isExpanded){
+  const sessionId = session => session.full_id || session.id;
+  const ids = new Set(sessions.map(sessionId));
+  const children = new Map();
+  const roots = [];
+  for (const session of sessions) {
+    const parent = session.parent_session_id;
+    if (parent && parent !== sessionId(session) && ids.has(parent)) {
+      if (!children.has(parent)) children.set(parent, []);
+      children.get(parent).push(session);
+    } else {
+      roots.push(session);
+    }
+  }
+
+  const rows = [];
+  const visited = new Set();
+  function visit(session, depth, visible){
+    const id = sessionId(session);
+    if (visited.has(id)) return;
+    visited.add(id);
+    const branch = (children.get(id) || []).filter(child => !visited.has(sessionId(child)));
+    const expanded = branch.length > 0 && isExpanded(id);
+    if (visible) rows.push({session, depth, childCount:branch.length, expanded});
+    for (const child of branch) visit(child, depth + 1, visible && expanded);
+  }
+  for (const root of roots) visit(root, 0, true);
+  // Keep sessions reachable if older evidence contains a parent cycle.
+  for (const session of sessions) visit(session, 0, true);
+  return rows;
+}
+
 function renderSessionQualityBadge(session){
   const score = session.quality_score;
   if (!session.quality_available || score == null || !Number.isFinite(Number(score))) {
@@ -241,6 +273,7 @@ class SessionConversationPlayhead {
   let selectedIdx = null;
   let focusedSessionId = '';
   let sessionListScroll = null;
+  const expandedSessionGroups = new Map();
   const listView = document.getElementById('session-table-view');
   const detailView = document.getElementById('session-detail-view');
   const listEl = document.getElementById('sb-list');
@@ -619,6 +652,12 @@ class SessionConversationPlayhead {
   }
 
   listEl.addEventListener('click', event => {
+    const toggle = event.target.closest('[data-session-branch]');
+    if (toggle?.dataset.sessionBranch) {
+      expandedSessionGroups.set(toggle.dataset.sessionBranch, toggle.getAttribute('aria-expanded') !== 'true');
+      renderSessionTable(filteredSessions());
+      return;
+    }
     const button = event.target.closest('[data-session-id]');
     if (!button) return;
     focusedSessionId = button.dataset.sessionId;
@@ -764,6 +803,8 @@ class SessionConversationPlayhead {
       }
       if (searchText) {
         const haystack = [
+          s.native_title || '',
+          s.title || '',
           s.first_prompt || '',
           s.id || '',
           s.full_id || '',
@@ -804,11 +845,16 @@ class SessionConversationPlayhead {
     document.dispatchEvent(new CustomEvent('dashboard-filters-changed', {
       detail: { sessions: filteredDashboardSessions.slice(), hasFilters, selectedSessionId: dashboardSelectedSessionId, filters: {...filterState, agents:[...filterState.agents]} }
     }));
+    renderSessionTable(filtered, hasFilters);
+  }
+
+  function renderSessionTable(filtered, hasFilters){
     const scrollLeft = listEl.querySelector('.analysis-table-scroll')?.scrollLeft || 0;
-    const rowHadFocus = document.activeElement.closest('#sb-list [data-session-id]')?.dataset.sessionId;
+    const active = document.activeElement.closest('#sb-list [data-session-id], #sb-list [data-session-branch]');
+    const rows = sessionTableRows(filtered, id => expandedSessionGroups.get(id) ?? Boolean(filterState.q));
     listEl.innerHTML = filtered.length ? analysisTable(
       ['Session', 'Agent', 'Started', 'Events', 'Tokens', 'Cost', 'Quality'],
-      filtered.map(session => {
+      rows.map(({session, depth, childCount, expanded}) => {
         const id = session.full_id || session.id;
         const title = sessionListIdentity(session);
         const highlighted = id === focusedSessionId;
@@ -817,9 +863,16 @@ class SessionConversationPlayhead {
         const cost = sessionCostPresentation(session, estimated);
         const unit = String(session.pricing_unit || sqlTab('usage').pricing_unit || 'usd').toUpperCase();
         const costLabel = cost.status === 'estimated' ? `${fmtCost(cost.cost)} ${unit}` : cost.label;
+        const context = [session.parent_session_id ? 'Child session' : '',
+          session.primary_model === 'codex-auto-review' ? 'Codex auto-review' : '',
+          title.missingPrompt ? 'Prompt text unavailable' : ''].filter(Boolean).join(' · ');
+        const branchLabel = `${fmt(childCount)} child session${childCount === 1 ? '' : 's'}`;
+        const branch = childCount ? `<button type="button" class="session-branch-toggle" data-session-branch="${escHtml(id)}"
+          aria-expanded="${expanded}" aria-label="${expanded ? 'Hide' : 'Show'} ${branchLabel} for ${escHtml(title.title)}">${branchLabel}</button>` : '';
         return `<tr class="analysis-summary${highlighted ? ' session-row-current' : ''}">
-          <th scope="row"><button type="button" class="analysis-toggle" data-session-id="${escHtml(id)}"${highlighted ? ' aria-current="true"' : ''}>${escHtml(title.title)}</button>
-            ${title.missingPrompt ? '<small class="analysis-subline">Prompt text unavailable</small>' : ''}</th>
+          <th scope="row"><div class="session-row-identity${depth ? ' session-row-child' : ''}" style="--session-depth:${Math.min(depth, 6)}">
+            <button type="button" class="analysis-toggle" data-session-id="${escHtml(id)}"${highlighted ? ' aria-current="true"' : ''}>${escHtml(title.title)}</button>
+            ${context ? `<small class="analysis-subline">${escHtml(context)}</small>` : ''}${branch}</div></th>
           <td>${escHtml(formatAgentLabel(session.agent))}</td><td>${escHtml(fmtWorkflowDate(session.created_at))}</td>
           <td>${fmt(session.event_count || 0)}</td><td>${tokens > 0 ? `${estimated ? '~' : ''}${fmtTokenShort(tokens)}` : '—'}</td>
           <td title="${escHtml(cost.reason || '')}">${escHtml(costLabel)}</td><td>${renderSessionQualityBadge(session)}</td>
@@ -828,8 +881,10 @@ class SessionConversationPlayhead {
     ) : `<p class="session-ledger-empty">${D._unpublishedNavigation ? 'Session navigation is updating.' : hasFilters ? 'No sessions match this scope. Adjust the filters to broaden it.' : 'No sessions have been captured yet.'}</p>`;
     const scroller = listEl.querySelector('.analysis-table-scroll');
     if (scroller) scroller.scrollLeft = scrollLeft;
-    if (rowHadFocus) {
-      [...listEl.querySelectorAll('[data-session-id]')].find(button => button.dataset.sessionId === rowHadFocus)?.focus({preventScroll:true});
+    if (active) {
+      const attribute = active.dataset.sessionBranch ? 'sessionBranch' : 'sessionId';
+      [...listEl.querySelectorAll('[data-session-id], [data-session-branch]')]
+        .find(button => button.dataset[attribute] === active.dataset[attribute])?.focus({preventScroll:true});
     }
   }
 

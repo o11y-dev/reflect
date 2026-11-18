@@ -8,6 +8,28 @@ from pathlib import Path
 import pytest
 
 
+def test_session_cost_says_why_a_dollar_amount_is_unavailable():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is required for Usage rendering checks")
+    source = Path("src/reflect/frontend/js_ledger.js").read_text()
+    renderer = source[source.index("function fmtCost("):source.index("function sessionToolCallTotal(")]
+    checks = r"""
+const assert = require('node:assert/strict');
+const coverage = {cost_status:'unavailable', observed_usage:0};
+const session = {agent:'codex', cost_scope:'event_window', pricing_coverage:coverage};
+assert.equal(sessionCostPresentation(session).label, 'Tokens not captured');
+assert.equal(sessionCostPresentation({...session, input_tokens:50}).label, 'No usage in range');
+const review = {...session, primary_model:'codex-auto-review', pricing_coverage:{...coverage, observed_usage:2}};
+assert.equal(sessionCostPresentation(review).label, 'Review rate unavailable');
+assert.equal(sessionCostPresentation(review).cost, 0);
+const priced = {...review, pricing_coverage:{cost_status:'complete', observed_usage:2}, total_cost_usd:0.04};
+assert.equal(sessionCostPresentation(priced).cost, 0.04);
+assert.equal(sessionCostPresentation(priced).status, 'estimated');
+"""
+    subprocess.run([node, "-e", renderer + checks], check=True, capture_output=True, text=True)
+
+
 def test_header_and_session_summary_use_selected_event_window():
     node = shutil.which("node")
     if node is None:
@@ -128,7 +150,21 @@ function payload(label,n) {
 }
 for (const [label,n] of [['first',11],['second',22]]) {
   context.D=payload(label,n);
+  context.D.git_activity.operations=[...Array(12).fill({provider:'git',operation:'status',state:'unresolved'}),
+    {provider:'git',operation:'commit',state:'unresolved'}, {provider:'git',operation:'push',state:'unresolved'}];
+  const tools=context.D.sqlite.tabs.tools;
+  tools.skill_attempts_by_count={[`attempt-${label}`]:2};
+  tools.skill_mentions_by_count={[`mention-${label}`]:1};
   context.renderUsageView();
+  context.buildToolsLists();
+  assert.match(element('measurement-summary').innerHTML,/Inspect tools, skills &amp; subagents/);
+  assert.match(element('measurement-git').innerHTML,/git commit/);
+  assert.match(element('measurement-git').innerHTML,/git push/);
+  assert.equal((element('measurement-git').innerHTML.match(/git status/g)||[]).length,1);
+  assert.match(element('skills-list').innerHTML,/Loaded or invoked.*Read attempts.*Reported/s);
+  assert.ok(element('skills-list').innerHTML.includes(`attempt-${label}</th><td>—</td><td>2</td>`));
+  assert.ok(!element('skills-list').innerHTML.includes(`mention-${label}`));
+  assert.ok(element('tools-subagent-activity').innerHTML.includes(label));
   assert.equal(context.D.sessions,sidebar);
   assert.ok(element('stat-row').innerHTML.includes(`>${n}</div>`));
   assert.ok(element('metric-row').innerHTML.includes(label));
@@ -171,7 +207,7 @@ def test_subagent_activity_preserves_observed_stops_without_claiming_success():
     if node is None:
         pytest.skip("Node is required for subagent rendering checks")
     source = Path("src/reflect/frontend/js_explore.js").read_text()
-    source = source[source.index("function buildSubagentActivity(){"):source.index("/* ════════════════════ TOOLS")]
+    source = source[source.index("function buildSubagentActivity("):source.index("/* ════════════════════ TOOLS")]
     script = r"""
 const assert=require('node:assert/strict'),vm=require('node:vm');
 const element={};

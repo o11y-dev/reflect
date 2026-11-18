@@ -20,18 +20,20 @@ def write_records(path, records):
     path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
 
 
-def test_cursor_hook_buckets_are_uncached_before_pricing():
-    attrs = {"gen_ai.client.name": "cursor", "gen_ai.usage.input_tokens": 1000, "hook.cache_read_tokens": 600, "hook.cache_write_tokens": 100}
+@pytest.mark.parametrize("write_key", ["hook.cache_write_tokens", "gen_ai.usage.cache_write.input_tokens"])
+def test_cursor_hook_buckets_are_uncached_before_pricing(write_key):
+    attrs = {"gen_ai.client.name": "cursor", "gen_ai.usage.input_tokens": 1000, "hook.cache_read_tokens": 600, write_key: 100}
     normalized = _canonical_usage_attrs(attrs)
     assert normalized["gen_ai.usage.input_tokens"] == 300
     assert normalized["reflect.usage.input_semantics"] == "uncached"
+    assert normalized["gen_ai.usage.cache_creation.input_tokens"] == 100
     assert attrs["gen_ai.usage.input_tokens"] == 1000
     assert _canonical_usage_attrs(normalized) == normalized
-    attrs.pop("hook.cache_write_tokens")
+    attrs.pop(write_key)
     missing = _canonical_usage_attrs(attrs)
     assert "gen_ai.usage.input_tokens" not in missing
     assert missing["reflect.usage.unavailable_reason"]
-    attrs["hook.cache_write_tokens"] = 500
+    attrs[write_key] = 500
     assert "gen_ai.usage.input_tokens" not in _canonical_usage_attrs(attrs)
 
 

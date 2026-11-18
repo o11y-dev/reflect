@@ -84,6 +84,7 @@ def session_card_from_row(
         "id": session_id,
         "full_id": session_id,
         "agent": row.get("agent") or "unknown",
+        "parent_session_id": row.get("parent_session_id"),
         "status": status,
         "title": row.get("title"),
         "first_prompt": first_prompt or row.get("first_prompt") or row.get("title") or "",
@@ -129,44 +130,13 @@ def sql_session_first_prompts(db_path: Path, session_ids: set[str]) -> dict[str,
     if not session_ids:
         return {}
     from reflect.store.sqlite import connect_sqlite_read_only
+    from reflect.views.sessions import session_first_prompts
 
-    ids = sorted(session_ids)
-    placeholders = ", ".join("?" for _ in ids)
     conn = connect_sqlite_read_only(db_path)
     try:
-        rows = dict_rows(
-            conn.execute(
-                f"""
-            SELECT session_id, raw_attrs_json
-            FROM steps
-            WHERE session_id IN ({placeholders})
-              AND raw_attrs_json LIKE '%gen_ai.client.prompt%'
-            ORDER BY session_id, seq
-            """,
-                ids,
-            )
-        )
+        return session_first_prompts(conn, session_ids)
     finally:
         conn.close()
-    prompts: dict[str, str] = {}
-    for row in rows:
-        session_id = str(row["session_id"])
-        if session_id in prompts:
-            continue
-        attrs = load_json_dict(row["raw_attrs_json"])
-        prompt = str(
-            sql_attr(
-                attrs,
-                "gen_ai.client.prompt",
-                "gen_ai.client.prompt.text",
-                "prompt",
-                "input",
-            )
-            or ""
-        ).strip()
-        if prompt:
-            prompts[session_id] = prompt
-    return prompts
 
 
 def dict_rows(cursor) -> list[dict[str, object]]:

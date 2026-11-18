@@ -108,7 +108,7 @@ def command_pattern(command: str) -> str:
     return _pattern(command.strip())
 
 
-def _parts(command: str) -> list[str]:
+def shell_command_parts(command: str, *, reject_groups: bool = False) -> list[str]:
     """Split only unquoted shell operators; leave word parsing to shlex."""
     parts: list[str] = []
     start = 0
@@ -126,6 +126,8 @@ def _parts(command: str) -> list[str]:
                 quote = ""
         elif char in "\"'":
             quote = char
+        elif reject_groups and char in "(){}":
+            raise ValueError("grouped shell commands")
         elif char == "#" and (index == 0 or command[index - 1].isspace()):
             raise ValueError("comment-bearing script")
         elif char in ";&|<>\n":
@@ -164,7 +166,7 @@ def _pattern(command: str, depth: int = 0) -> str:
         return _script_pattern(command)
     result: list[str] = []
     try:
-        for part in _parts(command):
+        for part in shell_command_parts(command):
             if part in {";", "&&", "||", "|", "&"} or re.fullmatch(r"\d*[<>]{1,2}(?:&(?:\d+|-))?", part):
                 result.append(part)
                 continue

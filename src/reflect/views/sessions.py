@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+from collections import defaultdict
 from typing import Any
 
 from reflect.schema.base import ReflectModel
+from reflect.utils import _json_dumps
 
 
 class SessionRow(ReflectModel):
@@ -12,6 +14,7 @@ class SessionRow(ReflectModel):
     repo: str | None = None
     status: str
     title: str | None = None
+    parent_session_id: str | None = None
     started_at: str
     ended_at: str | None = None
     duration_ms: int
@@ -57,6 +60,37 @@ NOT (
   AND COALESCE(sr.total_cost, s.estimated_cost_usd, 0) <= 0
 )
 """
+
+_FIRST_PROMPT = """substr(COALESCE(
+  (SELECT trim(cf.content_preview_redacted)
+   FROM conversation_facts cf JOIN steps st ON st.id = cf.step_id
+   WHERE cf.session_id = s.id AND cf.kind = 'prompt' AND cf.role = 'user'
+     AND trim(cf.content_preview_redacted) <> ''
+   ORDER BY st.seq LIMIT 1),
+  (SELECT first_prompt FROM (
+    SELECT st.seq, COALESCE(
+      NULLIF(trim(json_extract(st.raw_attrs_json, '$."gen_ai.client.prompt"')), ''),
+      NULLIF(trim(json_extract(st.raw_attrs_json, '$."gen_ai.client.prompt.text"')), ''),
+      NULLIF(trim(json_extract(st.raw_attrs_json, '$.prompt')), ''),
+      NULLIF(trim(json_extract(st.raw_attrs_json, '$.input')), '')
+    ) AS first_prompt
+    FROM steps st INDEXED BY idx_steps_session_type
+    WHERE st.session_id = s.id AND st.type IN ('conversation_event', 'llm_call')
+      AND st.raw_attrs_json LIKE '%gen_ai.client.prompt%'
+      AND json_valid(st.raw_attrs_json)
+  ) WHERE first_prompt IS NOT NULL ORDER BY seq LIMIT 1)
+), 1, 1024)"""
+
+
+def session_first_prompts(conn: sqlite3.Connection, session_ids: set[str]) -> dict[str, str]:
+    if not session_ids:
+        return {}
+    placeholders = ",".join("?" for _ in session_ids)
+    rows = conn.execute(
+        f"SELECT s.id, {_FIRST_PROMPT} FROM sessions s WHERE s.id IN ({placeholders})",
+        sorted(session_ids),
+    )
+    return {sid: prompt for sid, prompt in rows if prompt}
 
 
 def list_sessions(
@@ -115,6 +149,7 @@ def list_sessions(
           r.full_name AS repo,
           s.status,
           s.title,
+          s.parent_session_id,
           CASE
             WHEN (s.started_at IS NULL OR s.started_at = '' OR substr(s.started_at, 1, 4) < '2000')
               AND s.ended_at IS NOT NULL AND s.ended_at <> '' AND substr(s.ended_at, 1, 4) >= '2000'
@@ -265,9 +300,6 @@ def select_session_scope(
         predicates.append("COALESCE(sr.error_count,s.failure_count,0)>0")
     elif status == "recovered":
         predicates.append("s.recovered_failure_count>0")
-    if q.strip():
-        predicates.append("instr(lower(s.id||' '||COALESCE(s.title,'')||' '||COALESCE(a.name,'')||' '||s.status),?)>0")
-        params.append(q.lower().strip())
     date_parts = []
     for operator, value in ((">=", date_from), ("<", date_to)):
         if value:
@@ -275,6 +307,29 @@ def select_session_scope(
             params.append(value)
     if date_parts:
         predicates.append(f"EXISTS(SELECT 1 FROM steps st INDEXED BY idx_steps_measurement_times WHERE st.session_id=s.id AND {' AND '.join(date_parts)})")
+    if search := q.strip():
+        from reflect.native_session_titles import read_native_session_titles
+
+        candidates: dict[str, set[str]] = defaultdict(set)
+        for sid, agent in conn.execute(f"""SELECT s.id, COALESCE(a.name,sr.agent,'unknown')
+            FROM sessions s LEFT JOIN agents a ON a.id=s.agent_id
+            LEFT JOIN session_rollups sr ON sr.session_id=s.id
+            WHERE {' AND '.join(predicates)}""", params):
+            candidates[agent].add(sid)
+        title_matches = sorted(
+            sid for titles in read_native_session_titles(candidates).values()
+            for sid, title in titles.items() if search.casefold() in title.casefold()
+        )
+        terms = [
+            "instr(lower(s.id||' '||COALESCE(s.title,'')||' '||COALESCE(a.name,'')||' '||s.status),?)>0",
+        ]
+        params.append(search.lower())
+        if title_matches:
+            terms.append("s.id IN (SELECT value FROM json_each(?))")
+            params.append(_json_dumps(title_matches))
+        terms.append(f"instr(lower(COALESCE({_FIRST_PROMPT},'')),?)>0")
+        params.append(search.lower())
+        predicates.append(f"({' OR '.join(terms)})")
     projection = "s.id" if ids_only else """s.id,s.id AS session_id,
         COALESCE(a.name,sr.agent,'unknown') AS agent,s.status,s.title,
         s.started_at,s.ended_at,s.token_provenance,

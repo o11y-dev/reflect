@@ -73,7 +73,7 @@ assert.match(element('measurement-time').innerHTML,/does not measure active work
 assert.match(element('measurement-time').innerHTML,/Pauses do not establish wasted time/);
 assert.match(element('measurement-model-summary').innerHTML,/Eligible adjacent pairs/);
 assert.match(element('measurement-models').innerHTML,/model-a/);
-assert.match(element('measurement-git').innerHTML,/cost is not allocated/);
+assert.match(element('measurement-git').innerHTML,/Cost is reported at the session level/);
 assert.ok(!html.includes('NaN'));assert.ok(!html.includes('Infinity'));
 """)
 
@@ -129,6 +129,9 @@ const git=element('measurement-git').innerHTML;
 assert.equal((git.match(/<li>/g)||[]).length,10);
 assert.match(git,/10 of 15/);assert.match(git,/session=session%200/);
 assert.match(git,/evidence=evidence%200/);assert.ok(!git.includes('session%2010'));
+element('measurement-git').querySelector=()=>({open:true});
+context.renderMeasurementCoverage();
+assert.match(element('measurement-git').innerHTML,/<details class="usage-evidence" open>/);
 assert.match(element('measurement-models').innerHTML,/&lt;unsafe-model&gt;/);
 const diagnostics=element('usage-diagnostics');diagnostics.open=true;diagnostics.ontoggle();
 assert.deepEqual(resized,['eventChart','eventBarChart']);

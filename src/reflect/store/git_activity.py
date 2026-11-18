@@ -9,12 +9,18 @@ import hashlib
 import re
 import shlex
 import sqlite3
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import PurePath
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from reflect.command_patterns import (
+    STRUCTURED_SHELL_TOOLS,
+    shell_command,
+    shell_command_parts,
+    shell_tool_name,
+)
 from reflect.tool_inputs import tool_invocations
 
 try:
@@ -56,6 +62,10 @@ class GitOperation:
 
 _READS = {"view", "list", "diff", "status", "checks", "get", "show", "log", "fetch"}
 _WRITES = {"create", "merge", "close", "reopen", "edit", "update", "approve", "review", "comment", "note"}
+_VCS_EXECUTABLES = {"git", "gh", "glab"}
+_COMMAND_BOUNDARIES = {"&&", ";", "||", "|"}
+_SHELL_CONTROL = re.compile(r"(?:if|then|elif|else|fi|for|while|until|case|do|done|function)\b")
+_ENV_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 # shlex builds quoted tokens one character at a time. Captured shell tools can
 # contain megabytes of embedded code; these are not bounded CLI evidence.
 _MAX_COMMAND_CHARS = 32_768
@@ -125,19 +135,36 @@ def _cli_operation(command: str, repository: str | None) -> tuple[GitOperation |
             return None, False
         # Reject wrappers before parsing their arbitrary script/body arguments.
         cli = PurePath(first).name
-        if cli not in {"git", "gh", "glab"}:
+        if cli not in _VCS_EXECUTABLES | {"rtk", "command", "env"}:
             return None, False
         tokens = [first, *lexer]
     except ValueError:
         return None, False
     single = "\n" not in command and not any(token in {"&&", "||", ";", "|", "&", "(", ")"} for token in tokens)
+    if cli == "command" and len(tokens) > 1:
+        tokens = tokens[1:]
+        cli = PurePath(tokens[0]).name
+    if cli == "env":
+        index = 1
+        while index < len(tokens) and _ENV_ASSIGNMENT.match(tokens[index]):
+            index += 1
+        if index < len(tokens) and tokens[index] == "--":
+            index += 1
+        tokens = tokens[index:]
+        cli = PurePath(tokens[0]).name if tokens else ""
+        repository = None
+    if cli == "rtk" and len(tokens) > 1:
+        tokens = tokens[1:]
+        cli = PurePath(tokens[0]).name
+    if cli not in _VCS_EXECUTABLES:
+        return None, False
     if any(t in {"--help", "-h", "--dry-run"} for t in tokens):
         return GitOperation("read", {"gh": "github", "glab": "gitlab"}.get(cli, cli), repository, reason="help_or_dry_run"), single
     if cli == "git":
         index = 1
         while index < len(tokens) and tokens[index].startswith("-"):
             flag = tokens[index]
-            if flag in {"-C", "--git-dir", "--work-tree"}:
+            if flag in {"-C", "--git-dir", "--work-tree"} or flag.startswith(("--git-dir=", "--work-tree=")):
                 # Worktree override is not evidence of the session's repository.
                 repository = None
             index += 2 if flag in {"-C", "-c", "--git-dir", "--work-tree"} else 1
@@ -265,6 +292,44 @@ def operation_for_tool(row: dict[str, Any]) -> GitOperation | None:
     return GitOperation(**values)
 
 
+def _compound_git_observations(row: dict[str, Any]) -> list[tuple[int, GitOperation]]:
+    """Identify explicit commands without assigning a compound result to any one command."""
+    if not row.get("is_shell_call") and shell_tool_name(row.get("tool_name")) not in STRUCTURED_SHELL_TOOLS:
+        return []
+    command = shell_command(row.get("tool_name"), row.get("raw_attrs_json"), row.get("input_preview_redacted"))
+    if (len(command) > _MAX_COMMAND_CHARS or not any(mark in command for mark in ";&|\n")
+            or any(mark in command for mark in ("$(", "`", "<<"))):
+        return []
+    try:
+        parts = shell_command_parts(command, reject_groups=True)
+    except ValueError:
+        return []
+    if not _COMMAND_BOUNDARIES.intersection(parts):
+        return []
+    observations = []
+    for index, part in enumerate(parts):
+        if index and parts[index - 1] not in _COMMAND_BOUNDARIES:
+            continue
+        if part in _COMMAND_BOUNDARIES:
+            continue
+        if _SHELL_CONTROL.match(part):
+            return []
+        # Earlier commands can change the worktree. Only explicit repo flags
+        # on individual provider commands establish a repository here.
+        op, _ = _cli_operation(part, None)
+        if op is not None:
+            observations.append((index, replace(op, state="unresolved", reason="compound_command_result_ambiguous")))
+    return observations
+
+
+def _git_observations(row: dict[str, Any]):
+    compound = _compound_git_observations(row)
+    if compound:
+        yield from compound
+    elif (op := operation_for_tool(row)) is not None:
+        yield None, op
+
+
 def refresh_git_activity(conn: sqlite3.Connection, *, session_ids: set[str] | None = None) -> dict[str, int]:
     """Reconcile only this projection's rows; caller owns the transaction."""
     if session_ids == set():
@@ -280,13 +345,13 @@ def refresh_git_activity(conn: sqlite3.Connection, *, session_ids: set[str] | No
     now = datetime.now(UTC).isoformat()
     seen: set[str] = set()
     projected = (call for raw in rows for call in tool_invocations(dict(zip(columns, raw, strict=True))))
-    for row in projected:
-        op = operation_for_tool(row)
-        if op is None:
-            continue
+    observations = ((row, index, op) for row in projected for index, op in _git_observations(row))
+    for row, index, op in observations:
         identity = f"{row['session_id']}:{row.get('logical_call_id') or row['id']}"
         if "wrapper_index" in row:
             identity += f":invocation:{row['wrapper_index']}"
+        if index is not None:
+            identity += f":command:{index}"
         evidence_id = "vcs_" + hashlib.sha256(identity.encode()).hexdigest()[:32]
         seen.add(evidence_id)
         observed_at = row["observed_at"] if _object(row["raw_attrs_json"]).get("reflect.time.provenance") not in {"inferred", "synthetic"} else None

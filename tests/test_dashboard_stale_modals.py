@@ -72,6 +72,22 @@ assert.match(dialogs.at(-1).body,/reflect loops build loop/);
 """)
 
 
+def test_finding_detail_exposes_the_linked_workflow_or_creation():
+    _run_modal(r"""
+(async()=>{
+params.set('workflow_row','unrelated');
+const item={id:'finding',title:'Context usage',candidate_id:'linked-draft'};
+context.ledgerRequest=async url=>url.endsWith('/evidence') ? {candidate_id:item.candidate_id} : item;
+await context.showObservationEvidence('finding');
+assert.match(dialogs.at(-1).actions,/data-ledger-action="open-workflow" data-candidate-id="linked-draft">Open workflow</);
+assert.doesNotMatch(dialogs.at(-1).actions,/unrelated|create-from-finding/);
+delete item.candidate_id;
+await context.showObservationEvidence('finding');
+assert.match(dialogs.at(-1).actions,/data-ledger-action="create-from-finding" data-observation-id="finding">Create workflow</);
+})().catch(error=>{console.error(error);process.exitCode=1;});
+""")
+
+
 def test_workflow_review_requires_current_candidate_and_current_detail():
     _run_modal(r"""
 (async()=>{

@@ -111,6 +111,7 @@ def prepare_usage_db(
             normalization_failed += int(normalize_result.get("failed", 0))
 
         cursor_native_files: list[Path] = []
+        codex_native_files: list[Path] = []
         if include_native_sessions:
             report_preparation_progress(
                 progress,
@@ -124,6 +125,7 @@ def prepare_usage_db(
                 ):
                     continue
                 if native_agent == "codex":
+                    codex_native_files.append(session_file)
                     ingest_codex_context_file(conn, file_path=session_file)
                 result = ingest_native_session_file(
                     conn,
@@ -166,6 +168,7 @@ def prepare_usage_db(
             conn,
             timestamp=datetime.now(UTC).isoformat(),
             changed_session_ids=changed_session_ids,
+            codex_native_files=codex_native_files,
         )
         usage_inputs = pending_state.capture()
         changed_session_ids.update(usage_inputs.pending_for("cost") | usage_inputs.pending_for("rollup"))
@@ -380,6 +383,7 @@ def prepare_sql_report_db(
         ingest_sources: dict[str, dict[str, object]] = {}
         segment_batches: list[SegmentBatchIngestion] = []
         cursor_native_files: list[Path] = []
+        codex_native_files: list[Path] = []
         replay_policy = (
             AppendOnlyReplayPolicy.DEFER
             if defer_otlp_replay
@@ -459,6 +463,7 @@ def prepare_sql_report_db(
                     continue
                 source_ref = f"native_session:{agent}:{session_file}"
                 if agent == "codex":
+                    codex_native_files.append(session_file)
                     context_file_result = ingest_codex_context_file(
                         conn,
                         file_path=session_file,
@@ -553,6 +558,7 @@ def prepare_sql_report_db(
             conn,
             timestamp=datetime.now(UTC).isoformat(),
             changed_session_ids=changed_session_ids,
+            codex_native_files=codex_native_files,
         )
         timings["canonical_context_seconds"] = perf_counter() - operation_started
         report_preparation_progress(

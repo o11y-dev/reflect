@@ -72,7 +72,7 @@ function renderMeasurementCoverage(){
       <td><p class="usage-copy">${decimal(c.eligible_usage_turns)} turns with eligible usage · ${compact(m.mean_input_tokens)} mean inclusive input tokens</p><span class="analysis-subline">A recorded turn ending is not verified task success.</span></td></tr>
     <tr><th scope="row">Paired tool calls</th><td>${number(m.completed_tool_calls)}</td>
       <td><p class="usage-copy">${decimal(c.eligible_tool_turns)} eligible completed turns · ${decimal(m.mean_tool_calls_per_turn)} mean · ${decimal(m.max_tool_calls_per_turn)} max</p>
-      <button type="button" class="usage-link" data-usage-view="tools">Inspect tool activity <span aria-hidden="true">→</span></button></td></tr>
+      <button type="button" class="usage-link" data-usage-view="tools">Inspect tools, skills &amp; subagents <span aria-hidden="true">→</span></button></td></tr>
   `);
   el.onclick = event => {
     const trigger=event.target.closest('[data-usage-view]');
@@ -93,9 +93,17 @@ function renderMeasurementCoverage(){
   }
   const gitEl = document.getElementById('measurement-git');
   if (gitEl) {
-    const operations = (git.operations || []).slice(0,10);
+    const examplesOpen = gitEl.querySelector?.('details.usage-evidence')?.open;
+    const seenUnresolved = new Set();
+    const operations = (git.operations || []).filter(operation => {
+      if (operation.state !== 'unresolved' || operation.artifact_id) return true;
+      const key = `${operation.provider}:${operation.operation}`;
+      if (seenUnresolved.has(key)) return false;
+      seenUnresolved.add(key);
+      return true;
+    }).slice(0,10);
     const operationRow = op => `<li><div><strong>${escHtml([op.provider,op.operation].filter(Boolean).join(' ') || 'Operation')}</strong><span class="usage-operation-state">${escHtml(op.state || 'unknown')}</span><p title="${escHtml(op.repository || '')}">${escHtml(op.repository || 'Repository unknown')} · ${escHtml(op.artifact_id || 'Artifact not identified')}</p></div>${op.session_id ? `<a class="usage-link" href="${escHtml(sessionInspectionUrl({session_id:op.session_id,evidence_focus_id:op.evidence_id}))}">Inspect session <span aria-hidden="true">↗</span></a>` : '<span class="usage-copy">Session unknown</span>'}</li>`;
-    gitEl.innerHTML = `<div class="usage-widget-head"><h3>Git &amp; delivery</h3><span class="usage-unit">Confirmed distinct artifacts</span></div><dl class="usage-delivery-counts">${fact('Commits',git.distinct_commits)}${fact('PRs created',git.created_pull_requests)}${fact('PRs merged',git.merged_pull_requests)}${fact('MRs created',git.created_merge_requests)}${fact('MRs merged',git.merged_merge_requests)}</dl><div class="usage-delivery-note"><span>${decimal(git.total_operations)} captured operations</span><span>${decimal(git.states ? git.states.unresolved ?? 0 : null)} unresolved</span><span>${decimal(git.undated_operations)} undated</span></div><p class="usage-copy">Captured CLI and MCP operations only. A session’s AI cost is not allocated to its commits or PRs/MRs.</p>${operations.length ? `<details class="usage-evidence"><summary>Inspect recent operations <span>${operations.length} of ${decimal(git.total_operations)}</span></summary><ol class="usage-operations">${operations.map(operationRow).join('')}</ol></details>` : `<p class="usage-empty">${known(git.total_operations) ? 'No operation details were captured in this scope.' : 'Git activity is not available yet.'}</p>`}`;
+    gitEl.innerHTML = `<div class="usage-widget-head"><h3>Git &amp; delivery</h3><span class="usage-unit">Confirmed distinct artifacts</span></div><dl class="usage-delivery-counts">${fact('Commits',git.distinct_commits)}${fact('PRs created',git.created_pull_requests)}${fact('PRs merged',git.merged_pull_requests)}${fact('MRs created',git.created_merge_requests)}${fact('MRs merged',git.merged_merge_requests)}</dl><div class="usage-delivery-note"><span>${decimal(git.total_operations)} captured operation records</span><span>${decimal(git.states ? git.states.unresolved ?? 0 : null)} unresolved</span><span>${decimal(git.undated_operations)} undated</span></div><p class="usage-copy">Captured records can include multiple callbacks for the same command. Artifact totals require a result tied to the individual operation. Cost is reported at the session level.</p>${operations.length ? `<details class="usage-evidence"${examplesOpen ? " open" : ""}><summary>Inspect recent command examples <span>${operations.length} of ${decimal(git.total_operations)}</span></summary><ol class="usage-operations">${operations.map(operationRow).join('')}</ol></details>` : `<p class="usage-empty">${known(git.total_operations) ? 'No operation details were captured in this scope.' : 'Git activity is not available yet.'}</p>`}`;
   }
   const diagnostics = document.getElementById('usage-diagnostics');
   if (diagnostics) diagnostics.ontoggle = () => {
@@ -212,8 +220,9 @@ function buildHourBars(){
 }
 
 /* Recorded launches and lifecycle stops are observations, not success rates. */
-function buildSubagentActivity(){
-  const el = document.getElementById('subagent-effectiveness');
+function buildSubagentActivity(id = 'subagent-effectiveness'){
+  const el = document.getElementById(id);
+  if (!el) return;
   const toolsTab = sqlTab('tools');
   const launches = toolsTab.subagent_types_by_count || {};
   const stops = toolsTab.subagent_stops_by_type || {};
@@ -265,11 +274,14 @@ function buildBarList(elId, obj, color){
 function buildToolsLists(){
   const toolsTab = sqlTab('tools');
   buildBarList('tools-list', toolsTab.tools_by_count || {}, P.blue);
-  const sqlSkills = toolsTab.skills_by_count || {};
-  const skillsOrSubagents = Object.keys(sqlSkills).length
-    ? sqlSkills
-    : (toolsTab.subagent_types_by_count || {});
-  buildBarList('skills-list', skillsOrSubagents, P.purple);
+  const counts = [toolsTab.skills_by_count, toolsTab.skill_attempts_by_count,
+    toolsTab.skill_reports_by_count].map(value => value || {});
+  const skills = [...new Set(counts.flatMap(value => Object.keys(value)))].sort();
+  const rows = skills.map(name => `<tr><th scope="row">${escHtml(name)}</th>${counts.map(value => `<td>${value[name] ? fmt(value[name]) : '—'}</td>`).join('')}</tr>`).join('');
+  document.getElementById('skills-list').innerHTML = skills.length
+    ? analysisTable(['Skill', 'Loaded or invoked', 'Read attempts', 'Reported'], rows)
+    : '<p class="empty-note">No skill evidence in this selection.</p>';
+  buildSubagentActivity('tools-subagent-activity');
 }
 
 /* MCP availability table */

@@ -859,9 +859,8 @@ function buildImprovementSurfaces(){
       ? `<div class="session-ledger-empty">${escHtml(pendingCopy('Findings'))}</div>`
       : observations.length ? analysisTable(['Finding', 'Priority / confidence', 'Sessions', 'Workflow'], observations.map(item => {
       const proposedWorkflow = workflows.find(workflow => workflow.id === item.candidate_id);
-      const workflowState = proposedWorkflow
-        ? humanizeLedgerLabel(proposedWorkflow.lifecycle?.display || proposedWorkflow.status || 'pending')
-        : '';
+      const workflowStatus = proposedWorkflow?.lifecycle?.display || proposedWorkflow?.status || item.candidate_status;
+      const workflowState = workflowStatus ? `<span class="analysis-subline">${escHtml(humanizeLedgerLabel(workflowStatus))}</span>` : '';
       const priority = item.impact_score != null && Number.isFinite(Number(item.impact_score))
         ? `Priority ${Math.round(Number(item.impact_score))}/100` : 'Priority unavailable';
       const detectionConfidence = item.confidence != null && Number.isFinite(Number(item.confidence))
@@ -870,7 +869,7 @@ function buildImprovementSurfaces(){
         <th scope="row"><button type="button" class="analysis-toggle" data-ledger-action="evidence" data-observation-id="${escHtml(item.id)}">${escHtml(item.title || 'Finding')}<span class="analysis-subline">${escHtml(item.summary || '')}</span></button></th>
         <td title="Priority orders findings for review. Detection confidence describes the evidence and is not a measured outcome."><strong>${escHtml(priority)}</strong><span class="analysis-subline">${escHtml(detectionConfidence)} · ${escHtml(item.severity || 'low')} severity</span></td>
         <td>${fmt(Number(item.affected_session_count || 0))}<span class="analysis-subline">${fmt(Number(item.observation_count || 1))} patterns · ${fmt(Number(item.source_scope_count || 1))} scopes</span></td>
-        <td>${proposedWorkflow ? `<button type="button" class="ledger-button" data-ledger-action="open-workflow" data-candidate-id="${escHtml(proposedWorkflow.id)}">Open workflow</button><span class="analysis-subline">${escHtml(workflowState)}</span>` : isStaticDemo() ? '—' : `<button type="button" class="ledger-button" data-ledger-action="create-from-finding" data-observation-id="${escHtml(item.id)}">Create workflow</button>`}</td>
+        <td>${item.candidate_id ? `<button type="button" class="ledger-button" data-ledger-action="open-workflow" data-candidate-id="${escHtml(item.candidate_id)}">Open workflow</button>${workflowState}` : isStaticDemo() ? '—' : `<button type="button" class="ledger-button" data-ledger-action="create-from-finding" data-observation-id="${escHtml(item.id)}">Create workflow</button>`}</td>
       </tr>`;
     }).join('')) : resource('findings').state !== 'ready'
       ? '<div class="session-ledger-empty">No findings in the last loaded data. Updated findings are still pending.</div>'

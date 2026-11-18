@@ -139,7 +139,7 @@ def test_migration_queues_only_changed_boundaries_and_keeps_late_revision(conn):
     conn.execute("INSERT INTO pending_refresh(phase,session_id,revision,deferred) VALUES('improvements','session','old',1)")
     old_revision = PendingRefreshSnapshot(entries=(("improvements", "session", "old", True),))
     usage_before = conn.execute("SELECT COUNT(*),SUM(input_tokens) FROM llm_calls").fetchone()
-    assert migrate(conn) == [43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57]
+    assert migrate(conn) == [43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
     assert state.capture().pending_for("improvements", include_deferred=False) == {"session"}
     state.acknowledge(old_revision, "improvements")
     assert state.capture().pending_for("improvements") == {"session"}
@@ -160,7 +160,7 @@ def test_migration_reopens_submillisecond_work_after_premature_stop(conn):
     conn.execute("UPDATE steps SET started_at='2026-09-07T10:00:00.000100Z',ended_at='2026-09-07T10:00:00.000100Z' WHERE id='later'")
     ExecutionUnitService(conn).refresh()
     conn.execute("UPDATE execution_units SET boundary_json=json_set(boundary_json,'$.assessment.boundary','closed')")
-    assert migrate(conn) == [43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57]
+    assert migrate(conn) == [43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
     assert PendingRefreshState(conn).capture().pending_for("improvements") == {"session"}
     ExecutionUnitService(conn).refresh()
     assert assessment(conn)[0]["boundary"] == "open_or_ambiguous"
@@ -174,7 +174,7 @@ def test_migration_tolerates_nonobject_attrs_and_empty_end(conn):
     conn.execute("UPDATE steps SET ended_at='' WHERE id='stop'")
     ExecutionUnitService(conn).refresh()
     conn.execute("UPDATE execution_units SET boundary_json=json_set(boundary_json,'$.assessment.boundary','open_or_ambiguous')")
-    assert migrate(conn) == [43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57]
+    assert migrate(conn) == [43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
     assert PendingRefreshState(conn).capture().pending_for("improvements") == {"session"}
     ExecutionUnitService(conn).refresh()
     assert assessment(conn, source="session_fallback")[0]["boundary"] == "closed"

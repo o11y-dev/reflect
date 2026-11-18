@@ -144,20 +144,13 @@ header{
 }
 .brand-wrap{display:flex;align-items:center;gap:10px;min-width:0}
 .brand{
-  display:flex;
-  align-items:center;
-  gap:10px;
   color:inherit;
   text-decoration:none;
 }
 .brand-mark{
-  width:42px;
-  height:42px;
+  width:30px;
+  height:32px;
   position:relative;
-  display:grid;
-  place-items:center;
-  filter:drop-shadow(0 0 18px rgba(242,138,26,.28));
-  flex:0 0 auto;
 }
 .brand-mark::before{
   content:'';
@@ -172,13 +165,12 @@ header{
   left:50%;
   top:60%;
   transform:translate(-50%,-50%);
-  width:14px;
-  height:14px;
-  border:5px solid var(--signal);
+  width:10px;
+  height:10px;
+  border:3.5px solid var(--signal);
   border-radius:999px;
   background:var(--bg);
   z-index:1;
-  box-shadow:0 0 22px rgba(242,138,26,.55);
 }
 .brand h1{font-size:17px;font-weight:800;letter-spacing:.01em;color:var(--text)}
 .brand h1 em{font-style:normal;color:var(--signal-2);-webkit-text-fill-color:currentColor;background:none}
@@ -290,7 +282,6 @@ header{
 }
 @media(max-width:560px){
   header{grid-template-columns:1fr;padding-inline:max(14px,env(safe-area-inset-left)) max(14px,env(safe-area-inset-right));gap:7px}
-  .brand-mark{width:36px;height:36px}
   .brand h1{font-size:15px}
   .brand-badge{display:none}
   .header-meta{display:none}
@@ -406,8 +397,6 @@ header{
   background:#050505;border-right:1px solid rgba(245,242,234,.09);
 }
 .app-rail-brand{display:grid;place-items:center;width:42px;height:42px;flex:0 0 auto}
-.app-rail-brand .brand-mark{width:30px;height:32px;filter:none}
-.app-rail-brand .brand-mark::after{width:10px;height:10px;border-width:3.5px;box-shadow:none}
 #tabs{display:flex;flex:1;flex-direction:column;align-items:center;gap:7px;width:100%;overflow-y:auto;overflow-x:hidden;padding:2px 0;scrollbar-width:none}
 #tabs::-webkit-scrollbar{display:none}
 .tab{
@@ -446,8 +435,8 @@ footer{margin-left:var(--app-rail-width)}
 }
 @media(max-width:720px){
   body{padding-bottom:calc(64px + env(safe-area-inset-bottom))}
-  .app-rail{inset:auto 0 0;width:100%;height:calc(62px + env(safe-area-inset-bottom));padding:6px max(8px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left));border-right:0;border-top:1px solid rgba(245,242,234,.12);background:rgba(5,5,5,.97)}
-  .app-rail-brand,.app-rail-divider{display:none}
+  .app-rail{inset:auto 0 0;width:100%;height:calc(62px + env(safe-area-inset-bottom));padding:6px max(8px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left));border-right:0;border-top:1px solid rgba(245,242,234,.12);background:rgba(5,5,5,.97);flex-direction:row;gap:4px}
+  .app-rail-divider{display:none}
   #tabs{flex-direction:row;justify-content:space-around;gap:2px;overflow-x:auto;overflow-y:hidden}
   .tab{flex:1 1 0;min-width:0;width:auto;max-width:64px;height:46px}
   .tab svg{width:19px;height:19px}
@@ -953,6 +942,22 @@ body:has(.ledger-dialog[open]){overflow:hidden}
 .section-sidebar .workflow-filter-summary{margin:0;padding:0;white-space:normal}
 .section-sidebar .workflow-filter-field>select,.section-sidebar .workflow-filter-field>input{width:100%;min-width:0}
 .session-row-current{background:rgba(242,138,26,.065)}
+.session-row-identity{position:relative;padding-inline-start:calc(var(--session-depth,0) * 18px)}
+.session-row-child::before{
+  content:"";position:absolute;pointer-events:none;
+  inset-inline-start:calc(var(--session-depth) * 18px - 13px);inset-block-start:-10px;
+  width:8px;height:19px;border-inline-start:1px solid var(--muted);border-block-end:1px solid var(--muted);
+  border-end-start-radius:3px;
+}
+.session-branch-toggle{
+  display:inline-flex;align-items:center;gap:7px;min-height:24px;margin-top:3px;padding:0 7px;
+  border:1px solid var(--glass-border);border-radius:5px;background:var(--surface3);
+  color:var(--text-2);font:inherit;font-size:11px;cursor:pointer;
+}
+.session-branch-toggle::before{content:"";width:5px;height:5px;border:solid currentColor;border-width:0 1px 1px 0;transform:rotate(-45deg)}
+.session-branch-toggle[aria-expanded="true"]::before{transform:rotate(45deg)}
+.session-branch-toggle:hover,.session-branch-toggle[aria-expanded="true"]{color:var(--signal-2)}
+.session-branch-toggle:focus-visible{outline:2px solid var(--signal-2);outline-offset:2px}
 #sb-list .sb-card-badge{display:inline-block;white-space:nowrap}
 #sb-list .analysis-table td{font-variant-numeric:tabular-nums}
 #sb-list .analysis-table th:first-child{min-width:180px}
@@ -2822,7 +2827,6 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <header>
   <div class="brand-wrap">
     <a class="brand" href="https://reflect.o11y.dev/" aria-label="Open reflect.o11y.dev">
-      <span class="brand-mark" aria-hidden="true"></span>
       <h1>reflect.<em>o11y</em>.dev</h1>
     </a>
     <span class="brand-badge" id="demo-badge">DEMO</span>
@@ -3171,13 +3175,18 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
       <div class="bar-list" id="tools-list"></div>
     </div>
     <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Skills &amp; Subagents</div>
-      <div class="bar-list" id="skills-list"></div>
-    </div>
-    <div class="panel" style="margin-bottom:0">
       <div class="panel-title">MCP Servers</div>
       <div class="bar-list" id="mcp-list"></div>
     </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Skill evidence</div>
+    <div id="skills-list"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title">Subagent Activity</div>
+    <div id="tools-subagent-activity" class="analysis-table-scroll"></div>
   </div>
 
   <div class="panel">
@@ -4106,10 +4115,21 @@ function sessionCostPresentation(session, estimatedTokens = null){
   const cost = Number(session?.total_cost_usd || session?.total_cost || 0);
   const coverage = session?.pricing_coverage || session?.measurements?.coverage;
   if (coverage) {
-    const scope = session?.cost_scope === 'event_window' ? 'Selected dates' : 'Session lifetime';
+    const windowed = session?.cost_scope === 'event_window';
+    const scope = windowed ? 'Selected dates' : 'Session lifetime';
     if (coverage.cost_status === 'complete') return {cost, status:'estimated', label:'Estimated cost', reason:`${scope}: all observed usage priced, including explicit zero rates.`};
     if (coverage.cost_status === 'partial') return {cost, status:'partial', label:`Known subtotal $${fmtCost(cost)}`, reason:`${scope}: ${coverage.complete_priced_usage || 0}/${coverage.observed_usage || 0} usage records fully priced. Missing evidence is excluded from this subtotal.`};
-    return {cost:0, status:'unavailable', label:'Cost unavailable', reason:'Captured usage has no supported price. Missing data does not imply free usage.'};
+    const unavailable = {cost:0, status:'unavailable'};
+    if (Number(coverage.observed_usage) === 0) {
+      if (windowed && sessionTokenTotal(session, estimatedTokens) > 0) {
+        return {...unavailable, label:'No usage in range', reason:'No dated token usage was available for the selected dates.'};
+      }
+      return {...unavailable, label:'Tokens not captured', reason:`${scope}: no token usage was captured.`};
+    }
+    if (session?.agent === 'codex' && session.primary_model === 'codex-auto-review') {
+      return {...unavailable, label:'Review rate unavailable', reason:'Codex reported review tokens under codex-auto-review. There is no matching rate in the local price catalog.'};
+    }
+    return {...unavailable, label:'Price unresolved', reason:'Reflect could not resolve a rate for the captured token usage.'};
   }
   if (cost > 0) return {cost, status:'estimated', label:'Estimated cost', reason:''};
   const inferredStatus = sessionTokenTotal(session, estimatedTokens) <= 0
@@ -4300,7 +4320,7 @@ const improvementTabs = new Set(['inbox', 'workflows', 'skills', 'impact']);
 document.addEventListener('reflect-status-polled', () => {
   if (!dashboardDocumentActive || document.visibilityState === 'hidden') return;
   if (currentParams().get('tab') === 'explore') {
-    hydrateExploreView(activeExploreView).catch(() => {});
+    hydrateExploreView(activeExploreView, {poll:true}).catch(() => {});
     return;
   }
   if (!improvementTabs.has(currentParams().get('tab'))) return;
@@ -4621,6 +4641,10 @@ async function showObservationEvidence(observationId){
     const metricValue = Number(item.metric_value);
     const metricDisplay = Number.isFinite(metricValue) ? fmt(metricValue) : String(item.metric_value ?? '—');
     const ruleLabel = humanizeLedgerLabel(item.category || item.rule_id || 'Improvement');
+    const candidateId = ledger?.candidate_id ?? item.candidate_id;
+    const workflowAction = candidateId
+      ? `<button type="button" class="ledger-button primary" data-ledger-action="open-workflow" data-candidate-id="${escHtml(candidateId)}">Open workflow</button>`
+      : isStaticDemo() ? '' : `<button type="button" class="ledger-button primary" data-ledger-action="create-from-finding" data-observation-id="${escHtml(observationId)}">Create workflow</button>`;
     presentLedgerRead(request, {
       title:item.title || 'Observation evidence',
       subtitle:`${ruleLabel} Rule · Version ${item.rule_version} · ${confidence}% detection confidence`,
@@ -4654,7 +4678,7 @@ async function showObservationEvidence(observationId){
             <details class="advanced-review"><summary>Raw Evidence Links · ${fmt((item.evidence || []).length)}</summary><div class="evidence-list">${rawEvidence || '<div class="session-ledger-empty">No bounded evidence is available.</div>'}</div></details>
           </details></aside>
         </div>`,
-      actions:'<div class="ledger-action-spacer"></div><button type="button" class="ledger-button primary" data-ledger-action="close">Done</button>',
+      actions:`<button type="button" class="ledger-button" data-ledger-action="close">Done</button><div class="ledger-action-spacer"></div>${workflowAction}`,
     });
   } catch (error) {
     failLedgerRead(request, {title:'Evidence unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`});
@@ -5255,6 +5279,7 @@ document.addEventListener('click', async event => {
   if (action === 'review-skill') return showSkillReview(trigger.dataset.skillId || '');
   if (action === 'open-workflow') {
     activateTab('workflows');
+    updateUrlParams(params => params.set('workflow_row', candidateId));
     return showWorkflowReview(candidateId);
   }
   if (action === 'retry-improvements') return refreshImprovementSurfaces();
@@ -5338,6 +5363,8 @@ let dashboardSelectedSessionId = currentParams().get('session') || '';
 const lazySqlTabRequests = new Map();
 const exploreViewStates = new Map([['usage', 'ready']]);
 const exploreViewScopes = new Map();
+const exploreReads = new Map();
+const exploreReadIntervalMs = 5000;
 let failedGraphAttempt = null;
 let renderedGraph = null;
 let explorePublication = 0;
@@ -5517,7 +5544,7 @@ async function loadExploreView(viewName){
   return request;
 }
 
-async function hydrateExploreView(viewName, {retry = false} = {}){
+async function hydrateExploreView(viewName, {retry = false, poll = false} = {}){
   if (typeof updateExploreScope === 'function' && currentParams().get('tab') === 'explore' && activeExploreView === viewName) updateExploreScope();
   const cacheKey = exploreViewUrl(viewName).url.toString();
   const previous = exploreViewScopes.get(viewName);
@@ -5531,9 +5558,14 @@ async function hydrateExploreView(viewName, {retry = false} = {}){
   if (exploreViewStates.get(viewName) === 'ready' && previous?.scope === cacheKey && previous.publication === publication
     && (!graph || graphIsCurrent)) return;
   if (graph) failedGraphAttempt = null;
-  if (exploreViewStates.get(viewName) === 'loading' && lazySqlTabRequests.has(cacheKey)) return;
+  if (lazySqlTabRequests.has(cacheKey)) return;
   if (!D.sql_backed || (!isStaticDemo() && !reportSupportsServerFiltering())) return;
-  setExploreViewState(viewName, 'loading');
+  const previousRead = exploreReads.get(viewName);
+  const now = Date.now();
+  if (poll && previousRead?.scope === cacheKey && previousRead.publication === publication
+    && now - previousRead.startedAt < exploreReadIntervalMs) return;
+  exploreReads.set(viewName, {scope:cacheKey, publication, startedAt:now});
+  if (!poll || previous?.scope !== cacheKey) setExploreViewState(viewName, 'loading');
   try {
     const canReuseGraph = graph && previous?.scope === cacheKey
       && previous.publication === publication && previous.publication_state === 'ready';
@@ -5546,8 +5578,10 @@ async function hydrateExploreView(viewName, {retry = false} = {}){
     if (exploreViewUrl(viewName).url.toString() !== cacheKey) return;
     if (publication !== explorePublication) return hydrateExploreView(viewName);
     if (!payload) return;
+    const retainedReadAt = payload.publication?.state === 'stale' ? payload.publication.loaded_at : null;
+    const alreadyRendered = retainedReadAt && previous?.scope === cacheKey && previous.retainedReadAt === retainedReadAt;
     exploreViewScopes.set(viewName, {
-      scope:cacheKey, publication,
+      scope:cacheKey, publication, retainedReadAt,
       publication_state:payload.publication?.state || 'ready',
       loaded_at:payload.publication?.state === 'recorded' ? payload.publication.loaded_at || null
         : payload.publication?.snapshot_completed_at || payload.snapshot_completed_at || payload.publication?.loaded_at
@@ -5564,7 +5598,7 @@ async function hydrateExploreView(viewName, {retry = false} = {}){
         : payload.publication?.reason === 'historical_pending'
         ? 'Historical analysis is pending. These are the last published results.'
         : 'Refresh is pending; these are the last published results.');
-    if (viewName === 'usage') renderUsageView();
+    if (viewName === 'usage' && !alreadyRendered) renderUsageView();
     if (viewName === 'context') renderSqlTabPayloads();
     if (viewName === 'tools') renderToolsView();
   } catch (error) {
@@ -5948,6 +5982,38 @@ function sessionListIdentity(session){
   return {title:[model || agent || 'Session', id].filter(Boolean).join(' · '), missingPrompt:true};
 }
 
+function sessionTableRows(sessions, isExpanded){
+  const sessionId = session => session.full_id || session.id;
+  const ids = new Set(sessions.map(sessionId));
+  const children = new Map();
+  const roots = [];
+  for (const session of sessions) {
+    const parent = session.parent_session_id;
+    if (parent && parent !== sessionId(session) && ids.has(parent)) {
+      if (!children.has(parent)) children.set(parent, []);
+      children.get(parent).push(session);
+    } else {
+      roots.push(session);
+    }
+  }
+
+  const rows = [];
+  const visited = new Set();
+  function visit(session, depth, visible){
+    const id = sessionId(session);
+    if (visited.has(id)) return;
+    visited.add(id);
+    const branch = (children.get(id) || []).filter(child => !visited.has(sessionId(child)));
+    const expanded = branch.length > 0 && isExpanded(id);
+    if (visible) rows.push({session, depth, childCount:branch.length, expanded});
+    for (const child of branch) visit(child, depth + 1, visible && expanded);
+  }
+  for (const root of roots) visit(root, 0, true);
+  // Keep sessions reachable if older evidence contains a parent cycle.
+  for (const session of sessions) visit(session, 0, true);
+  return rows;
+}
+
 function renderSessionQualityBadge(session){
   const score = session.quality_score;
   if (!session.quality_available || score == null || !Number.isFinite(Number(score))) {
@@ -6179,6 +6245,7 @@ class SessionConversationPlayhead {
   let selectedIdx = null;
   let focusedSessionId = '';
   let sessionListScroll = null;
+  const expandedSessionGroups = new Map();
   const listView = document.getElementById('session-table-view');
   const detailView = document.getElementById('session-detail-view');
   const listEl = document.getElementById('sb-list');
@@ -6557,6 +6624,12 @@ class SessionConversationPlayhead {
   }
 
   listEl.addEventListener('click', event => {
+    const toggle = event.target.closest('[data-session-branch]');
+    if (toggle?.dataset.sessionBranch) {
+      expandedSessionGroups.set(toggle.dataset.sessionBranch, toggle.getAttribute('aria-expanded') !== 'true');
+      renderSessionTable(filteredSessions());
+      return;
+    }
     const button = event.target.closest('[data-session-id]');
     if (!button) return;
     focusedSessionId = button.dataset.sessionId;
@@ -6702,6 +6775,8 @@ class SessionConversationPlayhead {
       }
       if (searchText) {
         const haystack = [
+          s.native_title || '',
+          s.title || '',
           s.first_prompt || '',
           s.id || '',
           s.full_id || '',
@@ -6742,11 +6817,16 @@ class SessionConversationPlayhead {
     document.dispatchEvent(new CustomEvent('dashboard-filters-changed', {
       detail: { sessions: filteredDashboardSessions.slice(), hasFilters, selectedSessionId: dashboardSelectedSessionId, filters: {...filterState, agents:[...filterState.agents]} }
     }));
+    renderSessionTable(filtered, hasFilters);
+  }
+
+  function renderSessionTable(filtered, hasFilters){
     const scrollLeft = listEl.querySelector('.analysis-table-scroll')?.scrollLeft || 0;
-    const rowHadFocus = document.activeElement.closest('#sb-list [data-session-id]')?.dataset.sessionId;
+    const active = document.activeElement.closest('#sb-list [data-session-id], #sb-list [data-session-branch]');
+    const rows = sessionTableRows(filtered, id => expandedSessionGroups.get(id) ?? Boolean(filterState.q));
     listEl.innerHTML = filtered.length ? analysisTable(
       ['Session', 'Agent', 'Started', 'Events', 'Tokens', 'Cost', 'Quality'],
-      filtered.map(session => {
+      rows.map(({session, depth, childCount, expanded}) => {
         const id = session.full_id || session.id;
         const title = sessionListIdentity(session);
         const highlighted = id === focusedSessionId;
@@ -6755,9 +6835,16 @@ class SessionConversationPlayhead {
         const cost = sessionCostPresentation(session, estimated);
         const unit = String(session.pricing_unit || sqlTab('usage').pricing_unit || 'usd').toUpperCase();
         const costLabel = cost.status === 'estimated' ? `${fmtCost(cost.cost)} ${unit}` : cost.label;
+        const context = [session.parent_session_id ? 'Child session' : '',
+          session.primary_model === 'codex-auto-review' ? 'Codex auto-review' : '',
+          title.missingPrompt ? 'Prompt text unavailable' : ''].filter(Boolean).join(' · ');
+        const branchLabel = `${fmt(childCount)} child session${childCount === 1 ? '' : 's'}`;
+        const branch = childCount ? `<button type="button" class="session-branch-toggle" data-session-branch="${escHtml(id)}"
+          aria-expanded="${expanded}" aria-label="${expanded ? 'Hide' : 'Show'} ${branchLabel} for ${escHtml(title.title)}">${branchLabel}</button>` : '';
         return `<tr class="analysis-summary${highlighted ? ' session-row-current' : ''}">
-          <th scope="row"><button type="button" class="analysis-toggle" data-session-id="${escHtml(id)}"${highlighted ? ' aria-current="true"' : ''}>${escHtml(title.title)}</button>
-            ${title.missingPrompt ? '<small class="analysis-subline">Prompt text unavailable</small>' : ''}</th>
+          <th scope="row"><div class="session-row-identity${depth ? ' session-row-child' : ''}" style="--session-depth:${Math.min(depth, 6)}">
+            <button type="button" class="analysis-toggle" data-session-id="${escHtml(id)}"${highlighted ? ' aria-current="true"' : ''}>${escHtml(title.title)}</button>
+            ${context ? `<small class="analysis-subline">${escHtml(context)}</small>` : ''}${branch}</div></th>
           <td>${escHtml(formatAgentLabel(session.agent))}</td><td>${escHtml(fmtWorkflowDate(session.created_at))}</td>
           <td>${fmt(session.event_count || 0)}</td><td>${tokens > 0 ? `${estimated ? '~' : ''}${fmtTokenShort(tokens)}` : '—'}</td>
           <td title="${escHtml(cost.reason || '')}">${escHtml(costLabel)}</td><td>${renderSessionQualityBadge(session)}</td>
@@ -6766,8 +6853,10 @@ class SessionConversationPlayhead {
     ) : `<p class="session-ledger-empty">${D._unpublishedNavigation ? 'Session navigation is updating.' : hasFilters ? 'No sessions match this scope. Adjust the filters to broaden it.' : 'No sessions have been captured yet.'}</p>`;
     const scroller = listEl.querySelector('.analysis-table-scroll');
     if (scroller) scroller.scrollLeft = scrollLeft;
-    if (rowHadFocus) {
-      [...listEl.querySelectorAll('[data-session-id]')].find(button => button.dataset.sessionId === rowHadFocus)?.focus({preventScroll:true});
+    if (active) {
+      const attribute = active.dataset.sessionBranch ? 'sessionBranch' : 'sessionId';
+      [...listEl.querySelectorAll('[data-session-id], [data-session-branch]')]
+        .find(button => button.dataset[attribute] === active.dataset[attribute])?.focus({preventScroll:true});
     }
   }
 
@@ -9063,9 +9152,8 @@ function buildImprovementSurfaces(){
       ? `<div class="session-ledger-empty">${escHtml(pendingCopy('Findings'))}</div>`
       : observations.length ? analysisTable(['Finding', 'Priority / confidence', 'Sessions', 'Workflow'], observations.map(item => {
       const proposedWorkflow = workflows.find(workflow => workflow.id === item.candidate_id);
-      const workflowState = proposedWorkflow
-        ? humanizeLedgerLabel(proposedWorkflow.lifecycle?.display || proposedWorkflow.status || 'pending')
-        : '';
+      const workflowStatus = proposedWorkflow?.lifecycle?.display || proposedWorkflow?.status || item.candidate_status;
+      const workflowState = workflowStatus ? `<span class="analysis-subline">${escHtml(humanizeLedgerLabel(workflowStatus))}</span>` : '';
       const priority = item.impact_score != null && Number.isFinite(Number(item.impact_score))
         ? `Priority ${Math.round(Number(item.impact_score))}/100` : 'Priority unavailable';
       const detectionConfidence = item.confidence != null && Number.isFinite(Number(item.confidence))
@@ -9074,7 +9162,7 @@ function buildImprovementSurfaces(){
         <th scope="row"><button type="button" class="analysis-toggle" data-ledger-action="evidence" data-observation-id="${escHtml(item.id)}">${escHtml(item.title || 'Finding')}<span class="analysis-subline">${escHtml(item.summary || '')}</span></button></th>
         <td title="Priority orders findings for review. Detection confidence describes the evidence and is not a measured outcome."><strong>${escHtml(priority)}</strong><span class="analysis-subline">${escHtml(detectionConfidence)} · ${escHtml(item.severity || 'low')} severity</span></td>
         <td>${fmt(Number(item.affected_session_count || 0))}<span class="analysis-subline">${fmt(Number(item.observation_count || 1))} patterns · ${fmt(Number(item.source_scope_count || 1))} scopes</span></td>
-        <td>${proposedWorkflow ? `<button type="button" class="ledger-button" data-ledger-action="open-workflow" data-candidate-id="${escHtml(proposedWorkflow.id)}">Open workflow</button><span class="analysis-subline">${escHtml(workflowState)}</span>` : isStaticDemo() ? '—' : `<button type="button" class="ledger-button" data-ledger-action="create-from-finding" data-observation-id="${escHtml(item.id)}">Create workflow</button>`}</td>
+        <td>${item.candidate_id ? `<button type="button" class="ledger-button" data-ledger-action="open-workflow" data-candidate-id="${escHtml(item.candidate_id)}">Open workflow</button>${workflowState}` : isStaticDemo() ? '—' : `<button type="button" class="ledger-button" data-ledger-action="create-from-finding" data-observation-id="${escHtml(item.id)}">Create workflow</button>`}</td>
       </tr>`;
     }).join('')) : resource('findings').state !== 'ready'
       ? '<div class="session-ledger-empty">No findings in the last loaded data. Updated findings are still pending.</div>'
@@ -9368,7 +9456,7 @@ function renderMeasurementCoverage(){
       <td><p class="usage-copy">${decimal(c.eligible_usage_turns)} turns with eligible usage · ${compact(m.mean_input_tokens)} mean inclusive input tokens</p><span class="analysis-subline">A recorded turn ending is not verified task success.</span></td></tr>
     <tr><th scope="row">Paired tool calls</th><td>${number(m.completed_tool_calls)}</td>
       <td><p class="usage-copy">${decimal(c.eligible_tool_turns)} eligible completed turns · ${decimal(m.mean_tool_calls_per_turn)} mean · ${decimal(m.max_tool_calls_per_turn)} max</p>
-      <button type="button" class="usage-link" data-usage-view="tools">Inspect tool activity <span aria-hidden="true">→</span></button></td></tr>
+      <button type="button" class="usage-link" data-usage-view="tools">Inspect tools, skills &amp; subagents <span aria-hidden="true">→</span></button></td></tr>
   `);
   el.onclick = event => {
     const trigger=event.target.closest('[data-usage-view]');
@@ -9389,9 +9477,17 @@ function renderMeasurementCoverage(){
   }
   const gitEl = document.getElementById('measurement-git');
   if (gitEl) {
-    const operations = (git.operations || []).slice(0,10);
+    const examplesOpen = gitEl.querySelector?.('details.usage-evidence')?.open;
+    const seenUnresolved = new Set();
+    const operations = (git.operations || []).filter(operation => {
+      if (operation.state !== 'unresolved' || operation.artifact_id) return true;
+      const key = `${operation.provider}:${operation.operation}`;
+      if (seenUnresolved.has(key)) return false;
+      seenUnresolved.add(key);
+      return true;
+    }).slice(0,10);
     const operationRow = op => `<li><div><strong>${escHtml([op.provider,op.operation].filter(Boolean).join(' ') || 'Operation')}</strong><span class="usage-operation-state">${escHtml(op.state || 'unknown')}</span><p title="${escHtml(op.repository || '')}">${escHtml(op.repository || 'Repository unknown')} · ${escHtml(op.artifact_id || 'Artifact not identified')}</p></div>${op.session_id ? `<a class="usage-link" href="${escHtml(sessionInspectionUrl({session_id:op.session_id,evidence_focus_id:op.evidence_id}))}">Inspect session <span aria-hidden="true">↗</span></a>` : '<span class="usage-copy">Session unknown</span>'}</li>`;
-    gitEl.innerHTML = `<div class="usage-widget-head"><h3>Git &amp; delivery</h3><span class="usage-unit">Confirmed distinct artifacts</span></div><dl class="usage-delivery-counts">${fact('Commits',git.distinct_commits)}${fact('PRs created',git.created_pull_requests)}${fact('PRs merged',git.merged_pull_requests)}${fact('MRs created',git.created_merge_requests)}${fact('MRs merged',git.merged_merge_requests)}</dl><div class="usage-delivery-note"><span>${decimal(git.total_operations)} captured operations</span><span>${decimal(git.states ? git.states.unresolved ?? 0 : null)} unresolved</span><span>${decimal(git.undated_operations)} undated</span></div><p class="usage-copy">Captured CLI and MCP operations only. A session’s AI cost is not allocated to its commits or PRs/MRs.</p>${operations.length ? `<details class="usage-evidence"><summary>Inspect recent operations <span>${operations.length} of ${decimal(git.total_operations)}</span></summary><ol class="usage-operations">${operations.map(operationRow).join('')}</ol></details>` : `<p class="usage-empty">${known(git.total_operations) ? 'No operation details were captured in this scope.' : 'Git activity is not available yet.'}</p>`}`;
+    gitEl.innerHTML = `<div class="usage-widget-head"><h3>Git &amp; delivery</h3><span class="usage-unit">Confirmed distinct artifacts</span></div><dl class="usage-delivery-counts">${fact('Commits',git.distinct_commits)}${fact('PRs created',git.created_pull_requests)}${fact('PRs merged',git.merged_pull_requests)}${fact('MRs created',git.created_merge_requests)}${fact('MRs merged',git.merged_merge_requests)}</dl><div class="usage-delivery-note"><span>${decimal(git.total_operations)} captured operation records</span><span>${decimal(git.states ? git.states.unresolved ?? 0 : null)} unresolved</span><span>${decimal(git.undated_operations)} undated</span></div><p class="usage-copy">Captured records can include multiple callbacks for the same command. Artifact totals require a result tied to the individual operation. Cost is reported at the session level.</p>${operations.length ? `<details class="usage-evidence"${examplesOpen ? " open" : ""}><summary>Inspect recent command examples <span>${operations.length} of ${decimal(git.total_operations)}</span></summary><ol class="usage-operations">${operations.map(operationRow).join('')}</ol></details>` : `<p class="usage-empty">${known(git.total_operations) ? 'No operation details were captured in this scope.' : 'Git activity is not available yet.'}</p>`}`;
   }
   const diagnostics = document.getElementById('usage-diagnostics');
   if (diagnostics) diagnostics.ontoggle = () => {
@@ -9508,8 +9604,9 @@ function buildHourBars(){
 }
 
 /* Recorded launches and lifecycle stops are observations, not success rates. */
-function buildSubagentActivity(){
-  const el = document.getElementById('subagent-effectiveness');
+function buildSubagentActivity(id = 'subagent-effectiveness'){
+  const el = document.getElementById(id);
+  if (!el) return;
   const toolsTab = sqlTab('tools');
   const launches = toolsTab.subagent_types_by_count || {};
   const stops = toolsTab.subagent_stops_by_type || {};
@@ -9561,11 +9658,14 @@ function buildBarList(elId, obj, color){
 function buildToolsLists(){
   const toolsTab = sqlTab('tools');
   buildBarList('tools-list', toolsTab.tools_by_count || {}, P.blue);
-  const sqlSkills = toolsTab.skills_by_count || {};
-  const skillsOrSubagents = Object.keys(sqlSkills).length
-    ? sqlSkills
-    : (toolsTab.subagent_types_by_count || {});
-  buildBarList('skills-list', skillsOrSubagents, P.purple);
+  const counts = [toolsTab.skills_by_count, toolsTab.skill_attempts_by_count,
+    toolsTab.skill_reports_by_count].map(value => value || {});
+  const skills = [...new Set(counts.flatMap(value => Object.keys(value)))].sort();
+  const rows = skills.map(name => `<tr><th scope="row">${escHtml(name)}</th>${counts.map(value => `<td>${value[name] ? fmt(value[name]) : '—'}</td>`).join('')}</tr>`).join('');
+  document.getElementById('skills-list').innerHTML = skills.length
+    ? analysisTable(['Skill', 'Loaded or invoked', 'Read attempts', 'Reported'], rows)
+    : '<p class="empty-note">No skill evidence in this selection.</p>';
+  buildSubagentActivity('tools-subagent-activity');
 }
 
 /* MCP availability table */

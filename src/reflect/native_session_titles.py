@@ -177,6 +177,14 @@ _READERS = {
 }
 
 
+def read_native_session_titles(ids_by_agent: dict[str, set[str]]) -> dict[str, dict[str, str]]:
+    return {
+        agent: reader(capability.home(), ids_by_agent[agent])
+        for agent, reader in _READERS.items()
+        if ids_by_agent.get(agent) and (capability := get_agent_capability(agent)) is not None
+    }
+
+
 def with_native_session_titles(payload: dict) -> dict:
     """Enrich only the visible page, without mutating the response cache."""
     sessions = payload.get("sessions")
@@ -188,11 +196,7 @@ def with_native_session_titles(payload: dict) -> dict:
         session_id = session.get("id")
         if agent in _READERS and isinstance(session_id, str):
             ids_by_agent[agent].add(session_id)
-    titles = {
-        agent: reader(capability.home(), ids_by_agent[agent])
-        for agent, reader in _READERS.items()
-        if ids_by_agent.get(agent) and (capability := get_agent_capability(agent)) is not None
-    }
+    titles = read_native_session_titles(ids_by_agent)
     return {
         **payload,
         "sessions": [

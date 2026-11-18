@@ -131,6 +131,51 @@ def test_backfill_persists_hook_repository_metadata(tmp_path):
         conn.close()
 
 
+def test_codex_spawn_lineage_repairs_retained_and_late_parent_sessions(tmp_path, monkeypatch):
+    from reflect.store import migrate as migration_module
+
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    now = "2026-11-18T12:00:00+00:00"
+    migrations = migration_module.load_migrations()
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(migration_module, "load_migrations", lambda: [m for m in migrations if m.version <= 57])
+            migrate(conn)
+        conn.execute("INSERT INTO agents(id,name,kind,created_at,updated_at) VALUES ('codex','codex','coding_agent',?,?)", (now, now))
+        for sid in ("parent", "child", "late-child", "conflicting", "self", "review"):
+            _insert_session(conn, sid, now, agent_id="codex")
+        key = "source.subagent.thread_spawn.parent_thread_id"
+        claims = (("child", "parent"), ("late-child", "late-parent"),
+                  ("conflicting", "parent"), ("conflicting", "late-parent"), ("self", "self"))
+        for seq, (child, parent) in enumerate(claims):
+            _insert_step(conn, child, f"spawn-{seq}", seq, now, {key: parent, "code.workspace.root": str(tmp_path)})
+            conn.execute("UPDATE steps SET origin_kind = 'native_session' WHERE id=?", (f"spawn-{seq}",))
+        _insert_step(conn, "review", "review-step", 0, now, {"gen_ai.request.model": "codex-auto-review"})
+        conn.commit()
+
+        migrate(conn)
+        assert dict(conn.execute("SELECT id,parent_session_id FROM sessions"))["child"] == "parent"
+        assert PendingRefreshState(conn).capture().pending_for("graph") == {"child"}
+
+        _insert_session(conn, "late-parent", now, agent_id="codex")
+        review_file = tmp_path / "rollout-review.jsonl"
+        review_file.write_text(json.dumps({"type": "session_meta", "payload": {
+            "id": "review", "source": {"subagent": {"other": "guardian_review"}},
+            "parent_thread_id": "parent",
+        }}) + "\n", encoding="utf-8")
+        changed: set[str] = set()
+        backfill_session_context(conn, timestamp=now, changed_session_ids=changed,
+                                 codex_native_files=[review_file])
+        links = dict(conn.execute("SELECT id,parent_session_id FROM sessions"))
+        assert links["late-child"] == "late-parent"
+        assert links["review"] == "parent"
+        assert {sid for sid, parent in links.items() if parent} == {"child", "late-child", "review"}
+        assert {"late-child", "review"} <= changed
+        assert backfill_session_context(conn, timestamp=now)["parents"] == 0
+    finally:
+        conn.close()
+
+
 def test_backfill_and_graph_share_workspace_paths_and_parent_lineage(tmp_path):
     db = tmp_path / "reflect.db"
     repo = tmp_path / "reflect"

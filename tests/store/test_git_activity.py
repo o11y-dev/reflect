@@ -140,6 +140,36 @@ def test_event_window_and_undated_coverage(tmp_path):
     conn.close()
 
 
+@pytest.mark.parametrize("command", [
+    "cd '/project path' && git add . && git commit -m 'quoted; git push'",
+    "git add . 2>&1 && command git commit -m 'quoted; git push'",
+    "cd /project; env GIT_OPTION=test rtk git add . | head; git commit -m 'quoted; git push'",
+])
+def test_command_chain_keeps_each_git_observation_without_claiming_results(tmp_path, command):
+    conn = connect_sqlite(tmp_path / "git.db")
+    migrate(conn)
+    add_call(conn, "s1", "call1", command,
+             result={"exit_code": 0, "output": "[main abcdef1] commit"})
+    add_call(conn, "s1", "call2", "cd /project && echo 'git push'")
+    add_call(conn, "s1", "call3", "cd /project && git status # && git push")
+    add_call(conn, "s1", "call4", "if true; then git push; git commit; fi")
+    refresh_git_activity(conn, session_ids={"s1"})
+    result = git_activity(conn, session_ids={"s1"})
+    assert {row["operation"] for row in result["operations"]} == {"add", "commit"}
+    assert result["states"] == {"unresolved": 2}
+    assert result["distinct_commits"] == 0
+    assert all(row["repository"] is None and row["artifact_id"] is None for row in result["operations"])
+    refresh_git_activity(conn, session_ids={"s1"})
+    assert git_activity(conn, session_ids={"s1"})["total_operations"] == 2
+    conn.close()
+
+
+@pytest.mark.parametrize("command", ["rtk gh pr view 42", "command gh pr view 42", "env PAGER=cat gh pr view 42"])
+def test_known_wrappers_leave_a_single_command_result_attributable(command):
+    op = operation_for_tool(cli(command, {"exit_code": 0}))
+    assert (op.provider, op.operation, op.state) == ("github", "read", "confirmed")
+
+
 def test_wrapped_git_operations_keep_separate_results_and_canonical_owner(tmp_path):
     conn = connect_sqlite(tmp_path / 'test.db')
     migrate(conn)

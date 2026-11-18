@@ -461,6 +461,10 @@ def migrate(conn: sqlite3.Connection, *, commit: bool = True) -> list[int]:
                 )]
                 for offset in range(0, len(sessions), 20):
                     refresh_git_activity(conn, session_ids=set(sessions[offset:offset + 20]))
+            if migration.version == 58:
+                from reflect.store.workspaces import backfill_codex_spawn_lineage
+
+                backfill_codex_spawn_lineage(conn, timestamp=datetime.now(UTC).isoformat())
             conn.execute(
                 "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
                 (migration.version, migration.name, datetime.now(UTC).isoformat()),

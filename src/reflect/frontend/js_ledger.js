@@ -76,10 +76,21 @@ function sessionCostPresentation(session, estimatedTokens = null){
   const cost = Number(session?.total_cost_usd || session?.total_cost || 0);
   const coverage = session?.pricing_coverage || session?.measurements?.coverage;
   if (coverage) {
-    const scope = session?.cost_scope === 'event_window' ? 'Selected dates' : 'Session lifetime';
+    const windowed = session?.cost_scope === 'event_window';
+    const scope = windowed ? 'Selected dates' : 'Session lifetime';
     if (coverage.cost_status === 'complete') return {cost, status:'estimated', label:'Estimated cost', reason:`${scope}: all observed usage priced, including explicit zero rates.`};
     if (coverage.cost_status === 'partial') return {cost, status:'partial', label:`Known subtotal $${fmtCost(cost)}`, reason:`${scope}: ${coverage.complete_priced_usage || 0}/${coverage.observed_usage || 0} usage records fully priced. Missing evidence is excluded from this subtotal.`};
-    return {cost:0, status:'unavailable', label:'Cost unavailable', reason:'Captured usage has no supported price. Missing data does not imply free usage.'};
+    const unavailable = {cost:0, status:'unavailable'};
+    if (Number(coverage.observed_usage) === 0) {
+      if (windowed && sessionTokenTotal(session, estimatedTokens) > 0) {
+        return {...unavailable, label:'No usage in range', reason:'No dated token usage was available for the selected dates.'};
+      }
+      return {...unavailable, label:'Tokens not captured', reason:`${scope}: no token usage was captured.`};
+    }
+    if (session?.agent === 'codex' && session.primary_model === 'codex-auto-review') {
+      return {...unavailable, label:'Review rate unavailable', reason:'Codex reported review tokens under codex-auto-review. There is no matching rate in the local price catalog.'};
+    }
+    return {...unavailable, label:'Price unresolved', reason:'Reflect could not resolve a rate for the captured token usage.'};
   }
   if (cost > 0) return {cost, status:'estimated', label:'Estimated cost', reason:''};
   const inferredStatus = sessionTokenTotal(session, estimatedTokens) <= 0
@@ -270,7 +281,7 @@ const improvementTabs = new Set(['inbox', 'workflows', 'skills', 'impact']);
 document.addEventListener('reflect-status-polled', () => {
   if (!dashboardDocumentActive || document.visibilityState === 'hidden') return;
   if (currentParams().get('tab') === 'explore') {
-    hydrateExploreView(activeExploreView).catch(() => {});
+    hydrateExploreView(activeExploreView, {poll:true}).catch(() => {});
     return;
   }
   if (!improvementTabs.has(currentParams().get('tab'))) return;
@@ -591,6 +602,10 @@ async function showObservationEvidence(observationId){
     const metricValue = Number(item.metric_value);
     const metricDisplay = Number.isFinite(metricValue) ? fmt(metricValue) : String(item.metric_value ?? '—');
     const ruleLabel = humanizeLedgerLabel(item.category || item.rule_id || 'Improvement');
+    const candidateId = ledger?.candidate_id ?? item.candidate_id;
+    const workflowAction = candidateId
+      ? `<button type="button" class="ledger-button primary" data-ledger-action="open-workflow" data-candidate-id="${escHtml(candidateId)}">Open workflow</button>`
+      : isStaticDemo() ? '' : `<button type="button" class="ledger-button primary" data-ledger-action="create-from-finding" data-observation-id="${escHtml(observationId)}">Create workflow</button>`;
     presentLedgerRead(request, {
       title:item.title || 'Observation evidence',
       subtitle:`${ruleLabel} Rule · Version ${item.rule_version} · ${confidence}% detection confidence`,
@@ -624,7 +639,7 @@ async function showObservationEvidence(observationId){
             <details class="advanced-review"><summary>Raw Evidence Links · ${fmt((item.evidence || []).length)}</summary><div class="evidence-list">${rawEvidence || '<div class="session-ledger-empty">No bounded evidence is available.</div>'}</div></details>
           </details></aside>
         </div>`,
-      actions:'<div class="ledger-action-spacer"></div><button type="button" class="ledger-button primary" data-ledger-action="close">Done</button>',
+      actions:`<button type="button" class="ledger-button" data-ledger-action="close">Done</button><div class="ledger-action-spacer"></div>${workflowAction}`,
     });
   } catch (error) {
     failLedgerRead(request, {title:'Evidence unavailable', body:`<div class="inbox-copy">${escHtml(error.message)}</div>`});
@@ -1225,6 +1240,7 @@ document.addEventListener('click', async event => {
   if (action === 'review-skill') return showSkillReview(trigger.dataset.skillId || '');
   if (action === 'open-workflow') {
     activateTab('workflows');
+    updateUrlParams(params => params.set('workflow_row', candidateId));
     return showWorkflowReview(candidateId);
   }
   if (action === 'retry-improvements') return refreshImprovementSurfaces();
@@ -1308,6 +1324,8 @@ let dashboardSelectedSessionId = currentParams().get('session') || '';
 const lazySqlTabRequests = new Map();
 const exploreViewStates = new Map([['usage', 'ready']]);
 const exploreViewScopes = new Map();
+const exploreReads = new Map();
+const exploreReadIntervalMs = 5000;
 let failedGraphAttempt = null;
 let renderedGraph = null;
 let explorePublication = 0;
@@ -1487,7 +1505,7 @@ async function loadExploreView(viewName){
   return request;
 }
 
-async function hydrateExploreView(viewName, {retry = false} = {}){
+async function hydrateExploreView(viewName, {retry = false, poll = false} = {}){
   if (typeof updateExploreScope === 'function' && currentParams().get('tab') === 'explore' && activeExploreView === viewName) updateExploreScope();
   const cacheKey = exploreViewUrl(viewName).url.toString();
   const previous = exploreViewScopes.get(viewName);
@@ -1501,9 +1519,14 @@ async function hydrateExploreView(viewName, {retry = false} = {}){
   if (exploreViewStates.get(viewName) === 'ready' && previous?.scope === cacheKey && previous.publication === publication
     && (!graph || graphIsCurrent)) return;
   if (graph) failedGraphAttempt = null;
-  if (exploreViewStates.get(viewName) === 'loading' && lazySqlTabRequests.has(cacheKey)) return;
+  if (lazySqlTabRequests.has(cacheKey)) return;
   if (!D.sql_backed || (!isStaticDemo() && !reportSupportsServerFiltering())) return;
-  setExploreViewState(viewName, 'loading');
+  const previousRead = exploreReads.get(viewName);
+  const now = Date.now();
+  if (poll && previousRead?.scope === cacheKey && previousRead.publication === publication
+    && now - previousRead.startedAt < exploreReadIntervalMs) return;
+  exploreReads.set(viewName, {scope:cacheKey, publication, startedAt:now});
+  if (!poll || previous?.scope !== cacheKey) setExploreViewState(viewName, 'loading');
   try {
     const canReuseGraph = graph && previous?.scope === cacheKey
       && previous.publication === publication && previous.publication_state === 'ready';
@@ -1516,8 +1539,10 @@ async function hydrateExploreView(viewName, {retry = false} = {}){
     if (exploreViewUrl(viewName).url.toString() !== cacheKey) return;
     if (publication !== explorePublication) return hydrateExploreView(viewName);
     if (!payload) return;
+    const retainedReadAt = payload.publication?.state === 'stale' ? payload.publication.loaded_at : null;
+    const alreadyRendered = retainedReadAt && previous?.scope === cacheKey && previous.retainedReadAt === retainedReadAt;
     exploreViewScopes.set(viewName, {
-      scope:cacheKey, publication,
+      scope:cacheKey, publication, retainedReadAt,
       publication_state:payload.publication?.state || 'ready',
       loaded_at:payload.publication?.state === 'recorded' ? payload.publication.loaded_at || null
         : payload.publication?.snapshot_completed_at || payload.snapshot_completed_at || payload.publication?.loaded_at
@@ -1534,7 +1559,7 @@ async function hydrateExploreView(viewName, {retry = false} = {}){
         : payload.publication?.reason === 'historical_pending'
         ? 'Historical analysis is pending. These are the last published results.'
         : 'Refresh is pending; these are the last published results.');
-    if (viewName === 'usage') renderUsageView();
+    if (viewName === 'usage' && !alreadyRendered) renderUsageView();
     if (viewName === 'context') renderSqlTabPayloads();
     if (viewName === 'tools') renderToolsView();
   } catch (error) {

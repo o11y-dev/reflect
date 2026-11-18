@@ -75,7 +75,7 @@ def test_event_category_backfill_is_bounded_idempotent_and_preserves_accounting(
         attrs_before = conn.execute("SELECT id,raw_attrs_json FROM steps ORDER BY id").fetchall()
         queries = []
         conn.set_trace_callback(queries.append)
-        assert migrate(conn) == [51, 52, 53, 54, 55, 56, 57]
+        assert migrate(conn) == [51, 52, 53, 54, 55, 56, 57, 58]
         conn.set_trace_callback(None)
         batch = next(q for q in queries if q.startswith('SELECT rowid,id,summary,raw_attrs_json FROM steps'))
         plan = ' '.join(str(row[3]) for row in conn.execute('EXPLAIN QUERY PLAN ' + batch))

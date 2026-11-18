@@ -10,7 +10,6 @@ from reflect.dashboard_query_common import (
     quality_rules_payload,
     session_card_from_row,
     sql_insight_payload,
-    sql_session_first_prompts,
 )
 from reflect.graph import _compute_weekly_trends
 from reflect.store.pending_refresh import analysis_coverage, derived_analysis_state
@@ -625,7 +624,12 @@ def build_dashboard_payload(
     from reflect.store.git_activity import git_activity
     from reflect.store.sqlite import connect_sqlite_read_only, snapshot_incomplete
     from reflect.views.measurements import build_measurements
-    from reflect.views.sessions import aggregate_session_scope, list_sessions, select_session_scope
+    from reflect.views.sessions import (
+        aggregate_session_scope,
+        list_sessions,
+        select_session_scope,
+        session_first_prompts,
+    )
 
     days = 1 if range_name == "24h" else (
         int(range_name[:-1]) if range_name.endswith("d") and range_name[:-1].isdigit() else None
@@ -655,6 +659,8 @@ def build_dashboard_payload(
             }
         page = list_sessions(conn, session_ids={row["id"] for row in nav_sessions}, limit=limit, offset=offset)
         sessions_page = page.model_dump()
+        session_rows = sessions_page["rows"]
+        first_prompts = session_first_prompts(conn, {row.session_id for row in page.rows})
         scoped_overview = aggregate_session_scope(conn, scoped_session_ids)
         period_activity = None
         if date_from and date_to:
@@ -686,9 +692,6 @@ def build_dashboard_payload(
             analysis_window = None
     finally:
         conn.close()
-    session_rows = sessions_page["rows"]
-    first_prompts = {} if lazy_heavy_tabs or lazy_all_tabs else sql_session_first_prompts(
-        db_path, {str(row["session_id"]) for row in session_rows})
     sessions = [session_card_from_row(dict(row), first_prompt=first_prompts.get(str(row["session_id"]), ""),
         measurement=measurement["sessions"].get(str(row["session_id"])),
         cost_scope=measurement["scope"]["kind"] if str(row["session_id"]) in measurement["sessions"] else "session_lifetime") for row in session_rows]

@@ -205,7 +205,11 @@ def _canonical_usage_attrs(attrs: dict[str, Any]) -> dict[str, Any]:
     result = dict(attrs)
     for target, aliases in {
         "gen_ai.usage.cache_read.input_tokens": ("gen_ai.usage.cache_read_input_tokens", "hook.cache_read_tokens"),
-        "gen_ai.usage.cache_creation.input_tokens": ("gen_ai.usage.cache_creation_input_tokens", "hook.cache_write_tokens"),
+        "gen_ai.usage.cache_creation.input_tokens": (
+            "gen_ai.usage.cache_write.input_tokens",
+            "gen_ai.usage.cache_creation_input_tokens",
+            "hook.cache_write_tokens",
+        ),
     }.items():
         if target not in result:
             for alias in aliases:

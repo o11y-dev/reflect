@@ -168,7 +168,7 @@ def test_migration_52_collapses_exact_dispatch_copies_and_projects_one_call(tmp_
                     100,?,'2026-11-09','2026-11-09')""", (step_id, json.dumps(attrs)))
         conn.commit()
 
-        assert migrate(conn) == [52, 53, 54, 55, 56, 57]
+        assert migrate(conn) == [52, 53, 54, 55, 56, 57, 58]
         assert conn.execute("SELECT COUNT(*) FROM raw_events").fetchone()[0] == 3
         assert conn.execute("SELECT COUNT(*),SUM(type='tool_call') FROM steps").fetchone() == (3, 3)
         assert conn.execute("SELECT COUNT(*) FROM execution_unit_steps").fetchone()[0] == 3

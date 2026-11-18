@@ -583,11 +583,17 @@ def test_dashboard_api_displays_codex_title_without_persisting_it(tmp_path, monk
         assert result.status_code == 200
         session = next(row for row in result.json()["sessions"] if row["id"] == "sess-sql")
         assert session["native_title"] == "Review SQL dashboard"
+        assert session["first_prompt"].startswith("Fix the failing SQL dashboard tests")
         assert "Review SQL dashboard" not in db_path.with_suffix(".dashboard-responses.json").read_text()
 
         index.write_text('{"id":"sess-sql","thread_name":"Verify saved title"}\n', encoding="utf-8")
         renamed = next(row for row in client.get("/api/data?range=all").json()["sessions"] if row["id"] == "sess-sql")
         assert renamed["native_title"] == "Verify saved title"
+        for term in ("verify saved title", "failing sql dashboard tests"):
+            result = client.get("/api/data", params={"q": term, "range": "all"})
+            assert [row["id"] for row in result.json()["sessions"]] == ["sess-sql"]
+        tools = client.get("/api/explore/tools", params={"q": "verify saved title", "range": "all"})
+        assert tools.json()["tools_by_count"]
     finally:
         if executor is not None:
             executor.close()
@@ -647,7 +653,8 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path):
     assert tabs["activity"]["events_by_type"] == {"llm_call": 2, "tool_call": 2}
     assert tabs["costs"]["model_costs"]["gpt-5.4"] == 0.42
     assert payload["sessions"][0]["id"] == "sess-sql"
-    assert payload["sessions"][0]["first_prompt"] == "SQL session"
+    assert payload["sessions"][0]["title"] == "SQL session"
+    assert payload["sessions"][0]["first_prompt"].startswith("Fix the failing SQL dashboard tests")
     assert payload["sessions"][0]["duration_ms"] == 120000
     assert payload["sessions"][0]["quality_score"] > 0
     assert tabs["usage"]["avg_quality_score"] > 0
@@ -1139,6 +1146,7 @@ def test_pending_navigation_preserves_explicit_empty_tab_selection(tmp_path, mon
 
     assert payload["analysis_state"] == "preparing"
     assert payload["sessions"][0]["id"] == "sess-sql"
+    assert payload["sessions"][0]["first_prompt"].startswith("Fix the failing SQL dashboard tests")
     assert payload["measurements"]["totals"]["input_tokens"] > 0
     assert payload["sqlite"]["tabs"]["activity"]["events_by_type"] == {}
     assert payload["sqlite"]["tabs"]["tools"]["tools_by_count"] == {}

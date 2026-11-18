@@ -16,7 +16,9 @@ def _run_browser_contract(scenario: str, **data) -> None:
     source = Path("src/reflect/frontend/js_sessions.js").read_text()
     navigation = source[source.index("function syncSessionRoute("):
                         source.index("// Pill click")]
-    navigation = Path("src/reflect/frontend/js_demo.js").read_text() + "\n" + navigation
+    table_rows = source[source.index("function sessionListIdentity("):
+                        source.index("function renderSessionQualityBadge(")]
+    navigation = Path("src/reflect/frontend/js_demo.js").read_text() + "\n" + table_rows + navigation
     detail_start = re.search(r"(?:async )?function tryLoadFullDetail\(", source)
     assert detail_start is not None
     detail = source[detail_start.start():source.index("\n  document.addEventListener('dashboard-route-changed'")]
@@ -91,6 +93,34 @@ assert.equal(params.get('tab'), 'sessions');
 assert.equal(listRenders, 1);
 assert.equal(rendered.at(-1), sessions[1]);
 assert.equal(reloads, 0, 'session selection must not replace the whole dashboard');
+""")
+
+
+def test_session_table_expands_exact_parent_branches_and_keeps_orphan_rows():
+    _run_browser_contract(r"""
+const rows = [
+  {id:'worker', parent_session_id:'root'},
+  {id:'orphan', parent_session_id:'outside-scope'},
+  {id:'nested', parent_session_id:'worker'},
+  {id:'root'},
+  {id:'another-root'},
+];
+const visible = expanded => JSON.parse(JSON.stringify(context.sessionTableRows(rows, id => expanded.includes(id))
+  .map(({session, depth, childCount, expanded}) => [session.id, depth, childCount, expanded])));
+assert.deepEqual(visible([]), [['orphan',0,0,false], ['root',0,1,false], ['another-root',0,0,false]]);
+assert.deepEqual(visible(['root']), [['orphan',0,0,false], ['root',0,1,true], ['worker',1,1,false], ['another-root',0,0,false]]);
+assert.deepEqual(visible(['root','worker']), [['orphan',0,0,false], ['root',0,1,true], ['worker',1,1,true], ['nested',2,0,false], ['another-root',0,0,false]]);
+context.expandedSessionGroups = new Map();
+context.filteredSessions = () => rows;
+let tableRenders = 0;
+context.renderSessionTable = () => {tableRenders += 1;};
+const toggle = {target:{closest:selector => selector === '[data-session-branch]'
+  ? {dataset:{sessionBranch:'root'},getAttribute:() => 'false'} : null}};
+listEl.listeners.click(toggle);
+assert.equal(context.expandedSessionGroups.get('root'), true);
+assert.equal(tableRenders, 1);
+assert.equal(listRenders, 0, 'a disclosure should only redraw the table');
+assert.equal(params.get('session'), 'one', 'expansion should not open session details');
 """)
 
 

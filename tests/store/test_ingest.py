@@ -1,4 +1,7 @@
 import json
+from contextlib import closing
+
+import pytest
 
 from reflect.store.cursor_usage import apply_cursor_transcript_usage_estimates
 from reflect.store.ingest import (
@@ -118,6 +121,63 @@ def _write_codex_logs_file(path, *, session_id="codex-sess-1"):
         ]
     }
     path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize("trace_has_usage", [False, True])
+def test_codex_response_usage_fills_trace_session_gap_once(tmp_path, trace_has_usage):
+    traces = tmp_path / "otel-traces.jsonl"
+    logs = tmp_path / "otel-logs.jsonl"
+    attributes = {"conversation.id": "codex-sess-1"}
+    if trace_has_usage:
+        attributes["gen_ai.usage.output_tokens"] = "25"
+        attributes["gen_ai.request.model"] = "gpt-5.5"
+    _write_codex_trace_file(traces, attributes=attributes)
+    _write_codex_logs_file(logs)
+    payload = json.loads(logs.read_text())
+    records = payload["resourceLogs"][0]["scopeLogs"][0]["logRecords"]
+    records.append({"attributes": [
+        {"key": key, "value": {"stringValue": value}}
+        for key, value in {
+            "event.name": "codex.sse_event", "event.kind": "response.completed",
+            "event.timestamp": "2026-03-24T10:00:02Z", "conversation.id": "codex-sess-1",
+            "model": "gpt-5.5", "input_token_count": "100", "cached_token_count": "80",
+            "output_token_count": "25",
+        }.items()
+    ]})
+    logs.write_text(json.dumps(payload) + "\n")
+
+    with closing(connect_sqlite(tmp_path / "reflect.db")) as conn:
+        migrate(conn)
+        ingest_otlp_traces_file(conn, file_path=traces)
+        normalize_pending_raw_events(conn)
+        assert ingest_otlp_logs_file(conn, file_path=logs)["inserted"] == int(not trace_has_usage)
+        normalize_pending_raw_events(conn)
+        # Replay a copy at a new path with a different index in the input batch.
+        records.pop(0)
+        rotated = tmp_path / "otel-logs.rotated.jsonl"
+        rotated.write_text(json.dumps(payload) + "\n")
+        assert ingest_otlp_logs_file(conn, file_path=rotated)["inserted"] == 0
+        assert tuple(conn.execute(
+            "SELECT input_tokens, output_tokens, cache_read_tokens FROM sessions WHERE id='codex-sess-1'"
+        ).fetchone()) == ((0, 25, 0) if trace_has_usage else (20, 25, 80))
+        if not trace_has_usage:
+            # Later requests from the log source still count after the first
+            # enrichment has produced usage in the trace-owned session.
+            next_timestamp = next(attr for attr in records[0]["attributes"] if attr["key"] == "event.timestamp")
+            next_timestamp["value"]["stringValue"] = "2026-03-24T10:00:03Z"
+            rotated.write_text(json.dumps(payload) + "\n")
+            assert ingest_otlp_logs_file(conn, file_path=rotated)["inserted"] == 1
+            normalize_pending_raw_events(conn)
+            assert tuple(conn.execute(
+                "SELECT input_tokens, output_tokens, cache_read_tokens FROM sessions WHERE id='codex-sess-1'"
+            ).fetchone()) == (40, 50, 160)
+            from reflect.preparation_pipeline import reprice_sql_store
+            from reflect.pricing import ModelPricing, PricingTable
+
+            prices = PricingTable({"gpt-5.5": ModelPricing("gpt-5.5", 0.001, 0.002, None, 0.0001)}, "cache", 0)
+            reprice_sql_store(conn, session_ids={"codex-sess-1"}, pricing_table=prices, aliases={})
+            cost = conn.execute("SELECT estimated_cost_usd FROM sessions WHERE id='codex-sess-1'").fetchone()[0]
+            assert cost == pytest.approx(0.156)
 
 
 def _write_claude_logs_file(path):

@@ -451,6 +451,32 @@ assert.equal(statuses.tools.hidden,true);
 """)
 
 
+def test_usage_revalidation_keeps_the_same_retained_response_mounted():
+    _run_explore_contract(r"""
+let now=10000;
+context.Date=class extends Date{static now(){return now;}};
+const stale={...payload('A'),analysis_state:'stale',publication:{state:'stale',reason:'reading',
+  snapshot_completed_at:'2026-11-08T08:00:00Z',loaded_at:'2026-11-08T09:00:00Z'}};
+context.fetch=async url=>{requests.push(url);return response(200,JSON.parse(JSON.stringify(stale)));};
+await context.hydrateExploreView('usage');
+assert.deepEqual(renders,['usage']);
+now+=1000;
+await context.hydrateExploreView('usage',{poll:true});
+assert.equal(requests.length,1,'a status tick must not immediately reread the scope');
+now+=5000;
+await context.hydrateExploreView('usage',{poll:true});
+assert.equal(requests.length,2);
+assert.deepEqual(renders,['usage'],'the same retained read must not rebuild the widgets');
+assert.equal(panels.usage.children[1].hidden,false);
+context.fetch=async url=>{requests.push(url);return response(200,payload('updated'));};
+const event={preventDefault(){},detail:{profile:'snapshot'}};
+listeners.get('reflect-snapshot-published')(event);await new Promise(setImmediate);
+assert.equal(requests.length,3,'new snapshots bypass the poll delay');
+assert.deepEqual(renders,['usage','usage']);
+assert.equal(statuses.usage.hidden,true);
+""")
+
+
 @pytest.mark.parametrize("retained_state", ["stale", "recorded"])
 @pytest.mark.parametrize("pending_state", ["preparing", "busy"])
 def test_background_reads_retry_on_visible_explore_until_ready(retained_state, pending_state):
@@ -459,6 +485,7 @@ def test_background_reads_retry_on_visible_explore_until_ready(retained_state, p
                      source.index("const workflowDateFormatter =")]
     _run_explore_contract(r"""
 context.activeExploreView='tools';context.document.visibilityState='visible';
+let now=10000;context.Date=class extends Date{static now(){return now;}};
 let tick;context.document.addEventListener=(name,fn)=>{assert.equal(name,'reflect-status-polled');tick=fn;};
 vm.runInContext(input.polling,context);
 const publishedAt='2020-01-01T00:00:00Z';
@@ -481,14 +508,14 @@ assert.equal(requests.length,1,'unloading documents cannot start timer or direct
 context.dashboardDocumentActive=true;
 context.document.visibilityState='hidden';tick();assert.equal(requests.length,1);
 context.document.visibilityState='visible';params.set('tab','sessions');tick();assert.equal(requests.length,1);
-params.set('tab','explore');tick();await new Promise(setImmediate);
+params.set('tab','explore');now+=5000;tick();await new Promise(setImmediate);
 assert.equal(requests.length,2);assert.equal(panels.tools.children[1].hidden,false);
 assert.equal(statuses.tools.hidden,false);
 if(input.retained_state==='stale'){
   assert.match(statuses.tools.textContent,/Reading the current selection in the background/);
   assert.ok(statuses.tools.textContent.includes(new Date(publishedAt).toLocaleString()));
 }else assert.match(statuses.tools.textContent,/Showing stored telemetry read/);
-tick();await new Promise(setImmediate);
+now+=5000;tick();await new Promise(setImmediate);
 assert.equal(requests.length,3);assert.equal(statuses.tools.hidden,true);
 tick();await new Promise(setImmediate);
 assert.equal(requests.length,3,'ready same-revision scopes stop polling the API');

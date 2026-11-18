@@ -798,6 +798,27 @@ def _codex_session_identity(meta: dict, file_path: Path) -> tuple[str, str, dict
     return session_id, trace_id, base_attrs
 
 
+def read_codex_parent_thread(file_path: Path) -> tuple[str, str] | None:
+    """Read explicit parent identity from the native session header only."""
+    try:
+        with file_path.open("rb") as stream:
+            record = _json_loads(stream.readline(1024 * 1024))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict) or record.get("type") != "session_meta":
+        return None
+    meta = record.get("payload")
+    if not isinstance(meta, dict):
+        return None
+    source = meta.get("source")
+    if not isinstance(source, dict) or not source.get("subagent"):
+        return None
+    child, parent = meta.get("id"), meta.get("parent_thread_id")
+    if isinstance(child, str) and child.strip() and isinstance(parent, str) and parent.strip():
+        return child.strip(), parent.strip()
+    return None
+
+
 def _iter_codex_context_spans(file_path: Path, *, max_records: int = 64) -> Iterable[dict]:
     """Read only the bounded Codex preamble that carries injected context."""
 

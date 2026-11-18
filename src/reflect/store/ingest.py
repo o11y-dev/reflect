@@ -361,11 +361,11 @@ def _prepare_raw_span(span: dict, source: str, source_type: str) -> _PreparedRaw
         attrs["reflect.telemetry.classification"] = classification
     content_hash = _event_hash({**span, "attributes": attrs})
     if (
-        source_type == "otlp_traces_json"
+        (source_type == "otlp_traces_json" or attrs.get("reflect.usage.codex_log_enrichment"))
         and span.get("traceId")
         and span.get("spanId")
     ):
-        # Segment rotation changes the file path, not the identity of an OTLP span.
+        # Segment rotation changes the file path, not the identity of an OTLP event.
         event_id = hashlib.sha1(
             f"otlp-span:{span['traceId']}:{span['spanId']}:{content_hash}".encode()
         ).hexdigest()
@@ -512,6 +512,55 @@ def _session_owned_by_other_source(
     )
 
 
+def _codex_trace_usage_enrichment(conn: sqlite3.Connection, span: dict) -> dict | None:
+    """Let native response logs supply accounting to a trace-only Codex session."""
+    attrs = span["attributes"]
+    if (
+        attrs.get("gen_ai.client.name") != "codex"
+        or attrs.get("reflect.native.event_name") != "codex.sse_event"
+        or attrs.get("reflect.usage.grain") != "request"
+        or any(attrs.get(key) is None for key in (
+            "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens", "gen_ai.usage.cache_read.input_tokens",
+        ))
+    ):
+        return None
+    session_id = telemetry_session_id(attrs)
+    session = conn.execute(
+        """SELECT source_kind, max(input_tokens, output_tokens, cache_creation_tokens,
+                  cache_read_tokens, reasoning_tokens) > 0
+           FROM sessions WHERE id = ?""",
+        (session_id,),
+    ).fetchone()
+    source_kind, has_usage = session if session is not None else (None, False)
+    if session is None:
+        raw_owner = conn.execute(
+            "SELECT source_type FROM raw_events WHERE session_id = ? ORDER BY created_at, id LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        source_kind = raw_owner[0] if raw_owner else None
+    if source_kind != "otlp_traces_json":
+        return None
+
+    usage_sources = {row[0] for row in conn.execute(
+        """SELECT DISTINCT source_type FROM raw_events
+           WHERE session_id = ? AND normalized_status NOT IN ('superseded', 'ignored', 'failed')
+             AND (json_extract(attrs_json, '$."gen_ai.usage.input_tokens"') IS NOT NULL
+               OR json_extract(attrs_json, '$."gen_ai.usage.output_tokens"') IS NOT NULL
+               OR json_extract(attrs_json, '$."gen_ai.usage.cache_read.input_tokens"') IS NOT NULL
+               OR json_extract(attrs_json, '$."gen_ai.usage.cache_creation.input_tokens"') IS NOT NULL
+               OR json_extract(attrs_json, '$."gen_ai.usage.cache_write.input_tokens"') IS NOT NULL)""",
+        (session_id,),
+    )}
+    if usage_sources - {"otlp_logs_json"} or (has_usage and not usage_sources):
+        return None
+    # The parsed span ID includes its position in the read batch. Use the
+    # completion timestamp for a stable ID across replay and segment rotation.
+    if not span.get("start_time_ns"):
+        return None
+    stable_id = hashlib.sha256(f"codex-log:{session_id}:{span['start_time_ns']}".encode()).hexdigest()[:16]
+    return {**span, "spanId": stable_id, "attributes": {**attrs, "reflect.usage.codex_log_enrichment": True}}
+
+
 def _ingest_spans(
     db_conn,
     *,
@@ -536,6 +585,8 @@ def _ingest_spans(
                 ):
                     if source_type == "native_session":
                         span = {**span, "attributes": {**(span.get("attributes") or {}), "reflect.usage.enrichment_only": True}}
+                    elif source_type == "otlp_logs_json" and (enrichment := _codex_trace_usage_enrichment(db_conn, span)):
+                        span = enrichment
                     else:
                         skipped += 1
                         continue

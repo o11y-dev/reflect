@@ -85,7 +85,6 @@
 <header>
   <div class="brand-wrap">
     <a class="brand" href="https://reflect.o11y.dev/" aria-label="Open reflect.o11y.dev">
-      <span class="brand-mark" aria-hidden="true"></span>
       <h1>reflect.<em>o11y</em>.dev</h1>
     </a>
     <span class="brand-badge" id="demo-badge">DEMO</span>
@@ -434,13 +433,18 @@
       <div class="bar-list" id="tools-list"></div>
     </div>
     <div class="panel" style="margin-bottom:0">
-      <div class="panel-title">Skills &amp; Subagents</div>
-      <div class="bar-list" id="skills-list"></div>
-    </div>
-    <div class="panel" style="margin-bottom:0">
       <div class="panel-title">MCP Servers</div>
       <div class="bar-list" id="mcp-list"></div>
     </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Skill evidence</div>
+    <div id="skills-list"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title">Subagent Activity</div>
+    <div id="tools-subagent-activity" class="analysis-table-scroll"></div>
   </div>
 
   <div class="panel">

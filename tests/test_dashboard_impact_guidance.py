@@ -147,4 +147,9 @@ assert.match(findings.innerHTML,/Priority unavailable/);
 assert.match(findings.innerHTML,/Detection confidence unavailable/);
 assert.ok(!findings.innerHTML.includes('Priority 0/100'));
 assert.ok(!findings.innerHTML.includes('0% detection confidence'));
+Object.assign(context.IMPROVEMENT_DATA.observations[0],{candidate_id:'linked-draft',candidate_status:'pending'});
+context.IMPROVEMENT_DATA.workflows=[];
+context.buildImprovementSurfaces();
+assert.match(findings.innerHTML,/data-ledger-action="open-workflow" data-candidate-id="linked-draft">Open workflow</);
+assert.doesNotMatch(findings.innerHTML,/create-from-finding/);
 """)

@@ -439,6 +439,7 @@ def build_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
                 0
               ) AS duration_ms,
               (SELECT COUNT(*) FROM steps st WHERE st.session_id = s.id) AS event_count,
+              s.parent_session_id,
               COALESCE(sr.prompt_count, 0) AS prompt_count,
               COALESCE(sr.tool_call_count, 0) AS tool_call_count,
               COALESCE(sr.error_count, s.failure_count, 0) AS failure_count,

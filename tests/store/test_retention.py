@@ -776,7 +776,7 @@ def test_prune_cli_backs_up_before_migrating_for_apply(tmp_path, monkeypatch):
     conn = sqlite3.connect(db_path)
     backup_conn = sqlite3.connect(backup_path)
     try:
-        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 57
+        assert conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 58
         assert backup_conn.execute(
             "SELECT MAX(version) FROM schema_migrations"
         ).fetchone()[0] == 21
