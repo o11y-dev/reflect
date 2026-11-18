@@ -5938,8 +5938,10 @@ document.addEventListener('visibilitychange', () => {
 });
 /* ════════════════════ SESSION BROWSER ════════════════════ */
 function sessionListIdentity(session){
-  const prompt = String(session.first_prompt || '').trim();
-  if (prompt) return {title:prompt.slice(0, 80) + (prompt.length > 80 ? '…' : ''), missingPrompt:false};
+  const label = String(session.native_title || '').trim()
+    || String(session.title || '').trim()
+    || String(session.first_prompt || '').trim();
+  if (label) return {title:label.slice(0, 80) + (label.length > 80 ? '…' : ''), missingPrompt:false};
   const model = String(session.primary_model || '').trim();
   const agent = session.agent && session.agent !== 'unknown' ? formatAgentLabel(session.agent) : '';
   const id = String(session.full_id || session.id || '').slice(-8);

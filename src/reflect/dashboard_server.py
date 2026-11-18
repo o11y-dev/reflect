@@ -27,6 +27,7 @@ from reflect.dashboard_read_executor import (
 )
 from reflect.dashboard_sessions import build_session_payload, load_session_detail
 from reflect.improvements.service import FindingWorkflowConflict
+from reflect.native_session_titles import with_native_session_titles
 from reflect.store.sqlite import (
     SnapshotNotReadyError,
     is_sqlite_busy,
@@ -410,12 +411,17 @@ def build_dashboard_app(
                 return builder(db_path, *args, **kwargs)
         return await run_in_threadpool(read_pinned)
 
+    async def render_dashboard_read(request, payload, headers=None):
+        if request.url.path == "/api/data":
+            payload = await run_in_threadpool(with_native_session_titles, payload)
+        return JSONResponse(payload, headers=headers)
+
     @app.exception_handler(DashboardReadBusyError)
     async def read_busy(request, exc):
         key = response_cache.key(request.url.path, request.query_params, method=request.method)
         cached = response_cache.stale(key, reason="busy")
         if cached is not None and PublishedSnapshotStore(db_path).current() is not None:
-            return JSONResponse(cached, headers={"X-Reflect-Publication": "stale"})
+            return await render_dashboard_read(request, cached, {"X-Reflect-Publication": "stale"})
         return JSONResponse(
             {"error": str(exc), "state": "busy", "reason": "reading"},
             status_code=503, headers={"Retry-After": "2"},
@@ -426,7 +432,7 @@ def build_dashboard_app(
         key = response_cache.key(request.url.path, request.query_params, method=request.method)
         cached = response_cache.stale(key, reason=exc.state)
         if cached is not None and PublishedSnapshotStore(db_path).current() is not None:
-            return JSONResponse(cached, headers={"X-Reflect-Publication": "stale"})
+            return await render_dashboard_read(request, cached, {"X-Reflect-Publication": "stale"})
         return JSONResponse(
             {"error": str(exc), "state": exc.state},
             status_code=503 if exc.state == "preparing" else 409,
@@ -463,7 +469,7 @@ def build_dashboard_app(
         default_range=default_range,
     )
 
-    def read_response(request, payload):
+    def retain_read(request, payload):
         key = response_cache.key(request.url.path, request.query_params, method=request.method)
         if payload.get("analysis_state") == "pending":
             recorded_inspection = bool(re.fullmatch(
@@ -482,6 +488,10 @@ def build_dashboard_app(
             response_cache.put(key, payload, read_order=request.state.dashboard_read_order)
         publication_state = payload.get("publication", {}).get("state")
         headers = {"X-Reflect-Publication": publication_state} if publication_state else {}
+        return payload, headers
+
+    def read_response(request, payload):
+        payload, headers = retain_read(request, payload)
         return JSONResponse(payload, headers=headers)
 
     def requested_scope(params):
@@ -496,14 +506,14 @@ def build_dashboard_app(
         retained = response_cache.stale(key, reason="reading")
         current = response_cache.current(key, revision)
         if current is not None:
-            return JSONResponse(current)
+            return await render_dashboard_read(request, current)
         future = response_cache.prepare(
             key, revision, read_order=request.state.dashboard_read_order,
             submit=lambda: read_executor.submit(operation, db_path, *args, read_revision=revision, **scope),
             current_revision=lambda: read_revision(db_path, operation), allow_recorded=operation == "graph",
         )
         if retained is not None:
-            return JSONResponse(retained, headers={"X-Reflect-Publication": "stale"})
+            return await render_dashboard_read(request, retained, {"X-Reflect-Publication": "stale"})
         # Small reads can finish in this request. A large cold read keeps running
         # once in the bounded executor; polling shares its publication.
         wrapped = asyncio.wrap_future(future)
@@ -514,7 +524,7 @@ def build_dashboard_app(
         revision = await run_in_threadpool(read_revision, db_path, operation)
         current = response_cache.current(key, revision)
         if current is not None:
-            return JSONResponse(current)
+            return await render_dashboard_read(request, current)
         return JSONResponse(
             {"state": "preparing", "reason": "reading",
              "error": "This report read is preparing in the background. Please retry."},
@@ -543,7 +553,8 @@ def build_dashboard_app(
                 perf_kind = "session"
                 if read_executor is not None:
                     return await prepared_response(request, "session", session_id)
-                return read_response(request, await read_query("session", session_id))
+                payload = await read_query("session", session_id)
+                return await render_dashboard_read(request, *retain_read(request, payload))
             perf_kind = "filtered"
             filters = {
                 "limit": 50, "offset": 0, "q": q, "session_id": session_id, "agents": agents,
@@ -552,7 +563,8 @@ def build_dashboard_app(
             }
             if read_executor is not None:
                 return await prepared_response(request, "dashboard", **filters)
-            return read_response(request, await read_query("dashboard", **filters))
+            payload = await read_query("dashboard", **filters)
+            return await render_dashboard_read(request, *retain_read(request, payload))
         finally:
             _perf_finish(
                 "api.data",

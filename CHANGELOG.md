@@ -4,6 +4,8 @@
 
 ### Dependencies
 
+- Add PyYAML to read GitHub Copilot CLI workspace metadata.
+
 - Declare httpx as a runtime dependency for the shared asynchronous local backend client.
 
 - Accept OpenTelemetry hooks 0.15 alongside 0.14; telemetry tests preserve source-specific capability and provenance differences.
@@ -31,6 +33,8 @@
 - Guidance comparisons expose cache token mix, observed cache-read share, verified success rate, and cost per verified success to show cost drivers alongside outcome.
 
 ### Changed
+
+- Show saved Claude Code, Codex, Copilot CLI, Cursor, historical Gemini CLI, and OpenCode chat labels in the local dashboard when their session IDs match.
 
 - Use four Explore navigation rows and one scope toolbar with session selection and collapsible filters.
 - Open the local dashboard directly at the server address. A report query parameter is optional for the live interface.

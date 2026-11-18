@@ -62,8 +62,8 @@ def test_usage_cli_mcp_and_api_share_evidence_during_writer(product_backend):
 
 
 def test_refresh_cli_waits_for_durable_job_by_default(product_backend, monkeypatch):
-    from reflect.mcp import reflect_jobs
     from reflect.backend_runtime import _execute_job
+    from reflect.mcp import reflect_jobs
     db, runner, _ = product_backend
     spool = db.parent / 'otlp'
     spool.mkdir()

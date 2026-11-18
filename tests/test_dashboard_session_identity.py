@@ -27,6 +27,10 @@ def test_metadata_identity_and_scores_do_not_invent_missing_evidence():
     source = Path("src/reflect/frontend/js_sessions.js").read_text()
     _run(source[:source.index("class SessionConversationPlayhead")], r"""
 const identity=context.sessionListIdentity;
+assert.deepEqual(JSON.parse(JSON.stringify(identity({
+  native_title:'  Retry dashboard refresh  ', first_prompt:'Check build', agent:'cursor'
+}))), {title:'Retry dashboard refresh',missingPrompt:false});
+assert.equal(identity({title:'Saved title',first_prompt:'Check build',agent:'windsurf'}).title,'Saved title');
 assert.equal(identity({first_prompt:'  Check build  ',primary_model:'model'}).title,'Check build');
 assert.equal(identity({first_prompt:'  Check build  '}).missingPrompt,false);
 assert.equal(identity({first_prompt:' ',primary_model:'recorded-model',agent:'cursor',full_id:'one-12345678'}).title,

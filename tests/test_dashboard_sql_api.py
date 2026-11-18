@@ -562,6 +562,37 @@ def _add_sql_codex_sibling_session(db_path):
         conn.close()
 
 
+@pytest.mark.parametrize("prepared", [False, True])
+def test_dashboard_api_displays_codex_title_without_persisting_it(tmp_path, monkeypatch, prepared):
+    from reflect.dashboard_read_executor import DashboardReadExecutor
+
+    home = tmp_path / "codex"
+    home.mkdir()
+    index = home / "session_index.jsonl"
+    index.write_text(
+        '{"id":"sess-sql","thread_name":"Review SQL dashboard"}\n', encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    _publish_report(db_path)
+    executor = DashboardReadExecutor() if prepared else None
+    try:
+        client = TestClient(build_dashboard_app(docs_dir=tmp_path, db_path=db_path, read_executor=executor))
+        result = client.get("/api/data?range=all")
+        assert result.status_code == 200
+        session = next(row for row in result.json()["sessions"] if row["id"] == "sess-sql")
+        assert session["native_title"] == "Review SQL dashboard"
+        assert "Review SQL dashboard" not in db_path.with_suffix(".dashboard-responses.json").read_text()
+
+        index.write_text('{"id":"sess-sql","thread_name":"Verify saved title"}\n', encoding="utf-8")
+        renamed = next(row for row in client.get("/api/data?range=all").json()["sessions"] if row["id"] == "sess-sql")
+        assert renamed["native_title"] == "Verify saved title"
+    finally:
+        if executor is not None:
+            executor.close()
+
+
 def test_dashboard_api_embeds_sql_view_models(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)

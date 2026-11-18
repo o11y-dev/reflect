@@ -2,15 +2,27 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from reflect.agent_capabilities import get_agent_capability
 from reflect.utils import _json_loads
 
 _SUCCESS_TOOL_STATES = {"completed", "complete", "success", "succeeded"}
 _FAILED_TOOL_STATES = {"error", "failed", "failure", "cancelled", "canceled", "aborted"}
+
+
+def opencode_database_path() -> Path:
+    capability = get_agent_capability("opencode")
+    assert capability is not None
+    if any(os.environ.get(name) for name in capability.env_names):
+        return capability.home() / "opencode.db"
+    data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")).expanduser()
+    return data_home / "opencode" / "opencode.db"
 
 
 def opencode_tool_success(value: object) -> bool | None:
@@ -80,6 +92,19 @@ class OpenCodeSessionStore:
     def __init__(self, path: Path) -> None:
         self.path = path.expanduser().resolve()
 
+    def _connect(self, *, timeout: float = 5) -> sqlite3.Connection:
+        return sqlite3.connect(f"{self.path.as_uri()}?mode=ro", uri=True, timeout=timeout)
+
+    def titles(self, session_ids: set[str]) -> dict[str, str]:
+        if not session_ids or not self.path.is_file():
+            return {}
+        placeholders = ", ".join("?" for _ in session_ids)
+        with closing(self._connect(timeout=0.05)) as conn:
+            return dict(conn.execute(
+                f"SELECT id, title FROM session WHERE id IN ({placeholders}) AND title IS NOT NULL",
+                tuple(session_ids),
+            ))
+
     def load(
         self,
         session_id: str | None = None,
@@ -87,11 +112,7 @@ class OpenCodeSessionStore:
         after_updated_ms: int = 0,
         after_session_id: str = "",
     ) -> tuple[OpenCodeSessionRecord, ...]:
-        conn = sqlite3.connect(
-            f"{self.path.as_uri()}?mode=ro",
-            uri=True,
-            timeout=5,
-        )
+        conn = self._connect()
         conn.row_factory = sqlite3.Row
         try:
             conn.execute("PRAGMA query_only = ON")

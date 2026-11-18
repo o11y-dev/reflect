@@ -18,6 +18,7 @@ from reflect.opencode_store import (
     OpenCodeMessageRecord,
     OpenCodeSessionRecord,
     OpenCodeSessionStore,
+    opencode_database_path,
     opencode_tool_success,
 )
 from reflect.raw_segments import readable_segment_paths
@@ -752,16 +753,7 @@ def _discover_rich_session_files() -> list[tuple[str, Path]]:
     for agent, root, pattern in sources:
         candidates.extend((agent, path) for path in sorted(root.glob(pattern)))
 
-    opencode_capability = get_agent_capability("opencode")
-    assert opencode_capability is not None
-    if any(os.environ.get(name) for name in opencode_capability.env_names):
-        opencode_home = opencode_capability.home()
-    else:
-        data_home = Path(
-            os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")
-        ).expanduser()
-        opencode_home = data_home / "opencode"
-    opencode_db = opencode_home / "opencode.db"
+    opencode_db = opencode_database_path()
     if opencode_db.is_file():
         candidates.append(("opencode", opencode_db))
     return candidates
