@@ -16,7 +16,8 @@ def _run_explore_contract(scenario: str, **data) -> None:
     loading = source[source.index("const lazySqlTabRequests ="):]
     navigation = Path("src/reflect/frontend/js_navigation.js").read_text()
     loading += navigation[navigation.index("function clearExploreSessionScope("):navigation.index("function chooseExploreSession(")]
-    loading = Path("src/reflect/frontend/js_demo.js").read_text() + "\n" + loading
+    widgets = Path("src/reflect/frontend/js_graphs.js").read_text().split("/* Tool color map */")[0]
+    loading = Path("src/reflect/frontend/js_demo.js").read_text() + "\n" + widgets + loading
     script = r"""
 const assert = require('node:assert/strict'), vm = require('node:vm');
 const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
@@ -28,13 +29,22 @@ const navSessions = [{id:'navigation-A'}, {id:'navigation-B'}];
 const statuses = {}, panels = {};
 function element(id) {
   const classes = new Set();
-  return {id, hidden:false, _text:'', attributes:{}, children:[], listeners:{},
+  return {id, hidden:false, _text:'', attributes:{}, children:[], listeners:{}, dataset:{},
     get textContent() {return this._text + this.children.map(child=>child.textContent).join('');},
     set textContent(value) {this._text=value;this.children=[];},
     classList:{contains:name => classes.has(name),
       toggle:(name,on) => on ? classes.add(name) : classes.delete(name),
       add:name => classes.add(name), remove:name => classes.delete(name)},
     setAttribute(name,value) {this.attributes[name]=value;},
+    removeAttribute(name) {delete this.attributes[name];},
+    toggleAttribute(name,on) {if(on)this.attributes[name]='';else delete this.attributes[name];},
+    focus() {},
+    querySelectorAll(selector){return this.children.filter(child=>selector === '.'+child.className);},
+    querySelector(selector){
+      return this.children.find(child=>selector === '.'+child.className || selector===child.id)
+        || this.children.map(child=>child.querySelector(selector)).find(Boolean);
+    },
+    append(...children) {this.children.push(...children);},
     appendChild(child) {this.children.push(child);},
     addEventListener(name,callback) {this.listeners[name]=callback;},
   };
@@ -44,6 +54,13 @@ for (const name of ['usage','tools','context','graph']) {
   const content = element(name + '-content');
   panels[name] = element('tab-explore-' + name);
   panels[name].children = [status, content];
+  if (name === 'graph') {
+    content.className='graph-widget';
+    const heading=element('h2');heading.firstChild={textContent:'Graph'};
+    const body=element('widget-body');body.className='graph-widget-body';
+    const graphContent=element('widget-content');graphContent.className='graph-widget-content';
+    body.append(graphContent);content.append(heading,body);
+  }
 }
 const response = (status,body) => ({status,ok:status === 200,json:async()=>body});
 const payload = (scope,view='usage') => view === 'usage'
@@ -57,10 +74,9 @@ const context = {
   dashboardSelectedSessionId:'A', activeExploreView:'usage',
   improvementTabs:new Set(['inbox','workflows','skills','impact']),
   IMPROVEMENT_DATA:{resources:{}}, buildImprovementSurfaces:()=>{},
-  _graphsInited:false, requestAnimationFrame:fn=>fn(),
   sqlTab:name=>context.D.sqlite?.tabs?.[name] || {},
   currentParams:()=>params, reportSupportsServerFiltering:()=>true,
-  updateUrlParams:fn=>fn(params),updateExploreScope:()=>{},
+  updateUrlParams:fn=>fn(params),updateExploreScope:()=>{},updateDashboardViewScope:()=>{},
   reportUrlWithCurrentFilters:()=>{
     const url = new URL('/api/data','http://localhost:4000');
     for (const [key,value] of params) url.searchParams.set(key,value);
@@ -70,7 +86,7 @@ const context = {
       reload:()=>{reloads += 1;}},
     setTimeout:(fn,ms)=>{timers.push({fn,ms});return timers.length;},
     clearTimeout:id=>cleared.push(id)},
-  document:{addEventListener:(name, listener)=>listeners.set(name,listener),createElement:tag=>element('created-'+tag),getElementById:id=>{
+  document:{addEventListener:(name, listener)=>listeners.set(name,listener),createElement:tag=>element(tag),getElementById:id=>{
     for (const name of Object.keys(panels)) {
       if (id === panels[name].id) return panels[name];
       if (id === statuses[name].id) return statuses[name];
@@ -83,7 +99,7 @@ const context = {
   renderToolsView:()=>renders.push('tools'),
   renderSqlTabPayloads:()=>renders.push('context'),
   refreshImprovementSurfaces:()=>{improvementUpdates += 1;return Promise.resolve();},
-  initGraphs:()=>renders.push('graph'),
+  initGraphs:()=>renders.push('graph'), exploreGraphLifecycle:{},
 };
 vm.createContext(context); vm.runInContext(input.loading, context);
 (async()=>{
@@ -530,9 +546,9 @@ assert.ok(!statuses.graph.textContent.includes('Invalid Date'));
 params.set('session','B');
 let resolveNext;context.fetch=()=>new Promise(resolve=>{resolveNext=resolve;});
 const changed=context.hydrateExploreView('graph');
-assert.equal(panels.graph.children[1].hidden,true,'recorded data must not cross scopes');
+assert.equal(panels.graph.children[1].dataset.presentation,'placeholder','recorded data must not cross scopes');
 resolveNext(response(503,{state:'preparing'}));await changed;
-assert.equal(panels.graph.children[1].hidden,true);
+assert.equal(panels.graph.children[1].dataset.presentation,'placeholder');
 assert.ok(!statuses.graph.textContent.includes('Showing stored telemetry'));
 """)
 
@@ -621,4 +637,49 @@ listeners.get('reflect-snapshot-published')(complete);
 await Promise.resolve();
 assert.equal(complete.defaultPrevented,true);
 assert.equal(improvementUpdates,1,'full publication refreshes data in place');
+""")
+
+
+def test_graph_keeps_frames_and_recovers_from_a_widget_retry():
+    _run_explore_contract(r"""
+const panel=panels.graph;
+const widget=panel.children[1];
+let finish;
+context.fetch=url=>{requests.push(url);return new Promise(resolve=>{finish=resolve;});};
+const initial=context.hydrateExploreView('graph');
+const notice=widget.querySelector('.graph-widget-notice');
+const content=widget.querySelector('.graph-widget-content');
+const retry=notice.querySelector('button');
+assert.equal(widget.hidden,false);
+assert.equal(widget.dataset.presentation,'placeholder');
+assert.equal(widget.attributes['aria-busy'],'true');
+assert.ok(Object.hasOwn(content.attributes,'inert'));
+assert.equal(retry.hidden,true);
+finish(response(500,{error:'failed'}));
+await initial;
+assert.equal(retry.hidden,false);
+await context.hydrateExploreView('graph');
+assert.equal(requests.length,1,'status polling leaves a failed read available for explicit retry');
+retry.listeners.click();
+assert.equal(retry.hidden,true);
+finish(response(200,payload('A','graph')));
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(widget.hidden,false);
+assert.equal(widget.dataset.presentation,'data');
+assert.equal(renders.at(-1),'graph');
+assert.ok(!Object.hasOwn(content.attributes,'inert'));
+
+vm.runInContext('explorePublication += 1',context);
+const updating=context.hydrateExploreView('graph');
+assert.equal(widget.dataset.presentation,'data','same-scope refresh retains the rendered result');
+assert.match(notice.textContent,/Updating/);
+finish(response(200,payload('A','graph')));
+await updating;
+params.set('agents','cursor');
+const changed=context.hydrateExploreView('graph');
+assert.equal(widget.dataset.presentation,'placeholder','different filters must not show the previous scope');
+finish(response(200,payload('B','graph')));
+await changed;
+assert.equal(widget.dataset.presentation,'data');
+assert.equal(context.D.sqlite.tabs.graph.scope,'B');
 """)

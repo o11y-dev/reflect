@@ -1266,12 +1266,7 @@
   .telemetry-span-stack{padding-left:calc(var(--tree-depth, 0) * 12px + 18px)}
 }
 @media(max-width:640px){
-  .session-browser{
-    height:calc(100dvh - 108px);
-    min-height:0;
-    max-height:none;
-  }
-  .sb-list-head{padding:8px 10px}
+  #sb-detail{height:calc(100dvh - 120px);min-height:420px}
   .sb-detail-header-row{gap:8px;margin-bottom:6px}
   .sb-detail-model{font-size:11px}
   .sb-detail-stats{grid-template-columns:1fr}

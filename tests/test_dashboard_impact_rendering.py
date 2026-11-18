@@ -187,7 +187,7 @@ assert.equal(params.get('workflow_status'),'pending');assert.equal(params.get('r
 assert.match(workflowLedger.innerHTML,/Verify completion/);assert.match(workflowLedger.innerHTML,/Retired suggestion/);
 assert.match(workflowLedger.innerHTML,/aria-expanded="true"/);
 context.toggleAnalysisRow('workflow','workflow-one');assert.equal(button['aria-expanded'],'false');assert.equal(detail.hidden,true);
-context.buildImprovementSurfaces();assert.match(workflowLedger.innerHTML,/aria-expanded="false"/);
+context.buildImprovementSurfaces();assert.ok(!workflowLedger.innerHTML.includes('Verify completion'),'collapse returns to the filtered list');
 assert.ok(!workflowLedger.innerHTML.includes('Evidence Confidence'));
 let inspected=null;context.showWorkflowReview=id=>{inspected=id};
 context.navigateAnalysisRow('workflow','non-representative-variant');

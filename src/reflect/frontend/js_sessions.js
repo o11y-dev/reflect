@@ -227,11 +227,7 @@ class SessionConversationPlayhead {
   const sessions = D.sessions || (D.sessions = []);
   const params = currentParams();
   const initialSessionId = params.get('session');
-  if (initialSessionId && !sessions.some(session => (session.full_id || session.id) === initialSessionId || session.id === initialSessionId)) {
-    // Navigation identity only. Detail comes from its own API, never invented
-    // summary totals or a filtered aggregate rebuilt from session cards.
-    sessions.push({id:initialSessionId, full_id:initialSessionId, _navigationOnly:true});
-  }
+  const sessionIndex = id => sessions.findIndex(item => item.full_id === id || item.id === id);
   D._navigationCompletedAt = D.snapshot_completed_at || D._navigationCompletedAt || '';
   D._navigationLoadedAt = D._navigationLoadedAt || new Date().toISOString();
   function navigationSnapshotLabel(){
@@ -240,8 +236,13 @@ class SessionConversationPlayhead {
       ? `report completed ${new Date(D._navigationCompletedAt).toLocaleString()}`
       : `report loaded ${new Date(D._navigationLoadedAt).toLocaleString()}`;
   }
-  let selectedIdx = initialSessionId ? sessions.findIndex(s => (s.full_id || s.id) === initialSessionId || s.id === initialSessionId) : -1;
-  if (selectedIdx < 0) selectedIdx = null;
+  let selectedIdx = null;
+  let focusedSessionId = '';
+  let sessionListScroll = null;
+  const listView = document.getElementById('session-table-view');
+  const detailView = document.getElementById('session-detail-view');
+  const listEl = document.getElementById('sb-list');
+  const returnButton = document.getElementById('session-return');
   let activeConversationPlayhead = null;
 
   function conversationSearchText(event){
@@ -327,23 +328,20 @@ class SessionConversationPlayhead {
       ${hasFailures ? '<button type="button" class="conversation-nav-button" data-conversation-failure>Next failure</button>' : ''}
     </div>`;
   }
-  const filterState = {
-    q: (params.get('q') || '').trim(),
-    agents: new Set((params.get('agents') || '').split(',').filter(Boolean)),
-    model: params.get('model') || 'all',
-    status: params.get('status') || 'all',
-    range: params.get('range') || (params.get('session') || !D.sql_backed ? 'all' : (D.range || '7d')),
-    sort: params.get('sort') || 'recent',
-  };
-  if (D.sql_backed && reportSupportsServerFiltering() && !params.has('range') && !initialSessionId && params.get('tab') !== 'explore') {
-    // Persist the default before selecting a session adds its identity to the
-    // URL; a reload must keep the same activity window.
-    updateUrlParams(urlParams => urlParams.set('range', filterState.range));
-  }
+  const defaultRange = initialSessionId || !D.sql_backed ? 'all' : (D.range || '7d');
+  const readFilters = values => ({
+    q:(values.get('q') || '').trim(),
+    agents:new Set((values.get('agents') || values.get('agent') || '').split(',').filter(Boolean)),
+    model:values.get('model') || 'all',
+    status:values.get('status') || 'all',
+    range:values.get('range') || defaultRange,
+    sort:values.get('sort') || 'recent',
+  });
+  const filterState = readFilters(params);
 
   document.addEventListener('keydown', event => {
     const session = selectedIdx === null ? null : sessions[selectedIdx];
-    if (!session || session._detailTab !== 'conversation') return;
+    if (detailView.hidden || !document.getElementById('tab-sessions').classList.contains('active') || !session || session._detailTab !== 'conversation') return;
     const target = event.target;
     const isEditable = target instanceof HTMLInputElement
       || target instanceof HTMLTextAreaElement
@@ -365,24 +363,14 @@ class SessionConversationPlayhead {
   ]);
   const pillContainer = document.getElementById('sb-agent-pills');
   const listHead = document.getElementById('sb-list-head');
-  const metaEl = document.getElementById('global-filter-meta');
-  const launcherMetaEl = document.getElementById('session-filter-launcher-meta');
   const chipsEl = document.getElementById('filter-chips');
   const clearBtn = document.getElementById('filter-clear');
-  const filterShell = document.getElementById('global-filter-shell');
-  const compactToggleBtn = document.getElementById('filter-compact-toggle');
-  const filterSheetOpenBtn = document.getElementById('filter-sheet-open');
-  const filterSheetCloseBtn = document.getElementById('filter-sheet-close');
-  const filterSheetBackdrop = document.getElementById('filter-sheet-backdrop');
-  const sessionRailToggleBtn = document.getElementById('session-rail-toggle');
-  const sessionRailOpenBtn = document.getElementById('session-rail-open');
   const searchInput = document.getElementById('sb-search');
   const modelSelect = document.getElementById('filter-model');
   const statusSelect = document.getElementById('filter-status');
   const rangeSelect = document.getElementById('filter-range');
   const sortSelect = document.getElementById('filter-sort');
   let reloadTimer = null;
-  let filterExpanded = true;
   const agentNames = [...agentSet].sort((a,b) => a.localeCompare(b));
   const modelNames = [...new Set([
     ...(filterState.model === 'all' ? [] : [filterState.model]),
@@ -414,6 +402,7 @@ class SessionConversationPlayhead {
     updateUrlParams(urlParams => {
       if (filterState.q) urlParams.set('q', filterState.q);
       else urlParams.delete('q');
+      urlParams.delete('agent');
       if (filterState.agents.size) urlParams.set('agents', [...filterState.agents].join(','));
       else urlParams.delete('agents');
       if (filterState.model !== 'all') urlParams.set('model', filterState.model);
@@ -424,118 +413,148 @@ class SessionConversationPlayhead {
       if (filterState.sort !== 'recent') urlParams.set('sort', filterState.sort);
       else urlParams.delete('sort');
       urlParams.delete('session');
+      urlParams.delete('evidence');
     });
+    const activeTab = document.querySelector('.tab[aria-selected=true]')?.dataset.tab;
+    if (activeTab === 'explore') publishExploreMatchingCount();
+    if (activeTab) updateDashboardViewScope(activeTab);
+    updateAgentPills();
+    renderFilterChips();
   }
 
-  let sessionPublicationRequest = 0;
+  function navigationUrl(){
+    const url = new URL(reportUrlWithCurrentFilters());
+    url.searchParams.set('tab', 'sessions');
+    url.searchParams.delete('view');
+    url.searchParams.delete('session');
+    url.searchParams.set('range', filterState.range);
+    url.searchParams.sort();
+    return url.toString();
+  }
+
+  function snapshotDates({measurements, first_event_ts, last_event_ts}){
+    return {measurements, first_event_ts, last_event_ts};
+  }
+  let publishedDates = snapshotDates(D);
+  let publishedNavigationUrl = D._unfilteredNavigation || D._unpublishedNavigation || initialSessionId ? '' : navigationUrl();
+  let publishedSessionTotal = D.session_list_total;
+  function publishExploreMatchingCount(){
+    const exact = publishedNavigationUrl === navigationUrl() && !D._unpublishedNavigation;
+    exploreMatchingSessionCount = exact && publishedSessionTotal != null ? Number(publishedSessionTotal) : null;
+    if (document.getElementById('report-shell').dataset.view === 'explore') updateExploreScope();
+  }
+
   let sessionNavigationFlight = null;
+  let navigationState = '';
+  function presentNavigationStatus(state, message = ''){
+    navigationState = state;
+    const status = document.getElementById('session-list-status');
+    const busy = state === 'loading';
+    listView.setAttribute('aria-busy', String(busy));
+    status.hidden = !state;
+    status.textContent = message;
+    if (state === 'error') {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'ledger-button';
+      retry.textContent = 'Retry';
+      retry.addEventListener('click', refreshSessionNavigation);
+      status.append(' ', retry);
+    }
+  }
+
   async function refreshSessionNavigation(){
-    const url = reportUrlWithCurrentFilters();
-    const scopeRevision = D._sessionScopeRevision || 0;
-    if (sessionNavigationFlight?.url === url && sessionNavigationFlight.revision === scopeRevision) return sessionNavigationFlight.promise;
-    const request = ++sessionPublicationRequest;
-    D._navigationRefreshPending = true;
-    const promise = Promise.resolve().then(async () => {
-      try {
-        const response = await reportReadResponse(url, {headers:{Accept:'application/json'}, cache:'no-store'});
-        if (!response.ok) return;
-        const payload = await response.json();
-        if (!dashboardDocumentActive || request !== sessionPublicationRequest || scopeRevision !== (D._sessionScopeRevision || 0) || url !== reportUrlWithCurrentFilters()) return;
-        const selectedId = selectedIdx === null ? '' : (sessions[selectedIdx]?.full_id || sessions[selectedIdx]?.id || '');
-        const retained = new Map(sessions.map(item => [item.full_id || item.id, item]));
-        const detailKeys = ['conversation','telemetry','tool_inventory','measurements','git_activity',
-          'pricing_coverage','cost_scope','total_cost_usd','insights','assessments','derived_state','usage_state'];
-        const next = (payload.sessions || []).map(item => {
-          const existing = retained.get(item.full_id || item.id);
-          if (!existing) return item;
-          const summary = {...item};
-          if (existing._activityLoaded || existing._fullLoaded || existing._loadingDetail || existing.conversation?.length) {
-            for (const key of detailKeys) delete summary[key];
-          }
-          return Object.assign(existing, summary);
-        });
-        const pending = ['stale','recorded'].includes(payload.publication?.state);
-        sessions.splice(0, sessions.length, ...next);
-        Object.assign(D, payload, {sessions, _unpublishedNavigation:false,
-          _navigationScope:url, _navigationRefreshPending:pending});
-        const index = sessions.findIndex(item => (item.full_id || item.id) === selectedId);
-        selectedIdx = index >= 0 ? index : null;
-        renderSessionList();
-        if (pending) markNavigationCached();
-        hideReportLoader();
-      } finally {
-        if (sessionNavigationFlight?.request === request) sessionNavigationFlight = null;
+    if (!reportSupportsServerFiltering()) return;
+    const url = navigationUrl();
+    const revision = D._sessionScopeRevision || 0;
+    if (sessionNavigationFlight?.url === url && sessionNavigationFlight.revision === revision) return;
+    const request = {url, revision};
+    const signal = AbortSignal.timeout(30000);
+    sessionNavigationFlight = request;
+    const current = () => dashboardDocumentActive && sessionNavigationFlight === request
+      && revision === (D._sessionScopeRevision || 0) && url === navigationUrl();
+    D._navigationRefreshPending = false;
+    presentNavigationStatus('loading', 'Loading matching sessions…');
+    listEl.hidden = publishedNavigationUrl !== url && !D._unfilteredNavigation;
+    try {
+      const response = await reportReadResponse(url, {headers:{Accept:'application/json'}, cache:'no-store', signal});
+      if (!current()) return;
+      if (response.status === 503 && (await response.json()).state === 'preparing') {
+        if (!current()) return;
+        D._navigationRefreshPending = true;
+        presentNavigationStatus('loading', 'The session list is preparing. It will update automatically.');
+        return;
       }
-    });
-    sessionNavigationFlight = {url, request, revision:scopeRevision, promise};
-    return promise;
+      if (!response.ok) throw new Error('Could not load matching sessions.');
+      const payload = await response.json();
+      if (!current()) return;
+      const selected = selectedIdx === null ? null : sessions[selectedIdx];
+      const retained = new Map(sessions.map(item => [item.full_id || item.id, item]));
+      const detailKeys = ['conversation','telemetry','tool_inventory','measurements','git_activity',
+        'pricing_coverage','cost_scope','total_cost_usd','insights','assessments','derived_state','usage_state'];
+      const next = (payload.sessions || []).map(item => {
+        const existing = retained.get(item.full_id || item.id);
+        if (!existing) return item;
+        const summary = {...item};
+        if (existing._activityLoaded || existing._fullLoaded || existing._loadingDetail || existing.conversation?.length) {
+          for (const key of detailKeys) delete summary[key];
+        }
+        delete existing._navigationOnly;
+        return Object.assign(existing, summary);
+      });
+      if (selected && !next.some(item => (item.full_id || item.id) === (selected.full_id || selected.id))) {
+        selected._navigationOnly = true;
+        next.push(selected);
+      }
+      const pending = ['stale','recorded'].includes(payload.publication?.state);
+      sessions.splice(0, sessions.length, ...next);
+      const index = selected ? sessionIndex(selected.full_id || selected.id) : -1;
+      selectedIdx = index >= 0 ? index : null;
+      publishedNavigationUrl = url;
+      publishedDates = snapshotDates(payload);
+      publishedSessionTotal = payload.session_list_total;
+      Object.assign(D, {
+        session_list_total:payload.session_list_total,
+        _unpublishedNavigation:false, _unfilteredNavigation:false,
+        _navigationFromCache:pending, _navigationRefreshPending:pending,
+        _navigationCompletedAt:payload.snapshot_completed_at || '',
+        _navigationLoadedAt:new Date().toISOString(),
+      });
+      listEl.hidden = false;
+      presentNavigationStatus(pending ? 'stale' : '', pending ? `Showing retained sessions · ${navigationSnapshotLabel()}` : '');
+      if (document.getElementById('tab-sessions').classList.contains('active')) updateDashboardHeaderRange(publishedDates);
+      renderSessionList();
+    } catch (error) {
+      if (current()) presentNavigationStatus('error', error.name === 'TimeoutError'
+        ? 'The session list took too long to load.' : error.message || 'Could not load matching sessions.');
+    } finally {
+      if (sessionNavigationFlight === request) sessionNavigationFlight = null;
+    }
   }
 
   function scheduleDashboardReload(){
     if (!reportSupportsServerFiltering()) return false;
     if (reloadTimer) window.clearTimeout(reloadTimer);
     D._sessionScopeRevision = (D._sessionScopeRevision || 0) + 1;
-    showReportLoader('Loading selected sessions…');
-    reloadTimer = window.setTimeout(() => refreshSessionNavigation().catch(() => {}), 120);
+    presentNavigationStatus('loading', 'Loading matching sessions…');
+    if (publishedNavigationUrl !== navigationUrl()) {
+      listEl.hidden = true;
+      updateDashboardHeaderRange({});
+    }
+    if (currentParams().get('tab') === 'explore' && activeExploreView === 'graph'
+      && exploreViewScopes.get('graph')?.scope !== exploreViewUrl('graph').url.toString()) {
+      setExploreViewState('graph', 'loading');
+    }
+    reloadTimer = window.setTimeout(() => {
+      refreshSessionNavigation();
+      if (document.querySelector('.tab[data-tab="explore"][aria-selected="true"]')) hydrateExploreView(activeExploreView).catch(() => {});
+    }, 120);
     return true;
   }
 
   document.addEventListener('reflect-status-polled', () => {
-    if (dashboardDocumentActive && D._navigationRefreshPending) refreshSessionNavigation().catch(() => {});
+    if (dashboardDocumentActive && D._navigationRefreshPending) refreshSessionNavigation();
   });
-
-  function isMobileShell(){
-    return window.matchMedia('(max-width: 900px)').matches;
-  }
-
-  function syncRailState(){
-    const mobile = isMobileShell();
-    const filtersOpen = mobile ? document.body.classList.contains('filters-rail-open') : true;
-    const sessionsOpen = document.body.classList.contains('sessions-rail-open');
-    const sessionsCollapsed = document.body.classList.contains('sessions-rail-collapsed');
-    const overlayOpen = mobile && (filtersOpen || sessionsOpen);
-    document.body.classList.toggle('rail-overlay-open', overlayOpen);
-    if (filterSheetBackdrop) filterSheetBackdrop.hidden = !overlayOpen;
-    sessionRailToggleBtn?.setAttribute('aria-expanded', String(mobile ? sessionsOpen : !sessionsCollapsed));
-    sessionRailOpenBtn?.setAttribute('aria-expanded', String(mobile ? sessionsOpen : !sessionsCollapsed));
-    filterSheetOpenBtn?.setAttribute('aria-expanded', String(filtersOpen));
-    if (!mobile) document.body.classList.remove('sessions-rail-open');
-  }
-
-  function toggleSessionRail(){
-    if (isMobileShell()) {
-      document.body.classList.toggle('sessions-rail-open');
-    } else {
-      document.body.classList.toggle('sessions-rail-collapsed');
-    }
-    syncRailState();
-  }
-
-  function closeFilterRail(){
-    if (isMobileShell()) document.body.classList.remove('filters-rail-open');
-    syncRailState();
-  }
-
-  function toggleFilterRail(){
-    if (!isMobileShell()) return;
-    document.body.classList.toggle('filters-rail-open');
-    syncRailState();
-  }
-
-  function closeShellOverlays(){
-    document.body.classList.remove('sessions-rail-open');
-    document.body.classList.remove('filters-rail-open');
-    syncRailState();
-  }
-
-  function syncFilterLayout(){
-    filterShell.classList.toggle('expanded', filterExpanded);
-    if (compactToggleBtn) {
-      compactToggleBtn.setAttribute('aria-expanded', String(filterExpanded));
-      compactToggleBtn.textContent = filterExpanded ? 'Fewer filters' : 'More filters';
-    }
-    syncRailState();
-  }
 
   function updateAgentPills(){
     pillContainer.querySelectorAll('.sb-pill').forEach(p => {
@@ -547,22 +566,88 @@ class SessionConversationPlayhead {
     });
   }
 
-  function setSelectedSession(idx, {updateUrl = true} = {}){
-    selectedIdx = idx;
-    const selected = selectedIdx === null ? null : sessions[selectedIdx];
-    dashboardSelectedSessionId = selected ? (selected.full_id || selected.id || '') : '';
+  function syncSessionRoute({restoreFocus = false} = {}){
+    const route = currentParams();
+    const onSessions = document.getElementById('tab-sessions').classList.contains('active');
+    const id = route.get('session') || '';
+    dashboardSelectedSessionId = id;
+    const filters = readFilters(route);
+    Object.assign(filterState, filters);
+    searchInput.value = filters.q;
+    modelSelect.value = filters.model;
+    statusSelect.value = filters.status;
+    rangeSelect.value = filters.range;
+    sortSelect.value = filters.sort;
+    if (!onSessions) {
+      renderFilterChips();
+      updateAgentPills();
+      if (route.get('tab') === 'explore') {
+        publishExploreMatchingCount();
+        if (activeExploreView !== 'context' && !id && reportSupportsServerFiltering()
+          && publishedNavigationUrl !== navigationUrl()) refreshSessionNavigation();
+      }
+      return;
+    }
+    const wasOpen = !detailView.hidden;
+    let index = id ? sessionIndex(id) : -1;
+    if (id && index < 0) {
+      index = sessions.push({id, full_id:id, _navigationOnly:true}) - 1;
+    }
+    selectedIdx = index >= 0 ? index : null;
+    listView.hidden = document.getElementById('session-compare').hidden = Boolean(id);
+    detailView.hidden = !id;
     renderSessionList();
-    renderSessionDetail(selectedIdx === null ? null : sessions[idx]);
-    if (updateUrl) {
-      updateUrlParams(urlParams => {
-        urlParams.set('range', filterState.range);
-        const selected = selectedIdx === null ? null : sessions[selectedIdx];
-        if (selected) urlParams.set('session', selected.full_id || selected.id);
-        else urlParams.delete('session');
-      });
-      if (selected) activateTab('sessions');
+    renderSessionDetail(selectedIdx === null ? null : sessions[selectedIdx]);
+    if (!id) updateDashboardHeaderRange(!reportSupportsServerFiltering() || publishedNavigationUrl === navigationUrl() ? publishedDates : {});
+    if (!id && reportSupportsServerFiltering()) {
+      if (publishedNavigationUrl !== navigationUrl()) refreshSessionNavigation();
+      else if (navigationState && !D._navigationRefreshPending) {
+        listEl.hidden = false;
+        presentNavigationStatus('');
+      }
+    }
+    if (!id && (wasOpen || restoreFocus)) {
+      const opener = [...listEl.querySelectorAll('[data-session-id]')].find(button => button.dataset.sessionId === focusedSessionId);
+      (opener || document.getElementById('session-table-heading')).focus({preventScroll:true});
+      if (sessionListScroll) {
+        window.scrollTo({top:sessionListScroll.page, behavior:'instant'});
+        listEl.querySelector('.analysis-table-scroll')?.scrollTo({left:sessionListScroll.table, behavior:'instant'});
+      }
     }
   }
+
+  listEl.addEventListener('click', event => {
+    const button = event.target.closest('[data-session-id]');
+    if (!button) return;
+    focusedSessionId = button.dataset.sessionId;
+    sessionListScroll = {page:window.scrollY, table:listEl.querySelector('.analysis-table-scroll')?.scrollLeft || 0};
+    updateUrlParams(values => {
+      values.set('tab', 'sessions');
+      values.set('range', filterState.range);
+      values.set('session', focusedSessionId);
+      values.delete('evidence');
+    }, {mode:'push', state:{sessionOpenedFromList:true}});
+    updateDashboardViewScope('sessions');
+    syncSessionRoute();
+    detailView.scrollIntoView({block:'start', behavior:'instant'});
+    returnButton.focus({preventScroll:true});
+  });
+
+  document.getElementById('session-explore').hidden = isStaticDemo() || !D.sql_backed;
+  document.getElementById('session-explore').addEventListener('click', () => activateTab('explore', {view:'usage', focusButton:true}));
+
+  returnButton.addEventListener('click', () => {
+    if (window.history.state?.sessionOpenedFromList) {
+      window.history.back();
+      return;
+    }
+    updateUrlParams(values => {
+      values.delete('session');
+      values.delete('evidence');
+    });
+    updateDashboardViewScope('sessions');
+    syncSessionRoute({restoreFocus:true});
+  });
 
   // Pill click
   pillContainer.addEventListener('click', e => {
@@ -615,21 +700,6 @@ class SessionConversationPlayhead {
     if (scheduleDashboardReload()) return;
     renderSessionList();
   });
-  compactToggleBtn?.addEventListener('click', () => {
-    filterExpanded = !filterExpanded;
-    syncFilterLayout();
-  });
-  sessionRailToggleBtn?.addEventListener('click', () => toggleSessionRail());
-  sessionRailOpenBtn?.addEventListener('click', () => toggleSessionRail());
-  filterSheetOpenBtn?.addEventListener('click', () => toggleFilterRail());
-  filterSheetCloseBtn?.addEventListener('click', () => closeFilterRail());
-  filterSheetBackdrop?.addEventListener('click', () => closeShellOverlays());
-  window.addEventListener('resize', syncRailState);
-  document.addEventListener('keydown', evt => {
-    if (evt.key === 'Escape') closeShellOverlays();
-  });
-  syncFilterLayout();
-
   function removeFilterChip(kind, value){
     if (kind === 'q') filterState.q = '';
     if (kind === 'agent') filterState.agents.delete(value);
@@ -654,7 +724,13 @@ class SessionConversationPlayhead {
     if (filterState.model !== 'all') chips.push({kind:'model', value:'', label:`Model: ${filterState.model}`});
     if (filterState.status !== 'all') chips.push({kind:'status', value:'', label:`Status: ${statusSelect.options[statusSelect.selectedIndex]?.textContent || filterState.status}`});
     if (filterState.range !== 'all') chips.push({kind:'range', value:'', label:`Range: ${rangeSelect.options[rangeSelect.selectedIndex]?.textContent || filterState.range}`});
-    if (filterState.sort !== 'recent') chips.push({kind:'sort', value:'', label:`Sort: ${sortSelect.options[sortSelect.selectedIndex]?.textContent || filterState.sort}`});
+    if (!document.getElementById('session-sort-field').hidden && filterState.sort !== 'recent') chips.push({kind:'sort', value:'', label:`Sort: ${sortSelect.options[sortSelect.selectedIndex]?.textContent || filterState.sort}`});
+    const counter = document.getElementById('scope-filter-count');
+    const extra = document.getElementById('report-shell').dataset.view === 'explore'
+      ? chips.filter(chip => chip.kind !== 'range' && chip.kind !== 'agent').length : chips.length;
+    counter.hidden = !extra;
+    counter.textContent = extra ? String(extra) : '';
+    counter.setAttribute('aria-label', `${extra} active filter${extra === 1 ? '' : 's'}`);
     chipsEl.innerHTML = chips.map(chip => `
       <span class="filter-chip">${escHtml(chip.label)}<button type="button" data-kind="${chip.kind}" data-value="${escHtml(chip.value)}" aria-label="Remove ${escHtml(chip.label)}">×</button></span>
     `).join('');
@@ -672,8 +748,8 @@ class SessionConversationPlayhead {
       : filterState.range === '30d' ? 30 * 24 * 60 * 60 * 1000
       : 0;
     const filtered = sessions.map((s,i) => ({...s, _idx:i})).filter(s => {
+      if (s._navigationOnly) return false;
       if (serverFiltered) return true;
-      if ((s._navigationOnly || D._unfilteredNavigation) && (s.full_id || s.id) === initialSessionId) return true;
       if (filterState.agents.size && !filterState.agents.has(s.agent || '')) return false;
       if (filterState.model !== 'all' && (s.primary_model || '') !== filterState.model) return false;
       if (filterState.status === 'completed' && !s.is_completed) return false;
@@ -709,76 +785,50 @@ class SessionConversationPlayhead {
   }
 
   function renderSessionList(){
-    const listEl = document.getElementById('sb-list');
     const filtered = filteredSessions();
     filteredDashboardSessions = filtered.map(s => sessions[s._idx]);
     updateAgentPills();
     renderFilterChips();
     const hasFilters = Boolean(filterState.q || filterState.agents.size || filterState.model !== 'all' || filterState.status !== 'all' || filterState.range !== 'all' || filterState.sort !== 'recent');
-    const totalSessions = Number(D.session_list_total || sessions.length || 0);
-    metaEl.textContent = D._unpublishedNavigation
-      ? 'Captured session activity · published navigation not loaded'
+    const totalSessions = Number(publishedSessionTotal ?? filtered.length);
+    listHead.textContent = D._unpublishedNavigation
+      ? 'Session list is preparing'
       : D._navigationFromCache
-      ? `${fmt(filtered.length)} navigation entries · ${navigationSnapshotLabel()}`
-      : hasFilters
+      ? `${fmt(filtered.length)} cached sessions · ${navigationSnapshotLabel()}`
+      : filtered.length < totalSessions && reportSupportsServerFiltering()
       ? `Showing ${fmt(filtered.length)} of ${fmt(totalSessions)} sessions`
-      : `Showing ${fmt(filtered.length)} of ${fmt(totalSessions)} sessions`;
-    if (launcherMetaEl) launcherMetaEl.textContent = metaEl.textContent;
-    listHead.textContent = `${fmt(filtered.length)} session${filtered.length === 1 ? '' : 's'} in view`;
+      : `${fmt(filtered.length)} session${filtered.length === 1 ? '' : 's'} in view`;
+    publishExploreMatchingCount();
     document.dispatchEvent(new CustomEvent('dashboard-filters-changed', {
       detail: { sessions: filteredDashboardSessions.slice(), hasFilters, selectedSessionId: dashboardSelectedSessionId, filters: {...filterState, agents:[...filterState.agents]} }
     }));
-    if (selectedIdx !== null && !filtered.some(s => s._idx === selectedIdx)) {
-      selectedIdx = null;
-      dashboardSelectedSessionId = '';
-      updateUrlParams(urlParams => urlParams.delete('session'));
+    const scrollLeft = listEl.querySelector('.analysis-table-scroll')?.scrollLeft || 0;
+    const rowHadFocus = document.activeElement.closest('#sb-list [data-session-id]')?.dataset.sessionId;
+    listEl.innerHTML = filtered.length ? analysisTable(
+      ['Session', 'Agent', 'Started', 'Events', 'Tokens', 'Cost', 'Quality'],
+      filtered.map(session => {
+        const id = session.full_id || session.id;
+        const title = sessionListIdentity(session);
+        const highlighted = id === focusedSessionId;
+        const estimated = getEstimatedSessionTokens(session);
+        const tokens = sessionTokenTotal(session, estimated);
+        const cost = sessionCostPresentation(session, estimated);
+        const unit = String(session.pricing_unit || sqlTab('usage').pricing_unit || 'usd').toUpperCase();
+        const costLabel = cost.status === 'estimated' ? `${fmtCost(cost.cost)} ${unit}` : cost.label;
+        return `<tr class="analysis-summary${highlighted ? ' session-row-current' : ''}">
+          <th scope="row"><button type="button" class="analysis-toggle" data-session-id="${escHtml(id)}"${highlighted ? ' aria-current="true"' : ''}>${escHtml(title.title)}</button>
+            ${title.missingPrompt ? '<small class="analysis-subline">Prompt text unavailable</small>' : ''}</th>
+          <td>${escHtml(formatAgentLabel(session.agent))}</td><td>${escHtml(fmtWorkflowDate(session.created_at))}</td>
+          <td>${fmt(session.event_count || 0)}</td><td>${tokens > 0 ? `${estimated ? '~' : ''}${fmtTokenShort(tokens)}` : '—'}</td>
+          <td title="${escHtml(cost.reason || '')}">${escHtml(costLabel)}</td><td>${renderSessionQualityBadge(session)}</td>
+        </tr>`;
+      }).join('')
+    ) : `<p class="session-ledger-empty">${D._unpublishedNavigation ? 'Session navigation is updating.' : hasFilters ? 'No sessions match this scope. Adjust the filters to broaden it.' : 'No sessions have been captured yet.'}</p>`;
+    const scroller = listEl.querySelector('.analysis-table-scroll');
+    if (scroller) scroller.scrollLeft = scrollLeft;
+    if (rowHadFocus) {
+      [...listEl.querySelectorAll('[data-session-id]')].find(button => button.dataset.sessionId === rowHadFocus)?.focus({preventScroll:true});
     }
-    if (!filtered.length) {
-      listEl.innerHTML = `<div class="sb-empty" style="height:auto;padding:24px 12px"><div class="sb-empty-icon" aria-hidden="true">&#128269;</div><div>${D._unpublishedNavigation ? 'Session navigation is updating. Other sections remain available.' : 'No sessions match this filter'}</div></div>`;
-      renderSessionDetail(selectedIdx === null ? null : sessions[selectedIdx]);
-      return;
-    }
-    if (selectedIdx === null) {
-      selectedIdx = filtered[0]._idx;
-    }
-    listEl.innerHTML = filtered.map(s => {
-      const agentColor = colorForAgent(s.agent);
-      const agentName = formatAgentLabel(s.agent);
-      const identity = sessionListIdentity(s);
-      const isActive = s._idx === selectedIdx;
-      const estimatedTokens = getEstimatedSessionTokens(s);
-      const tokens = sessionTokenTotal(s, estimatedTokens);
-      const costPresentation = sessionCostPresentation(s, estimatedTokens);
-      const cost = costPresentation.cost;
-      const unit = String(s.pricing_unit || sqlTab('usage').pricing_unit || 'usd').toUpperCase();
-      return `<button type="button" class="sb-card${isActive ? ' active' : ''}" data-idx="${s._idx}" aria-pressed="${isActive ? 'true' : 'false'}">
-        <div class="sb-card-header">
-          <div class="sb-card-agent-icon">${agentIconSvg(s.agent)}</div>
-          <div class="sb-card-agent">${escHtml(agentName)}</div>
-          <div class="sb-card-time">${s._navigationOnly ? 'Linked session' : escHtml(fmtWorkflowDate(s.created_at))}</div>
-        </div>
-        <div class="sb-card-prompt">${escHtml(identity.title)}</div>
-        <div class="sb-card-badges">
-          ${identity.missingPrompt ? '<div class="sb-card-badge">Prompt text unavailable</div>' : ''}
-          ${s._navigationOnly ? '<div class="sb-card-badge">Activity detail · summary unavailable</div>' : `<div class="sb-card-badge">${fmt(s.event_count || 0)} events</div>
-          ${tokens > 0 ? `<div class="sb-card-badge">${estimatedTokens ? '~' : ''}${fmtTokenShort(tokens)} tok</div>` : ''}
-          ${costPresentation.status === 'estimated'
-            ? `<div class="sb-card-badge">${fmtCost(cost)} ${escHtml(unit)}</div>`
-            : `<div class="sb-card-badge" style="color:var(--text-3)" title="${escHtml(costPresentation.reason)}">${escHtml(costPresentation.label)}</div>`}
-          ${renderSessionQualityBadge(s)}`}
-        </div>
-      </button>`;
-    }).join('');
-
-    // Click handler
-    listEl.querySelectorAll('.sb-card').forEach(card => {
-      card.addEventListener('click', () => {
-        const idx = parseInt(card.dataset.idx);
-        setSelectedSession(idx);
-        if (isMobileShell()) closeShellOverlays();
-      });
-    });
-    renderSessionDetail(sessions[selectedIdx]);
   }
 
   function renderSessionDetail(session){
@@ -787,6 +837,11 @@ class SessionConversationPlayhead {
     activeConversationPlayhead = null;
     if (!session) {
       detailEl.innerHTML = '<div class="sb-empty"><div class="sb-empty-icon" aria-hidden="true">&#9776;</div><div>Select a session to view its conversation timeline</div></div>';
+      return;
+    }
+
+    if (session._detailNotFound) {
+      detailEl.innerHTML = '<p class="session-ledger-empty" role="status">Session not found in captured telemetry.</p>';
       return;
     }
 
@@ -2069,6 +2124,7 @@ class SessionConversationPlayhead {
       sessions[idx]._loadingDetail = true;
       sessions[idx]._detailRequest = requestToken;
       sessions[idx]._detailLoadError = '';
+      sessions[idx]._detailNotFound = false;
     }
     if (btn) {
       btn.disabled = true;
@@ -2086,7 +2142,11 @@ class SessionConversationPlayhead {
         if (r.status === 503 && (await r.json()).state === 'preparing') {
           throw new Error('Session details are refreshing. Showing the last completed summary. Retry after refresh completes.');
         }
-        if (r.status === 404) throw new Error('Session not found in captured telemetry.');
+        if (r.status === 404) {
+          const error = new Error('Session not found in captured telemetry.');
+          error.name = 'SessionNotFound';
+          throw error;
+        }
         if (!r.ok) throw new Error('Session details could not be loaded. Please retry.');
         return r.json();
       })
@@ -2135,6 +2195,7 @@ class SessionConversationPlayhead {
         if (!dashboardDocumentActive || requestRevision !== (D._sessionScopeRevision || 0)) return;
         if (idx >= 0) {
           sessions[idx]._loadingDetail = false;
+          sessions[idx]._detailNotFound = err.name === 'SessionNotFound';
           sessions[idx]._detailLoadError = err.name === 'AbortError'
             ? 'Session details took too long to load. Please retry.'
             : err.message || 'Session details could not be loaded. Please retry.';
@@ -2170,18 +2231,14 @@ class SessionConversationPlayhead {
 
   function markNavigationCached(){
     if (!D._unpublishedNavigation) D._navigationFromCache = true;
-    for (const id of ['global-filter-meta', 'session-filter-launcher-meta']) {
-      const label = document.getElementById(id);
-      if (label) label.textContent = D._unpublishedNavigation
-        ? 'Captured session activity · published navigation not loaded'
-        : `Cached navigation · ${navigationSnapshotLabel()}`;
-    }
+    listHead.textContent = D._unpublishedNavigation
+      ? 'Session list is preparing' : `Cached sessions · ${navigationSnapshotLabel()}`;
   }
 
   document.addEventListener('reflect-snapshot-published', event => {
     if (!dashboardDocumentActive) return;
     D._sessionScopeRevision = (D._sessionScopeRevision || 0) + 1;
-    if (document.getElementById('tab-sessions')?.classList.contains('active')) refreshSessionNavigation().catch(() => {});
+    if (document.getElementById('tab-sessions')?.classList.contains('active')) refreshSessionNavigation();
     if (!document.getElementById('tab-sessions')?.classList.contains('active') || selectedIdx === null) return;
     event.preventDefault();
     markNavigationCached();
@@ -2189,6 +2246,7 @@ class SessionConversationPlayhead {
       session._activityLoaded = false;
       session._fullLoaded = false;
       session._detailLoadError = '';
+      session._detailNotFound = false;
       if (session._loadingDetail) session._refreshDetailAfterLoad = true;
     }
     const selected = sessions[selectedIdx];
@@ -2200,8 +2258,7 @@ class SessionConversationPlayhead {
     if (selected._refreshDetailAfterLoad) tryLoadFullDetail(selected.full_id || selected.id, null);
   });
 
-  renderSessionList();
-  if (selectedIdx !== null) {
-    renderSessionDetail(sessions[selectedIdx]);
-  }
+  document.addEventListener('dashboard-route-changed', () => syncSessionRoute());
+  syncSessionRoute();
+  if (!document.getElementById('tab-sessions').classList.contains('active')) renderSessionList();
 })();

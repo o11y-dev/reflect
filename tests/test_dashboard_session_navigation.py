@@ -14,12 +14,12 @@ def _run_browser_contract(scenario: str, **data) -> None:
     if node is None:
         pytest.skip("Node is required for browser session contract checks")
     source = Path("src/reflect/frontend/js_sessions.js").read_text()
-    navigation = source[source.index("function setSelectedSession("):
+    navigation = source[source.index("function syncSessionRoute("):
                         source.index("// Pill click")]
     navigation = Path("src/reflect/frontend/js_demo.js").read_text() + "\n" + navigation
     detail_start = re.search(r"(?:async )?function tryLoadFullDetail\(", source)
     assert detail_start is not None
-    detail = source[detail_start.start():source.index("\n  renderSessionList();\n  if (selectedIdx")]
+    detail = source[detail_start.start():source.index("\n  document.addEventListener('dashboard-route-changed'")]
     script = r"""
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
@@ -28,20 +28,27 @@ const rendered = [], tabs = [], timersCleared = [];
 const listeners = new Map();
 let scroller = {scrollTop:173};
 const detailElement = {querySelector:() => scroller};
+const listEl={listeners:{},addEventListener:(name,fn)=>{listEl.listeners[name]=fn;},querySelector:()=>null,querySelectorAll:()=>[]};
+const detailView={hidden:false,scrollIntoView:()=>{}};
+const button={focus:()=>{}}, defaultElement={addEventListener:()=>{},focus:()=>{},setAttribute:()=>{}};
 let reloads = 0, listRenders = 0;
 const params = new URLSearchParams('agents=cursor&session=one');
 const sessions = [{id:'short-one', full_id:'one'}, {id:'short-two', full_id:'two'}];
 const response = (status, body) => ({status, ok:status === 200, json:async () => body});
 const context = {
   refreshSessionNavigation:async()=>{},
-  sessions, selectedIdx:0, dashboardSelectedSessionId:'one', AbortController,dashboardDocumentActive:true,
+  sessions, selectedIdx:0, dashboardSelectedSessionId:'one', AbortController,AbortSignal,URL,dashboardDocumentActive:true,
+  currentParams:()=>params,listEl,listView:{hidden:false,setAttribute:()=>{}},detailView,returnButton:defaultElement,listHead:{},
+  initialSessionId:'one',readFilters:()=>({range:'7d'}),sessionIndex:id=>sessions.findIndex(item=>item.full_id===id || item.id===id),
+  searchInput:{},modelSelect:{},statusSelect:{},rangeSelect:{},sortSelect:{},updateDashboardViewScope:()=>{},
+  focusedSessionId:'', sessionListScroll:null,updateDashboardHeaderRange:()=>{},
   filterState:{range:'7d'},
   D:{sessions, _navigationCompletedAt:'2026-01-01T00:00:00Z'},
   document:{addEventListener:(name, listener) => listeners.set(name, listener),
     getElementById:id => id === 'sb-detail' ? detailElement
-      : id === 'tab-sessions' ? {classList:{contains:() => true}} : null},
+      : id === 'tab-sessions' ? {classList:{contains:() => true}} : defaultElement},
   navigationSnapshotLabel:() => 'report completed 2026-01-01',
-  window:{setTimeout:() => 42, clearTimeout:id => timersCleared.push(id),
+  window:{scrollY:0, history:{}, setTimeout:() => 42, clearTimeout:id => timersCleared.push(id),
     addEventListener:(name,listener)=>listeners.set(name,listener)},
   activateTab:tab => tabs.push(tab),
   renderSessionList:() => {listRenders += 1;},
@@ -70,13 +77,17 @@ vm.runInContext(input.navigation + '\n' + input.detail, context);
 
 def test_session_selection_opens_detail_without_reloading_dashboard():
     _run_browser_contract(r"""
-context.setSelectedSession(1);
+context.publishedDates={};
+context.publishedNavigationUrl='same';
+context.navigationUrl=()=> 'same';
+context.navigationState='';
+listEl.listeners.click({target:{closest:()=>({dataset:{sessionId:'two'}})}});
 assert.equal(context.selectedIdx, 1);
 assert.equal(context.dashboardSelectedSessionId, 'two');
 assert.equal(params.get('session'), 'two');
 assert.equal(params.get('agents'), 'cursor');
 assert.equal(params.get('range'), '7d', 'selection preserves the current window before a reload');
-assert.deepEqual(tabs, ['sessions']);
+assert.equal(params.get('tab'), 'sessions');
 assert.equal(listRenders, 1);
 assert.equal(rendered.at(-1), sessions[1]);
 assert.equal(reloads, 0, 'session selection must not replace the whole dashboard');
@@ -275,22 +286,22 @@ assert.ok(!Object.hasOwn(sessions[0],'git_activity'),'successful response can re
 
 
 def test_uncached_deep_link_uses_identity_only_navigation_entry():
-    source = Path("src/reflect/frontend/js_sessions.js").read_text()
-    initialization = source[source.index("  const sessions = D.sessions"):
-                            source.index("  let activeConversationPlayhead")]
     _run_browser_contract(r"""
-const empty = {D:{sessions:[],snapshot_completed_at:'2026-02-01T00:00:00Z'},
-  currentParams:()=>new URLSearchParams('session=not-in-cache')};
-vm.createContext(empty); vm.runInContext('(function(){'+input.initialization+'})();',empty);
-const linked = empty.D.sessions[0];
+context.publishedDates={};
+context.publishedNavigationUrl='same';
+context.navigationUrl=()=> 'same';
+context.navigationState='';
+params.set('session','not-in-cache');
+context.syncSessionRoute();
+const linked = sessions.at(-1);
 assert.equal(linked.id, 'not-in-cache');
 assert.equal(linked.full_id, 'not-in-cache');
 assert.equal(linked._navigationOnly,true);
 for (const key of ['input_tokens','output_tokens','event_count','total_cost_usd','quality_score','is_completed']) {
   assert.ok(!Object.hasOwn(linked,key), 'identity must not manufacture summary fields: '+key);
 }
-assert.equal(empty.D._navigationCompletedAt, '2026-02-01T00:00:00Z');
-""", initialization=initialization)
+assert.equal(rendered.at(-1),linked);
+""")
 
 
 def test_pending_analysis_does_not_render_unknown_outcome_or_zero_git_activity():
@@ -352,6 +363,7 @@ def test_inbox_distinguishes_pending_retained_and_successful_empty_data():
     source = Path("src/reflect/frontend/js_impact.js").read_text()
     renderer = source[source.index("function buildImprovementSurfaces()"):
                       source.index("\nbuildImprovementSurfaces();")]
+    renderer += source[source.index("function analysisTable("):source.index("function analysisToggle(")]
     _run_browser_contract(r"""
 const panels = Object.fromEntries(['inbox','workflows','skills','impact'].map(name => {
   const classes = new Set(), children = [];
@@ -448,6 +460,7 @@ def test_cached_workflow_evidence_never_enables_a_new_review():
                     source.index("async function showObservationEvidence(")]
     review += source[source.index("async function showWorkflowReview("):
                      source.index("async function submitSessionFeedback(")]
+    review += next(line for line in source.splitlines() if line.startswith("const ledgerSelectionParams"))
     impact = Path("src/reflect/frontend/js_impact.js").read_text()
     review += impact[impact.index("function workflowTableName("):impact.index("function impactOutcome(")]
     _run_browser_contract(r"""
@@ -476,7 +489,7 @@ assert.ok(!dialogs.at(-1).body.includes('workflow-content-editor'));
 
 def test_navigation_refresh_preserves_selection_and_discards_old_scope():
     source = Path('src/reflect/frontend/js_sessions.js').read_text()
-    refresh = source[source.index('  let sessionPublicationRequest ='):source.index('  function isMobileShell()')]
+    refresh = source[source.index('  function navigationUrl()'):source.index('  function updateAgentPills()')]
     _run_browser_contract(r'''
 let url='http://localhost/api/data?agents=cursor', resolveOld, renders=0;
 context.reportUrlWithCurrentFilters=()=>url;
@@ -500,7 +513,7 @@ assert.equal(renders,1,'late scope cannot replace the current navigation');
 
 def test_delayed_detail_resolves_identity_after_navigation_reorders_rows():
     source = Path('src/reflect/frontend/js_sessions.js').read_text()
-    refresh = source[source.index('  let sessionPublicationRequest ='):source.index('  function isMobileShell()')]
+    refresh = source[source.index('  function navigationUrl()'):source.index('  function updateAgentPills()')]
     _run_browser_contract(r'''
 let resolveDetail;
 context.fetch=()=>new Promise(resolve=>{resolveDetail=resolve;});
@@ -523,7 +536,7 @@ assert.equal(rendered.at(-1),sessions[1]);
 @pytest.mark.parametrize('first_state', ['preparing', 'stale'])
 def test_navigation_retries_same_revision_and_preserves_loaded_detail(first_state):
     source = Path('src/reflect/frontend/js_sessions.js').read_text()
-    refresh = source[source.index('  let sessionPublicationRequest ='):source.index('  function isMobileShell()')]
+    refresh = source[source.index('  function navigationUrl()'):source.index('  function updateAgentPills()')]
     _run_browser_contract(r'''
 let calls=0;
 context.reportUrlWithCurrentFilters=()=> 'http://localhost/api/data?agents=cursor';

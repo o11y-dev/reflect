@@ -21,13 +21,14 @@ def test_document_navigation_stops_new_reads_and_resumes_one_status_poll():
                         source.index("function reportSupportsServerFiltering(")]
     sessions = Path("src/reflect/frontend/js_sessions.js").read_text()
     reload = sessions[sessions.index("  function scheduleDashboardReload()"):
-                      sessions.index("  function isMobileShell()")]
+                      sessions.index("  function updateAgentPills()")]
     script = r"""
 const assert=require('node:assert/strict'),vm=require('node:vm');
 const input=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
 const listeners=new Map(),timers=new Map(),calls=[],pending=[];
 let timerId=0,replacements=0;
 const context={URL,URLSearchParams,D:{sql_backed:true},reloadTimer:null,
+  presentNavigationStatus:()=>{},publishedNavigationUrl:'same',navigationUrl:()=> 'same',
   document:{addEventListener:()=>{},dispatchEvent:()=>true},CustomEvent:class {},
   window:{location:{href:'http://localhost/?tab=sessions',search:'?tab=sessions',reload:()=>{}},
     addEventListener:(name,listener)=>listeners.set(name,listener),
@@ -84,7 +85,7 @@ def test_initial_report_waits_for_preparation_and_surfaces_failure(state):
     if node is None:
         pytest.skip("Node is required for browser loading contract checks")
     source = Path("src/reflect/frontend/js_bootstrap.js").read_text()
-    loader = source[source.index("async function loadDashboardData()"):
+    loader = source[source.index("function isLocalDashboard()"):
                     source.index("async function loadImprovementData(")]
     script = r"""
 const assert = require('node:assert/strict');
@@ -137,7 +138,7 @@ def test_filtered_bootstrap_retries_quick_pending_responses_with_per_request_dea
     if node is None:
         pytest.skip("Node is required for browser loading contract checks")
     source = Path("src/reflect/frontend/js_bootstrap.js").read_text()
-    loader = source[source.index("async function loadDashboardData()"):
+    loader = source[source.index("function isLocalDashboard()"):
                     source.index("async function loadImprovementData(")]
     script = r"""
 const assert=require('node:assert/strict'),vm=require('node:vm');
@@ -201,7 +202,7 @@ def test_session_link_can_navigate_completed_cache_without_claiming_scoped_total
     if node is None:
         pytest.skip("Node is required for browser loading contract checks")
     source = Path("src/reflect/frontend/js_bootstrap.js").read_text()
-    loader = source[source.index("async function loadDashboardData()"):
+    loader = source[source.index("function isLocalDashboard()"):
                     source.index("async function loadImprovementData(")]
     script = r"""
 const assert = require('node:assert/strict'), vm = require('node:vm');
@@ -264,16 +265,16 @@ const assert = require('node:assert/strict'), vm = require('node:vm');
 const source = JSON.parse(require('node:fs').readFileSync(0,'utf8'));
 const params = new URLSearchParams('tab=sessions&session=selected');
 const hydrated = [];
-const button = {classList:{toggle:()=>{}}, setAttribute:()=>{}};
+const button = {classList:{toggle:()=>{}}, setAttribute:()=>{}, getAttribute:()=>null,dataset:{tab:'sessions'}};
 const panel = {id:'tab-explore-usage', classList:{toggle:()=>{}}, hidden:true};
 const context = {activeExploreView:'usage', D:{sql_backed:true, focused_session_id:''},
-  tabButtons:[button], updateTabIndicator:()=>{}, animateTabIndicator:()=>{}, updateDashboardViewScope:()=>{},
+  tabButtons:[button], ledgerSelectionParams:[], CustomEvent:class{}, updateDashboardViewScope:()=>{},
   currentParams:()=>params, canonicalDashboardLocation:(tab,view)=>({tab,view}),
   updateUrlParams:fn=>fn(params),
   showReportLoader:()=>{throw new Error('must not block whole dashboard');},
   hydrateExploreView:view=>{hydrated.push([view,params.get('session'),params.get('tab')]);return Promise.resolve();},
   window:{location:{reload:()=>{throw new Error('must not reload');}}},
-  document:{querySelector:()=>button, querySelectorAll:selector=>selector === '.tab-panel' ? [panel] : []},
+  document:{querySelector:()=>button, dispatchEvent:()=>{}, querySelectorAll:selector=>selector === '.tab-panel' ? [panel] : []},
 };
 vm.createContext(context); vm.runInContext(source, context);
 context.activateTab('explore');
@@ -355,6 +356,8 @@ class Element {
   set textContent(value){this.text=value;this.children=[];}
   get textContent(){return this.text || '';}
   setAttribute(name,value){this.attributes[name]=value;}
+  getAttribute(name){return this.attributes[name] ?? null;}
+  removeAttribute(name){delete this.attributes[name];}
   appendChild(child){child.parentElement=this;this.children.push(child);}
   append(...children){children.forEach(child=>this.appendChild(child));}
   replaceChildren(...children){this.children=[];this.append(...children);}
@@ -362,6 +365,7 @@ class Element {
   remove(){if(this.parentElement)this.parentElement.children=this.parentElement.children.filter(child=>child!==this);}
   showModal(){this.open=true;}
   close(){this.open=false;}
+  focus(){}
   getContext(){return {canvas:this};}
   addEventListener(name,fn){(this.listeners ||= {})[name]=fn;}
   querySelector(selector){return this.children.find(child=>selector === '.'+child.className) || null;}
@@ -402,17 +406,19 @@ const response=(status,body)=>({status,ok:status===200,json:async()=>body});
 const captured={session:{id:'first',agent:'codex'},derived_state:'preparing',
   conversation:[{type:'response',preview:'Captured activity before first publication',ts:1}],
   telemetry:{spans:[]},tool_inventory:{tools:[]}};
-const context={URL,URLSearchParams,AbortController,console,navigator:{language:'en-US'},
+const context={URL,URLSearchParams,AbortController,AbortSignal,console,navigator:{language:'en-US'},
   CustomEvent:class{constructor(type,opts={}){this.type=type;Object.assign(this,opts);}preventDefault(){this.defaultPrevented=true;}},
   Chart:class{static defaults={};static getChart(){return undefined;}constructor(){if(!sample)throw new Error('unpublished aggregates must not create charts');}},
   document:{body:element('body'),head:element('head'),getElementById:element,createElement:()=>new Element(),
+    activeElement:element('body'),
     querySelector:selector=>selector.startsWith('.tab[data-tab=') ? tabs.find(tab=>selector.includes('"'+tab.dataset.tab+'"')) : null,
     querySelectorAll:selector=>selector==='.tab' ? tabs : selector==='.tab-panel' ? panels : selector==='[data-demo-step]' ? demoSteps : [],
     addEventListener:(name,fn)=>{if(!listeners.has(name))listeners.set(name,[]);listeners.get(name).push(fn);},
     dispatchEvent:event=>{for(const fn of listeners.get(event.type)||[])fn(event);return !event.defaultPrevented;}},
   window:{location,innerWidth:1200,setTimeout:()=>1,setInterval:()=>1,clearTimeout:()=>{},addEventListener:()=>{},
     matchMedia:()=>({matches:false}),sessionStorage:{getItem:()=>null,setItem:()=>{}},
-    history:{replaceState:(_,__,url)=>{const parsed=new URL(url,location.href);location.href=parsed.href;location.search=parsed.search;}}},
+    history:{replaceState(state,_,url){const parsed=new URL(url,location.href);location.href=parsed.href;location.search=parsed.search;this.state=state;},
+      pushState(state,title,url){this.replaceState(state,title,url);}}},
   requestAnimationFrame:fn=>fn(),
   fetch:async url=>{const path=new URL(url,location.href).pathname;requests.push(path);
     if(sample){assert.equal(path,'/reports/showcase.json','static report must not fetch an API');return response(200,input.demo);}
@@ -463,7 +469,7 @@ vm.createContext(context);vm.runInContext(bundle,context);
       }
     }
     element('button-explore').listeners.click();await new Promise(resolve=>setImmediate(resolve));
-    assert.equal(element('filter-rail').hidden,true,'fixed sample Usage has no misleading aggregate filters');
+    assert.equal(element('section-filters').hidden,true,'fixed sample Usage has no misleading aggregate filters');
     assert.deepEqual(requests,['/reports/showcase.json'],'all detail and inventory reads use the bundle');
     return;
   }
@@ -488,6 +494,8 @@ vm.createContext(context);vm.runInContext(bundle,context);
   }
   assert.ok(!data._navigationFromCache,'no completed report exists to call cached');
   assert.equal(data.sessions.length,1);assert.equal(data.sessions[0].agent,'codex');
+  assert.equal(new URLSearchParams(location.search).get('tab'),'explore','bootstrap preserves the requested view');
+  element('button-sessions').listeners.click();await new Promise(resolve=>setImmediate(resolve));
   assert.equal(data.sessions[0]._activityLoaded,true);assert.equal(data.sessions[0]._fullLoaded,false);
   assert.ok(!Object.hasOwn(data,'measurements'));assert.ok(!Object.hasOwn(data,'git_activity'));
   assert.ok(!Object.hasOwn(data.sqlite,'overview'));assert.deepEqual(Object.keys(data.sqlite.tabs),[]);
@@ -495,9 +503,9 @@ vm.createContext(context);vm.runInContext(bundle,context);
   assert.equal(new URLSearchParams(location.search).get('tab'),'sessions');
   assert.match(element('sb-detail').innerHTML,/Captured activity available; analysis is refreshing/);
   assert.ok(!/Duration:|Events:|Cost:|quality-score-value/.test(element('sb-detail').innerHTML));
-  assert.match(element('global-filter-meta').textContent,/published navigation not loaded/);
+  assert.match(element('sb-list-head').textContent,/Session list is preparing/);
   for(const view of ['usage','tools','graph','context']) {
-    assert.equal(element(view+'-content').hidden,true);
+    assert.equal(element(view+'-content').hidden,view!=='graph');
     assert.match(element(view+'-view-status').textContent,/Loading .*This view updates automatically/);
   }
   for(const name of ['workflows','impact']) {
@@ -557,4 +565,34 @@ vm.createContext(context);vm.runInContext(source,context);
 })().catch(error=>{console.error(error);process.exitCode=1;});
 '''
     result = subprocess.run([node, '-e', script], input=json.dumps(lifecycle), text=True, capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
+def test_local_dashboard_root_defaults_to_live_data_and_keeps_explicit_sources():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is required for browser loading contract checks")
+    source = Path("src/reflect/frontend/js_bootstrap.js").read_text()
+    source = source[source.index("function isLocalDashboard()"):
+                    source.index("async function loadDashboardData()")]
+    script = r"""
+const assert=require('node:assert/strict'), vm=require('node:vm');
+const source=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
+const context={URLSearchParams,window:{location:{pathname:'/',hostname:'127.0.0.1',search:''}}};
+vm.createContext(context);vm.runInContext(source,context);
+assert.equal(context.dashboardReportSource(),'/api/data');
+context.window.location.search='?tab=explore&view=graph';
+assert.equal(context.dashboardReportSource(),'/api/data');
+context.window.location.search='?report=api%2Fdata&range=7d';
+assert.equal(context.dashboardReportSource(),'api/data');
+context.window.location.search='?data=embedded';
+assert.equal(context.dashboardReportSource(),'');
+context.window.location.pathname='/report.html';
+context.window.location.search='?report=reports%2Fshowcase.json';
+assert.equal(context.dashboardReportSource(),'reports/showcase.json');
+context.window.location.search='';
+assert.equal(context.dashboardReportSource(),'');
+"""
+    result = subprocess.run([node, "-e", script], input=json.dumps(source),
+                            text=True, capture_output=True, timeout=10)
     assert result.returncode == 0, result.stderr

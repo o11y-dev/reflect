@@ -51,11 +51,29 @@ function renderMeasurementCoverage(){
   const scope = data.scope || {};
   const scopeEl = document.getElementById('measurement-scope');
   if (scopeEl) scopeEl.textContent = `${D.focused_session_id ? 'Selected session · ' : ''}${scope.kind === 'event_window' ? 'Selected event window' : 'Captured session lifetimes'}${scope.date_from || scope.date_to ? ` · ${scope.date_from ? fmtWorkflowDate(scope.date_from) : 'First event'} — ${scope.date_to ? fmtWorkflowDate(scope.date_to) : 'Latest event'} (local time)` : ''}. Coverage travels with every measurement.${scope.kind === 'event_window' && Number(c.undated_usage)>0 ? ` ${decimal(c.undated_usage)} undated session totals are excluded. Select All time to inspect them.` : ''}${hasRetained ? ' Retained session totals are included; transcript estimates are not exact provider usage.' : ''}`;
-  el.innerHTML = `
-    <article class="usage-widget usage-headline usage-cost"><div class="usage-widget-head"><h3><span class="usage-code">M1</span> ${escHtml(costLabel)}</h3><span class="usage-unit">USD</span></div><div class="usage-big">${number(cost,amount,'USD')}</div><div class="usage-coverage"><span>${known(observed) && observed>0 ? `${decimal(fullyPriced)} / ${decimal(observed)} fully priced` : 'Pricing coverage unknown'}</span><b>${percent(observed>0 && known(fullyPriced) ? fullyPriced/observed : null)}</b></div>${ratioBar(fullyPriced,observed,'Fully priced usage coverage')}<p class="usage-copy">${c.cost_status === 'complete' ? 'All observed usage records are fully priced.' : costKnown ? 'Unpriced usage is excluded from this subtotal.' : Number(c.known_model_usage)>0 ? 'Captured models have no priced usage. Run reflect doctor cost to check model aliases and pricing.' : 'No priced usage was captured for this scope.'} Estimates are not provider invoices.</p></article>
-    <article class="usage-widget usage-headline"><div class="usage-widget-head"><h3><span class="usage-code">M2</span> ${hasRetained ? 'Captured + retained tokens' : 'Captured tokens'}</h3><span class="usage-unit">${tokenComplete ? 'Complete buckets' : 'Known buckets'}</span></div><div class="usage-big">${number(tokenTotal,compact,'tokens')}</div><dl class="usage-token-buckets">${tokenBuckets.map(item=>`<div title="${escHtml(item.label)} · ${escHtml(decimal(item.records))} of ${escHtml(decimal(observed))} records"><dt><b>${item.code}</b> ${escHtml(item.label)}</dt><dd>${number(item.value,compact,'tokens')}</dd><small>${decimal(item.records)} / ${decimal(observed)} records${item.retained ? ` · ${item.retained} retained totals` : ''}</small></div>`).join('')}</dl><div class="usage-inline-metric"><span>Cache-read share</span>${number(m.cache_read_ratio,percent)}</div>${ratioBar(m.cache_read_ratio,1,'Cache-read token share')}<p class="usage-copy">R / (U + R + W), from ${decimal(c.complete_input_usage)} complete-input records. A token share, not a provider cache hit rate.</p></article>
-    <article class="usage-widget usage-headline"><div class="usage-widget-head"><h3><span class="usage-code">M3</span> Completed turns</h3></div><div class="usage-big">${number(completedTurns)}</div><dl class="usage-facts">${fact('Mean inclusive input',m.mean_input_tokens,compact,'tokens')}${fact('Eligible usage turns',c.eligible_usage_turns)}</dl><p class="usage-copy">Input includes U + R + W. A recorded turn ending is not verified task success.</p></article>
-    <article class="usage-widget usage-headline"><div class="usage-widget-head"><h3><span class="usage-code">M4</span> Paired tool calls</h3></div><div class="usage-big">${number(m.completed_tool_calls)}</div><dl class="usage-facts">${fact('Mean per eligible turn',m.mean_tool_calls_per_turn,decimal)}${fact('Maximum in a turn',m.max_tool_calls_per_turn)}</dl><p class="usage-copy">Calls with results across ${decimal(c.eligible_tool_turns)} eligible completed turns.</p><button type="button" class="usage-link" data-usage-view="tools">Inspect tool activity <span aria-hidden="true">→</span></button></article>`;
+  const pricingCoverage = known(observed) && observed > 0
+    ? `${decimal(fullyPriced)} / ${decimal(observed)} fully priced` : 'Pricing coverage unknown';
+  const costNote = c.cost_status === 'complete' ? 'Estimated from priced observations.'
+    : costKnown ? 'Unpriced usage is excluded.'
+    : Number(c.known_model_usage) > 0 ? 'No priced usage. Run reflect doctor cost to check model aliases and pricing.'
+    : 'No priced usage was captured in this scope.';
+  const tokenBreakdown = `<details class="usage-evidence"><summary>Token buckets and coverage</summary>
+    <dl class="usage-token-buckets">${tokenBuckets.map(item => `<div><dt>${escHtml(item.label)}</dt>
+      <dd>${number(item.value,compact,'tokens')}</dd><small>${decimal(item.records)} / ${decimal(observed)} records${item.retained ? ` · ${item.retained} retained totals` : ''}</small></div>`).join('')}</dl>
+    <p class="usage-copy">Cache-read share uses ${decimal(c.complete_input_usage)} records with all input buckets. This is a token share, not a provider cache hit rate.</p>
+  </details>`;
+  el.innerHTML = analysisTable(['Metric','Observed','Coverage'], `
+    <tr><th scope="row">${escHtml(costLabel)}</th><td>${number(cost,amount,'USD')}${costKnown ? ' USD' : ''}</td>
+      <td><p class="usage-copy">${escHtml(pricingCoverage)} · ${escHtml(costNote)}</p></td></tr>
+    <tr><th scope="row">${hasRetained ? 'Captured and retained tokens' : 'Captured tokens'}</th>
+      <td>${number(tokenTotal,compact,'tokens')}<span class="analysis-subline">${tokenComplete ? 'Complete buckets' : 'Known buckets'}</span></td>
+      <td><p class="usage-copy">Cache-read share ${number(m.cache_read_ratio,percent)}</p>${tokenBreakdown}</td></tr>
+    <tr><th scope="row">Completed turns</th><td>${number(completedTurns)}</td>
+      <td><p class="usage-copy">${decimal(c.eligible_usage_turns)} turns with eligible usage · ${compact(m.mean_input_tokens)} mean inclusive input tokens</p><span class="analysis-subline">A recorded turn ending is not verified task success.</span></td></tr>
+    <tr><th scope="row">Paired tool calls</th><td>${number(m.completed_tool_calls)}</td>
+      <td><p class="usage-copy">${decimal(c.eligible_tool_turns)} eligible completed turns · ${decimal(m.mean_tool_calls_per_turn)} mean · ${decimal(m.max_tool_calls_per_turn)} max</p>
+      <button type="button" class="usage-link" data-usage-view="tools">Inspect tool activity <span aria-hidden="true">→</span></button></td></tr>
+  `);
   el.onclick = event => {
     const trigger=event.target.closest('[data-usage-view]');
     if (trigger) activateTab('explore',{view:trigger.dataset.usageView});

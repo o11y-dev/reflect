@@ -23,7 +23,6 @@
 .demo-story .demo-step-copy{margin:16px 0}
 .synthetic-demo .feedback-row,.synthetic-demo .ledger-command,.synthetic-demo .tile-card-command{display:none}
 .synthetic-demo #hdr-ts{color:var(--muted)}
-.synthetic-demo #report-shell[data-view=explore]{grid-template-columns:minmax(0,1fr)}
 .synthetic-demo [data-skill-graph-expand][aria-disabled=true]{cursor:default}
 .synthetic-demo .skill-usage-summary label,.synthetic-demo [data-skill-graph-reset],.synthetic-demo [data-skill-graph-next],.synthetic-demo [data-skill-evidence-next]{display:none}
 .synthetic-demo .demo-scope{color:var(--evidence)}

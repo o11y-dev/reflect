@@ -136,9 +136,9 @@ context.document.getElementById=id=>id==='finding-ledger'?findings:getElementByI
 context.IMPROVEMENT_DATA.observations=[{id:'finding-one',title:'Repeated retries',impact_score:86,confidence:0.95}];
 context.buildImprovementSurfaces();
 assert.match(findings.innerHTML,/>Priority 86\/100</);
-assert.match(findings.innerHTML,/>95% detection confidence</);
+assert.match(findings.innerHTML,/>95% detection confidence(?:<| ·)/);
 assert.match(findings.innerHTML,/not a measured outcome/);
-assert.match(findings.innerHTML,/Create workflow from finding/);
+assert.match(findings.innerHTML,/data-ledger-action="create-from-finding" data-observation-id="finding-one">Create workflow</);
 assert.match(findings.innerHTML,/data-observation-id="finding-one"/);
 assert.ok(!findings.innerHTML.includes('impact 86'));
 Object.assign(context.IMPROVEMENT_DATA.observations[0],{impact_score:null,confidence:null});

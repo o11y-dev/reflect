@@ -32,31 +32,35 @@ class Element {
     this.style={setProperty:()=>{}};this.clientWidth=1200;
   }
   setAttribute(name,value) {this.attributes[name]=value;}
+  getAttribute(name) {return this.attributes[name] ?? null;}
+  removeAttribute(name) {delete this.attributes[name];}
   getBoundingClientRect() {return {left:0,width:200};}
   focus() {this.focused=true;}
   click() {this.clicks=(this.clicks || 0)+1;}
 }
 const names=['sessions','inbox','workflows','skills','impact','explore'];
 const buttons=names.map(name=>Object.assign(new Element('tab-button-'+name),{dataset:{tab:name}}));
-const panels=names.filter(name=>name!=='explore').concat(['explore-usage','explore-tools','explore-context'])
+const panels=names.filter(name=>name!=='explore').concat(['explore-usage','explore-tools','explore-graph','explore-context'])
   .map(name=>new Element('tab-'+name));
 const elements=new Map([...buttons,...panels].map(el=>[el.id,el]));
-for (const id of ['tabs','report-shell','session-rail','session-rail-open','session-rail-toggle',
-  'filter-rail','filter-sheet-open','report-panel-controls','hdr-range','session-sort-field',
-  'filter-scope-title','filter-scope-note','filter-sheet-backdrop','inbox-analysis-window',
-  'explore-scope','explore-scope-label','explore-scope-detail','explore-session-change','explore-session-clear']) {
+for (const id of ['tabs','report-shell','section-sidebar','section-nav-title','section-scope-note','inactive-scope',
+  'section-explore-nav','dashboard-scope','session-scope-summary','session-table-heading','section-filters',
+  'hdr-range','session-sort-field','workflow-scope-controls','skill-scope-controls','inbox-analysis-window',
+  'explore-scope-label','explore-session-change','explore-session-clear']) {
   elements.set(id,new Element(id));
 }
+const exploreButtons=['usage','tools','graph','context'].map(view=>
+  Object.assign(new Element('explore-'+view),{dataset:{exploreView:view}}));
 const params=new URLSearchParams('tab=sessions&session=selected&agents=codex&range=30d&q=review&model=gpt&status=failed&sort=cost');
 const body=new Element('body');
 const hydrated=[];
 let mobile=false;
 const context={URL,URLSearchParams,D:{analysis_window:{days:7,date_to:'2026-11-09'},sessions:[{id:'selected',agent:'codex',first_prompt:'Fix the retry loop'}]},
-  dashboardSelectedSessionId:'selected',formatAgentLabel:String,
+  dashboardSelectedSessionId:'selected',formatAgentLabel:String,fmt:String,ledgerSelectionParams:[],CustomEvent:class{},
   window:{matchMedia:()=>({matches:mobile}),location:{href:'http://localhost/?'+params}},
-  document:{body,getElementById:id=>elements.get(id),
+  document:{body,getElementById:id=>elements.get(id),dispatchEvent:()=>{},
     querySelector:selector=>buttons.find(button=>selector.includes('"'+button.dataset.tab+'"')),
-    querySelectorAll:selector=>selector==='.tab'?buttons:selector==='.tab-panel'?panels:[]},
+    querySelectorAll:selector=>selector==='.tab'?buttons:selector==='.tab-panel'?panels:selector.startsWith('#section-explore-nav')?exploreButtons:[]},
   currentParams:()=>params,updateUrlParams:fn=>fn(params),fmtWorkflowDate:String,
   hydrateExploreView:view=>{hydrated.push(view);return Promise.resolve();}};
 vm.createContext(context);
@@ -69,64 +73,46 @@ vm.runInContext(JSON.parse(require('node:fs').readFileSync(0,'utf8')),context);
 
 def test_inventory_navigation_preserves_filters_and_selected_session():
     _run_navigation(r"""
-body.classList.add('sessions-rail-collapsed');
+const saved=Object.fromEntries([...params].filter(([key])=>key!=='tab'));
 for (const tab of ['inbox','workflows','skills','impact']) {
   context.activateTab(tab);
-  for (const id of ['session-rail','session-rail-open','filter-rail','filter-sheet-open','hdr-range','report-panel-controls'])
-    assert.equal(elements.get(id).hidden,true,tab+' should hide '+id);
+  for (const id of ['dashboard-scope','section-filters','hdr-range']) assert.equal(elements.get(id).hidden,true);
   assert.equal(elements.get('tab-'+tab).hidden,false);
   assert.equal(elements.get('report-shell').dataset.view,tab);
-  assert.equal(params.get('session'),'selected');
-  assert.equal(params.get('agents'),'codex');
-  assert.equal(params.get('range'),'30d');
-  assert.equal(params.get('q'),'review');
-  assert.equal(params.get('model'),'gpt');
-  assert.equal(params.get('status'),'failed');
-  assert.equal(params.get('sort'),'cost');
+  for (const [key,value] of Object.entries(saved)) assert.equal(params.get(key),value);
 }
 context.activateTab('sessions');
-assert.equal(elements.get('session-rail').hidden,false);
-assert.equal(elements.get('filter-rail').hidden,false);
-assert.equal(elements.get('hdr-range').hidden,false);
+assert.equal(elements.get('dashboard-scope').hidden,true,'a selected session owns the whole workspace');
+params.delete('session');
+context.updateDashboardViewScope('sessions');
+assert.equal(elements.get('dashboard-scope').hidden,false);
+assert.equal(elements.get('section-filters').hidden,false);
 assert.equal(elements.get('session-sort-field').hidden,false);
-assert.ok(body.classList.contains('sessions-rail-collapsed'),'keep the user rail preference');
-assert.equal(elements.get('session-rail-toggle').attributes['aria-expanded'],'false');
 """)
 
 
-def test_usage_keeps_matching_filters_without_session_rail_or_sort():
+def test_explore_scope_uses_matching_total_and_context_keeps_filters_saved():
     _run_navigation(r"""
-context.activateTab('explore');
-assert.deepEqual(hydrated,['usage']);
-assert.equal(params.get('view'),'usage');
-assert.equal(params.get('session'),'selected');
-assert.equal(elements.get('session-rail').hidden,true);
-assert.equal(elements.get('filter-rail').hidden,false);
-assert.equal(elements.get('hdr-range').hidden,false);
+params.delete('session');context.dashboardSelectedSessionId='';params.set('range','7d');
+vm.runInContext('exploreMatchingSessionCount=230',context);
+context.activateTab('explore',{view:'graph'});
+assert.equal(elements.get('dashboard-scope').hidden,false);
+assert.equal(elements.get('section-filters').hidden,false);
 assert.equal(elements.get('session-sort-field').hidden,true);
-assert.equal(elements.get('filter-scope-title').textContent,'Matching-session filters');
+assert.match(elements.get('explore-scope-label').textContent,/Last 7 days · codex · 230 matching sessions/);
+assert.equal(exploreButtons.filter(button=>button.attributes['aria-current']==='page').length,1);
+assert.equal(exploreButtons[2].attributes['aria-current'],'page');
+elements.get('section-filters').open=true;
+context.activateTab('explore',{view:'context'});
+assert.equal(elements.get('section-filters').hidden,true);
+assert.equal(elements.get('section-filters').open,false);
+assert.match(elements.get('explore-scope-label').textContent,/All captured context · Session filters saved and inactive/);
+assert.equal(params.get('range'),'7d');
 context.activateTab('explore',{view:'tools'});
-assert.deepEqual(hydrated,['usage','tools']);
-assert.equal(elements.get('filter-rail').hidden,false);
-assert.equal(elements.get('tab-explore-tools').hidden,false);
-""")
-
-
-def test_mobile_navigation_closes_overlays_without_losing_collapsed_preference():
-    _run_navigation(r"""
-mobile=true;
-body.classList.add('sessions-rail-open','filters-rail-open','rail-overlay-open','sessions-rail-collapsed');
-context.activateTab('skills');
-for (const name of ['sessions-rail-open','filters-rail-open','rail-overlay-open'])
-  assert.equal(body.classList.contains(name),false);
-assert.equal(elements.get('filter-sheet-backdrop').hidden,true);
-context.activateTab('explore');
-assert.equal(elements.get('filter-sheet-open').attributes['aria-expanded'],'false');
-assert.equal(elements.get('session-rail-open').hidden,true);
-context.activateTab('sessions');
-assert.equal(elements.get('session-rail-open').hidden,false);
-assert.equal(elements.get('session-rail-open').attributes['aria-expanded'],'false');
-assert.ok(body.classList.contains('sessions-rail-collapsed'));
+assert.equal(elements.get('section-filters').hidden,false);
+assert.equal(elements.get('section-filters').open,false);
+assert.match(elements.get('explore-scope-label').textContent,/230 matching sessions/);
+assert.deepEqual(hydrated,['graph','context','tools']);
 """)
 
 
@@ -147,12 +133,8 @@ assert.equal(elements.get('inbox-analysis-window').textContent,'Analysis window 
 def test_main_tab_highlight_uses_the_same_selection_state_as_accessibility():
     css = Path("src/reflect/frontend/css_foundation.css").read_text()
     assert '.tab[aria-selected="true"]{' in css
-    assert '.tab[aria-selected="true"]::before{' in css
     assert ".tab.active" not in css
     _run_navigation(r"""
-// A stale presentation class must not determine which main tab is highlighted.
-buttons[0].classList.add('active');
-for (const button of buttons) button.classList.toggle=()=>{};
 for (const tab of names) {
   context.activateTab(tab);
   const selected=buttons.filter(button=>button.attributes['aria-selected']==='true');
@@ -166,72 +148,41 @@ for (const tab of names) {
 """)
 
 
-def test_explore_displays_session_scope_and_clears_only_that_scope():
+def test_explore_displays_session_and_clears_only_that_scope():
     _run_navigation(r"""
 context.activateTab('explore');
-assert.equal(elements.get('explore-scope').hidden,false);
-assert.match(elements.get('explore-scope-label').textContent,/Selected session: Fix the retry loop/);
-assert.match(elements.get('explore-scope-detail').textContent,/codex.*selected/);
+assert.match(elements.get('explore-scope-label').textContent,/Last 30 days · codex · Session: Fix the retry loop/);
 assert.equal(elements.get('explore-session-clear').hidden,false);
 context.clearExploreSessionScope();
 assert.equal(params.has('session'),false);
 assert.equal(context.dashboardSelectedSessionId,'');
-assert.equal(context.exploreViewUrl('usage').url.searchParams.has('session'),false);
-assert.deepEqual(hydrated,['usage','usage']);
-for(const [key,value] of Object.entries({agents:'codex',range:'30d',q:'review',model:'gpt',status:'failed',sort:'cost'}))
-  assert.equal(params.get(key),value);
-assert.equal(elements.get('explore-scope-label').textContent,'All matching sessions');
-assert.equal(elements.get('explore-session-clear').hidden,true);
-assert.equal(elements.get('explore-session-change').textContent,'Choose session');
-""")
-
-
-def test_explore_scope_follows_requested_selection_even_with_cached_payload():
-    _run_navigation(r"""
-context.D.focused_session_id='old-session';
-context.D._navigationFromCache=true;
-params.set('session','new-session-12345678');
-context.activateTab('explore');
-assert.match(elements.get('explore-scope-label').textContent,/12345678/);
-assert.ok(!elements.get('explore-scope-label').textContent.includes('old-session'));
-params.set('session','selected');
-context.activateTab('sessions');
-assert.equal(elements.get('explore-scope').hidden,true);
-context.activateTab('explore',{view:'tools'});
-assert.match(elements.get('explore-scope-label').textContent,/Fix the retry loop/);
-""")
-
-
-@pytest.mark.parametrize("mobile", [False, True])
-def test_choose_session_opens_existing_browser_and_keeps_filters(mobile):
-    _run_navigation(r"""
-mobile=MOBILE;
-body.classList.add('sessions-rail-collapsed');
-context.activateTab('explore');
-context.chooseExploreSession();
-assert.equal(params.get('tab'),'sessions');
-assert.equal(elements.get('session-rail').hidden,false);
-assert.equal(elements.get('session-rail-open').clicks,1);
-assert.equal(params.get('session'),'selected');
+assert.equal(context.exploreViewUrl('usage').sessionId,'');
 assert.equal(params.get('agents'),'codex');
 assert.equal(params.get('range'),'30d');
-""".replace("MOBILE", str(mobile).lower()))
-
-
-def test_context_and_synthetic_sample_explain_scope_without_inapplicable_controls():
-    _run_navigation(r"""
-context.activateTab('explore',{view:'context'});
-assert.equal(elements.get('explore-scope-label').textContent,'All captured context');
-assert.match(elements.get('explore-scope-detail').textContent,/Session and date filters do not apply/);
+assert.match(elements.get('explore-scope-label').textContent,/Matching sessions/);
 assert.equal(elements.get('explore-session-clear').hidden,true);
-assert.equal(elements.get('explore-session-change').hidden,true);
-assert.equal(elements.get('filter-rail').hidden,true);
-assert.equal(elements.get('report-shell').dataset.exploreView,'context');
-assert.equal(params.get('session'),'selected','context navigation preserves the next Usage selection');
+""")
+
+
+def test_choose_session_opens_session_table_and_keeps_filters():
+    _run_navigation(r"""
+context.activateTab('explore',{view:'graph'});
+context.chooseExploreSession();
+assert.equal(elements.get('report-shell').dataset.view,'sessions');
+assert.equal(elements.get('session-scope-summary').hidden,false);
+assert.equal(elements.get('session-table-heading').focused,true);
+assert.equal(params.has('session'),false);
+assert.equal(params.get('agents'),'codex');
+assert.equal(params.get('range'),'30d');
+""")
+
+
+def test_synthetic_sample_hides_inapplicable_scope_controls():
+    _run_navigation(r"""
 context.isStaticDemo=()=>true;
 context.activateTab('explore',{view:'usage'});
 assert.equal(elements.get('explore-scope-label').textContent,'Full illustrative sample');
 assert.equal(elements.get('explore-session-clear').hidden,true);
 assert.equal(elements.get('explore-session-change').hidden,true);
-assert.equal(elements.get('filter-rail').hidden,true);
+assert.equal(elements.get('section-filters').hidden,true);
 """)

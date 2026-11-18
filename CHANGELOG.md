@@ -32,11 +32,16 @@
 
 ### Changed
 
+- Use four Explore navigation rows and one scope toolbar with session selection and collapsible filters.
+- Open the local dashboard directly at the server address. A report query parameter is optional for the live interface.
+- Reorganize the dashboard around concise evidence tables and full-width session details. Evidence drawers keep the current table in view, and dashboard links restore their selected view and record.
 - CLI durable operations now wait for completion by default; `--no-wait` returns the queued job ID for asynchronous use. `reflect jobs` continues to inspect and wait on jobs.
 - Route product CLI and MCP operations through the shared local FastAPI backend. Reads lease completed evidence during refresh; workflow reviews commit independently. Long operations use durable jobs and `reflect jobs` inspects progress.
 
 ### Fixed
 
+- Keep Explore Graph widgets in place while data loads, with visible refresh status and widget retry controls.
+- Keep the selected project when retrying a workflow preview.
 - Run asynchronous skill discovery and loop builds from the invoking project directory so Codex CLI trust checks use the user's repository instead of the backend server's working directory.
 - Retain accepted task receipts until their completed evidence generation is published, and journal workflow file changes for crash recovery.
 

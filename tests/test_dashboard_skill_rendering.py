@@ -41,6 +41,7 @@ def test_skill_registry_preserves_packages_search_and_unknown_analysis():
     source = Path("src/reflect/frontend/js_impact.js").read_text()
     renderer = source[source.index("function buildImprovementSurfaces()"):
                       source.index("\nbuildImprovementSurfaces();")]
+    renderer += source[source.index("function analysisTable("):source.index("function analysisToggle(")]
     _run_contract(renderer, r"""
 const classes=new Set(), children=[];
 const panel={classList:{toggle:(name,on)=>on?classes.add(name):classes.delete(name)},
@@ -63,22 +64,22 @@ context.IMPROVEMENT_DATA={skills:[{id:'one',name:'Verify changes',current_versio
   resources:{skills:{state:'ready',loaded_at:'2026-11-08T09:00:00Z'}},skill_analysis_state:'pending'};
 params.set('skill_q','verify');context.buildImprovementSurfaces();
 assert.equal(search.value,'verify');assert.equal(count.firstChild.textContent,'1');
-assert.match(registry.innerHTML,/Inspect Skill/);
-assert.match(registry.innerHTML,/<dt>References · All Time<\/dt><dd>—<\/dd>/);
-assert.match(registry.innerHTML,/<dt>Impact Checks<\/dt><dd>—<\/dd>/);
+assert.match(registry.innerHTML,/data-ledger-action="review-skill"/);
+assert.match(registry.innerHTML,/\<td>—<span class="analysis-subline">/);
+assert.match(registry.innerHTML,/<td>—<\/td>/);
 assert.match(children[0].innerHTML,/Showing recorded packages and installations/);
 search.value='missing';search.oninput();assert.match(registry.innerHTML,/No skills match/);
-search.value='verify';search.oninput();assert.match(registry.innerHTML,/Inspect Skill/);
+search.value='verify';search.oninput();assert.match(registry.innerHTML,/data-ledger-action="review-skill"/);
 
 const record=context.IMPROVEMENT_DATA.skills[0];
 Object.assign(record,{usage_count:7,evidence_count:3,measurement_count:2});
 context.IMPROVEMENT_DATA.skill_analysis_state='ready';context.buildImprovementSurfaces();
-assert.match(registry.innerHTML,/<dt>References · All Time<\/dt><dd>7<\/dd>/);
+assert.match(registry.innerHTML,/\<td>7<span class="analysis-subline">/);
 assert.equal(children[0].hidden,true);
 context.IMPROVEMENT_DATA.resources.skills.state='error';context.buildImprovementSurfaces();
 assert.match(children[0].innerHTML,/last loaded/);
-assert.match(registry.innerHTML,/Inspect Skill/);
-assert.match(registry.innerHTML,/<dt>References · All Time<\/dt><dd>7<\/dd>/);
+assert.match(registry.innerHTML,/data-ledger-action="review-skill"/);
+assert.match(registry.innerHTML,/\<td>7<span class="analysis-subline">/);
 assert.match(children[0].innerHTML,/historical usage, evidence, and impact/);
 assert.equal(search.value,'verify');assert.ok(!classes.has('evidence-unavailable'));
 
@@ -88,23 +89,23 @@ context.IMPROVEMENT_DATA.skills.push({id:'two',name:'Verify new work',analysis_s
 context.IMPROVEMENT_DATA.skill_analysis_state='stale';
 context.IMPROVEMENT_DATA.resources.skills={state:'stale',loaded:true,loaded_at:null};
 context.buildImprovementSurfaces();
-assert.match(registry.innerHTML,/<dt>Current Version<\/dt><dd>3<\/dd>/);
-assert.match(registry.innerHTML,/<dt>References · All Time<\/dt><dd>7<\/dd>/);
-assert.match(registry.innerHTML,/<dt>References · All Time<\/dt><dd>—<\/dd>/);
+assert.match(registry.innerHTML,/<td>3<span class="analysis-subline">/);
+assert.match(registry.innerHTML,/\<td>7<span class="analysis-subline">/);
+assert.match(registry.innerHTML,/\<td>—<span class="analysis-subline">/);
 assert.match(children[0].innerHTML,/timestamp unavailable/);
 assert.match(children[0].innerHTML,/missing results remain unknown/);
 assert.equal(search.value,'verify');
 context.IMPROVEMENT_DATA.skill_evidence_state='recorded';context.IMPROVEMENT_DATA.skill_analysis_state='pending';
 context.IMPROVEMENT_DATA.resources.skills.state='recorded';record.analysis_state='pending';
 context.buildImprovementSurfaces();
-assert.match(registry.innerHTML,/<dt>References · All Time<\/dt><dd>7<\/dd>/);
+assert.match(registry.innerHTML,/\<td>7<span class="analysis-subline">/);
 assert.match(children[0].innerHTML,/stored references read/);
 assert.ok(!children[0].innerHTML.includes('historical usage'));
 assert.match(children[0].innerHTML,/Stored impact results have not been revalidated/);
 context.IMPROVEMENT_DATA.skill_evidence_state='published';record.evidence_state='recorded';
 context.buildImprovementSurfaces();
-assert.match(registry.innerHTML,/<dt>References · All Time<\/dt><dd>7<\/dd>/);
-assert.match(registry.innerHTML,/Recorded references · validation pending/);
+assert.match(registry.innerHTML,/\<td>7<span class="analysis-subline">/);
+assert.match(registry.innerHTML,/Recorded · validation pending/);
 assert.match(children[0].innerHTML,/Newly recorded references are marked separately/);
 context.IMPROVEMENT_DATA.skills=[];params.delete('skill_q');context.buildImprovementSurfaces();
 assert.match(registry.innerHTML,/last loaded registry/);
@@ -119,6 +120,7 @@ def test_skill_detail_shows_packages_without_unpublished_analysis_and_retries():
     source = Path("src/reflect/frontend/js_ledger.js").read_text()
     notice = source[source.index("function staleEvidenceNotice("):
                     source.index("async function showObservationEvidence(")]
+    notice += next(line for line in source.splitlines() if line.startswith("const ledgerSelectionParams"))
     review = source[source.index("async function showSkillReview("):
                     source.index("async function showWorkflowReview(")]
     _run_contract(notice + review, r"""

@@ -97,11 +97,11 @@ function setupDemoNavigation(actions){
     url.searchParams.set('tab','sessions'); url.searchParams.set('session',scenario.session_id);
     url.searchParams.set('example',scenario.id);
     url.searchParams.set('step',step);
-    for (const key of ['evidence','workflow','workflow_root','skill','loop','impact']) url.searchParams.delete(key);
+    for (const key of ['evidence','workflow','workflow_root','skill','loop','impact','finding','finding_draft','view']) url.searchParams.delete(key);
     link.href = url.toString();
     const current = new URL(window.location.href);
     current.searchParams.set('example',scenario.id); current.searchParams.set('step',step);
-    window.history.replaceState({},'',current.toString());
+    window.history.replaceState(window.history.state,'',current.toString());
   };
   picker.addEventListener('change', () => {
     scenario = sample.scenarios.find(item => item.id === picker.value) || scenario;

@@ -43,9 +43,8 @@ def test_dashboard_html_uses_larger_font_baseline(path: Path):
     assert re.search(r"\.header-meta\s*\{[^}]*font-size\s*:\s*13px\s*;", text), (
         f"Expected .header-meta font-size: 13px in {path}"
     )
-    assert re.search(r"\.tab\s*\{[^}]*font-size\s*:\s*14px\s*;", text), (
-        f"Expected .tab font-size: 14px in {path}"
-    )
+    assert '.nav-label{' in text
+    assert 'class="app-rail"' in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
@@ -141,25 +140,19 @@ def test_dashboard_html_surfaces_background_refresh_progress(path: Path):
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
-def test_dashboard_html_uses_contextual_session_and_filter_rails(path: Path):
+def test_dashboard_uses_one_scope_toolbar_and_full_width_session_detail(path: Path):
     text = path.read_text(encoding="utf-8")
 
-    assert 'id="report-shell"' in text
-    assert 'id="session-rail"' in text
-    assert 'id="filter-rail"' in text
-    assert 'id="session-rail-toggle"' in text
-    assert 'id="session-rail-open"' in text
-    assert 'id="filter-sheet-open"' in text
-    assert "body.sessions-rail-collapsed .report-shell" in text
-    assert re.search(r"main\s*\{[^}]*max-width\s*:\s*none\s*;", text), (
-        f"Expected full-width report shell in {path}"
-    )
-    assert ".filter-rail{\n  display:block;" in text
-    assert ".shell-filter-toggle{display:none}" in text
-    assert ".shell-filter-toggle{display:inline-flex}" in text
-    assert ".shell-left-toggle{display:none}" in text
-    assert '.report-shell [hidden],#hdr-range[hidden]{display:none!important}' in text
-    assert text.index('id="sb-list"') < text.index('id="tab-sessions"')
+    assert 'id="dashboard-scope"' in text
+    assert '<details class="section-filters" id="section-filters">' in text
+    assert 'id="section-explore-nav"' in text
+    assert text.count('class="explore-link"') == 4
+    assert ".section-subnav{display:grid;grid-template-columns:minmax(0,1fr)" in text
+    assert 'id="session-table-view"' in text
+    assert 'id="session-detail-view"' in text
+    assert 'id="session-return"' in text
+    for removed in ('session-rail', 'filter-rail', 'global-filter-meta'):
+        assert f'id="{removed}"' not in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
@@ -185,7 +178,7 @@ def test_dashboard_session_filters_reload_sql_reports(path: Path):
 
     assert match is not None
     assert "if (!reportSupportsServerFiltering()) return false;" in match.group(1)
-    assert "showReportLoader('Loading selected sessions…');" in match.group(1)
+    assert "presentNavigationStatus('loading', 'Loading matching sessions…');" in match.group(1)
     assert "refreshSessionNavigation()" in match.group(1)
     assert "window.location.reload()" not in match.group(1)
     assert "return true;" in match.group(1)
@@ -201,12 +194,8 @@ def test_dashboard_session_filters_use_server_scoped_sql_payloads(path: Path):
     assert "visibleSessions()" not in text
     assert "function incrementCounter(" not in text
     assert "function sortedCounter(" not in text
-    assert "dashboardFilterActive = Boolean(event.detail?.hasFilters || dashboardSelectedSessionId);" in text
-    assert "dashboardFilterActive = urlHasDashboardFilters();" in text
     assert "let dashboardSelectedSessionId = currentParams().get('session') || '';" in text
     assert "selectedSessionId: dashboardSelectedSessionId" in text
-    assert "event.detail?.hasFilters || dashboardSelectedSessionId" in text
-    assert "(params.get('session') || '').trim()" in text
     assert "const cohortTab = sqlTab('cohort_comparison');" in text
     assert "const comparison = cohortTab.comparison;" in text
     assert "cohortTab.agent_comparison || currentAgentComparison()" in text
@@ -232,14 +221,14 @@ def test_dashboard_html_builds_agent_filters_from_data_without_allowlist(path: P
     assert "function agentIconSvg(agent)" in text
     assert "agentTab.agent_comparison || []" in text
     assert "Object.keys(sqlTab('models').models_by_count || {})" in text
-    assert "D.session_list_total || sessions.length || 0" in text
+    assert "publishedSessionTotal ?? filtered.length" in text
     assert "fetch(reportUrlWithCurrentFilters()" in text
     assert "['q','agents','agent','model','status','range','session','tab','view']" in text
     assert "if (scheduleDashboardReload()) return;" in text
     assert "urlParams.delete('session');" in text
-    assert "selectedIdx = filtered[0]._idx;" in text
+    assert "selectedIdx = filtered[0]._idx;" not in text
     assert "pill.innerHTML =" in text
-    assert "const agentName = formatAgentLabel(s.agent);" in text
+    assert "${escHtml(formatAgentLabel(session.agent))}" in text
     assert "const agentName = formatAgentLabel(session.agent);" in text
     assert "${escHtml(agentName)}" in text
     assert "s.agent.charAt(0).toUpperCase()" not in text
@@ -348,7 +337,7 @@ def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(p
     assert "RuleRegistry" in text
     assert "DEFAULT_RULE_REGISTRY" in text
     assert "Session Rules score one session" in text
-    assert "View Task Evidence" in text
+    assert 'data-ledger-action="evidence"' in text
     assert "/api/findings/${encodeURIComponent(observationId)}/evidence" in text
     assert "This observation has no workflow session ledger." not in text
     assert "Source Evidence" in text
@@ -397,15 +386,15 @@ def test_dashboard_html_explains_rules_workflow_changes_and_session_provenance(p
     assert "finding_total_count" in text
     assert "skill_total_count" in text
     assert "registry entries" in text
-    assert "linked session(s)" in text
+    assert "item.affected_session_count || 0" in text
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
 def test_dashboard_activity_widgets_live_on_explore_usage_view(path: Path):
     text = path.read_text(encoding="utf-8")
 
-    assert 'data-tab="explore">Usage &amp; explore</button>' in text
-    assert 'data-explore-view="usage">Usage</button>' in text
+    assert 'data-tab="explore"><svg' in text
+    assert 'data-explore-view="usage" aria-current="page">Usage &amp; delivery</button>' in text
     assert 'data-tab="activity"' not in text
     assert 'id="tab-activity"' not in text
     assert 'id="hm-grid"' in text
@@ -419,12 +408,12 @@ def test_dashboard_activity_widgets_live_on_explore_usage_view(path: Path):
 def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path: Path):
     text = path.read_text(encoding="utf-8")
 
-    assert 'data-tab="sessions">Sessions</button>' in text
-    assert 'data-tab="inbox">Inbox</button>' in text
-    assert 'data-tab="workflows">Workflows</button>' in text
-    assert 'data-tab="skills">Skills</button>' in text
-    assert 'data-tab="impact">Impact</button>' in text
-    assert 'data-tab="explore">Usage &amp; explore</button>' in text
+    assert 'data-tab="sessions"><svg' in text
+    assert 'data-tab="inbox"><svg' in text
+    assert 'data-tab="workflows"><svg' in text
+    assert 'data-tab="skills"><svg' in text
+    assert 'data-tab="impact"><svg' in text
+    assert 'data-tab="explore"><svg' in text
     assert 'data-tab="observations"' not in text
     assert 'data-tab="compare"' not in text
     assert 'data-tab="overview"' not in text
@@ -456,8 +445,7 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "params.set('inbox_view', view)" in text
     assert "workflow_view" not in text
     assert 'data-ledger-action="open-workflow"' in text
-    assert "Open Linked Workflow" in text
-    assert "Review & Build Instructions" in text
+    assert 'data-ledger-action="review-loop"' in text
     assert "Reflect monitors comparable future task executions in Impact" in text
     assert "'/api/skills?limit=500'" in text
     assert "'/api/impact'" in text
@@ -539,7 +527,7 @@ def test_dashboard_uses_product_navigation_and_durable_improvement_surfaces(path
     assert "? 'not captured'" in text
     assert ": fmtTokenShort(sessionTokenTotal(session))" in text
     assert "['Evidence Coverage', `${coverage.toFixed(0)}%`]" in text
-    assert "fmtWorkflowDate(headerScope?.kind === 'event_window' ? headerScope.date_from : D.first_event_ts)" in text
+    assert "scope?.kind === 'event_window' ? scope.date_from : report.first_event_ts" in text
     assert "comparable tasks. Only the selected project will be changed." in text
     assert "create:'New file'" in text
     assert "2. Review file changes" in text
@@ -571,18 +559,16 @@ def test_dashboard_report_copy_matches_canonical_asset():
 
 
 @pytest.mark.parametrize("path", DASHBOARD_HTML_FILES)
-def test_dashboard_workflows_use_tables_and_skills_use_responsive_tiles(path: Path):
+def test_dashboard_workflows_and_skills_use_evidence_tables(path: Path):
     text = path.read_text(encoding="utf-8")
 
     assert 'class="workflow-list" id="workflow-ledger"' in text
-    assert 'class="workflow-list skill-tile-grid" id="skill-registry"' in text
+    assert 'class="workflow-list" id="skill-registry"' in text
     assert 'id="skill-search" type="search"' in text
     assert 'id="skill-filter-summary" aria-live="polite"' in text
     assert "function skillMatchesSearch(skill, query)" in text
-    assert "params.set('skill_q', query.trim())" in text
+    assert "params.set('skill_q', query)" in text
     assert "'/api/skills?limit=500'" in text
-    assert ".workflow-tile-grid{grid-template-columns:repeat(auto-fit" in text
-    assert ".skill-tile-grid{grid-template-columns:repeat(auto-fit" in text
     assert "function renderWorkflowSteps(steps, {limit = 0, compact = false} = {})" in text
     assert 'class="workflow-step-number" aria-hidden="true"' in text
     assert "renderWorkflowSteps(content.steps)" in text

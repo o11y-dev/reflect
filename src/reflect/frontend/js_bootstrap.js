@@ -306,11 +306,20 @@ async function requestDashboardRefresh(){
   startPreparationStatusPolling();
 }
 
+function isLocalDashboard(){
+  return window.location.pathname === '/' &&
+    ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
+}
+
+function dashboardReportSource(params = new URLSearchParams(window.location.search)){
+  return params.get('report') || (isLocalDashboard() && !params.get('data') ? '/api/data' : '');
+}
+
 async function loadDashboardData(){
   if (!dashboardDocumentActive) return null;
   showReportLoader();
   const params = new URLSearchParams(window.location.search);
-  const report = params.get('report');
+  const report = dashboardReportSource(params);
   if (!report && !params.get('data')) {
     const publicHome = 'https://reflect.o11y.dev/';
     const currentPublicUrl = `${window.location.origin}${window.location.pathname}`;
@@ -338,6 +347,10 @@ async function loadDashboardData(){
           }
           // These sections own independent reads; a cold session snapshot must
           // not prevent their navigation and evidence from initializing.
+          if (params.get('tab') === 'explore' && params.get('view') === 'graph' && reportSupportsServerFiltering()) {
+            return {sql_backed:true, _unpublishedNavigation:true, snapshot_completed_at:null,
+              sessions:[], sqlite:{tabs:{}}};
+          }
           if (pending.reason !== 'reading' && ['inbox','skills','workflows','impact'].includes(params.get('tab')) && reportSupportsServerFiltering()) {
             return {sql_backed:true, _unpublishedNavigation:true, snapshot_completed_at:null,
               sessions:[], sqlite:{tabs:{}}};
@@ -354,19 +367,17 @@ async function loadDashboardData(){
               const cached = await cachedResponse.json();
               cached._navigationFromCache = true;
               cached._unfilteredNavigation = true;
-              if (params.get('tab') !== 'explore') {
-                updateUrlParams(values => { values.set('tab', 'sessions'); values.delete('view'); });
-              }
               return cached;
             }
             if (sessionId && cachedResponse.status === 503 && (await cachedResponse.json()).state === 'preparing') {
               if (!dashboardDocumentActive) return null;
               const detailResponse = await fetch('/api/session/' + encodeURIComponent(sessionId), options);
-              if (detailResponse.status === 404) throw new Error('Session not found in captured telemetry.');
+              if (detailResponse.status === 404) {
+                return {sql_backed:true, _unpublishedNavigation:true, sessions:[], sqlite:{tabs:{}}};
+              }
               if (detailResponse.ok) {
                 const detail = await detailResponse.json();
                 if (detail.session?.id === sessionId) {
-                  updateUrlParams(values => { values.set('tab', 'sessions'); values.delete('view'); });
                   return {
                     sql_backed:true, _unpublishedNavigation:true, snapshot_completed_at:null,
                     sessions:[{id:sessionId, full_id:sessionId, agent:detail.session.agent,
@@ -482,20 +493,22 @@ async function loadImprovementData(onResource = null){
   return sequence === loadImprovementData.sequence ? result : IMPROVEMENT_DATA;
 }
 
-function updateUrlParams(mutator, {mode = 'replace'} = {}){
+function updateUrlParams(mutator, {mode = 'replace', state = null} = {}){
   const url = new URL(window.location.href);
+  const previous = url.href;
   mutator(url.searchParams);
   const query = url.searchParams.toString();
   const target = `${url.pathname}${query ? `?${query}` : ''}${url.hash}`;
-  if (target === `${url.pathname}${url.search}${url.hash}`) return;
-  window.history[mode === 'push' ? 'pushState' : 'replaceState']({}, '', target);
+  if (url.href === previous) return;
+  window.history[mode === 'push' ? 'pushState' : 'replaceState'](state ?? (mode === 'replace' ? window.history.state : null), '', target);
 }
 
 function reportSupportsServerFiltering(){
-  const report = new URLSearchParams(window.location.search).get('report') || '/api/data';
+  const report = dashboardReportSource();
+  if (!report) return false;
   try {
     const url = new URL(report, window.location.href);
-    return url.pathname === '/api/data';
+    return url.origin === window.location.origin && url.pathname === '/api/data';
   } catch {
     return report === '/api/data' || report.endsWith('/api/data');
   }
@@ -503,7 +516,7 @@ function reportSupportsServerFiltering(){
 
 function reportUrlWithCurrentFilters(){
   const params = new URLSearchParams(window.location.search);
-  const report = params.get('report') || '/api/data';
+  const report = dashboardReportSource(params) || '/api/data';
   const url = new URL(report, window.location.href);
   ['q','agents','agent','model','status','range','session','tab','view'].forEach(key => {
     const value = params.get(key);
@@ -534,7 +547,12 @@ async function initApp(){
     if (improvementSurfacesReady) buildImprovementSurfaces();
   }).catch(() => {});
   const demoBadge = document.getElementById('demo-badge');
-  const reportParam = new URLSearchParams(window.location.search).get('report') || '';
-  const isLocalApiReport = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
-    && reportParam.replace(/^\//, '') === 'api/data';
-  if (demoBadge && isLocalApiReport) demoBadge.hidden = true;
+  const isLocalApiReport = isLocalDashboard() && reportSupportsServerFiltering();
+  if (isLocalApiReport) {
+    if (demoBadge) demoBadge.hidden = true;
+    document.title = 'Reflect Dashboard';
+    const report = new URL(dashboardReportSource(), window.location.href);
+    if (!report.search && !report.hash && !new URLSearchParams(window.location.search).has('data')) {
+      updateUrlParams(params => params.delete('report'));
+    }
+  }

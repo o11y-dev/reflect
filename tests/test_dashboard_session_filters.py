@@ -27,9 +27,9 @@ def _browser(scenario, **data):
         "time": source[source.index("  function sessionTimeMs("):
                        source.index("  function persistFilters(")],
         "persist": source[source.index("  function persistFilters("):
-                          source.index("  function scheduleDashboardReload(")],
+                          source.index("  function navigationUrl(")],
         "clear": source[source.index("  clearBtn.addEventListener('click'"):
-                        source.index("  compactToggleBtn?.addEventListener(")],
+                        source.index("  function removeFilterChip(")],
         "filter": source[source.index("  function filteredSessions("):
                          source.index("  function renderSessionList(")],
     }
@@ -47,10 +47,10 @@ let reloads=0;
 const context={D:input.payload || {sql_backed:true,sessions:[],range:'7d'},
   currentParams:()=>params,updateUrlParams:fn=>fn(params),
   reportSupportsServerFiltering:()=>true,sqlTab:()=>({}),
-  document:{addEventListener:()=>{},getElementById:element,createElement:()=>element(Math.random())},
+  document:{addEventListener:()=>{},querySelector:()=>null,getElementById:element,createElement:()=>element(Math.random())},
   agentIconSvg:()=>'',formatAgentLabel:String,escHtml:String,
   scheduleDashboardReload:()=>{reloads++;return true;},renderSessionList:()=>{},
-  dashboardSelectedSessionId:'selected',Date};
+  dashboardSelectedSessionId:'selected',updateAgentPills:()=>{},renderFilterChips:()=>{},Date};
 vm.createContext(context);
 vm.runInContext(input.demo,context);
 """ + scenario + r"""
@@ -76,10 +76,9 @@ assert.equal(context.state.range,input.expected);
 if(params.get('tab')==='explore') {
   assert.equal(params.get('range'),null,'initialization must not change an active Explore request scope');
   assert.equal(params.toString(),new URLSearchParams(input.query).toString(),'Explore hydration keeps its captured URL');
-} else if(!params.has('session')) {
-  params.set('session','selected');
-  assert.equal(params.get('range'),input.expected,'selection/reload must retain the activity window');
-} else if(!input.query.includes('range=')) assert.equal(params.get('range'),null);
+} else if(!input.query.includes('range=')) {
+  assert.equal(params.get('range'),null,'read-only initialization leaves the incoming URL intact');
+}
 assert.equal(params.get('tab'),new URLSearchParams(input.query).get('tab'));
 """, query=query, expected=expected)
 
@@ -116,7 +115,7 @@ assert.equal(context.filteredSessions().length,0,'static reports still apply the
 context.D.sql_backed=true;context.D._unfilteredNavigation=true;
 assert.equal(context.filteredSessions().length,0,'unscoped fallback navigation still applies local filters');
 context.initialSessionId='long-lived';
-assert.equal(context.filteredSessions().length,1,'fallback navigation preserves the linked session');
+assert.equal(context.filteredSessions().length,0,'link-only detail must not appear as a match in the list');
 """, payload={"sql_backed": True, "range": "7d", "session_list_total": 1, "sessions": [{
         "id": "long-lived", "created_at": "2020-01-01T00:00:00Z", "agent": "codex",
         "primary_model": "primary", "first_prompt": "different preview", "is_completed": True,

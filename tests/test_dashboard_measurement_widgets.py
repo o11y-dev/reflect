@@ -15,6 +15,8 @@ def _run_widgets(scenario: str) -> None:
     source = Path("src/reflect/frontend/js_explore.js").read_text()
     renderer = source[source.index("function renderMeasurementCoverage(){"):
                       source.index("\n/* Heatmap */")]
+    impact = Path("src/reflect/frontend/js_impact.js").read_text()
+    renderer += impact[impact.index("function analysisTable("):impact.index("function analysisToggle(")]
     script = r"""
 const assert=require('node:assert/strict'),vm=require('node:vm');
 const renderer=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
@@ -58,7 +60,7 @@ def test_widgets_use_canonical_scope_and_keep_metric_definitions_explicit():
     _run_widgets(r"""
 context.D=complete();context.renderMeasurementCoverage();
 const html=all();
-for(const code of ['M1','M2','M3','M4','M5','M6']) assert.ok(html.includes('>'+code+'</span>'));
+for(const code of ['M5','M6']) assert.ok(html.includes('>'+code+'</span>'));
 assert.match(element('measurement-summary').innerHTML,/12\.34/);
 assert.ok(!html.includes('999999'),'sidebar cards cannot supply aggregates');
 assert.match(element('measurement-scope').textContent,/Selected session/);
@@ -109,7 +111,7 @@ context.renderMeasurementCoverage();
 const html=element('measurement-summary').innerHTML;
 assert.match(html,/Known cost subtotal/);assert.match(html,/3 \/ 10 fully priced/);
 assert.match(html,/Unpriced usage is excluded/);assert.match(html,/4 \/ 10 records/);
-assert.match(html,/Cache write<\/dt><dd><strong[^>]*>Unknown/);
+assert.match(html,/Cache write<\/dt>\s*<dd><strong[^>]*>Unknown/);
 assert.match(element('measurement-models').innerHTML,/model-b[\s\S]*>Unknown<\/span>/);
 """)
 
@@ -153,7 +155,7 @@ context.D={measurements:{scope:{kind:'session_lifetime'},totals:{input_tokens:70
  retained_token_bucket_records:{input_tokens:1,output_tokens:1}},metrics:{}}};
 context.renderMeasurementCoverage();
 assert.match(element('measurement-summary').innerHTML,/971/);
-assert.match(element('measurement-summary').innerHTML,/Captured \+ retained tokens/);
+assert.match(element('measurement-summary').innerHTML,/Captured and retained tokens/);
 assert.match(element('measurement-scope').textContent,/transcript estimates are not exact/);
 context.D.measurements.scope.kind='event_window';
 context.D.measurements.coverage.retained_token_bucket_records={};

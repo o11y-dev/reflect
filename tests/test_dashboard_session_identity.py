@@ -44,18 +44,19 @@ assert.match(badge({quality_available:false,quality_score:93}),/No score/);
 """)
 
 
-def test_native_dialog_close_cleans_deep_link_and_preserves_session_filters():
+def test_escape_closes_evidence_and_preserves_session_filters():
     source = Path("src/reflect/frontend/js_ledger.js").read_text()
     _run(source[source.index("const ledgerDialog ="):source.index("async function ledgerRequest(")], """
-listeners.close();
+listeners.cancel({preventDefault:()=>{}});
 assert.equal(dialog.inspection,null);
 for(const key of ['workflow','workflow_root','loop','skill']) assert.equal(params.has(key),false);
 assert.equal(params.get('range'),'7d');assert.equal(params.get('session'),'selected');
 assert.equal(params.get('tab'),'workflows');
-dialog.open=true;dialog.inspection='new';params.set('workflow','new');listeners.close();
-assert.equal(dialog.inspection,'new');assert.equal(params.get('workflow'),'new');
+dialog.open=true;dialog.inspection='new';params.set('workflow','new');
+context.closeLedgerDialog({fromHistory:true});
+assert.equal(dialog.inspection,null);assert.equal(params.get('workflow'),'new','history synchronization must not rewrite the browser route');
 """, setup="""
-const listeners={},dialog={inspection:'workflow',addEventListener:(name,fn)=>listeners[name]=fn};
+const listeners={},dialog={inspection:'workflow',open:true,close(){this.open=false;},addEventListener:(name,fn)=>listeners[name]=fn};
 const params=new URLSearchParams('workflow=one&workflow_root=root&loop=two&skill=three&range=7d&session=selected&tab=workflows');
-context.document={getElementById:()=>dialog};context.updateUrlParams=fn=>fn(params);
+context.document={getElementById:()=>dialog};context.window={history:{}};context.updateUrlParams=fn=>fn(params);
 """)

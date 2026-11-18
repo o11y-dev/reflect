@@ -17,7 +17,7 @@ def test_header_and_session_summary_use_selected_event_window():
     summary = source[source.index("function renderUsageSummary(){"):source.index("function renderSqlTabPayloads(){")]
     summary = (frontend / "js_demo.js").read_text() + "\n" + summary
     source = (frontend / "js_navigation.js").read_text()
-    header = source[source.index("const headerScope ="):source.index("document.getElementById('hdr-ts')")]
+    header = source[source.index("function updateDashboardHeaderRange("):source.index("document.getElementById('hdr-ts')")]
     script = r"""
 const assert=require('node:assert/strict'),vm=require('node:vm');
 const source=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
@@ -31,6 +31,7 @@ for (const windowed of [true,false]) {
     sqlTab:()=>({first_event_ts:'2026-09-24',unique_sessions:4})};
   vm.createContext(context);
   vm.runInContext(source.summary+'\n'+source.header,context);
+  context.updateDashboardHeaderRange(context.D);
   context.renderUsageSummary();
   assert.equal(elements['hdr-range'].textContent,
     windowed?'2026-11-01 — 2026-11-08':'2026-09-24 — 2026-11-08');
@@ -51,7 +52,7 @@ def test_usage_rerenders_scope_and_recovers_from_empty_charts():
     impact = (frontend / "js_impact.js").read_text()
     explore = (frontend / "js_explore.js").read_text().split("/* ════════════════════ SESSION COMPARISON")[0]
     # Other product surfaces keep their existing startup lifecycle.
-    impact = impact.replace("renderSqlTabPayloads();", "").replace("buildImprovementSurfaces();", "")
+    impact = impact.replace("renderSqlTabPayloads();", "").replace("buildImprovementSurfaces();", "").split("\nsyncLedgerRoute();")[0] + impact[impact.index("/* Explore achievements */"):]
     impact = (frontend / "js_demo.js").read_text() + "\n" + impact
     explore = explore.replace("renderToolsView();", "")
     script = r"""

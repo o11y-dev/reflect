@@ -79,7 +79,6 @@
     <button class="tab" id="tab-button-impact" type="button" role="tab" aria-label="Impact" title="Impact" aria-selected="false" aria-controls="tab-impact" tabindex="-1" data-tab="impact"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5h16"/><path d="M6.5 16v-4m5 4V7m5 9v-6"/><circle cx="6.5" cy="10" r="1"/><circle cx="11.5" cy="5" r="1"/><circle cx="16.5" cy="8" r="1"/></svg><span class="nav-label">Impact</span></button>
     <button class="tab" id="tab-button-explore" type="button" role="tab" aria-label="Explore" title="Explore" aria-selected="false" aria-controls="tab-explore-usage" tabindex="-1" data-tab="explore"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="7" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="18" cy="17" r="2"/><path d="m8 6.5 8 1m-8.5.5 0 8m2 1 6.5.5m1-8v5.5"/></svg><span class="nav-label">Explore</span></button>
   </nav>
-  <div class="app-rail-foot" aria-hidden="true"><span class="app-status-dot"></span></div>
 </aside>
 
 <!-- ── Header ── -->
@@ -135,68 +134,114 @@
 <div class="dashboard-layout">
 <aside class="section-sidebar" id="section-sidebar" aria-label="Current section navigation">
   <div class="section-sidebar-head">
-    <h2 id="section-nav-title">Sessions</h2>
-    <p id="section-nav-description">Browse captured agent work.</p>
+    <h2 id="section-nav-title">Session scope</h2>
   </div>
-  <nav class="explore-subnav section-subnav" id="section-explore-nav" aria-label="Explore views" hidden>
-    <button class="explore-link active" type="button" data-explore-view="usage" aria-current="page">Usage &amp; delivery</button>
+  <nav class="section-subnav" id="section-explore-nav" aria-label="Explore views" hidden>
+    <button class="explore-link" type="button" data-explore-view="usage" aria-current="page">Usage &amp; delivery</button>
     <button class="explore-link" type="button" data-explore-view="tools">Tools &amp; MCP</button>
     <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
     <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
   </nav>
-  <div class="section-scope-note" id="section-scope-note">Local evidence from your captured sessions.</div>
+  <div class="workflow-toolbar" id="workflow-scope-controls" aria-label="Workflow filters" hidden>
+    <div class="workflow-filter-field"><label for="workflow-type-filter">Behavior</label><select id="workflow-type-filter"><option value="all">All behavior types</option><option value="recovery">Recovery</option><option value="verification">Verification</option><option value="exploration">Exploration</option><option value="proven_pattern">Proven Pattern</option></select></div>
+    <div class="workflow-filter-field"><label for="workflow-status-filter">State</label><select id="workflow-status-filter"><option value="reviewable">Current suggestions &amp; active</option><option value="history">History</option><option value="all">All states</option><option value="pending">Suggestions</option><option value="approved">Approved</option><option value="active">Active</option><option value="rolled_back">Rolled Back</option><option value="stale">Retired suggestions</option><option value="rejected">Dismissed / rejected</option></select></div>
+    <div class="workflow-filter-summary" id="workflow-filter-summary" aria-live="polite"></div>
+  </div>
+  <div class="workflow-toolbar" id="skill-scope-controls" aria-label="Skill filters" hidden>
+      <div class="workflow-filter-field skill-search-field"><label for="skill-search">Search skills</label><input id="skill-search" type="search" placeholder="Name, purpose, agent, state, or installation…" autocomplete="off" spellcheck="false" aria-controls="skill-registry"/></div>
+      <div class="workflow-filter-summary" id="skill-filter-summary" aria-live="polite"></div>
+    </div>
+  <p class="section-scope-note" id="section-scope-note"></p>
+  <p class="section-scope-note" id="inactive-scope" hidden></p>
 </aside>
 <main id="main-content">
 
 <div class="report-shell" id="report-shell" data-view="sessions">
-  <aside class="session-rail" id="session-rail" aria-label="Sessions">
-    <div class="rail-head">
-      <div class="rail-title">Sessions</div>
-      <button type="button" class="rail-toggle" id="session-rail-toggle" aria-label="Toggle sessions" aria-expanded="true">
-        <span class="rail-toggle-lines" aria-hidden="true"></span>
-      </button>
-    </div>
-    <div class="sb-left">
-      <div class="sb-list-head" id="sb-list-head"></div>
-      <div class="sb-list" id="sb-list"></div>
-    </div>
-  </aside>
-
   <div class="report-content">
-    <div class="shell-toolbar" id="report-panel-controls" aria-label="Report panels">
-      <button type="button" class="rail-toggle shell-left-toggle" id="session-rail-open" aria-label="Open sessions" aria-expanded="true">
-        <span class="rail-toggle-lines" aria-hidden="true"></span>
-      </button>
-      <button type="button" class="rail-toggle shell-filter-toggle" id="filter-sheet-open" aria-label="Toggle filters" aria-expanded="false">
-        <span class="rail-toggle-lines" aria-hidden="true"></span>
-      </button>
+    <div class="dashboard-scope" id="dashboard-scope">
+      <div class="workspace-heading" id="session-scope-summary">
+        <h2 id="session-table-heading" tabindex="-1">Sessions</h2>
+        <p id="sb-list-head" role="status"></p>
+      </div>
+      <p id="explore-scope-label" class="explore-scope-label" role="status" aria-live="polite" aria-atomic="true" hidden></p>
+      <div class="dashboard-scope-actions">
+        <button id="explore-session-change" class="ledger-button" type="button" hidden>Choose session</button>
+        <button id="explore-session-clear" class="ledger-button" type="button" hidden>Clear session</button>
+        <details class="section-filters" id="section-filters">
+          <summary class="ledger-button">Filters <span id="scope-filter-count" hidden></span></summary>
+          <section class="global-filter-shell" id="global-filter-shell" aria-label="Session filters">
+            <div class="global-filter-top">
+              <h3 class="global-filter-title">Session filters</h3>
+              <button type="button" class="filter-clear" id="filter-clear">Clear filters</button>
+            </div>
+            <div class="global-filter-grid" id="global-filter-grid">
+              <div class="filter-field">
+                <label class="filter-label" for="sb-search">Search</label>
+                <input type="text" class="sb-search" id="sb-search" name="session-search" autocomplete="off" spellcheck="false" placeholder="Prompt, model, ID…"/>
+              </div>
+              <div class="filter-field">
+                <label class="filter-label" for="filter-model">Model</label>
+                <select class="filter-select" id="filter-model">
+                  <option value="all">All models</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <label class="filter-label" for="filter-status">Status</label>
+                <select class="filter-select" id="filter-status">
+                  <option value="all">All sessions</option>
+                  <option value="completed">Completed</option>
+                  <option value="active">Not completed</option>
+                  <option value="recovered">Recovered failures</option>
+                  <option value="failing">Has failures</option>
+                </select>
+              </div>
+              <div class="filter-field filter-field-secondary">
+                <label class="filter-label" for="filter-range">Range</label>
+                <select class="filter-select" id="filter-range">
+                  <option value="all">All time</option>
+                  <option value="24h">Last 24 hours</option>
+                  <option value="7d">Last 7 days</option>
+                  <option value="30d">Last 30 days</option>
+                </select>
+              </div>
+              <div class="filter-field filter-field-secondary" id="session-sort-field">
+                <label class="filter-label" for="filter-sort">Sort</label>
+                <select class="filter-select" id="filter-sort">
+                  <option value="recent">Most recent</option>
+                  <option value="quality">Highest quality</option>
+                  <option value="tokens">Most tokens</option>
+                  <option value="cost">Most cost</option>
+                  <option value="duration">Longest sessions</option>
+                  <option value="events">Most events</option>
+                </select>
+              </div>
+            </div>
+            <div class="sb-agent-pills" id="sb-agent-pills">
+              <button class="sb-pill active" type="button" data-agent="all" aria-pressed="true">All agents</button>
+            </div>
+            <div class="filter-chip-row">
+              <div class="filter-chips" id="filter-chips"></div>
+            </div>
+          </section>
+        </details>
+      </div>
     </div>
-
-    <section id="explore-scope" class="explore-scope" aria-label="Explore session scope" hidden>
-      <div class="explore-scope-copy" aria-live="polite" aria-atomic="true">
-        <strong id="explore-scope-label">All matching sessions</strong>
-        <p id="explore-scope-detail"></p>
-      </div>
-      <div class="explore-scope-actions">
-        <button id="explore-session-change" class="ledger-button" type="button">Choose session</button>
-        <button id="explore-session-clear" class="ledger-button" type="button" hidden>All matching sessions</button>
-      </div>
-    </section>
 
 <!-- ════════════════════ SESSIONS BROWSER ════════════════════ -->
 <div class="tab-panel active" id="tab-sessions" role="tabpanel" aria-labelledby="tab-button-sessions">
-  <div class="session-browser">
-    <div class="sb-right">
-      <div id="sb-detail">
-        <div class="sb-empty">
-          <div class="sb-empty-icon" aria-hidden="true">&#9776;</div>
-          <div>Select a session to view its conversation timeline</div>
-        </div>
-      </div>
+  <section id="session-table-view" aria-labelledby="session-table-heading">
+    <div class="review-warning" id="session-list-status" role="status" hidden></div>
+    <div id="sb-list"></div>
+  </section>
+  <section id="session-detail-view" aria-label="Session detail" hidden>
+    <div class="session-detail-actions">
+      <button type="button" class="ledger-button" id="session-return">← Back to sessions</button>
+      <button type="button" class="ledger-button" id="session-explore">Explore this session</button>
     </div>
-  </div>
-  <div class="panel panel-no-hover">
-    <div class="panel-title">Compare Sessions <span style="color:var(--text-3);font-weight:400;font-size:11px">— select A then B</span></div>
+    <div class="sb-right" id="sb-detail"></div>
+  </section>
+  <details id="session-compare" class="panel panel-no-hover session-compare">
+    <summary>Compare sessions</summary>
       <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:flex-end">
         <div style="flex:1;min-width:200px">
         <label for="cmp-a" style="display:block;font-size:12px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Session A</label>
@@ -213,15 +258,15 @@
       <button id="cmp-clear" class="compare-clear" type="button" title="Clear selection">Clear</button>
     </div>
     <div id="cmp-result"></div>
-  </div>
+  </details>
 </div>
 
 <!-- ════════════════════ EXPLORE: USAGE ════════════════════ -->
 <div class="tab-panel" id="tab-explore-usage" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
   <div class="panel explore-view-status" id="usage-view-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
   <section class="usage-measurements" id="measurement-panel" aria-labelledby="usage-heading">
-    <div class="usage-heading"><div><span class="usage-eyebrow">Captured telemetry</span><h2 id="usage-heading">Usage &amp; delivery</h2><p id="measurement-scope"></p></div><span class="usage-scope-tag">M1–M7</span></div>
-    <div class="usage-headlines" id="measurement-summary"></div>
+    <div class="usage-heading"><div><h2 id="usage-heading">Usage &amp; delivery</h2><p id="measurement-scope"></p></div><a class="usage-link" href="#measurement-git">Git &amp; delivery ↓</a></div>
+    <div class="usage-summary-table" id="measurement-summary"></div>
     <div class="usage-widget-grid usage-chart-grid">
       <section class="usage-widget"><div class="usage-widget-head"><h3>Cost over time</h3><span class="usage-unit">USD</span></div><p class="usage-copy">Estimated cost of dated, priced observations.</p><div class="chart-box"><canvas id="agentCostChart"></canvas></div></section>
       <section class="usage-widget"><div class="usage-widget-head"><h3>Captured token mix</h3><span class="usage-unit">U / R / W / O</span></div><p class="usage-copy">Known token buckets in the selected scope.</p><div class="chart-box"><canvas id="tokenChart"></canvas></div></section>
@@ -306,7 +351,7 @@
 <!-- ════════════════════ IMPACT ════════════════════ -->
 <div class="tab-panel" id="tab-impact" role="tabpanel" aria-labelledby="tab-button-impact" hidden>
   <div class="product-hero view-intro">
-    <div><h2>Impact</h2><p>Check whether later, comparable tasks support a workflow improvement.</p><p class="view-scope">Historical comparisons use their recorded cohort dates, not the selected activity date range. Expand a row to inspect the evidence.</p></div>
+    <div><h2>Impact</h2><p>Check whether later, comparable tasks support a workflow improvement.</p><p class="view-scope">Each comparison uses its recorded task cohorts. Expand a row to see eligibility and evidence.</p></div>
     <div class="product-count" id="measurement-count">0<small>impact checks</small></div>
   </div>
   <details class="impact-help"><summary>How comparisons work</summary><div class="impact-explainer" aria-label="How impact checks work">
@@ -321,7 +366,7 @@
 <!-- ════════════════════ INBOX ════════════════════ -->
 <div class="tab-panel" id="tab-inbox" role="tabpanel" aria-labelledby="tab-button-inbox" hidden>
   <div class="product-hero view-intro">
-    <div><h2>Inbox</h2><p>Inspect findings and repeated behavior before choosing a workflow.</p><p class="view-scope"><span id="inbox-analysis-window">Analysis window not supplied by this report.</span> Retained evidence may include older sessions. Session filters do not apply.</p></div>
+    <div><h2>Inbox</h2><p>Inspect findings and repeated behavior before choosing a workflow.</p><p class="view-scope"><span id="inbox-analysis-window">Analysis window not supplied by this report.</span> Retained evidence may include older sessions.</p></div>
     <div class="product-count" id="inbox-signal-count">0<small>needs attention</small></div>
   </div>
   <div class="inbox-view-switch" role="tablist" aria-label="Inbox evidence views">
@@ -349,7 +394,7 @@
 <!-- ════════════════════ WORKFLOWS ════════════════════ -->
 <div class="tab-panel" id="tab-workflows" role="tabpanel" aria-labelledby="tab-button-workflows" hidden>
   <div class="product-hero view-intro">
-    <div><h2>Workflows</h2><p>Choose a useful procedure, inspect the changes, and enable it for one project.</p><p class="view-scope">Stored workflow inventory. Each workflow shows its supporting task scope; session filters do not apply.</p></div>
+    <div><h2>Workflows</h2><p>Choose a useful procedure, inspect the changes, and enable it for one project.</p><p class="view-scope">Each workflow shows the tasks that support it.</p></div>
     <div class="product-count" id="workflow-total-count">0<small>workflow contracts</small></div>
   </div>
   <section class="panel product-section" id="workflow-candidates-section">
@@ -358,11 +403,7 @@
     <button type="button" class="ledger-button primary" data-ledger-action="create-workflow">Create workflow</button>
     <div class="product-section-count" id="workflow-count">0<small>reviewable workflows</small></div>
   </div>
-  <div class="workflow-toolbar" aria-label="Workflow filters">
-    <div class="workflow-filter-field"><label for="workflow-type-filter">Behavior</label><select id="workflow-type-filter"><option value="all">All behavior types</option><option value="recovery">Recovery</option><option value="verification">Verification</option><option value="exploration">Exploration</option><option value="proven_pattern">Proven Pattern</option></select></div>
-    <div class="workflow-filter-field"><label for="workflow-status-filter">State</label><select id="workflow-status-filter"><option value="reviewable">Current suggestions &amp; active</option><option value="history">History</option><option value="all">All states</option><option value="pending">Suggestions</option><option value="approved">Approved</option><option value="active">Active</option><option value="rolled_back">Rolled Back</option><option value="stale">Retired suggestions</option><option value="rejected">Dismissed / rejected</option></select></div>
-    <div class="workflow-filter-summary" id="workflow-filter-summary" aria-live="polite"></div>
-  </div>
+
   <div id="workflow-action-status" class="workflow-action-status" role="status" aria-live="polite"></div>
   <div class="workflow-list" id="workflow-ledger" aria-live="polite"></div>
   </section>
@@ -371,18 +412,15 @@
 <!-- ════════════════════ SKILL REGISTRY ════════════════════ -->
 <div class="tab-panel" id="tab-skills" role="tabpanel" aria-labelledby="tab-button-skills" hidden>
   <div class="product-hero view-intro">
-    <div><h2>Skills Registry</h2><p>Inspect skill versions, installations, and recorded use.</p><p class="view-scope">Stored skill inventory. Reference counts cover all captured history; session filters do not apply.</p></div>
+    <div><h2>Skills Registry</h2><p>Inspect skill versions, installations, and recorded use.</p><p class="view-scope">Reference counts cover all captured history.</p></div>
     <div class="product-count" id="skill-count">0<small>registry entries</small></div>
   </div>
   <section class="panel product-section" id="skill-registry-section">
     <div class="product-section-head">
       <div><h3 class="product-section-title">Available Procedures</h3><p class="product-section-copy">See what is installed, where skills were referenced, and which have evidence of better outcomes. A recorded reference alone does not prove a skill was followed.</p></div>
     </div>
-    <div class="workflow-toolbar" aria-label="Skill filters">
-      <div class="workflow-filter-field skill-search-field"><label for="skill-search">Search skills</label><input id="skill-search" type="search" placeholder="Name, purpose, agent, state, or installation…" autocomplete="off" spellcheck="false" aria-controls="skill-registry"/></div>
-      <div class="workflow-filter-summary" id="skill-filter-summary" aria-live="polite"></div>
-    </div>
-    <div class="workflow-list skill-tile-grid" id="skill-registry" aria-live="polite"></div>
+
+    <div class="workflow-list" id="skill-registry" aria-live="polite"></div>
   </section>
 </div>
 
@@ -446,59 +484,78 @@
 
 <!-- ════════════════════ GRAPHS ════════════════════ -->
 <div class="tab-panel" id="tab-explore-graph" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
-  <div class="panel explore-view-status" id="graph-view-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+  <div class="graph-view-status" id="graph-view-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
   <!-- 1. Behavioral Memory Graph -->
-  <div class="panel">
-    <div class="semantic-graph-toolbar">
-      <div class="panel-title" style="margin-bottom:0">Behavioral Memory Graph <span class="panel-title-count">(sessions, workspaces, folders, tools, skills, memories, outcomes)</span></div>
-      <div class="semantic-graph-controls">
-        <select id="semantic-graph-mode" aria-label="Choose behavioral memory graph relationship scope">
-          <option value="workspace">Same workspace</option>
-          <option value="session">Selected session only</option>
-        </select>
-        <select id="semantic-session-filter" aria-label="Filter behavioral memory graph by session"></select>
+  <section class="panel graph-widget graph-widget-semantic" aria-labelledby="graph-title-semantic">
+    <h2 class="panel-title" id="graph-title-semantic">Behavioral Memory Graph <span class="panel-title-count">(sessions, workspaces, folders, tools, skills, memories, outcomes)</span></h2>
+    <div class="graph-widget-body">
+      <div class="graph-widget-content">
+        <div class="semantic-graph-controls">
+          <select id="semantic-graph-mode" aria-label="Choose behavioral memory graph relationship scope">
+            <option value="workspace">Same workspace</option>
+            <option value="session">Selected session only</option>
+          </select>
+          <select id="semantic-session-filter" aria-label="Filter behavioral memory graph by session"></select>
+        </div>
+        <p class="semantic-graph-context" id="semantic-graph-context">All bounded graph relationships. Select a session to inspect its workspace peers.</p>
+        <div class="semantic-graph-shell" id="semantic-graph-shell">
+          <svg class="semantic-graph-svg" id="semantic-graph-svg" role="img" aria-label="Behavioral memory graph"></svg>
+          <div class="semantic-graph-tip" id="semantic-graph-tip"></div>
+        </div>
+        <div class="graph-legend" id="semantic-graph-legend"></div>
       </div>
     </div>
-    <p class="semantic-graph-context" id="semantic-graph-context">All bounded graph relationships. Select a session to inspect its workspace peers.</p>
-    <div class="semantic-graph-shell" id="semantic-graph-shell">
-      <svg class="semantic-graph-svg" id="semantic-graph-svg" role="img" aria-label="Behavioral memory graph"></svg>
-      <div class="semantic-graph-tip" id="semantic-graph-tip"></div>
-    </div>
-    <div class="graph-legend" id="semantic-graph-legend"></div>
-  </div>
+  </section>
 
   <!-- 1. Tool Flow (Sankey) -->
-  <div class="panel">
-    <div class="panel-title">Tool Sequence Flow</div>
-    <svg id="sankey-svg" class="graph-svg" style="height:380px"></svg>
-    <div class="graph-legend" id="sankey-legend"></div>
-  </div>
+  <section class="panel graph-widget graph-widget-sequence" aria-labelledby="graph-title-sequence">
+    <h2 class="panel-title" id="graph-title-sequence">Tool Sequence Flow</h2>
+    <div class="graph-widget-body">
+      <div class="graph-widget-content">
+        <p class="graph-widget-empty" id="sankey-empty" hidden>No tool sequences were captured for this scope.</p>
+        <svg id="sankey-svg" class="graph-svg" style="height:380px"></svg>
+      </div>
+    </div>
+  </section>
 
   <!-- 2. Dependency Graph -->
-  <div class="panel">
-    <div class="panel-title">Agent Tool Network <span class="panel-title-count">(top live tool relationships)</span></div>
-    <svg id="dep-svg" class="graph-svg" style="height:440px"></svg>
-    <div id="dep-note" style="margin-top:12px;font-size:13px;color:var(--text-3)"></div>
-    <div class="graph-legend">
-      <div class="graph-legend-item"><div class="graph-legend-dot" style="background:var(--purple)"></div>Agent</div>
-      <div class="graph-legend-item"><div class="graph-legend-dot" style="background:var(--blue)"></div>Tool</div>
-      <div class="graph-legend-item"><div class="graph-legend-dot" style="background:var(--teal)"></div>MCP Tool</div>
+  <section class="panel graph-widget graph-widget-network" aria-labelledby="graph-title-network">
+    <h2 class="panel-title" id="graph-title-network">Agent Tool Network <span class="panel-title-count">(top live tool relationships)</span></h2>
+    <div class="graph-widget-body">
+      <div class="graph-widget-content">
+        <svg id="dep-svg" class="graph-svg" style="height:440px"></svg>
+        <div id="dep-note" style="margin-top:12px;font-size:13px;color:var(--text-3)"></div>
+        <div class="graph-legend">
+          <div class="graph-legend-item"><div class="graph-legend-dot" style="background:var(--purple)"></div>Agent</div>
+          <div class="graph-legend-item"><div class="graph-legend-dot" style="background:var(--blue)"></div>Tool</div>
+          <div class="graph-legend-item"><div class="graph-legend-dot" style="background:var(--teal)"></div>MCP Tool</div>
+        </div>
+      </div>
     </div>
-  </div>
+  </section>
 
   <!-- 3. Session Timeline -->
-  <div class="panel">
-    <div class="panel-title">Session Timelines <span class="panel-title-count">(top 6 sessions by event count)</span></div>
-    <div class="timeline-wrap" id="timeline-wrap"></div>
-    <div class="graph-legend" id="timeline-legend"></div>
-  </div>
+  <section class="panel graph-widget graph-widget-timeline" aria-labelledby="graph-title-timeline">
+    <h2 class="panel-title" id="graph-title-timeline">Session Timelines <span class="panel-title-count">(top 6 sessions by event count)</span></h2>
+    <div class="graph-widget-body">
+      <div class="graph-widget-content">
+        <div class="timeline-wrap" id="timeline-wrap"></div>
+        <div class="graph-legend" id="timeline-legend"></div>
+      </div>
+    </div>
+  </section>
 
   <!-- 4. Co-occurrence Matrix -->
-  <div class="panel">
-    <div class="panel-title">Tool Co-occurrence Matrix <span class="panel-title-count">(sessions where both tools appeared)</span></div>
-    <div class="matrix-wrap"><table class="matrix-table" id="matrix-table"></table></div>
-  </div>
+  <section class="panel graph-widget graph-widget-matrix" aria-labelledby="graph-title-matrix">
+    <h2 class="panel-title" id="graph-title-matrix">Tool Co-occurrence Matrix <span class="panel-title-count">(sessions where both tools appeared)</span></h2>
+    <div class="graph-widget-body">
+      <div class="graph-widget-content">
+        <p class="graph-widget-empty" id="matrix-empty" hidden>No tool co-occurrence data was captured for this scope.</p>
+        <div class="matrix-wrap"><table class="matrix-table" id="matrix-table"></table></div>
+      </div>
+    </div>
+  </section>
 
 </div>
 
@@ -538,77 +595,7 @@
 
   </div>
 
-  <aside class="filter-rail" id="filter-rail" aria-label="Filters">
-    <div class="rail-head">
-      <div class="rail-title">Filters</div>
-      <button type="button" class="rail-toggle filter-sheet-close" id="filter-sheet-close" aria-label="Close filters">
-        <span class="rail-toggle-lines" aria-hidden="true"></span>
-      </button>
-    </div>
-    <section class="global-filter-shell" id="global-filter-shell" aria-label="Session filters">
-      <div class="global-filter-top">
-        <div>
-          <div class="global-filter-title" id="filter-scope-title">Session filters</div>
-          <div class="global-filter-meta" id="global-filter-meta">Showing all sessions</div>
-        </div>
-        <div class="global-filter-actions">
-          <button type="button" class="filter-compact-toggle" id="filter-compact-toggle" aria-expanded="false" aria-controls="global-filter-grid">More filters</button>
-          <button type="button" class="filter-clear" id="filter-clear">Clear filters</button>
-        </div>
-      </div>
-      <p class="view-scope filter-scope-note" id="filter-scope-note">Choose sessions to inspect. Session details cover their captured lifetime.</p>
-      <div class="global-filter-grid" id="global-filter-grid">
-        <div class="filter-field">
-          <label class="filter-label" for="sb-search">Search</label>
-          <input type="text" class="sb-search" id="sb-search" name="session-search" autocomplete="off" spellcheck="false" placeholder="Search by prompt, session ID, model, or agent…"/>
-        </div>
-        <div class="filter-field">
-          <label class="filter-label" for="filter-model">Model</label>
-          <select class="filter-select" id="filter-model">
-            <option value="all">All models</option>
-          </select>
-        </div>
-        <div class="filter-field">
-          <label class="filter-label" for="filter-status">Status</label>
-          <select class="filter-select" id="filter-status">
-            <option value="all">All sessions</option>
-            <option value="completed">Completed</option>
-            <option value="active">Not completed</option>
-            <option value="recovered">Recovered failures</option>
-            <option value="failing">Has failures</option>
-          </select>
-        </div>
-        <div class="filter-field filter-field-secondary">
-          <label class="filter-label" for="filter-range">Range</label>
-          <select class="filter-select" id="filter-range">
-            <option value="all">All time</option>
-            <option value="24h">Last 24 hours</option>
-            <option value="7d">Last 7 days</option>
-            <option value="30d">Last 30 days</option>
-          </select>
-        </div>
-        <div class="filter-field filter-field-secondary" id="session-sort-field">
-          <label class="filter-label" for="filter-sort">Sort</label>
-          <select class="filter-select" id="filter-sort">
-            <option value="recent">Most recent</option>
-            <option value="quality">Highest quality</option>
-            <option value="tokens">Most tokens</option>
-            <option value="cost">Most cost</option>
-            <option value="duration">Longest sessions</option>
-            <option value="events">Most events</option>
-          </select>
-        </div>
-      </div>
-      <div class="sb-agent-pills" id="sb-agent-pills">
-        <button class="sb-pill active" type="button" data-agent="all" aria-pressed="true">All agents</button>
-      </div>
-      <div class="filter-chip-row">
-        <div class="filter-chips" id="filter-chips"></div>
-      </div>
-    </section>
-  </aside>
 </div>
-<div class="global-filter-backdrop" id="filter-sheet-backdrop" hidden></div>
 
 </main>
 </div>
@@ -616,7 +603,7 @@
 <dialog class="ledger-dialog" id="ledger-dialog" aria-labelledby="ledger-dialog-title" aria-describedby="ledger-dialog-subtitle">
   <div class="ledger-dialog-head">
     <div><h2 class="ledger-dialog-title" id="ledger-dialog-title">Improvement detail</h2><div class="inbox-copy" id="ledger-dialog-subtitle"></div></div>
-    <button class="ledger-dialog-close" id="ledger-dialog-close" type="button" aria-label="Close">&times;</button>
+    <button class="ledger-dialog-close" id="ledger-dialog-close" type="button" aria-label="Close evidence" autofocus>&times;</button>
   </div>
   <div class="ledger-dialog-body" id="ledger-dialog-body"></div>
   <div class="ledger-dialog-actions" id="ledger-dialog-actions"></div>

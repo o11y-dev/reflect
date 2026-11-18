@@ -200,7 +200,6 @@ function buildCohortComparison(){
 }
 document.addEventListener('dashboard-filters-changed', event => {
   dashboardSelectedSessionId = event.detail?.selectedSessionId || dashboardSelectedSessionId || '';
-  dashboardFilterActive = Boolean(event.detail?.hasFilters || dashboardSelectedSessionId);
   buildCohortComparison();
 });
 
@@ -629,11 +628,8 @@ function impactScope(item){
   return `${task} · ${repository}`;
 }
 
-// Expanded rows survive background renders; explicit URL targets open on arrival.
-const analysisExpandedRows = new Map();
 function analysisRowOpen(kind, id){
-  const key = `${kind}:${id}`;
-  return analysisExpandedRows.has(key) ? analysisExpandedRows.get(key) : currentParams().get(`${kind}_row`) === String(id);
+  return currentParams().get(`${kind}_row`) === String(id);
 }
 function analysisTable(headers, rows){
   return `<div class="analysis-table-scroll" tabindex="0" role="region" aria-label="${escHtml(headers[0])} evidence table"><table class="analysis-table"><thead><tr>${headers.map(label => `<th scope="col">${escHtml(label)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -643,17 +639,24 @@ function analysisToggle(kind, id, label){
   return `<button type="button" id="toggle-${escHtml(key)}" class="analysis-toggle" data-ledger-action="toggle-analysis-row" data-row-kind="${kind}" data-row-id="${escHtml(id)}" aria-expanded="${analysisRowOpen(kind,id)}" aria-controls="detail-${escHtml(key)}"><span class="analysis-chevron" aria-hidden="true">›</span><span>${escHtml(label)}</span></button>`;
 }
 function toggleAnalysisRow(kind, id){
-  const open = !analysisRowOpen(kind,id);
-  analysisExpandedRows.set(`${kind}:${id}`, open);
-  const button = document.getElementById(`toggle-${kind}-${id}`);
-  const detail = document.getElementById(`detail-${kind}-${id}`);
-  if (button) button.setAttribute('aria-expanded', String(open));
-  if (detail) detail.hidden = !open;
+  const key = `${kind}_row`;
+  const previousId = currentParams().get(key);
+  const open = previousId !== String(id);
+  updateUrlParams(params => { open ? params.set(key, id) : params.delete(key); }, {mode:'push'});
+  if (previousId) {
+    document.getElementById(`toggle-${kind}-${previousId}`)?.setAttribute('aria-expanded', 'false');
+    const previousDetail = document.getElementById(`detail-${kind}-${previousId}`);
+    if (previousDetail) previousDetail.hidden = true;
+  }
+  if (open) {
+    document.getElementById(`toggle-${kind}-${id}`)?.setAttribute('aria-expanded', 'true');
+    const detail = document.getElementById(`detail-${kind}-${id}`);
+    if (detail) detail.hidden = false;
+  }
 }
 function navigateAnalysisRow(kind, id){
-  analysisExpandedRows.set(`${kind}:${id}`, true);
-  updateUrlParams(params => params.set(`${kind}_row`, id));
   activateTab(kind === 'workflow' ? 'workflows' : 'impact');
+  updateUrlParams(params => params.set(`${kind}_row`, id));
   buildImprovementSurfaces();
   if (kind === 'workflow' && !(IMPROVEMENT_DATA.workflows || []).some(item => String(item.id) === String(id))) return showWorkflowReview(id);
   const button = document.getElementById(`toggle-${kind}-${id}`);
@@ -854,7 +857,7 @@ function buildImprovementSurfaces(){
   if (findingLedger) {
     findingLedger.innerHTML = !hasLoaded('findings')
       ? `<div class="session-ledger-empty">${escHtml(pendingCopy('Findings'))}</div>`
-      : observations.length ? observations.map(item => {
+      : observations.length ? analysisTable(['Finding', 'Priority / confidence', 'Sessions', 'Workflow'], observations.map(item => {
       const proposedWorkflow = workflows.find(workflow => workflow.id === item.candidate_id);
       const workflowState = proposedWorkflow
         ? humanizeLedgerLabel(proposedWorkflow.lifecycle?.display || proposedWorkflow.status || 'pending')
@@ -863,24 +866,13 @@ function buildImprovementSurfaces(){
         ? `Priority ${Math.round(Number(item.impact_score))}/100` : 'Priority unavailable';
       const detectionConfidence = item.confidence != null && Number.isFinite(Number(item.confidence))
         ? `${Math.round(Number(item.confidence) * 100)}% detection confidence` : 'Detection confidence unavailable';
-      return `<article class="inbox-card">
-        <div class="inbox-card-head">
-          <div><div class="inbox-title">${escHtml(String(item.title || 'Observation'))}</div><div class="inbox-copy">${escHtml(String(item.summary || ''))}</div></div>
-          <span class="ledger-pill signal">${priority}</span>
-        </div>
-        <div class="ledger-meta">
-          <span class="ledger-pill">${escHtml(String(item.status || 'new').replaceAll('_',' '))}</span>
-          <span class="ledger-pill">${escHtml(String(item.severity || 'low'))} severity</span>
-          <span class="ledger-pill">${detectionConfidence}</span>
-          <span class="ledger-pill">${fmt(Number(item.affected_session_count || 0))} linked session(s)</span>
-          <span class="ledger-pill">${fmt(Number(item.observation_count || 1))} evidence pattern(s)</span>
-          <span class="ledger-pill">${fmt(Number(item.source_scope_count || 1))} scope(s)</span>
-          ${proposedWorkflow ? `<span class="ledger-pill">Linked workflow · ${escHtml(workflowState)}</span>` : ''}
-        </div>
-        <div class="inbox-copy">Priority ranks this finding for review. Detection confidence describes the evidence pattern, not a measured outcome or likelihood of improvement.</div>
-        <div class="ledger-actions"><button type="button" class="ledger-button" data-ledger-action="evidence" data-observation-id="${escHtml(String(item.id))}">View Task Evidence</button>${proposedWorkflow ? `<button type="button" class="ledger-button primary" data-ledger-action="open-workflow" data-candidate-id="${escHtml(String(proposedWorkflow.id))}">Open Linked Workflow</button>` : isStaticDemo() ? '' : `<button type="button" class="ledger-button primary" data-ledger-action="create-from-finding" data-observation-id="${escHtml(String(item.id))}">Create workflow from finding</button>`}</div>
-      </article>`;
-    }).join('') : resource('findings').state !== 'ready'
+      return `<tr class="analysis-summary">
+        <th scope="row"><button type="button" class="analysis-toggle" data-ledger-action="evidence" data-observation-id="${escHtml(item.id)}">${escHtml(item.title || 'Finding')}<span class="analysis-subline">${escHtml(item.summary || '')}</span></button></th>
+        <td title="Priority orders findings for review. Detection confidence describes the evidence and is not a measured outcome."><strong>${escHtml(priority)}</strong><span class="analysis-subline">${escHtml(detectionConfidence)} · ${escHtml(item.severity || 'low')} severity</span></td>
+        <td>${fmt(Number(item.affected_session_count || 0))}<span class="analysis-subline">${fmt(Number(item.observation_count || 1))} patterns · ${fmt(Number(item.source_scope_count || 1))} scopes</span></td>
+        <td>${proposedWorkflow ? `<button type="button" class="ledger-button" data-ledger-action="open-workflow" data-candidate-id="${escHtml(proposedWorkflow.id)}">Open workflow</button><span class="analysis-subline">${escHtml(workflowState)}</span>` : isStaticDemo() ? '—' : `<button type="button" class="ledger-button" data-ledger-action="create-from-finding" data-observation-id="${escHtml(item.id)}">Create workflow</button>`}</td>
+      </tr>`;
+    }).join('')) : resource('findings').state !== 'ready'
       ? '<div class="session-ledger-empty">No findings in the last loaded data. Updated findings are still pending.</div>'
       : `<div class="panel"><div class="panel-title">Inbox is clear</div><div class="inbox-copy">Reflect has no open finding with retained task evidence in this scope.</div></div>`;
   }
@@ -889,12 +881,12 @@ function buildImprovementSurfaces(){
   if (loopLedger) {
     loopLedger.innerHTML = !hasLoaded('loops')
       ? `<div class="session-ledger-empty">${escHtml(pendingCopy('Loops'))}</div>`
-      : loops.length ? loops.map(item => `<article class="inbox-card">
-      <div class="inbox-card-head"><div><div class="inbox-title">${escHtml(String(item.title || 'Observed loop'))}</div><div class="inbox-copy">${escHtml(String(item.summary || ''))}</div></div><span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(item.kind || 'stalled'))}</span></div>
-      <div class="ledger-meta">${item.status === 'detected' ? '<span class="ledger-pill signal">Ready to review</span>' : ''}<span class="ledger-pill">${fmt(Number(item.affected_session_count || 0))} sessions</span><span class="ledger-pill">${fmt(Number(item.occurrence_count || 0))} occurrences</span>${item.kind === 'agent_native' ? `<span class="ledger-pill">${escHtml(item.tool_name || 'native command')}</span>` : `<span class="ledger-pill">${fmt(Number(item.state_change_count || 0))} state changes</span>`}<span class="ledger-pill">${Math.round(Number(item.confidence || 0)*100)}% confidence</span><span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.status || 'detected'))}</span></div>
-      <div class="ledger-command">reflect loops show ${escHtml(String(item.id))}</div>
-      <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-loop" data-loop-id="${escHtml(String(item.id))}">${item.status === 'detected' ? 'Review & Build Instructions' : 'Review Loop Evidence'}</button></div>
-    </article>`).join('') : resource('loops').state !== 'ready'
+      : loops.length ? analysisTable(['Loop', 'Status', 'Sessions', 'Occurrences', 'Confidence'], loops.map(item => `<tr class="analysis-summary">
+        <th scope="row"><button type="button" class="analysis-toggle" data-ledger-action="review-loop" data-loop-id="${escHtml(item.id)}">${escHtml(item.title || 'Observed loop')}<span class="analysis-subline">${escHtml(item.summary || '')}</span></button></th>
+        <td>${item.status === 'detected' ? 'Ready to review' : escHtml(humanizeLedgerLabel(item.status || 'detected'))}<span class="analysis-subline">${escHtml(humanizeLedgerLabel(item.kind || 'stalled'))}</span></td>
+        <td>${fmt(Number(item.affected_session_count || 0))}</td><td>${fmt(Number(item.occurrence_count || 0))}</td>
+        <td>${item.confidence == null ? '—' : `${Math.round(Number(item.confidence) * 100)}%`}</td>
+      </tr>`).join('')) : resource('loops').state !== 'ready'
       ? '<div class="session-ledger-empty">No loops in the last loaded data. Updated loops are still pending.</div>'
       : `<div class="session-ledger-empty">${isStaticDemo() ? 'No additional loops are included in this illustrative sample. Choose another example above.' : 'No agent-native or behavioral loop is currently detected. Run <code>reflect loops</code> after more sessions are captured.'}</div>`;
   }
@@ -907,41 +899,37 @@ function buildImprovementSurfaces(){
     const renderSkillRegistry = () => {
       const query = searchInput?.value || '';
       const visible = skills.filter(item => skillMatchesSearch(item, query));
-      updateUrlParams(params => {
-        query.trim() ? params.set('skill_q', query.trim()) : params.delete('skill_q');
-      });
+
       if (filterSummary) filterSummary.textContent = hasLoaded('skills') ? `Showing ${fmt(visible.length)} of ${fmt(skills.length)} skills` : 'Skill registry is unavailable';
       skillRegistry.innerHTML = !hasLoaded('skills')
         ? `<div class="session-ledger-empty">${escHtml(pendingCopy('Skills'))}</div>`
-        : visible.length ? visible.map(item => {
+        : visible.length ? analysisTable(['Skill', 'Availability', 'Version', 'References', 'Impact checks'], visible.map(item => {
         const title = humanizeLedgerLabel(item.slug || item.name || 'Skill');
         const state = humanizeLedgerLabel(item.lifecycle_state || 'pending');
         const origin = humanizeLedgerLabel(item.origin || 'imported');
         const availability = skillAvailabilityPresentation(item);
-        const command = `reflect skills show ${String(item.id)}`;
         const recordedEvidence = (item.evidence_state ?? IMPROVEMENT_DATA.skill_evidence_state) === 'recorded';
         const analysisCount = value => (item.analysis_state === 'pending' && !recordedEvidence) || value == null ? '—' : fmt(Number(value));
-        return `<article class="workflow-card skill-tile" data-state="${escHtml(String(item.lifecycle_state || 'pending'))}">
-          <div class="tile-card-main">
-            <div class="tile-card-kicker"><span>Durable Skill</span><span>${escHtml(origin)}</span><span>${escHtml(state)}</span></div>
-            <div class="tile-card-head"><div class="tile-card-heading"><h3 class="tile-card-title">${escHtml(title)}</h3><p class="tile-card-description">${escHtml(String(item.description || 'No description is available yet.'))}</p></div><span class="ledger-pill skill-availability ${escHtml(availability.kind)} tile-card-status">${escHtml(availability.label)}</span></div>
-            <dl class="tile-metric-grid">
-              <div class="tile-metric signal"><dt>Current Version</dt><dd>${fmt(Number(item.current_version || 0))}</dd></div>
-              <div class="tile-metric"><dt>Installations</dt><dd>${fmt(Number(item.installation_count || 0))}</dd></div>
-              <div class="tile-metric"><dt>References · All Time</dt><dd>${analysisCount(item.usage_count)}</dd></div>
-              <div class="tile-metric"><dt>Impact Checks</dt><dd>${analysisCount(item.measurement_count)}</dd></div>
-            </dl>
-            <div class="tile-card-meta"><span class="ledger-pill">${escHtml(availability.detail)}</span><span class="ledger-pill">${analysisCount(item.evidence_count)} evidence links</span><span class="ledger-pill">${fmt(Number(item.version_count || item.current_version || 0))} versions</span>${recordedEvidence ? '<span class="ledger-pill">Recorded references · validation pending</span>' : ''}</div>
-          </div>
-          <footer class="tile-card-footer"><code class="tile-card-command" title="${escHtml(command)}" translate="no">${escHtml(command)}</code><button type="button" class="ledger-button primary" data-ledger-action="review-skill" data-skill-id="${escHtml(String(item.id))}">Inspect Skill</button></footer>
-        </article>`;
-      }).join('') : query.trim()
+        return `<tr class="analysis-summary">
+          <th scope="row"><button type="button" class="analysis-toggle" data-ledger-action="review-skill" data-skill-id="${escHtml(item.id)}">${escHtml(title)}<span class="analysis-subline">${escHtml(item.description || '')}</span></button></th>
+          <td><span class="ledger-pill skill-availability ${escHtml(availability.kind)}">${escHtml(availability.label)}</span><span class="analysis-subline">${escHtml(availability.detail)} · ${escHtml(origin)} · ${escHtml(state)}</span></td>
+          <td>${item.current_version == null ? '—' : fmt(Number(item.current_version))}<span class="analysis-subline">${fmt(Number(item.installation_count || 0))} installations</span></td>
+          <td>${analysisCount(item.usage_count)}<span class="analysis-subline">${recordedEvidence ? 'Recorded · validation pending' : 'All captured history'}</span></td>
+          <td>${analysisCount(item.measurement_count)}</td>
+        </tr>`;
+      }).join('')) : query.trim()
         ? `<div class="session-ledger-empty">No skills match <strong>${escHtml(query.trim())}</strong>. Clear the search to return to the full registry.</div>`
         : resource('skills').state !== 'ready'
           ? '<div class="session-ledger-empty">No skills in the last loaded registry. Updated records are still pending.</div>'
           : `<div class="session-ledger-empty">${isStaticDemo() ? 'No skills match this selection. Clear the filters to explore the sample skills.' : 'No skill records are registered. Run <code>reflect skills sync</code> to reconcile installed skills or <code>reflect skills discover</code> to stage evidence-backed drafts.'}</div>`;
     };
-    if (searchInput) searchInput.oninput = renderSkillRegistry;
+    if (searchInput) searchInput.oninput = () => {
+      updateUrlParams(params => {
+        const query = searchInput.value.trim();
+        query ? params.set('skill_q', query) : params.delete('skill_q');
+      });
+      renderSkillRegistry();
+    };
     renderSkillRegistry();
   }
 
@@ -1078,24 +1066,12 @@ function buildImprovementSurfaces(){
       : `<div class="panel"><div class="panel-title">No Impact Checks Yet</div><div class="measurement-copy">Install a reviewed workflow to start a bounded validation window. Reflect reports a result only when both task cohorts and their required signals are complete.</div></div>`;
   }
 
-  const linkedWorkflow = currentParams().get('workflow') || '';
-  if (linkedWorkflow && !window._linkedWorkflowInitialized) {
-    window._linkedWorkflowInitialized = true;
-    queueMicrotask(() => showWorkflowReview(linkedWorkflow, currentParams().get('workflow_root') || ''));
-  }
-  const linkedLoop = currentParams().get('loop') || '';
-  if (!linkedWorkflow && linkedLoop && !window._linkedLoopInitialized && loops.some(item => item.id === linkedLoop)) {
-    window._linkedLoopInitialized = true;
-    queueMicrotask(() => showLoopReview(linkedLoop));
-  }
-  const linkedSkill = currentParams().get('skill') || '';
-  if (!linkedWorkflow && !linkedLoop && linkedSkill && !window._linkedSkillInitialized && skills.some(item => item.id === linkedSkill)) {
-    window._linkedSkillInitialized = true;
-    queueMicrotask(() => showSkillReview(linkedSkill));
-  }
+
 }
 improvementSurfacesReady = true;
 buildImprovementSurfaces();
+syncLedgerRoute();
+document.addEventListener('dashboard-route-changed', syncLedgerRoute);
 
 /* Explore achievements */
 function buildAchievements(){

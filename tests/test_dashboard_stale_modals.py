@@ -19,6 +19,7 @@ def _run_modal(scenario: str) -> None:
                         source.index("async function submitSessionFeedback(")]
     fragments += source[source.index("async function showImpactSessions("):
                         source.index("document.addEventListener('click'", source.index("async function showImpactSessions("))]
+    fragments += next(line for line in source.splitlines() if line.startswith('const ledgerSelectionParams'))
     impact = Path("src/reflect/frontend/js_impact.js").read_text()
     fragments += impact[impact.index("function formatImpactSessionValue("):
                         impact.index("function impactMeasurementState(")]
@@ -32,7 +33,7 @@ const source=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
 const dialogs=[],requests=[],params=new URLSearchParams();
 const context={URL,window:{location:{origin:'http://localhost'}},
   openLedgerDialog:dialog=>dialogs.push(dialog),escHtml:String,fmt:String,
-  humanizeLedgerLabel:String,humanizeLedgerText:String,updateUrlParams:fn=>fn(params),
+  humanizeLedgerLabel:String,humanizeLedgerText:String,currentParams:()=>params,updateUrlParams:fn=>fn(params),
   fmtWorkflowDate:String,compactLedgerId:String,sessionInspectionUrl:item=>`?session=${item.session_id}`,
   impactMetricPresentation:()=>({goal:'Verification'}),formatImpactSessionValue:String,
   workflowSourcePresentation:()=>({label:'Imported',detail:'Local procedure'}),

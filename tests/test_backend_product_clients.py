@@ -65,12 +65,23 @@ def test_refresh_cli_waits_for_durable_job_by_default(product_backend, monkeypat
     from reflect.mcp import reflect_jobs
     from reflect.backend_runtime import _execute_job
     db, runner, _ = product_backend
+    spool = db.parent / 'otlp'
+    spool.mkdir()
+    traces = spool / 'otel-traces.active.jsonl'
+    traces.touch()
+    spans = db.parent / 'spans'
+    spans.mkdir()
+
     def execute_waiting_job(_db, job_id):
         assert runner.jobs.claim(job_id, owner='test')
         _execute_job(db, runner.jobs.path, job_id, 'test')
         return runner.jobs.get(job_id).response()
+
     monkeypatch.setattr('reflect.cli.backend.wait_for_job', execute_waiting_job)
-    result = CliRunner().invoke(main, ['refresh', '--no-native-sessions', '--json', '--db-path', str(db)])
+    result = CliRunner().invoke(main, [
+        'refresh', '--no-native-sessions', '--json', '--db-path', str(db),
+        '--otlp-traces', str(traces), '--spans-dir', str(spans),
+    ])
     assert result.exit_code == 0, result.output
     import json
     payload = json.loads(result.output)

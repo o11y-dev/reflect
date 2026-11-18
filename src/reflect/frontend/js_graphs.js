@@ -1,5 +1,62 @@
 /* ════════════════════ GRAPHS ════════════════════ */
 
+function presentGraphWidgets(panel, state, showData, message){
+  const busy = state === 'loading' || state === 'preparing';
+  const label = {
+    loading: showData ? 'Updating…' : 'Loading graph data…',
+    preparing: showData ? 'Updating…' : 'Loading graph data…',
+    stale: 'Published snapshot',
+    recorded: 'Analysis pending',
+    error: showData ? 'Update failed. Showing the last result.' : message || 'Could not load this widget.',
+  }[state] || '';
+  for (const widget of panel.querySelectorAll('.graph-widget')) {
+    const body = widget.querySelector('.graph-widget-body');
+    const content = widget.querySelector('.graph-widget-content');
+    const presentation = showData ? 'data' : 'placeholder';
+    widget.dataset.presentation = presentation;
+    widget.dataset.state = state;
+    widget.setAttribute('aria-busy', String(busy));
+    content.toggleAttribute('inert', !showData);
+    let notice = body.querySelector('.graph-widget-notice');
+    if (!notice) {
+      notice = document.createElement('div');
+      notice.className = 'graph-widget-notice';
+      const copy = document.createElement('span');
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'ledger-button';
+      retry.textContent = 'Retry';
+      const heading = widget.querySelector('h2');
+      retry.setAttribute('aria-label', `Retry ${heading.firstChild.textContent.trim()}`);
+      retry.addEventListener('click', () => {
+        heading.tabIndex = -1;
+        heading.focus({preventScroll:true});
+        hydrateExploreView('graph', {retry:true}).catch(() => {});
+      });
+      notice.append(copy, retry);
+      body.append(notice);
+    }
+    const copy = notice.querySelector('span');
+    if (copy.textContent !== label) copy.textContent = label;
+    notice.title = state === 'error' || state === 'stale' || state === 'recorded' ? message : '';
+    notice.querySelector('button').hidden = state !== 'error';
+    notice.hidden = !label;
+  }
+}
+
+function renderPublishedGraph(scope){
+  const panel = document.getElementById('tab-explore-graph');
+  if (panel.hidden) return;
+  try {
+    initGraphs();
+    renderedGraph = {scope, payload:sqlTab('graph')};
+  } catch (error) {
+    renderedGraph = null;
+    exploreGraphLifecycle.key = '';
+    throw error;
+  }
+}
+
 /* Tool color map */
 const TOOL_COLORS = {};
 (function assignToolColors(){
@@ -43,6 +100,8 @@ function initGraphs() {
 (function buildSankey(){
   const el = document.getElementById('sankey-svg');
   const trans = sqlTab('graph').graph_tool_transitions || [];
+  const empty = document.getElementById('sankey-empty');
+  if (empty) empty.hidden = Boolean(trans.length);
   if (!el || !trans.length) {
     if (el) d3.select(el).selectAll('*').remove();
     return;
@@ -734,7 +793,8 @@ function initGraphs() {
 /* ── 4. Co-occurrence Matrix ── */
 (function buildMatrix(){
   const co = sqlTab('graph').graph_cooccurrence;
-  if (!co || !co.tools.length) {
+  document.getElementById('matrix-empty').hidden = Boolean(co?.tools?.length);
+  if (!co?.tools?.length) {
     document.getElementById('matrix-table').innerHTML = '';
     return;
   }
@@ -867,20 +927,6 @@ function makeLine(id, labels, datasets, costAxis=false){
   });
 }
 
-function urlHasDashboardFilters(){
-  const params = currentParams();
-  return Boolean(
-    (params.get('q') || '').trim()
-    || (params.get('session') || '').trim()
-    || (params.get('agents') || '').trim()
-    || ((params.get('model') || 'all') !== 'all')
-    || ((params.get('status') || 'all') !== 'all')
-    || ((params.get('range') || 'all') !== 'all')
-    || ((params.get('sort') || 'recent') !== 'recent')
-  );
-}
-
-dashboardFilterActive = urlHasDashboardFilters();
 buildCohortComparison();
 
 setupDemoNavigation({evidence:showObservationEvidence, workflow:showWorkflowReview, impact:showImpactSessions});

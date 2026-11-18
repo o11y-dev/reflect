@@ -173,29 +173,60 @@ function openLedgerDialog({title, subtitle = '', body = '', actions = ''}){
   if (!ledgerDialog.open) ledgerDialog.showModal();
 }
 
+const ledgerSelectionParams = ['finding', 'loop', 'workflow', 'skill', 'impact', 'finding_draft'];
+
 function clearLedgerDialogSelection(){
-  if (ledgerDialog) ledgerDialog.inspection = null;
+  ledgerDialog.inspection = null;
   updateUrlParams(params => {
-    params.delete('workflow');
+    for (const key of ledgerSelectionParams) params.delete(key);
     params.delete('workflow_root');
-    params.delete('loop');
-    params.delete('skill');
-  });
+  }, {state:{}});
 }
 
-function closeLedgerDialog(){
-  if (ledgerDialog?.open) ledgerDialog.close();
-  clearLedgerDialogSelection();
+function closeLedgerDialog({fromHistory = false, returnToPrevious = false} = {}){
+  ledgerDialog.inspection = null;
+  if (ledgerDialog.open) ledgerDialog.close();
+  if (fromHistory) return;
+  if (returnToPrevious && window.history.state?.ledgerOpened) window.history.back();
+  else clearLedgerDialogSelection();
 }
 
-document.getElementById('ledger-dialog-close')?.addEventListener('click', closeLedgerDialog);
-ledgerDialog?.addEventListener('close', () => {
-  // A queued close event must not clear a newly opened inspection.
-  if (!ledgerDialog.open) clearLedgerDialogSelection();
+function dismissLedgerDialog(){
+  closeLedgerDialog({returnToPrevious:true});
+}
+
+document.getElementById('ledger-dialog-close')?.addEventListener('click', dismissLedgerDialog);
+ledgerDialog.addEventListener('cancel', event => {
+  event.preventDefault();
+  dismissLedgerDialog();
 });
-ledgerDialog?.addEventListener('click', event => {
-  if (event.target === ledgerDialog) closeLedgerDialog();
+ledgerDialog.addEventListener('click', event => {
+  if (event.target === ledgerDialog) dismissLedgerDialog();
 });
+
+function syncLedgerRoute(){
+  const params = currentParams();
+  const inspect = [
+    ['workflow', showWorkflowReview],
+    ['finding', showObservationEvidence],
+    ['finding_draft', showFindingWorkflowCreate],
+    ['loop', showLoopReview],
+    ['skill', showSkillReview],
+    ['impact', showImpactSessions],
+  ].find(([key]) => params.has(key));
+  if (!inspect) {
+    if (ledgerDialog.open) closeLedgerDialog({fromHistory:true});
+    return;
+  }
+  const [key, show] = inspect;
+  const id = params.get(key);
+  const root = key === 'workflow' ? params.get('workflow_root') || '' : '';
+  const current = ledgerDialog.inspection;
+  if (ledgerDialog.open && current?.routeKey === key && current.id === id
+    && (key !== 'workflow' || current.projectRoot === root)) return;
+  if (id) show(id, root);
+  else closeLedgerDialog({fromHistory:true});
+}
 
 async function ledgerRequest(url, {method = 'GET', body} = {}){
   const controller = new AbortController();
@@ -414,7 +445,7 @@ function ledgerWorkspaceName(value){
 
 function sessionInspectionUrl(session){
   const url = new URL(window.location.href);
-  ['workflow','workflow_root','workflow_type','workflow_status','loop','skill','skill_q','q','agents','agent','model','status','range'].forEach(key => url.searchParams.delete(key));
+  [...ledgerSelectionParams, 'workflow_root', 'view'].forEach(key => url.searchParams.delete(key));
   url.searchParams.set('tab', 'sessions');
   url.searchParams.set('session', session.session_id || '');
   if (session.evidence_focus_id) url.searchParams.set('evidence', session.evidence_focus_id);
@@ -483,12 +514,22 @@ function staleEvidenceNotice(...payloads){
   return `${recordedNotice}<div class="review-warning" role="status"><strong>Historical evidence.</strong> ${escHtml(timestamps.join('; '))}. ${escHtml(pending)}</div>`;
 }
 
-function beginLedgerRead(kind, id, title){
+function beginLedgerRead(kind, id, title, projectRoot){
+  const routeKey = kind === 'finding-workflow' ? 'finding_draft' : kind;
   const previous = ledgerDialog.inspection;
-  const request = {kind,id,retain:Boolean(ledgerDialog.open && previous?.kind === kind && previous?.id === id)};
-  if (request.retain) request.projectRoot = previous.projectRoot;
+  const same = ledgerDialog.open && previous?.kind === kind && previous.id === id;
+  projectRoot ??= same ? previous.projectRoot : '';
+  const request = {kind, id, routeKey, projectRoot, retain:Boolean(same && previous.projectRoot === projectRoot)};
+  const params = currentParams();
+  const sameRecord = params.get(routeKey) === String(id);
+  updateUrlParams(values => {
+    for (const key of ledgerSelectionParams) values.delete(key);
+    values.set(routeKey, id);
+    if (routeKey === 'workflow' && projectRoot) values.set('workflow_root', projectRoot);
+    else values.delete('workflow_root');
+  }, sameRecord || ledgerDialog.open ? {} : {mode:'push', state:{ledgerOpened:true}});
   ledgerDialog.inspection = request;
-  if (!request.retain) openLedgerDialog({title});
+  if (!request.retain) openLedgerDialog({title, body:'<p class="review-panel-copy" role="status">Loading record…</p>'});
   return request;
 }
 
@@ -598,12 +639,6 @@ async function showLoopReview(loopId){
     const loop = detail.loop || {};
     const occurrences = detail.occurrences || [];
     const nativeLoop = loop.kind === 'agent_native';
-    updateUrlParams(params => {
-      params.delete('workflow');
-      params.delete('workflow_root');
-      params.delete('skill');
-      params.set('loop', loopId);
-    });
     const sourceSessions = renderWorkflowSessionLedger(occurrences.map(item => ({
       session_id:item.session_id,
       title:`${humanizeLedgerLabel(item.tool_name || loop.tool_name || 'Tool')} · ${fmt(Number(item.repeat_count || 0))} ${nativeLoop ? 'signals' : 'repeats'}`,
@@ -686,12 +721,6 @@ async function showSkillReview(skillId){
     const pendingAnalysis = '<div class="session-ledger-empty">Analysis is updating. These results are not available yet.</div>';
     const availability = skillAvailabilityPresentation(skill, installations);
     const workflowCandidateId = analysisPending || analysisStale ? '' : versions.find(item => item.workflow_candidate_id)?.workflow_candidate_id || '';
-    updateUrlParams(params => {
-      params.delete('workflow');
-      params.delete('workflow_root');
-      params.delete('loop');
-      params.set('skill', skillId);
-    });
     const versionRows = versions.map(item => `<article class="skill-detail-tile">
       <div class="inbox-card-head"><div class="inbox-title">Version ${fmt(Number(item.version || 0))}</div><span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(item.status || 'pending'))}</span></div>
       <div class="ledger-meta"><span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.source_kind || skill.origin || 'imported'))}</span>${item.source_agent ? `<span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.source_agent))}</span>` : ''}${item.source_loop_id ? `<span class="ledger-pill">from loop</span>` : ''}<span class="ledger-pill">${escHtml(fmtWorkflowDate(item.created_at))}</span></div>
@@ -808,8 +837,9 @@ function showWorkflowCreate(context = null){
     abstain_when:(context.content.abstain_when || []).join('\n'),
     project_root:context.project_roots?.length === 1 ? context.project_roots[0] : '',
   } : {});
-  clearLedgerDialogSelection();
-  const creation = {kind:'create-workflow', findingId:context?.finding_id};
+  const findingId = context?.finding_id;
+  const creation = {kind:'create-workflow', routeKey:findingId ? 'finding_draft' : '', id:findingId, findingId};
+  if (!findingId) clearLedgerDialogSelection();
   ledgerDialog.inspection = creation;
   const field = (name, label, {multiline = false, required = false, hint = ''} = {}) => `<div class="workflow-create-field"><label for="create-workflow-${name}">${label}${required ? ' (required)' : ''}</label>${multiline
     ? `<textarea class="ledger-editor" id="create-workflow-${name}" name="${name}" rows="${name === 'steps' ? 6 : 3}" ${required ? 'required' : ''}>${escHtml(workflowCreationDraft[name] || '')}</textarea>`
@@ -871,9 +901,9 @@ function showWorkflowCreate(context = null){
   form.querySelector('input')?.focus();
 }
 
-async function showWorkflowReview(candidateId, requestedRoot = ''){
-  const request = beginLedgerRead('workflow', candidateId, 'Preparing workflow preview…');
-  requestedRoot = request.projectRoot = requestedRoot || request.projectRoot || '';
+async function showWorkflowReview(candidateId, requestedRoot){
+  const request = beginLedgerRead('workflow', candidateId, 'Preparing workflow preview…', requestedRoot);
+  requestedRoot = request.projectRoot;
   try {
     const sourceCandidate = (IMPROVEMENT_DATA.workflows || []).find(item => item.id === candidateId);
     const candidateSnapshot = sourceCandidate ? JSON.stringify(sourceCandidate) : null;
@@ -914,12 +944,10 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     const candidatePublication = ledger.candidate ? ledger : !candidateCurrent ? {publication:{...resource.publication,
       state:resource.publication?.state === 'recorded' || resource.state === 'recorded' ? 'recorded' : 'stale',
       loaded_at:resource.publication?.loaded_at ?? resource.loaded_at}} : {};
-    updateUrlParams(params => {
-      params.delete('loop');
-      params.delete('skill');
-      params.set('workflow', candidateId);
-      if (preview.project_root) params.set('workflow_root', preview.project_root);
-    });
+    if (preview.project_root) {
+      request.projectRoot = preview.project_root;
+      updateUrlParams(params => params.set('workflow_root', preview.project_root));
+    }
     const active = candidate.lifecycle?.deployment === 'active';
     const reviewable = !['rejected','stale'].includes(candidate.status);
     const applyAllowed = Boolean(preview.checks?.apply_allowed);
@@ -1191,7 +1219,7 @@ document.addEventListener('click', async event => {
   }
   if (action === 'create-from-finding') return showFindingWorkflowCreate(trigger.dataset.observationId || '');
   if (action === 'create-workflow') return showWorkflowCreate();
-  if (action === 'close') return closeLedgerDialog();
+  if (action === 'close') return dismissLedgerDialog();
   if (action === 'evidence') return showObservationEvidence(trigger.dataset.observationId || '');
   if (action === 'review-loop') return showLoopReview(trigger.dataset.loopId || '');
   if (action === 'review-skill') return showSkillReview(trigger.dataset.skillId || '');
@@ -1215,11 +1243,7 @@ document.addEventListener('click', async event => {
     return showWorkflowReview(candidateId, root);
   }
   if (action === 'open-session') {
-    const url = new URL(window.location.href);
-    url.searchParams.set('tab', 'sessions');
-    url.searchParams.set('session', trigger.dataset.sessionId || '');
-    if (trigger.dataset.evidenceId) url.searchParams.set('evidence', trigger.dataset.evidenceId);
-    window.location.assign(url.toString());
+    window.location.assign(sessionInspectionUrl({session_id:trigger.dataset.sessionId, evidence_focus_id:trigger.dataset.evidenceId}));
     return;
   }
   let enabledPath = '';
@@ -1280,11 +1304,12 @@ function sqlTab(name){
 }
 
 let filteredDashboardSessions = (D.sessions || []).slice();
-let dashboardFilterActive = false;
 let dashboardSelectedSessionId = currentParams().get('session') || '';
 const lazySqlTabRequests = new Map();
 const exploreViewStates = new Map([['usage', 'ready']]);
 const exploreViewScopes = new Map();
+let failedGraphAttempt = null;
+let renderedGraph = null;
 let explorePublication = 0;
 document.addEventListener('reflect-snapshot-published', event => {
   // The first publication fills missing navigation through the existing URL-
@@ -1329,12 +1354,19 @@ function setExploreViewState(viewName, state, errorMessage = ''){
   status.classList.toggle('loading', loading);
   status.setAttribute('role', state === 'error' ? 'alert' : 'status');
   const message = loading ? `${exploreViewLoadingCopy[viewName]} This view updates automatically.` : errorMessage;
-  status.textContent = retained && state !== 'ready'
+  const statusMessage = retained && state !== 'ready'
     ? `${previous.publication_state === 'recorded'
       ? `Showing stored telemetry${previous.loaded_at ? ` read ${new Date(previous.loaded_at).toLocaleString()}` : '; read time unavailable'}.`
       : previous.loaded_at ? `Showing data from ${new Date(previous.loaded_at).toLocaleString()}.` : 'Showing last published data; timestamp unavailable.'} ${message || 'Updating in the background.'}`
     : message;
+  if (status.textContent !== statusMessage) status.textContent = statusMessage;
   status.hidden = state === 'ready';
+  if (viewName === 'graph') {
+    panel.removeAttribute('aria-busy');
+    const showData = retained && renderedGraph?.scope === previous.scope;
+    presentGraphWidgets(panel, state, showData, errorMessage);
+    return;
+  }
   if (state === 'error') {
     const retry = document.createElement('button');
     retry.type = 'button';
@@ -1344,7 +1376,7 @@ function setExploreViewState(viewName, state, errorMessage = ''){
     status.appendChild(retry);
   }
   [...panel.children].forEach(child => {
-    if (child === status || child.classList.contains('explore-subnav')) return;
+    if (child === status) return;
     child.hidden = state !== 'ready' && !retained;
   });
 }
@@ -1455,16 +1487,31 @@ async function loadExploreView(viewName){
   return request;
 }
 
-async function hydrateExploreView(viewName){
+async function hydrateExploreView(viewName, {retry = false} = {}){
   if (typeof updateExploreScope === 'function' && currentParams().get('tab') === 'explore' && activeExploreView === viewName) updateExploreScope();
   const cacheKey = exploreViewUrl(viewName).url.toString();
   const previous = exploreViewScopes.get(viewName);
   const publication = explorePublication;
-  if (exploreViewStates.get(viewName) === 'ready' && previous?.scope === cacheKey && previous.publication === publication) return;
+  const graph = viewName === 'graph';
+  const graphIsCurrent = graph && renderedGraph?.scope === cacheKey && renderedGraph.payload === sqlTab('graph');
+  if (graph && !retry && failedGraphAttempt?.scope === cacheKey && failedGraphAttempt.publication === publication) {
+    setExploreViewState(viewName, 'error', failedGraphAttempt.message);
+    return;
+  }
+  if (exploreViewStates.get(viewName) === 'ready' && previous?.scope === cacheKey && previous.publication === publication
+    && (!graph || graphIsCurrent)) return;
+  if (graph) failedGraphAttempt = null;
   if (exploreViewStates.get(viewName) === 'loading' && lazySqlTabRequests.has(cacheKey)) return;
   if (!D.sql_backed || (!isStaticDemo() && !reportSupportsServerFiltering())) return;
   setExploreViewState(viewName, 'loading');
   try {
+    const canReuseGraph = graph && previous?.scope === cacheKey
+      && previous.publication === publication && previous.publication_state === 'ready';
+    if (canReuseGraph && !graphIsCurrent && !retry) {
+      renderPublishedGraph(cacheKey);
+      setExploreViewState(viewName, 'ready');
+      return;
+    }
     const payload = await loadExploreView(viewName);
     if (exploreViewUrl(viewName).url.toString() !== cacheKey) return;
     if (publication !== explorePublication) return hydrateExploreView(viewName);
@@ -1476,6 +1523,7 @@ async function hydrateExploreView(viewName){
         : payload.publication?.snapshot_completed_at || payload.snapshot_completed_at || payload.publication?.loaded_at
         || (payload.publication?.state === 'stale' ? null : new Date().toISOString()),
     });
+    if (graph) renderPublishedGraph(cacheKey);
     setExploreViewState(viewName, ['stale','recorded'].includes(payload.publication?.state) ? payload.publication.state : 'ready',
       payload.publication?.state === 'recorded'
         ? payload.publication.reason === 'historical_pending'
@@ -1489,14 +1537,11 @@ async function hydrateExploreView(viewName){
     if (viewName === 'usage') renderUsageView();
     if (viewName === 'context') renderSqlTabPayloads();
     if (viewName === 'tools') renderToolsView();
-    if (viewName === 'graph') {
-      _graphsInited = true;
-      requestAnimationFrame(initGraphs);
-    }
   } catch (error) {
     if (exploreViewUrl(viewName).url.toString() !== cacheKey) return;
     if (publication !== explorePublication) return hydrateExploreView(viewName);
-    setExploreViewState(viewName, error.preparing ? 'preparing' : 'error', error.name === 'AbortError'
-      ? 'This view took too long to load. Please retry.' : error.message);
+    const message = error.name === 'AbortError' ? 'This view took too long to load.' : error.message;
+    if (graph && !error.preparing) failedGraphAttempt = {scope:cacheKey, publication, message};
+    setExploreViewState(viewName, error.preparing ? 'preparing' : 'error', message);
   }
 }

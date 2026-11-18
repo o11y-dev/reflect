@@ -1,5 +1,4 @@
 /* ── Tabs ── */
-let _graphsInited = false;
 const tabButtons = Array.from(document.querySelectorAll('.tab'));
 const PRODUCT_TABS = new Set(['sessions','inbox','workflows','skills','impact','explore']);
 const EXPLORE_VIEWS = new Set(['usage','tools','graph','context']);
@@ -18,22 +17,31 @@ function updateTabOrientation(){
   if (tabs) tabs.setAttribute('aria-orientation', window.matchMedia('(max-width: 720px)').matches ? 'horizontal' : 'vertical');
 }
 
+let exploreMatchingSessionCount = null;
+
 function updateExploreScope(){
   const label = document.getElementById('explore-scope-label');
-  const detail = document.getElementById('explore-scope-detail');
   const change = document.getElementById('explore-session-change');
   const clear = document.getElementById('explore-session-clear');
-  if (!label || !detail || !change || !clear) return;
   const fixed = isStaticDemo();
   const context = activeExploreView === 'context';
   const sessionId = fixed || context ? '' : exploreViewUrl(activeExploreView).sessionId;
+  const params = currentParams();
+  const range = params.get('range') || (sessionId ? 'all' : D.range);
+  const rangeLabel = range === 'all' ? 'All time' : range === '24h' ? 'Last 24 hours'
+    : /^\d+d$/.test(range || '') ? `Last ${parseInt(range, 10)} days` : 'Default date range';
+  const agents = (params.get('agents') || params.get('agent') || '').split(',').filter(Boolean);
+  const agentLabel = agents.length ? agents.map(formatAgentLabel).join(', ') : 'All agents';
   const session = (D.sessions || []).find(item => (item.full_id || item.id) === sessionId || item.id === sessionId);
-  label.textContent = fixed ? 'Full illustrative sample' : context ? 'All captured context'
-    : sessionId ? `Selected session: ${sessionListIdentity(session || {id:sessionId}).title}` : 'All matching sessions';
-  const identity = sessionId ? [session?.agent ? formatAgentLabel(session.agent) : '', sessionId.slice(-8)].filter(Boolean).join(' · ') + '. ' : '';
-  detail.textContent = fixed ? 'Fixed sample scope; session selections do not filter these views.'
-    : context ? 'Stored context and system inventory. Session and date filters do not apply.'
-    : identity + 'Date and matching-session filters still apply. Each section labels its event-window or full-session totals.';
+  const matchingCount = exploreMatchingSessionCount;
+  const sessionLabel = sessionId ? `Session: ${sessionListIdentity(session || {id:sessionId}).title}`
+    : matchingCount === null ? 'Matching sessions'
+    : `${fmt(matchingCount)} matching session${matchingCount === 1 ? '' : 's'}`;
+  const saved = ['range','agents','agent','q','model','status','session'].some(key => params.has(key));
+  const scope = fixed ? 'Full illustrative sample'
+    : context ? (saved ? 'All captured context · Session filters saved and inactive' : 'All captured context')
+    : [rangeLabel, agentLabel, sessionLabel].join(' · ');
+  if (label.textContent !== scope) label.textContent = scope;
   change.hidden = fixed || context;
   change.textContent = sessionId ? 'Change session' : 'Choose session';
   clear.hidden = fixed || context || !sessionId;
@@ -41,84 +49,88 @@ function updateExploreScope(){
 
 function clearExploreSessionScope(){
   dashboardSelectedSessionId = '';
-  updateUrlParams(params => params.delete('session'));
-  updateExploreScope();
+  updateUrlParams(params => { params.delete('session'); params.delete('evidence'); }, {mode:'push'});
+  updateDashboardViewScope('explore');
   document.getElementById('explore-session-change')?.focus();
   return hydrateExploreView(activeExploreView).catch(() => {});
 }
 
 function chooseExploreSession(){
-  activateTab('sessions', {focusButton:true});
-  if (window.matchMedia('(max-width: 900px)').matches || document.body.classList.contains('sessions-rail-collapsed')) {
-    document.getElementById('session-rail-open')?.click();
-  }
+  activateTab('sessions', {clearSession:true});
+  document.getElementById('session-table-heading')?.focus();
 }
 
 function updateDashboardViewScope(tabName){
   const sessionsVisible = tabName === 'sessions';
   const filtersVisible = sessionsVisible || (tabName === 'explore' && activeExploreView !== 'context' && !isStaticDemo());
-  const exploreScope = document.getElementById('explore-scope');
-  if (exploreScope) exploreScope.hidden = tabName !== 'explore';
   const sectionTitle = document.getElementById('section-nav-title');
-  const sectionDescription = document.getElementById('section-nav-description');
   const sectionScope = document.getElementById('section-scope-note');
   const sectionExploreNav = document.getElementById('section-explore-nav');
-  const sectionCopy = {
-    sessions: ['Sessions', 'Browse captured agent work.', 'Sessions are navigation and aggregate-usage containers.'],
-    inbox: ['Inbox', 'Investigate evidence that needs a decision.', 'Create a workflow from a finding you want to address.'],
-    workflows: ['Workflows', 'Review and manage reusable procedures.', 'Agent guidance changes only through the reviewed enablement flow.'],
-    skills: ['Skills', 'Browse installed and generated skills.', 'References and measured outcomes are separate evidence.'],
-    impact: ['Impact', 'Compare later work with prior tasks.', 'Results require comparable tasks and eligible outcome evidence.'],
-    explore: ['Explore', 'Analyze usage, tools, and delivery.', 'Follow table rows back to captured evidence.'],
-  }[tabName] || ['Sessions', 'Browse captured agent work.', 'Local evidence from your captured sessions.'];
-  if (sectionTitle) sectionTitle.textContent = sectionCopy[0];
-  if (sectionDescription) sectionDescription.textContent = sectionCopy[1];
-  if (sectionScope) sectionScope.textContent = sectionCopy[2];
+  const [title, note] = {
+    sessions: ['Session scope', 'Filters apply to the session list.'],
+    inbox: ['Finding scope', 'Findings link to the tasks that support them.'],
+    workflows: ['Workflow filters', 'Review project changes before enabling a workflow.'],
+    skills: ['Registry filters', 'Skill references cover all captured history.'],
+    impact: ['Comparison scope', 'Each check uses its recorded task cohorts.'],
+    explore: ['Explore views', ''],
+  }[tabName];
+  sectionTitle.textContent = title;
+  sectionScope.textContent = note;
+  sectionScope.hidden = !note;
   if (sectionExploreNav) sectionExploreNav.hidden = tabName !== 'explore';
   const sectionSidebar = document.getElementById('section-sidebar');
-  if (sectionSidebar) sectionSidebar.dataset.view = tabName;
-  if (tabName === 'explore') updateExploreScope();
+  sectionSidebar.dataset.view = tabName;
+  sectionSidebar.hidden = sessionsVisible;
   const shell = document.getElementById('report-shell');
   if (shell) {
     shell.dataset.view = tabName;
     shell.dataset.exploreView = activeExploreView;
   }
-  for (const id of ['session-rail', 'session-rail-open']) {
-    const element = document.getElementById(id);
-    if (element) element.hidden = !sessionsVisible;
+  const params = currentParams();
+  const hasSession = sessionsVisible && params.has('session');
+  const exploreVisible = tabName === 'explore';
+  const sessionListVisible = sessionsVisible && !hasSession;
+  const filterDisclosure = document.getElementById('section-filters');
+  document.getElementById('dashboard-scope').hidden = !exploreVisible && !sessionListVisible;
+  document.getElementById('session-scope-summary').hidden = !sessionListVisible;
+  document.getElementById('explore-scope-label').hidden = !exploreVisible;
+  if (exploreVisible) updateExploreScope();
+  else {
+    document.getElementById('explore-session-change').hidden = true;
+    document.getElementById('explore-session-clear').hidden = true;
   }
-  for (const id of ['filter-rail', 'filter-sheet-open', 'report-panel-controls', 'hdr-range']) {
-    const element = document.getElementById(id);
-    if (element) element.hidden = !filtersVisible;
-  }
-  const sortField = document.getElementById('session-sort-field');
-  if (sortField) sortField.hidden = !sessionsVisible;
-  const filterTitle = document.getElementById('filter-scope-title');
-  if (filterTitle) filterTitle.textContent = sessionsVisible ? 'Session filters' : 'Matching-session filters';
-  const filterNote = document.getElementById('filter-scope-note');
-  if (filterNote) filterNote.textContent = sessionsVisible
-    ? 'Choose sessions to inspect. Session details cover their captured lifetime.'
-    : 'Choose matching sessions. Each view labels its event-window or lifetime scope.';
-  // Close temporary mobile panels without changing the saved session selection,
-  // filters, or the desktop rail's collapsed preference.
-  document.body.classList.remove('sessions-rail-open', 'filters-rail-open', 'rail-overlay-open');
-  const backdrop = document.getElementById('filter-sheet-backdrop');
-  if (backdrop) backdrop.hidden = true;
-  const mobile = window.matchMedia('(max-width: 900px)').matches;
-  for (const id of ['session-rail-open', 'session-rail-toggle']) {
-    document.getElementById(id)?.setAttribute('aria-expanded', String(sessionsVisible && !mobile && !document.body.classList.contains('sessions-rail-collapsed')));
-  }
-  document.getElementById('filter-sheet-open')?.setAttribute('aria-expanded', String(filtersVisible && !mobile));
+  filterDisclosure.hidden = !filtersVisible || hasSession;
+  if (filterDisclosure.hidden) filterDisclosure.open = false;
+  document.getElementById('workflow-scope-controls').hidden = tabName !== 'workflows';
+  document.getElementById('skill-scope-controls').hidden = tabName !== 'skills';
+  document.getElementById('hdr-range').hidden = !sessionListVisible;
+  document.getElementById('session-sort-field').hidden = !sessionsVisible;
+
+  const inactive = document.getElementById('inactive-scope');
+  const inactiveSessionFilters = !filtersVisible || hasSession;
+  const savedScope = [
+    inactiveSessionFilters && params.has('range') && `range ${params.get('range')}`,
+    inactiveSessionFilters && (params.get('agents') || params.get('agent')) && `agents ${params.get('agents') || params.get('agent')}`,
+    inactiveSessionFilters && params.has('model') && 'model',
+    inactiveSessionFilters && params.has('status') && 'status',
+    inactiveSessionFilters && params.has('q') && 'session search',
+    !sessionsVisible && params.has('sort') && 'session sort',
+    !filtersVisible && params.has('session') && 'selected session',
+    tabName !== 'workflows' && (params.has('workflow_type') || params.has('workflow_status')) && 'workflow filters',
+    tabName !== 'skills' && params.has('skill_q') && 'skill search',
+  ].filter(Boolean);
+  inactive.hidden = exploreVisible || !savedScope.length;
+  inactive.textContent = savedScope.length ? `Saved scope inactive here · ${savedScope.join(', ')}` : '';
   const analysisScope = document.getElementById('inbox-analysis-window');
   const analysisWindow = D.analysis_window;
-  if (analysisScope) analysisScope.textContent = isStaticDemo() ? 'Fixed illustrative sample. Findings and comparisons retain their own linked tasks.' : analysisWindow?.date_from && analysisWindow?.date_to
+  if (analysisScope) analysisScope.textContent = isStaticDemo() ? 'Fixed illustrative sample.' : analysisWindow?.date_from && analysisWindow?.date_to
     ? `Latest analysis window: ${fmtWorkflowDate(analysisWindow.date_from)} — ${fmtWorkflowDate(analysisWindow.date_to)}.`
     : analysisWindow?.days && analysisWindow?.date_to
       ? `Latest analysis window: ${analysisWindow.days} days ending ${fmtWorkflowDate(analysisWindow.date_to)}.`
       : 'Analysis window not supplied by this report.';
 }
 
-function activateTab(tabName, {view = '', updateUrl = true, focusButton = false} = {}){
+function activateTab(tabName, {view = '', updateUrl = true, focusButton = false, clearSession = false} = {}){
   const previousTab = tabButtons.find(button => button.getAttribute('aria-selected') === 'true')?.dataset.tab || '';
   const previousExploreView = activeExploreView;
   const location = canonicalDashboardLocation(tabName, view || activeExploreView);
@@ -142,10 +154,8 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
     panel.classList.toggle('active', isActive);
     panel.hidden = !isActive;
   });
-  updateDashboardViewScope(activeTab);
-  document.querySelectorAll('[data-explore-view]').forEach(button => {
+  document.querySelectorAll('#section-explore-nav [data-explore-view]').forEach(button => {
     const active = button.dataset.exploreView === activeExploreView;
-    button.classList.toggle('active', active);
     if (active) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   });
@@ -154,19 +164,20 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
       || (activeTab === 'explore' && previousExploreView !== activeExploreView);
     updateUrlParams(params => {
       params.set('tab', activeTab);
+      if (clearSession) {
+        params.delete('session');
+        params.delete('evidence');
+      }
       if (activeTab === 'explore') params.set('view', activeExploreView);
       else params.delete('view');
-      if (activeTab !== 'workflows') {
-        params.delete('workflow');
+      if (activeTab !== previousTab) {
+        for (const key of ledgerSelectionParams) params.delete(key);
         params.delete('workflow_root');
       }
-      if (activeTab !== 'inbox') {
-        params.delete('inbox_view');
-        params.delete('loop');
-      }
-      if (activeTab !== 'skills') params.delete('skill_q');
     }, {mode: routeChanged ? 'push' : 'replace'});
   }
+  updateDashboardViewScope(activeTab);
+  document.dispatchEvent(new CustomEvent('dashboard-route-changed', {detail:{tab:activeTab}}));
   if (activeTab === 'explore') hydrateExploreView(activeExploreView).catch(() => {});
 }
 
@@ -189,13 +200,21 @@ tabButtons.forEach((button, index) => {
 });
 updateTabOrientation();
 window.addEventListener('resize', updateTabOrientation);
+const dashboardFilters = document.getElementById('section-filters');
+document.addEventListener('pointerdown', event => {
+  if (dashboardFilters.open && !dashboardFilters.contains(event.target)) dashboardFilters.open = false;
+});
+dashboardFilters.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || !dashboardFilters.open) return;
+  event.preventDefault();
+  dashboardFilters.open = false;
+  dashboardFilters.querySelector('summary').focus();
+});
 document.getElementById('explore-session-change')?.addEventListener('click', chooseExploreSession);
 document.getElementById('explore-session-clear')?.addEventListener('click', clearExploreSessionScope);
-document.querySelectorAll('[data-explore-view]').forEach(button => {
+document.querySelectorAll('#section-explore-nav [data-explore-view]').forEach(button => {
   button.addEventListener('click', () => activateTab('explore', {view: button.dataset.exploreView || 'usage'}));
 });
-const requestedInitialTab = currentParams().get('tab');
-const requestedInitialView = currentParams().get('view');
 const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length
   ? 'inbox'
   : (IMPROVEMENT_DATA.workflows || []).length
@@ -203,21 +222,38 @@ const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPRO
     : (IMPROVEMENT_DATA.skills || []).length
       ? 'skills'
       : 'sessions';
-activateTab(requestedInitialTab || (isStaticDemo() ? 'inbox' : defaultProductTab), {
-  view: requestedInitialView || '',
-  updateUrl: Boolean(requestedInitialTab || requestedInitialView),
-});
-window.addEventListener('popstate', () => {
+
+function restoreDashboardRoute(){
   const params = currentParams();
-  activateTab(params.get('tab') || (isStaticDemo() ? 'inbox' : defaultProductTab), {
-    view: params.get('view') || '',
-    updateUrl: false,
+  const inferred = [
+    ['session', 'sessions'],
+    ['workflow', 'workflows'],
+    ['finding', 'inbox'],
+    ['finding_draft', 'inbox'],
+    ['loop', 'inbox'],
+    ['skill', 'skills'],
+    ['impact', 'impact'],
+    ['view', 'explore'],
+  ].find(([key]) => params.has(key))?.[1];
+  const defaultTab = isStaticDemo() ? 'inbox' : isLocalDashboard() ? 'sessions' : defaultProductTab;
+  activateTab(params.get('tab') || inferred || defaultTab, {
+    view:params.get('view') || 'usage',
+    updateUrl:false,
   });
+}
+restoreDashboardRoute();
+window.addEventListener('popstate', () => {
+  restoreDashboardRoute();
+  buildImprovementSurfaces();
 });
 
 /* ── Header ── */
-const headerScope = D.measurements?.scope;
-document.getElementById('hdr-range').textContent = `${fmtWorkflowDate(headerScope?.kind === 'event_window' ? headerScope.date_from : D.first_event_ts)} — ${fmtWorkflowDate(headerScope?.kind === 'event_window' ? headerScope.date_to : D.last_event_ts)}`;
+function updateDashboardHeaderRange(report){
+  const scope = report.measurements?.scope;
+  const from = scope?.kind === 'event_window' ? scope.date_from : report.first_event_ts;
+  const to = scope?.kind === 'event_window' ? scope.date_to : report.last_event_ts;
+  document.getElementById('hdr-range').textContent = from && to ? `${fmtWorkflowDate(from)} — ${fmtWorkflowDate(to)}` : '';
+}
 document.getElementById('hdr-ts').textContent = isStaticDemo()
   ? 'Illustrative sample · fixed dates · all sample usage'
   : 'Loaded ' + new Date().toLocaleString();

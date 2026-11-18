@@ -411,30 +411,29 @@ header{
 #tabs{display:flex;flex:1;flex-direction:column;align-items:center;gap:7px;width:100%;overflow-y:auto;overflow-x:hidden;padding:2px 0;scrollbar-width:none}
 #tabs::-webkit-scrollbar{display:none}
 .tab{
-  appearance:none;position:relative;display:grid;place-items:center;flex:0 0 auto;
+  appearance:none;position:relative;display:flex;flex:0 0 auto;align-items:center;justify-content:center;
   width:46px;height:46px;border:1px solid transparent;border-radius:9px;
   background:transparent;color:#aaa49a;cursor:pointer;touch-action:manipulation;
   transition:color .18s ease,background-color .18s ease,border-color .18s ease;
+  flex-direction:column;gap:4px;
 }
 .tab svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .tab:hover{color:var(--text);background:rgba(245,242,234,.055)}
 .tab[aria-selected="true"]{color:var(--signal-2);background:rgba(242,138,26,.11);border-color:rgba(242,138,26,.25)}
 .tab:focus-visible{outline:2px solid var(--signal-2);outline-offset:2px;color:var(--text)}
-.nav-label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.nav-label{font-size:9px;line-height:1.1;white-space:nowrap}
 .app-rail-divider{width:26px;height:1px;flex:0 0 auto;margin:4px 0;background:rgba(245,242,234,.14)}
-.app-rail-foot{display:grid;place-items:center;width:46px;height:34px;flex:0 0 auto}
-.app-status-dot{width:7px;height:7px;border-radius:50%;background:var(--signal);box-shadow:0 0 10px rgba(242,138,26,.45)}
 .dashboard-layout{display:grid;grid-template-columns:var(--context-rail-width) minmax(0,1fr);align-items:stretch;flex:1;min-width:0;margin-left:var(--app-rail-width)}
-.section-sidebar{position:sticky;top:68px;align-self:start;display:flex;flex-direction:column;gap:18px;min-width:0;height:calc(100dvh - 68px);padding:22px 17px 18px;background:rgba(9,9,8,.94);border-right:1px solid rgba(245,242,234,.09);overflow-y:auto}
+.section-sidebar{position:sticky;top:68px;align-self:start;display:flex;flex-direction:column;gap:12px;min-width:0;height:calc(100dvh - 68px);padding:22px 17px 18px;background:rgba(9,9,8,.94);border-right:1px solid rgba(245,242,234,.09);overflow-y:auto}
+.section-sidebar[hidden]{display:none}
+.dashboard-layout:has(>.section-sidebar[hidden]){grid-template-columns:minmax(0,1fr)}
 .section-sidebar-head h2{font-size:17px;line-height:1.25;font-weight:720;letter-spacing:-.02em;color:var(--text)}
-.section-sidebar-head p{margin-top:7px;color:var(--text-3);font-size:11px;line-height:1.45}
-.section-scope-note{margin-top:auto;padding-top:14px;border-top:1px solid rgba(245,242,234,.09);color:var(--text-3);font-size:11px;line-height:1.5}
-.section-subnav{display:grid;gap:4px;margin:0;padding:0;border:0;background:transparent}
+.section-scope-note{padding-top:10px;border-top:1px solid rgba(245,242,234,.09);color:var(--text-3);font-size:11px;line-height:1.5}
+.section-subnav{display:grid;grid-template-columns:minmax(0,1fr);gap:4px}
 .section-subnav[hidden]{display:none!important}
-.section-subnav::before,.section-subnav::after{display:none}
-.section-subnav .explore-link{justify-content:flex-start;min-height:36px;padding:7px 10px;border:1px solid transparent;border-radius:6px;color:var(--text-3);font-size:12px;font-weight:600;text-align:left}
+.section-subnav .explore-link{appearance:none;width:100%;min-height:36px;padding:8px 10px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--text-2);font:inherit;font-size:12px;font-weight:600;line-height:1.4;text-align:left;cursor:pointer}
 .section-subnav .explore-link:hover{color:var(--text);background:rgba(245,242,234,.045)}
-.section-subnav .explore-link.active{color:var(--text);border-color:rgba(242,138,26,.2);background:rgba(242,138,26,.09)}
+.section-subnav .explore-link[aria-current="page"]{color:var(--text);border-color:rgba(242,138,26,.2);background:rgba(242,138,26,.09)}
 .section-subnav .explore-link:focus-visible{outline:2px solid var(--signal-2);outline-offset:2px}
 .dashboard-layout>main{min-width:0;width:auto;margin:0;padding:14px 18px 12px;flex:1}
 .demo-story{margin-left:calc(var(--app-rail-width) + 18px);margin-right:18px}
@@ -448,9 +447,9 @@ footer{margin-left:var(--app-rail-width)}
 @media(max-width:720px){
   body{padding-bottom:calc(64px + env(safe-area-inset-bottom))}
   .app-rail{inset:auto 0 0;width:100%;height:calc(62px + env(safe-area-inset-bottom));padding:6px max(8px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left));border-right:0;border-top:1px solid rgba(245,242,234,.12);background:rgba(5,5,5,.97)}
-  .app-rail-brand,.app-rail-foot,.app-rail-divider{display:none}
+  .app-rail-brand,.app-rail-divider{display:none}
   #tabs{flex-direction:row;justify-content:space-around;gap:2px;overflow-x:auto;overflow-y:hidden}
-  .tab{width:52px;height:46px}
+  .tab{flex:1 1 0;min-width:0;width:auto;max-width:64px;height:46px}
   .tab svg{width:19px;height:19px}
   .nav-label{position:static;width:auto;height:auto;margin:0;overflow:visible;clip:auto;font-size:8px;line-height:1;white-space:nowrap}
   .tab{display:flex;flex-direction:column;gap:2px}
@@ -459,11 +458,8 @@ footer{margin-left:var(--app-rail-width)}
   .dashboard-layout{grid-template-columns:minmax(0,1fr);margin-left:0}
   .section-sidebar{position:static;height:auto;max-height:none;gap:10px;padding:12px 14px;border-right:0;border-bottom:1px solid rgba(245,242,234,.1);overflow:visible}
   .section-sidebar-head h2{font-size:15px}
-  .section-sidebar-head p{margin-top:3px}
-  .section-scope-note{display:none}
-  .section-subnav{display:flex;gap:4px;overflow-x:auto;padding-bottom:2px}
-  .section-subnav[hidden]{display:none!important}
-  .section-subnav .explore-link{flex:0 0 auto;min-height:32px;padding:6px 9px;font-size:10px}
+  .section-scope-note{padding-top:6px}
+  .section-subnav{gap:2px}
   .dashboard-layout>main{padding:12px 10px}
   footer{margin-left:0;padding-bottom:10px}
 }
@@ -591,7 +587,6 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .demo-story .demo-step-copy{margin:16px 0}
 .synthetic-demo .feedback-row,.synthetic-demo .ledger-command,.synthetic-demo .tile-card-command{display:none}
 .synthetic-demo #hdr-ts{color:var(--muted)}
-.synthetic-demo #report-shell[data-view=explore]{grid-template-columns:minmax(0,1fr)}
 .synthetic-demo [data-skill-graph-expand][aria-disabled=true]{cursor:default}
 .synthetic-demo .skill-usage-summary label,.synthetic-demo [data-skill-graph-reset],.synthetic-demo [data-skill-graph-next],.synthetic-demo [data-skill-evidence-next]{display:none}
 .synthetic-demo .demo-scope{color:var(--evidence)}
@@ -615,22 +610,21 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .tab-panel.evidence-unavailable > :not(.evidence-unavailable-message){display:none}
 .evidence-unavailable-message{padding:14px;margin-bottom:16px;border:1px solid var(--orange);border-radius:6px;background:rgba(242,138,26,.06)}
 .inbox-card,.workflow-card,.measurement-card{content-visibility:auto;contain-intrinsic-size:auto 180px;border:1px solid var(--border);border-radius:8px;background:var(--surface);padding:17px;box-shadow:0 12px 28px rgba(0,0,0,.18)}
-.inbox-card-head,.workflow-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:8px}
+.inbox-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:8px}
 .impact-card{position:relative;min-width:0;overflow:hidden;border-color:rgba(242,138,26,.2);background:linear-gradient(145deg,rgba(242,138,26,.055),rgba(18,17,15,.92) 34%,rgba(12,12,11,.98))}.impact-card::before{content:"";position:absolute;inset:0 auto 0 0;width:2px;background:var(--impact-color,var(--blue))}.impact-card[data-verdict="improved"]{--impact-color:var(--green)}.impact-card[data-verdict="regressed"]{--impact-color:var(--red)}.impact-card[data-verdict="regressed"][data-trend="improving"]{--impact-color:var(--blue)}.impact-card[data-verdict="unchanged"]{--impact-color:var(--text-3)}
 .impact-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.impact-head-main{min-width:0}.impact-eyebrow{margin-bottom:6px;color:var(--text-3);font-size:10px;font-weight:750;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.impact-title{margin:0;color:var(--text);font-size:17px;line-height:1.35;letter-spacing:-.01em;text-wrap:balance}.impact-status-stack{display:flex;flex:0 0 auto;align-items:flex-end;flex-direction:column;gap:6px}.impact-status{border:1px solid rgba(242,138,26,.3);border-radius:999px;padding:5px 9px;background:rgba(242,138,26,.08);color:var(--blue);font-size:10px;font-weight:750}.impact-status.improved{border-color:rgba(50,215,75,.28);background:rgba(50,215,75,.07);color:var(--green)}.impact-status.regressed{border-color:rgba(255,69,58,.3);background:rgba(255,69,58,.07);color:#ff8b84}.impact-status.unchanged{border-color:var(--border2);background:var(--surface2);color:var(--text-2)}.impact-trend-status{color:var(--text-3);font-size:10px;font-weight:720}.impact-trend-status.improving{color:var(--green)}.impact-trend-status.worsening{color:#ff8b84}
 .impact-summary{max-width:820px;margin:11px 0 0;color:var(--text-2);font-size:13px;line-height:1.58;text-wrap:pretty}.impact-progress{display:grid;gap:8px;margin-top:15px}.impact-progress-copy{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--text-3);font-size:11px}.impact-progress-copy strong{color:var(--text-2);font-weight:750}.impact-progress progress{appearance:none;width:100%;height:6px;border:0;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.06)}.impact-progress progress::-webkit-progress-bar{background:rgba(255,255,255,.06)}.impact-progress progress::-webkit-progress-value{border-radius:999px;background:linear-gradient(90deg,#b85c12,var(--blue))}.impact-progress progress::-moz-progress-bar{border-radius:999px;background:linear-gradient(90deg,#b85c12,var(--blue))}
 .impact-comparison{display:grid;grid-template-columns:minmax(0,1fr) 24px minmax(0,1fr);gap:10px;align-items:stretch;margin-top:15px}.impact-period{min-width:0;padding:12px 13px;border:1px solid var(--border);border-radius:7px;background:rgba(255,255,255,.018)}.impact-period-label{color:var(--text-3);font-size:9px;font-weight:750;letter-spacing:.08em;text-transform:uppercase}.impact-period-value{margin-top:5px;color:var(--text);font-size:14px;font-weight:760;font-variant-numeric:tabular-nums}.impact-period-note{margin-top:3px;color:var(--text-3);font-size:10px}.impact-arrow{display:grid;place-items:center;color:var(--blue);font-size:15px}.impact-scope{margin-top:12px;color:var(--text-3);font-size:10px;line-height:1.45}.impact-history{margin-top:13px;border-top:1px solid var(--border);padding-top:11px}.impact-history>summary{cursor:pointer;color:var(--text-3);font-size:10px;font-weight:700}.impact-history>summary:hover{color:var(--blue)}.impact-history>summary:focus-visible{outline:2px solid var(--blue);outline-offset:3px}.impact-history-list{display:grid;gap:6px;margin:10px 0 0;padding:0;list-style:none}.impact-history-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 9px;border-radius:6px;background:rgba(255,255,255,.018);color:var(--text-3);font-size:10px;font-variant-numeric:tabular-nums}.impact-explainer{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;margin-bottom:14px;border:1px solid var(--border);border-radius:8px;background:var(--border);overflow:hidden}.impact-step{min-width:0;padding:13px 14px;background:var(--surface)}.impact-step strong{display:block;margin-bottom:4px;color:var(--text);font-size:11px}.impact-step span{color:var(--text-3);font-size:10px;line-height:1.45}
 .impact-chart{--impact-chart-color:var(--impact-color,var(--blue));margin-top:12px;padding:12px 13px 10px;border:1px solid var(--border);border-radius:7px;background:rgba(255,255,255,.018)}.impact-chart[data-trend="improving"]{--impact-chart-color:var(--green)}.impact-chart[data-trend="worsening"]{--impact-chart-color:#ff8b84}.impact-chart-head,.impact-chart-axis{display:flex;align-items:center;justify-content:space-between;gap:12px}.impact-chart-title{color:var(--text-2);font-size:10px;font-weight:780;letter-spacing:.06em;text-transform:uppercase}.impact-chart-direction,.impact-chart-axis{color:var(--text-3);font-size:9px}.impact-chart-svg{display:block;width:100%;height:132px;margin-top:7px;overflow:visible}.impact-chart-grid{stroke:rgba(255,255,255,.055);stroke-width:1}.impact-chart-baseline{stroke:rgba(242,138,26,.48);stroke-width:1.25;stroke-dasharray:5 5}.impact-chart-area{fill:color-mix(in srgb,var(--impact-chart-color) 10%,transparent)}.impact-chart-line{fill:none;stroke:var(--impact-chart-color);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.impact-chart-point{fill:var(--surface);stroke:var(--impact-chart-color);stroke-width:2.5}.impact-chart-point.baseline{stroke:var(--blue)}.impact-chart-empty{margin-top:9px;padding:18px 10px;border:1px dashed var(--border);border-radius:6px;color:var(--text-3);font-size:10px;text-align:center}
 .workflow-toolbar{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin:-6px 0 16px;padding:13px 15px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}.workflow-filter-field{display:grid;gap:5px;min-width:170px}.workflow-filter-field label{color:var(--text-3);font-size:10px;font-weight:750;letter-spacing:.07em;text-transform:uppercase}.workflow-filter-field select,.workflow-filter-field input{border:1px solid var(--border2);border-radius:6px;background:#070604;color:var(--text);padding:9px 10px}.workflow-filter-field select{padding-right:34px}.workflow-filter-field input::placeholder{color:#77736b}.workflow-filter-field select:focus-visible,.workflow-filter-field input:focus-visible{outline:2px solid var(--blue);outline-offset:2px}.skill-search-field{flex:1 1 300px;max-width:620px}.workflow-filter-summary{margin-left:auto;padding-bottom:9px;color:var(--text-3);font-size:11px}
-.workflow-tile-grid,.skill-tile-grid{display:grid;gap:14px;align-items:stretch}.workflow-tile-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr))}.skill-tile-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr))}
-.workflow-tile,.skill-tile{position:relative;display:flex;min-width:0;height:100%;padding:0;overflow:hidden;flex-direction:column;border-color:rgba(242,138,26,.18);background:linear-gradient(150deg,rgba(242,138,26,.055),rgba(18,17,15,.96) 32%,rgba(10,10,9,.99))}.workflow-tile::before,.skill-tile::before{content:"";position:absolute;inset:0 auto 0 0;width:2px;background:var(--tile-accent,var(--blue))}.workflow-tile:hover,.skill-tile:hover{border-color:rgba(242,138,26,.38);background:linear-gradient(150deg,rgba(242,138,26,.085),rgba(18,17,15,.98) 34%,rgba(10,10,9,.99))}.workflow-tile:focus-within,.skill-tile:focus-within{border-color:rgba(242,138,26,.46);box-shadow:0 0 0 1px rgba(242,138,26,.12),0 16px 34px rgba(0,0,0,.26)}
-.workflow-tile[data-state="active"],.skill-tile[data-state="active"]{--tile-accent:var(--green)}.workflow-tile[data-state="stale"],.workflow-tile[data-state="rolled_back"],.skill-tile[data-state="archived"]{--tile-accent:var(--text-3)}.workflow-tile[data-state="rejected"]{--tile-accent:var(--red)}
+.workflow-tile{position:relative;display:flex;min-width:0;height:100%;padding:0;overflow:hidden;flex-direction:column;border-color:rgba(242,138,26,.18);background:linear-gradient(150deg,rgba(242,138,26,.055),rgba(18,17,15,.96) 32%,rgba(10,10,9,.99))}.workflow-tile::before{content:"";position:absolute;inset:0 auto 0 0;width:2px;background:var(--tile-accent,var(--blue))}.workflow-tile:hover{border-color:rgba(242,138,26,.38);background:linear-gradient(150deg,rgba(242,138,26,.085),rgba(18,17,15,.98) 34%,rgba(10,10,9,.99))}.workflow-tile:focus-within{border-color:rgba(242,138,26,.46);box-shadow:0 0 0 1px rgba(242,138,26,.12),0 16px 34px rgba(0,0,0,.26)}
+.workflow-tile[data-state="active"]{--tile-accent:var(--green)}.workflow-tile[data-state="stale"],.workflow-tile[data-state="rolled_back"]{--tile-accent:var(--text-3)}.workflow-tile[data-state="rejected"]{--tile-accent:var(--red)}
 .tile-card-main{display:flex;min-width:0;flex:1;flex-direction:column;padding:18px 18px 15px}.tile-card-kicker{display:flex;min-width:0;align-items:center;gap:7px;margin-bottom:10px;color:var(--blue);font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.tile-card-kicker span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tile-card-kicker span+span::before{content:"/";margin-right:7px;color:var(--text-3)}.tile-card-head{display:flex;min-width:0;align-items:flex-start;justify-content:space-between;gap:13px}.tile-card-heading{min-width:0}.tile-card-title{margin:0;color:var(--text);font-size:17px;font-weight:790;line-height:1.3;letter-spacing:-.015em;text-wrap:balance;overflow-wrap:anywhere}.tile-card-description{display:-webkit-box;margin:8px 0 0;color:var(--text-2);font-size:12px;line-height:1.55;text-wrap:pretty;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:3}.tile-card-status{flex:0 0 auto;max-width:42%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tile-metric-grid{display:grid;gap:7px;margin:15px 0 0}.workflow-tile .tile-metric-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.skill-tile .tile-metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.tile-metric{min-width:0;margin:0;padding:10px 11px;border:1px solid var(--border);border-radius:7px;background:rgba(255,255,255,.018)}.tile-metric dt{color:var(--text-3);font-size:8px;font-weight:750;letter-spacing:.08em;text-transform:uppercase}.tile-metric dd{min-width:0;margin:5px 0 0;color:var(--text);font-size:14px;font-weight:780;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tile-metric.signal dd{color:var(--blue)}
+.tile-metric-grid{display:grid;gap:7px;margin:15px 0 0}.workflow-tile .tile-metric-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.tile-metric{min-width:0;margin:0;padding:10px 11px;border:1px solid var(--border);border-radius:7px;background:rgba(255,255,255,.018)}.tile-metric dt{color:var(--text-3);font-size:8px;font-weight:750;letter-spacing:.08em;text-transform:uppercase}.tile-metric dd{min-width:0;margin:5px 0 0;color:var(--text);font-size:14px;font-weight:780;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tile-metric.signal dd{color:var(--blue)}
 .workflow-step-preview{margin-top:15px}.workflow-step-preview-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;color:var(--text-3);font-size:9px;font-weight:780;letter-spacing:.08em;text-transform:uppercase}.workflow-step-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:8px;margin:0;padding:0;list-style:none}.workflow-step-tiles.compact{grid-template-columns:1fr}.workflow-step-tile{display:grid;min-width:0;grid-template-columns:27px minmax(0,1fr);gap:9px;align-items:start;padding:10px 11px;border:1px solid var(--border);border-radius:7px;background:rgba(255,255,255,.018)}.workflow-step-number{display:grid;width:27px;height:27px;place-items:center;border:1px solid rgba(242,138,26,.28);border-radius:6px;background:rgba(242,138,26,.075);color:var(--blue);font-size:10px;font-weight:850;font-variant-numeric:tabular-nums}.workflow-step-copy{min-width:0;color:var(--text-2);font-size:11px;line-height:1.48;text-wrap:pretty;overflow-wrap:anywhere}.workflow-step-more{margin-top:8px;color:var(--text-3);font-size:10px}.workflow-step-empty{padding:11px;border:1px dashed var(--border);border-radius:7px;color:var(--text-3);font-size:11px}
 .tile-card-meta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:13px}.tile-card-footer{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:12px 15px 12px 18px;border-top:1px solid var(--border);background:rgba(0,0,0,.18)}.tile-card-command{min-width:0;color:#b38a51;font:9px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.tile-card-footer .ledger-button{min-height:36px}.skill-detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:9px;margin-top:12px}.skill-detail-tile{min-width:0;padding:12px;border:1px solid var(--border);border-radius:7px;background:var(--surface2)}.skill-detail-tile .inbox-card-head{margin-bottom:7px}.skill-detail-tile .inbox-title{overflow-wrap:anywhere}
 .skill-availability{border-color:var(--border2);background:var(--surface2);color:var(--text-2)}.skill-availability.codex,.skill-availability.repository{border-color:rgba(50,215,75,.3);background:rgba(50,215,75,.075);color:var(--green)}.skill-availability.pending{border-color:rgba(242,138,26,.34);background:rgba(242,138,26,.085);color:var(--blue)}.skill-availability.other-agent{border-color:rgba(215,209,198,.24);background:rgba(215,209,198,.07);color:var(--text-2)}.skill-availability.telemetry,.skill-availability.archived,.skill-availability.unavailable{color:var(--text-3)}
-.inbox-title,.workflow-title{font-size:15px;font-weight:750;color:var(--text)}
+.inbox-title{font-size:15px;font-weight:750;color:var(--text)}
 .inbox-copy,.workflow-copy,.measurement-copy{font-size:13px;color:var(--text-2);line-height:1.55}
 .ledger-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;font-size:11px;color:var(--text-3)}
 .ledger-pill{border:1px solid var(--border);border-radius:999px;padding:4px 8px;background:var(--surface2)}
@@ -648,8 +642,6 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 @media(max-width:860px){.review-grid{grid-template-columns:1fr}.review-kpi-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.review-kpi:nth-child(3){border-left:0;border-top:1px solid var(--border)}.review-kpi:nth-child(4){border-top:1px solid var(--border)}.workflow-approval-summary{grid-template-columns:1fr}.workflow-approval-item+.workflow-approval-item{border-top:1px solid var(--border);border-left:0}.ledger-dialog{width:calc(100vw - 24px);max-height:calc(100vh - 24px)}.workflow-support-grid{grid-template-columns:1fr}}
 @media(max-width:600px){.product-hero,.product-section-head{align-items:flex-start;flex-direction:column}.product-count,.product-section-count{align-self:flex-start}.product-count small,.product-section-count small{text-align:left}.inbox-view-switch{grid-template-columns:1fr}.rule-grid{grid-template-columns:1fr}.ledger-dialog{width:calc(100vw - 12px);max-height:calc(100vh - 12px);border-radius:8px}.ledger-dialog-head{padding:19px 17px 16px}.ledger-dialog-body{padding:17px}.ledger-dialog-actions{padding-inline:17px;overflow-x:auto}.ledger-dialog-title{font-size:18px}.workflow-target-row{align-items:stretch;flex-direction:column}.workflow-toolbar{align-items:stretch}.workflow-filter-field{min-width:100%}.workflow-filter-summary{margin-left:0;padding:0}.ledger-action-spacer{display:none}.session-ledger-item{grid-template-columns:1fr}.session-ledger-side{display:flex;align-items:center;justify-content:space-between}.review-fact{grid-template-columns:82px minmax(0,1fr)}.impact-head{align-items:flex-start;flex-direction:column;gap:10px}.impact-status-stack{align-items:flex-start}.impact-comparison{grid-template-columns:1fr}.impact-arrow{transform:rotate(90deg)}.impact-explainer{grid-template-columns:1fr}}
 @media(max-width:600px){.tile-card-footer{grid-template-columns:1fr}.tile-card-footer .ledger-button{width:100%}.workflow-tile .tile-metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.workflow-tile .tile-metric:last-child{grid-column:1/-1}.tile-card-main{padding:16px 15px 13px}}
-.explore-subnav{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 18px;padding:6px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}
-.explore-link{appearance:none;border:0;border-radius:6px;background:transparent;color:var(--text-2);padding:8px 12px;font:600 12px inherit;cursor:pointer}.explore-link:hover,.explore-link.active{background:rgba(242,138,26,.12);color:var(--blue)}
 .badge-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .badge-grid .badge{white-space:normal;align-items:flex-start;height:100%}
 @media(max-width:1100px){
@@ -660,7 +652,7 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 }
 
 .impact-readiness{display:flex;flex-wrap:wrap;gap:8px 18px;margin:12px 0;padding:10px 12px;border:1px solid var(--border);border-radius:6px;color:var(--text-2);font-size:11px}.impact-readiness strong{color:var(--text)}.impact-readiness span:last-child{color:var(--blue)}.skill-usage-section{margin:0 0 18px}
-.skill-tile,.skill-tile[data-state="active"],.workflow-tile[data-state="active"]{--tile-accent:var(--skill)}
+.workflow-tile[data-state="active"]{--tile-accent:var(--skill)}
 .skill-availability.installed,.skill-availability.available{color:var(--skill)}
 .ledger-button[data-ledger-action="evidence"],.ledger-button[data-ledger-action="open-session"]{color:var(--evidence)}
 .ledger-button[data-ledger-action="review-skill"]{color:var(--skill)}
@@ -668,20 +660,21 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 /* Scan first; inspect the evidence only when a row is expanded. */
 .analysis-table-scroll{width:100%;overflow-x:auto;border:1px solid var(--glass-border);border-radius:7px;background:var(--panel)}
 .analysis-table{width:100%;border-collapse:collapse;text-align:left;font-size:12px;line-height:1.5}
-.analysis-table th,.analysis-table td{padding:13px 14px;vertical-align:top;border-bottom:1px solid var(--glass-border)}
+.analysis-table th,.analysis-table td{padding:10px 12px;vertical-align:top;border-bottom:1px solid var(--glass-border)}
 .analysis-table thead th{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600;white-space:nowrap;background:rgba(128,128,128,.04)}
-.analysis-table tbody th{font-weight:500;min-width:230px;max-width:330px}
-.analysis-table tbody td{min-width:105px}
+.analysis-table tbody th{font-weight:500;min-width:180px;max-width:360px}
+.analysis-table tbody td{min-width:78px}
 .analysis-table tbody tr:last-child td,.analysis-table tbody tr:last-child th{border-bottom:0}
 .analysis-summary:hover{background:rgba(242,138,26,.035)}
 .analysis-summary:has([aria-expanded="true"]){background:rgba(242,138,26,.065)}
 .analysis-toggle{display:flex;align-items:flex-start;gap:8px;width:100%;padding:0;border:0;background:none;color:var(--text);text-align:left;font:inherit;font-weight:600;cursor:pointer;line-height:1.5}
 .analysis-toggle:hover{color:#F28A1A}
+.analysis-toggle:has(.analysis-subline){display:block}
 .analysis-toggle:focus-visible,.analysis-table-scroll:focus-visible{outline:2px solid #F28A1A;outline-offset:3px}
 .analysis-chevron{display:inline-block;color:#F28A1A;font-size:19px;line-height:1.1;transition:transform .15s}
 .analysis-toggle[aria-expanded="true"] .analysis-chevron{transform:rotate(90deg)}
 .analysis-subline{display:block;font-size:11px;color:var(--muted);font-weight:400;margin-top:5px}
-.analysis-summary th>.analysis-subline{margin-left:18px}
+.analysis-summary th:has(.analysis-chevron)>.analysis-subline{margin-left:18px}
 .analysis-values{font-variant-numeric:tabular-nums;min-width:150px!important}
 .analysis-limitations{min-width:180px!important;max-width:280px;color:var(--text-2)}
 .analysis-table .impact-status{font-size:11px;white-space:normal;line-height:1.4}
@@ -693,7 +686,7 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .impact-help{margin-bottom:16px;color:var(--muted);font-size:12px}
 .impact-help>summary{cursor:pointer;width:fit-content;padding:4px 0}
 .impact-help .impact-explainer{margin-top:12px}
-@media(max-width:800px){.analysis-table{min-width:1000px}.analysis-table th,.analysis-table td{padding:10px}.analysis-detail>td{padding:0 12px 12px}}
+@media(max-width:800px){.analysis-table th,.analysis-table td{padding:9px 10px}.analysis-detail>td{padding:0 12px 12px}}
 @media(prefers-reduced-motion:reduce){.analysis-chevron{transition:none}}
 .workflow-action-status:empty{display:none}
 .workflow-action-status{margin:12px 0;padding:12px 14px;border:1px solid var(--signal);border-radius:6px;color:var(--text-2);font-size:12px}
@@ -709,21 +702,37 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .workflow-enable-layout .review-panel{padding:14px}
 
 .workflow-create-form{display:grid;gap:20px;max-width:720px}.workflow-create-field{display:grid;gap:8px}.workflow-create-field label{color:var(--text);font-weight:650}.workflow-create-field .ledger-editor{min-height:90px}.workflow-create-field .review-panel-copy{margin:0}
+
+
+/* Keep the evidence next to the table while the drawer is open. */
+.ledger-dialog{
+  inset:0 0 0 auto;
+  width:min(760px,100%);
+  height:100dvh;
+  max-height:none;
+  margin:0;
+  border-width:0 0 0 1px;
+  border-radius:0;
+  background:var(--panel);
+}
+.ledger-dialog::backdrop{background:rgba(0,0,0,.46);backdrop-filter:none}
+.ledger-dialog-head{gap:12px;padding:18px 20px 15px}
+.ledger-dialog-body{padding:20px;overflow-wrap:anywhere}
+.ledger-dialog .review-grid,.ledger-dialog .workflow-support-grid{grid-template-columns:minmax(0,1fr)}
+.ledger-dialog .session-ledger-head>.ledger-pill{flex-shrink:0}
+.ledger-dialog .analysis-toggle{display:block}
+body:has(.ledger-dialog[open]){overflow:hidden}
+.ledger-dialog-actions{flex-wrap:wrap;padding-inline:20px}
+.ledger-dialog-actions:empty{display:none}
+@media(max-width:720px){
+  .ledger-dialog{inset:auto 0 0;width:100%;height:min(88dvh,880px);border-width:1px 0 0;border-radius:8px 8px 0 0}
+  .ledger-dialog-head,.ledger-dialog-body,.ledger-dialog-actions{padding-inline:14px}
+}
 /* ── Chart wrappers ──────────────────────────────────────── */
 .chart-box{position:relative}
 .explore-view-status{padding:18px;border-color:rgba(242,138,26,.28);background:rgba(242,138,26,.055);color:var(--text-2);font-size:13px;line-height:1.5}
 .explore-view-status.error{border-color:rgba(255,69,58,.28);background:rgba(255,69,58,.055);color:#ff8b84}
 [id^="tab-explore-"]>[hidden]{display:none!important}
-.explore-scope{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 0 20px;padding:16px 0;border-bottom:1px solid var(--glass-border)}
-.explore-scope[hidden]{display:none}
-.explore-scope-copy{min-width:0;max-width:75ch}
-.explore-scope-copy strong{display:block;color:var(--text);font-size:14px;overflow-wrap:anywhere}
-.explore-scope-copy p{margin:6px 0 0;color:var(--text-2);font-size:13px;line-height:1.5}
-.explore-scope-actions{display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0}
-.explore-scope-actions button{min-height:44px}
-.report-shell[data-view="explore"][data-explore-view="context"]{grid-template-columns:minmax(0,1fr)}
-@media(max-width:900px){.explore-scope{align-items:flex-start;flex-direction:column}}
-
 /* ── Heatmap ─────────────────────────────────────────────── */
 .heatmap-wrap{overflow-x:auto;padding-bottom:4px}
 .heatmap-outer{display:flex;gap:8px;width:100%}
@@ -809,23 +818,17 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .usage-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin:8px 0 20px}
 .usage-heading h2{font-size:27px;letter-spacing:-.035em;line-height:1.15;margin:6px 0 8px;color:var(--text)}
 .usage-heading p{font-size:12px;line-height:1.6;color:var(--text-3);margin:0;max-width:540px}
-.usage-eyebrow,.usage-scope-tag,.usage-unit,.usage-code{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
-.usage-eyebrow{color:var(--orange)}
-.usage-scope-tag{border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text-3);white-space:nowrap}
-.usage-headlines,.usage-widget-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:14px}
+.usage-unit,.usage-code{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.usage-widget-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:14px}
 .usage-widget{min-width:0;padding:18px;background:var(--surface1,#10100f);border:1px solid var(--border,rgba(245,242,234,.09));border-radius:8px}
-.usage-cost{border-color:rgba(242,138,26,.35);background:linear-gradient(145deg,rgba(242,138,26,.055),var(--surface1,#10100f) 70%)}
 .usage-widget-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:14px}
 .usage-widget-head h3{font-size:13px;font-weight:600;line-height:1.4;margin:0;color:var(--text);text-wrap:balance}
 .usage-code{color:var(--orange);margin-right:6px;font-size:9px}
 .usage-unit{color:var(--text-3);text-align:right;line-height:1.4;font-size:9px}
 .usage-big{font-size:clamp(25px,2.4vw,38px);line-height:1.12;letter-spacing:-.04em;font-variant-numeric:tabular-nums;margin:0 0 18px;overflow-wrap:anywhere}
 .usage-big strong{font-weight:650}
-.usage-cost .usage-big{color:var(--orange)}
 .usage-big-small{font-size:28px;margin-bottom:20px}
 .usage-big>span{display:block;font-size:11px;font-weight:400;letter-spacing:0;color:var(--text-3);margin-top:7px}
-.usage-coverage,.usage-inline-metric{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px;line-height:1.5;color:var(--text-2)}
-.usage-coverage b,.usage-inline-metric strong{color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
 .usage-proportion{height:4px;overflow:hidden;border-radius:3px;background:var(--surface3);margin-top:8px;margin-bottom:12px}
 .usage-proportion>span{display:block;height:100%;background:var(--orange);border-radius:inherit}
 .usage-copy{font-size:11px;line-height:1.65;color:var(--text-3);margin:12px 0 0;overflow-wrap:anywhere}
@@ -838,7 +841,6 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .usage-token-buckets dd{font-size:15px}
 .usage-token-buckets small{display:block;font-size:9px;color:var(--text-3);margin-top:3px;line-height:1.4}
 .usage-link{display:inline-flex;align-items:center;gap:8px;border:0;background:none;padding:0;font:inherit;font-size:11px;color:var(--orange);cursor:pointer;text-decoration:none;line-height:1.5;text-align:left}
-.usage-headline>.usage-link{margin-top:14px}
 .usage-link:hover{text-decoration:underline;text-underline-offset:3px}
 .usage-link:focus-visible,.usage-evidence>summary:focus-visible,.usage-diagnostics>summary:focus-visible{outline:2px solid var(--orange);outline-offset:5px;border-radius:2px}
 .usage-chart-grid .chart-box{height:205px;margin-top:16px}
@@ -884,28 +886,22 @@ main{max-width:none;margin:0;padding:14px max(14px,env(safe-area-inset-right)) 1
 .usage-diagnostics>summary>span:last-child{font-size:10px;font-weight:400;color:var(--text-3)}
 .usage-diagnostics>.usage-copy{margin:-6px 0 20px}
 .usage-legacy-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:12px 0}
-@container(max-width:550px){.usage-headlines,.usage-widget-grid,.usage-model-grid{grid-template-columns:1fr}.usage-model-grid>.chart-box{height:200px}.usage-delivery-counts{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media(max-width:700px){.usage-headlines,.usage-widget-grid{grid-template-columns:1fr}.usage-model-grid{grid-template-columns:1fr}.usage-model-grid>.chart-box{height:200px}.usage-delivery-counts{grid-template-columns:repeat(3,minmax(0,1fr))}.usage-big{font-size:32px}.usage-heading h2{font-size:24px}.usage-widget{padding:16px}}
+@container(max-width:550px){.usage-widget-grid,.usage-model-grid{grid-template-columns:1fr}.usage-model-grid>.chart-box{height:200px}.usage-delivery-counts{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:700px){.usage-widget-grid{grid-template-columns:1fr}.usage-model-grid{grid-template-columns:1fr}.usage-model-grid>.chart-box{height:200px}.usage-delivery-counts{grid-template-columns:repeat(3,minmax(0,1fr))}.usage-big{font-size:32px}.usage-heading h2{font-size:24px}.usage-widget{padding:16px}}
 
 .explore-view-status.loading{display:flex;align-items:center;gap:10px}
 .explore-view-status.loading::before{content:"";width:14px;height:14px;flex:0 0 14px;border:2px solid rgba(242,138,26,.25);border-top-color:var(--orange);border-radius:50%;animation:explore-loading 1s linear infinite}
 @keyframes explore-loading{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.explore-view-status.loading::before{animation:none}}
+
+
+.usage-summary-table{margin-bottom:14px}
+.usage-summary-table .analysis-table th:first-child{min-width:116px}
+.usage-summary-table .usage-copy{margin:0}
+.usage-summary-table .usage-evidence{margin-top:6px}
+.usage-summary-table .usage-token-buckets{margin:6px 0}
 /* ── Persistent report shell ─────────────────────────────── */
-.report-shell{
-  display:grid;
-  grid-template-columns:minmax(280px,360px) minmax(0,1fr) minmax(300px,360px);
-  gap:12px;
-  align-items:start;
-}
-body.sessions-rail-collapsed .report-shell[data-view="sessions"]{
-  grid-template-columns:48px minmax(0,1fr) minmax(300px,360px);
-}
-.report-shell[data-view="explore"]{
-  grid-template-columns:minmax(0,1fr) minmax(280px,320px);
-}
-.report-shell:not([data-view="sessions"]):not([data-view="explore"]){display:block}
-.report-shell [hidden],#hdr-range[hidden]{display:none!important}
+.report-shell [hidden],.section-sidebar [hidden],#hdr-range[hidden]{display:none!important}
 .product-hero.view-intro{
   align-items:flex-start;
   padding:0 0 12px;
@@ -920,170 +916,67 @@ body.sessions-rail-collapsed .report-shell[data-view="sessions"]{
 .view-intro .product-count{display:flex;align-items:baseline;gap:6px;font-size:22px}
 .view-intro .product-count small{font-size:11px;letter-spacing:0;text-transform:none}
 .view-scope,.view-intro p.view-scope{margin-top:6px;color:var(--muted);font-size:12px;line-height:1.5}
-.filter-scope-note{margin-bottom:12px}
 .report-content .evidence-unavailable-message{padding:9px 12px;margin-bottom:12px;font-size:12px;line-height:1.5}
 .report-content{min-width:0}
-.session-rail,
-.filter-rail{
-  position:sticky;
-  top:12px;
-  height:calc(100dvh - 150px);
-  min-height:480px;
-  min-width:0;
-}
-.session-rail{
-  display:flex;
-  flex-direction:column;
-  gap:8px;
-}
-.filter-rail{
-  display:block;
-}
-.rail-head,
-.shell-toolbar{
-  display:flex;
-  align-items:center;
-  gap:8px;
-}
-.rail-head{
-  justify-content:space-between;
-  min-height:40px;
-  padding:0 2px;
-}
-.shell-toolbar{
-  justify-content:flex-end;
-  height:0;
-  margin:0;
-  position:sticky;
-  top:12px;
-  z-index:25;
-  pointer-events:none;
-}
-.rail-title{
-  min-width:0;
-  color:var(--text-2);
-  font-size:12px;
-  font-weight:700;
-  letter-spacing:.1em;
-  text-transform:uppercase;
-}
-.rail-toggle{
-  appearance:none;
-  width:36px;
-  height:36px;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  flex-shrink:0;
-  border:1px solid rgba(255,255,255,.12);
-  border-radius:8px;
-  background:rgba(255,255,255,.03);
-  color:var(--text-2);
-  cursor:pointer;
-}
-.rail-toggle:hover{
-  color:var(--text);
-  background:rgba(255,255,255,.06);
-}
-.rail-toggle:focus-visible{
-  outline:2px solid rgba(255,177,86,.9);
-  outline-offset:2px;
-}
-.rail-toggle-lines,
-.rail-toggle-lines::before,
-.rail-toggle-lines::after{
-  display:block;
-  width:16px;
-  height:2px;
-  border-radius:999px;
-  background:currentColor;
-}
-.rail-toggle-lines{
+/* Sessions workspace and shared scope controls */
+.dashboard-scope{
   position:relative;
-}
-.rail-toggle-lines::before,
-.rail-toggle-lines::after{
-  content:'';
-  position:absolute;
-  left:0;
-}
-.rail-toggle-lines::before{top:-5px}
-.rail-toggle-lines::after{top:5px}
-.shell-left-toggle{display:none}
-.shell-filter-toggle{display:none}
-body.sessions-rail-collapsed .session-rail{
-  align-items:center;
-}
-body.sessions-rail-collapsed .session-rail .rail-head{
-  justify-content:center;
-  width:100%;
-}
-body.sessions-rail-collapsed .session-rail .sb-left,
-body.sessions-rail-collapsed .session-rail .rail-title{
-  display:none;
-}
-
-/* ── Session Browser — Detail Pane ───────────────────────── */
-.session-browser{
-  display:block;
-  height:calc(100dvh - 150px);
-  min-height:480px;
-  max-height:calc(100dvh - 150px);
-}
-
-/* Left rail — session list */
-.sb-left{
-  background:var(--surface);
-  backdrop-filter:saturate(180%) blur(var(--glass-blur));
-  -webkit-backdrop-filter:saturate(180%) blur(var(--glass-blur));
-  border:1px solid var(--glass-border);
-  border-radius:var(--radius);
   display:flex;
-  flex-direction:column;
-  overflow:hidden;
-  height:calc(100% - 48px);
-  min-height:0;
+  align-items:center;
+  justify-content:space-between;
+  flex-wrap:wrap;
+  gap:8px 16px;
+  margin-bottom:14px;
+  padding-bottom:12px;
+  border-bottom:1px solid var(--glass-border);
+}
+.dashboard-scope-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-inline-start:auto}
+.dashboard-scope-actions .ledger-button{min-height:36px}
+.explore-scope-label{min-width:0;color:var(--text-2);font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.workspace-heading{min-width:0}
+.workspace-heading h2{margin:0;font-size:22px;line-height:1.3}
+.workspace-heading p{margin-top:4px;color:var(--muted);font-size:12px}
+#session-detail-view{scroll-margin-top:80px}
+.session-detail-actions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.session-compare{margin-top:16px}
+.session-compare>summary,.section-filters>summary{cursor:pointer;color:var(--text-2);font-weight:600}
+.session-compare[open]>summary{margin-bottom:12px}
+.section-filters>summary{display:flex;align-items:center;gap:6px;list-style:none}
+.section-filters>summary::-webkit-details-marker{display:none}
+.section-filters>summary::after{content:"";width:5px;height:5px;margin:0 2px 3px 4px;border:solid currentColor;border-width:0 1px 1px 0;transform:rotate(45deg)}
+.section-filters[open]>summary::after{margin-bottom:0;transform:rotate(225deg)}
+#scope-filter-count{padding:0 5px;border-radius:4px;background:var(--surface3);color:var(--signal-2);font-size:11px}
+.section-filters .filter-select{min-width:0}
+.section-filters .filter-chip{overflow-wrap:anywhere}
+.section-sidebar .workflow-toolbar{display:grid;gap:10px;margin:0;padding:0;border:0;background:none}
+.section-sidebar .workflow-filter-field{min-width:0;width:100%}
+.section-sidebar .workflow-filter-summary{margin:0;padding:0;white-space:normal}
+.section-sidebar .workflow-filter-field>select,.section-sidebar .workflow-filter-field>input{width:100%;min-width:0}
+.session-row-current{background:rgba(242,138,26,.065)}
+#sb-list .sb-card-badge{display:inline-block;white-space:nowrap}
+#sb-list .analysis-table td{font-variant-numeric:tabular-nums}
+#sb-list .analysis-table th:first-child{min-width:180px}
+@media(max-width:720px){
+  .section-sidebar .workflow-toolbar{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #skill-scope-controls .workflow-filter-field,.section-sidebar .workflow-filter-summary{grid-column:1/-1}
 }
 .global-filter-shell{
-  margin:0;
-  padding:10px 12px 8px;
-  background:rgba(255,255,255,.02);
-  backdrop-filter:saturate(180%) blur(var(--glass-blur));
-  -webkit-backdrop-filter:saturate(180%) blur(var(--glass-blur));
-  border:1px solid var(--glass-border);
-  border-radius:8px;
-  box-shadow:none;
-  height:100%;
+  position:absolute;
+  z-index:10;
+  inset-block-start:100%;
+  inset-inline-end:0;
+  width:min(100%,480px);
+  max-height:min(65dvh,470px);
   overflow:auto;
+  padding:14px;
+  background:var(--surface);
+  border:1px solid var(--border2);
+  border-radius:8px;
+  box-shadow:var(--panel-shadow);
 }
-.global-filter-top{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:12px;
-  margin-bottom:8px;
-}
-.global-filter-title{
-  font-size:12px;
-  font-weight:700;
-  letter-spacing:.1em;
-  text-transform:uppercase;
-  color:var(--text-3);
-}
-.global-filter-meta{font-size:12px;color:var(--text-2);margin-top:2px}
-.global-filter-actions{
-  display:flex;
-  align-items:center;
-  gap:8px;
-  flex-wrap:wrap;
-  justify-content:flex-end;
-}
-.global-filter-grid{
-  display:grid;
-  grid-template-columns:1fr;
-  gap:8px;
-  align-items:center;
-}
+.global-filter-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.global-filter-title{margin:0;color:var(--text);font-size:14px;font-weight:650}
+.global-filter-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:start}
 .filter-field{display:flex;flex-direction:column;gap:4px}
 .filter-label{
   font-size:11px;
@@ -1135,26 +1028,6 @@ body.sessions-rail-collapsed .session-rail .rail-title{
   font-size:13px;
   line-height:1;
 }
-.filter-compact-toggle,
-.filter-sheet-close{
-  appearance:none;
-  border:1px solid rgba(255,255,255,.12);
-  background:rgba(255,255,255,.03);
-  color:var(--text-2);
-  font-size:12px;
-  font-weight:600;
-  border-radius:8px;
-  padding:6px 9px;
-  cursor:pointer;
-}
-.filter-compact-toggle{display:none}
-.filter-rail .filter-field-secondary{display:flex}
-.filter-compact-toggle:hover,
-.filter-sheet-close:hover{
-  color:var(--text);
-  background:rgba(255,255,255,.06);
-}
-.filter-sheet-close{display:none}
 .filter-clear{
   appearance:none;
   border:none;
@@ -1165,7 +1038,6 @@ body.sessions-rail-collapsed .session-rail .rail-title{
   cursor:pointer;
 }
 .filter-clear:hover{color:var(--text)}
-.sb-list-head{padding:8px 10px 0;font-size:12px;color:var(--text-3)}
 .sb-search{
   width:100%;
   background:var(--surface2);
@@ -1214,136 +1086,6 @@ body.sessions-rail-collapsed .session-rail .rail-title{
   outline-offset:1px;
   color:var(--text);
 }
-.sb-list{
-  flex:1;
-  min-height:0;
-  overflow-y:auto;
-  padding:4px;
-  overscroll-behavior:contain;
-}
-.sb-list::-webkit-scrollbar{width:5px}
-.sb-list::-webkit-scrollbar-track{background:transparent}
-.sb-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:3px}
-@media(max-width:1100px){
-  .filter-compact-toggle{display:none}
-}
-.global-filter-backdrop{
-  position:fixed;
-  inset:0;
-  background:rgba(5,7,10,.5);
-  backdrop-filter:blur(6px);
-  z-index:39;
-}
-body.rail-overlay-open{overflow:hidden}
-@media(max-width:900px){
-  .report-shell{display:block}
-  .shell-toolbar{
-    position:sticky;
-    top:0;
-    z-index:20;
-    height:auto;
-    margin-bottom:10px;
-    padding:8px 0;
-    background:linear-gradient(180deg,rgba(13,13,15,.96),rgba(13,13,15,.86));
-    backdrop-filter:saturate(180%) blur(var(--glass-blur));
-    pointer-events:auto;
-    justify-content:space-between;
-  }
-  .shell-left-toggle{display:inline-flex}
-  .shell-filter-toggle{display:inline-flex}
-  .session-rail,
-  .filter-rail{
-    position:fixed;
-    top:max(10px, env(safe-area-inset-top));
-    bottom:max(10px, env(safe-area-inset-bottom));
-    z-index:40;
-    width:min(86vw,360px);
-    height:auto;
-    min-height:0;
-    transition:transform .18s ease;
-  }
-  .session-rail{
-    left:10px;
-    transform:translateX(calc(-100% - 20px));
-  }
-  .filter-rail{
-    right:10px;
-    display:block;
-    transform:translateX(calc(100% + 20px));
-  }
-  body.sessions-rail-open .session-rail,
-  body.filters-rail-open .filter-rail{
-    transform:translateX(0);
-  }
-  .session-rail .rail-head,
-  .filter-rail .rail-head{
-    background:rgba(16,18,24,.98);
-    border:1px solid var(--glass-border);
-    border-bottom:none;
-    border-radius:8px 8px 0 0;
-    padding:8px 10px;
-  }
-  .session-rail .sb-left{
-    height:calc(100% - 57px);
-    border-radius:0 0 var(--radius) var(--radius);
-  }
-  .filter-rail .global-filter-shell{
-    height:calc(100% - 57px);
-    border-radius:0 0 8px 8px;
-    background:rgba(16,18,24,.98);
-  }
-  body.sessions-rail-collapsed .session-rail{
-    align-items:stretch;
-  }
-  body.sessions-rail-collapsed .session-rail .sb-left,
-  body.sessions-rail-collapsed .session-rail .rail-title{
-    display:flex;
-  }
-  .filter-sheet-close{display:inline-flex}
-}
-
-/* Session card */
-.sb-card{
-  appearance:none;
-  width:100%;
-  text-align:left;
-  background:transparent;
-  border-top:none;
-  border-right:none;
-  border-bottom:none;
-  padding:9px 10px;
-  border-radius:var(--radius-sm);
-  cursor:pointer;
-  border-left:3px solid transparent;
-  transition:background-color .15s ease, border-color .15s ease, transform .15s ease;
-  margin-bottom:2px;
-  touch-action:manipulation;
-}
-.sb-card:hover{background:rgba(255,255,255,.04)}
-.sb-card.active{
-  background:rgba(242,138,26,.08);
-  border-left-color:var(--blue);
-}
-.sb-card:focus-visible{
-  outline:2px solid rgba(255,177,86,.9);
-  outline-offset:1px;
-}
-.sb-card-header{display:flex;align-items:center;gap:6px;margin-bottom:4px}
-.sb-card-agent-icon{width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--text-2)}
-.sb-card-agent-icon svg{width:16px;height:16px;display:block;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.sb-card-agent{font-size:12px;font-weight:600;color:var(--text)}
-.sb-card-time{font-size:11px;color:var(--text-3);margin-left:auto;flex-shrink:0}
-.sb-card-prompt{
-  font-size:12px;
-  font-style:italic;
-  color:var(--text-3);
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-  margin-bottom:4px;
-  line-height:1.3;
-}
-.sb-card-badges{display:flex;gap:4px;flex-wrap:wrap}
 .sb-card-badge{
   font-size:9px;
   font-weight:600;
@@ -1353,31 +1095,17 @@ body.rail-overlay-open{overflow:hidden}
   color:var(--text-2);
 }
 
-/* Right panel — session detail */
-.sb-right{
-  background:rgba(20,20,22,.72);
-  backdrop-filter:saturate(180%) blur(var(--glass-blur));
-  -webkit-backdrop-filter:saturate(180%) blur(var(--glass-blur));
-  border:1px solid var(--glass-border);
-  border-radius:var(--radius);
-  display:flex;
-  flex-direction:column;
-  overflow:hidden;
-  height:100%;
-  min-height:0;
-}
+/* Session detail */
 #sb-detail{
   display:flex;
   flex-direction:column;
-  flex:1;
-  height:100%;
-  min-height:0;
+  height:calc(100dvh - 150px);
+  min-height:480px;
+  background:var(--panel);
+  border:1px solid var(--glass-border);
+  border-radius:var(--radius);
   overflow:hidden;
 }
-@media(max-width:900px){
-  .sb-right{border-radius:var(--radius)}
-}
-
 .sb-detail-header{
   padding:16px 18px;
   border-bottom:1px solid var(--glass-border);
@@ -2818,12 +2546,7 @@ body.rail-overlay-open{overflow:hidden}
   .telemetry-span-stack{padding-left:calc(var(--tree-depth, 0) * 12px + 18px)}
 }
 @media(max-width:640px){
-  .session-browser{
-    height:calc(100dvh - 108px);
-    min-height:0;
-    max-height:none;
-  }
-  .sb-list-head{padding:8px 10px}
+  #sb-detail{height:calc(100dvh - 120px);min-height:420px}
   .sb-detail-header-row{gap:8px;margin-bottom:6px}
   .sb-detail-model{font-size:11px}
   .sb-detail-stats{grid-template-columns:1fr}
@@ -2917,12 +2640,11 @@ body.rail-overlay-open{overflow:hidden}
   font-weight:900;
 }
 /* ── Graph panels ────────────────────────────────────────── */
-.graph-svg{width:100%;overflow:visible}
+.graph-svg{display:block;width:100%;overflow:visible}
 .graph-svg text{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif}
 .semantic-graph-shell{position:relative;height:620px;border:1px solid var(--glass-border);border-radius:8px;overflow:hidden;background:radial-gradient(circle at 50% 45%,rgba(255,255,255,.045),rgba(255,255,255,.012) 42%,rgba(0,0,0,.22))}
-.semantic-graph-toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap}
-.semantic-graph-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.semantic-graph-toolbar select{min-height:32px;border:1px solid var(--glass-border);border-radius:6px;background:rgba(0,0,0,.24);color:var(--text-1);padding:4px 8px;font:inherit;font-size:12px}
+.semantic-graph-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.semantic-graph-controls select{max-width:100%;min-height:32px;border:1px solid var(--glass-border);border-radius:6px;background:rgba(0,0,0,.24);color:var(--text-1);padding:4px 8px;font:inherit;font-size:12px}
 .semantic-graph-context{margin:-4px 0 12px;color:var(--text-3);font-size:11px;line-height:1.5}
 .semantic-graph-svg{display:block;width:100%;height:100%;cursor:grab}
 .semantic-graph-svg:active{cursor:grabbing}
@@ -2956,6 +2678,68 @@ body.rail-overlay-open{overflow:hidden}
 .graph-legend-item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-3)}
 .graph-legend-dot{width:10px;height:10px;border-radius:50%}
 
+/* Keep widget geometry stable while the selected graph scope is loading. */
+.graph-view-status{
+  position:absolute;
+  width:1px;
+  height:1px;
+  overflow:hidden;
+  clip-path:inset(50%);
+  white-space:nowrap;
+}
+.graph-widget-body{position:relative;min-width:0;min-height:var(--graph-widget-height)}
+.graph-widget-semantic{--graph-widget-height:730px}
+.graph-widget-sequence{--graph-widget-height:392px}
+.graph-widget-network{--graph-widget-height:488px}
+.graph-widget-timeline{--graph-widget-height:280px}
+.graph-widget-matrix{--graph-widget-height:492px}
+.graph-widget-content{min-width:0}
+.graph-widget:not([data-presentation="data"]) .graph-widget-content{visibility:hidden}
+.graph-widget-notice{
+  position:absolute;
+  top:8px;
+  right:8px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  max-width:calc(100% - 16px);
+  padding:5px 9px;
+  border:1px solid var(--glass-border);
+  border-radius:6px;
+  background:var(--surface);
+  color:var(--text-2);
+  font-size:12px;
+  line-height:1.5;
+}
+.graph-widget-notice[hidden],.graph-widget-notice button[hidden]{display:none}
+.graph-widget[data-presentation="placeholder"] .graph-widget-notice{
+  inset:0;
+  max-width:none;
+  justify-content:center;
+  flex-wrap:wrap;
+  align-content:center;
+  padding:16px;
+  text-align:center;
+}
+.graph-widget[data-presentation="placeholder"]:is([data-state="loading"],[data-state="preparing"]) .graph-widget-notice::before{
+  content:"";
+  width:min(72%,320px);
+  height:52px;
+  margin:0 auto 6px;
+  flex:0 0 100%;
+  background:
+    linear-gradient(var(--surface3),var(--surface3)) center top / min(72%,320px) 10px no-repeat,
+    linear-gradient(var(--surface3),var(--surface3)) center 20px / min(54%,240px) 10px no-repeat,
+    linear-gradient(var(--surface3),var(--surface3)) center 40px / min(38%,168px) 10px no-repeat;
+}
+.graph-widget[data-presentation="placeholder"] .graph-widget-notice span{max-width:44ch}
+.graph-widget[data-state="error"] .graph-widget-notice{border-color:var(--border2)}
+.graph-widget-empty{margin:0 0 12px;color:var(--text-3);font-size:13px}
+@media(max-width:720px){
+  .semantic-graph-shell{height:440px}
+  .graph-widget-semantic{--graph-widget-height:560px}
+}
+
 /* ── Footer ──────────────────────────────────────────────── */
 footer{text-align:center;padding:14px 24px;font-size:13px;color:var(--text-3);border-top:1px solid var(--glass-border)}
 footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
@@ -2965,7 +2749,6 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   .hm-cell,
   .hour-bar,
   .sb-pill,
-  .sb-card,
   .sb-load-btn,
   .report-loader,
   .loader-mark,
@@ -3033,7 +2816,6 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
     <button class="tab" id="tab-button-impact" type="button" role="tab" aria-label="Impact" title="Impact" aria-selected="false" aria-controls="tab-impact" tabindex="-1" data-tab="impact"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5h16"/><path d="M6.5 16v-4m5 4V7m5 9v-6"/><circle cx="6.5" cy="10" r="1"/><circle cx="11.5" cy="5" r="1"/><circle cx="16.5" cy="8" r="1"/></svg><span class="nav-label">Impact</span></button>
     <button class="tab" id="tab-button-explore" type="button" role="tab" aria-label="Explore" title="Explore" aria-selected="false" aria-controls="tab-explore-usage" tabindex="-1" data-tab="explore"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="7" r="2"/><circle cx="8" cy="18" r="2"/><circle cx="18" cy="17" r="2"/><path d="m8 6.5 8 1m-8.5.5 0 8m2 1 6.5.5m1-8v5.5"/></svg><span class="nav-label">Explore</span></button>
   </nav>
-  <div class="app-rail-foot" aria-hidden="true"><span class="app-status-dot"></span></div>
 </aside>
 
 <!-- ── Header ── -->
@@ -3089,68 +2871,114 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <div class="dashboard-layout">
 <aside class="section-sidebar" id="section-sidebar" aria-label="Current section navigation">
   <div class="section-sidebar-head">
-    <h2 id="section-nav-title">Sessions</h2>
-    <p id="section-nav-description">Browse captured agent work.</p>
+    <h2 id="section-nav-title">Session scope</h2>
   </div>
-  <nav class="explore-subnav section-subnav" id="section-explore-nav" aria-label="Explore views" hidden>
-    <button class="explore-link active" type="button" data-explore-view="usage" aria-current="page">Usage &amp; delivery</button>
+  <nav class="section-subnav" id="section-explore-nav" aria-label="Explore views" hidden>
+    <button class="explore-link" type="button" data-explore-view="usage" aria-current="page">Usage &amp; delivery</button>
     <button class="explore-link" type="button" data-explore-view="tools">Tools &amp; MCP</button>
     <button class="explore-link" type="button" data-explore-view="graph">Graph</button>
     <button class="explore-link" type="button" data-explore-view="context">Context &amp; system</button>
   </nav>
-  <div class="section-scope-note" id="section-scope-note">Local evidence from your captured sessions.</div>
+  <div class="workflow-toolbar" id="workflow-scope-controls" aria-label="Workflow filters" hidden>
+    <div class="workflow-filter-field"><label for="workflow-type-filter">Behavior</label><select id="workflow-type-filter"><option value="all">All behavior types</option><option value="recovery">Recovery</option><option value="verification">Verification</option><option value="exploration">Exploration</option><option value="proven_pattern">Proven Pattern</option></select></div>
+    <div class="workflow-filter-field"><label for="workflow-status-filter">State</label><select id="workflow-status-filter"><option value="reviewable">Current suggestions &amp; active</option><option value="history">History</option><option value="all">All states</option><option value="pending">Suggestions</option><option value="approved">Approved</option><option value="active">Active</option><option value="rolled_back">Rolled Back</option><option value="stale">Retired suggestions</option><option value="rejected">Dismissed / rejected</option></select></div>
+    <div class="workflow-filter-summary" id="workflow-filter-summary" aria-live="polite"></div>
+  </div>
+  <div class="workflow-toolbar" id="skill-scope-controls" aria-label="Skill filters" hidden>
+      <div class="workflow-filter-field skill-search-field"><label for="skill-search">Search skills</label><input id="skill-search" type="search" placeholder="Name, purpose, agent, state, or installation…" autocomplete="off" spellcheck="false" aria-controls="skill-registry"/></div>
+      <div class="workflow-filter-summary" id="skill-filter-summary" aria-live="polite"></div>
+    </div>
+  <p class="section-scope-note" id="section-scope-note"></p>
+  <p class="section-scope-note" id="inactive-scope" hidden></p>
 </aside>
 <main id="main-content">
 
 <div class="report-shell" id="report-shell" data-view="sessions">
-  <aside class="session-rail" id="session-rail" aria-label="Sessions">
-    <div class="rail-head">
-      <div class="rail-title">Sessions</div>
-      <button type="button" class="rail-toggle" id="session-rail-toggle" aria-label="Toggle sessions" aria-expanded="true">
-        <span class="rail-toggle-lines" aria-hidden="true"></span>
-      </button>
-    </div>
-    <div class="sb-left">
-      <div class="sb-list-head" id="sb-list-head"></div>
-      <div class="sb-list" id="sb-list"></div>
-    </div>
-  </aside>
-
   <div class="report-content">
-    <div class="shell-toolbar" id="report-panel-controls" aria-label="Report panels">
-      <button type="button" class="rail-toggle shell-left-toggle" id="session-rail-open" aria-label="Open sessions" aria-expanded="true">
-        <span class="rail-toggle-lines" aria-hidden="true"></span>
-      </button>
-      <button type="button" class="rail-toggle shell-filter-toggle" id="filter-sheet-open" aria-label="Toggle filters" aria-expanded="false">
-        <span class="rail-toggle-lines" aria-hidden="true"></span>
-      </button>
+    <div class="dashboard-scope" id="dashboard-scope">
+      <div class="workspace-heading" id="session-scope-summary">
+        <h2 id="session-table-heading" tabindex="-1">Sessions</h2>
+        <p id="sb-list-head" role="status"></p>
+      </div>
+      <p id="explore-scope-label" class="explore-scope-label" role="status" aria-live="polite" aria-atomic="true" hidden></p>
+      <div class="dashboard-scope-actions">
+        <button id="explore-session-change" class="ledger-button" type="button" hidden>Choose session</button>
+        <button id="explore-session-clear" class="ledger-button" type="button" hidden>Clear session</button>
+        <details class="section-filters" id="section-filters">
+          <summary class="ledger-button">Filters <span id="scope-filter-count" hidden></span></summary>
+          <section class="global-filter-shell" id="global-filter-shell" aria-label="Session filters">
+            <div class="global-filter-top">
+              <h3 class="global-filter-title">Session filters</h3>
+              <button type="button" class="filter-clear" id="filter-clear">Clear filters</button>
+            </div>
+            <div class="global-filter-grid" id="global-filter-grid">
+              <div class="filter-field">
+                <label class="filter-label" for="sb-search">Search</label>
+                <input type="text" class="sb-search" id="sb-search" name="session-search" autocomplete="off" spellcheck="false" placeholder="Prompt, model, ID…"/>
+              </div>
+              <div class="filter-field">
+                <label class="filter-label" for="filter-model">Model</label>
+                <select class="filter-select" id="filter-model">
+                  <option value="all">All models</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <label class="filter-label" for="filter-status">Status</label>
+                <select class="filter-select" id="filter-status">
+                  <option value="all">All sessions</option>
+                  <option value="completed">Completed</option>
+                  <option value="active">Not completed</option>
+                  <option value="recovered">Recovered failures</option>
+                  <option value="failing">Has failures</option>
+                </select>
+              </div>
+              <div class="filter-field filter-field-secondary">
+                <label class="filter-label" for="filter-range">Range</label>
+                <select class="filter-select" id="filter-range">
+                  <option value="all">All time</option>
+                  <option value="24h">Last 24 hours</option>
+                  <option value="7d">Last 7 days</option>
+                  <option value="30d">Last 30 days</option>
+                </select>
+              </div>
+              <div class="filter-field filter-field-secondary" id="session-sort-field">
+                <label class="filter-label" for="filter-sort">Sort</label>
+                <select class="filter-select" id="filter-sort">
+                  <option value="recent">Most recent</option>
+                  <option value="quality">Highest quality</option>
+                  <option value="tokens">Most tokens</option>
+                  <option value="cost">Most cost</option>
+                  <option value="duration">Longest sessions</option>
+                  <option value="events">Most events</option>
+                </select>
+              </div>
+            </div>
+            <div class="sb-agent-pills" id="sb-agent-pills">
+              <button class="sb-pill active" type="button" data-agent="all" aria-pressed="true">All agents</button>
+            </div>
+            <div class="filter-chip-row">
+              <div class="filter-chips" id="filter-chips"></div>
+            </div>
+          </section>
+        </details>
+      </div>
     </div>
-
-    <section id="explore-scope" class="explore-scope" aria-label="Explore session scope" hidden>
-      <div class="explore-scope-copy" aria-live="polite" aria-atomic="true">
-        <strong id="explore-scope-label">All matching sessions</strong>
-        <p id="explore-scope-detail"></p>
-      </div>
-      <div class="explore-scope-actions">
-        <button id="explore-session-change" class="ledger-button" type="button">Choose session</button>
-        <button id="explore-session-clear" class="ledger-button" type="button" hidden>All matching sessions</button>
-      </div>
-    </section>
 
 <!-- ════════════════════ SESSIONS BROWSER ════════════════════ -->
 <div class="tab-panel active" id="tab-sessions" role="tabpanel" aria-labelledby="tab-button-sessions">
-  <div class="session-browser">
-    <div class="sb-right">
-      <div id="sb-detail">
-        <div class="sb-empty">
-          <div class="sb-empty-icon" aria-hidden="true">&#9776;</div>
-          <div>Select a session to view its conversation timeline</div>
-        </div>
-      </div>
+  <section id="session-table-view" aria-labelledby="session-table-heading">
+    <div class="review-warning" id="session-list-status" role="status" hidden></div>
+    <div id="sb-list"></div>
+  </section>
+  <section id="session-detail-view" aria-label="Session detail" hidden>
+    <div class="session-detail-actions">
+      <button type="button" class="ledger-button" id="session-return">← Back to sessions</button>
+      <button type="button" class="ledger-button" id="session-explore">Explore this session</button>
     </div>
-  </div>
-  <div class="panel panel-no-hover">
-    <div class="panel-title">Compare Sessions <span style="color:var(--text-3);font-weight:400;font-size:11px">— select A then B</span></div>
+    <div class="sb-right" id="sb-detail"></div>
+  </section>
+  <details id="session-compare" class="panel panel-no-hover session-compare">
+    <summary>Compare sessions</summary>
       <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:flex-end">
         <div style="flex:1;min-width:200px">
         <label for="cmp-a" style="display:block;font-size:12px;color:var(--text-3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em">Session A</label>
@@ -3167,15 +2995,15 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
       <button id="cmp-clear" class="compare-clear" type="button" title="Clear selection">Clear</button>
     </div>
     <div id="cmp-result"></div>
-  </div>
+  </details>
 </div>
 
 <!-- ════════════════════ EXPLORE: USAGE ════════════════════ -->
 <div class="tab-panel" id="tab-explore-usage" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
   <div class="panel explore-view-status" id="usage-view-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
   <section class="usage-measurements" id="measurement-panel" aria-labelledby="usage-heading">
-    <div class="usage-heading"><div><span class="usage-eyebrow">Captured telemetry</span><h2 id="usage-heading">Usage &amp; delivery</h2><p id="measurement-scope"></p></div><span class="usage-scope-tag">M1–M7</span></div>
-    <div class="usage-headlines" id="measurement-summary"></div>
+    <div class="usage-heading"><div><h2 id="usage-heading">Usage &amp; delivery</h2><p id="measurement-scope"></p></div><a class="usage-link" href="#measurement-git">Git &amp; delivery ↓</a></div>
+    <div class="usage-summary-table" id="measurement-summary"></div>
     <div class="usage-widget-grid usage-chart-grid">
       <section class="usage-widget"><div class="usage-widget-head"><h3>Cost over time</h3><span class="usage-unit">USD</span></div><p class="usage-copy">Estimated cost of dated, priced observations.</p><div class="chart-box"><canvas id="agentCostChart"></canvas></div></section>
       <section class="usage-widget"><div class="usage-widget-head"><h3>Captured token mix</h3><span class="usage-unit">U / R / W / O</span></div><p class="usage-copy">Known token buckets in the selected scope.</p><div class="chart-box"><canvas id="tokenChart"></canvas></div></section>
@@ -3260,7 +3088,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <!-- ════════════════════ IMPACT ════════════════════ -->
 <div class="tab-panel" id="tab-impact" role="tabpanel" aria-labelledby="tab-button-impact" hidden>
   <div class="product-hero view-intro">
-    <div><h2>Impact</h2><p>Check whether later, comparable tasks support a workflow improvement.</p><p class="view-scope">Historical comparisons use their recorded cohort dates, not the selected activity date range. Expand a row to inspect the evidence.</p></div>
+    <div><h2>Impact</h2><p>Check whether later, comparable tasks support a workflow improvement.</p><p class="view-scope">Each comparison uses its recorded task cohorts. Expand a row to see eligibility and evidence.</p></div>
     <div class="product-count" id="measurement-count">0<small>impact checks</small></div>
   </div>
   <details class="impact-help"><summary>How comparisons work</summary><div class="impact-explainer" aria-label="How impact checks work">
@@ -3275,7 +3103,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <!-- ════════════════════ INBOX ════════════════════ -->
 <div class="tab-panel" id="tab-inbox" role="tabpanel" aria-labelledby="tab-button-inbox" hidden>
   <div class="product-hero view-intro">
-    <div><h2>Inbox</h2><p>Inspect findings and repeated behavior before choosing a workflow.</p><p class="view-scope"><span id="inbox-analysis-window">Analysis window not supplied by this report.</span> Retained evidence may include older sessions. Session filters do not apply.</p></div>
+    <div><h2>Inbox</h2><p>Inspect findings and repeated behavior before choosing a workflow.</p><p class="view-scope"><span id="inbox-analysis-window">Analysis window not supplied by this report.</span> Retained evidence may include older sessions.</p></div>
     <div class="product-count" id="inbox-signal-count">0<small>needs attention</small></div>
   </div>
   <div class="inbox-view-switch" role="tablist" aria-label="Inbox evidence views">
@@ -3303,7 +3131,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <!-- ════════════════════ WORKFLOWS ════════════════════ -->
 <div class="tab-panel" id="tab-workflows" role="tabpanel" aria-labelledby="tab-button-workflows" hidden>
   <div class="product-hero view-intro">
-    <div><h2>Workflows</h2><p>Choose a useful procedure, inspect the changes, and enable it for one project.</p><p class="view-scope">Stored workflow inventory. Each workflow shows its supporting task scope; session filters do not apply.</p></div>
+    <div><h2>Workflows</h2><p>Choose a useful procedure, inspect the changes, and enable it for one project.</p><p class="view-scope">Each workflow shows the tasks that support it.</p></div>
     <div class="product-count" id="workflow-total-count">0<small>workflow contracts</small></div>
   </div>
   <section class="panel product-section" id="workflow-candidates-section">
@@ -3312,11 +3140,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
     <button type="button" class="ledger-button primary" data-ledger-action="create-workflow">Create workflow</button>
     <div class="product-section-count" id="workflow-count">0<small>reviewable workflows</small></div>
   </div>
-  <div class="workflow-toolbar" aria-label="Workflow filters">
-    <div class="workflow-filter-field"><label for="workflow-type-filter">Behavior</label><select id="workflow-type-filter"><option value="all">All behavior types</option><option value="recovery">Recovery</option><option value="verification">Verification</option><option value="exploration">Exploration</option><option value="proven_pattern">Proven Pattern</option></select></div>
-    <div class="workflow-filter-field"><label for="workflow-status-filter">State</label><select id="workflow-status-filter"><option value="reviewable">Current suggestions &amp; active</option><option value="history">History</option><option value="all">All states</option><option value="pending">Suggestions</option><option value="approved">Approved</option><option value="active">Active</option><option value="rolled_back">Rolled Back</option><option value="stale">Retired suggestions</option><option value="rejected">Dismissed / rejected</option></select></div>
-    <div class="workflow-filter-summary" id="workflow-filter-summary" aria-live="polite"></div>
-  </div>
+
   <div id="workflow-action-status" class="workflow-action-status" role="status" aria-live="polite"></div>
   <div class="workflow-list" id="workflow-ledger" aria-live="polite"></div>
   </section>
@@ -3325,18 +3149,15 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <!-- ════════════════════ SKILL REGISTRY ════════════════════ -->
 <div class="tab-panel" id="tab-skills" role="tabpanel" aria-labelledby="tab-button-skills" hidden>
   <div class="product-hero view-intro">
-    <div><h2>Skills Registry</h2><p>Inspect skill versions, installations, and recorded use.</p><p class="view-scope">Stored skill inventory. Reference counts cover all captured history; session filters do not apply.</p></div>
+    <div><h2>Skills Registry</h2><p>Inspect skill versions, installations, and recorded use.</p><p class="view-scope">Reference counts cover all captured history.</p></div>
     <div class="product-count" id="skill-count">0<small>registry entries</small></div>
   </div>
   <section class="panel product-section" id="skill-registry-section">
     <div class="product-section-head">
       <div><h3 class="product-section-title">Available Procedures</h3><p class="product-section-copy">See what is installed, where skills were referenced, and which have evidence of better outcomes. A recorded reference alone does not prove a skill was followed.</p></div>
     </div>
-    <div class="workflow-toolbar" aria-label="Skill filters">
-      <div class="workflow-filter-field skill-search-field"><label for="skill-search">Search skills</label><input id="skill-search" type="search" placeholder="Name, purpose, agent, state, or installation…" autocomplete="off" spellcheck="false" aria-controls="skill-registry"/></div>
-      <div class="workflow-filter-summary" id="skill-filter-summary" aria-live="polite"></div>
-    </div>
-    <div class="workflow-list skill-tile-grid" id="skill-registry" aria-live="polite"></div>
+
+    <div class="workflow-list" id="skill-registry" aria-live="polite"></div>
   </section>
 </div>
 
@@ -3400,59 +3221,78 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
 <!-- ════════════════════ GRAPHS ════════════════════ -->
 <div class="tab-panel" id="tab-explore-graph" role="tabpanel" aria-labelledby="tab-button-explore" hidden>
-  <div class="panel explore-view-status" id="graph-view-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+  <div class="graph-view-status" id="graph-view-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
   <!-- 1. Behavioral Memory Graph -->
-  <div class="panel">
-    <div class="semantic-graph-toolbar">
-      <div class="panel-title" style="margin-bottom:0">Behavioral Memory Graph <span class="panel-title-count">(sessions, workspaces, folders, tools, skills, memories, outcomes)</span></div>
-      <div class="semantic-graph-controls">
-        <select id="semantic-graph-mode" aria-label="Choose behavioral memory graph relationship scope">
-          <option value="workspace">Same workspace</option>
-          <option value="session">Selected session only</option>
-        </select>
-        <select id="semantic-session-filter" aria-label="Filter behavioral memory graph by session"></select>
+  <section class="panel graph-widget graph-widget-semantic" aria-labelledby="graph-title-semantic">
+    <h2 class="panel-title" id="graph-title-semantic">Behavioral Memory Graph <span class="panel-title-count">(sessions, workspaces, folders, tools, skills, memories, outcomes)</span></h2>
+    <div class="graph-widget-body">
+      <div class="graph-widget-content">
+        <div class="semantic-graph-controls">
+          <select id="semantic-graph-mode" aria-label="Choose behavioral memory graph relationship scope">
+            <option value="workspace">Same workspace</option>
+            <option value="session">Selected session only</option>
+          </select>
+          <select id="semantic-session-filter" aria-label="Filter behavioral memory graph by session"></select>
+        </div>
+        <p class="semantic-graph-context" id="semantic-graph-context">All bounded graph relationships. Select a session to inspect its workspace peers.</p>
+        <div class="semantic-graph-shell" id="semantic-graph-shell">
+          <svg class="semantic-graph-svg" id="semantic-graph-svg" role="img" aria-label="Behavioral memory graph"></svg>
+          <div class="semantic-graph-tip" id="semantic-graph-tip"></div>
+        </div>
+        <div class="graph-legend" id="semantic-graph-legend"></div>
       </div>
     </div>
-    <p class="semantic-graph-context" id="semantic-graph-context">All bounded graph relationships. Select a session to inspect its workspace peers.</p>
-    <div class="semantic-graph-shell" id="semantic-graph-shell">
-      <svg class="semantic-graph-svg" id="semantic-graph-svg" role="img" aria-label="Behavioral memory graph"></svg>
-      <div class="semantic-graph-tip" id="semantic-graph-tip"></div>
-    </div>
-    <div class="graph-legend" id="semantic-graph-legend"></div>
-  </div>
+  </section>
 
   <!-- 1. Tool Flow (Sankey) -->
-  <div class="panel">
-    <div class="panel-title">Tool Sequence Flow</div>
-    <svg id="sankey-svg" class="graph-svg" style="height:380px"></svg>
-    <div class="graph-legend" id="sankey-legend"></div>
-  </div>
+  <section class="panel graph-widget graph-widget-sequence" aria-labelledby="graph-title-sequence">
+    <h2 class="panel-title" id="graph-title-sequence">Tool Sequence Flow</h2>
+    <div class="graph-widget-body">
+      <div class="graph-widget-content">
+        <p class="graph-widget-empty" id="sankey-empty" hidden>No tool sequences were captured for this scope.</p>
+        <svg id="sankey-svg" class="graph-svg" style="height:380px"></svg>
+      </div>
+    </div>
+  </section>
 
   <!-- 2. Dependency Graph -->
-  <div class="panel">
-    <div class="panel-title">Agent Tool Network <span class="panel-title-count">(top live tool relationships)</span></div>
-    <svg id="dep-svg" class="graph-svg" style="height:440px"></svg>
-    <div id="dep-note" style="margin-top:12px;font-size:13px;color:var(--text-3)"></div>
-    <div class="graph-legend">
-      <div class="graph-legend-item"><div class="graph-legend-dot" style="background:var(--purple)"></div>Agent</div>
-      <div class="graph-legend-item"><div class="graph-legend-dot" style="background:var(--blue)"></div>Tool</div>
-      <div class="graph-legend-item"><div class="graph-legend-dot" style="background:var(--teal)"></div>MCP Tool</div>
+  <section class="panel graph-widget graph-widget-network" aria-labelledby="graph-title-network">
+    <h2 class="panel-title" id="graph-title-network">Agent Tool Network <span class="panel-title-count">(top live tool relationships)</span></h2>
+    <div class="graph-widget-body">
+      <div class="graph-widget-content">
+        <svg id="dep-svg" class="graph-svg" style="height:440px"></svg>
+        <div id="dep-note" style="margin-top:12px;font-size:13px;color:var(--text-3)"></div>
+        <div class="graph-legend">
+          <div class="graph-legend-item"><div class="graph-legend-dot" style="background:var(--purple)"></div>Agent</div>
+          <div class="graph-legend-item"><div class="graph-legend-dot" style="background:var(--blue)"></div>Tool</div>
+          <div class="graph-legend-item"><div class="graph-legend-dot" style="background:var(--teal)"></div>MCP Tool</div>
+        </div>
+      </div>
     </div>
-  </div>
+  </section>
 
   <!-- 3. Session Timeline -->
-  <div class="panel">
-    <div class="panel-title">Session Timelines <span class="panel-title-count">(top 6 sessions by event count)</span></div>
-    <div class="timeline-wrap" id="timeline-wrap"></div>
-    <div class="graph-legend" id="timeline-legend"></div>
-  </div>
+  <section class="panel graph-widget graph-widget-timeline" aria-labelledby="graph-title-timeline">
+    <h2 class="panel-title" id="graph-title-timeline">Session Timelines <span class="panel-title-count">(top 6 sessions by event count)</span></h2>
+    <div class="graph-widget-body">
+      <div class="graph-widget-content">
+        <div class="timeline-wrap" id="timeline-wrap"></div>
+        <div class="graph-legend" id="timeline-legend"></div>
+      </div>
+    </div>
+  </section>
 
   <!-- 4. Co-occurrence Matrix -->
-  <div class="panel">
-    <div class="panel-title">Tool Co-occurrence Matrix <span class="panel-title-count">(sessions where both tools appeared)</span></div>
-    <div class="matrix-wrap"><table class="matrix-table" id="matrix-table"></table></div>
-  </div>
+  <section class="panel graph-widget graph-widget-matrix" aria-labelledby="graph-title-matrix">
+    <h2 class="panel-title" id="graph-title-matrix">Tool Co-occurrence Matrix <span class="panel-title-count">(sessions where both tools appeared)</span></h2>
+    <div class="graph-widget-body">
+      <div class="graph-widget-content">
+        <p class="graph-widget-empty" id="matrix-empty" hidden>No tool co-occurrence data was captured for this scope.</p>
+        <div class="matrix-wrap"><table class="matrix-table" id="matrix-table"></table></div>
+      </div>
+    </div>
+  </section>
 
 </div>
 
@@ -3492,77 +3332,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 
   </div>
 
-  <aside class="filter-rail" id="filter-rail" aria-label="Filters">
-    <div class="rail-head">
-      <div class="rail-title">Filters</div>
-      <button type="button" class="rail-toggle filter-sheet-close" id="filter-sheet-close" aria-label="Close filters">
-        <span class="rail-toggle-lines" aria-hidden="true"></span>
-      </button>
-    </div>
-    <section class="global-filter-shell" id="global-filter-shell" aria-label="Session filters">
-      <div class="global-filter-top">
-        <div>
-          <div class="global-filter-title" id="filter-scope-title">Session filters</div>
-          <div class="global-filter-meta" id="global-filter-meta">Showing all sessions</div>
-        </div>
-        <div class="global-filter-actions">
-          <button type="button" class="filter-compact-toggle" id="filter-compact-toggle" aria-expanded="false" aria-controls="global-filter-grid">More filters</button>
-          <button type="button" class="filter-clear" id="filter-clear">Clear filters</button>
-        </div>
-      </div>
-      <p class="view-scope filter-scope-note" id="filter-scope-note">Choose sessions to inspect. Session details cover their captured lifetime.</p>
-      <div class="global-filter-grid" id="global-filter-grid">
-        <div class="filter-field">
-          <label class="filter-label" for="sb-search">Search</label>
-          <input type="text" class="sb-search" id="sb-search" name="session-search" autocomplete="off" spellcheck="false" placeholder="Search by prompt, session ID, model, or agent…"/>
-        </div>
-        <div class="filter-field">
-          <label class="filter-label" for="filter-model">Model</label>
-          <select class="filter-select" id="filter-model">
-            <option value="all">All models</option>
-          </select>
-        </div>
-        <div class="filter-field">
-          <label class="filter-label" for="filter-status">Status</label>
-          <select class="filter-select" id="filter-status">
-            <option value="all">All sessions</option>
-            <option value="completed">Completed</option>
-            <option value="active">Not completed</option>
-            <option value="recovered">Recovered failures</option>
-            <option value="failing">Has failures</option>
-          </select>
-        </div>
-        <div class="filter-field filter-field-secondary">
-          <label class="filter-label" for="filter-range">Range</label>
-          <select class="filter-select" id="filter-range">
-            <option value="all">All time</option>
-            <option value="24h">Last 24 hours</option>
-            <option value="7d">Last 7 days</option>
-            <option value="30d">Last 30 days</option>
-          </select>
-        </div>
-        <div class="filter-field filter-field-secondary" id="session-sort-field">
-          <label class="filter-label" for="filter-sort">Sort</label>
-          <select class="filter-select" id="filter-sort">
-            <option value="recent">Most recent</option>
-            <option value="quality">Highest quality</option>
-            <option value="tokens">Most tokens</option>
-            <option value="cost">Most cost</option>
-            <option value="duration">Longest sessions</option>
-            <option value="events">Most events</option>
-          </select>
-        </div>
-      </div>
-      <div class="sb-agent-pills" id="sb-agent-pills">
-        <button class="sb-pill active" type="button" data-agent="all" aria-pressed="true">All agents</button>
-      </div>
-      <div class="filter-chip-row">
-        <div class="filter-chips" id="filter-chips"></div>
-      </div>
-    </section>
-  </aside>
 </div>
-<div class="global-filter-backdrop" id="filter-sheet-backdrop" hidden></div>
 
 </main>
 </div>
@@ -3570,7 +3340,7 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
 <dialog class="ledger-dialog" id="ledger-dialog" aria-labelledby="ledger-dialog-title" aria-describedby="ledger-dialog-subtitle">
   <div class="ledger-dialog-head">
     <div><h2 class="ledger-dialog-title" id="ledger-dialog-title">Improvement detail</h2><div class="inbox-copy" id="ledger-dialog-subtitle"></div></div>
-    <button class="ledger-dialog-close" id="ledger-dialog-close" type="button" aria-label="Close">&times;</button>
+    <button class="ledger-dialog-close" id="ledger-dialog-close" type="button" aria-label="Close evidence" autofocus>&times;</button>
   </div>
   <div class="ledger-dialog-body" id="ledger-dialog-body"></div>
   <div class="ledger-dialog-actions" id="ledger-dialog-actions"></div>
@@ -3678,11 +3448,11 @@ function setupDemoNavigation(actions){
     url.searchParams.set('tab','sessions'); url.searchParams.set('session',scenario.session_id);
     url.searchParams.set('example',scenario.id);
     url.searchParams.set('step',step);
-    for (const key of ['evidence','workflow','workflow_root','skill','loop','impact']) url.searchParams.delete(key);
+    for (const key of ['evidence','workflow','workflow_root','skill','loop','impact','finding','finding_draft','view']) url.searchParams.delete(key);
     link.href = url.toString();
     const current = new URL(window.location.href);
     current.searchParams.set('example',scenario.id); current.searchParams.set('step',step);
-    window.history.replaceState({},'',current.toString());
+    window.history.replaceState(window.history.state,'',current.toString());
   };
   picker.addEventListener('change', () => {
     scenario = sample.scenarios.find(item => item.id === picker.value) || scenario;
@@ -4008,11 +3778,20 @@ async function requestDashboardRefresh(){
   startPreparationStatusPolling();
 }
 
+function isLocalDashboard(){
+  return window.location.pathname === '/' &&
+    ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
+}
+
+function dashboardReportSource(params = new URLSearchParams(window.location.search)){
+  return params.get('report') || (isLocalDashboard() && !params.get('data') ? '/api/data' : '');
+}
+
 async function loadDashboardData(){
   if (!dashboardDocumentActive) return null;
   showReportLoader();
   const params = new URLSearchParams(window.location.search);
-  const report = params.get('report');
+  const report = dashboardReportSource(params);
   if (!report && !params.get('data')) {
     const publicHome = 'https://reflect.o11y.dev/';
     const currentPublicUrl = `${window.location.origin}${window.location.pathname}`;
@@ -4040,6 +3819,10 @@ async function loadDashboardData(){
           }
           // These sections own independent reads; a cold session snapshot must
           // not prevent their navigation and evidence from initializing.
+          if (params.get('tab') === 'explore' && params.get('view') === 'graph' && reportSupportsServerFiltering()) {
+            return {sql_backed:true, _unpublishedNavigation:true, snapshot_completed_at:null,
+              sessions:[], sqlite:{tabs:{}}};
+          }
           if (pending.reason !== 'reading' && ['inbox','skills','workflows','impact'].includes(params.get('tab')) && reportSupportsServerFiltering()) {
             return {sql_backed:true, _unpublishedNavigation:true, snapshot_completed_at:null,
               sessions:[], sqlite:{tabs:{}}};
@@ -4056,19 +3839,17 @@ async function loadDashboardData(){
               const cached = await cachedResponse.json();
               cached._navigationFromCache = true;
               cached._unfilteredNavigation = true;
-              if (params.get('tab') !== 'explore') {
-                updateUrlParams(values => { values.set('tab', 'sessions'); values.delete('view'); });
-              }
               return cached;
             }
             if (sessionId && cachedResponse.status === 503 && (await cachedResponse.json()).state === 'preparing') {
               if (!dashboardDocumentActive) return null;
               const detailResponse = await fetch('/api/session/' + encodeURIComponent(sessionId), options);
-              if (detailResponse.status === 404) throw new Error('Session not found in captured telemetry.');
+              if (detailResponse.status === 404) {
+                return {sql_backed:true, _unpublishedNavigation:true, sessions:[], sqlite:{tabs:{}}};
+              }
               if (detailResponse.ok) {
                 const detail = await detailResponse.json();
                 if (detail.session?.id === sessionId) {
-                  updateUrlParams(values => { values.set('tab', 'sessions'); values.delete('view'); });
                   return {
                     sql_backed:true, _unpublishedNavigation:true, snapshot_completed_at:null,
                     sessions:[{id:sessionId, full_id:sessionId, agent:detail.session.agent,
@@ -4184,20 +3965,22 @@ async function loadImprovementData(onResource = null){
   return sequence === loadImprovementData.sequence ? result : IMPROVEMENT_DATA;
 }
 
-function updateUrlParams(mutator, {mode = 'replace'} = {}){
+function updateUrlParams(mutator, {mode = 'replace', state = null} = {}){
   const url = new URL(window.location.href);
+  const previous = url.href;
   mutator(url.searchParams);
   const query = url.searchParams.toString();
   const target = `${url.pathname}${query ? `?${query}` : ''}${url.hash}`;
-  if (target === `${url.pathname}${url.search}${url.hash}`) return;
-  window.history[mode === 'push' ? 'pushState' : 'replaceState']({}, '', target);
+  if (url.href === previous) return;
+  window.history[mode === 'push' ? 'pushState' : 'replaceState'](state ?? (mode === 'replace' ? window.history.state : null), '', target);
 }
 
 function reportSupportsServerFiltering(){
-  const report = new URLSearchParams(window.location.search).get('report') || '/api/data';
+  const report = dashboardReportSource();
+  if (!report) return false;
   try {
     const url = new URL(report, window.location.href);
-    return url.pathname === '/api/data';
+    return url.origin === window.location.origin && url.pathname === '/api/data';
   } catch {
     return report === '/api/data' || report.endsWith('/api/data');
   }
@@ -4205,7 +3988,7 @@ function reportSupportsServerFiltering(){
 
 function reportUrlWithCurrentFilters(){
   const params = new URLSearchParams(window.location.search);
-  const report = params.get('report') || '/api/data';
+  const report = dashboardReportSource(params) || '/api/data';
   const url = new URL(report, window.location.href);
   ['q','agents','agent','model','status','range','session','tab','view'].forEach(key => {
     const value = params.get(key);
@@ -4236,10 +4019,15 @@ async function initApp(){
     if (improvementSurfacesReady) buildImprovementSurfaces();
   }).catch(() => {});
   const demoBadge = document.getElementById('demo-badge');
-  const reportParam = new URLSearchParams(window.location.search).get('report') || '';
-  const isLocalApiReport = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
-    && reportParam.replace(/^\//, '') === 'api/data';
-  if (demoBadge && isLocalApiReport) demoBadge.hidden = true;
+  const isLocalApiReport = isLocalDashboard() && reportSupportsServerFiltering();
+  if (isLocalApiReport) {
+    if (demoBadge) demoBadge.hidden = true;
+    document.title = 'Reflect Dashboard';
+    const report = new URL(dashboardReportSource(), window.location.href);
+    if (!report.search && !report.hash && !new URLSearchParams(window.location.search).has('data')) {
+      updateUrlParams(params => params.delete('report'));
+    }
+  }
 /* ── Palette — reflect showcase colors ── */
 const P = {
   blue:    '#75b8ff',
@@ -4415,29 +4203,60 @@ function openLedgerDialog({title, subtitle = '', body = '', actions = ''}){
   if (!ledgerDialog.open) ledgerDialog.showModal();
 }
 
+const ledgerSelectionParams = ['finding', 'loop', 'workflow', 'skill', 'impact', 'finding_draft'];
+
 function clearLedgerDialogSelection(){
-  if (ledgerDialog) ledgerDialog.inspection = null;
+  ledgerDialog.inspection = null;
   updateUrlParams(params => {
-    params.delete('workflow');
+    for (const key of ledgerSelectionParams) params.delete(key);
     params.delete('workflow_root');
-    params.delete('loop');
-    params.delete('skill');
-  });
+  }, {state:{}});
 }
 
-function closeLedgerDialog(){
-  if (ledgerDialog?.open) ledgerDialog.close();
-  clearLedgerDialogSelection();
+function closeLedgerDialog({fromHistory = false, returnToPrevious = false} = {}){
+  ledgerDialog.inspection = null;
+  if (ledgerDialog.open) ledgerDialog.close();
+  if (fromHistory) return;
+  if (returnToPrevious && window.history.state?.ledgerOpened) window.history.back();
+  else clearLedgerDialogSelection();
 }
 
-document.getElementById('ledger-dialog-close')?.addEventListener('click', closeLedgerDialog);
-ledgerDialog?.addEventListener('close', () => {
-  // A queued close event must not clear a newly opened inspection.
-  if (!ledgerDialog.open) clearLedgerDialogSelection();
+function dismissLedgerDialog(){
+  closeLedgerDialog({returnToPrevious:true});
+}
+
+document.getElementById('ledger-dialog-close')?.addEventListener('click', dismissLedgerDialog);
+ledgerDialog.addEventListener('cancel', event => {
+  event.preventDefault();
+  dismissLedgerDialog();
 });
-ledgerDialog?.addEventListener('click', event => {
-  if (event.target === ledgerDialog) closeLedgerDialog();
+ledgerDialog.addEventListener('click', event => {
+  if (event.target === ledgerDialog) dismissLedgerDialog();
 });
+
+function syncLedgerRoute(){
+  const params = currentParams();
+  const inspect = [
+    ['workflow', showWorkflowReview],
+    ['finding', showObservationEvidence],
+    ['finding_draft', showFindingWorkflowCreate],
+    ['loop', showLoopReview],
+    ['skill', showSkillReview],
+    ['impact', showImpactSessions],
+  ].find(([key]) => params.has(key));
+  if (!inspect) {
+    if (ledgerDialog.open) closeLedgerDialog({fromHistory:true});
+    return;
+  }
+  const [key, show] = inspect;
+  const id = params.get(key);
+  const root = key === 'workflow' ? params.get('workflow_root') || '' : '';
+  const current = ledgerDialog.inspection;
+  if (ledgerDialog.open && current?.routeKey === key && current.id === id
+    && (key !== 'workflow' || current.projectRoot === root)) return;
+  if (id) show(id, root);
+  else closeLedgerDialog({fromHistory:true});
+}
 
 async function ledgerRequest(url, {method = 'GET', body} = {}){
   const controller = new AbortController();
@@ -4656,7 +4475,7 @@ function ledgerWorkspaceName(value){
 
 function sessionInspectionUrl(session){
   const url = new URL(window.location.href);
-  ['workflow','workflow_root','workflow_type','workflow_status','loop','skill','skill_q','q','agents','agent','model','status','range'].forEach(key => url.searchParams.delete(key));
+  [...ledgerSelectionParams, 'workflow_root', 'view'].forEach(key => url.searchParams.delete(key));
   url.searchParams.set('tab', 'sessions');
   url.searchParams.set('session', session.session_id || '');
   if (session.evidence_focus_id) url.searchParams.set('evidence', session.evidence_focus_id);
@@ -4725,12 +4544,22 @@ function staleEvidenceNotice(...payloads){
   return `${recordedNotice}<div class="review-warning" role="status"><strong>Historical evidence.</strong> ${escHtml(timestamps.join('; '))}. ${escHtml(pending)}</div>`;
 }
 
-function beginLedgerRead(kind, id, title){
+function beginLedgerRead(kind, id, title, projectRoot){
+  const routeKey = kind === 'finding-workflow' ? 'finding_draft' : kind;
   const previous = ledgerDialog.inspection;
-  const request = {kind,id,retain:Boolean(ledgerDialog.open && previous?.kind === kind && previous?.id === id)};
-  if (request.retain) request.projectRoot = previous.projectRoot;
+  const same = ledgerDialog.open && previous?.kind === kind && previous.id === id;
+  projectRoot ??= same ? previous.projectRoot : '';
+  const request = {kind, id, routeKey, projectRoot, retain:Boolean(same && previous.projectRoot === projectRoot)};
+  const params = currentParams();
+  const sameRecord = params.get(routeKey) === String(id);
+  updateUrlParams(values => {
+    for (const key of ledgerSelectionParams) values.delete(key);
+    values.set(routeKey, id);
+    if (routeKey === 'workflow' && projectRoot) values.set('workflow_root', projectRoot);
+    else values.delete('workflow_root');
+  }, sameRecord || ledgerDialog.open ? {} : {mode:'push', state:{ledgerOpened:true}});
   ledgerDialog.inspection = request;
-  if (!request.retain) openLedgerDialog({title});
+  if (!request.retain) openLedgerDialog({title, body:'<p class="review-panel-copy" role="status">Loading record…</p>'});
   return request;
 }
 
@@ -4840,12 +4669,6 @@ async function showLoopReview(loopId){
     const loop = detail.loop || {};
     const occurrences = detail.occurrences || [];
     const nativeLoop = loop.kind === 'agent_native';
-    updateUrlParams(params => {
-      params.delete('workflow');
-      params.delete('workflow_root');
-      params.delete('skill');
-      params.set('loop', loopId);
-    });
     const sourceSessions = renderWorkflowSessionLedger(occurrences.map(item => ({
       session_id:item.session_id,
       title:`${humanizeLedgerLabel(item.tool_name || loop.tool_name || 'Tool')} · ${fmt(Number(item.repeat_count || 0))} ${nativeLoop ? 'signals' : 'repeats'}`,
@@ -4928,12 +4751,6 @@ async function showSkillReview(skillId){
     const pendingAnalysis = '<div class="session-ledger-empty">Analysis is updating. These results are not available yet.</div>';
     const availability = skillAvailabilityPresentation(skill, installations);
     const workflowCandidateId = analysisPending || analysisStale ? '' : versions.find(item => item.workflow_candidate_id)?.workflow_candidate_id || '';
-    updateUrlParams(params => {
-      params.delete('workflow');
-      params.delete('workflow_root');
-      params.delete('loop');
-      params.set('skill', skillId);
-    });
     const versionRows = versions.map(item => `<article class="skill-detail-tile">
       <div class="inbox-card-head"><div class="inbox-title">Version ${fmt(Number(item.version || 0))}</div><span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(item.status || 'pending'))}</span></div>
       <div class="ledger-meta"><span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.source_kind || skill.origin || 'imported'))}</span>${item.source_agent ? `<span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.source_agent))}</span>` : ''}${item.source_loop_id ? `<span class="ledger-pill">from loop</span>` : ''}<span class="ledger-pill">${escHtml(fmtWorkflowDate(item.created_at))}</span></div>
@@ -5050,8 +4867,9 @@ function showWorkflowCreate(context = null){
     abstain_when:(context.content.abstain_when || []).join('\n'),
     project_root:context.project_roots?.length === 1 ? context.project_roots[0] : '',
   } : {});
-  clearLedgerDialogSelection();
-  const creation = {kind:'create-workflow', findingId:context?.finding_id};
+  const findingId = context?.finding_id;
+  const creation = {kind:'create-workflow', routeKey:findingId ? 'finding_draft' : '', id:findingId, findingId};
+  if (!findingId) clearLedgerDialogSelection();
   ledgerDialog.inspection = creation;
   const field = (name, label, {multiline = false, required = false, hint = ''} = {}) => `<div class="workflow-create-field"><label for="create-workflow-${name}">${label}${required ? ' (required)' : ''}</label>${multiline
     ? `<textarea class="ledger-editor" id="create-workflow-${name}" name="${name}" rows="${name === 'steps' ? 6 : 3}" ${required ? 'required' : ''}>${escHtml(workflowCreationDraft[name] || '')}</textarea>`
@@ -5113,9 +4931,9 @@ function showWorkflowCreate(context = null){
   form.querySelector('input')?.focus();
 }
 
-async function showWorkflowReview(candidateId, requestedRoot = ''){
-  const request = beginLedgerRead('workflow', candidateId, 'Preparing workflow preview…');
-  requestedRoot = request.projectRoot = requestedRoot || request.projectRoot || '';
+async function showWorkflowReview(candidateId, requestedRoot){
+  const request = beginLedgerRead('workflow', candidateId, 'Preparing workflow preview…', requestedRoot);
+  requestedRoot = request.projectRoot;
   try {
     const sourceCandidate = (IMPROVEMENT_DATA.workflows || []).find(item => item.id === candidateId);
     const candidateSnapshot = sourceCandidate ? JSON.stringify(sourceCandidate) : null;
@@ -5156,12 +4974,10 @@ async function showWorkflowReview(candidateId, requestedRoot = ''){
     const candidatePublication = ledger.candidate ? ledger : !candidateCurrent ? {publication:{...resource.publication,
       state:resource.publication?.state === 'recorded' || resource.state === 'recorded' ? 'recorded' : 'stale',
       loaded_at:resource.publication?.loaded_at ?? resource.loaded_at}} : {};
-    updateUrlParams(params => {
-      params.delete('loop');
-      params.delete('skill');
-      params.set('workflow', candidateId);
-      if (preview.project_root) params.set('workflow_root', preview.project_root);
-    });
+    if (preview.project_root) {
+      request.projectRoot = preview.project_root;
+      updateUrlParams(params => params.set('workflow_root', preview.project_root));
+    }
     const active = candidate.lifecycle?.deployment === 'active';
     const reviewable = !['rejected','stale'].includes(candidate.status);
     const applyAllowed = Boolean(preview.checks?.apply_allowed);
@@ -5433,7 +5249,7 @@ document.addEventListener('click', async event => {
   }
   if (action === 'create-from-finding') return showFindingWorkflowCreate(trigger.dataset.observationId || '');
   if (action === 'create-workflow') return showWorkflowCreate();
-  if (action === 'close') return closeLedgerDialog();
+  if (action === 'close') return dismissLedgerDialog();
   if (action === 'evidence') return showObservationEvidence(trigger.dataset.observationId || '');
   if (action === 'review-loop') return showLoopReview(trigger.dataset.loopId || '');
   if (action === 'review-skill') return showSkillReview(trigger.dataset.skillId || '');
@@ -5457,11 +5273,7 @@ document.addEventListener('click', async event => {
     return showWorkflowReview(candidateId, root);
   }
   if (action === 'open-session') {
-    const url = new URL(window.location.href);
-    url.searchParams.set('tab', 'sessions');
-    url.searchParams.set('session', trigger.dataset.sessionId || '');
-    if (trigger.dataset.evidenceId) url.searchParams.set('evidence', trigger.dataset.evidenceId);
-    window.location.assign(url.toString());
+    window.location.assign(sessionInspectionUrl({session_id:trigger.dataset.sessionId, evidence_focus_id:trigger.dataset.evidenceId}));
     return;
   }
   let enabledPath = '';
@@ -5522,11 +5334,12 @@ function sqlTab(name){
 }
 
 let filteredDashboardSessions = (D.sessions || []).slice();
-let dashboardFilterActive = false;
 let dashboardSelectedSessionId = currentParams().get('session') || '';
 const lazySqlTabRequests = new Map();
 const exploreViewStates = new Map([['usage', 'ready']]);
 const exploreViewScopes = new Map();
+let failedGraphAttempt = null;
+let renderedGraph = null;
 let explorePublication = 0;
 document.addEventListener('reflect-snapshot-published', event => {
   // The first publication fills missing navigation through the existing URL-
@@ -5571,12 +5384,19 @@ function setExploreViewState(viewName, state, errorMessage = ''){
   status.classList.toggle('loading', loading);
   status.setAttribute('role', state === 'error' ? 'alert' : 'status');
   const message = loading ? `${exploreViewLoadingCopy[viewName]} This view updates automatically.` : errorMessage;
-  status.textContent = retained && state !== 'ready'
+  const statusMessage = retained && state !== 'ready'
     ? `${previous.publication_state === 'recorded'
       ? `Showing stored telemetry${previous.loaded_at ? ` read ${new Date(previous.loaded_at).toLocaleString()}` : '; read time unavailable'}.`
       : previous.loaded_at ? `Showing data from ${new Date(previous.loaded_at).toLocaleString()}.` : 'Showing last published data; timestamp unavailable.'} ${message || 'Updating in the background.'}`
     : message;
+  if (status.textContent !== statusMessage) status.textContent = statusMessage;
   status.hidden = state === 'ready';
+  if (viewName === 'graph') {
+    panel.removeAttribute('aria-busy');
+    const showData = retained && renderedGraph?.scope === previous.scope;
+    presentGraphWidgets(panel, state, showData, errorMessage);
+    return;
+  }
   if (state === 'error') {
     const retry = document.createElement('button');
     retry.type = 'button';
@@ -5586,7 +5406,7 @@ function setExploreViewState(viewName, state, errorMessage = ''){
     status.appendChild(retry);
   }
   [...panel.children].forEach(child => {
-    if (child === status || child.classList.contains('explore-subnav')) return;
+    if (child === status) return;
     child.hidden = state !== 'ready' && !retained;
   });
 }
@@ -5697,16 +5517,31 @@ async function loadExploreView(viewName){
   return request;
 }
 
-async function hydrateExploreView(viewName){
+async function hydrateExploreView(viewName, {retry = false} = {}){
   if (typeof updateExploreScope === 'function' && currentParams().get('tab') === 'explore' && activeExploreView === viewName) updateExploreScope();
   const cacheKey = exploreViewUrl(viewName).url.toString();
   const previous = exploreViewScopes.get(viewName);
   const publication = explorePublication;
-  if (exploreViewStates.get(viewName) === 'ready' && previous?.scope === cacheKey && previous.publication === publication) return;
+  const graph = viewName === 'graph';
+  const graphIsCurrent = graph && renderedGraph?.scope === cacheKey && renderedGraph.payload === sqlTab('graph');
+  if (graph && !retry && failedGraphAttempt?.scope === cacheKey && failedGraphAttempt.publication === publication) {
+    setExploreViewState(viewName, 'error', failedGraphAttempt.message);
+    return;
+  }
+  if (exploreViewStates.get(viewName) === 'ready' && previous?.scope === cacheKey && previous.publication === publication
+    && (!graph || graphIsCurrent)) return;
+  if (graph) failedGraphAttempt = null;
   if (exploreViewStates.get(viewName) === 'loading' && lazySqlTabRequests.has(cacheKey)) return;
   if (!D.sql_backed || (!isStaticDemo() && !reportSupportsServerFiltering())) return;
   setExploreViewState(viewName, 'loading');
   try {
+    const canReuseGraph = graph && previous?.scope === cacheKey
+      && previous.publication === publication && previous.publication_state === 'ready';
+    if (canReuseGraph && !graphIsCurrent && !retry) {
+      renderPublishedGraph(cacheKey);
+      setExploreViewState(viewName, 'ready');
+      return;
+    }
     const payload = await loadExploreView(viewName);
     if (exploreViewUrl(viewName).url.toString() !== cacheKey) return;
     if (publication !== explorePublication) return hydrateExploreView(viewName);
@@ -5718,6 +5553,7 @@ async function hydrateExploreView(viewName){
         : payload.publication?.snapshot_completed_at || payload.snapshot_completed_at || payload.publication?.loaded_at
         || (payload.publication?.state === 'stale' ? null : new Date().toISOString()),
     });
+    if (graph) renderPublishedGraph(cacheKey);
     setExploreViewState(viewName, ['stale','recorded'].includes(payload.publication?.state) ? payload.publication.state : 'ready',
       payload.publication?.state === 'recorded'
         ? payload.publication.reason === 'historical_pending'
@@ -5731,15 +5567,12 @@ async function hydrateExploreView(viewName){
     if (viewName === 'usage') renderUsageView();
     if (viewName === 'context') renderSqlTabPayloads();
     if (viewName === 'tools') renderToolsView();
-    if (viewName === 'graph') {
-      _graphsInited = true;
-      requestAnimationFrame(initGraphs);
-    }
   } catch (error) {
     if (exploreViewUrl(viewName).url.toString() !== cacheKey) return;
     if (publication !== explorePublication) return hydrateExploreView(viewName);
-    setExploreViewState(viewName, error.preparing ? 'preparing' : 'error', error.name === 'AbortError'
-      ? 'This view took too long to load. Please retry.' : error.message);
+    const message = error.name === 'AbortError' ? 'This view took too long to load.' : error.message;
+    if (graph && !error.preparing) failedGraphAttempt = {scope:cacheKey, publication, message};
+    setExploreViewState(viewName, error.preparing ? 'preparing' : 'error', message);
   }
 }
 /* Skill evidence is loaded independently from package and installation detail. */
@@ -5840,7 +5673,6 @@ async function loadSkillUsageGraph(skillId, container, filters = {}) {
   } finally {window.clearTimeout(timeout);}
 }
 /* ── Tabs ── */
-let _graphsInited = false;
 const tabButtons = Array.from(document.querySelectorAll('.tab'));
 const PRODUCT_TABS = new Set(['sessions','inbox','workflows','skills','impact','explore']);
 const EXPLORE_VIEWS = new Set(['usage','tools','graph','context']);
@@ -5859,22 +5691,31 @@ function updateTabOrientation(){
   if (tabs) tabs.setAttribute('aria-orientation', window.matchMedia('(max-width: 720px)').matches ? 'horizontal' : 'vertical');
 }
 
+let exploreMatchingSessionCount = null;
+
 function updateExploreScope(){
   const label = document.getElementById('explore-scope-label');
-  const detail = document.getElementById('explore-scope-detail');
   const change = document.getElementById('explore-session-change');
   const clear = document.getElementById('explore-session-clear');
-  if (!label || !detail || !change || !clear) return;
   const fixed = isStaticDemo();
   const context = activeExploreView === 'context';
   const sessionId = fixed || context ? '' : exploreViewUrl(activeExploreView).sessionId;
+  const params = currentParams();
+  const range = params.get('range') || (sessionId ? 'all' : D.range);
+  const rangeLabel = range === 'all' ? 'All time' : range === '24h' ? 'Last 24 hours'
+    : /^\d+d$/.test(range || '') ? `Last ${parseInt(range, 10)} days` : 'Default date range';
+  const agents = (params.get('agents') || params.get('agent') || '').split(',').filter(Boolean);
+  const agentLabel = agents.length ? agents.map(formatAgentLabel).join(', ') : 'All agents';
   const session = (D.sessions || []).find(item => (item.full_id || item.id) === sessionId || item.id === sessionId);
-  label.textContent = fixed ? 'Full illustrative sample' : context ? 'All captured context'
-    : sessionId ? `Selected session: ${sessionListIdentity(session || {id:sessionId}).title}` : 'All matching sessions';
-  const identity = sessionId ? [session?.agent ? formatAgentLabel(session.agent) : '', sessionId.slice(-8)].filter(Boolean).join(' · ') + '. ' : '';
-  detail.textContent = fixed ? 'Fixed sample scope; session selections do not filter these views.'
-    : context ? 'Stored context and system inventory. Session and date filters do not apply.'
-    : identity + 'Date and matching-session filters still apply. Each section labels its event-window or full-session totals.';
+  const matchingCount = exploreMatchingSessionCount;
+  const sessionLabel = sessionId ? `Session: ${sessionListIdentity(session || {id:sessionId}).title}`
+    : matchingCount === null ? 'Matching sessions'
+    : `${fmt(matchingCount)} matching session${matchingCount === 1 ? '' : 's'}`;
+  const saved = ['range','agents','agent','q','model','status','session'].some(key => params.has(key));
+  const scope = fixed ? 'Full illustrative sample'
+    : context ? (saved ? 'All captured context · Session filters saved and inactive' : 'All captured context')
+    : [rangeLabel, agentLabel, sessionLabel].join(' · ');
+  if (label.textContent !== scope) label.textContent = scope;
   change.hidden = fixed || context;
   change.textContent = sessionId ? 'Change session' : 'Choose session';
   clear.hidden = fixed || context || !sessionId;
@@ -5882,84 +5723,88 @@ function updateExploreScope(){
 
 function clearExploreSessionScope(){
   dashboardSelectedSessionId = '';
-  updateUrlParams(params => params.delete('session'));
-  updateExploreScope();
+  updateUrlParams(params => { params.delete('session'); params.delete('evidence'); }, {mode:'push'});
+  updateDashboardViewScope('explore');
   document.getElementById('explore-session-change')?.focus();
   return hydrateExploreView(activeExploreView).catch(() => {});
 }
 
 function chooseExploreSession(){
-  activateTab('sessions', {focusButton:true});
-  if (window.matchMedia('(max-width: 900px)').matches || document.body.classList.contains('sessions-rail-collapsed')) {
-    document.getElementById('session-rail-open')?.click();
-  }
+  activateTab('sessions', {clearSession:true});
+  document.getElementById('session-table-heading')?.focus();
 }
 
 function updateDashboardViewScope(tabName){
   const sessionsVisible = tabName === 'sessions';
   const filtersVisible = sessionsVisible || (tabName === 'explore' && activeExploreView !== 'context' && !isStaticDemo());
-  const exploreScope = document.getElementById('explore-scope');
-  if (exploreScope) exploreScope.hidden = tabName !== 'explore';
   const sectionTitle = document.getElementById('section-nav-title');
-  const sectionDescription = document.getElementById('section-nav-description');
   const sectionScope = document.getElementById('section-scope-note');
   const sectionExploreNav = document.getElementById('section-explore-nav');
-  const sectionCopy = {
-    sessions: ['Sessions', 'Browse captured agent work.', 'Sessions are navigation and aggregate-usage containers.'],
-    inbox: ['Inbox', 'Investigate evidence that needs a decision.', 'Create a workflow from a finding you want to address.'],
-    workflows: ['Workflows', 'Review and manage reusable procedures.', 'Agent guidance changes only through the reviewed enablement flow.'],
-    skills: ['Skills', 'Browse installed and generated skills.', 'References and measured outcomes are separate evidence.'],
-    impact: ['Impact', 'Compare later work with prior tasks.', 'Results require comparable tasks and eligible outcome evidence.'],
-    explore: ['Explore', 'Analyze usage, tools, and delivery.', 'Follow table rows back to captured evidence.'],
-  }[tabName] || ['Sessions', 'Browse captured agent work.', 'Local evidence from your captured sessions.'];
-  if (sectionTitle) sectionTitle.textContent = sectionCopy[0];
-  if (sectionDescription) sectionDescription.textContent = sectionCopy[1];
-  if (sectionScope) sectionScope.textContent = sectionCopy[2];
+  const [title, note] = {
+    sessions: ['Session scope', 'Filters apply to the session list.'],
+    inbox: ['Finding scope', 'Findings link to the tasks that support them.'],
+    workflows: ['Workflow filters', 'Review project changes before enabling a workflow.'],
+    skills: ['Registry filters', 'Skill references cover all captured history.'],
+    impact: ['Comparison scope', 'Each check uses its recorded task cohorts.'],
+    explore: ['Explore views', ''],
+  }[tabName];
+  sectionTitle.textContent = title;
+  sectionScope.textContent = note;
+  sectionScope.hidden = !note;
   if (sectionExploreNav) sectionExploreNav.hidden = tabName !== 'explore';
   const sectionSidebar = document.getElementById('section-sidebar');
-  if (sectionSidebar) sectionSidebar.dataset.view = tabName;
-  if (tabName === 'explore') updateExploreScope();
+  sectionSidebar.dataset.view = tabName;
+  sectionSidebar.hidden = sessionsVisible;
   const shell = document.getElementById('report-shell');
   if (shell) {
     shell.dataset.view = tabName;
     shell.dataset.exploreView = activeExploreView;
   }
-  for (const id of ['session-rail', 'session-rail-open']) {
-    const element = document.getElementById(id);
-    if (element) element.hidden = !sessionsVisible;
+  const params = currentParams();
+  const hasSession = sessionsVisible && params.has('session');
+  const exploreVisible = tabName === 'explore';
+  const sessionListVisible = sessionsVisible && !hasSession;
+  const filterDisclosure = document.getElementById('section-filters');
+  document.getElementById('dashboard-scope').hidden = !exploreVisible && !sessionListVisible;
+  document.getElementById('session-scope-summary').hidden = !sessionListVisible;
+  document.getElementById('explore-scope-label').hidden = !exploreVisible;
+  if (exploreVisible) updateExploreScope();
+  else {
+    document.getElementById('explore-session-change').hidden = true;
+    document.getElementById('explore-session-clear').hidden = true;
   }
-  for (const id of ['filter-rail', 'filter-sheet-open', 'report-panel-controls', 'hdr-range']) {
-    const element = document.getElementById(id);
-    if (element) element.hidden = !filtersVisible;
-  }
-  const sortField = document.getElementById('session-sort-field');
-  if (sortField) sortField.hidden = !sessionsVisible;
-  const filterTitle = document.getElementById('filter-scope-title');
-  if (filterTitle) filterTitle.textContent = sessionsVisible ? 'Session filters' : 'Matching-session filters';
-  const filterNote = document.getElementById('filter-scope-note');
-  if (filterNote) filterNote.textContent = sessionsVisible
-    ? 'Choose sessions to inspect. Session details cover their captured lifetime.'
-    : 'Choose matching sessions. Each view labels its event-window or lifetime scope.';
-  // Close temporary mobile panels without changing the saved session selection,
-  // filters, or the desktop rail's collapsed preference.
-  document.body.classList.remove('sessions-rail-open', 'filters-rail-open', 'rail-overlay-open');
-  const backdrop = document.getElementById('filter-sheet-backdrop');
-  if (backdrop) backdrop.hidden = true;
-  const mobile = window.matchMedia('(max-width: 900px)').matches;
-  for (const id of ['session-rail-open', 'session-rail-toggle']) {
-    document.getElementById(id)?.setAttribute('aria-expanded', String(sessionsVisible && !mobile && !document.body.classList.contains('sessions-rail-collapsed')));
-  }
-  document.getElementById('filter-sheet-open')?.setAttribute('aria-expanded', String(filtersVisible && !mobile));
+  filterDisclosure.hidden = !filtersVisible || hasSession;
+  if (filterDisclosure.hidden) filterDisclosure.open = false;
+  document.getElementById('workflow-scope-controls').hidden = tabName !== 'workflows';
+  document.getElementById('skill-scope-controls').hidden = tabName !== 'skills';
+  document.getElementById('hdr-range').hidden = !sessionListVisible;
+  document.getElementById('session-sort-field').hidden = !sessionsVisible;
+
+  const inactive = document.getElementById('inactive-scope');
+  const inactiveSessionFilters = !filtersVisible || hasSession;
+  const savedScope = [
+    inactiveSessionFilters && params.has('range') && `range ${params.get('range')}`,
+    inactiveSessionFilters && (params.get('agents') || params.get('agent')) && `agents ${params.get('agents') || params.get('agent')}`,
+    inactiveSessionFilters && params.has('model') && 'model',
+    inactiveSessionFilters && params.has('status') && 'status',
+    inactiveSessionFilters && params.has('q') && 'session search',
+    !sessionsVisible && params.has('sort') && 'session sort',
+    !filtersVisible && params.has('session') && 'selected session',
+    tabName !== 'workflows' && (params.has('workflow_type') || params.has('workflow_status')) && 'workflow filters',
+    tabName !== 'skills' && params.has('skill_q') && 'skill search',
+  ].filter(Boolean);
+  inactive.hidden = exploreVisible || !savedScope.length;
+  inactive.textContent = savedScope.length ? `Saved scope inactive here · ${savedScope.join(', ')}` : '';
   const analysisScope = document.getElementById('inbox-analysis-window');
   const analysisWindow = D.analysis_window;
-  if (analysisScope) analysisScope.textContent = isStaticDemo() ? 'Fixed illustrative sample. Findings and comparisons retain their own linked tasks.' : analysisWindow?.date_from && analysisWindow?.date_to
+  if (analysisScope) analysisScope.textContent = isStaticDemo() ? 'Fixed illustrative sample.' : analysisWindow?.date_from && analysisWindow?.date_to
     ? `Latest analysis window: ${fmtWorkflowDate(analysisWindow.date_from)} — ${fmtWorkflowDate(analysisWindow.date_to)}.`
     : analysisWindow?.days && analysisWindow?.date_to
       ? `Latest analysis window: ${analysisWindow.days} days ending ${fmtWorkflowDate(analysisWindow.date_to)}.`
       : 'Analysis window not supplied by this report.';
 }
 
-function activateTab(tabName, {view = '', updateUrl = true, focusButton = false} = {}){
+function activateTab(tabName, {view = '', updateUrl = true, focusButton = false, clearSession = false} = {}){
   const previousTab = tabButtons.find(button => button.getAttribute('aria-selected') === 'true')?.dataset.tab || '';
   const previousExploreView = activeExploreView;
   const location = canonicalDashboardLocation(tabName, view || activeExploreView);
@@ -5983,10 +5828,8 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
     panel.classList.toggle('active', isActive);
     panel.hidden = !isActive;
   });
-  updateDashboardViewScope(activeTab);
-  document.querySelectorAll('[data-explore-view]').forEach(button => {
+  document.querySelectorAll('#section-explore-nav [data-explore-view]').forEach(button => {
     const active = button.dataset.exploreView === activeExploreView;
-    button.classList.toggle('active', active);
     if (active) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   });
@@ -5995,19 +5838,20 @@ function activateTab(tabName, {view = '', updateUrl = true, focusButton = false}
       || (activeTab === 'explore' && previousExploreView !== activeExploreView);
     updateUrlParams(params => {
       params.set('tab', activeTab);
+      if (clearSession) {
+        params.delete('session');
+        params.delete('evidence');
+      }
       if (activeTab === 'explore') params.set('view', activeExploreView);
       else params.delete('view');
-      if (activeTab !== 'workflows') {
-        params.delete('workflow');
+      if (activeTab !== previousTab) {
+        for (const key of ledgerSelectionParams) params.delete(key);
         params.delete('workflow_root');
       }
-      if (activeTab !== 'inbox') {
-        params.delete('inbox_view');
-        params.delete('loop');
-      }
-      if (activeTab !== 'skills') params.delete('skill_q');
     }, {mode: routeChanged ? 'push' : 'replace'});
   }
+  updateDashboardViewScope(activeTab);
+  document.dispatchEvent(new CustomEvent('dashboard-route-changed', {detail:{tab:activeTab}}));
   if (activeTab === 'explore') hydrateExploreView(activeExploreView).catch(() => {});
 }
 
@@ -6030,13 +5874,21 @@ tabButtons.forEach((button, index) => {
 });
 updateTabOrientation();
 window.addEventListener('resize', updateTabOrientation);
+const dashboardFilters = document.getElementById('section-filters');
+document.addEventListener('pointerdown', event => {
+  if (dashboardFilters.open && !dashboardFilters.contains(event.target)) dashboardFilters.open = false;
+});
+dashboardFilters.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || !dashboardFilters.open) return;
+  event.preventDefault();
+  dashboardFilters.open = false;
+  dashboardFilters.querySelector('summary').focus();
+});
 document.getElementById('explore-session-change')?.addEventListener('click', chooseExploreSession);
 document.getElementById('explore-session-clear')?.addEventListener('click', clearExploreSessionScope);
-document.querySelectorAll('[data-explore-view]').forEach(button => {
+document.querySelectorAll('#section-explore-nav [data-explore-view]').forEach(button => {
   button.addEventListener('click', () => activateTab('explore', {view: button.dataset.exploreView || 'usage'}));
 });
-const requestedInitialTab = currentParams().get('tab');
-const requestedInitialView = currentParams().get('view');
 const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPROVEMENT_DATA.loops || []).length
   ? 'inbox'
   : (IMPROVEMENT_DATA.workflows || []).length
@@ -6044,21 +5896,38 @@ const defaultProductTab = (IMPROVEMENT_DATA.observations || []).length || (IMPRO
     : (IMPROVEMENT_DATA.skills || []).length
       ? 'skills'
       : 'sessions';
-activateTab(requestedInitialTab || (isStaticDemo() ? 'inbox' : defaultProductTab), {
-  view: requestedInitialView || '',
-  updateUrl: Boolean(requestedInitialTab || requestedInitialView),
-});
-window.addEventListener('popstate', () => {
+
+function restoreDashboardRoute(){
   const params = currentParams();
-  activateTab(params.get('tab') || (isStaticDemo() ? 'inbox' : defaultProductTab), {
-    view: params.get('view') || '',
-    updateUrl: false,
+  const inferred = [
+    ['session', 'sessions'],
+    ['workflow', 'workflows'],
+    ['finding', 'inbox'],
+    ['finding_draft', 'inbox'],
+    ['loop', 'inbox'],
+    ['skill', 'skills'],
+    ['impact', 'impact'],
+    ['view', 'explore'],
+  ].find(([key]) => params.has(key))?.[1];
+  const defaultTab = isStaticDemo() ? 'inbox' : isLocalDashboard() ? 'sessions' : defaultProductTab;
+  activateTab(params.get('tab') || inferred || defaultTab, {
+    view:params.get('view') || 'usage',
+    updateUrl:false,
   });
+}
+restoreDashboardRoute();
+window.addEventListener('popstate', () => {
+  restoreDashboardRoute();
+  buildImprovementSurfaces();
 });
 
 /* ── Header ── */
-const headerScope = D.measurements?.scope;
-document.getElementById('hdr-range').textContent = `${fmtWorkflowDate(headerScope?.kind === 'event_window' ? headerScope.date_from : D.first_event_ts)} — ${fmtWorkflowDate(headerScope?.kind === 'event_window' ? headerScope.date_to : D.last_event_ts)}`;
+function updateDashboardHeaderRange(report){
+  const scope = report.measurements?.scope;
+  const from = scope?.kind === 'event_window' ? scope.date_from : report.first_event_ts;
+  const to = scope?.kind === 'event_window' ? scope.date_to : report.last_event_ts;
+  document.getElementById('hdr-range').textContent = from && to ? `${fmtWorkflowDate(from)} — ${fmtWorkflowDate(to)}` : '';
+}
 document.getElementById('hdr-ts').textContent = isStaticDemo()
   ? 'Illustrative sample · fixed dates · all sample usage'
   : 'Loaded ' + new Date().toLocaleString();
@@ -6296,11 +6165,7 @@ class SessionConversationPlayhead {
   const sessions = D.sessions || (D.sessions = []);
   const params = currentParams();
   const initialSessionId = params.get('session');
-  if (initialSessionId && !sessions.some(session => (session.full_id || session.id) === initialSessionId || session.id === initialSessionId)) {
-    // Navigation identity only. Detail comes from its own API, never invented
-    // summary totals or a filtered aggregate rebuilt from session cards.
-    sessions.push({id:initialSessionId, full_id:initialSessionId, _navigationOnly:true});
-  }
+  const sessionIndex = id => sessions.findIndex(item => item.full_id === id || item.id === id);
   D._navigationCompletedAt = D.snapshot_completed_at || D._navigationCompletedAt || '';
   D._navigationLoadedAt = D._navigationLoadedAt || new Date().toISOString();
   function navigationSnapshotLabel(){
@@ -6309,8 +6174,13 @@ class SessionConversationPlayhead {
       ? `report completed ${new Date(D._navigationCompletedAt).toLocaleString()}`
       : `report loaded ${new Date(D._navigationLoadedAt).toLocaleString()}`;
   }
-  let selectedIdx = initialSessionId ? sessions.findIndex(s => (s.full_id || s.id) === initialSessionId || s.id === initialSessionId) : -1;
-  if (selectedIdx < 0) selectedIdx = null;
+  let selectedIdx = null;
+  let focusedSessionId = '';
+  let sessionListScroll = null;
+  const listView = document.getElementById('session-table-view');
+  const detailView = document.getElementById('session-detail-view');
+  const listEl = document.getElementById('sb-list');
+  const returnButton = document.getElementById('session-return');
   let activeConversationPlayhead = null;
 
   function conversationSearchText(event){
@@ -6396,23 +6266,20 @@ class SessionConversationPlayhead {
       ${hasFailures ? '<button type="button" class="conversation-nav-button" data-conversation-failure>Next failure</button>' : ''}
     </div>`;
   }
-  const filterState = {
-    q: (params.get('q') || '').trim(),
-    agents: new Set((params.get('agents') || '').split(',').filter(Boolean)),
-    model: params.get('model') || 'all',
-    status: params.get('status') || 'all',
-    range: params.get('range') || (params.get('session') || !D.sql_backed ? 'all' : (D.range || '7d')),
-    sort: params.get('sort') || 'recent',
-  };
-  if (D.sql_backed && reportSupportsServerFiltering() && !params.has('range') && !initialSessionId && params.get('tab') !== 'explore') {
-    // Persist the default before selecting a session adds its identity to the
-    // URL; a reload must keep the same activity window.
-    updateUrlParams(urlParams => urlParams.set('range', filterState.range));
-  }
+  const defaultRange = initialSessionId || !D.sql_backed ? 'all' : (D.range || '7d');
+  const readFilters = values => ({
+    q:(values.get('q') || '').trim(),
+    agents:new Set((values.get('agents') || values.get('agent') || '').split(',').filter(Boolean)),
+    model:values.get('model') || 'all',
+    status:values.get('status') || 'all',
+    range:values.get('range') || defaultRange,
+    sort:values.get('sort') || 'recent',
+  });
+  const filterState = readFilters(params);
 
   document.addEventListener('keydown', event => {
     const session = selectedIdx === null ? null : sessions[selectedIdx];
-    if (!session || session._detailTab !== 'conversation') return;
+    if (detailView.hidden || !document.getElementById('tab-sessions').classList.contains('active') || !session || session._detailTab !== 'conversation') return;
     const target = event.target;
     const isEditable = target instanceof HTMLInputElement
       || target instanceof HTMLTextAreaElement
@@ -6434,24 +6301,14 @@ class SessionConversationPlayhead {
   ]);
   const pillContainer = document.getElementById('sb-agent-pills');
   const listHead = document.getElementById('sb-list-head');
-  const metaEl = document.getElementById('global-filter-meta');
-  const launcherMetaEl = document.getElementById('session-filter-launcher-meta');
   const chipsEl = document.getElementById('filter-chips');
   const clearBtn = document.getElementById('filter-clear');
-  const filterShell = document.getElementById('global-filter-shell');
-  const compactToggleBtn = document.getElementById('filter-compact-toggle');
-  const filterSheetOpenBtn = document.getElementById('filter-sheet-open');
-  const filterSheetCloseBtn = document.getElementById('filter-sheet-close');
-  const filterSheetBackdrop = document.getElementById('filter-sheet-backdrop');
-  const sessionRailToggleBtn = document.getElementById('session-rail-toggle');
-  const sessionRailOpenBtn = document.getElementById('session-rail-open');
   const searchInput = document.getElementById('sb-search');
   const modelSelect = document.getElementById('filter-model');
   const statusSelect = document.getElementById('filter-status');
   const rangeSelect = document.getElementById('filter-range');
   const sortSelect = document.getElementById('filter-sort');
   let reloadTimer = null;
-  let filterExpanded = true;
   const agentNames = [...agentSet].sort((a,b) => a.localeCompare(b));
   const modelNames = [...new Set([
     ...(filterState.model === 'all' ? [] : [filterState.model]),
@@ -6483,6 +6340,7 @@ class SessionConversationPlayhead {
     updateUrlParams(urlParams => {
       if (filterState.q) urlParams.set('q', filterState.q);
       else urlParams.delete('q');
+      urlParams.delete('agent');
       if (filterState.agents.size) urlParams.set('agents', [...filterState.agents].join(','));
       else urlParams.delete('agents');
       if (filterState.model !== 'all') urlParams.set('model', filterState.model);
@@ -6493,118 +6351,148 @@ class SessionConversationPlayhead {
       if (filterState.sort !== 'recent') urlParams.set('sort', filterState.sort);
       else urlParams.delete('sort');
       urlParams.delete('session');
+      urlParams.delete('evidence');
     });
+    const activeTab = document.querySelector('.tab[aria-selected=true]')?.dataset.tab;
+    if (activeTab === 'explore') publishExploreMatchingCount();
+    if (activeTab) updateDashboardViewScope(activeTab);
+    updateAgentPills();
+    renderFilterChips();
   }
 
-  let sessionPublicationRequest = 0;
+  function navigationUrl(){
+    const url = new URL(reportUrlWithCurrentFilters());
+    url.searchParams.set('tab', 'sessions');
+    url.searchParams.delete('view');
+    url.searchParams.delete('session');
+    url.searchParams.set('range', filterState.range);
+    url.searchParams.sort();
+    return url.toString();
+  }
+
+  function snapshotDates({measurements, first_event_ts, last_event_ts}){
+    return {measurements, first_event_ts, last_event_ts};
+  }
+  let publishedDates = snapshotDates(D);
+  let publishedNavigationUrl = D._unfilteredNavigation || D._unpublishedNavigation || initialSessionId ? '' : navigationUrl();
+  let publishedSessionTotal = D.session_list_total;
+  function publishExploreMatchingCount(){
+    const exact = publishedNavigationUrl === navigationUrl() && !D._unpublishedNavigation;
+    exploreMatchingSessionCount = exact && publishedSessionTotal != null ? Number(publishedSessionTotal) : null;
+    if (document.getElementById('report-shell').dataset.view === 'explore') updateExploreScope();
+  }
+
   let sessionNavigationFlight = null;
+  let navigationState = '';
+  function presentNavigationStatus(state, message = ''){
+    navigationState = state;
+    const status = document.getElementById('session-list-status');
+    const busy = state === 'loading';
+    listView.setAttribute('aria-busy', String(busy));
+    status.hidden = !state;
+    status.textContent = message;
+    if (state === 'error') {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'ledger-button';
+      retry.textContent = 'Retry';
+      retry.addEventListener('click', refreshSessionNavigation);
+      status.append(' ', retry);
+    }
+  }
+
   async function refreshSessionNavigation(){
-    const url = reportUrlWithCurrentFilters();
-    const scopeRevision = D._sessionScopeRevision || 0;
-    if (sessionNavigationFlight?.url === url && sessionNavigationFlight.revision === scopeRevision) return sessionNavigationFlight.promise;
-    const request = ++sessionPublicationRequest;
-    D._navigationRefreshPending = true;
-    const promise = Promise.resolve().then(async () => {
-      try {
-        const response = await reportReadResponse(url, {headers:{Accept:'application/json'}, cache:'no-store'});
-        if (!response.ok) return;
-        const payload = await response.json();
-        if (!dashboardDocumentActive || request !== sessionPublicationRequest || scopeRevision !== (D._sessionScopeRevision || 0) || url !== reportUrlWithCurrentFilters()) return;
-        const selectedId = selectedIdx === null ? '' : (sessions[selectedIdx]?.full_id || sessions[selectedIdx]?.id || '');
-        const retained = new Map(sessions.map(item => [item.full_id || item.id, item]));
-        const detailKeys = ['conversation','telemetry','tool_inventory','measurements','git_activity',
-          'pricing_coverage','cost_scope','total_cost_usd','insights','assessments','derived_state','usage_state'];
-        const next = (payload.sessions || []).map(item => {
-          const existing = retained.get(item.full_id || item.id);
-          if (!existing) return item;
-          const summary = {...item};
-          if (existing._activityLoaded || existing._fullLoaded || existing._loadingDetail || existing.conversation?.length) {
-            for (const key of detailKeys) delete summary[key];
-          }
-          return Object.assign(existing, summary);
-        });
-        const pending = ['stale','recorded'].includes(payload.publication?.state);
-        sessions.splice(0, sessions.length, ...next);
-        Object.assign(D, payload, {sessions, _unpublishedNavigation:false,
-          _navigationScope:url, _navigationRefreshPending:pending});
-        const index = sessions.findIndex(item => (item.full_id || item.id) === selectedId);
-        selectedIdx = index >= 0 ? index : null;
-        renderSessionList();
-        if (pending) markNavigationCached();
-        hideReportLoader();
-      } finally {
-        if (sessionNavigationFlight?.request === request) sessionNavigationFlight = null;
+    if (!reportSupportsServerFiltering()) return;
+    const url = navigationUrl();
+    const revision = D._sessionScopeRevision || 0;
+    if (sessionNavigationFlight?.url === url && sessionNavigationFlight.revision === revision) return;
+    const request = {url, revision};
+    const signal = AbortSignal.timeout(30000);
+    sessionNavigationFlight = request;
+    const current = () => dashboardDocumentActive && sessionNavigationFlight === request
+      && revision === (D._sessionScopeRevision || 0) && url === navigationUrl();
+    D._navigationRefreshPending = false;
+    presentNavigationStatus('loading', 'Loading matching sessions…');
+    listEl.hidden = publishedNavigationUrl !== url && !D._unfilteredNavigation;
+    try {
+      const response = await reportReadResponse(url, {headers:{Accept:'application/json'}, cache:'no-store', signal});
+      if (!current()) return;
+      if (response.status === 503 && (await response.json()).state === 'preparing') {
+        if (!current()) return;
+        D._navigationRefreshPending = true;
+        presentNavigationStatus('loading', 'The session list is preparing. It will update automatically.');
+        return;
       }
-    });
-    sessionNavigationFlight = {url, request, revision:scopeRevision, promise};
-    return promise;
+      if (!response.ok) throw new Error('Could not load matching sessions.');
+      const payload = await response.json();
+      if (!current()) return;
+      const selected = selectedIdx === null ? null : sessions[selectedIdx];
+      const retained = new Map(sessions.map(item => [item.full_id || item.id, item]));
+      const detailKeys = ['conversation','telemetry','tool_inventory','measurements','git_activity',
+        'pricing_coverage','cost_scope','total_cost_usd','insights','assessments','derived_state','usage_state'];
+      const next = (payload.sessions || []).map(item => {
+        const existing = retained.get(item.full_id || item.id);
+        if (!existing) return item;
+        const summary = {...item};
+        if (existing._activityLoaded || existing._fullLoaded || existing._loadingDetail || existing.conversation?.length) {
+          for (const key of detailKeys) delete summary[key];
+        }
+        delete existing._navigationOnly;
+        return Object.assign(existing, summary);
+      });
+      if (selected && !next.some(item => (item.full_id || item.id) === (selected.full_id || selected.id))) {
+        selected._navigationOnly = true;
+        next.push(selected);
+      }
+      const pending = ['stale','recorded'].includes(payload.publication?.state);
+      sessions.splice(0, sessions.length, ...next);
+      const index = selected ? sessionIndex(selected.full_id || selected.id) : -1;
+      selectedIdx = index >= 0 ? index : null;
+      publishedNavigationUrl = url;
+      publishedDates = snapshotDates(payload);
+      publishedSessionTotal = payload.session_list_total;
+      Object.assign(D, {
+        session_list_total:payload.session_list_total,
+        _unpublishedNavigation:false, _unfilteredNavigation:false,
+        _navigationFromCache:pending, _navigationRefreshPending:pending,
+        _navigationCompletedAt:payload.snapshot_completed_at || '',
+        _navigationLoadedAt:new Date().toISOString(),
+      });
+      listEl.hidden = false;
+      presentNavigationStatus(pending ? 'stale' : '', pending ? `Showing retained sessions · ${navigationSnapshotLabel()}` : '');
+      if (document.getElementById('tab-sessions').classList.contains('active')) updateDashboardHeaderRange(publishedDates);
+      renderSessionList();
+    } catch (error) {
+      if (current()) presentNavigationStatus('error', error.name === 'TimeoutError'
+        ? 'The session list took too long to load.' : error.message || 'Could not load matching sessions.');
+    } finally {
+      if (sessionNavigationFlight === request) sessionNavigationFlight = null;
+    }
   }
 
   function scheduleDashboardReload(){
     if (!reportSupportsServerFiltering()) return false;
     if (reloadTimer) window.clearTimeout(reloadTimer);
     D._sessionScopeRevision = (D._sessionScopeRevision || 0) + 1;
-    showReportLoader('Loading selected sessions…');
-    reloadTimer = window.setTimeout(() => refreshSessionNavigation().catch(() => {}), 120);
+    presentNavigationStatus('loading', 'Loading matching sessions…');
+    if (publishedNavigationUrl !== navigationUrl()) {
+      listEl.hidden = true;
+      updateDashboardHeaderRange({});
+    }
+    if (currentParams().get('tab') === 'explore' && activeExploreView === 'graph'
+      && exploreViewScopes.get('graph')?.scope !== exploreViewUrl('graph').url.toString()) {
+      setExploreViewState('graph', 'loading');
+    }
+    reloadTimer = window.setTimeout(() => {
+      refreshSessionNavigation();
+      if (document.querySelector('.tab[data-tab="explore"][aria-selected="true"]')) hydrateExploreView(activeExploreView).catch(() => {});
+    }, 120);
     return true;
   }
 
   document.addEventListener('reflect-status-polled', () => {
-    if (dashboardDocumentActive && D._navigationRefreshPending) refreshSessionNavigation().catch(() => {});
+    if (dashboardDocumentActive && D._navigationRefreshPending) refreshSessionNavigation();
   });
-
-  function isMobileShell(){
-    return window.matchMedia('(max-width: 900px)').matches;
-  }
-
-  function syncRailState(){
-    const mobile = isMobileShell();
-    const filtersOpen = mobile ? document.body.classList.contains('filters-rail-open') : true;
-    const sessionsOpen = document.body.classList.contains('sessions-rail-open');
-    const sessionsCollapsed = document.body.classList.contains('sessions-rail-collapsed');
-    const overlayOpen = mobile && (filtersOpen || sessionsOpen);
-    document.body.classList.toggle('rail-overlay-open', overlayOpen);
-    if (filterSheetBackdrop) filterSheetBackdrop.hidden = !overlayOpen;
-    sessionRailToggleBtn?.setAttribute('aria-expanded', String(mobile ? sessionsOpen : !sessionsCollapsed));
-    sessionRailOpenBtn?.setAttribute('aria-expanded', String(mobile ? sessionsOpen : !sessionsCollapsed));
-    filterSheetOpenBtn?.setAttribute('aria-expanded', String(filtersOpen));
-    if (!mobile) document.body.classList.remove('sessions-rail-open');
-  }
-
-  function toggleSessionRail(){
-    if (isMobileShell()) {
-      document.body.classList.toggle('sessions-rail-open');
-    } else {
-      document.body.classList.toggle('sessions-rail-collapsed');
-    }
-    syncRailState();
-  }
-
-  function closeFilterRail(){
-    if (isMobileShell()) document.body.classList.remove('filters-rail-open');
-    syncRailState();
-  }
-
-  function toggleFilterRail(){
-    if (!isMobileShell()) return;
-    document.body.classList.toggle('filters-rail-open');
-    syncRailState();
-  }
-
-  function closeShellOverlays(){
-    document.body.classList.remove('sessions-rail-open');
-    document.body.classList.remove('filters-rail-open');
-    syncRailState();
-  }
-
-  function syncFilterLayout(){
-    filterShell.classList.toggle('expanded', filterExpanded);
-    if (compactToggleBtn) {
-      compactToggleBtn.setAttribute('aria-expanded', String(filterExpanded));
-      compactToggleBtn.textContent = filterExpanded ? 'Fewer filters' : 'More filters';
-    }
-    syncRailState();
-  }
 
   function updateAgentPills(){
     pillContainer.querySelectorAll('.sb-pill').forEach(p => {
@@ -6616,22 +6504,88 @@ class SessionConversationPlayhead {
     });
   }
 
-  function setSelectedSession(idx, {updateUrl = true} = {}){
-    selectedIdx = idx;
-    const selected = selectedIdx === null ? null : sessions[selectedIdx];
-    dashboardSelectedSessionId = selected ? (selected.full_id || selected.id || '') : '';
+  function syncSessionRoute({restoreFocus = false} = {}){
+    const route = currentParams();
+    const onSessions = document.getElementById('tab-sessions').classList.contains('active');
+    const id = route.get('session') || '';
+    dashboardSelectedSessionId = id;
+    const filters = readFilters(route);
+    Object.assign(filterState, filters);
+    searchInput.value = filters.q;
+    modelSelect.value = filters.model;
+    statusSelect.value = filters.status;
+    rangeSelect.value = filters.range;
+    sortSelect.value = filters.sort;
+    if (!onSessions) {
+      renderFilterChips();
+      updateAgentPills();
+      if (route.get('tab') === 'explore') {
+        publishExploreMatchingCount();
+        if (activeExploreView !== 'context' && !id && reportSupportsServerFiltering()
+          && publishedNavigationUrl !== navigationUrl()) refreshSessionNavigation();
+      }
+      return;
+    }
+    const wasOpen = !detailView.hidden;
+    let index = id ? sessionIndex(id) : -1;
+    if (id && index < 0) {
+      index = sessions.push({id, full_id:id, _navigationOnly:true}) - 1;
+    }
+    selectedIdx = index >= 0 ? index : null;
+    listView.hidden = document.getElementById('session-compare').hidden = Boolean(id);
+    detailView.hidden = !id;
     renderSessionList();
-    renderSessionDetail(selectedIdx === null ? null : sessions[idx]);
-    if (updateUrl) {
-      updateUrlParams(urlParams => {
-        urlParams.set('range', filterState.range);
-        const selected = selectedIdx === null ? null : sessions[selectedIdx];
-        if (selected) urlParams.set('session', selected.full_id || selected.id);
-        else urlParams.delete('session');
-      });
-      if (selected) activateTab('sessions');
+    renderSessionDetail(selectedIdx === null ? null : sessions[selectedIdx]);
+    if (!id) updateDashboardHeaderRange(!reportSupportsServerFiltering() || publishedNavigationUrl === navigationUrl() ? publishedDates : {});
+    if (!id && reportSupportsServerFiltering()) {
+      if (publishedNavigationUrl !== navigationUrl()) refreshSessionNavigation();
+      else if (navigationState && !D._navigationRefreshPending) {
+        listEl.hidden = false;
+        presentNavigationStatus('');
+      }
+    }
+    if (!id && (wasOpen || restoreFocus)) {
+      const opener = [...listEl.querySelectorAll('[data-session-id]')].find(button => button.dataset.sessionId === focusedSessionId);
+      (opener || document.getElementById('session-table-heading')).focus({preventScroll:true});
+      if (sessionListScroll) {
+        window.scrollTo({top:sessionListScroll.page, behavior:'instant'});
+        listEl.querySelector('.analysis-table-scroll')?.scrollTo({left:sessionListScroll.table, behavior:'instant'});
+      }
     }
   }
+
+  listEl.addEventListener('click', event => {
+    const button = event.target.closest('[data-session-id]');
+    if (!button) return;
+    focusedSessionId = button.dataset.sessionId;
+    sessionListScroll = {page:window.scrollY, table:listEl.querySelector('.analysis-table-scroll')?.scrollLeft || 0};
+    updateUrlParams(values => {
+      values.set('tab', 'sessions');
+      values.set('range', filterState.range);
+      values.set('session', focusedSessionId);
+      values.delete('evidence');
+    }, {mode:'push', state:{sessionOpenedFromList:true}});
+    updateDashboardViewScope('sessions');
+    syncSessionRoute();
+    detailView.scrollIntoView({block:'start', behavior:'instant'});
+    returnButton.focus({preventScroll:true});
+  });
+
+  document.getElementById('session-explore').hidden = isStaticDemo() || !D.sql_backed;
+  document.getElementById('session-explore').addEventListener('click', () => activateTab('explore', {view:'usage', focusButton:true}));
+
+  returnButton.addEventListener('click', () => {
+    if (window.history.state?.sessionOpenedFromList) {
+      window.history.back();
+      return;
+    }
+    updateUrlParams(values => {
+      values.delete('session');
+      values.delete('evidence');
+    });
+    updateDashboardViewScope('sessions');
+    syncSessionRoute({restoreFocus:true});
+  });
 
   // Pill click
   pillContainer.addEventListener('click', e => {
@@ -6684,21 +6638,6 @@ class SessionConversationPlayhead {
     if (scheduleDashboardReload()) return;
     renderSessionList();
   });
-  compactToggleBtn?.addEventListener('click', () => {
-    filterExpanded = !filterExpanded;
-    syncFilterLayout();
-  });
-  sessionRailToggleBtn?.addEventListener('click', () => toggleSessionRail());
-  sessionRailOpenBtn?.addEventListener('click', () => toggleSessionRail());
-  filterSheetOpenBtn?.addEventListener('click', () => toggleFilterRail());
-  filterSheetCloseBtn?.addEventListener('click', () => closeFilterRail());
-  filterSheetBackdrop?.addEventListener('click', () => closeShellOverlays());
-  window.addEventListener('resize', syncRailState);
-  document.addEventListener('keydown', evt => {
-    if (evt.key === 'Escape') closeShellOverlays();
-  });
-  syncFilterLayout();
-
   function removeFilterChip(kind, value){
     if (kind === 'q') filterState.q = '';
     if (kind === 'agent') filterState.agents.delete(value);
@@ -6723,7 +6662,13 @@ class SessionConversationPlayhead {
     if (filterState.model !== 'all') chips.push({kind:'model', value:'', label:`Model: ${filterState.model}`});
     if (filterState.status !== 'all') chips.push({kind:'status', value:'', label:`Status: ${statusSelect.options[statusSelect.selectedIndex]?.textContent || filterState.status}`});
     if (filterState.range !== 'all') chips.push({kind:'range', value:'', label:`Range: ${rangeSelect.options[rangeSelect.selectedIndex]?.textContent || filterState.range}`});
-    if (filterState.sort !== 'recent') chips.push({kind:'sort', value:'', label:`Sort: ${sortSelect.options[sortSelect.selectedIndex]?.textContent || filterState.sort}`});
+    if (!document.getElementById('session-sort-field').hidden && filterState.sort !== 'recent') chips.push({kind:'sort', value:'', label:`Sort: ${sortSelect.options[sortSelect.selectedIndex]?.textContent || filterState.sort}`});
+    const counter = document.getElementById('scope-filter-count');
+    const extra = document.getElementById('report-shell').dataset.view === 'explore'
+      ? chips.filter(chip => chip.kind !== 'range' && chip.kind !== 'agent').length : chips.length;
+    counter.hidden = !extra;
+    counter.textContent = extra ? String(extra) : '';
+    counter.setAttribute('aria-label', `${extra} active filter${extra === 1 ? '' : 's'}`);
     chipsEl.innerHTML = chips.map(chip => `
       <span class="filter-chip">${escHtml(chip.label)}<button type="button" data-kind="${chip.kind}" data-value="${escHtml(chip.value)}" aria-label="Remove ${escHtml(chip.label)}">×</button></span>
     `).join('');
@@ -6741,8 +6686,8 @@ class SessionConversationPlayhead {
       : filterState.range === '30d' ? 30 * 24 * 60 * 60 * 1000
       : 0;
     const filtered = sessions.map((s,i) => ({...s, _idx:i})).filter(s => {
+      if (s._navigationOnly) return false;
       if (serverFiltered) return true;
-      if ((s._navigationOnly || D._unfilteredNavigation) && (s.full_id || s.id) === initialSessionId) return true;
       if (filterState.agents.size && !filterState.agents.has(s.agent || '')) return false;
       if (filterState.model !== 'all' && (s.primary_model || '') !== filterState.model) return false;
       if (filterState.status === 'completed' && !s.is_completed) return false;
@@ -6778,76 +6723,50 @@ class SessionConversationPlayhead {
   }
 
   function renderSessionList(){
-    const listEl = document.getElementById('sb-list');
     const filtered = filteredSessions();
     filteredDashboardSessions = filtered.map(s => sessions[s._idx]);
     updateAgentPills();
     renderFilterChips();
     const hasFilters = Boolean(filterState.q || filterState.agents.size || filterState.model !== 'all' || filterState.status !== 'all' || filterState.range !== 'all' || filterState.sort !== 'recent');
-    const totalSessions = Number(D.session_list_total || sessions.length || 0);
-    metaEl.textContent = D._unpublishedNavigation
-      ? 'Captured session activity · published navigation not loaded'
+    const totalSessions = Number(publishedSessionTotal ?? filtered.length);
+    listHead.textContent = D._unpublishedNavigation
+      ? 'Session list is preparing'
       : D._navigationFromCache
-      ? `${fmt(filtered.length)} navigation entries · ${navigationSnapshotLabel()}`
-      : hasFilters
+      ? `${fmt(filtered.length)} cached sessions · ${navigationSnapshotLabel()}`
+      : filtered.length < totalSessions && reportSupportsServerFiltering()
       ? `Showing ${fmt(filtered.length)} of ${fmt(totalSessions)} sessions`
-      : `Showing ${fmt(filtered.length)} of ${fmt(totalSessions)} sessions`;
-    if (launcherMetaEl) launcherMetaEl.textContent = metaEl.textContent;
-    listHead.textContent = `${fmt(filtered.length)} session${filtered.length === 1 ? '' : 's'} in view`;
+      : `${fmt(filtered.length)} session${filtered.length === 1 ? '' : 's'} in view`;
+    publishExploreMatchingCount();
     document.dispatchEvent(new CustomEvent('dashboard-filters-changed', {
       detail: { sessions: filteredDashboardSessions.slice(), hasFilters, selectedSessionId: dashboardSelectedSessionId, filters: {...filterState, agents:[...filterState.agents]} }
     }));
-    if (selectedIdx !== null && !filtered.some(s => s._idx === selectedIdx)) {
-      selectedIdx = null;
-      dashboardSelectedSessionId = '';
-      updateUrlParams(urlParams => urlParams.delete('session'));
+    const scrollLeft = listEl.querySelector('.analysis-table-scroll')?.scrollLeft || 0;
+    const rowHadFocus = document.activeElement.closest('#sb-list [data-session-id]')?.dataset.sessionId;
+    listEl.innerHTML = filtered.length ? analysisTable(
+      ['Session', 'Agent', 'Started', 'Events', 'Tokens', 'Cost', 'Quality'],
+      filtered.map(session => {
+        const id = session.full_id || session.id;
+        const title = sessionListIdentity(session);
+        const highlighted = id === focusedSessionId;
+        const estimated = getEstimatedSessionTokens(session);
+        const tokens = sessionTokenTotal(session, estimated);
+        const cost = sessionCostPresentation(session, estimated);
+        const unit = String(session.pricing_unit || sqlTab('usage').pricing_unit || 'usd').toUpperCase();
+        const costLabel = cost.status === 'estimated' ? `${fmtCost(cost.cost)} ${unit}` : cost.label;
+        return `<tr class="analysis-summary${highlighted ? ' session-row-current' : ''}">
+          <th scope="row"><button type="button" class="analysis-toggle" data-session-id="${escHtml(id)}"${highlighted ? ' aria-current="true"' : ''}>${escHtml(title.title)}</button>
+            ${title.missingPrompt ? '<small class="analysis-subline">Prompt text unavailable</small>' : ''}</th>
+          <td>${escHtml(formatAgentLabel(session.agent))}</td><td>${escHtml(fmtWorkflowDate(session.created_at))}</td>
+          <td>${fmt(session.event_count || 0)}</td><td>${tokens > 0 ? `${estimated ? '~' : ''}${fmtTokenShort(tokens)}` : '—'}</td>
+          <td title="${escHtml(cost.reason || '')}">${escHtml(costLabel)}</td><td>${renderSessionQualityBadge(session)}</td>
+        </tr>`;
+      }).join('')
+    ) : `<p class="session-ledger-empty">${D._unpublishedNavigation ? 'Session navigation is updating.' : hasFilters ? 'No sessions match this scope. Adjust the filters to broaden it.' : 'No sessions have been captured yet.'}</p>`;
+    const scroller = listEl.querySelector('.analysis-table-scroll');
+    if (scroller) scroller.scrollLeft = scrollLeft;
+    if (rowHadFocus) {
+      [...listEl.querySelectorAll('[data-session-id]')].find(button => button.dataset.sessionId === rowHadFocus)?.focus({preventScroll:true});
     }
-    if (!filtered.length) {
-      listEl.innerHTML = `<div class="sb-empty" style="height:auto;padding:24px 12px"><div class="sb-empty-icon" aria-hidden="true">&#128269;</div><div>${D._unpublishedNavigation ? 'Session navigation is updating. Other sections remain available.' : 'No sessions match this filter'}</div></div>`;
-      renderSessionDetail(selectedIdx === null ? null : sessions[selectedIdx]);
-      return;
-    }
-    if (selectedIdx === null) {
-      selectedIdx = filtered[0]._idx;
-    }
-    listEl.innerHTML = filtered.map(s => {
-      const agentColor = colorForAgent(s.agent);
-      const agentName = formatAgentLabel(s.agent);
-      const identity = sessionListIdentity(s);
-      const isActive = s._idx === selectedIdx;
-      const estimatedTokens = getEstimatedSessionTokens(s);
-      const tokens = sessionTokenTotal(s, estimatedTokens);
-      const costPresentation = sessionCostPresentation(s, estimatedTokens);
-      const cost = costPresentation.cost;
-      const unit = String(s.pricing_unit || sqlTab('usage').pricing_unit || 'usd').toUpperCase();
-      return `<button type="button" class="sb-card${isActive ? ' active' : ''}" data-idx="${s._idx}" aria-pressed="${isActive ? 'true' : 'false'}">
-        <div class="sb-card-header">
-          <div class="sb-card-agent-icon">${agentIconSvg(s.agent)}</div>
-          <div class="sb-card-agent">${escHtml(agentName)}</div>
-          <div class="sb-card-time">${s._navigationOnly ? 'Linked session' : escHtml(fmtWorkflowDate(s.created_at))}</div>
-        </div>
-        <div class="sb-card-prompt">${escHtml(identity.title)}</div>
-        <div class="sb-card-badges">
-          ${identity.missingPrompt ? '<div class="sb-card-badge">Prompt text unavailable</div>' : ''}
-          ${s._navigationOnly ? '<div class="sb-card-badge">Activity detail · summary unavailable</div>' : `<div class="sb-card-badge">${fmt(s.event_count || 0)} events</div>
-          ${tokens > 0 ? `<div class="sb-card-badge">${estimatedTokens ? '~' : ''}${fmtTokenShort(tokens)} tok</div>` : ''}
-          ${costPresentation.status === 'estimated'
-            ? `<div class="sb-card-badge">${fmtCost(cost)} ${escHtml(unit)}</div>`
-            : `<div class="sb-card-badge" style="color:var(--text-3)" title="${escHtml(costPresentation.reason)}">${escHtml(costPresentation.label)}</div>`}
-          ${renderSessionQualityBadge(s)}`}
-        </div>
-      </button>`;
-    }).join('');
-
-    // Click handler
-    listEl.querySelectorAll('.sb-card').forEach(card => {
-      card.addEventListener('click', () => {
-        const idx = parseInt(card.dataset.idx);
-        setSelectedSession(idx);
-        if (isMobileShell()) closeShellOverlays();
-      });
-    });
-    renderSessionDetail(sessions[selectedIdx]);
   }
 
   function renderSessionDetail(session){
@@ -6856,6 +6775,11 @@ class SessionConversationPlayhead {
     activeConversationPlayhead = null;
     if (!session) {
       detailEl.innerHTML = '<div class="sb-empty"><div class="sb-empty-icon" aria-hidden="true">&#9776;</div><div>Select a session to view its conversation timeline</div></div>';
+      return;
+    }
+
+    if (session._detailNotFound) {
+      detailEl.innerHTML = '<p class="session-ledger-empty" role="status">Session not found in captured telemetry.</p>';
       return;
     }
 
@@ -8138,6 +8062,7 @@ class SessionConversationPlayhead {
       sessions[idx]._loadingDetail = true;
       sessions[idx]._detailRequest = requestToken;
       sessions[idx]._detailLoadError = '';
+      sessions[idx]._detailNotFound = false;
     }
     if (btn) {
       btn.disabled = true;
@@ -8155,7 +8080,11 @@ class SessionConversationPlayhead {
         if (r.status === 503 && (await r.json()).state === 'preparing') {
           throw new Error('Session details are refreshing. Showing the last completed summary. Retry after refresh completes.');
         }
-        if (r.status === 404) throw new Error('Session not found in captured telemetry.');
+        if (r.status === 404) {
+          const error = new Error('Session not found in captured telemetry.');
+          error.name = 'SessionNotFound';
+          throw error;
+        }
         if (!r.ok) throw new Error('Session details could not be loaded. Please retry.');
         return r.json();
       })
@@ -8204,6 +8133,7 @@ class SessionConversationPlayhead {
         if (!dashboardDocumentActive || requestRevision !== (D._sessionScopeRevision || 0)) return;
         if (idx >= 0) {
           sessions[idx]._loadingDetail = false;
+          sessions[idx]._detailNotFound = err.name === 'SessionNotFound';
           sessions[idx]._detailLoadError = err.name === 'AbortError'
             ? 'Session details took too long to load. Please retry.'
             : err.message || 'Session details could not be loaded. Please retry.';
@@ -8239,18 +8169,14 @@ class SessionConversationPlayhead {
 
   function markNavigationCached(){
     if (!D._unpublishedNavigation) D._navigationFromCache = true;
-    for (const id of ['global-filter-meta', 'session-filter-launcher-meta']) {
-      const label = document.getElementById(id);
-      if (label) label.textContent = D._unpublishedNavigation
-        ? 'Captured session activity · published navigation not loaded'
-        : `Cached navigation · ${navigationSnapshotLabel()}`;
-    }
+    listHead.textContent = D._unpublishedNavigation
+      ? 'Session list is preparing' : `Cached sessions · ${navigationSnapshotLabel()}`;
   }
 
   document.addEventListener('reflect-snapshot-published', event => {
     if (!dashboardDocumentActive) return;
     D._sessionScopeRevision = (D._sessionScopeRevision || 0) + 1;
-    if (document.getElementById('tab-sessions')?.classList.contains('active')) refreshSessionNavigation().catch(() => {});
+    if (document.getElementById('tab-sessions')?.classList.contains('active')) refreshSessionNavigation();
     if (!document.getElementById('tab-sessions')?.classList.contains('active') || selectedIdx === null) return;
     event.preventDefault();
     markNavigationCached();
@@ -8258,6 +8184,7 @@ class SessionConversationPlayhead {
       session._activityLoaded = false;
       session._fullLoaded = false;
       session._detailLoadError = '';
+      session._detailNotFound = false;
       if (session._loadingDetail) session._refreshDetailAfterLoad = true;
     }
     const selected = sessions[selectedIdx];
@@ -8269,10 +8196,9 @@ class SessionConversationPlayhead {
     if (selected._refreshDetailAfterLoad) tryLoadFullDetail(selected.full_id || selected.id, null);
   });
 
-  renderSessionList();
-  if (selectedIdx !== null) {
-    renderSessionDetail(sessions[selectedIdx]);
-  }
+  document.addEventListener('dashboard-route-changed', () => syncSessionRoute());
+  syncSessionRoute();
+  if (!document.getElementById('tab-sessions').classList.contains('active')) renderSessionList();
 })();
 /* ════════════════════ EXPLORE: USAGE ════════════════════ */
 
@@ -8476,7 +8402,6 @@ function buildCohortComparison(){
 }
 document.addEventListener('dashboard-filters-changed', event => {
   dashboardSelectedSessionId = event.detail?.selectedSessionId || dashboardSelectedSessionId || '';
-  dashboardFilterActive = Boolean(event.detail?.hasFilters || dashboardSelectedSessionId);
   buildCohortComparison();
 });
 
@@ -8905,11 +8830,8 @@ function impactScope(item){
   return `${task} · ${repository}`;
 }
 
-// Expanded rows survive background renders; explicit URL targets open on arrival.
-const analysisExpandedRows = new Map();
 function analysisRowOpen(kind, id){
-  const key = `${kind}:${id}`;
-  return analysisExpandedRows.has(key) ? analysisExpandedRows.get(key) : currentParams().get(`${kind}_row`) === String(id);
+  return currentParams().get(`${kind}_row`) === String(id);
 }
 function analysisTable(headers, rows){
   return `<div class="analysis-table-scroll" tabindex="0" role="region" aria-label="${escHtml(headers[0])} evidence table"><table class="analysis-table"><thead><tr>${headers.map(label => `<th scope="col">${escHtml(label)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -8919,17 +8841,24 @@ function analysisToggle(kind, id, label){
   return `<button type="button" id="toggle-${escHtml(key)}" class="analysis-toggle" data-ledger-action="toggle-analysis-row" data-row-kind="${kind}" data-row-id="${escHtml(id)}" aria-expanded="${analysisRowOpen(kind,id)}" aria-controls="detail-${escHtml(key)}"><span class="analysis-chevron" aria-hidden="true">›</span><span>${escHtml(label)}</span></button>`;
 }
 function toggleAnalysisRow(kind, id){
-  const open = !analysisRowOpen(kind,id);
-  analysisExpandedRows.set(`${kind}:${id}`, open);
-  const button = document.getElementById(`toggle-${kind}-${id}`);
-  const detail = document.getElementById(`detail-${kind}-${id}`);
-  if (button) button.setAttribute('aria-expanded', String(open));
-  if (detail) detail.hidden = !open;
+  const key = `${kind}_row`;
+  const previousId = currentParams().get(key);
+  const open = previousId !== String(id);
+  updateUrlParams(params => { open ? params.set(key, id) : params.delete(key); }, {mode:'push'});
+  if (previousId) {
+    document.getElementById(`toggle-${kind}-${previousId}`)?.setAttribute('aria-expanded', 'false');
+    const previousDetail = document.getElementById(`detail-${kind}-${previousId}`);
+    if (previousDetail) previousDetail.hidden = true;
+  }
+  if (open) {
+    document.getElementById(`toggle-${kind}-${id}`)?.setAttribute('aria-expanded', 'true');
+    const detail = document.getElementById(`detail-${kind}-${id}`);
+    if (detail) detail.hidden = false;
+  }
 }
 function navigateAnalysisRow(kind, id){
-  analysisExpandedRows.set(`${kind}:${id}`, true);
-  updateUrlParams(params => params.set(`${kind}_row`, id));
   activateTab(kind === 'workflow' ? 'workflows' : 'impact');
+  updateUrlParams(params => params.set(`${kind}_row`, id));
   buildImprovementSurfaces();
   if (kind === 'workflow' && !(IMPROVEMENT_DATA.workflows || []).some(item => String(item.id) === String(id))) return showWorkflowReview(id);
   const button = document.getElementById(`toggle-${kind}-${id}`);
@@ -9130,7 +9059,7 @@ function buildImprovementSurfaces(){
   if (findingLedger) {
     findingLedger.innerHTML = !hasLoaded('findings')
       ? `<div class="session-ledger-empty">${escHtml(pendingCopy('Findings'))}</div>`
-      : observations.length ? observations.map(item => {
+      : observations.length ? analysisTable(['Finding', 'Priority / confidence', 'Sessions', 'Workflow'], observations.map(item => {
       const proposedWorkflow = workflows.find(workflow => workflow.id === item.candidate_id);
       const workflowState = proposedWorkflow
         ? humanizeLedgerLabel(proposedWorkflow.lifecycle?.display || proposedWorkflow.status || 'pending')
@@ -9139,24 +9068,13 @@ function buildImprovementSurfaces(){
         ? `Priority ${Math.round(Number(item.impact_score))}/100` : 'Priority unavailable';
       const detectionConfidence = item.confidence != null && Number.isFinite(Number(item.confidence))
         ? `${Math.round(Number(item.confidence) * 100)}% detection confidence` : 'Detection confidence unavailable';
-      return `<article class="inbox-card">
-        <div class="inbox-card-head">
-          <div><div class="inbox-title">${escHtml(String(item.title || 'Observation'))}</div><div class="inbox-copy">${escHtml(String(item.summary || ''))}</div></div>
-          <span class="ledger-pill signal">${priority}</span>
-        </div>
-        <div class="ledger-meta">
-          <span class="ledger-pill">${escHtml(String(item.status || 'new').replaceAll('_',' '))}</span>
-          <span class="ledger-pill">${escHtml(String(item.severity || 'low'))} severity</span>
-          <span class="ledger-pill">${detectionConfidence}</span>
-          <span class="ledger-pill">${fmt(Number(item.affected_session_count || 0))} linked session(s)</span>
-          <span class="ledger-pill">${fmt(Number(item.observation_count || 1))} evidence pattern(s)</span>
-          <span class="ledger-pill">${fmt(Number(item.source_scope_count || 1))} scope(s)</span>
-          ${proposedWorkflow ? `<span class="ledger-pill">Linked workflow · ${escHtml(workflowState)}</span>` : ''}
-        </div>
-        <div class="inbox-copy">Priority ranks this finding for review. Detection confidence describes the evidence pattern, not a measured outcome or likelihood of improvement.</div>
-        <div class="ledger-actions"><button type="button" class="ledger-button" data-ledger-action="evidence" data-observation-id="${escHtml(String(item.id))}">View Task Evidence</button>${proposedWorkflow ? `<button type="button" class="ledger-button primary" data-ledger-action="open-workflow" data-candidate-id="${escHtml(String(proposedWorkflow.id))}">Open Linked Workflow</button>` : isStaticDemo() ? '' : `<button type="button" class="ledger-button primary" data-ledger-action="create-from-finding" data-observation-id="${escHtml(String(item.id))}">Create workflow from finding</button>`}</div>
-      </article>`;
-    }).join('') : resource('findings').state !== 'ready'
+      return `<tr class="analysis-summary">
+        <th scope="row"><button type="button" class="analysis-toggle" data-ledger-action="evidence" data-observation-id="${escHtml(item.id)}">${escHtml(item.title || 'Finding')}<span class="analysis-subline">${escHtml(item.summary || '')}</span></button></th>
+        <td title="Priority orders findings for review. Detection confidence describes the evidence and is not a measured outcome."><strong>${escHtml(priority)}</strong><span class="analysis-subline">${escHtml(detectionConfidence)} · ${escHtml(item.severity || 'low')} severity</span></td>
+        <td>${fmt(Number(item.affected_session_count || 0))}<span class="analysis-subline">${fmt(Number(item.observation_count || 1))} patterns · ${fmt(Number(item.source_scope_count || 1))} scopes</span></td>
+        <td>${proposedWorkflow ? `<button type="button" class="ledger-button" data-ledger-action="open-workflow" data-candidate-id="${escHtml(proposedWorkflow.id)}">Open workflow</button><span class="analysis-subline">${escHtml(workflowState)}</span>` : isStaticDemo() ? '—' : `<button type="button" class="ledger-button" data-ledger-action="create-from-finding" data-observation-id="${escHtml(item.id)}">Create workflow</button>`}</td>
+      </tr>`;
+    }).join('')) : resource('findings').state !== 'ready'
       ? '<div class="session-ledger-empty">No findings in the last loaded data. Updated findings are still pending.</div>'
       : `<div class="panel"><div class="panel-title">Inbox is clear</div><div class="inbox-copy">Reflect has no open finding with retained task evidence in this scope.</div></div>`;
   }
@@ -9165,12 +9083,12 @@ function buildImprovementSurfaces(){
   if (loopLedger) {
     loopLedger.innerHTML = !hasLoaded('loops')
       ? `<div class="session-ledger-empty">${escHtml(pendingCopy('Loops'))}</div>`
-      : loops.length ? loops.map(item => `<article class="inbox-card">
-      <div class="inbox-card-head"><div><div class="inbox-title">${escHtml(String(item.title || 'Observed loop'))}</div><div class="inbox-copy">${escHtml(String(item.summary || ''))}</div></div><span class="ledger-pill signal">${escHtml(humanizeLedgerLabel(item.kind || 'stalled'))}</span></div>
-      <div class="ledger-meta">${item.status === 'detected' ? '<span class="ledger-pill signal">Ready to review</span>' : ''}<span class="ledger-pill">${fmt(Number(item.affected_session_count || 0))} sessions</span><span class="ledger-pill">${fmt(Number(item.occurrence_count || 0))} occurrences</span>${item.kind === 'agent_native' ? `<span class="ledger-pill">${escHtml(item.tool_name || 'native command')}</span>` : `<span class="ledger-pill">${fmt(Number(item.state_change_count || 0))} state changes</span>`}<span class="ledger-pill">${Math.round(Number(item.confidence || 0)*100)}% confidence</span><span class="ledger-pill">${escHtml(humanizeLedgerLabel(item.status || 'detected'))}</span></div>
-      <div class="ledger-command">reflect loops show ${escHtml(String(item.id))}</div>
-      <div class="ledger-actions"><button type="button" class="ledger-button primary" data-ledger-action="review-loop" data-loop-id="${escHtml(String(item.id))}">${item.status === 'detected' ? 'Review & Build Instructions' : 'Review Loop Evidence'}</button></div>
-    </article>`).join('') : resource('loops').state !== 'ready'
+      : loops.length ? analysisTable(['Loop', 'Status', 'Sessions', 'Occurrences', 'Confidence'], loops.map(item => `<tr class="analysis-summary">
+        <th scope="row"><button type="button" class="analysis-toggle" data-ledger-action="review-loop" data-loop-id="${escHtml(item.id)}">${escHtml(item.title || 'Observed loop')}<span class="analysis-subline">${escHtml(item.summary || '')}</span></button></th>
+        <td>${item.status === 'detected' ? 'Ready to review' : escHtml(humanizeLedgerLabel(item.status || 'detected'))}<span class="analysis-subline">${escHtml(humanizeLedgerLabel(item.kind || 'stalled'))}</span></td>
+        <td>${fmt(Number(item.affected_session_count || 0))}</td><td>${fmt(Number(item.occurrence_count || 0))}</td>
+        <td>${item.confidence == null ? '—' : `${Math.round(Number(item.confidence) * 100)}%`}</td>
+      </tr>`).join('')) : resource('loops').state !== 'ready'
       ? '<div class="session-ledger-empty">No loops in the last loaded data. Updated loops are still pending.</div>'
       : `<div class="session-ledger-empty">${isStaticDemo() ? 'No additional loops are included in this illustrative sample. Choose another example above.' : 'No agent-native or behavioral loop is currently detected. Run <code>reflect loops</code> after more sessions are captured.'}</div>`;
   }
@@ -9183,41 +9101,37 @@ function buildImprovementSurfaces(){
     const renderSkillRegistry = () => {
       const query = searchInput?.value || '';
       const visible = skills.filter(item => skillMatchesSearch(item, query));
-      updateUrlParams(params => {
-        query.trim() ? params.set('skill_q', query.trim()) : params.delete('skill_q');
-      });
+
       if (filterSummary) filterSummary.textContent = hasLoaded('skills') ? `Showing ${fmt(visible.length)} of ${fmt(skills.length)} skills` : 'Skill registry is unavailable';
       skillRegistry.innerHTML = !hasLoaded('skills')
         ? `<div class="session-ledger-empty">${escHtml(pendingCopy('Skills'))}</div>`
-        : visible.length ? visible.map(item => {
+        : visible.length ? analysisTable(['Skill', 'Availability', 'Version', 'References', 'Impact checks'], visible.map(item => {
         const title = humanizeLedgerLabel(item.slug || item.name || 'Skill');
         const state = humanizeLedgerLabel(item.lifecycle_state || 'pending');
         const origin = humanizeLedgerLabel(item.origin || 'imported');
         const availability = skillAvailabilityPresentation(item);
-        const command = `reflect skills show ${String(item.id)}`;
         const recordedEvidence = (item.evidence_state ?? IMPROVEMENT_DATA.skill_evidence_state) === 'recorded';
         const analysisCount = value => (item.analysis_state === 'pending' && !recordedEvidence) || value == null ? '—' : fmt(Number(value));
-        return `<article class="workflow-card skill-tile" data-state="${escHtml(String(item.lifecycle_state || 'pending'))}">
-          <div class="tile-card-main">
-            <div class="tile-card-kicker"><span>Durable Skill</span><span>${escHtml(origin)}</span><span>${escHtml(state)}</span></div>
-            <div class="tile-card-head"><div class="tile-card-heading"><h3 class="tile-card-title">${escHtml(title)}</h3><p class="tile-card-description">${escHtml(String(item.description || 'No description is available yet.'))}</p></div><span class="ledger-pill skill-availability ${escHtml(availability.kind)} tile-card-status">${escHtml(availability.label)}</span></div>
-            <dl class="tile-metric-grid">
-              <div class="tile-metric signal"><dt>Current Version</dt><dd>${fmt(Number(item.current_version || 0))}</dd></div>
-              <div class="tile-metric"><dt>Installations</dt><dd>${fmt(Number(item.installation_count || 0))}</dd></div>
-              <div class="tile-metric"><dt>References · All Time</dt><dd>${analysisCount(item.usage_count)}</dd></div>
-              <div class="tile-metric"><dt>Impact Checks</dt><dd>${analysisCount(item.measurement_count)}</dd></div>
-            </dl>
-            <div class="tile-card-meta"><span class="ledger-pill">${escHtml(availability.detail)}</span><span class="ledger-pill">${analysisCount(item.evidence_count)} evidence links</span><span class="ledger-pill">${fmt(Number(item.version_count || item.current_version || 0))} versions</span>${recordedEvidence ? '<span class="ledger-pill">Recorded references · validation pending</span>' : ''}</div>
-          </div>
-          <footer class="tile-card-footer"><code class="tile-card-command" title="${escHtml(command)}" translate="no">${escHtml(command)}</code><button type="button" class="ledger-button primary" data-ledger-action="review-skill" data-skill-id="${escHtml(String(item.id))}">Inspect Skill</button></footer>
-        </article>`;
-      }).join('') : query.trim()
+        return `<tr class="analysis-summary">
+          <th scope="row"><button type="button" class="analysis-toggle" data-ledger-action="review-skill" data-skill-id="${escHtml(item.id)}">${escHtml(title)}<span class="analysis-subline">${escHtml(item.description || '')}</span></button></th>
+          <td><span class="ledger-pill skill-availability ${escHtml(availability.kind)}">${escHtml(availability.label)}</span><span class="analysis-subline">${escHtml(availability.detail)} · ${escHtml(origin)} · ${escHtml(state)}</span></td>
+          <td>${item.current_version == null ? '—' : fmt(Number(item.current_version))}<span class="analysis-subline">${fmt(Number(item.installation_count || 0))} installations</span></td>
+          <td>${analysisCount(item.usage_count)}<span class="analysis-subline">${recordedEvidence ? 'Recorded · validation pending' : 'All captured history'}</span></td>
+          <td>${analysisCount(item.measurement_count)}</td>
+        </tr>`;
+      }).join('')) : query.trim()
         ? `<div class="session-ledger-empty">No skills match <strong>${escHtml(query.trim())}</strong>. Clear the search to return to the full registry.</div>`
         : resource('skills').state !== 'ready'
           ? '<div class="session-ledger-empty">No skills in the last loaded registry. Updated records are still pending.</div>'
           : `<div class="session-ledger-empty">${isStaticDemo() ? 'No skills match this selection. Clear the filters to explore the sample skills.' : 'No skill records are registered. Run <code>reflect skills sync</code> to reconcile installed skills or <code>reflect skills discover</code> to stage evidence-backed drafts.'}</div>`;
     };
-    if (searchInput) searchInput.oninput = renderSkillRegistry;
+    if (searchInput) searchInput.oninput = () => {
+      updateUrlParams(params => {
+        const query = searchInput.value.trim();
+        query ? params.set('skill_q', query) : params.delete('skill_q');
+      });
+      renderSkillRegistry();
+    };
     renderSkillRegistry();
   }
 
@@ -9354,24 +9268,12 @@ function buildImprovementSurfaces(){
       : `<div class="panel"><div class="panel-title">No Impact Checks Yet</div><div class="measurement-copy">Install a reviewed workflow to start a bounded validation window. Reflect reports a result only when both task cohorts and their required signals are complete.</div></div>`;
   }
 
-  const linkedWorkflow = currentParams().get('workflow') || '';
-  if (linkedWorkflow && !window._linkedWorkflowInitialized) {
-    window._linkedWorkflowInitialized = true;
-    queueMicrotask(() => showWorkflowReview(linkedWorkflow, currentParams().get('workflow_root') || ''));
-  }
-  const linkedLoop = currentParams().get('loop') || '';
-  if (!linkedWorkflow && linkedLoop && !window._linkedLoopInitialized && loops.some(item => item.id === linkedLoop)) {
-    window._linkedLoopInitialized = true;
-    queueMicrotask(() => showLoopReview(linkedLoop));
-  }
-  const linkedSkill = currentParams().get('skill') || '';
-  if (!linkedWorkflow && !linkedLoop && linkedSkill && !window._linkedSkillInitialized && skills.some(item => item.id === linkedSkill)) {
-    window._linkedSkillInitialized = true;
-    queueMicrotask(() => showSkillReview(linkedSkill));
-  }
+
 }
 improvementSurfacesReady = true;
 buildImprovementSurfaces();
+syncLedgerRoute();
+document.addEventListener('dashboard-route-changed', syncLedgerRoute);
 
 /* Explore achievements */
 function buildAchievements(){
@@ -9443,11 +9345,29 @@ function renderMeasurementCoverage(){
   const scope = data.scope || {};
   const scopeEl = document.getElementById('measurement-scope');
   if (scopeEl) scopeEl.textContent = `${D.focused_session_id ? 'Selected session · ' : ''}${scope.kind === 'event_window' ? 'Selected event window' : 'Captured session lifetimes'}${scope.date_from || scope.date_to ? ` · ${scope.date_from ? fmtWorkflowDate(scope.date_from) : 'First event'} — ${scope.date_to ? fmtWorkflowDate(scope.date_to) : 'Latest event'} (local time)` : ''}. Coverage travels with every measurement.${scope.kind === 'event_window' && Number(c.undated_usage)>0 ? ` ${decimal(c.undated_usage)} undated session totals are excluded. Select All time to inspect them.` : ''}${hasRetained ? ' Retained session totals are included; transcript estimates are not exact provider usage.' : ''}`;
-  el.innerHTML = `
-    <article class="usage-widget usage-headline usage-cost"><div class="usage-widget-head"><h3><span class="usage-code">M1</span> ${escHtml(costLabel)}</h3><span class="usage-unit">USD</span></div><div class="usage-big">${number(cost,amount,'USD')}</div><div class="usage-coverage"><span>${known(observed) && observed>0 ? `${decimal(fullyPriced)} / ${decimal(observed)} fully priced` : 'Pricing coverage unknown'}</span><b>${percent(observed>0 && known(fullyPriced) ? fullyPriced/observed : null)}</b></div>${ratioBar(fullyPriced,observed,'Fully priced usage coverage')}<p class="usage-copy">${c.cost_status === 'complete' ? 'All observed usage records are fully priced.' : costKnown ? 'Unpriced usage is excluded from this subtotal.' : Number(c.known_model_usage)>0 ? 'Captured models have no priced usage. Run reflect doctor cost to check model aliases and pricing.' : 'No priced usage was captured for this scope.'} Estimates are not provider invoices.</p></article>
-    <article class="usage-widget usage-headline"><div class="usage-widget-head"><h3><span class="usage-code">M2</span> ${hasRetained ? 'Captured + retained tokens' : 'Captured tokens'}</h3><span class="usage-unit">${tokenComplete ? 'Complete buckets' : 'Known buckets'}</span></div><div class="usage-big">${number(tokenTotal,compact,'tokens')}</div><dl class="usage-token-buckets">${tokenBuckets.map(item=>`<div title="${escHtml(item.label)} · ${escHtml(decimal(item.records))} of ${escHtml(decimal(observed))} records"><dt><b>${item.code}</b> ${escHtml(item.label)}</dt><dd>${number(item.value,compact,'tokens')}</dd><small>${decimal(item.records)} / ${decimal(observed)} records${item.retained ? ` · ${item.retained} retained totals` : ''}</small></div>`).join('')}</dl><div class="usage-inline-metric"><span>Cache-read share</span>${number(m.cache_read_ratio,percent)}</div>${ratioBar(m.cache_read_ratio,1,'Cache-read token share')}<p class="usage-copy">R / (U + R + W), from ${decimal(c.complete_input_usage)} complete-input records. A token share, not a provider cache hit rate.</p></article>
-    <article class="usage-widget usage-headline"><div class="usage-widget-head"><h3><span class="usage-code">M3</span> Completed turns</h3></div><div class="usage-big">${number(completedTurns)}</div><dl class="usage-facts">${fact('Mean inclusive input',m.mean_input_tokens,compact,'tokens')}${fact('Eligible usage turns',c.eligible_usage_turns)}</dl><p class="usage-copy">Input includes U + R + W. A recorded turn ending is not verified task success.</p></article>
-    <article class="usage-widget usage-headline"><div class="usage-widget-head"><h3><span class="usage-code">M4</span> Paired tool calls</h3></div><div class="usage-big">${number(m.completed_tool_calls)}</div><dl class="usage-facts">${fact('Mean per eligible turn',m.mean_tool_calls_per_turn,decimal)}${fact('Maximum in a turn',m.max_tool_calls_per_turn)}</dl><p class="usage-copy">Calls with results across ${decimal(c.eligible_tool_turns)} eligible completed turns.</p><button type="button" class="usage-link" data-usage-view="tools">Inspect tool activity <span aria-hidden="true">→</span></button></article>`;
+  const pricingCoverage = known(observed) && observed > 0
+    ? `${decimal(fullyPriced)} / ${decimal(observed)} fully priced` : 'Pricing coverage unknown';
+  const costNote = c.cost_status === 'complete' ? 'Estimated from priced observations.'
+    : costKnown ? 'Unpriced usage is excluded.'
+    : Number(c.known_model_usage) > 0 ? 'No priced usage. Run reflect doctor cost to check model aliases and pricing.'
+    : 'No priced usage was captured in this scope.';
+  const tokenBreakdown = `<details class="usage-evidence"><summary>Token buckets and coverage</summary>
+    <dl class="usage-token-buckets">${tokenBuckets.map(item => `<div><dt>${escHtml(item.label)}</dt>
+      <dd>${number(item.value,compact,'tokens')}</dd><small>${decimal(item.records)} / ${decimal(observed)} records${item.retained ? ` · ${item.retained} retained totals` : ''}</small></div>`).join('')}</dl>
+    <p class="usage-copy">Cache-read share uses ${decimal(c.complete_input_usage)} records with all input buckets. This is a token share, not a provider cache hit rate.</p>
+  </details>`;
+  el.innerHTML = analysisTable(['Metric','Observed','Coverage'], `
+    <tr><th scope="row">${escHtml(costLabel)}</th><td>${number(cost,amount,'USD')}${costKnown ? ' USD' : ''}</td>
+      <td><p class="usage-copy">${escHtml(pricingCoverage)} · ${escHtml(costNote)}</p></td></tr>
+    <tr><th scope="row">${hasRetained ? 'Captured and retained tokens' : 'Captured tokens'}</th>
+      <td>${number(tokenTotal,compact,'tokens')}<span class="analysis-subline">${tokenComplete ? 'Complete buckets' : 'Known buckets'}</span></td>
+      <td><p class="usage-copy">Cache-read share ${number(m.cache_read_ratio,percent)}</p>${tokenBreakdown}</td></tr>
+    <tr><th scope="row">Completed turns</th><td>${number(completedTurns)}</td>
+      <td><p class="usage-copy">${decimal(c.eligible_usage_turns)} turns with eligible usage · ${compact(m.mean_input_tokens)} mean inclusive input tokens</p><span class="analysis-subline">A recorded turn ending is not verified task success.</span></td></tr>
+    <tr><th scope="row">Paired tool calls</th><td>${number(m.completed_tool_calls)}</td>
+      <td><p class="usage-copy">${decimal(c.eligible_tool_turns)} eligible completed turns · ${decimal(m.mean_tool_calls_per_turn)} mean · ${decimal(m.max_tool_calls_per_turn)} max</p>
+      <button type="button" class="usage-link" data-usage-view="tools">Inspect tool activity <span aria-hidden="true">→</span></button></td></tr>
+  `);
   el.onclick = event => {
     const trigger=event.target.closest('[data-usage-view]');
     if (trigger) activateTab('explore',{view:trigger.dataset.usageView});
@@ -10043,6 +9963,63 @@ renderToolsView();
 })();
 /* ════════════════════ GRAPHS ════════════════════ */
 
+function presentGraphWidgets(panel, state, showData, message){
+  const busy = state === 'loading' || state === 'preparing';
+  const label = {
+    loading: showData ? 'Updating…' : 'Loading graph data…',
+    preparing: showData ? 'Updating…' : 'Loading graph data…',
+    stale: 'Published snapshot',
+    recorded: 'Analysis pending',
+    error: showData ? 'Update failed. Showing the last result.' : message || 'Could not load this widget.',
+  }[state] || '';
+  for (const widget of panel.querySelectorAll('.graph-widget')) {
+    const body = widget.querySelector('.graph-widget-body');
+    const content = widget.querySelector('.graph-widget-content');
+    const presentation = showData ? 'data' : 'placeholder';
+    widget.dataset.presentation = presentation;
+    widget.dataset.state = state;
+    widget.setAttribute('aria-busy', String(busy));
+    content.toggleAttribute('inert', !showData);
+    let notice = body.querySelector('.graph-widget-notice');
+    if (!notice) {
+      notice = document.createElement('div');
+      notice.className = 'graph-widget-notice';
+      const copy = document.createElement('span');
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'ledger-button';
+      retry.textContent = 'Retry';
+      const heading = widget.querySelector('h2');
+      retry.setAttribute('aria-label', `Retry ${heading.firstChild.textContent.trim()}`);
+      retry.addEventListener('click', () => {
+        heading.tabIndex = -1;
+        heading.focus({preventScroll:true});
+        hydrateExploreView('graph', {retry:true}).catch(() => {});
+      });
+      notice.append(copy, retry);
+      body.append(notice);
+    }
+    const copy = notice.querySelector('span');
+    if (copy.textContent !== label) copy.textContent = label;
+    notice.title = state === 'error' || state === 'stale' || state === 'recorded' ? message : '';
+    notice.querySelector('button').hidden = state !== 'error';
+    notice.hidden = !label;
+  }
+}
+
+function renderPublishedGraph(scope){
+  const panel = document.getElementById('tab-explore-graph');
+  if (panel.hidden) return;
+  try {
+    initGraphs();
+    renderedGraph = {scope, payload:sqlTab('graph')};
+  } catch (error) {
+    renderedGraph = null;
+    exploreGraphLifecycle.key = '';
+    throw error;
+  }
+}
+
 /* Tool color map */
 const TOOL_COLORS = {};
 (function assignToolColors(){
@@ -10086,6 +10063,8 @@ function initGraphs() {
 (function buildSankey(){
   const el = document.getElementById('sankey-svg');
   const trans = sqlTab('graph').graph_tool_transitions || [];
+  const empty = document.getElementById('sankey-empty');
+  if (empty) empty.hidden = Boolean(trans.length);
   if (!el || !trans.length) {
     if (el) d3.select(el).selectAll('*').remove();
     return;
@@ -10777,7 +10756,8 @@ function initGraphs() {
 /* ── 4. Co-occurrence Matrix ── */
 (function buildMatrix(){
   const co = sqlTab('graph').graph_cooccurrence;
-  if (!co || !co.tools.length) {
+  document.getElementById('matrix-empty').hidden = Boolean(co?.tools?.length);
+  if (!co?.tools?.length) {
     document.getElementById('matrix-table').innerHTML = '';
     return;
   }
@@ -10910,20 +10890,6 @@ function makeLine(id, labels, datasets, costAxis=false){
   });
 }
 
-function urlHasDashboardFilters(){
-  const params = currentParams();
-  return Boolean(
-    (params.get('q') || '').trim()
-    || (params.get('session') || '').trim()
-    || (params.get('agents') || '').trim()
-    || ((params.get('model') || 'all') !== 'all')
-    || ((params.get('status') || 'all') !== 'all')
-    || ((params.get('range') || 'all') !== 'all')
-    || ((params.get('sort') || 'recent') !== 'recent')
-  );
-}
-
-dashboardFilterActive = urlHasDashboardFilters();
 buildCohortComparison();
 
 setupDemoNavigation({evidence:showObservationEvidence, workflow:showWorkflowReview, impact:showImpactSessions});
