@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from itertools import chain
+from itertools import chain, islice
 from pathlib import Path
 
 from reflect.opencode_store import OpenCodeSessionStore
@@ -28,11 +28,18 @@ from reflect.parsing import (
     _load_otlp_traces,
 )
 from reflect.raw_segments import closed_segment_paths, readable_segment_paths
-from reflect.store.provenance import apply_origin_kind, classify_origin_kind, stable_hash_attrs
+from reflect.store.provenance import (
+    apply_origin_kind,
+    classify_origin_kind,
+    stable_hash_attrs,
+    telemetry_session_id,
+    unassigned_codex_classification,
+)
 
 CHECKPOINT_HASH_WINDOW_BYTES = 64 * 1024
 JSONL_SCAN_CHUNK_BYTES = 64 * 1024
 SOURCE_DECODER_VERSION = 2
+NATIVE_DECODER_VERSION = 5
 logger = logging.getLogger(__name__)
 
 IngestionResult = dict[str, int | str]
@@ -165,7 +172,7 @@ class SourceIngestionState:
         checkpoint = self.load(source_id, source_type)
         return bool(
             checkpoint
-            and checkpoint.decoder_version == SOURCE_DECODER_VERSION
+            and checkpoint.decoder_version == (NATIVE_DECODER_VERSION if source_type == "native_session" else SOURCE_DECODER_VERSION)
             and checkpoint.size_bytes == fingerprint.size_bytes
             and checkpoint.modified_ns == fingerprint.modified_ns
             and (
@@ -221,7 +228,7 @@ class SourceIngestionState:
                 datetime.now(tz=UTC).isoformat(),
                 processed_offset_bytes,
                 checkpoint_tail_sha256,
-                SOURCE_DECODER_VERSION,
+                NATIVE_DECODER_VERSION if source_type == "native_session" else SOURCE_DECODER_VERSION,
                 record_cursor_time,
                 record_cursor_id,
             ),
@@ -336,15 +343,35 @@ def _event_hash(span: dict) -> str:
     return hashlib.sha256(canon.encode()).hexdigest()
 
 
-def _session_id(attrs: dict) -> str | None:
-    return (
-        attrs.get("session.id")
-        or attrs.get("gen_ai.session.id")
-        or attrs.get("gen_ai.client.session_id")
-        or attrs.get("conversation.id")
-        or attrs.get("session_id")
-        or None
-    )
+@dataclass(frozen=True)
+class _PreparedRawSpan:
+    attrs: dict
+    origin_kind: str
+    classification: str | None
+    content_hash: str
+    event_id: str
+
+
+def _prepare_raw_span(span: dict, source: str, source_type: str) -> _PreparedRawSpan:
+    attrs = span.get("attributes", {}) or {}
+    origin_kind = classify_origin_kind(source_type, attrs)
+    attrs = apply_origin_kind(attrs, origin_kind)
+    classification = unassigned_codex_classification(attrs)
+    if classification:
+        attrs["reflect.telemetry.classification"] = classification
+    content_hash = _event_hash({**span, "attributes": attrs})
+    if (
+        (source_type == "otlp_traces_json" or attrs.get("reflect.usage.codex_log_enrichment"))
+        and span.get("traceId")
+        and span.get("spanId")
+    ):
+        # Segment rotation changes the file path, not the identity of an OTLP event.
+        event_id = hashlib.sha1(
+            f"otlp-span:{span['traceId']}:{span['spanId']}:{content_hash}".encode()
+        ).hexdigest()
+    else:
+        event_id = hashlib.sha1(f"{source}:{content_hash}".encode()).hexdigest()
+    return _PreparedRawSpan(attrs, origin_kind, classification, content_hash, event_id)
 
 
 def _insert_raw_span(
@@ -355,15 +382,14 @@ def _insert_raw_span(
     source_type: str,
     created_at: str,
 ) -> bool:
-    attrs = span.get("attributes", {}) or {}
-    origin_kind = classify_origin_kind(source_type, attrs)
-    attrs = apply_origin_kind(attrs, origin_kind)
+    prepared = _prepare_raw_span(span, source, source_type)
+    attrs = prepared.attrs
     runtime_internal = attrs.get("reflect.telemetry.classification") == "runtime_internal"
     if runtime_internal:
         return False
     observed_at = _iso8601_from_ns(int(span.get("start_time_ns", 0) or 0))
     received_at = _iso8601_from_ns(int(span.get("end_time_ns", 0) or 0))
-    session_id = _session_id(attrs)
+    session_id = telemetry_session_id(attrs)
     if session_id:
         tombstone = db_conn.execute(
             """
@@ -389,8 +415,7 @@ def _insert_raw_span(
                 """,
                 (created_at, observed_at, session_id),
             )
-    content_hash = _event_hash({**span, "attributes": attrs})
-    event_id = hashlib.sha1(f"{source}:{content_hash}".encode()).hexdigest()
+    event_id = prepared.event_id
 
     cursor = db_conn.execute(
         """
@@ -411,15 +436,21 @@ def _insert_raw_span(
             session_id,
             observed_at,
             received_at,
-            origin_kind,
+            prepared.origin_kind,
             json.dumps(attrs, sort_keys=True),
             json.dumps(span.get("body", {}) or {}, sort_keys=True),
-            "pending",
+            "ignored" if prepared.classification else "pending",
             None,
-            content_hash,
+            prepared.content_hash,
             created_at,
         ),
     )
+    if not cursor.rowcount and source_type == "native_session":
+        cursor = db_conn.execute(
+            "UPDATE raw_events SET normalized_status = 'pending', normalization_error = NULL "
+            "WHERE id = ? AND normalized_status = 'superseded'",
+            (event_id,),
+        )
     return cursor.rowcount != 0
 
 
@@ -430,7 +461,7 @@ def _session_owned_by_other_source(
     source: str,
     source_type: str,
 ) -> bool:
-    session_id = _session_id(span.get("attributes", {}) or {})
+    session_id = telemetry_session_id(span.get("attributes", {}) or {})
     if not session_id:
         return False
     row = db_conn.execute(
@@ -462,10 +493,72 @@ def _session_owned_by_other_source(
         """,
         (session_id,),
     ).fetchone()
+    if source_type == "native_session" and raw_owner and str(raw_owner[0]) != "native_session":
+        has_usage = db_conn.execute(
+            """
+            SELECT 1 FROM raw_events WHERE session_id = ? AND source_id <> ?
+            AND normalized_status <> 'superseded' AND (
+              json_extract(attrs_json, '$."gen_ai.usage.input_tokens"') IS NOT NULL OR
+              json_extract(attrs_json, '$."gen_ai.usage.output_tokens"') IS NOT NULL OR
+              json_extract(attrs_json, '$."gen_ai.usage.cache_read.input_tokens"') IS NOT NULL
+            ) LIMIT 1
+            """, (session_id, source),
+        ).fetchone()
+        if not has_usage:
+            return False
     return bool(
         raw_owner
         and (str(raw_owner[0] or ""), str(raw_owner[1] or "")) != (source_type, source)
     )
+
+
+def _codex_trace_usage_enrichment(conn: sqlite3.Connection, span: dict) -> dict | None:
+    """Let native response logs supply accounting to a trace-only Codex session."""
+    attrs = span["attributes"]
+    if (
+        attrs.get("gen_ai.client.name") != "codex"
+        or attrs.get("reflect.native.event_name") != "codex.sse_event"
+        or attrs.get("reflect.usage.grain") != "request"
+        or any(attrs.get(key) is None for key in (
+            "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens", "gen_ai.usage.cache_read.input_tokens",
+        ))
+    ):
+        return None
+    session_id = telemetry_session_id(attrs)
+    session = conn.execute(
+        """SELECT source_kind, max(input_tokens, output_tokens, cache_creation_tokens,
+                  cache_read_tokens, reasoning_tokens) > 0
+           FROM sessions WHERE id = ?""",
+        (session_id,),
+    ).fetchone()
+    source_kind, has_usage = session if session is not None else (None, False)
+    if session is None:
+        raw_owner = conn.execute(
+            "SELECT source_type FROM raw_events WHERE session_id = ? ORDER BY created_at, id LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        source_kind = raw_owner[0] if raw_owner else None
+    if source_kind != "otlp_traces_json":
+        return None
+
+    usage_sources = {row[0] for row in conn.execute(
+        """SELECT DISTINCT source_type FROM raw_events
+           WHERE session_id = ? AND normalized_status NOT IN ('superseded', 'ignored', 'failed')
+             AND (json_extract(attrs_json, '$."gen_ai.usage.input_tokens"') IS NOT NULL
+               OR json_extract(attrs_json, '$."gen_ai.usage.output_tokens"') IS NOT NULL
+               OR json_extract(attrs_json, '$."gen_ai.usage.cache_read.input_tokens"') IS NOT NULL
+               OR json_extract(attrs_json, '$."gen_ai.usage.cache_creation.input_tokens"') IS NOT NULL
+               OR json_extract(attrs_json, '$."gen_ai.usage.cache_write.input_tokens"') IS NOT NULL)""",
+        (session_id,),
+    )}
+    if usage_sources - {"otlp_logs_json"} or (has_usage and not usage_sources):
+        return None
+    # The parsed span ID includes its position in the read batch. Use the
+    # completion timestamp for a stable ID across replay and segment rotation.
+    if not span.get("start_time_ns"):
+        return None
+    stable_id = hashlib.sha256(f"codex-log:{session_id}:{span['start_time_ns']}".encode()).hexdigest()[:16]
+    return {**span, "spanId": stable_id, "attributes": {**attrs, "reflect.usage.codex_log_enrichment": True}}
 
 
 def _ingest_spans(
@@ -479,27 +572,35 @@ def _ingest_spans(
     inserted = 0
     skipped = 0
     created_at = datetime.now(tz=UTC).isoformat()
-    for span in spans:
-        if respect_session_ownership and _session_owned_by_other_source(
-            db_conn,
-            span=span,
-            source=source,
-            source_type=source_type,
-        ):
-            skipped += 1
-            continue
-        if _insert_raw_span(
-            db_conn,
-            span=span,
-            source=source,
-            source_type=source_type,
-            created_at=created_at,
-        ):
-            inserted += 1
-        else:
-            skipped += 1
-
-    db_conn.commit()
+    spans = iter(spans)
+    while batch := list(islice(spans, 500)):
+        # Parse outside the transaction. Checkpoints advance only after the file
+        # completes; stable event IDs make replay of committed batches safe.
+        try:
+            if not db_conn.in_transaction:
+                db_conn.execute("BEGIN IMMEDIATE")
+            for span in batch:
+                if respect_session_ownership and _session_owned_by_other_source(
+                    db_conn, span=span, source=source, source_type=source_type,
+                ):
+                    if source_type == "native_session":
+                        span = {**span, "attributes": {**(span.get("attributes") or {}), "reflect.usage.enrichment_only": True}}
+                    elif source_type == "otlp_logs_json" and (enrichment := _codex_trace_usage_enrichment(db_conn, span)):
+                        span = enrichment
+                    else:
+                        skipped += 1
+                        continue
+                if _insert_raw_span(
+                    db_conn, span=span, source=source, source_type=source_type,
+                    created_at=created_at,
+                ):
+                    inserted += 1
+                else:
+                    skipped += 1
+            db_conn.commit()
+        except BaseException:
+            db_conn.rollback()
+            raise
     return {"inserted": inserted, "skipped": skipped}
 
 
@@ -515,8 +616,11 @@ def _ingest_file_spans(
     replay_policy: AppendOnlyReplayPolicy = AppendOnlyReplayPolicy.REPLAY,
     skip_existing_session: bool = False,
     respect_session_ownership: bool = False,
+    decoded_fingerprint: SourceFingerprint | None = None,
 ) -> IngestionResult:
-    fingerprint = SourceFingerprint.from_path(file_path)
+    # Already-decoded native projections must checkpoint the version they read,
+    # not a later append that was never included in the projection.
+    fingerprint = decoded_fingerprint or SourceFingerprint.from_path(file_path)
     state = SourceIngestionState(db_conn)
     if skip_unchanged and state.matches(source, source_type, fingerprint):
         checkpoint = state.load(source, source_type)
@@ -850,14 +954,16 @@ def ingest_opencode_session_store(
     file_path: Path,
     source_id: str | None = None,
     skip_unchanged: bool = False,
+    session_ids: tuple[str, ...] = (),
 ) -> IngestionResult:
     """Ingest only OpenCode sessions beyond the durable relational cursor."""
 
     source = source_id or f"native_session:opencode:{file_path}"
+    checkpoint_source = source + (":sessions:" + ",".join(sorted(session_ids)) if session_ids else "")
     source_type = "native_session"
     fingerprint = SourceFingerprint.from_path(file_path)
     state = SourceIngestionState(db_conn)
-    if skip_unchanged and state.matches(source, source_type, fingerprint):
+    if skip_unchanged and state.matches(checkpoint_source, source_type, fingerprint):
         return {
             "inserted": 0,
             "skipped": 0,
@@ -865,19 +971,19 @@ def ingest_opencode_session_store(
             "scanned_sessions": 0,
         }
 
-    checkpoint = state.load(source, source_type)
+    checkpoint = state.load(checkpoint_source, source_type)
     cursor_time = 0
     cursor_id = ""
     if (
         skip_unchanged
         and checkpoint is not None
-        and checkpoint.decoder_version == SOURCE_DECODER_VERSION
+        and checkpoint.decoder_version == NATIVE_DECODER_VERSION
     ):
         cursor_time = checkpoint.record_cursor_time or 0
         cursor_id = checkpoint.record_cursor_id
 
     try:
-        sessions = OpenCodeSessionStore(file_path).load(
+        sessions = tuple(record for session_id in session_ids for record in OpenCodeSessionStore(file_path).load(session_id)) if session_ids else OpenCodeSessionStore(file_path).load(
             after_updated_ms=cursor_time,
             after_session_id=cursor_id,
         )
@@ -901,7 +1007,7 @@ def ingest_opencode_session_store(
         cursor_time = sessions[-1].updated_ms
         cursor_id = sessions[-1].id
     state.record(
-        source,
+        checkpoint_source,
         source_type,
         fingerprint,
         processed_offset_bytes=fingerprint.size_bytes,
@@ -917,6 +1023,72 @@ def ingest_opencode_session_store(
     return result
 
 
+def _retire_native_projection(
+    conn: sqlite3.Connection, source: str, *, keep_event_ids: set[str] | None = None,
+) -> int:
+    """Retire changed evidence while keeping exact retained raw/canonical identities."""
+    from reflect.store.normalize import (
+        _logical_tool_call_id,
+        _stable_id,
+        _status,
+        refresh_session_usage,
+    )
+    from reflect.store.pending_refresh import PendingRefreshState
+    from reflect.tool_outcomes import with_tool_outcome
+
+    rows = conn.execute(
+        "SELECT id, session_id, attrs_json FROM raw_events WHERE source_id = ? AND source_type = 'native_session' "
+        "AND normalized_status <> 'superseded'", (source,),
+    ).fetchall()
+    if keep_event_ids is not None:
+        rows = [row for row in rows if row[0] not in keep_event_ids]
+    if not rows:
+        return 0
+    retired_ids = {row[0] for row in rows}
+    # A tool call merges invocation and result evidence. Retracting either side
+    # requires rebuilding that call from its still-retained counterparts only.
+    affected_calls = {
+        (row[1], call_id) for row in rows
+        if (call_id := _logical_tool_call_id(json.loads(row[2]), ""))
+    }
+    for session_id in {sid for sid, _ in affected_calls}:
+        retained = conn.execute(
+            "SELECT id, event_type, attrs_json FROM raw_events WHERE session_id = ? "
+            "AND normalized_status NOT IN ('superseded', 'ignored')", (session_id,),
+        ).fetchall()
+        for event_id, event_type, attrs_json in retained:
+            attrs = json.loads(attrs_json)
+            if event_id in retired_ids or (session_id, _logical_tool_call_id(attrs, "")) not in affected_calls:
+                continue
+            conn.execute(
+                "UPDATE raw_events SET normalized_status = 'pending', normalization_error = NULL WHERE id = ?",
+                (event_id,),
+            )
+            conn.execute(
+                "UPDATE steps SET status = ? WHERE id = ?",
+                (_status(event_type, with_tool_outcome(event_type, attrs)), _stable_id("step", event_id)),
+            )
+    for session_id, call_id in affected_calls:
+        conn.execute("DELETE FROM tool_calls WHERE session_id = ? AND logical_call_id = ?", (session_id, call_id))
+    step_ids = [_stable_id("step", row[0]) for row in rows]
+    for offset in range(0, len(step_ids), 400):
+        batch = step_ids[offset:offset + 400]
+        placeholders = ",".join("?" for _ in batch)
+        conn.execute(f"UPDATE steps SET parent_step_id = NULL WHERE parent_step_id IN ({placeholders})", batch)
+        conn.execute(f"DELETE FROM steps WHERE id IN ({placeholders})", batch)
+    for batch_start in range(0, len(rows), 400):
+        ids = [row[0] for row in rows[batch_start:batch_start + 400]]
+        placeholders = ",".join("?" for _ in ids)
+        conn.execute(
+            "UPDATE raw_events SET normalized_status = 'superseded', normalization_error = ? "
+            f"WHERE id IN ({placeholders})", (f"native_decoder:{NATIVE_DECODER_VERSION}", *ids),
+        )
+    affected_session_ids = {str(row[1]) for row in rows if row[1]}
+    refresh_session_usage(conn, affected_session_ids)
+    PendingRefreshState(conn).mark(affected_session_ids)
+    return len(rows)
+
+
 def ingest_native_session_file(
     db_conn,
     *,
@@ -925,6 +1097,7 @@ def ingest_native_session_file(
     source_id: str | None = None,
     skip_existing_sessions: bool = False,
     skip_unchanged: bool = False,
+    session_ids: tuple[str, ...] = (),
 ) -> IngestionResult:
     source = source_id or f"native_session:{agent}:{file_path}"
     if agent == "opencode":
@@ -933,7 +1106,18 @@ def ingest_native_session_file(
             file_path=file_path,
             source_id=source,
             skip_unchanged=skip_unchanged,
+            session_ids=session_ids,
         )
+    fingerprint = SourceFingerprint.from_path(file_path)
+    state = SourceIngestionState(db_conn)
+    checkpoint = state.load(source, "native_session")
+    if state.matches(source, "native_session", fingerprint):
+        if skip_unchanged:
+            return {"inserted": 0, "skipped": 0, "unchanged": 1}
+        count = db_conn.execute(
+            "SELECT COUNT(*) FROM raw_events WHERE source_id = ? AND normalized_status <> 'superseded'", (source,),
+        ).fetchone()[0]
+        return {"inserted": 0, "skipped": count}
     if agent == "codex":
         spans = _iter_codex_session_spans(file_path)
     elif agent == "copilot":
@@ -946,15 +1130,63 @@ def ingest_native_session_file(
         spans = _iter_gemini_session_spans(file_path)
     else:
         spans = ()
-    return _ingest_file_spans(
+    # Decode before retiring the old projection. A missing/empty retained source
+    # cannot establish that previous evidence ceased to exist.
+    projected = list(spans)
+    if not projected:
+        return {"inserted": 0, "skipped": 0, "unchanged": 0}
+    usage_owner_is_other: dict[str, bool] = {}
+    for span in projected:
+        session_id = telemetry_session_id(span.get("attributes") or {})
+        if session_id not in usage_owner_is_other:
+            usage_owner_is_other[session_id] = _session_owned_by_other_source(
+                db_conn, span=span, source=source, source_type="native_session",
+            )
+    for span in projected:
+        if usage_owner_is_other.get(telemetry_session_id(span.get("attributes") or {})):
+            span["attributes"] = {**span["attributes"], "reflect.usage.enrichment_only": True}
+    retained_ids: set[str] = set()
+    if checkpoint is not None and checkpoint.decoder_version == NATIVE_DECODER_VERSION:
+        projected_ids = {
+            _prepare_raw_span(span, source, "native_session").event_id: span for span in projected
+        }
+        active_ids = {
+            row[0] for row in db_conn.execute(
+                "SELECT id FROM raw_events WHERE source_id = ? AND source_type = 'native_session' "
+                "AND normalized_status <> 'superseded'", (source,),
+            )
+        }
+        retained_ids = active_ids.intersection(projected_ids)
+        retired = _retire_native_projection(db_conn, source, keep_event_ids=set(projected_ids))
+        projected = [span for event_id, span in projected_ids.items() if event_id not in retained_ids]
+        if retired and not projected:
+            # A pure retraction still needs the existing normalization pipeline
+            # to refresh session assessments/costs. Prefer a zero-usage boundary;
+            # timestamp-free sources may only retain a request. Reprocessing its
+            # stable ID is idempotent and normalization reconciles usage totals.
+            db_conn.execute(
+                "UPDATE raw_events SET normalized_status = 'pending' WHERE id IN ("
+                "SELECT COALESCE(MIN(CASE WHEN event_type = 'gen_ai.client.hook.SessionStart' THEN id END), MIN(id)) "
+                "FROM raw_events WHERE source_id = ? AND source_type = 'native_session' AND normalized_status = 'ok' "
+                "GROUP BY session_id)", (source,),
+            )
+    else:
+        retired = _retire_native_projection(db_conn, source)
+    result = _ingest_file_spans(
         db_conn,
         file_path=file_path,
         source=source,
         source_type="native_session",
-        spans_factory=lambda _start, _end: spans,
-        skip_unchanged=skip_unchanged,
-        skip_existing_session=skip_existing_sessions,
+        spans_factory=lambda _start, _end: projected,
+        skip_unchanged=False,
+        decoded_fingerprint=fingerprint,
     )
+    result["skipped"] += len(retained_ids)
+    if skip_unchanged:
+        result["unchanged"] = 0
+    if retired:
+        result.update({"replaced_native_events": retired, "decoder_version": NATIVE_DECODER_VERSION})
+    return result
 
 
 def ingest_codex_context_file(

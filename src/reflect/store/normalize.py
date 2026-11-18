@@ -6,11 +6,26 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
-from reflect.store.hook_facts import backfill_hook_facts
+from reflect.store.command_patterns import refresh_command_projection
+from reflect.store.hook_facts import HookFactRepository, backfill_hook_facts
 from reflect.store.mcp import DEFAULT_MCP_CLASSIFIER, MCPCallBackfill
-from reflect.store.provenance import apply_origin_kind, classify_origin_kind
+from reflect.store.pending_refresh import PendingRefreshState
+from reflect.store.provenance import (
+    apply_origin_kind,
+    classify_origin_kind,
+    is_codex_otel_service,
+    telemetry_agent_name,
+    telemetry_session_id,
+    unassigned_codex_classification,
+)
 from reflect.store.workspaces import backfill_session_context
 from reflect.task_runs import TaskRunReconciler
+from reflect.telemetry_facts import TOOL_NAME_KEYS, recorded_tool_call_id, recorded_tool_name
+from reflect.tool_outcomes import with_tool_outcome
+from reflect.usage_facts import usage_facts
+from reflect.utils import _json_dumps
+
+NON_OPERATION_SPAN_TYPES = frozenset({"runtime_span", "session_span", "generation_span"})
 
 
 def _now() -> str:
@@ -72,22 +87,34 @@ def _first_text(attrs: dict[str, Any], *keys: str) -> str | None:
 
 def _logical_tool_call_id(attrs: dict[str, Any], fallback: object) -> str:
     """Return the provider-neutral identity shared by invocation and result events."""
+    if _is_codex_dispatch(attrs):
+        return str(attrs["call_id"]).strip()
     return (
         DEFAULT_MCP_CLASSIFIER.call_id(attrs)
-        or _first_text(
-            attrs,
-            "tool.id",
-            "tool_call.id",
-            "gen_ai.tool.call.id",
-        )
+        or recorded_tool_call_id(attrs)
         or str(fallback)
+    )
+
+
+def _is_codex_dispatch(attrs: dict[str, Any]) -> bool:
+    call_id = attrs.get("call_id")
+    return bool(
+        attrs.get("reflect.telemetry.origin") == "native_otlp_trace"
+        and is_codex_otel_service(attrs.get("service.name"))
+        and attrs.get("code.module.name") == "codex_core::tools::parallel"
+        and attrs.get("codex.tool.phase") == "dispatch"
+        and telemetry_session_id(attrs)
+        and _first_text(attrs, "turn.id", "turn_id")
+        and isinstance(call_id, str)
+        and call_id.strip()
+        and recorded_tool_name(attrs)
     )
 
 
 def _canonical_tool_name(attrs: dict[str, Any], fallback: object) -> str:
     raw_name = str(
-        attrs.get("gen_ai.client.tool_name")
-        or attrs.get("gen_ai.client.command")
+        recorded_tool_name(attrs)
+        or ("Shell" if attrs.get("gen_ai.client.command") else "")
         or fallback
     )
     identity = DEFAULT_MCP_CLASSIFIER.identify(attrs)
@@ -160,16 +187,6 @@ def backfill_mcp_calls(
     )
 
 
-def _agent_name(attrs: dict[str, Any]) -> str:
-    return str(
-        attrs.get("gen_ai.client.name")
-        or attrs.get("ide.name")
-        or attrs.get("agent.name")
-        or attrs.get("service.name")
-        or "unknown"
-    )
-
-
 _TOKEN_ATTRIBUTE_KEYS = (
     "gen_ai.usage.input_tokens",
     "gen_ai.usage.output_tokens",
@@ -181,6 +198,46 @@ _TOKEN_ATTRIBUTE_KEYS = (
 
 def _has_token_attributes(attrs: dict[str, Any]) -> bool:
     return any(key in attrs for key in _TOKEN_ATTRIBUTE_KEYS)
+
+
+def _canonical_usage_attrs(attrs: dict[str, Any]) -> dict[str, Any]:
+    """Normalize known source bucket semantics without turning missing into zero."""
+    result = dict(attrs)
+    for target, aliases in {
+        "gen_ai.usage.cache_read.input_tokens": ("gen_ai.usage.cache_read_input_tokens", "hook.cache_read_tokens"),
+        "gen_ai.usage.cache_creation.input_tokens": (
+            "gen_ai.usage.cache_write.input_tokens",
+            "gen_ai.usage.cache_creation_input_tokens",
+            "hook.cache_write_tokens",
+        ),
+    }.items():
+        if target not in result:
+            for alias in aliases:
+                if result.get(alias) is not None:
+                    result[target] = result[alias]
+                    break
+    inclusive = result.get("reflect.usage.input_semantics") == "inclusive" or (
+        telemetry_agent_name(result) == "cursor"
+        and result.get("reflect.usage.input_semantics") != "uncached"
+    )
+    if inclusive and result.get("gen_ai.usage.input_tokens") is not None:
+        value = result["gen_ai.usage.input_tokens"]
+        result["reflect.usage.inclusive_input_tokens"] = value
+        keys = ("gen_ai.usage.cache_read.input_tokens", "gen_ai.usage.cache_creation.input_tokens")
+        if all(result.get(key) is not None for key in keys):
+            try:
+                buckets = [int(value), *(int(result[key]) for key in keys)]
+            except (TypeError, ValueError, OverflowError):
+                buckets = [-1]
+            uncached = buckets[0] - sum(buckets[1:])
+            if all(bucket >= 0 for bucket in buckets) and uncached >= 0:
+                result["gen_ai.usage.input_tokens"] = uncached
+                result["reflect.usage.input_semantics"] = "uncached"
+                return result
+        result.pop("gen_ai.usage.input_tokens")
+        result["reflect.usage.input_semantics"] = "unavailable"
+        result["reflect.usage.unavailable_reason"] = "missing_or_inconsistent_cache_buckets"
+    return result
 
 
 def _has_token_usage(attrs: dict[str, Any]) -> bool:
@@ -206,12 +263,21 @@ def _step_type(event_type: str, attrs: dict[str, Any]) -> str:
         return "agent_call"
     if attrs.get("gen_ai.client.command"):
         return "shell_command"
-    if attrs.get("gen_ai.client.tool_name") or attrs.get("ide.tool_name") or "tool" in event:
+    # Runtime spans can mention tools while only measuring queue/wait time.
+    # A tool projection needs a recorded identity or explicit invocation event.
+    if (
+        recorded_tool_name(attrs)
+        or event in {"pretooluse", "posttooluse", "posttoolusefailure", "beforetoolcall", "aftertoolcall"}
+        or str(attrs.get("event.name") or event_type).lower() in {"tool.execution_start", "tool.execution_complete"}
+        or attrs.get("gen_ai.operation.name") == "execute_tool"
+    ):
         return "tool_call"
     if event in {"userpromptsubmit", "user.message", "user_message"}:
         return "llm_call" if _has_token_usage(attrs) else "conversation_event"
     if event in {"sessionstart", "sessionend", "session.start", "session.end"}:
         return "llm_call" if _has_token_usage(attrs) else "lifecycle"
+    if event in {"assistantmessage", "usage"} and not _has_token_attributes(attrs):
+        return "conversation_event"
     if event == "stop" and not _has_model_exchange_evidence(attrs):
         return "conversation_event"
     if (
@@ -224,6 +290,22 @@ def _step_type(event_type: str, attrs: dict[str, Any]) -> str:
         return "llm_call"
     if "error" in event or "fail" in event:
         return "error"
+    # Container and runtime instrumentation is retained evidence, but does not
+    # establish an invocation, a model exchange, or a task boundary. Explicit
+    # operation semantics above always take precedence over this fallback.
+    full_event = str(attrs.get("gen_ai.client.hook.event") or attrs.get("ide.hook.event")
+                     or attrs.get("event.name") or event_type).lower()
+    if (_first_text(attrs, "gen_ai.client.session_id") or "").strip():
+        if full_event == "gen_ai.client.session":
+            return "session_span"
+        if full_event == "gen_ai.client.generation" and (_first_text(attrs, "gen_ai.client.generation_id") or "").strip():
+            return "generation_span"
+    if (
+        (_first_text(attrs, "code.module.name") or "").strip()
+        and all(type(attrs.get(key)) in (int, float) and 0 <= attrs[key] < float("inf")
+                for key in ("busy_ns", "idle_ns"))
+    ):
+        return "runtime_span"
     return "unknown"
 
 
@@ -262,7 +344,7 @@ def _next_step_seq(conn: sqlite3.Connection, session_id: str) -> int:
 
 
 def _insert_agent(conn: sqlite3.Connection, attrs: dict[str, Any], timestamp: str) -> str:
-    name = _agent_name(attrs)
+    name = telemetry_agent_name(attrs)
     agent_id = _stable_id("agent", name)
     conn.execute(
         """
@@ -295,7 +377,7 @@ def _upsert_session(
         if _valid_source_timestamp(str(value) if value else None)
     ]
     last_observed_at = max(source_timestamps, default=None)
-    context_only = bool(attrs.get("gen_ai.memory.id"))
+    context_only = bool(attrs.get("gen_ai.memory.id") or attrs.get("reflect.usage.enrichment_only"))
     conn.execute(
         """
         INSERT INTO sessions(
@@ -409,7 +491,7 @@ def _insert_step(
             _status(raw_event["event_type"], attrs),
             raw_event["event_type"],
             raw_event["origin_kind"],
-            raw_event["attrs_json"],
+            json.dumps(attrs, sort_keys=True),
             timestamp,
             timestamp,
         ),
@@ -417,21 +499,45 @@ def _insert_step(
     return step_id
 
 
-def repair_telemetry_provenance(conn: sqlite3.Connection) -> dict[str, int]:
+_PROVENANCE_REPAIR_KEY = "telemetry_provenance_legacy_repair_v1"
+
+
+def repair_telemetry_provenance(
+    conn: sqlite3.Connection, *, incremental: bool = False,
+) -> dict[str, int]:
+    """Repair provenance, committing the existing caller transaction on success.
+
+    Explicit repairs inspect historical JSON. Routine normalization does this
+    once, then uses the origin index; ingestion already writes both fields.
+    """
     previous_row_factory = conn.row_factory
     conn.row_factory = sqlite3.Row
+    owned_transaction = not conn.in_transaction
+    savepoint_started = False
     try:
+        if owned_transaction:
+            conn.execute("BEGIN IMMEDIATE")
+        conn.execute("SAVEPOINT reflect_provenance_repair")
+        savepoint_started = True
+        legacy = not incremental or conn.execute(
+            "SELECT 1 FROM store_metadata WHERE key = ? AND value = 'complete'",
+            (_PROVENANCE_REPAIR_KEY,),
+        ).fetchone() is None
+        predicate = "origin_kind IS NULL"
+        if legacy:
+            predicate += """ OR COALESCE(json_extract(attrs_json, '$."reflect.telemetry.origin"'), '')
+                IS NOT COALESCE(origin_kind, '')"""
         rows = conn.execute(
-            """
-            SELECT id, source_type, origin_kind, attrs_json
+            f"""
+            SELECT id, session_id, source_type, origin_kind, attrs_json
             FROM raw_events
-            WHERE origin_kind IS NULL
-               OR COALESCE(NULLIF(json_extract(attrs_json, '$."reflect.telemetry.origin"'), ''), '') = ''
+            WHERE {predicate}
             ORDER BY observed_at, id
             """
         ).fetchall()
         repaired_raw_events = 0
         repaired_steps = 0
+        repaired_session_ids: set[str] = set()
         for row in rows:
             attrs = _load_json(row["attrs_json"])
             origin_kind = classify_origin_kind(str(row["source_type"] or ""), attrs)
@@ -446,12 +552,30 @@ def repair_telemetry_provenance(conn: sqlite3.Connection) -> dict[str, int]:
             repaired_raw_events += 1
             step_id = _stable_id("step", row["id"])
             step_result = conn.execute(
-                "UPDATE steps SET origin_kind = ?, raw_attrs_json = ? WHERE id = ?",
-                (origin_kind, attrs_json, step_id),
+                "UPDATE steps SET origin_kind = ?, "
+                "raw_attrs_json = json_set(raw_attrs_json, '$.\"reflect.telemetry.origin\"', ?) WHERE id = ?",
+                (origin_kind, origin_kind, step_id),
             )
             repaired_steps += int(step_result.rowcount or 0)
+            if step_result.rowcount and row["session_id"]:
+                repaired_session_ids.add(str(row["session_id"]))
+        PendingRefreshState(conn).mark(repaired_session_ids)
+        if legacy:
+            conn.execute(
+                """INSERT INTO store_metadata(key, value, updated_at) VALUES (?, 'complete', ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
+                (_PROVENANCE_REPAIR_KEY, _now()),
+            )
         conn.commit()
+        savepoint_started = False
         return {"raw_events": repaired_raw_events, "steps": repaired_steps}
+    except BaseException:
+        if savepoint_started:
+            conn.execute("ROLLBACK TO SAVEPOINT reflect_provenance_repair")
+            conn.execute("RELEASE SAVEPOINT reflect_provenance_repair")
+        if owned_transaction:
+            conn.rollback()
+        raise
     finally:
         conn.row_factory = previous_row_factory
 
@@ -468,12 +592,37 @@ def _upsert_tool_call(
     duration_ms: int | None,
 ) -> str:
     logical_call_id = _logical_tool_call_id(attrs, raw_event["id"])
+    if _is_codex_dispatch(attrs):
+        # A generic Codex call_id is scoped by its session, but old/corrupt
+        # captures can still reuse it across turns or names. Keep that
+        # observation separate rather than joining incompatible invocations.
+        existing = conn.execute(
+            "SELECT raw_attrs_json,tool_name,tool_type FROM tool_calls WHERE session_id=? AND logical_call_id=?",
+            (session_id, logical_call_id),
+        ).fetchone()
+        if existing:
+            prior_attrs = _load_json(existing[0])
+            prior_turn = _first_text(prior_attrs, "turn.id", "turn_id")
+            current_turn = _first_text(attrs, "turn.id", "turn_id")
+            prior_name = recorded_tool_name(prior_attrs) or existing[1]
+            current_name = recorded_tool_name(attrs)
+            if (
+                prior_turn != current_turn
+                or (
+                    prior_name != current_name
+                    and existing[2] != "mcp"
+                )
+            ):
+                logical_call_id = str(raw_event["id"])
     tool_name = _canonical_tool_name(attrs, raw_event["event_type"])
     identity = DEFAULT_MCP_CLASSIFIER.identify(attrs)
     input_preview = _first_text(attrs, "gen_ai.client.tool.input", "tool.input")
     output_preview = _first_text(attrs, "gen_ai.client.tool.output", "tool.output")
+    recorded_name_sql = "COALESCE(" + ",".join(
+        f"NULLIF(trim(json_extract(tool_calls.raw_attrs_json, '$.\"{key}\"')), '')" for key in TOOL_NAME_KEYS
+    ) + ")"
     conn.execute(
-        """
+        f"""
         INSERT OR IGNORE INTO tool_calls(
           id, step_id, session_id, logical_call_id, tool_name, tool_type, status, duration_ms,
           input_hash, output_hash, input_preview_redacted, output_preview_redacted, error_type,
@@ -482,17 +631,22 @@ def _upsert_tool_call(
         ON CONFLICT(session_id, logical_call_id)
           WHERE logical_call_id IS NOT NULL AND logical_call_id <> ''
         DO UPDATE SET
-          tool_name = excluded.tool_name,
+          tool_name = CASE WHEN ? AND tool_calls.tool_name IS NOT excluded.tool_name
+            THEN tool_calls.tool_name
+            WHEN ? OR (? AND {recorded_name_sql} IS NULL AND tool_calls.tool_type IS NOT 'mcp')
+            THEN excluded.tool_name ELSE tool_calls.tool_name END,
           tool_type = COALESCE(excluded.tool_type, tool_calls.tool_type),
           status = CASE
-            WHEN excluded.status = 'error' OR tool_calls.status = 'error' THEN 'error'
+            WHEN excluded.status = 'error' OR tool_calls.status = 'error'
+              OR NULLIF(trim(tool_calls.error_type), '') IS NOT NULL THEN 'error'
             WHEN excluded.status = 'ok' OR tool_calls.status = 'ok' THEN 'ok'
             ELSE excluded.status
           END,
-          duration_ms = MAX(
-            COALESCE(tool_calls.duration_ms, 0),
-            COALESCE(excluded.duration_ms, 0)
-          ),
+          duration_ms = CASE WHEN ? AND tool_calls.duration_ms IS NOT NULL
+            THEN tool_calls.duration_ms ELSE MAX(
+              COALESCE(tool_calls.duration_ms, 0),
+              COALESCE(excluded.duration_ms, 0)
+            ) END,
           input_hash = COALESCE(tool_calls.input_hash, excluded.input_hash),
           output_hash = COALESCE(excluded.output_hash, tool_calls.output_hash),
           input_preview_redacted = COALESCE(
@@ -508,6 +662,7 @@ def _upsert_tool_call(
             excluded.error_message_redacted,
             tool_calls.error_message_redacted
           ),
+          raw_attrs_json = json_patch(tool_calls.raw_attrs_json, excluded.raw_attrs_json),
           updated_at = excluded.updated_at
         """,
         (
@@ -537,14 +692,18 @@ def _upsert_tool_call(
             output_preview,
             attrs.get("error.type"),
             _first_text(attrs, "gen_ai.client.error.text", "error.message"),
-            raw_event["attrs_json"],
+            json.dumps(attrs, sort_keys=True),
             timestamp,
             timestamp,
+            _is_codex_dispatch(attrs),
+            bool(recorded_tool_name(attrs) or identity.server_name and identity.tool_name),
+            bool(attrs.get("gen_ai.client.command")),
+            _is_codex_dispatch(attrs),
         ),
     )
     row = conn.execute(
         """
-        SELECT id
+        SELECT id, step_id, status
         FROM tool_calls
         WHERE session_id = ? AND logical_call_id = ?
         """,
@@ -552,6 +711,11 @@ def _upsert_tool_call(
     ).fetchone()
     if row is None:
         raise RuntimeError("canonical tool call was not persisted")
+    refresh_command_projection(conn, str(row[0]))
+    if row[2] == "error":
+        conn.execute(
+            "UPDATE steps SET status = 'error' WHERE id IN (?, ?)", (row[1], step_id),
+        )
     return str(row[0])
 
 
@@ -605,7 +769,15 @@ def _insert_call_record(
 ) -> None:
     duration = _duration_ms(raw_event["observed_at"], raw_event["received_at"])
     status = _status(raw_event["event_type"], attrs)
-    if step_type == "llm_call":
+    # Agent lifecycle and model usage are independent facts. A token-bearing
+    # SubagentStop remains an agent_call step while owning canonical usage.
+    if step_type == "llm_call" or (step_type == "agent_call" and _has_token_attributes(attrs)):
+        request_id = attrs.get("gen_ai.request.id")
+        call_id = (
+            _stable_id("llm", session_id, raw_event["source_id"], str(request_id))
+            if request_id and raw_event["source_type"] == "native_session"
+            else _stable_id("llm", raw_event["id"])
+        )
         prompt_preview = _first_text(
             attrs,
             "gen_ai.client.prompt.text",
@@ -625,16 +797,29 @@ def _insert_call_record(
         )
         conn.execute(
             """
-            INSERT OR IGNORE INTO llm_calls(
+            INSERT INTO llm_calls(
               id, step_id, session_id, provider, request_model, response_model,
               operation_name, input_tokens, output_tokens, cache_creation_input_tokens,
               cache_read_input_tokens, reasoning_output_tokens, latency_ms,
               prompt_hash, response_hash, prompt_preview_redacted, response_preview_redacted,
               raw_attrs_json, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              step_id = excluded.step_id,
+              request_model = excluded.request_model,
+              response_model = excluded.response_model,
+              input_tokens = excluded.input_tokens,
+              output_tokens = excluded.output_tokens,
+              cache_creation_input_tokens = excluded.cache_creation_input_tokens,
+              cache_read_input_tokens = excluded.cache_read_input_tokens,
+              reasoning_output_tokens = excluded.reasoning_output_tokens,
+              raw_attrs_json = excluded.raw_attrs_json,
+              response_hash = excluded.response_hash,
+              response_preview_redacted = excluded.response_preview_redacted,
+              updated_at = excluded.updated_at
             """,
             (
-                _stable_id("llm", raw_event["id"]),
+                call_id,
                 step_id,
                 session_id,
                 attrs.get("gen_ai.system"),
@@ -662,12 +847,12 @@ def _insert_call_record(
                 ),
                 prompt_preview,
                 response_preview,
-                raw_event["attrs_json"],
+                json.dumps(attrs, sort_keys=True),
                 timestamp,
                 timestamp,
             ),
         )
-    elif step_type in {"tool_call", "mcp_call"}:
+    elif step_type in {"tool_call", "mcp_call", "shell_command"}:
         tool_call_id = _upsert_tool_call(
             conn,
             raw_event=raw_event,
@@ -700,19 +885,34 @@ def _insert_memory_record(
     memory_id = attrs.get("gen_ai.memory.id")
     if not memory_id:
         return
+    from reflect.memory.models import MemorySourceMetadata
+
+    source_path = str(attrs.get("gen_ai.memory.source_path") or attrs.get("path") or "")
+    source = MemorySourceMetadata(
+        source_kind=str(attrs.get("gen_ai.memory.source") or "opentelemetry_hook"),
+        source_ref=source_path or str(memory_id),
+        path=source_path,
+        workspace_root=str(attrs.get("code.workspace.root") or attrs.get("workspace_root") or ""),
+        content_hash=str(attrs.get("gen_ai.memory.content_hash") or ""),
+    )
     conn.execute(
         """
         INSERT INTO memories(
           id, scope, type, session_id, step_id, content_hash,
           content_preview_redacted, confidence, sensitivity, source, expires_at,
-          last_seen_at, raw_attrs_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          last_seen_at, raw_attrs_json, source_metadata_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
-          content_hash = COALESCE(excluded.content_hash, memories.content_hash),
-          content_preview_redacted = COALESCE(
+          content_hash = CASE WHEN memories.source = 'filesystem_instruction_scan'
+            THEN memories.content_hash ELSE COALESCE(excluded.content_hash, memories.content_hash) END,
+          content_preview_redacted = CASE WHEN memories.source = 'filesystem_instruction_scan'
+            THEN memories.content_preview_redacted ELSE COALESCE(
             excluded.content_preview_redacted,
             memories.content_preview_redacted
-          ),
+          ) END,
+          source_metadata_json = CASE WHEN memories.source = 'filesystem_instruction_scan'
+            THEN memories.source_metadata_json
+            ELSE json_patch(memories.source_metadata_json, excluded.source_metadata_json) END,
           last_seen_at = CASE
             WHEN memories.last_seen_at IS NULL THEN excluded.last_seen_at
             WHEN excluded.last_seen_at IS NULL THEN memories.last_seen_at
@@ -734,6 +934,7 @@ def _insert_memory_record(
             attrs.get("gen_ai.memory.expires_at"),
             attrs.get("gen_ai.memory.last_seen_at") or raw_event["observed_at"],
             raw_event["attrs_json"],
+            _json_dumps(source.to_json_dict()),
             timestamp,
             timestamp,
         ),
@@ -798,44 +999,76 @@ def _insert_privacy_finding(
 
 
 def _backfill_parent_step_ids(conn: sqlite3.Connection, session_ids: set[str]) -> None:
-    if not session_ids:
-        return
     for session_id in sorted(session_ids):
+        parents = dict(conn.execute(
+            "SELECT id,parent_step_id FROM steps WHERE session_id=?", (session_id,),
+        ))
         rows = conn.execute(
-            """
-            SELECT id, span_id, parent_span_id
-            FROM raw_events
-            WHERE session_id = ?
-              AND COALESCE(span_id, '') <> ''
-              AND COALESCE(parent_span_id, '') <> ''
-            """,
-            (session_id,),
+            "SELECT id,span_id,parent_span_id FROM raw_events "
+            "WHERE session_id=? AND COALESCE(span_id,'')<>''", (session_id,),
         ).fetchall()
-        span_to_step_id = {
-            str(row["span_id"]): _stable_id("step", row["id"])
-            for row in conn.execute(
-                """
-                SELECT id, span_id
-                FROM raw_events
-                WHERE session_id = ? AND COALESCE(span_id, '') <> ''
-                """,
-                (session_id,),
-            ).fetchall()
-        }
+        span_to_step_id = {str(row["span_id"]): _stable_id("step", row["id"]) for row in rows}
+        links = []
         for row in rows:
-            step_id = _stable_id("step", row["id"])
-            parent_step_id = span_to_step_id.get(str(row["parent_span_id"] or ""))
-            if not parent_step_id or parent_step_id == step_id:
+            if not row["parent_span_id"]:
                 continue
-            conn.execute(
-                """
-                UPDATE steps
-                SET parent_step_id = COALESCE(parent_step_id, ?)
-                WHERE id = ?
-                  AND EXISTS (SELECT 1 FROM steps parent WHERE parent.id = ?)
-                """,
-                (parent_step_id, step_id, parent_step_id),
+            step_id = _stable_id("step", row["id"])
+            parent_id = span_to_step_id.get(str(row["parent_span_id"]))
+            if (step_id in parents and parents[step_id] is None
+                    and parent_id in parents and parent_id != step_id):
+                links.append((parent_id, step_id))
+        # Existing links are immutable here. Only unresolved links whose parent
+        # is now present need writes; late parents use the same path.
+        conn.executemany(
+            "UPDATE steps SET parent_step_id=? WHERE id=? AND parent_step_id IS NULL", links,
+        )
+        if links:
+            PendingRefreshState(conn).mark_steps(
+                session_id, (step_id for _, step_id in links), phases=("graph", "improvements"),
             )
+
+
+def refresh_session_usage(conn: sqlite3.Connection, session_ids: set[str]) -> None:
+    """Reconcile canonical observations with the pricing/reader identity rule."""
+    keys = ("gen_ai.request.id", "reflect.usage.identity", "reflect.usage.input_semantics",
+            *_TOKEN_ATTRIBUTE_KEYS, "hook.cache_read_tokens", "hook.cache_write_tokens")
+    paths = ",".join(f"'$.\"{key}\"'" for key in keys)
+    for session_id in session_ids:
+        # Keep retained hook/request row IDs and source provenance intact.
+        # Multiple observations of one explicit request own one subtotal, in
+        # the same chronological order used by pricing and measurements.
+        cursor = conn.execute(
+            f"""SELECT lc.id,lc.session_id,lc.provider,lc.input_tokens,lc.output_tokens,
+                      lc.cache_creation_input_tokens,lc.cache_read_input_tokens,lc.reasoning_output_tokens,
+                      json_extract(lc.raw_attrs_json,{paths}) AS usage_attrs_json
+               FROM llm_calls lc JOIN steps st ON st.id=lc.step_id
+               WHERE lc.session_id=? ORDER BY st.started_at,lc.id""", (session_id,),
+        )
+        names = [column[0] for column in cursor.description]
+        totals = dict.fromkeys(("input_tokens", "output_tokens", "cache_creation_input_tokens",
+                                "cache_read_input_tokens", "reasoning_output_tokens"), 0)
+        seen: set[tuple] = set()
+        for values in cursor:
+            row = dict(zip(names, values, strict=True))
+            attrs = dict(zip(keys, json.loads(row["usage_attrs_json"]), strict=True))
+            facts = usage_facts(row, attrs)
+            if facts.present and facts.identity not in seen:
+                seen.add(facts.identity)
+                for key in totals:
+                    totals[key] += facts.tokens[key]
+        updated = conn.execute(
+            """
+            UPDATE sessions SET
+              (input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, reasoning_tokens)
+              = (?, ?, ?, ?, ?)
+            WHERE id = ? AND token_provenance <> 'estimated_cursor_transcript'
+              AND (input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, reasoning_tokens)
+                  IS NOT (?, ?, ?, ?, ?)
+            """,
+            (*totals.values(), session_id, *totals.values()),
+        )
+        if updated.rowcount:
+            PendingRefreshState(conn).mark({session_id}, phases=("cost", "rollup"))
 
 
 def _refresh_session_statuses(conn: sqlite3.Connection, session_ids: set[str], timestamp: str) -> None:
@@ -845,7 +1078,10 @@ def _refresh_session_statuses(conn: sqlite3.Connection, session_ids: set[str], t
         row = conn.execute(
             """
             SELECT
-              COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) AS error_count,
+              (SELECT COUNT(*) FROM tool_calls WHERE session_id = ? AND status = 'error')
+              + COALESCE(SUM(CASE WHEN status = 'error'
+                AND type NOT IN ('tool_call', 'mcp_call', 'shell_command')
+                THEN 1 ELSE 0 END), 0) AS error_count,
               COALESCE(SUM(CASE
                 WHEN lower(COALESCE(json_extract(raw_attrs_json, '$."gen_ai.client.hook.event"'), summary, ''))
                   IN ('stop', 'sessionend', 'session_end', 'subagentstop', 'subagent_stop')
@@ -862,7 +1098,7 @@ def _refresh_session_statuses(conn: sqlite3.Connection, session_ids: set[str], t
             FROM steps
             WHERE session_id = ?
             """,
-            (session_id,),
+            (session_id, session_id),
         ).fetchone()
         if not row:
             continue
@@ -908,42 +1144,135 @@ def normalize_pending_raw_events(
     *,
     limit: int | None = None,
     changed_session_ids: set[str] | None = None,
+    batch_size: int = 500,
+) -> dict[str, int]:
+    if batch_size < 1 or (limit is not None and limit < 0):
+        raise ValueError("batch_size must be positive and limit must be nonnegative")
+    repair_telemetry_provenance(conn, incremental=True)
+    result = {"processed": 0, "failed": 0, "skipped": 0}
+    normalized_session_ids: set[str] = set()
+    remaining = limit
+    while remaining is None or remaining > 0:
+        size = batch_size if remaining is None else min(batch_size, remaining)
+        batch = _normalize_pending_batch(conn, limit=size, changed_session_ids=normalized_session_ids)
+        for key in result:
+            result[key] += batch[key]
+        count = batch["processed"] + batch["failed"] + batch["skipped"]
+        if count < size:
+            break
+        if remaining is not None:
+            remaining -= count
+    normalized_session_ids.update(_refresh_normalized_sessions(conn, normalized_session_ids))
+    if changed_session_ids is not None:
+        changed_session_ids.update(normalized_session_ids)
+    return result
+
+
+def _refresh_normalized_sessions(conn: sqlite3.Connection, session_ids: set[str]) -> set[str]:
+    """Finish session-wide maintenance once, including interrupted raw batches.
+
+    Raw batches commit their dirty scope with canonical rows. Hold the writer
+    while maintaining and acknowledging that scope; failures retain it for the
+    next invocation even when no raw events remain pending.
+    """
+    previous_row_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        pending = PendingRefreshState(conn)
+        captured = pending.capture()
+        session_ids = session_ids | captured.pending_for("canonical")
+        repair_identities = conn.execute(
+            "SELECT 1 FROM maintenance_tasks WHERE task = 'reconcile_task_identities'"
+        ).fetchone()
+        if not session_ids and not repair_identities:
+            conn.commit()
+            return set()
+        timestamp = _now()
+        _backfill_parent_step_ids(conn, session_ids)
+        backfill_session_context(
+            conn, timestamp=timestamp, changed_session_ids=session_ids, session_ids=session_ids,
+        )
+        # New/changed steps already persist their facts with their canonical
+        # transaction. Only explicit broad repairs need historical JSON again.
+        full_fact_sessions = {sid for sid, steps in captured.step_scope("canonical").items() if steps is None}
+        if full_fact_sessions:
+            backfill_hook_facts(conn, session_ids=full_fact_sessions, timestamp=timestamp)
+        _refresh_session_statuses(conn, session_ids, timestamp)
+        refresh_session_usage(conn, session_ids)
+        reconciler = TaskRunReconciler(conn)
+        recovered_ids = reconciler.recover_identities(None if repair_identities else session_ids)
+        pending.mark(recovered_ids)
+        session_ids.update(recovered_ids)
+        if repair_identities:
+            conn.execute("DELETE FROM maintenance_tasks WHERE task = 'reconcile_task_identities'")
+        reconciler.reconcile(session_ids=session_ids, commit=False)
+        # Git evidence is a canonical-call projection shared by usage/report
+        # refreshes. Its rows and the acknowledgement must commit together so
+        # an interrupted refresh can retry even after raw batches were drained.
+        from reflect.store.git_activity import refresh_git_activity
+
+        refresh_git_activity(conn, session_ids=session_ids)
+        # Context/identity repair can record additional revisions in this same
+        # transaction. They are also maintained; no other writer can intervene.
+        pending.acknowledge(pending.capture(), "canonical", session_ids=session_ids)
+        conn.commit()
+        return session_ids
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.row_factory = previous_row_factory
+
+
+def _normalize_pending_batch(
+    conn: sqlite3.Connection, *, limit: int, changed_session_ids: set[str] | None,
 ) -> dict[str, int]:
     previous_row_factory = conn.row_factory
     conn.row_factory = sqlite3.Row
     try:
-        repair_telemetry_provenance(conn)
-        params: list[int] = []
-        limit_sql = ""
-        if limit is not None:
-            limit_sql = " LIMIT ?"
-            params.append(limit)
+        # Reserve the writer before reading the pending set. Per-event savepoints
+        # must not commit independently or allow another normalizer to select
+        # the same events between reads and writes.
+        conn.execute("BEGIN IMMEDIATE")
         rows = conn.execute(
             """
             SELECT *
             FROM raw_events
             WHERE normalized_status = 'pending'
             ORDER BY observed_at, id
-            """ + limit_sql,
-            params,
+            LIMIT ?
+            """,
+            (limit,),
         ).fetchall()
 
         processed = 0
         failed = 0
+        skipped = 0
         processed_session_ids: set[str] = set()
+        changed_steps: dict[str, set[str]] = {}
+        hook_facts = HookFactRepository(conn)
         timestamp = _now()
         for index, row in enumerate(rows):
             savepoint = f"normalize_raw_event_{index}"
             session_id = ""
             try:
                 conn.execute(f"SAVEPOINT {savepoint}")
-                attrs = _load_json(row["attrs_json"])
-                session_id = (
-                    row["session_id"]
-                    or attrs.get("session.id")
-                    or attrs.get("gen_ai.client.session_id")
-                    or attrs.get("conversation.id")
-                )
+                attrs = _canonical_usage_attrs(with_tool_outcome(row["event_type"], _load_json(row["attrs_json"])))
+                if attrs.get("reflect.usage.enrichment_only"):
+                    attrs = {key: value for key, value in attrs.items() if not key.startswith("gen_ai.usage.")}
+                classification = unassigned_codex_classification(attrs)
+                if not row["session_id"] and classification:
+                    attrs["reflect.telemetry.classification"] = classification
+                    conn.execute(
+                        "UPDATE raw_events SET normalized_status = 'ignored', "
+                        "normalization_error = NULL, attrs_json = ? WHERE id = ?",
+                        (json.dumps(attrs, sort_keys=True), row["id"]),
+                    )
+                    conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                    skipped += 1
+                    continue
+                session_id = row["session_id"] or telemetry_session_id(attrs)
                 if not session_id:
                     session_id = _stable_id("session", row["source_id"])
                 session_id = str(session_id)
@@ -990,42 +1319,47 @@ def normalize_pending_raw_events(
                     step_id=step_id,
                     timestamp=timestamp,
                 )
+                hook_facts.persist_step(
+                    step_id=step_id, session_id=session_id,
+                    fallback_event=row["event_type"], attrs=attrs, timestamp=timestamp,
+                )
+                event_steps = {step_id}
+                if step_type in {"tool_call", "mcp_call", "shell_command"}:
+                    paired = conn.execute(
+                        "SELECT step_id FROM tool_calls WHERE session_id=? AND logical_call_id=?",
+                        (session_id, _logical_tool_call_id(attrs, row["id"])),
+                    ).fetchone()
+                    if paired:
+                        event_steps.add(str(paired[0]))
                 conn.execute(
                     "UPDATE raw_events SET normalized_status = 'ok', normalization_error = NULL WHERE id = ?",
                     (row["id"],),
                 )
                 conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                changed_steps.setdefault(session_id, set()).update(event_steps)
                 processed_session_ids.add(session_id)
                 processed += 1
             except Exception as exc:
                 conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
                 conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                if isinstance(exc, sqlite3.OperationalError):
+                    # Store failures are not malformed telemetry. Keep events
+                    # pending and preserve the original error for the caller.
+                    raise
                 conn.execute(
                     "UPDATE raw_events SET normalized_status = 'failed', normalization_error = ? WHERE id = ?",
                     (str(exc), row["id"]),
                 )
                 failed += 1
-        _backfill_parent_step_ids(conn, processed_session_ids)
-        backfill_session_context(
-            conn,
-            timestamp=timestamp,
-            changed_session_ids=processed_session_ids,
-            session_ids=processed_session_ids,
-        )
-        backfill_hook_facts(
-            conn,
-            session_ids=processed_session_ids,
-            timestamp=timestamp,
-        )
-        backfill_tool_call_hashes(conn)
-        _refresh_session_statuses(conn, processed_session_ids, timestamp)
-        TaskRunReconciler(conn).reconcile(
-            session_ids=processed_session_ids,
-            commit=False,
-        )
         if changed_session_ids is not None:
             changed_session_ids.update(processed_session_ids)
+        pending = PendingRefreshState(conn)
+        for session_id, step_ids in changed_steps.items():
+            pending.mark_steps(session_id, step_ids)
         conn.commit()
-        return {"processed": processed, "failed": failed, "skipped": 0}
+        return {"processed": processed, "failed": failed, "skipped": skipped}
+    except BaseException:
+        conn.rollback()
+        raise
     finally:
         conn.row_factory = previous_row_factory

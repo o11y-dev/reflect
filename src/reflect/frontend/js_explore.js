@@ -1,7 +1,120 @@
 /* ════════════════════ ACTIVITY ════════════════════ */
 
+function resetUsageChart(id){
+  const canvas = document.getElementById(id);
+  if (!canvas) return;
+  Chart.getChart(canvas)?.destroy();
+  canvas.hidden = false;
+  canvas.parentElement.querySelector('[data-usage-chart-empty]')?.remove();
+}
+
+function renderUsageChartEmpty(id, message){
+  const canvas = document.getElementById(id);
+  if (!canvas) return;
+  canvas.hidden = true;
+  const note = document.createElement('div');
+  note.dataset.usageChartEmpty = 'true';
+  note.className = 'empty-note';
+  note.textContent = message;
+  canvas.parentElement.appendChild(note);
+}
+
+function renderMeasurementCoverage(){
+  const el = document.getElementById('measurement-summary');
+  if (!el) return;
+  const data = D.measurements || {}, c = data.coverage || {}, m = data.metrics || {}, totals = data.totals || {};
+  const git = D.git_activity || {}, buckets = c.token_bucket_records || {};
+  const retained = c.retained_token_bucket_records || {};
+  const hasRetained = Object.values(retained).some(value => Number(value)>0);
+  const known = v => v != null && Number.isFinite(Number(v));
+  const compact = v => !known(v) ? 'Unknown' : Number(v).toLocaleString(undefined, {notation:'compact', maximumFractionDigits:1});
+  const decimal = v => !known(v) ? 'Unknown' : Number(v).toLocaleString(undefined, {maximumFractionDigits:2});
+  const duration = v => !known(v) ? 'Unknown' : v >= 86400000 ? `${decimal(v/86400000)}d` : v >= 3600000 ? `${decimal(v/3600000)}h` : fmtDur(v);
+  const percent = v => !known(v) ? 'Unknown' : `${decimal(v*100)}%`;
+  const amount = v => !known(v) ? 'Unknown' : Number(v).toLocaleString(undefined, {minimumFractionDigits:2,maximumFractionDigits:2});
+  const exact = v => known(v) ? Number(v).toLocaleString(undefined, {maximumFractionDigits:6}) : 'Not captured';
+  const number = (v, format=compact, unit='') => `<strong title="${escHtml(exact(v)+(unit ? ' '+unit : ''))}">${escHtml(format(v))}</strong>`;
+  const fact = (label, v, format=compact, unit='') => `<div><dt>${escHtml(label)}</dt><dd>${number(v,format,unit)}</dd></div>`;
+  const ratioBar = (part,total,label) => known(part) && known(total) && total > 0
+    ? `<div class="usage-proportion" role="img" aria-label="${escHtml(label)}"><span style="width:${Math.max(0,Math.min(100,part/total*100))}%"></span></div>` : '';
+  const observed = c.observed_usage, fullyPriced = c.complete_priced_usage;
+  const costKnown = known(totals.estimated_cost_usd) && c.cost_status !== 'unavailable' && (Number(c.priced_usage || 0)+Number(c.partially_priced_usage || 0)+Number(c.legacy_cost_usage || 0)>0);
+  const cost = costKnown ? totals.estimated_cost_usd : null;
+  const costLabel = c.cost_status === 'complete' ? 'Estimated cost' : 'Known cost subtotal';
+  const tokenBuckets = [
+    ['U','Uncached input','input_tokens'],['R','Cache read','cache_read_tokens'],
+    ['W','Cache write','cache_creation_tokens'],['O','Output','output_tokens'],
+  ].map(([code,label,key])=>({code,label,key,records:buckets[key],retained:Number(retained[key] || 0),value:(Number(buckets[key])>0 || Number(retained[key])>0) && known(totals[key]) ? totals[key] : null}));
+  const tokenTotal = tokenBuckets.some(item=>known(item.value)) ? tokenBuckets.reduce((sum,item)=>sum+Number(item.value || 0),0) : null;
+  const tokenComplete = tokenBuckets.every(item=>known(item.value) && item.records === observed);
+  const completedTurns = m.completed_turns === 0 && !known(c.observed_prompt_turns) ? null : m.completed_turns;
+  const scope = data.scope || {};
+  const scopeEl = document.getElementById('measurement-scope');
+  if (scopeEl) scopeEl.textContent = `${D.focused_session_id ? 'Selected session · ' : ''}${scope.kind === 'event_window' ? 'Selected event window' : 'Captured session lifetimes'}${scope.date_from || scope.date_to ? ` · ${scope.date_from ? fmtWorkflowDate(scope.date_from) : 'First event'} — ${scope.date_to ? fmtWorkflowDate(scope.date_to) : 'Latest event'} (local time)` : ''}. Coverage travels with every measurement.${scope.kind === 'event_window' && Number(c.undated_usage)>0 ? ` ${decimal(c.undated_usage)} undated session totals are excluded. Select All time to inspect them.` : ''}${hasRetained ? ' Retained session totals are included; transcript estimates are not exact provider usage.' : ''}`;
+  const pricingCoverage = known(observed) && observed > 0
+    ? `${decimal(fullyPriced)} / ${decimal(observed)} fully priced` : 'Pricing coverage unknown';
+  const costNote = c.cost_status === 'complete' ? 'Estimated from priced observations.'
+    : costKnown ? 'Unpriced usage is excluded.'
+    : Number(c.known_model_usage) > 0 ? 'No priced usage. Run reflect doctor cost to check model aliases and pricing.'
+    : 'No priced usage was captured in this scope.';
+  const tokenBreakdown = `<details class="usage-evidence"><summary>Token buckets and coverage</summary>
+    <dl class="usage-token-buckets">${tokenBuckets.map(item => `<div><dt>${escHtml(item.label)}</dt>
+      <dd>${number(item.value,compact,'tokens')}</dd><small>${decimal(item.records)} / ${decimal(observed)} records${item.retained ? ` · ${item.retained} retained totals` : ''}</small></div>`).join('')}</dl>
+    <p class="usage-copy">Cache-read share uses ${decimal(c.complete_input_usage)} records with all input buckets. This is a token share, not a provider cache hit rate.</p>
+  </details>`;
+  el.innerHTML = analysisTable(['Metric','Observed','Coverage'], `
+    <tr><th scope="row">${escHtml(costLabel)}</th><td>${number(cost,amount,'USD')}${costKnown ? ' USD' : ''}</td>
+      <td><p class="usage-copy">${escHtml(pricingCoverage)} · ${escHtml(costNote)}</p></td></tr>
+    <tr><th scope="row">${hasRetained ? 'Captured and retained tokens' : 'Captured tokens'}</th>
+      <td>${number(tokenTotal,compact,'tokens')}<span class="analysis-subline">${tokenComplete ? 'Complete buckets' : 'Known buckets'}</span></td>
+      <td><p class="usage-copy">Cache-read share ${number(m.cache_read_ratio,percent)}</p>${tokenBreakdown}</td></tr>
+    <tr><th scope="row">Completed turns</th><td>${number(completedTurns)}</td>
+      <td><p class="usage-copy">${decimal(c.eligible_usage_turns)} turns with eligible usage · ${compact(m.mean_input_tokens)} mean inclusive input tokens</p><span class="analysis-subline">A recorded turn ending is not verified task success.</span></td></tr>
+    <tr><th scope="row">Paired tool calls</th><td>${number(m.completed_tool_calls)}</td>
+      <td><p class="usage-copy">${decimal(c.eligible_tool_turns)} eligible completed turns · ${decimal(m.mean_tool_calls_per_turn)} mean · ${decimal(m.max_tool_calls_per_turn)} max</p>
+      <button type="button" class="usage-link" data-usage-view="tools">Inspect tools, skills &amp; subagents <span aria-hidden="true">→</span></button></td></tr>
+  `);
+  el.onclick = event => {
+    const trigger=event.target.closest('[data-usage-view]');
+    if (trigger) activateTab('explore',{view:trigger.dataset.usageView});
+  };
+  const timeEl = document.getElementById('measurement-time');
+  if (timeEl) timeEl.innerHTML = `
+    <section class="usage-widget"><div class="usage-widget-head"><h3><span class="usage-code">M5</span> Elapsed time</h3><span class="usage-unit">Includes waiting</span></div><div class="usage-time-row"><span>Observed session span<small>${decimal(c.eligible_session_elapsed)} eligible sessions</small></span><dl>${fact('Mean',m.mean_session_elapsed_ms,duration,'ms')}${fact('p95',m.p95_session_elapsed_ms,duration,'ms')}</dl></div><div class="usage-time-row"><span>Prompt to final stop<small>${decimal(c.eligible_turn_elapsed)} eligible turns</small></span><dl>${fact('Mean',m.mean_turn_elapsed_ms,duration,'ms')}${fact('p95',m.p95_turn_elapsed_ms,duration,'ms')}</dl></div><p class="usage-copy">Session span is first to last captured event in this scope. Elapsed time includes waiting; it does not measure active work.</p></section>
+    <section class="usage-widget"><div class="usage-widget-head"><h3><span class="usage-code">M6</span> Between-turn pauses</h3></div><div class="usage-big usage-big-small">${number(m.idle_total_ms,duration,'ms')}<span>Total observed pause</span></div><dl class="usage-facts">${fact('Longest pause',m.idle_max_ms,duration,'ms')}${fact('Over five minutes',m.idle_over_five_minutes)}</dl><p class="usage-copy">${decimal(c.eligible_idle_intervals)} eligible intervals from a final stop to the next prompt. Pauses do not establish wasted time.</p></section>`;
+  const modelSummary = document.getElementById('measurement-model-summary');
+  const switchRatio = c.eligible_model_transitions > 0 && known(m.model_switches) ? m.model_switches/c.eligible_model_transitions : null;
+  if (modelSummary) modelSummary.innerHTML = `<dl class="usage-facts usage-switches">${fact('Model switches',m.model_switches)}${fact('Eligible adjacent pairs',c.eligible_model_transitions)}${fact('Switch rate',switchRatio,percent)}</dl>${ratioBar(m.model_switches,c.eligible_model_transitions,'Model switches among eligible adjacent turns')}<p class="usage-copy">${decimal(c.known_model_usage)} / ${decimal(observed)} usage records identify a model. Switches compare adjacent observed turns with known models.</p>`;
+  const modelsEl = document.getElementById('measurement-models');
+  if (modelsEl) {
+    const models = [...(data.model_mix || [])].sort((a,b)=>Number(b.calls || 0)-Number(a.calls || 0));
+    const row = model => `<div class="usage-model-row"><div><strong title="${escHtml(model.model || 'Model unknown')}">${escHtml(model.model || 'Model unknown')}</strong><small>${decimal(model.calls)} usage records · ${decimal(model.cost_observations)} with cost</small></div><span title="${escHtml(exact(model.cost_usd))} USD">${Number(model.cost_observations)>0 ? `${amount(model.cost_usd)} <small>USD</small>` : 'Unknown'}</span></div>`;
+    modelsEl.innerHTML = models.length ? `<div class="usage-ledger-heading"><span>Model / captured usage</span><span>Known cost</span></div>${models.slice(0,5).map(row).join('')}${models.length>5 ? `<details class="usage-evidence"><summary>Show ${models.length-5} more models</summary>${models.slice(5).map(row).join('')}</details>` : ''}` : '<p class="usage-empty">No model observations are available for this scope.</p>';
+  }
+  const gitEl = document.getElementById('measurement-git');
+  if (gitEl) {
+    const examplesOpen = gitEl.querySelector?.('details.usage-evidence')?.open;
+    const seenUnresolved = new Set();
+    const operations = (git.operations || []).filter(operation => {
+      if (operation.state !== 'unresolved' || operation.artifact_id) return true;
+      const key = `${operation.provider}:${operation.operation}`;
+      if (seenUnresolved.has(key)) return false;
+      seenUnresolved.add(key);
+      return true;
+    }).slice(0,10);
+    const operationRow = op => `<li><div><strong>${escHtml([op.provider,op.operation].filter(Boolean).join(' ') || 'Operation')}</strong><span class="usage-operation-state">${escHtml(op.state || 'unknown')}</span><p title="${escHtml(op.repository || '')}">${escHtml(op.repository || 'Repository unknown')} · ${escHtml(op.artifact_id || 'Artifact not identified')}</p></div>${op.session_id ? `<a class="usage-link" href="${escHtml(sessionInspectionUrl({session_id:op.session_id,evidence_focus_id:op.evidence_id}))}">Inspect session <span aria-hidden="true">↗</span></a>` : '<span class="usage-copy">Session unknown</span>'}</li>`;
+    gitEl.innerHTML = `<div class="usage-widget-head"><h3>Git &amp; delivery</h3><span class="usage-unit">Confirmed distinct artifacts</span></div><dl class="usage-delivery-counts">${fact('Commits',git.distinct_commits)}${fact('PRs created',git.created_pull_requests)}${fact('PRs merged',git.merged_pull_requests)}${fact('MRs created',git.created_merge_requests)}${fact('MRs merged',git.merged_merge_requests)}</dl><div class="usage-delivery-note"><span>${decimal(git.total_operations)} captured operation records</span><span>${decimal(git.states ? git.states.unresolved ?? 0 : null)} unresolved</span><span>${decimal(git.undated_operations)} undated</span></div><p class="usage-copy">Captured records can include multiple callbacks for the same command. Artifact totals require a result tied to the individual operation. Cost is reported at the session level.</p>${operations.length ? `<details class="usage-evidence"${examplesOpen ? " open" : ""}><summary>Inspect recent command examples <span>${operations.length} of ${decimal(git.total_operations)}</span></summary><ol class="usage-operations">${operations.map(operationRow).join('')}</ol></details>` : `<p class="usage-empty">${known(git.total_operations) ? 'No operation details were captured in this scope.' : 'Git activity is not available yet.'}</p>`}`;
+  }
+  const diagnostics = document.getElementById('usage-diagnostics');
+  if (diagnostics) diagnostics.ontoggle = () => {
+    if (diagnostics.open) requestAnimationFrame(()=>{
+      for (const id of ['eventChart','eventBarChart']) Chart.getChart(document.getElementById(id))?.resize();
+    });
+  };
+}
+
 /* Heatmap */
-(function buildHeatmap(){
+function buildHeatmap(){
   const WD = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const SHOW = [true,false,true,false,true,false,true];
   const activityTab = sqlTab('activity');
@@ -75,10 +188,10 @@
     }
     gEl.appendChild(col);
   });
-})();
+}
 
 /* Hour bars */
-(function buildHourBars(){
+function buildHourBars(){
   const activityTab = sqlTab('activity');
   const hours=activityTab.activity_by_hour || {};
   const total = Object.values(hours).reduce((sum, value) => sum + Number(value || 0), 0);
@@ -104,53 +217,43 @@
     lbl.textContent=(h%6===0)?h12(h):'';
     lEl.appendChild(lbl);
   }
-})();
+}
 
-/* Subagent effectiveness table */
-(function buildSubagentEffectiveness(){
-  const el = document.getElementById('subagent-effectiveness');
+/* Recorded launches and lifecycle stops are observations, not success rates. */
+function buildSubagentActivity(id = 'subagent-effectiveness'){
+  const el = document.getElementById(id);
+  if (!el) return;
   const toolsTab = sqlTab('tools');
   const launches = toolsTab.subagent_types_by_count || {};
   const stops = toolsTab.subagent_stops_by_type || {};
-  const allTypes = Object.keys(launches)
+  const allTypes = [...new Set([...Object.keys(launches), ...Object.keys(stops)])]
     .sort((a, b) => Number(launches[b] || 0) - Number(launches[a] || 0) || a.localeCompare(b));
   const types = allTypes.slice(0, 12);
   if (!types.length) {
-    el.innerHTML = '<p style="color:var(--text-3);font-size:14px;text-align:center;padding:40px 0">No subagent data yet</p>';
+    el.innerHTML = '<p class="empty-note">No recorded subagent launches or stops in this selection.</p>';
     return;
   }
-  const totalLaunches = toolsTab.subagent_total_starts || Object.values(launches).reduce((a,b)=>a+b,0);
-  const totalStops = toolsTab.subagent_total_stops || Object.values(stops).reduce((a,b)=>a+b,0);
-  const rows = types.map(t => {
-    const launched = launches[t] || 0;
-    const done = Math.min(stops[t] || 0, launched);
-    const rate = launched > 0 ? Math.round(done / launched * 100) : 0;
-    const color = rate >= 90 ? 'var(--green)' : rate >= 70 ? 'var(--yellow)' : 'var(--red)';
-    return `<tr>
-      <td>${escHtml(t)}</td>
-      <td style="text-align:right">${launched.toLocaleString()}</td>
-      <td style="text-align:right">${done.toLocaleString()}</td>
-      <td style="text-align:right"><span style="color:${color};font-weight:600">${rate}%</span></td>
-    </tr>`;
-  }).join('');
-  const totalRate = totalLaunches > 0 ? Math.round(Math.min(totalStops,totalLaunches)/totalLaunches*100) : 0;
-  const totalColor = totalRate >= 90 ? 'var(--green)' : totalRate >= 70 ? 'var(--yellow)' : 'var(--red)';
+  const totalLaunches = toolsTab.subagent_total_starts ?? Object.values(launches).reduce((a,b)=>a+b,0);
+  const totalStops = toolsTab.subagent_total_stops ?? Object.values(stops).reduce((a,b)=>a+b,0);
+  const rows = types.map(t => `<tr>
+      <td>${escHtml(t === 'unknown' ? 'Role not recorded' : t)}</td>
+      <td style="text-align:right">${Number(launches[t] || 0).toLocaleString()}</td>
+      <td style="text-align:right">${Number(stops[t] || 0).toLocaleString()}</td>
+    </tr>`).join('');
   el.innerHTML = `<table class="data-table">
     <thead><tr>
-      <th>Agent Type</th>
-      <th style="text-align:right">Launched</th>
-      <th style="text-align:right">Completed</th>
-      <th style="text-align:right">Rate</th>
+      <th>Role / task</th>
+      <th style="text-align:right">Launches</th>
+      <th style="text-align:right">Recorded stops</th>
     </tr></thead>
     <tbody>${rows}</tbody>
     <tfoot><tr style="border-top:1px solid rgba(255,255,255,.1);font-weight:600">
       <td>Total</td>
       <td style="text-align:right">${totalLaunches.toLocaleString()}</td>
-      <td style="text-align:right">${Math.min(totalStops,totalLaunches).toLocaleString()}</td>
-      <td style="text-align:right"><span style="color:${totalColor}">${totalRate}%</span></td>
+      <td style="text-align:right">${totalStops.toLocaleString()}</td>
     </tr></tfoot>
-  </table>${allTypes.length > types.length ? `<div class="empty-note" style="padding-top:10px">Showing the 12 most-launched types of ${fmt(allTypes.length)}.</div>` : ''}`;
-})();
+  </table><p class="empty-note">Stops depend on harness capture and do not verify task success. A missing stop does not establish failure.</p>${allTypes.length > types.length ? `<div class="empty-note">Showing 12 of ${fmt(allTypes.length)} recorded roles or tasks.</div>` : ''}`;
+}
 
 /* ════════════════════ TOOLS ════════════════════ */
 
@@ -163,7 +266,7 @@ function buildBarList(elId, obj, color){
   const max=entries[0]?.[1]||1;
   document.getElementById(elId).innerHTML=entries.map(([name,count])=>`
     <div class="bar-item">
-      <div class="bar-lbl" title="${name}">${name}</div>
+      <div class="bar-lbl" title="${escHtml(name)}">${escHtml(name)}</div>
       <div class="bar-track"><div class="bar-fill" style="width:${(count/max*100).toFixed(1)}%;background:${color}"></div></div>
       <div class="bar-cnt">${count.toLocaleString()}</div>
     </div>`).join('');
@@ -171,11 +274,14 @@ function buildBarList(elId, obj, color){
 function buildToolsLists(){
   const toolsTab = sqlTab('tools');
   buildBarList('tools-list', toolsTab.tools_by_count || {}, P.blue);
-  const sqlSkills = toolsTab.skills_by_count || {};
-  const skillsOrSubagents = Object.keys(sqlSkills).length
-    ? sqlSkills
-    : (toolsTab.subagent_types_by_count || {});
-  buildBarList('skills-list', skillsOrSubagents, P.purple);
+  const counts = [toolsTab.skills_by_count, toolsTab.skill_attempts_by_count,
+    toolsTab.skill_reports_by_count].map(value => value || {});
+  const skills = [...new Set(counts.flatMap(value => Object.keys(value)))].sort();
+  const rows = skills.map(name => `<tr><th scope="row">${escHtml(name)}</th>${counts.map(value => `<td>${value[name] ? fmt(value[name]) : '—'}</td>`).join('')}</tr>`).join('');
+  document.getElementById('skills-list').innerHTML = skills.length
+    ? analysisTable(['Skill', 'Loaded or invoked', 'Read attempts', 'Reported'], rows)
+    : '<p class="empty-note">No skill evidence in this selection.</p>';
+  buildSubagentActivity('tools-subagent-activity');
 }
 
 /* MCP availability table */
@@ -227,7 +333,7 @@ function buildMcpPanel(){
 }
 
 /* Weekly trends table */
-(function buildWeeklyTrends(){
+function buildWeeklyTrends(){
   const wt = (sqlTab('activity').weekly_trends || []).slice(-12);
   const el = document.getElementById('weekly-trends-table');
   if (!wt.length) {
@@ -262,22 +368,25 @@ function buildMcpPanel(){
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
-})();
+}
 
 /* Event distribution */
-(function buildEventBar(){
-  const activityTab = sqlTab('activity');
-  const entries=Object.entries(activityTab.events_by_type || {});
+function buildEventBar(){
+  const entries=Object.entries(sqlTab('tools').events_by_type || {});
   const n=entries.length;
   const barH=28, pad=40;
   document.getElementById('event-bar-box').style.height=(n*barH+pad)+'px';
+  if (!entries.length) {
+    renderUsageChartEmpty('eventBarChart', 'No events match the current selection.');
+    return;
+  }
   new Chart(document.getElementById('eventBarChart').getContext('2d'),{
     type:'bar',
     data:{
-      labels:entries.map(e=>e[0]),
+      labels:entries.map(e=>e[0] === 'unknown' ? 'Unclassified events' : e[0]),
       datasets:[{
         data:entries.map(e=>e[1]),
-        backgroundColor:entries.map((_,i)=>COLORS[i%COLORS.length]),
+        backgroundColor:entries.map(([kind],i)=>kind === 'unknown' ? '#beb8ad' : COLORS[i%COLORS.length]),
         borderRadius:6,
         borderSkipped:false,
       }]
@@ -302,7 +411,22 @@ function buildMcpPanel(){
       }
     }
   });
-})();
+}
+
+function renderUsageView(){
+  if (D._unpublishedNavigation && exploreViewScopes.get('usage')?.scope !== exploreViewUrl('usage').url.toString()) return;
+  ['modelChart', 'eventChart', 'agentCostChart', 'tokenChart'].forEach(resetUsageChart);
+  renderUsageSummary();
+  renderMeasurementCoverage();
+  buildCohortComparison();
+  renderUsageMetrics();
+  buildHeatmap();
+  buildHourBars();
+  buildSubagentActivity();
+  buildWeeklyTrends();
+  buildAchievements();
+}
+renderUsageView();
 
 /* ════════════════════ LATENCY (merged into Tools tab) ════════════════════ */
 
@@ -326,7 +450,7 @@ function buildPercentiles(){
   }
   tbody.innerHTML = pctl.map(r => `
     <tr>
-      <td><span class="mono" style="color:var(--teal)">${r.tool}</span></td>
+      <td><span class="mono" style="color:var(--teal)">${escHtml(r.tool)}</span></td>
       <td style="text-align:right;font-weight:600">${r.count.toLocaleString()}</td>
       <td style="text-align:right;color:${pctlColor(r.p50)}">${fmtMs(r.p50)}</td>
       <td style="text-align:right;color:${pctlColor(r.p90)}">${fmtMs(r.p90)}</td>
@@ -338,16 +462,22 @@ function buildPercentiles(){
 function buildCommandPatterns(){
   const toolsTab = sqlTab('tools');
   const commands = toolsTab.top_commands || [];
-  document.getElementById('cmd-unique').textContent='-- '+Number(toolsTab.unique_commands || 0)+' unique patterns';
+  document.getElementById('cmd-unique').textContent='-- '+Number(toolsTab.unique_commands || 0)+' templates';
+  const coverage = document.getElementById('cmd-coverage');
+  if (coverage) coverage.textContent = toolsTab.commands_with_template == null ? ''
+    : `${fmt(toolsTab.commands_with_template)} of ${fmt(toolsTab.shell_executions || 0)} recorded shell calls have command text available for templates.`;
   document.getElementById('cmd-tbody').innerHTML=commands.length ? commands.map((c,i)=>`
     <tr>
       <td style="color:var(--text-3);font-weight:600">${i+1}</td>
       <td><span class="mono" style="color:var(--teal)">${escHtml(c.command)}</span></td>
       <td style="text-align:right"><span class="run-badge">${c.count}x</span></td>
-    </tr>`).join('') : '<tr><td colspan="3" class="empty-note">No command patterns match this cohort.</td></tr>';
+    </tr>`).join('') : '<tr><td colspan="3" class="empty-note">No captured command templates match this cohort.</td></tr>';
 }
 
 function renderToolsView(){
+  if (D._unpublishedNavigation && exploreViewScopes.get('tools')?.scope !== exploreViewUrl('tools').url.toString()) return;
+  resetUsageChart('eventBarChart');
+  buildEventBar();
   buildToolsLists();
   buildMcpPanel();
   buildPercentiles();
@@ -370,7 +500,7 @@ renderToolsView();
   if (initialB) selIdB = initialB;
 
   function availableSessions(){
-    return filteredDashboardSessions || D.sessions || [];
+    return (filteredDashboardSessions || D.sessions || []).filter(session => !session._navigationOnly);
   }
 
   function findSessionById(sessionId){

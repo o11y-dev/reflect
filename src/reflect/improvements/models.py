@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -64,6 +64,7 @@ class WorkflowSourceKind(StrEnum):
 
     RULE_BLUEPRINT = "rule_blueprint"
     AGENT_AUTHORED = "agent_authored"
+    USER_AUTHORED = "user_authored"
     MANUAL_SKILL_FILE = "manual_skill_file"
 
 
@@ -76,6 +77,7 @@ class WorkflowArtifactKind(StrEnum):
 class SkillOrigin(StrEnum):
     RULE_BLUEPRINT = "rule_blueprint"
     AGENT_AUTHORED = "agent_authored"
+    USER_AUTHORED = "user_authored"
     IMPORTED = "imported"
 
 
@@ -169,6 +171,32 @@ class EvidenceRef(ReflectModel):
     attrs: dict[str, Any] = Field(default_factory=dict)
 
 
+class TaskIntent(ReflectModel):
+    family: str | None = None
+    source_refs: list[EvidenceRef] = Field(default_factory=list)
+    target_refs: list[str] = Field(default_factory=list)
+    state: Literal["identified", "mixed", "unknown"] = "unknown"
+    reason: str
+
+
+class ProcedureStep(ReflectModel):
+    action: str
+    target_parameter: str
+    evidence_required: str
+    decision: str = ""
+    source_kind: Literal["observed", "user_instruction", "proposed"]
+    source_refs: list[EvidenceRef] = Field(default_factory=list)
+
+
+class ProcedureDefinition(ReflectModel):
+    task_intent: TaskIntent
+    applicability: dict[str, str]
+    inputs: list[str]
+    steps: list[ProcedureStep]
+    stop_conditions: list[str]
+    expected_output: str
+
+
 class ObservationSessionRef(ReflectModel):
     session_id: str
     occurrence_count: int = Field(default=1, ge=1)
@@ -196,8 +224,8 @@ class ObservationDraft(ReflectModel):
     impact_score: float = Field(ge=0, le=100)
     severity: Severity
     confidence: float = Field(ge=0, le=1)
-    occurrence_count: int = Field(default=1, ge=1)
-    affected_session_count: int = Field(default=1, ge=1)
+    occurrence_count: int = Field(default=1, ge=0)
+    affected_session_count: int = Field(default=1, ge=0)
     actionability: str = "review"
     repo_id: str | None = None
     evidence: list[EvidenceRef] = Field(default_factory=list)
@@ -426,7 +454,11 @@ class SkillMeasurementRecord(ReflectModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
-class SkillUsageSessionRecord(ReflectModel):
+class SkillUsageOccurrenceRecord(ReflectModel):
+    usage_id: str = ""
+    execution_unit_id: str | None = None
+    source_kind: str = "legacy"
+    source_id: str = ""
     session_id: str
     skill_version_id: str | None = None
     title: str | None = None
@@ -446,7 +478,7 @@ class SkillDetail(ReflectModel):
     versions: list[SkillVersionRecord] = Field(default_factory=list)
     installations: list[SkillInstallationRecord] = Field(default_factory=list)
     evidence: list[dict[str, Any]] = Field(default_factory=list)
-    usage_sessions: list[SkillUsageSessionRecord] = Field(default_factory=list)
+    usage_occurrences: list[SkillUsageOccurrenceRecord] = Field(default_factory=list)
     measurements: list[SkillMeasurementRecord] = Field(default_factory=list)
 
 
@@ -499,6 +531,9 @@ class ImprovementSummary(ReflectModel):
     resolved_scope: ImprovementScope | None = None
     eligible_session_count: int = Field(default=0, ge=0)
     attribution_complete: bool = True
+    analysis_state: str = "ready"
+    analysis_coverage: dict[str, dict[str, int]] = Field(default_factory=dict)
+    limitations: list[str] = Field(default_factory=list)
 
 
 class AskEvidence(ReflectModel):

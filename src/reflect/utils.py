@@ -155,7 +155,7 @@ def _sanitize_command_display(command: str, *, max_len: int | None = None) -> st
         sanitized,
     )
     sanitized = re.sub(
-        r'(?P<token>(?:~|/)[^\s"\']+)',
+        r'(?<![\w./~])(?P<token>(?:~|/)[^\s"\']+)',
         lambda match: _redact_path_token(match.group("token")),
         sanitized,
     )

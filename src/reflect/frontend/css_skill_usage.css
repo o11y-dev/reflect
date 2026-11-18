@@ -1,0 +1,15 @@
+.skill-usage-summary{display:flex;flex-wrap:wrap;gap:16px;color:#F5F2EA;font-size:12px;font-weight:600}
+.skill-usage-canvas{max-height:400px;overflow:auto;border:1px solid var(--border);border-radius:6px;margin:12px 0;background:#090909}
+.skill-usage-canvas svg{display:block;min-width:700px;width:100%}
+.skill-usage-edge{fill:none;stroke:#81786b;stroke-width:1.1;opacity:.65}
+.skill-usage-edge.inferred{stroke-dasharray:4 4}
+.skill-usage-node rect{fill:#20201e;stroke:#655e53;stroke-width:1}
+.skill-usage-node.skill rect{stroke:#F28A1A;stroke-width:2}
+.skill-usage-node text{fill:#F5F2EA;font-size:11px;font-family:var(--font-mono,monospace)}
+.skill-usage-node[role=button]{cursor:pointer}
+.skill-usage-node[role=button]:focus rect,.skill-usage-node[role=button]:hover rect{stroke:#F28A1A;stroke-width:2}
+.skill-usage-table{overflow-x:auto;margin:12px 0}
+.skill-usage-table table{width:100%;font-size:12px;border-collapse:collapse}
+.skill-usage-table th,.skill-usage-table td{text-align:left;vertical-align:top;padding:10px 8px;border-bottom:1px solid var(--border)}
+.skill-usage-table ul{margin:0 0 8px;padding-left:14px}
+.skill-source-ref{font-family:var(--font-mono,monospace);font-size:10px;color:#BEB8AD;overflow-wrap:anywhere}

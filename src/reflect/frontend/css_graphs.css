@@ -1,10 +1,9 @@
 /* ── Graph panels ────────────────────────────────────────── */
-.graph-svg{width:100%;overflow:visible}
+.graph-svg{display:block;width:100%;overflow:visible}
 .graph-svg text{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif}
 .semantic-graph-shell{position:relative;height:620px;border:1px solid var(--glass-border);border-radius:8px;overflow:hidden;background:radial-gradient(circle at 50% 45%,rgba(255,255,255,.045),rgba(255,255,255,.012) 42%,rgba(0,0,0,.22))}
-.semantic-graph-toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap}
-.semantic-graph-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.semantic-graph-toolbar select{min-height:32px;border:1px solid var(--glass-border);border-radius:6px;background:rgba(0,0,0,.24);color:var(--text-1);padding:4px 8px;font:inherit;font-size:12px}
+.semantic-graph-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.semantic-graph-controls select{max-width:100%;min-height:32px;border:1px solid var(--glass-border);border-radius:6px;background:rgba(0,0,0,.24);color:var(--text-1);padding:4px 8px;font:inherit;font-size:12px}
 .semantic-graph-context{margin:-4px 0 12px;color:var(--text-3);font-size:11px;line-height:1.5}
 .semantic-graph-svg{display:block;width:100%;height:100%;cursor:grab}
 .semantic-graph-svg:active{cursor:grabbing}
@@ -33,20 +32,72 @@
 .timeline-track{flex:1;position:relative;height:24px;background:rgba(255,255,255,.04);border-radius:4px;overflow:hidden;min-width:400px}
 .timeline-span{position:absolute;top:3px;height:18px;border-radius:3px;cursor:default;transition:opacity .15s;min-width:2px}
 .timeline-span:hover{opacity:.7}
-/* Latency histogram */
-.hist-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
-@media(max-width:800px){.hist-grid{grid-template-columns:1fr}}
-.hist-item{}
-.hist-label{font-size:13px;font-weight:600;color:var(--text-2);margin-bottom:8px;font-family:'SF Mono',ui-monospace,monospace}
-.hist-bars{display:flex;gap:4px;align-items:flex-end;height:80px}
-.hist-bar{flex:1;border-radius:3px 3px 0 0;min-height:2px;cursor:default;transition:opacity .15s}
-.hist-bar:hover{opacity:.7}
-.hist-bLabels{display:flex;gap:4px;margin-top:4px}
-.hist-bLabel{flex:1;text-align:center;font-size:9px;color:var(--text-3)}
 /* Graph legend */
 .graph-legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px}
 .graph-legend-item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-3)}
 .graph-legend-dot{width:10px;height:10px;border-radius:50%}
+
+/* Keep widget geometry stable while the selected graph scope is loading. */
+.graph-view-status{
+  position:absolute;
+  width:1px;
+  height:1px;
+  overflow:hidden;
+  clip-path:inset(50%);
+  white-space:nowrap;
+}
+.graph-widget-body{position:relative;min-width:0;min-height:var(--graph-widget-height)}
+.graph-widget-semantic{--graph-widget-height:730px}
+.graph-widget-sequence{--graph-widget-height:392px}
+.graph-widget-network{--graph-widget-height:488px}
+.graph-widget-timeline{--graph-widget-height:280px}
+.graph-widget-matrix{--graph-widget-height:492px}
+.graph-widget-content{min-width:0}
+.graph-widget:not([data-presentation="data"]) .graph-widget-content{visibility:hidden}
+.graph-widget-notice{
+  position:absolute;
+  top:8px;
+  right:8px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  max-width:calc(100% - 16px);
+  padding:5px 9px;
+  border:1px solid var(--glass-border);
+  border-radius:6px;
+  background:var(--surface);
+  color:var(--text-2);
+  font-size:12px;
+  line-height:1.5;
+}
+.graph-widget-notice[hidden],.graph-widget-notice button[hidden]{display:none}
+.graph-widget[data-presentation="placeholder"] .graph-widget-notice{
+  inset:0;
+  max-width:none;
+  justify-content:center;
+  flex-wrap:wrap;
+  align-content:center;
+  padding:16px;
+  text-align:center;
+}
+.graph-widget[data-presentation="placeholder"]:is([data-state="loading"],[data-state="preparing"]) .graph-widget-notice::before{
+  content:"";
+  width:min(72%,320px);
+  height:52px;
+  margin:0 auto 6px;
+  flex:0 0 100%;
+  background:
+    linear-gradient(var(--surface3),var(--surface3)) center top / min(72%,320px) 10px no-repeat,
+    linear-gradient(var(--surface3),var(--surface3)) center 20px / min(54%,240px) 10px no-repeat,
+    linear-gradient(var(--surface3),var(--surface3)) center 40px / min(38%,168px) 10px no-repeat;
+}
+.graph-widget[data-presentation="placeholder"] .graph-widget-notice span{max-width:44ch}
+.graph-widget[data-state="error"] .graph-widget-notice{border-color:var(--border2)}
+.graph-widget-empty{margin:0 0 12px;color:var(--text-3);font-size:13px}
+@media(max-width:720px){
+  .semantic-graph-shell{height:440px}
+  .graph-widget-semantic{--graph-widget-height:560px}
+}
 
 /* ── Footer ──────────────────────────────────────────────── */
 footer{text-align:center;padding:14px 24px;font-size:13px;color:var(--text-3);border-top:1px solid var(--glass-border)}
@@ -57,7 +108,6 @@ footer code{font-family:'SF Mono',ui-monospace,monospace;color:var(--text-2)}
   .hm-cell,
   .hour-bar,
   .sb-pill,
-  .sb-card,
   .sb-load-btn,
   .report-loader,
   .loader-mark,

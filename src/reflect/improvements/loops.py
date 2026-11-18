@@ -6,6 +6,7 @@ import sqlite3
 from collections import defaultdict
 from typing import Any
 
+from reflect.improvements.analysis_scope import AnalysisScope
 from reflect.improvements.models import (
     LoopDetail,
     LoopKind,
@@ -54,29 +55,38 @@ class LoopService:
         if initialize_schema:
             migrate(conn)
 
-    def refresh(self, *, commit: bool = True) -> dict[str, int]:
-        """Refresh behavioral and agent-native loops from canonical evidence."""
+    def refresh(self, *, commit: bool = True, scope: AnalysisScope | None = None) -> dict[str, int]:
+        """Refresh one complete cohort, retaining unevaluated historical loops."""
+        scope = scope or AnalysisScope()
+        if scope.session_ids == set():
+            return dict.fromkeys(("detected", "agent_native", "stalled", "productive", "resolved"), 0)
         now = utc_now()
         seen: set[str] = set()
-        agent_native = self._refresh_agent_native(now=now, seen=seen)
-        stalled = self._refresh_stalled(now=now, seen=seen)
-        productive = self._refresh_productive(now=now, seen=seen)
+        agent_native = self._refresh_agent_native(now=now, seen=seen, scope=scope)
+        stalled = self._refresh_stalled(now=now, seen=seen, scope=scope)
+        productive = self._refresh_productive(now=now, seen=seen, scope=scope)
+        predicate = "1=1"
+        if scope.session_ids is not None:
+            predicate = f"""
+              EXISTS (SELECT 1 FROM loop_occurrences support WHERE support.loop_id = loop_patterns.id)
+              AND loop_patterns.affected_session_count <= (
+                SELECT COUNT(DISTINCT support.session_id) FROM loop_occurrences support
+                WHERE support.loop_id = loop_patterns.id
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM loop_occurrences support
+                WHERE support.loop_id = loop_patterns.id
+                  AND NOT ({scope.contains('support.session_id')})
+              )
+            """
+        params = [now]
         if seen:
-            placeholders = ",".join("?" for _ in seen)
-            resolved = self.conn.execute(
-                f"""
-                UPDATE loop_patterns
-                SET status = 'resolved', updated_at = ?
-                WHERE id NOT IN ({placeholders})
-                  AND status = 'detected'
-                """,
-                (now, *sorted(seen)),
-            ).rowcount
-        else:
-            resolved = self.conn.execute(
-                "UPDATE loop_patterns SET status = 'resolved', updated_at = ? WHERE status = 'detected'",
-                (now,),
-            ).rowcount
+            predicate += f" AND id NOT IN ({','.join('?' for _ in seen)})"
+            params.extend(sorted(seen))
+        resolved = self.conn.execute(
+            f"UPDATE loop_patterns SET status = 'resolved', updated_at = ? WHERE status = 'detected' AND {predicate}",
+            params,
+        ).rowcount
         if commit:
             self.conn.commit()
         return {
@@ -87,19 +97,19 @@ class LoopService:
             "resolved": int(resolved or 0),
         }
 
-    def _refresh_agent_native(self, *, now: str, seen: set[str]) -> int:
+    def _refresh_agent_native(self, *, now: str, seen: set[str], scope: AnalysisScope) -> int:
         rows = self.conn.execute(
-            """
+            f"""
             SELECT s.repo_id, s.id, COALESCE(a.name, 'unknown'), 'session_title',
                    NULL, NULL, s.title
-            FROM sessions s
+            FROM {scope.sessions} s
             LEFT JOIN agents a ON a.id = s.agent_id
             WHERE trim(COALESCE(s.title, '')) LIKE '/%'
             UNION ALL
             SELECT s.repo_id, tc.session_id, COALESCE(a.name, 'unknown'), 'tool_call',
                    tc.tool_name, tc.input_hash, tc.input_preview_redacted
             FROM tool_calls tc
-            JOIN sessions s ON s.id = tc.session_id
+            JOIN {scope.sessions} s ON s.id = tc.session_id
             LEFT JOIN agents a ON a.id = s.agent_id
             WHERE lower(tc.tool_name) LIKE '%goal%'
                OR lower(tc.tool_name) LIKE '%cron%'
@@ -190,22 +200,22 @@ class LoopService:
                 )
         return len(grouped)
 
-    def _refresh_stalled(self, *, now: str, seen: set[str]) -> int:
+    def _refresh_stalled(self, *, now: str, seen: set[str], scope: AnalysisScope) -> int:
         cursor = self.conn.execute(
-            """
+            f"""
             SELECT s.repo_id, tc.session_id, lower(trim(tc.tool_name)) AS tool_key,
                    tc.tool_name, tc.input_hash,
                    CASE WHEN lower(COALESCE(tc.status, '')) IN ('error', 'failed', 'failure')
                         THEN 1 ELSE 0 END AS is_error
             FROM steps st
             JOIN tool_calls tc ON tc.step_id = st.id
-            JOIN sessions s ON s.id = tc.session_id
+            JOIN {scope.sessions} s ON s.id = tc.session_id
             WHERE NULLIF(tc.input_hash, '') IS NOT NULL
               AND NULLIF(trim(tc.tool_name), '') IS NOT NULL
               AND lower(trim(tc.tool_name)) NOT IN ('write_stdin', 'wait')
               AND lower(COALESCE(tc.input_preview_redacted, '')) NOT LIKE '%"decision":"approved"%'
               AND lower(trim(COALESCE(tc.input_preview_redacted, ''))) NOT IN (
-                '[redacted]', 'redacted', '{}', 'null'
+                '[redacted]', 'redacted', '{{}}', 'null'
               )
             ORDER BY tc.session_id, st.seq, tc.id
             """
@@ -307,15 +317,16 @@ class LoopService:
                 )
         return len(qualified)
 
-    def _refresh_productive(self, *, now: str, seen: set[str]) -> int:
+    def _refresh_productive(self, *, now: str, seen: set[str], scope: AnalysisScope) -> int:
         rows = self.conn.execute(
-            """
+            f"""
             SELECT o.id, o.fingerprint, o.title, o.summary, o.scope_type, o.scope_id,
                    o.repo_id, o.occurrence_count, o.affected_session_count,
                    o.confidence, o.baseline_query_json
             FROM observations o
             WHERE o.rule_id = 'high_performing_repeated_workflow'
               AND o.status NOT IN ('resolved', 'dismissed', 'rejected')
+              AND {scope.observation_predicate('o')}
             ORDER BY o.confidence DESC, o.affected_session_count DESC
             """
         ).fetchall()
@@ -417,7 +428,9 @@ class LoopService:
               state_change_count = excluded.state_change_count,
               confidence = excluded.confidence,
               status = CASE WHEN loop_patterns.status = 'resolved' THEN 'detected' ELSE loop_patterns.status END,
-              evidence_json = excluded.evidence_json,
+              evidence_json = CASE WHEN json_extract(loop_patterns.evidence_json, '$.promoted_skill_id') IS NOT NULL
+                THEN json_set(excluded.evidence_json, '$.promoted_skill_id', json_extract(loop_patterns.evidence_json, '$.promoted_skill_id'))
+                ELSE excluded.evidence_json END,
               last_seen_at = excluded.last_seen_at,
               updated_at = excluded.updated_at
             """,

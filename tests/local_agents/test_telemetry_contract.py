@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from reflect import core
+from reflect import preparation_pipeline
 from reflect.context import ReflectContextService
 from reflect.memory import MemoryItem, MemoryService, MemorySourceMetadata
 from reflect.store.migrate import migrate
@@ -101,6 +101,8 @@ def _write_session_spans(
                 "gen_ai.request.model": f"test-{agent}",
                 "gen_ai.usage.input_tokens": 100,
                 "gen_ai.usage.output_tokens": 20,
+                "gen_ai.usage.cache_read.input_tokens": 0,
+                "gen_ai.usage.cache_creation.input_tokens": 0,
                 "gen_ai.client.output": "Validated blog output",
             },
         )
@@ -172,13 +174,13 @@ def test_cross_agent_blog_contract_has_exact_idempotent_telemetry(
     finally:
         conn.close()
 
-    first = core.prepare_sql_report_db(
+    first = preparation_pipeline.prepare_sql_report_db(
         db_path,
         otlp_traces=None,
         include_native_sessions=False,
         spans_dir=spans_dir,
     )
-    second = core.prepare_sql_report_db(
+    second = preparation_pipeline.prepare_sql_report_db(
         db_path,
         otlp_traces=None,
         include_native_sessions=False,

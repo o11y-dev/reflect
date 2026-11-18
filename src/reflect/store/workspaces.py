@@ -11,6 +11,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from reflect.store.pending_refresh import PendingRefreshState
+
 WORKSPACE_ATTRIBUTE_KEYS = (
     "code.workspace.root",
     "gen_ai.client.cwd",
@@ -20,6 +22,7 @@ WORKSPACE_ATTRIBUTE_KEYS = (
     "workspace_path",
     "workspace",
     "cwd",
+    "gen_ai.client.file_path",
 )
 PARENT_SESSION_ATTRIBUTE_KEYS = (
     "gen_ai.client.parent_session_id",
@@ -144,9 +147,21 @@ class WorkspaceResolver:
         if not counts:
             return None
 
+        file_repos = {self._discover_repo_root(path) for path, sources in counts.items()
+                      if "gen_ai.client.file_path" in sources}
+        file_repos.discard("")
+        if len(file_repos) > 1:
+            for sources in counts.values():
+                sources.pop("gen_ai.client.file_path", None)
+
         resolved: list[tuple[int, str, str, int, str]] = []
         for path, source_counts in counts.items():
+            if not source_counts:
+                continue
             repo_root = self._discover_repo_root(path)
+            # A file is a repository hint, never a workspace directory itself.
+            if set(source_counts) == {"gen_ai.client.file_path"} and not repo_root:
+                continue
             if "gen_ai.client.repository_root" in source_counts:
                 repo_root = path
             if (_is_agent_state_path(path) or _is_generic_workspace_root(path)) and not repo_root:
@@ -288,6 +303,40 @@ class WorkspaceStore:
         return repo_id
 
 
+def backfill_codex_spawn_lineage(
+    conn: sqlite3.Connection, *, timestamp: str, native_files: Iterable[Path] = (),
+) -> set[str]:
+    """Link native Codex child sessions to an existing, unambiguous parent."""
+    from reflect.parsing import read_codex_parent_thread
+
+    native_claims = [claim for file_path in native_files if (claim := read_codex_parent_thread(file_path))]
+    changed = {str(row[0]) for row in conn.execute("""
+        WITH evidence(session_id, parent_id) AS (
+          SELECT st.session_id, NULLIF(trim(json_extract(st.raw_attrs_json,
+            '$."source.subagent.thread_spawn.parent_thread_id"')), '')
+          FROM steps st INDEXED BY idx_steps_codex_spawn_lineage
+          JOIN sessions child ON child.id = st.session_id AND child.parent_session_id IS NULL
+          WHERE st.origin_kind = 'native_session' AND CASE WHEN json_valid(st.raw_attrs_json) THEN
+            json_type(st.raw_attrs_json, '$."source.subagent.thread_spawn.parent_thread_id"') = 'text'
+          END
+          UNION ALL
+          SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)
+        ), claims AS MATERIALIZED (
+          SELECT session_id, MIN(parent_id) AS parent_id FROM evidence
+          GROUP BY session_id HAVING COUNT(DISTINCT parent_id) = 1
+        )
+        UPDATE sessions AS child
+        SET parent_session_id = parent.id, updated_at = ?
+        FROM claims JOIN sessions parent ON parent.id = claims.parent_id
+          JOIN agents a ON a.id = parent.agent_id AND a.name = 'codex'
+        WHERE child.id = claims.session_id AND child.parent_session_id IS NULL AND child.id <> parent.id
+          AND child.agent_id = parent.agent_id
+        RETURNING id
+    """, (json.dumps(native_claims), timestamp))}
+    PendingRefreshState(conn).mark(changed, phases=("graph", "improvements"))
+    return changed
+
+
 def backfill_session_context(
     conn: sqlite3.Connection,
     *,
@@ -295,6 +344,7 @@ def backfill_session_context(
     changed_session_ids: set[str] | None = None,
     session_ids: set[str] | None = None,
     resolver: WorkspaceResolver | None = None,
+    codex_native_files: Iterable[Path] = (),
 ) -> dict[str, int]:
     """Promote stored workspace and lineage attributes into canonical sessions."""
 
@@ -337,6 +387,7 @@ def backfill_session_context(
     params: list[str] = []
     if session_ids is not None:
         if not session_ids:
+            PendingRefreshState(conn).mark(invalid_sessions)
             return {"sessions_updated": 0, "workspaces": 0, "parents": 0}
         placeholders = ", ".join("?" for _ in session_ids)
         filters.append(f"id IN ({placeholders})")
@@ -432,6 +483,13 @@ def backfill_session_context(
         parent_updates += int(parent_id != str(session[4] or ""))
         if changed_session_ids is not None:
             changed_session_ids.add(session_id)
+    PendingRefreshState(conn).mark(updated_session_ids)
+    if session_ids is None:
+        linked = backfill_codex_spawn_lineage(conn, timestamp=timestamp, native_files=codex_native_files)
+        updated_session_ids.update(linked)
+        parent_updates += len(linked)
+        if changed_session_ids is not None:
+            changed_session_ids.update(linked)
     return {
         "sessions_updated": len(updated_session_ids),
         "workspaces": len(touched_workspaces),

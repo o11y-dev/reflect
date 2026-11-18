@@ -58,10 +58,10 @@ _DEFAULT_FALLBACK_PRICES: dict[str, dict[str, float]] = {
 @dataclass(frozen=True)
 class ModelPricing:
     model_key: str
-    input_cost_per_token: float = 0.0
-    output_cost_per_token: float = 0.0
-    cache_creation_cost_per_token: float = 0.0
-    cache_read_cost_per_token: float = 0.0
+    input_cost_per_token: float | None = None
+    output_cost_per_token: float | None = None
+    cache_creation_cost_per_token: float | None = None
+    cache_read_cost_per_token: float | None = None
 
 
 @dataclass(frozen=True)
@@ -69,7 +69,7 @@ class PricingResolution:
     requested_model: str
     canonical_model: str
     matched_model_key: str
-    source: str  # live | cache | fallback | missing
+    source: str  # live | cache | fallback | partial | missing
     confidence: float
 
 
@@ -86,6 +86,7 @@ class CostBreakdown:
     cache_read_cost_usd: float
     total_cost_usd: float
     resolution: PricingResolution
+    missing_price_buckets: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -180,20 +181,16 @@ def _fetch_json_url(url: str, timeout_seconds: float, api_key: str = "") -> dict
 
 
 def _coerce_model_pricing(model_key: str, payload: dict) -> ModelPricing:
+    def rate(*keys: str) -> float | None:
+        value = next((payload[key] for key in keys if payload.get(key) is not None), None)
+        return float(value) if value is not None else None
+
     return ModelPricing(
         model_key=model_key,
-        input_cost_per_token=float(payload.get("input_cost_per_token") or 0.0),
-        output_cost_per_token=float(payload.get("output_cost_per_token") or 0.0),
-        cache_creation_cost_per_token=float(
-            payload.get("cache_creation_input_token_cost")
-            or payload.get("cache_creation_cost_per_token")
-            or 0.0
-        ),
-        cache_read_cost_per_token=float(
-            payload.get("cache_read_input_token_cost")
-            or payload.get("cache_read_cost_per_token")
-            or 0.0
-        ),
+        input_cost_per_token=rate("input_cost_per_token"),
+        output_cost_per_token=rate("output_cost_per_token"),
+        cache_creation_cost_per_token=rate("cache_creation_input_token_cost", "cache_creation_cost_per_token"),
+        cache_read_cost_per_token=rate("cache_read_input_token_cost", "cache_read_cost_per_token"),
     )
 
 
@@ -321,8 +318,10 @@ def calculate_cost(
     model: str,
     pricing_table: PricingTable,
     aliases: dict[str, str] | None = None,
+    *,
+    unknown_rate_buckets: frozenset[str] = frozenset(),
 ) -> CostBreakdown:
-    aliases = aliases or load_model_aliases()
+    aliases = load_model_aliases() if aliases is None else aliases
     requested_model = model or ""
     alias_target = aliases.get(requested_model.strip().lower(), "")
     canonical = canonicalize_model_name(requested_model, aliases)
@@ -332,7 +331,10 @@ def calculate_cost(
         or pricing_table.prices.get(alias_target.strip().lower())
         or pricing_table.prices.get(requested_model.lower())
     )
-    if model_pricing is None:
+    if model_pricing is None or not any(rate is not None for rate in (
+        model_pricing.input_cost_per_token, model_pricing.output_cost_per_token,
+        model_pricing.cache_creation_cost_per_token, model_pricing.cache_read_cost_per_token,
+    )):
         resolution = PricingResolution(
             requested_model=requested_model,
             canonical_model=canonical,
@@ -356,10 +358,29 @@ def calculate_cost(
     cache_creation_tokens = int(tokens.get("cache_creation", 0) or 0)
     cache_read_tokens = int(tokens.get("cache_read", 0) or 0)
 
-    input_cost = input_tokens * model_pricing.input_cost_per_token
-    output_cost = output_tokens * model_pricing.output_cost_per_token
-    cache_creation_cost = cache_creation_tokens * model_pricing.cache_creation_cost_per_token
-    cache_read_cost = cache_read_tokens * model_pricing.cache_read_cost_per_token
+    bucket_rates = {
+        "input": (input_tokens, model_pricing.input_cost_per_token),
+        "output": (output_tokens, model_pricing.output_cost_per_token),
+        "cache_creation": (cache_creation_tokens, model_pricing.cache_creation_cost_per_token),
+        "cache_read": (cache_read_tokens, model_pricing.cache_read_cost_per_token),
+    }
+    for key in unknown_rate_buckets & bucket_rates.keys():
+        bucket_rates[key] = (bucket_rates[key][0], None)
+    missing = tuple(key for key, (count, rate) in bucket_rates.items() if count > 0 and rate is None)
+    if missing:
+        partially_priced = any(count > 0 and rate is not None for count, rate in bucket_rates.values())
+        resolution = PricingResolution(
+            requested_model=resolution.requested_model,
+            canonical_model=resolution.canonical_model,
+            matched_model_key=resolution.matched_model_key,
+            source="partial" if partially_priced else "missing",
+            confidence=resolution.confidence * (1 - len(missing) / 4) if partially_priced else 0.0,
+        )
+    cost_by_bucket = {key: count * (rate or 0.0) for key, (count, rate) in bucket_rates.items()}
+    input_cost = cost_by_bucket["input"]
+    output_cost = cost_by_bucket["output"]
+    cache_creation_cost = cost_by_bucket["cache_creation"]
+    cache_read_cost = cost_by_bucket["cache_read"]
     total = input_cost + output_cost + cache_creation_cost + cache_read_cost
 
     return CostBreakdown(
@@ -374,4 +395,5 @@ def calculate_cost(
         cache_read_cost_usd=cache_read_cost,
         total_cost_usd=total,
         resolution=resolution,
+        missing_price_buckets=missing,
     )

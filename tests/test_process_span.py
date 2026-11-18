@@ -156,6 +156,58 @@ class TestMcpTracking:
 
 
 class TestSubagentTracking:
+    def test_paired_launch_result_and_lifecycle_are_one_observed_child(self):
+        from reflect.telemetry_facts import SubagentTracker
+
+        counters = _fresh_counters()
+        tracker = SubagentTracker()
+        for event, attrs in [
+            ("PreToolUse", {"gen_ai.client.tool_name": "spawn_agent", "gen_ai.tool.call.id": "spawn-1",
+                            "gen_ai.client.tool.input": '{"agent_type":"worker"}'}),
+            ("PostToolUse", {"gen_ai.client.tool_name": "spawn_agent", "gen_ai.tool.call.id": "spawn-1",
+                             "gen_ai.client.tool.output": '{"agent_id":"child"}'}),
+            ("SubagentStart", {"gen_ai.client.agent_id": "child", "gen_ai.client.subagent_type": "worker"}),
+            ("SubagentStop", {"gen_ai.client.agent_id": "child"}),
+        ]:
+            span = make_span(event)
+            span["attributes"].update(attrs)
+            _process_span(span, **counters, subagent_tracker=tracker)
+        assert +counters["subagent_types"] == {"worker": 1}
+        assert +counters["subagent_stops_by_type"] == {"worker": 1}
+
+    def test_nameless_failed_result_retracts_streamed_tool_start(self):
+        from reflect.telemetry_facts import SubagentTracker
+
+        counters = _fresh_counters()
+        tracker = SubagentTracker()
+        launch = make_span("PreToolUse", tool="spawn_agent", tool_input='{"agent_type":"worker"}')
+        launch["attributes"]["tool.call_id"] = "failed-call"
+        failed = make_span("PostToolUseFailure")
+        failed["attributes"].update({"tool.call_id": "failed-call", "error.type": "tool_result"})
+        for span in (launch, failed):
+            _process_span(span, **counters, subagent_tracker=tracker)
+        assert counters["subagent_types"] == {}
+        assert counters["events_by_type"]["SubagentStart"] == 0
+
+    def test_nameless_success_links_only_a_previously_observed_launch(self):
+        from reflect.telemetry_facts import SubagentTracker
+
+        counters = _fresh_counters()
+        tracker = SubagentTracker()
+        events = [
+            ("PostToolUse", {"tool.call_id": "unmatched", "gen_ai.client.tool.output": '{"agent_id":"unrelated"}'}),
+            ("PreToolUse", {"gen_ai.client.tool_name": "spawn_agent", "tool.call_id": "call",
+                            "gen_ai.client.tool.input": '{"agent_type":"reviewer"}'}),
+            ("PostToolUse", {"tool.call_id": "call", "gen_ai.client.tool.output": '{"agent_id":"child"}'}),
+            ("SubagentStart", {"gen_ai.client.agent_id": "child", "gen_ai.client.subagent_type": "reviewer"}),
+        ]
+        for event, attrs in events:
+            span = make_span(event)
+            span["attributes"].update(attrs)
+            _process_span(span, **counters, subagent_tracker=tracker)
+        assert counters["subagent_types"] == {"reviewer": 1}
+        assert "unrelated" not in {fact.agent_id for fact in tracker.facts.values()}
+
     def test_subagent_start_counted(self):
         c = process(make_span("SubagentStart", subagent_type="explore"))
         assert c["subagent_types"]["explore"] == 1
@@ -176,8 +228,8 @@ class TestSubagentTracking:
             tool_input='{"agent_type":"explore","name":"repo-strategy"}',
         ))
         assert c["events_by_type"]["SubagentStart"] == 1
-        assert c["subagent_types"]["repo-strategy"] == 1
-        assert c["agents"][COPILOT].subagent_types["repo-strategy"] == 1
+        assert c["subagent_types"]["explore"] == 1
+        assert c["agents"][COPILOT].subagent_types["explore"] == 1
 
     def test_pre_tool_use_captures_nested_skill_file_path(self):
         span = make_span(
@@ -268,20 +320,31 @@ class TestTokenUsage:
 
 
 class TestShellCommands:
+    def test_structured_shell_inputs_and_result_only_calls_share_templates(self):
+        c = _fresh_counters()
+        seen = set()
+        for event, command in [("PreToolUse", '{"decision":"approved"}'),
+                               ("PostToolUse", '{"cmd":"poetry run pytest tests/a.py -q"}'),
+                               ("PostToolUse", '{"cmd":"poetry run pytest tests/a.py -q"}')]:
+            span = make_span(event, tool="exec_command", tool_input=command)
+            span["attributes"]["gen_ai.tool.call.id"] = "call-one"
+            _process_span(span, **c, seen_shell_calls=seen)
+        assert c["shell_commands"] == Counter({"pytest <path> -q": 1})
+
     def test_before_shell_execution(self):
         c = process(make_span("BeforeShellExecution", command="pytest tests/"))
-        assert c["shell_commands"]["pytest tests/"] == 1
+        assert c["shell_commands"]["pytest <path>"] == 1
 
     def test_bash_tool_pre_tool_use(self):
         c = process(make_span("PreToolUse", tool="Bash", tool_input="git diff --stat"))
         assert c["shell_commands"]["git diff --stat"] == 1
 
-    def test_long_command_truncated(self):
-        long_cmd = "a" * 100
+    def test_oversized_command_keeps_an_opaque_script_identity(self):
+        long_cmd = "python -c '" + "a" * 40000 + "'"
         c = process(make_span("BeforeShellExecution", command=long_cmd))
         key = list(c["shell_commands"].keys())[0]
-        assert len(key) <= 63  # 60 chars + "..."
-        assert key.endswith("...")
+        assert len(key) <= 40
+        assert key.startswith("shell script [")
 
 
 class TestAgentStats:

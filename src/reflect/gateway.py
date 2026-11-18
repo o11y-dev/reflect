@@ -300,7 +300,12 @@ def _build_http_app(
 ) -> FastAPI:
     resolved_traces, resolved_logs = _storage_paths(traces_path, logs_path)
     guard = storage_guard or _storage_guard(resolved_traces, resolved_logs)
-    app = FastAPI(title="reflect-gateway", docs_url=None, redoc_url=None)
+    # This receiver must not create exporters from an agent's inherited OTLP
+    # environment, which may point back to its own gRPC listener.
+    app = FastAPI(
+        title="reflect-gateway", docs_url=None, redoc_url=None,
+        telemetry={"auto_configure": False},
+    )
 
     def storage_full(exc: RawStorageLimitExceeded) -> Response:
         return Response(

@@ -1,0 +1,362 @@
+[
+  {
+    "case_id": "review-normal",
+    "split": "development",
+    "session_group": "chain-0",
+    "task_family": "review",
+    "expected_target": "change",
+    "expected_steps": [
+      "metadata",
+      "diff"
+    ],
+    "expected_outcome": "unknown",
+    "expected_disposition": "propose",
+    "human_scores": null
+  },
+  {
+    "case_id": "review-no_change",
+    "split": "development",
+    "session_group": "chain-1",
+    "task_family": "review",
+    "expected_target": "change",
+    "expected_steps": [
+      "metadata",
+      "diff"
+    ],
+    "expected_outcome": "no_change",
+    "expected_disposition": "propose",
+    "human_scores": null
+  },
+  {
+    "case_id": "review-checks_only",
+    "split": "held_out",
+    "session_group": "chain-2",
+    "task_family": "review",
+    "expected_target": "change",
+    "expected_steps": [
+      "metadata",
+      "diff"
+    ],
+    "expected_outcome": "unknown",
+    "expected_disposition": "propose",
+    "human_scores": null
+  },
+  {
+    "case_id": "review-unknown_outcome",
+    "split": "development",
+    "session_group": "chain-3",
+    "task_family": "review",
+    "expected_target": "change",
+    "expected_steps": [
+      "metadata",
+      "diff"
+    ],
+    "expected_outcome": "unknown",
+    "expected_disposition": "propose",
+    "human_scores": null
+  },
+  {
+    "case_id": "review-later_correction",
+    "split": "development",
+    "session_group": "chain-4",
+    "task_family": "review",
+    "expected_target": "change",
+    "expected_steps": [
+      "metadata",
+      "diff"
+    ],
+    "expected_outcome": "corrected",
+    "expected_disposition": "propose",
+    "human_scores": null
+  },
+  {
+    "case_id": "review-missing_head",
+    "split": "held_out",
+    "session_group": "chain-5",
+    "task_family": "review",
+    "expected_target": "change",
+    "expected_steps": [
+      "metadata",
+      "diff"
+    ],
+    "expected_outcome": "unknown",
+    "expected_disposition": "propose",
+    "human_scores": null
+  },
+  {
+    "case_id": "review-missing_check",
+    "split": "development",
+    "session_group": "chain-6",
+    "task_family": "review",
+    "expected_target": "change",
+    "expected_steps": [
+      "metadata",
+      "diff"
+    ],
+    "expected_outcome": "unknown",
+    "expected_disposition": "propose",
+    "human_scores": null
+  },
+  {
+    "case_id": "review-reordered_reads",
+    "split": "development",
+    "session_group": "chain-7",
+    "task_family": "review",
+    "expected_target": "change",
+    "expected_steps": [
+      "metadata",
+      "diff"
+    ],
+    "expected_outcome": "unknown",
+    "expected_disposition": "propose",
+    "human_scores": null
+  },
+  {
+    "case_id": "review-read_only",
+    "split": "held_out",
+    "session_group": "chain-8",
+    "task_family": "review",
+    "expected_target": "change",
+    "expected_steps": [
+      "metadata",
+      "diff"
+    ],
+    "expected_outcome": "unknown",
+    "expected_disposition": "propose",
+    "human_scores": null
+  },
+  {
+    "case_id": "review-accepted",
+    "split": "development",
+    "session_group": "chain-9",
+    "task_family": "review",
+    "expected_target": "change",
+    "expected_steps": [
+      "metadata",
+      "diff"
+    ],
+    "expected_outcome": "success",
+    "expected_disposition": "propose",
+    "human_scores": null
+  },
+  {
+    "case_id": "other-implementation",
+    "split": "development",
+    "session_group": "chain-10",
+    "task_family": "implementation",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "other-incident",
+    "split": "held_out",
+    "session_group": "chain-11",
+    "task_family": "incident",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "other-rollout",
+    "split": "development",
+    "session_group": "chain-12",
+    "task_family": "rollout",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "other-documentation",
+    "split": "development",
+    "session_group": "chain-13",
+    "task_family": "documentation",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "other-testing",
+    "split": "held_out",
+    "session_group": "chain-14",
+    "task_family": "testing",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "other-research",
+    "split": "development",
+    "session_group": "chain-15",
+    "task_family": "research",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "other-release",
+    "split": "development",
+    "session_group": "chain-16",
+    "task_family": "release",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "other-ticket_creation",
+    "split": "held_out",
+    "session_group": "chain-17",
+    "task_family": "ticket_creation",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "other-debugging",
+    "split": "development",
+    "session_group": "chain-18",
+    "task_family": "debugging",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "other-configuration",
+    "split": "development",
+    "session_group": "chain-19",
+    "task_family": "configuration",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "negative-mixed_targets",
+    "split": "held_out",
+    "session_group": "chain-20",
+    "task_family": "unknown",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "negative-missing_prompt",
+    "split": "development",
+    "session_group": "chain-21",
+    "task_family": "unknown",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "negative-quoted_example",
+    "split": "development",
+    "session_group": "chain-22",
+    "task_family": "unknown",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "negative-failed_diff",
+    "split": "held_out",
+    "session_group": "chain-23",
+    "task_family": "unknown",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "negative-duplicate_child",
+    "split": "development",
+    "session_group": "chain-24",
+    "task_family": "unknown",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "negative-retries_only",
+    "split": "development",
+    "session_group": "chain-25",
+    "task_family": "unknown",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "negative-truncated_calls",
+    "split": "held_out",
+    "session_group": "chain-26",
+    "task_family": "unknown",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "negative-missing_repository",
+    "split": "development",
+    "session_group": "chain-27",
+    "task_family": "unknown",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "negative-unrelated_prompt",
+    "split": "development",
+    "session_group": "chain-28",
+    "task_family": "unknown",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  },
+  {
+    "case_id": "negative-changed_revision",
+    "split": "held_out",
+    "session_group": "chain-29",
+    "task_family": "unknown",
+    "expected_target": "unknown",
+    "expected_steps": [],
+    "expected_outcome": "unknown",
+    "expected_disposition": "abstain",
+    "human_scores": null
+  }
+]

@@ -51,7 +51,7 @@ def test_project_bundles_hooks_and_exposes_existing_command():
     project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
 
     assert project["requires-python"] == ">=3.12"
-    assert "opentelemetry-hooks>=0.14,<0.15" in project["dependencies"]
+    assert "opentelemetry-hooks>=0.14,<0.16" in project["dependencies"]
     assert project["scripts"]["otel-hook"] == "otel_hook:cli"
 
 

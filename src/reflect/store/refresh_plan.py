@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 
-DEFAULT_INCREMENTAL_SESSION_LIMIT = 400
+DEFAULT_SESSION_BATCH_SIZE = 400
 
 
 class RefreshMode(StrEnum):
@@ -32,12 +33,19 @@ class DerivedRefreshPlan:
         return payload
 
 
-def _mode_for_sessions(session_ids: set[str], *, limit: int) -> RefreshMode:
-    if not session_ids:
-        return RefreshMode.SKIP
-    if len(session_ids) <= limit:
-        return RefreshMode.INCREMENTAL
-    return RefreshMode.FULL
+def session_batches(
+    session_ids: Iterable[str], *, batch_size: int = DEFAULT_SESSION_BATCH_SIZE,
+) -> Iterator[tuple[str, ...]]:
+    """Bound individual writes without expanding their scope to all history."""
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    ordered = sorted(set(session_ids))
+    for offset in range(0, len(ordered), batch_size):
+        yield tuple(ordered[offset:offset + batch_size])
+
+
+def _mode_for_sessions(session_ids: set[str]) -> RefreshMode:
+    return RefreshMode.INCREMENTAL if session_ids else RefreshMode.SKIP
 
 
 def plan_derived_refresh(
@@ -47,32 +55,35 @@ def plan_derived_refresh(
     graph_session_ids: set[str],
     rollup_session_ids: set[str],
     graph_exists: bool,
-    incremental_limit: int = DEFAULT_INCREMENTAL_SESSION_LIMIT,
+    graph_scope_session_ids: set[str] | None = None,
+    graph_changed_session_ids: set[str] | None = None,
     force_full_cost_reason: str = "",
     force_full_rollup_reason: str = "",
 ) -> DerivedRefreshPlan:
     """Choose bounded graph and rollup repairs without coupling their lifecycles."""
-    missing_graph = all_session_ids - graph_session_ids
+    graph_scope = all_session_ids if graph_scope_session_ids is None else graph_scope_session_ids
+    missing_graph = graph_scope - graph_session_ids
     missing_rollups = all_session_ids - rollup_session_ids
     orphan_rollups = rollup_session_ids - all_session_ids
-    graph_targets = changed_session_ids | missing_graph
+    graph_changed = changed_session_ids if graph_changed_session_ids is None else graph_changed_session_ids
+    graph_targets = graph_changed | missing_graph
     rollup_targets = changed_session_ids | missing_rollups
 
     if force_full_cost_reason and all_session_ids:
         cost_mode = RefreshMode.FULL
         cost_reason = force_full_cost_reason
     else:
-        cost_mode = _mode_for_sessions(changed_session_ids, limit=incremental_limit)
+        cost_mode = _mode_for_sessions(changed_session_ids)
         cost_reason = (
             f"{len(changed_session_ids)} changed session(s)"
             if changed_session_ids
             else "pricing state is current"
         )
-    if all_session_ids and not graph_exists:
+    if all_session_ids and not graph_exists and graph_scope_session_ids is None:
         graph_mode = RefreshMode.FULL
         graph_reason = "graph state is absent"
     else:
-        graph_mode = _mode_for_sessions(graph_targets, limit=incremental_limit)
+        graph_mode = _mode_for_sessions(graph_targets)
         graph_reason = (
             f"{len(graph_targets)} changed or missing session(s)"
             if graph_targets
@@ -92,7 +103,7 @@ def plan_derived_refresh(
         rollup_mode = RefreshMode.FULL
         rollup_reason = f"{len(orphan_rollups)} orphan rollup row(s)"
     else:
-        rollup_mode = _mode_for_sessions(rollup_targets, limit=incremental_limit)
+        rollup_mode = _mode_for_sessions(rollup_targets)
         rollup_reason = (
             f"{len(rollup_targets)} changed or missing session(s)"
             if rollup_targets

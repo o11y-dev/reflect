@@ -104,6 +104,15 @@ def test_improvement_summary_is_paginated_and_summary_first(tmp_path):
         conn.close()
 
 
+def _observed_stop(conn, session_id: str, at: str) -> None:
+    conn.execute(
+        """INSERT INTO steps(id, session_id, seq, type, started_at, status,
+            raw_attrs_json, created_at, updated_at)
+           VALUES (?, ?, 9999, 'session_end', ?, 'ok', '{"reflect.turn.terminal":true}', ?, ?)""",
+        (f"observed-stop-{session_id}", session_id, at, NOW, NOW),
+    )
+
+
 def _seed(conn) -> None:
     conn.execute(
         """
@@ -200,6 +209,75 @@ def _service(tmp_path: Path) -> tuple[ImprovementService, object]:
     return ImprovementService(conn), conn
 
 
+def test_impact_context_tokens_include_cache_without_double_counting_reasoning(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO execution_units(
+              id, session_id, source, source_confidence, workspace_id,
+              repo_id, agent_id, started_at, ended_at, status, outcome,
+              verification_passed, eligible, boundary_json, created_at, updated_at
+            ) VALUES ('unit-context', 'session-1', 'mcp_task_run', 1,
+                      'workspace-1', 'repo-1', 'agent-1', ?, ?, 'completed',
+                      'success', 1, 1, '{}', ?, ?)
+            """,
+            (NOW, NOW, NOW, NOW),
+        )
+        conn.execute(
+            """
+            INSERT INTO steps(
+              id, session_id, seq, type, started_at, status,
+              raw_attrs_json, created_at, updated_at
+            ) VALUES ('unit-context-step-0', 'session-1', 100,
+                      'llm_call', ?, 'ok', '{}', ?, ?)
+            """,
+            (NOW, NOW, NOW),
+        )
+        conn.execute(
+            """
+            INSERT INTO execution_unit_steps(
+              execution_unit_id, step_id, session_id, created_at
+            ) VALUES ('unit-context', 'unit-context-step-0', 'session-1', ?)
+            """,
+            (NOW,),
+        )
+        conn.execute(
+            """
+            INSERT INTO llm_calls(
+              id, step_id, session_id, input_tokens, output_tokens,
+              cache_read_input_tokens, cache_creation_input_tokens,
+              reasoning_output_tokens, created_at, updated_at
+            ) VALUES ('llm-context', 'unit-context-step-0', 'session-1',
+                      1, 7, 3, 4, 5, ?, ?)
+            """,
+            (NOW, NOW),
+        )
+
+        assert service.measurements._execution_unit_metric_values(
+            "context_outlier_sessions", ["unit-context"]
+        ) == {"unit-context": 15.0}
+
+        conn.execute("UPDATE llm_calls SET input_tokens=0, output_tokens=0, cache_read_input_tokens=0, cache_creation_input_tokens=0, reasoning_output_tokens=0")
+        assert service.measurements._execution_unit_metric_values(
+            "context_outlier_sessions", ["unit-context"]
+        ) == {}
+        conn.execute("UPDATE llm_calls SET raw_attrs_json=?", (json.dumps({"gen_ai.usage.output_tokens": 0}),))
+        assert service.measurements._execution_unit_metric_values("context_outlier_sessions", ["unit-context"]) == {}
+        conn.execute("UPDATE llm_calls SET raw_attrs_json='{}', reasoning_output_tokens=5")
+        assert service.measurements._execution_unit_metric_values("context_outlier_sessions", ["unit-context"]) == {}
+        conn.execute("UPDATE llm_calls SET raw_attrs_json=?", (json.dumps({
+            "gen_ai.usage.input_tokens": 0, "gen_ai.usage.output_tokens": 0,
+            "gen_ai.usage.cache_read.input_tokens": 0,
+            "gen_ai.usage.cache_creation.input_tokens": 0,
+        }),))
+        assert service.measurements._execution_unit_metric_values(
+            "context_outlier_sessions", ["unit-context"]
+        ) == {"unit-context": 0.0}
+    finally:
+        conn.close()
+
+
 def _workflow_contract(
     signature_hash: str,
     *,
@@ -283,7 +361,8 @@ def _insert_contract_execution(
           workspace_id, repo_id, agent_id, started_at, ended_at, status,
           outcome, verification_passed, eligible, boundary_json, created_at, updated_at
         ) VALUES (?, 'session-1', ?, 'mcp_task_run', 1, 'workspace-1', 'repo-1',
-                  'agent-1', ?, ?, 'completed', 'success', ?, 1, '{}', ?, ?)
+                  'agent-1', ?, ?, 'completed', 'success', ?, 1,
+                  '{"assessment":{"boundary":"closed"}}', ?, ?)
         """,
         (
             execution_unit_id,
@@ -341,6 +420,266 @@ def _insert_contract_execution(
             )
 
 
+def _measurement_policy_fixture(tmp_path):
+    service, conn = _service(tmp_path)
+    project_root = tmp_path / "policy-project"
+    (project_root / ".git").mkdir(parents=True)
+    service.refresh()
+    candidate = service.workflows.list()[0]
+    applied = service.workflows.apply(candidate.id, project_root=project_root)
+    _configure_contract(
+        conn, candidate_id=candidate.id, intervention_id=applied["intervention_id"],
+        contract=_workflow_contract("policy", validation={"baseline_minimum": 3}),
+        exposed_at="2026-07-10T00:00:00+00:00",
+        target_metric="read_only_exploration_calls", measurement_window=5,
+    )
+    for index in range(5):
+        _insert_contract_execution(conn, f"post-{index}",
+                                   started_at=f"2026-07-{11 + index}T10:00:00+00:00",
+                                   sequence_base=100 + index * 3)
+    conn.commit()
+    return service, conn, candidate.id, applied["intervention_id"]
+
+
+def test_measurement_policy_counts_observed_closed_work_without_claiming_success(tmp_path):
+    service, conn, candidate_id, intervention_id = _measurement_policy_fixture(tmp_path)
+    try:
+        for index, status in enumerate(("unknown", "failed", "completed", "unknown", "running")):
+            unit_id = f"pre-{index}"
+            _insert_contract_execution(conn, unit_id,
+                                       started_at=f"2026-07-0{index + 3}T10:00:00+00:00",
+                                       sequence_base=200 + index * 3)
+            conn.execute("UPDATE execution_units SET status=?,outcome=NULL,verification_passed=NULL WHERE id=?",
+                         (status, unit_id))
+        conn.execute("""UPDATE execution_units SET boundary_json=
+            '{"assessment":{"boundary":"open_or_ambiguous"}}' WHERE id='pre-3'""")
+        _insert_contract_execution(conn, "pre-overlap", started_at="2026-07-09T23:00:00+00:00", sequence_base=250)
+        conn.execute("UPDATE execution_units SET ended_at='2026-07-10T01:00:00+00:00' WHERE id='pre-overlap'")
+        for index, state in enumerate(("followed", "invoked", "ignored", "unknown")):
+            conn.execute("""INSERT INTO workflow_exposures
+                (id,intervention_id,session_id,execution_unit_id,state,created_at)
+                VALUES (?,?,'session-1',?,?,?)""",
+                         (f"exposure-{index}", intervention_id, f"post-{index}", state, NOW))
+        result = service.measurements.measure(candidate_id)
+        cohort = result["cohort"]
+        assert result["before_count"] == 3
+        assert cohort["baseline_state"] == "frozen"
+        assert cohort["policy_version"] == 2
+        assert cohort["eligibility"]["before"]["exclusion_reasons"]["boundary_unobserved"] == 2
+        assert cohort["eligibility"]["before"]["exclusion_reasons"]["activation_overlap"] == 1
+        assert cohort["eligibility"]["before"]["eligible_count"] == 3
+        assert cohort["exposure"]["after"] == {
+            "selected_count": 5, "followed": 1, "invoked": 1, "ignored": 1, "unknown": 2,
+        }
+        assert cohort["exposure"]["before"]["unknown"] == 3
+        assert result["after_count"] == 5  # Not the one observed followed execution.
+        conn.execute("UPDATE workflow_exposures SET state='invoked' WHERE id='exposure-0'")
+        revised = service.measurements.measure(candidate_id, skip_unchanged=True)
+        assert revised["created"] is True
+        assert revised["cohort"]["after_execution_unit_ids"] == cohort["after_execution_unit_ids"]
+        assert revised["cohort"]["exposure"]["after"]["followed"] == 0
+        assert revised["cohort"]["exposure"]["after"]["invoked"] == 2
+        assert service.measurements.measure(candidate_id, skip_unchanged=True)["created"] is False
+        outcome_scope = {**cohort, "metric": "successful_workflow_sessions"}
+        assert service.measurements.validity.select_ids(
+            outcome_scope, cohort["exposure_started_at"], before=True, limit=20,
+        ) == []
+        conn.execute("UPDATE execution_units SET outcome='failure',verification_passed=0 WHERE id='pre-1'")
+        assert service.measurements.validity.select_ids(
+            outcome_scope, cohort["exposure_started_at"], before=True, limit=20,
+        ) == ["pre-1"]
+    finally:
+        conn.close()
+
+
+def test_measurement_policy_fills_provisional_baseline_then_freezes_real_members(tmp_path):
+    service, conn, candidate_id, _ = _measurement_policy_fixture(tmp_path)
+    try:
+        for index in range(2):
+            _insert_contract_execution(conn, f"pre-{index}",
+                                       started_at=f"2026-07-0{index + 3}T10:00:00+00:00",
+                                       sequence_base=200 + index * 3)
+        first = service.measurements.measure(candidate_id)
+        assert first["before_count"] == 2
+        assert first["cohort"]["baseline_frozen"] is False
+        assert first["cohort"]["baseline_state"] == "historical_unavailable"
+        assert first["cohort"]["measurement_state"] == "not_measurable"
+        _insert_contract_execution(conn, "pre-late", started_at="2026-07-08T10:00:00+00:00", sequence_base=250)
+        second = service.measurements.measure(candidate_id, skip_unchanged=True)
+        assert second["before_count"] == 3
+        assert second["cohort"]["baseline_frozen"] is True
+        frozen = second["cohort"]["before_execution_unit_ids"]
+        _insert_contract_execution(conn, "pre-later", started_at="2026-07-09T10:00:00+00:00", sequence_base=260)
+        third = service.measurements.measure(candidate_id, skip_unchanged=True)
+        assert third["created"] is True  # New diagnostics, unchanged frozen members.
+        assert third["cohort"]["before_execution_unit_ids"] == frozen
+        assert service.measurements.measure(candidate_id, skip_unchanged=True)["created"] is False
+        conn.execute("UPDATE execution_units SET eligible=0 WHERE id='pre-late'")
+        invalid = service.measurements.measure(candidate_id, skip_unchanged=True)
+        assert invalid["cohort"]["before_execution_unit_ids"] == frozen
+        assert invalid["cohort"]["measurement_state"] == "not_measurable"
+        assert invalid["delta"] is None
+        conn.execute("DELETE FROM execution_units WHERE id='post-0'")
+        missing_after = service.measurements.measure(candidate_id, skip_unchanged=True)
+        assert len(missing_after["cohort"]["after_execution_unit_ids"]) == 5
+        assert missing_after["cohort"]["invalid_members"]["post-0"] == ["Execution unit is missing."]
+    finally:
+        conn.close()
+
+
+def test_measurement_policy_preserves_prior_policy_and_distinguishes_missing_signals(tmp_path):
+    service, conn, candidate_id, _ = _measurement_policy_fixture(tmp_path)
+    try:
+        for index in range(3):
+            _insert_contract_execution(conn, f"pre-{index}",
+                                       started_at=f"2026-07-0{index + 3}T10:00:00+00:00",
+                                       sequence_base=200 + index * 3)
+        first = service.measurements.measure(candidate_id)
+        prior = {**first["cohort"]}
+        prior.pop("policy_version")
+        prior_json = json.dumps(prior)
+        conn.execute("UPDATE measurements SET cohort_json=? WHERE id=?", (prior_json, first["id"]))
+        revised = service.measurements.measure(candidate_id, skip_unchanged=True)
+        assert revised["created"] is True
+        assert revised["cohort"]["previous_policy_measurement_id"] == first["id"]
+        assert conn.execute("SELECT cohort_json FROM measurements WHERE id=?", (first["id"],)).fetchone()[0] == prior_json
+        assert service.measurements.sessions(first["id"])["before_execution_units"] == prior["execution_unit_snapshots"]["before"]
+        conn.execute("UPDATE workflow_candidates SET target_metric='context_outlier_sessions' WHERE id=?", (candidate_id,))
+        missing = service.measurements.measure(candidate_id)
+        assert missing["cohort"]["eligibility"]["before"]["eligible_count"] == 3
+        assert missing["cohort"]["eligibility"]["before"]["missing_metric_count"] == 3
+        assert missing["before_count"] == 0
+        assert missing["before_value"] is None
+        assert missing["cohort"]["baseline_state"] == "historical_unavailable"
+        conn.execute("INSERT INTO pending_refresh(phase,session_id,revision,deferred) VALUES ('improvements','session-1','policy',1)")
+        pending = service.measurements.measure(candidate_id)
+        assert pending["cohort"]["baseline_state"] == "analysis_pending"
+        assert pending["cohort"]["eligibility"]["before"]["exclusion_reasons"]["evidence_pending"] == 4
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(("started", "ended", "before", "eligible"), [
+    ("2026-07-09T23:00:00Z", "2026-07-10T00:00:00Z", True, True),
+    ("2026-07-10T01:00:00+02:00", "2026-07-10T02:00:00+02:00", True, True),
+    ("2026-07-09T19:00:00-04:00", "2026-07-09T20:00:00-04:00", True, True),
+    ("2026-07-09T23:00:00Z", "2026-07-10T00:00:00.000001Z", True, False),
+    ("2026-07-09T23:00:00Z", "2026-07-09T23:59:59.999999Z", True, False),
+    ("2026-07-10T02:00:00+02:00", "2026-07-10T02:01:00+02:00", False, True),
+    ("2026-07-09T20:00:00-04:00", "2026-07-09T20:01:00-04:00", False, True),
+])
+def test_measurement_policy_compares_utc_offsets_without_rounding_into_baseline(
+    tmp_path, started, ended, before, eligible,
+):
+    service, conn, _, _ = _measurement_policy_fixture(tmp_path)
+    try:
+        _insert_contract_execution(conn, "offset-unit", started_at=started, sequence_base=200)
+        conn.execute("UPDATE execution_units SET ended_at=? WHERE id='offset-unit'", (ended,))
+        cohort = {"policy_version": 2, "assessment_version": 1, "repo_id": "repo-1",
+                  "workspace_id": None, "task_archetype_id": "implementation",
+                  "metric": "read_only_exploration_calls",
+                  "before_execution_unit_ids": ["offset-unit"] if before else [],
+                  "after_execution_unit_ids": [] if before else ["offset-unit"]}
+        cutoff = "2026-07-10T00:00:00+00:00"
+        selected = service.measurements.validity.select_ids(cohort, cutoff, before=before, limit=100)
+        assert ("offset-unit" in selected) is eligible
+        invalid = service.measurements.validity.invalid_members(cohort, cutoff)
+        assert ("offset-unit" not in invalid) is eligible
+        diagnostics = service.measurements.validity.diagnostics(cohort, cutoff, before=before)
+        assert diagnostics["candidate_count"] == diagnostics["eligible_count"] + diagnostics["excluded_count"]
+        if before and not eligible:
+            assert diagnostics["exclusion_reasons"]["activation_overlap"] == 1
+    finally:
+        conn.close()
+
+
+def test_measurement_policy_reports_bounded_baseline_metric_gap(tmp_path):
+    service, conn, candidate_id, _ = _measurement_policy_fixture(tmp_path)
+    try:
+        conn.execute("UPDATE workflow_candidates SET target_metric='context_outlier_sessions' WHERE id=?", (candidate_id,))
+        for index in range(23):
+            unit_id = f"pre-{index:02d}"
+            _insert_contract_execution(conn, unit_id,
+                                       started_at=f"2026-07-05T10:{index:02d}:00+00:00",
+                                       sequence_base=200 + index * 3)
+            if index < 3:
+                conn.execute("""INSERT INTO llm_calls(id,step_id,session_id,input_tokens,output_tokens,created_at,updated_at)
+                    VALUES (?,?,'session-1',100,10,?,?)""",
+                             (f"llm-{index}", f"{unit_id}-step-0", NOW, NOW))
+        result = service.measurements.measure(candidate_id)
+        diagnostics = result["cohort"]["eligibility"]["before"]
+        assert diagnostics["eligible_count"] == 23
+        assert diagnostics["selected_count"] == 20
+        assert diagnostics["missing_metric_count"] == 20
+        assert result["before_count"] == 0
+        assert result["cohort"]["baseline_state"] == "historical_unavailable"
+    finally:
+        conn.close()
+
+
+def test_recorded_measurements_preserve_saved_results_without_current_validation(tmp_path):
+    service, conn, candidate_id, _ = _measurement_policy_fixture(tmp_path)
+    try:
+        for index in range(3):
+            _insert_contract_execution(conn, f"pre-{index}",
+                                       started_at=f"2026-07-0{index + 3}T10:00:00+00:00",
+                                       sequence_base=200 + index * 3)
+        measured = service.measurements.measure(candidate_id)
+        expected = service.measurements.list(measurement_id=measured["id"])
+        stored = conn.execute("SELECT * FROM measurements WHERE id=?", (measured["id"],)).fetchone()
+        conn.execute("UPDATE execution_units SET eligible=0 WHERE id='pre-0'")
+        conn.execute("INSERT INTO pending_refresh(phase,session_id,revision,deferred) VALUES ('improvements','session-1','repair',0)")
+        conn.commit()
+        conn.execute("PRAGMA query_only = ON")
+        with patch.object(service.measurements.validity, "invalid_members",
+                          side_effect=AssertionError("Recorded reads must not inspect partial current evidence")):
+            assert service.measurements.list(measurement_id=measured["id"], recorded_only=True) == expected
+            assert list(service.measurements.iter_results(candidate_id=candidate_id, recorded_only=True)) == expected
+        assert conn.execute("SELECT * FROM measurements WHERE id=?", (measured["id"],)).fetchone() == stored
+        current = service.measurements.list(measurement_id=measured["id"])[0]
+        assert current["cohort"]["measurement_state"] == "not_measurable"
+        assert current["before_value"] is None
+        assert expected[0]["before_value"] == measured["before_value"]
+        assert expected[0]["measured_at"] == measured["measured_at"]
+    finally:
+        conn.close()
+
+
+def test_pipeline_publishes_new_impact_to_skills_in_the_same_refresh(tmp_path, monkeypatch):
+    from reflect.preparation_pipeline import prepare_sql_report_db
+    from reflect.store.sqlite import connect_sqlite_read_only
+
+    monkeypatch.setenv("REFLECT_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr("reflect.pricing._fetch_json_url", lambda *args, **kwargs: {})
+    service, conn, candidate_id, _ = _measurement_policy_fixture(tmp_path)
+    assert conn.execute("SELECT COUNT(*) FROM measurements").fetchone()[0] == 0
+    conn.close()
+    spans = tmp_path / "spans"
+    spans.mkdir()
+
+    result = prepare_sql_report_db(tmp_path / "reflect.db", otlp_traces=None, spans_dir=spans)
+
+    assert result["improvements"]["measurements_created"] == 1
+    with connect_sqlite_read_only(tmp_path / "reflect.db", profile="snapshot") as published:
+        rows = published.execute("""
+            SELECT m.id,m.before_value,m.after_value,m.before_count,m.after_count,m.measured_at,
+                   sm.before_value,sm.after_value,sm.measured_at,sm.details_json
+            FROM measurements m
+            JOIN interventions i ON i.id=m.intervention_id
+            JOIN workflow_versions wv ON wv.id=i.workflow_version_id
+            LEFT JOIN skill_measurements sm
+              ON json_extract(sm.details_json,'$.source_measurement_id')=m.id
+            WHERE wv.candidate_id=?
+        """, (candidate_id,)).fetchall()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row[9] is not None, "The completed snapshot must include the new skill projection"
+    details = json.loads(row[9])
+    assert (row[1], row[2], row[5]) == (row[6], row[7], row[8])
+    assert (row[3], row[4]) == (details["before_count"], details["after_count"])
+    assert details["source_measurement_id"] == row[0]
+
+
 def test_refresh_persists_versioned_observations_and_pending_candidates(tmp_path):
     service, conn = _service(tmp_path)
     try:
@@ -362,7 +701,7 @@ def test_refresh_persists_versioned_observations_and_pending_candidates(tmp_path
         assert "repeated_tool_failure_chain" in first_ids
         assert "retry_loop_without_state_change" not in first_ids
         assert "missing_or_late_verification" in first_ids
-        assert conn.execute("SELECT COUNT(*) FROM rule_definitions").fetchone()[0] == 9
+        assert conn.execute("SELECT COUNT(*) FROM rule_definitions").fetchone()[0] == 17
         assert conn.execute("SELECT COUNT(*) FROM workflow_candidates").fetchone()[0] <= len(first_ids)
         assert conn.execute("SELECT COUNT(*) FROM loop_patterns").fetchone()[0] >= 1
         assert {
@@ -769,7 +1108,8 @@ def test_refresh_resolves_a_finding_that_disappears(tmp_path):
         conn.execute("UPDATE tool_calls SET status = 'ok', error_type = NULL")
         conn.commit()
 
-        service.refresh()
+        # Skipping execution rebuilding must not limit detector/resolution scope.
+        service.refresh(session_ids=set())
 
         status = conn.execute("SELECT status FROM observations WHERE id = ?", (observation_id,)).fetchone()[0]
         assert status == ObservationStatus.RESOLVED.value
@@ -1452,7 +1792,7 @@ def test_task_archetypes_scope_workflow_adherence(tmp_path):
 
         assert result["exposures"] == 2
         assert refreshed.task_archetype_id == "implementation"
-        assert refreshed.exposure_counts == {"followed": 1, "ignored": 1}
+        assert refreshed.exposure_counts == {"invoked": 1, "unknown": 1}
     finally:
         conn.close()
 
@@ -1767,50 +2107,14 @@ def test_remaining_p0_rules_use_explicit_outcomes_and_canonical_signals(tmp_path
             "user_correction_after_completion",
             "constraint_or_instruction_ignored",
             "successful_recovery_sequence",
-            "high_performing_repeated_workflow",
             "correct_no_change_outcome",
         } <= rule_ids
-        productive = [item for item in service.loops.list() if item.kind.value == "productive"]
-        assert productive
-        assert productive[0].state_change_count >= 1
+        # Named tools and a completed session card are not a verified outcome.
+        assert "high_performing_repeated_workflow" not in rule_ids
         assert conn.execute(
-            """
-            SELECT COUNT(*) FROM workflow_candidates wc
-            JOIN observations o ON o.id = wc.observation_id
-            WHERE o.rule_id = 'high_performing_repeated_workflow'
-            """
-        ).fetchone()[0] == 1
-        candidate_row = conn.execute(
-            """
-            SELECT wc.id, wc.measurement_window,
-                   json_extract(wc.content_json, '$.workflow_contract.signature_hash')
-            FROM workflow_candidates wc
-            JOIN observations o ON o.id = wc.observation_id
-            WHERE o.rule_id = 'high_performing_repeated_workflow'
-            """
-        ).fetchone()
-        assert candidate_row[1] == 5
-        assert candidate_row[2]
-
-        project_root = tmp_path
-        (project_root / ".git").mkdir(parents=True)
-        service.workflows.apply(candidate_row[0], project_root=project_root)
-        service.skills.refresh()
-        service.refresh()
-
-        assert conn.execute(
-            """
-            SELECT status FROM observations
-            WHERE rule_id = 'high_performing_repeated_workflow'
-            """
-        ).fetchone()[0] == "resolved"
-        assert conn.execute(
-            """
-            SELECT COUNT(*) FROM workflow_candidates wc
-            JOIN observations o ON o.id = wc.observation_id
-            WHERE o.rule_id = 'high_performing_repeated_workflow'
-            """
-        ).fetchone()[0] == 1
+            """SELECT COUNT(*) FROM workflow_candidates wc JOIN observations o ON o.id=wc.observation_id
+               WHERE o.rule_id='high_performing_repeated_workflow'"""
+        ).fetchone()[0] == 0
     finally:
         conn.close()
 
@@ -1906,6 +2210,7 @@ def test_refresh_automatically_measures_new_comparable_sessions_once(tmp_path):
                     NOW,
                 ),
             )
+            _observed_stop(conn, session_id, started_at)
         conn.commit()
 
         result = service.refresh()
@@ -2050,7 +2355,9 @@ def test_failure_rate_impact_is_not_measurable_with_unknown_status_baseline(tmp_
         conn.close()
 
 
-def test_measurement_keeps_completed_fixed_size_cohort_stable(tmp_path):
+@pytest.mark.parametrize("mutation", ["eligible", "mixed", "missing", "workspace", "time", "status", "evidence",
+                                     "pending_canonical", "pending_cost", "pending_improvements", "pending_deferred"])
+def test_measurement_keeps_completed_fixed_size_cohort_stable(tmp_path, mutation):
     service, conn = _service(tmp_path)
     project_root = tmp_path / "project"
     (project_root / ".git").mkdir(parents=True)
@@ -2110,6 +2417,8 @@ def test_measurement_keeps_completed_fixed_size_cohort_stable(tmp_path):
             ),
         )
 
+        _observed_stop(conn, session_id, started_at)
+
     try:
         service.refresh()
         candidate = next(
@@ -2134,7 +2443,8 @@ def test_measurement_keeps_completed_fixed_size_cohort_stable(tmp_path):
             "UPDATE workflow_candidates SET task_archetype_id = NULL WHERE id = ?",
             (candidate.id,),
         )
-        for index in range(3, 6):
+        # Policy v2 freezes only an adequately sized baseline.
+        for index in range(3, 8):
             add_session(f"before-{index}", f"2026-07-0{index}T10:00:00+00:00")
         for index in range(50):
             add_session(f"after-{index:02d}", f"2026-07-11T00:{index:02d}:00+00:00")
@@ -2149,12 +2459,67 @@ def test_measurement_keeps_completed_fixed_size_cohort_stable(tmp_path):
         second_sessions = service.measurements.sessions(second["id"])
 
         assert first["after_count"] == second["after_count"] == candidate.measurement_window
-        assert second["created"] is False
-        assert second["id"] == first["id"]
+        assert second["created"] is True  # Candidate count changed outside the frozen cohort.
+        assert second["id"] != first["id"]
+        assert service.measurements.measure(candidate.id, skip_unchanged=True)["created"] is False
         assert second["after_value"] == first["after_value"]
         assert "after-newest" not in {
             item["session_id"] for item in second_sessions["after_execution_units"]
         }
+
+        frozen = first["cohort"]["before_execution_unit_ids"]
+        victim = frozen[0]
+        if mutation.startswith("pending_"):
+            phase = mutation.removeprefix("pending_")
+            deferred = int(phase == "deferred")
+            if deferred:
+                phase = "improvements"
+            conn.execute(
+                """INSERT INTO pending_refresh(phase,session_id,revision,deferred)
+                   SELECT ?,session_id,'pending-test',? FROM execution_units WHERE id=?""",
+                (phase, deferred, victim),
+            )
+        elif mutation == "missing":
+            conn.execute("DELETE FROM execution_units WHERE id = ?", (victim,))
+        elif mutation == "evidence":
+            conn.execute("UPDATE execution_units SET boundary_json=json_set(boundary_json, '$.assessment.input_digest', 'changed') WHERE id=?", (victim,))
+        elif mutation == "mixed":
+            conn.execute("UPDATE execution_unit_archetypes SET mixed = 1 WHERE execution_unit_id = ?", (victim,))
+        else:
+            assignment = {"eligible": "eligible = 0", "workspace": "repo_id = NULL",
+                          "time": "started_at = '2099-01-01'", "status": "status = 'running'"}[mutation]
+            conn.execute(f"UPDATE execution_units SET {assignment} WHERE id = ?", (victim,))
+        conn.commit()
+        conn.execute("PRAGMA query_only = ON")
+        if mutation.startswith("pending_"):
+            selected = service.measurements.validity.select_ids(
+                first["cohort"], "2026-07-10T00:00:00+00:00", before=True, limit=100,
+            )
+            assert victim not in selected
+        effective = service.measurements.list(measurement_id=first["id"])[0]
+        assert effective["verdict"] == "insufficient_data"
+        assert effective["delta"] is None
+        assert effective["cohort"]["measurement_state"] == "not_measurable"
+        assert victim in effective["cohort"]["invalid_members"]
+        if mutation.startswith("pending_"):
+            assert effective["cohort"]["invalid_members"][victim] == ["Execution evidence refresh is pending."]
+        ledger = service.measurements.sessions(first["id"])
+        assert ledger["snapshot_exact"] is True
+        assert ledger["before_execution_units"] == second_sessions["before_execution_units"]
+        assert ledger["measurement_state"] == "not_measurable"
+        conn.execute("PRAGMA query_only = OFF")
+        invalid = service.measurements.measure(candidate.id, skip_unchanged=True)
+        assert invalid["created"] is True
+        assert invalid["cohort"]["before_execution_unit_ids"] == frozen
+        assert invalid["verdict"] == "insufficient_data"
+        assert invalid["before_value"] is None
+        assert invalid["delta"] is None
+        assert service.measurements.measure(candidate.id, skip_unchanged=True)["created"] is False
+        # Legacy ledgers are live reconstructions, not exact metric snapshots.
+        old_cohort = dict(first["cohort"])
+        old_cohort.pop("execution_unit_snapshots")
+        conn.execute("UPDATE measurements SET cohort_json = ? WHERE id = ?", (json.dumps(old_cohort), first["id"]))
+        assert service.measurements.sessions(first["id"])["snapshot_exact"] is False
     finally:
         conn.close()
 
@@ -2293,16 +2658,19 @@ def test_team_bundle_is_signed_aggregate_only_and_idempotent(tmp_path):
         conn.close()
 
 
-def test_simplified_cli_contract_reads_the_durable_ledger(tmp_path):
+def test_simplified_cli_contract_reads_the_durable_ledger(tmp_path, monkeypatch):
     service, conn = _service(tmp_path)
     db_path = tmp_path / "reflect.db"
     try:
         service.refresh()
     finally:
         conn.close()
+    from tests.backend_helpers import bind_backend, publish_actions
+    publish_actions(db_path)
+    bind_backend(monkeypatch, db_path, refresh_arguments={"otlp_traces": None, "include_native_sessions": False})
     runner = CliRunner()
 
-    with patch("reflect.core.prepare_sql_report_db") as prepare:
+    with patch("reflect.preparation_pipeline.prepare_sql_report_db") as prepare:
         improve_result = runner.invoke(
             main,
             ["improve", "--global", "--period", "all", "--json", "--db-path", str(db_path)],
@@ -2323,7 +2691,7 @@ def test_simplified_cli_contract_reads_the_durable_ledger(tmp_path):
         prepare.assert_not_called()
 
     assert improve_result.exit_code == 0
-    assert '"observations"' in improve_result.output
+    assert '"findings"' in improve_result.output
     assert ask_result.exit_code == 0
     assert '"evidence"' in ask_result.output
     assert workflow_result.exit_code == 0
@@ -2334,13 +2702,16 @@ def test_simplified_cli_contract_reads_the_durable_ledger(tmp_path):
     } == {"verification"}
 
 
-def test_improve_labels_cli_table_as_observed_improvements(tmp_path):
+def test_improve_labels_cli_table_as_observed_improvements(tmp_path, monkeypatch):
     service, conn = _service(tmp_path)
     db_path = tmp_path / "reflect.db"
     try:
         service.refresh()
     finally:
         conn.close()
+    from tests.backend_helpers import bind_backend, publish_actions
+    publish_actions(db_path)
+    bind_backend(monkeypatch, db_path, refresh_arguments={"otlp_traces": None, "include_native_sessions": False})
 
     result = CliRunner().invoke(
         main,
@@ -2352,7 +2723,7 @@ def test_improve_labels_cli_table_as_observed_improvements(tmp_path):
     assert "Improvement Inbox" not in result.output
 
 
-def test_improve_reports_progress_on_stderr_without_corrupting_json(tmp_path):
+def test_improve_reports_progress_on_stderr_without_corrupting_json(tmp_path, monkeypatch):
     from reflect.preparation import PreparationProgress, PreparationStage
 
     service, conn = _service(tmp_path)
@@ -2361,6 +2732,9 @@ def test_improve_reports_progress_on_stderr_without_corrupting_json(tmp_path):
         service.refresh()
     finally:
         conn.close()
+    from tests.backend_helpers import bind_backend, publish_actions
+    publish_actions(db_path)
+    backend = bind_backend(monkeypatch, db_path, refresh_arguments={"otlp_traces": None, "include_native_sessions": False})
     runner = CliRunner()
 
     def prepare(*_args, progress=None, **_kwargs):
@@ -2373,7 +2747,7 @@ def test_improve_reports_progress_on_stderr_without_corrupting_json(tmp_path):
         )
         return {}
 
-    with patch("reflect.core.prepare_sql_report_db", side_effect=prepare):
+    with patch("reflect.preparation_pipeline.prepare_sql_report_db", side_effect=prepare):
         result = runner.invoke(
             main,
             [
@@ -2382,6 +2756,7 @@ def test_improve_reports_progress_on_stderr_without_corrupting_json(tmp_path):
                 "--period",
                 "all",
                 "--refresh",
+                "--no-wait",
                 "--json",
                 "--db-path",
                 str(db_path),
@@ -2389,18 +2764,22 @@ def test_improve_reports_progress_on_stderr_without_corrupting_json(tmp_path):
         )
 
     assert result.exit_code == 0
-    assert json.loads(result.stdout)["observations"]
-    assert "Reading new OTLP traces" in result.stderr
+    job = backend.jobs.get(json.loads(result.stdout)["job_id"])
+    assert job.kind == "refresh" and job.state == "queued"
+    assert not result.stderr
     assert "\x1b" not in result.stderr
 
 
-def test_improve_requires_an_explicit_global_period(tmp_path):
+def test_improve_requires_an_explicit_global_period(tmp_path, monkeypatch):
     service, conn = _service(tmp_path)
     db_path = tmp_path / "reflect.db"
     try:
         service.refresh()
     finally:
         conn.close()
+    from tests.backend_helpers import bind_backend, publish_actions
+    publish_actions(db_path)
+    bind_backend(monkeypatch, db_path, refresh_arguments={"otlp_traces": None, "include_native_sessions": False})
 
     runner = CliRunner()
     missing_period = runner.invoke(
@@ -2418,16 +2797,19 @@ def test_improve_requires_an_explicit_global_period(tmp_path):
     assert "--period requires --global" in unscoped_period.output
 
 
-def test_snapshot_commands_refresh_only_when_explicit(tmp_path):
+def test_snapshot_commands_refresh_only_when_explicit(tmp_path, monkeypatch):
     service, conn = _service(tmp_path)
     db_path = tmp_path / "reflect.db"
     try:
         service.refresh()
     finally:
         conn.close()
+    from tests.backend_helpers import bind_backend, publish_actions
+    publish_actions(db_path)
+    backend = bind_backend(monkeypatch, db_path, refresh_arguments={"otlp_traces": None, "include_native_sessions": False})
 
     runner = CliRunner()
-    with patch("reflect.core.prepare_sql_report_db", return_value={}) as prepare:
+    with patch("reflect.preparation_pipeline.prepare_sql_report_db", return_value={}) as prepare:
         ask_result = runner.invoke(
             main,
             ["ask", "What should I do?", "--json", "--db-path", str(db_path)],
@@ -2448,6 +2830,7 @@ def test_snapshot_commands_refresh_only_when_explicit(tmp_path):
                 "ask",
                 "What should I do?",
                 "--refresh",
+                "--no-wait",
                 "--json",
                 "--db-path",
                 str(db_path),
@@ -2458,18 +2841,22 @@ def test_snapshot_commands_refresh_only_when_explicit(tmp_path):
     assert workflow_result.exit_code == 0
     assert loops_result.exit_code == 0
     assert refreshed.exit_code == 0
-    prepare.assert_called_once()
+    prepare.assert_not_called()
+    assert backend.jobs.get(json.loads(refreshed.stdout)["job_id"]).kind == "refresh"
 
 
-def test_feedback_never_refreshes_implicitly(tmp_path):
+def test_feedback_never_refreshes_implicitly(tmp_path, monkeypatch):
     service, conn = _service(tmp_path)
     db_path = tmp_path / "reflect.db"
     try:
         service.refresh()
     finally:
         conn.close()
+    from tests.backend_helpers import bind_backend, publish_actions
+    publish_actions(db_path)
+    backend = bind_backend(monkeypatch, db_path, refresh_arguments={"otlp_traces": None, "include_native_sessions": False})
 
-    with patch("reflect.core.prepare_sql_report_db") as prepare:
+    with patch("reflect.preparation_pipeline.prepare_sql_report_db") as prepare:
         result = CliRunner().invoke(
             main,
             [
@@ -2483,7 +2870,8 @@ def test_feedback_never_refreshes_implicitly(tmp_path):
         )
 
     assert result.exit_code == 1
-    assert "Re-run with --refresh" in result.output
+    assert "session" in result.output.lower()
+    assert not backend.jobs.list()
     prepare.assert_not_called()
 
 
@@ -2491,20 +2879,23 @@ def test_feedback_never_refreshes_implicitly(tmp_path):
 def test_improve_never_prepares_a_missing_snapshot_without_refresh(
     tmp_path,
     refresh_flag,
+    monkeypatch,
 ):
     db_path = tmp_path / "missing.db"
-    with patch("reflect.core.prepare_sql_report_db") as prepare:
+    from tests.backend_helpers import bind_backend
+    bind_backend(monkeypatch, db_path)
+    with patch("reflect.preparation_pipeline.prepare_sql_report_db") as prepare:
         result = CliRunner().invoke(
             main,
             ["improve", *refresh_flag, "--db-path", str(db_path)],
         )
 
     assert result.exit_code == 1
-    assert "reflect refresh" in result.output
+    assert "preparing" in result.output
     prepare.assert_not_called()
 
 
-def test_workflows_add_stages_an_existing_skill_without_installing_it(tmp_path):
+def test_workflows_add_stages_an_existing_skill_without_installing_it(tmp_path, monkeypatch):
     skill_file = tmp_path / "SKILL.md"
     skill_file.write_text(
         "---\n"
@@ -2515,6 +2906,11 @@ def test_workflows_add_stages_an_existing_skill_without_installing_it(tmp_path):
         encoding="utf-8",
     )
     db_path = tmp_path / "reflect.db"
+    from tests.backend_helpers import bind_backend, publish_actions
+    from tests.test_dashboard_sql_api import _seed_sql_report_db
+    _seed_sql_report_db(db_path)
+    publish_actions(db_path)
+    bind_backend(monkeypatch, db_path)
 
     result = CliRunner().invoke(
         main,
@@ -2532,8 +2928,9 @@ def test_workflows_add_stages_an_existing_skill_without_installing_it(tmp_path):
     assert result.exit_code == 0
     assert "Nothing was installed" in result.output
     assert not (tmp_path / ".agents").exists()
-    conn = connect_sqlite(db_path)
-    try:
+    from reflect.application import ReflectApplication
+    with ReflectApplication(db_path).state_action() as read_service:
+        conn = read_service.conn
         row = conn.execute(
             """
             SELECT status,
@@ -2553,11 +2950,9 @@ def test_workflows_add_stages_an_existing_skill_without_installing_it(tmp_path):
             "skill",
             "manual_skill_file",
         )
-    finally:
-        conn.close()
 
 
-def test_workflows_add_preserves_agent_and_source_workflow_provenance(tmp_path):
+def test_workflows_add_preserves_agent_and_source_workflow_provenance(tmp_path, monkeypatch):
     service, conn = _service(tmp_path)
     db_path = tmp_path / "reflect.db"
     try:
@@ -2565,6 +2960,9 @@ def test_workflows_add_preserves_agent_and_source_workflow_provenance(tmp_path):
         source = service.workflows.list()[0]
     finally:
         conn.close()
+    from tests.backend_helpers import bind_backend, publish_actions
+    publish_actions(db_path)
+    bind_backend(monkeypatch, db_path, refresh_arguments={"otlp_traces": None, "include_native_sessions": False})
     skill_file = tmp_path / "AGENT-SKILL.md"
     skill_file.write_text(
         "---\n"
@@ -2595,8 +2993,9 @@ def test_workflows_add_preserves_agent_and_source_workflow_provenance(tmp_path):
     assert result.exit_code == 0
     assert "Authorship: agent draft (codex)" in result.output
     assert f"from {source.id}" in result.output
-    conn = connect_sqlite(db_path)
-    try:
+    from reflect.application import ReflectApplication
+    with ReflectApplication(db_path).state_action() as read_service:
+        conn = read_service.conn
         row = conn.execute(
             """
             SELECT json_extract(content_json, '$.source.kind'),
@@ -2615,9 +3014,287 @@ def test_workflows_add_preserves_agent_and_source_workflow_provenance(tmp_path):
         )
         added = next(
             item
-            for item in ImprovementService(conn).workflows.list(limit=500)
+            for item in read_service.workflows.list(limit=500)
             if item.content.get("slug") == "bounded-debug-loop"
         )
-        assert added.support_execution_unit_count == source.support_execution_unit_count
+        # A source workflow link preserves provenance, not comparable support.
+        assert added.support_execution_unit_count == 0
+        assert added.content["source"]["workflow_id"] == source.id
+
+
+def test_adherence_delta_filters_after_global_cohort_limit_and_fills_missing_exposures(tmp_path):
+    service, conn = _service(tmp_path)
+    project_root = tmp_path / 'delta-project'
+    (project_root / '.git').mkdir(parents=True)
+    try:
+        service.refresh()
+        candidate = service.workflows.list()[0]
+        applied = service.workflows.apply(candidate.id, project_root=project_root)
+        _configure_contract(conn, candidate_id=candidate.id, intervention_id=applied['intervention_id'],
+                            contract=_workflow_contract('delta-contract'), measurement_window=2,
+                            exposed_at='2026-07-03')
+        for number in range(3):
+            _insert_contract_execution(conn, f'delta-{number}', started_at=f'2026-07-03T10:0{number}:00+00:00', sequence_base=300 + number * 10)
+        conn.commit()
+        assert service.adherence.refresh()['exposures'] == 2
+        before = conn.execute("SELECT id,state,evidence_json,created_at FROM workflow_exposures ORDER BY id").fetchall()
+        assert service.adherence.refresh(execution_unit_ids={'delta-2'})['exposures'] == 0
+        assert conn.execute("SELECT id,state,evidence_json,created_at FROM workflow_exposures ORDER BY id").fetchall() == before
+        conn.execute("DELETE FROM workflow_exposures WHERE execution_unit_id='delta-0'")
+        assert service.adherence.refresh(execution_unit_ids=set())['exposures'] == 1
+        assert conn.execute("SELECT id,state,evidence_json FROM workflow_exposures ORDER BY id").fetchall() == [row[:3] for row in before]
+        writes = conn.total_changes
+        assert service.adherence.refresh(execution_unit_ids={'delta-1'})['exposures'] == 1
+        assert conn.total_changes == writes
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("ineligible", [False, True])
+@pytest.mark.parametrize("origin_version", [1, 2, None])
+def test_assessment_upgrade_remeasures_same_members_without_rewriting_history(tmp_path, ineligible, origin_version):
+    from reflect.store.impact_reassessment import reassess_upgraded_measurements
+
+    service, conn, candidate_id, _ = _measurement_policy_fixture(tmp_path)
+    try:
+        for index in range(3):
+            _insert_contract_execution(conn, f"pre-{index}",
+                                       started_at=f"2026-07-0{index + 3}T10:00:00+00:00",
+                                       sequence_base=200 + index * 3)
+        conn.execute("""UPDATE execution_units SET boundary_json=json_set(boundary_json,
+            '$.assessment.version',?,'$.assessment.input_digest',id || '-v1')""", (origin_version,))
+        original = service.measurements.measure(candidate_id)
+        original_row = tuple(conn.execute('SELECT * FROM measurements WHERE id=?', (original['id'],)).fetchone())
+        conn.execute("""UPDATE execution_units SET boundary_json=json_set(boundary_json,
+            '$.assessment.version',2,'$.assessment.input_digest',id || '-v2')""")
+        if ineligible:
+            conn.execute("UPDATE execution_units SET eligible=0 WHERE id='pre-0'")
+        # Repeated blocked measurements already contain v2 snapshots but pin v1 hashes.
+        service.measurements.measure(candidate_id)
+        if origin_version != 1:
+            assert reassess_upgraded_measurements(conn) == 0
+            assert tuple(conn.execute('SELECT * FROM measurements WHERE id=?', (original['id'],)).fetchone()) == original_row
+            return
+        if ineligible:
+            assert reassess_upgraded_measurements(conn) == 1
+        else:
+            conn.execute('DELETE FROM schema_migrations WHERE version=53')
+            conn.commit()
+            count = conn.execute('SELECT COUNT(*) FROM measurements').fetchone()[0]
+            conn.execute('BEGIN')
+            assert migrate(conn, commit=False) == [53]
+            conn.rollback()
+            assert conn.execute('SELECT COUNT(*) FROM measurements').fetchone()[0] == count
+            assert migrate(conn) == [53]
+        current = service.measurements.measure(candidate_id, skip_unchanged=True)
+        for side in ('before', 'after'):
+            key = f'{side}_execution_unit_ids'
+            assert current['cohort'][key] == original['cohort'][key]
+        assert current['cohort']['measurement_state'] == ('not_measurable' if ineligible else 'measured')
+        assert tuple(conn.execute('SELECT * FROM measurements WHERE id=?', (original['id'],)).fetchone()) == original_row
+        assert reassess_upgraded_measurements(conn) == 0
+        conn.execute("""UPDATE execution_units SET boundary_json=json_set(boundary_json,
+            '$.assessment.input_digest','later-evidence') WHERE id='pre-1'""")
+        assert reassess_upgraded_measurements(conn) == 0
+        assert service.measurements.measure(candidate_id)['cohort']['measurement_state'] == 'not_measurable'
+    finally:
+        conn.close()
+
+
+def test_dismiss_suggestion_covers_variants_persists_refresh_and_restores(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        service.refresh()
+        first, second = service.workflows.list()[:2]
+        conn.execute("UPDATE workflow_candidates SET contract_signature=? WHERE id=?", (first.contract_signature, second.id))
+        conn.commit()
+        dismissed = service.workflows.dismiss_suggestion(first.id)
+        assert set(dismissed["affected_ids"]) >= {first.id, second.id}
+        service.refresh()
+        assert service.workflows.show(first.id).status == WorkflowStatus.REJECTED
+        assert service.workflows.show(second.id).status == WorkflowStatus.REJECTED
+        cursor = conn.execute("SELECT * FROM observations WHERE id=?", (first.observation_id,))
+        observation = dict(zip([field[0] for field in cursor.description], cursor.fetchone(), strict=True))
+        observation.update(id="future-observation", fingerprint="future-evidence", status="new")
+        conn.execute(f"INSERT INTO observations ({','.join(observation)}) VALUES ({','.join('?' for _ in observation)})", list(observation.values()))
+        new_variant = service.repository.stage_candidate(
+            "future-observation", title=first.title, hypothesis=first.hypothesis,
+            content=first.content, confidence=first.confidence, target_metric=first.target_metric, now=NOW,
+        )
+        assert service.workflows.show(new_variant).status == WorkflowStatus.REJECTED
+        restored = service.workflows.restore_suggestion(first.id)
+        assert set(restored["affected_ids"]) == set(dismissed["affected_ids"]) | {new_variant}
+        assert service.workflows.show(first.id).status == WorkflowStatus.PENDING
+        assert service.workflows.show(second.id).status == WorkflowStatus.PENDING
+    finally:
+        conn.close()
+
+
+def test_dismiss_suggestion_never_modifies_an_active_installation(tmp_path):
+    service, conn = _service(tmp_path)
+    project = tmp_path / "project"
+    (project / ".git").mkdir(parents=True)
+    try:
+        service.refresh()
+        candidate = service.workflows.list()[0]
+        service.workflows.apply(candidate.id, project_root=project)
+        with pytest.raises(RuntimeError, match="active"):
+            service.workflows.dismiss_suggestion(candidate.id)
+        assert service.workflows.show(candidate.id).lifecycle.deployment.value == "active"
+    finally:
+        conn.close()
+
+
+def test_history_exposes_restore_without_resurrecting_manual_rejections(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        service.refresh()
+        first, second = service.workflows.list()[:2]
+        conn.execute("UPDATE workflow_candidates SET contract_signature=?, confidence=1 WHERE id=?", (first.contract_signature, second.id))
+        conn.commit()
+        service.workflows.reject(second.id)
+        service.workflows.dismiss_suggestion(first.id)
+        group = next(item for item in service.workflows.list() if item.contract_signature == first.contract_signature)
+        assert group.id == first.id
+        assert group.checks['dismissal']
+        service.workflows.restore_suggestion(group.id)
+        assert service.workflows.show(second.id).status == WorkflowStatus.REJECTED
+    finally:
+        conn.close()
+
+
+def test_finding_creation_keeps_repo_baseline_and_collects_future_tasks(tmp_path):
+    service, conn = _service(tmp_path)
+    try:
+        service.archetypes.refresh()
+        for index in range(5):
+            _insert_contract_execution(conn, f'finding-pre-{index}',
+                started_at=f'2026-07-0{index + 3}T10:00:00+00:00', sequence_base=500 + index * 4)
+        rule = RuleDefinition(id='manual-finding', version=1, category='verification',
+                              title='Verification finding', description='Recorded checks')
+        service.repository.sync_rule_definitions([rule], now=NOW)
+        finding_id = service.repository.upsert_observation(ObservationDraft(
+            rule_id=rule.id, rule_version=1, scope_type='repo', scope_id='repo-1', repo_id='repo-1',
+            fingerprint='finding-baseline', category='verification', title='Review checks',
+            summary='Review verification behavior', metric_name='unverified_change_sessions',
+            metric_value=1, metric_unit='executions', metric_direction='lower_is_better',
+            baseline_query={'repo_id':'repo-1'}, impact_score=20, severity=Severity.LOW, confidence=0.8,
+            evidence=[EvidenceRef(entity_type='execution_unit', entity_id=f'finding-pre-{i}',
+                                  session_id='session-1', summary_redacted='Recorded check') for i in range(5)],
+        ), now=NOW)
+        conn.commit()
+        context = service.finding_workflow_context(finding_id)
+        candidate = service.create_workflow(content=context['content'], finding_id=finding_id)
+        other = tmp_path / 'other-project'
+        other.mkdir()
+        assert not service.workflows.preview(candidate['id'], project_root=other)['checks']['apply_allowed']
+        with pytest.raises(RuntimeError, match='baseline'):
+            service.workflows.apply(candidate['id'], project_root=other)
+        assert not (other / '.agents').exists()
+        preview = service.workflows.preview(candidate['id'], project_root=tmp_path)
+        assert preview['checks']['apply_allowed']
+        applied = service.workflows.apply(candidate['id'], project_root=tmp_path)
+        result = service.measurements.measure(candidate['id'])
+        assert result['cohort']['baseline_state'] == 'frozen'
+        assert result['cohort']['measurement_state'] == 'collecting'
+        assert result['before_count'] == 5 and result['after_count'] == 0
+        assert result['cohort']['repo_id'] == 'repo-1'
+        assert result['metric_name'] == 'unverified_change_sessions'
+        assert applied['status'] == 'active'
+        assert service.measurements._execution_unit_metric_values('unsupported_metric', ['finding-pre-0']) == {}
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize('known_workspace', [True, False, 'mixed'])
+def test_repoless_finding_never_uses_an_unrelated_global_baseline(tmp_path, known_workspace):
+    service, conn = _service(tmp_path)
+    try:
+        service.archetypes.refresh()
+        conn.execute("UPDATE sessions SET repo_id=NULL, workspace_id=?", ('workspace-1' if known_workspace else None,))
+        conn.execute("UPDATE workspaces SET repo_id=NULL WHERE id='workspace-1'")
+        for index in range(5):
+            _insert_contract_execution(conn, f'unrelated-{index}',
+                started_at=f'2026-07-0{index + 3}T10:00:00+00:00', sequence_base=600 + index * 4)
+        conn.execute('UPDATE execution_units SET repo_id=NULL, workspace_id=NULL')
+        extra_evidence = []
+        alternate_root = tmp_path / 'second-source-project'
+        if known_workspace == 'mixed':
+            alternate_root.mkdir()
+            conn.execute("UPDATE execution_units SET workspace_id='workspace-1'")
+            conn.execute("INSERT INTO workspaces(id,root_path,path_hash,label,repo_id,source_key,confidence,raw_json,created_at,updated_at) VALUES ('workspace-2',?,'other-root','other','repo-1','test',1,'{}',?,?)",
+                         (str(alternate_root), NOW, NOW))
+            conn.execute("UPDATE sessions SET workspace_id='workspace-2' WHERE id='session-2'")
+            extra_evidence = [EvidenceRef(entity_type='session', entity_id='session-2', session_id='session-2', summary_redacted='Other project')]
+        rule = RuleDefinition(id='repoless-finding', version=1, category='verification',
+                              title='Verification finding', description='Recorded checks')
+        service.repository.sync_rule_definitions([rule], now=NOW)
+        finding = service.repository.upsert_observation(ObservationDraft(
+            rule_id=rule.id, rule_version=1, scope_type='user', scope_id='local',
+            fingerprint='repoless', category='verification', title='Review checks', summary='Check finding',
+            metric_name='unverified_change_sessions', metric_value=1, metric_unit='executions',
+            metric_direction='lower_is_better', impact_score=20, severity=Severity.LOW, confidence=0.8,
+            evidence=[EvidenceRef(entity_type='session', entity_id='session-1', session_id='session-1',
+                                  summary_redacted='Observed checks'), *extra_evidence],
+        ), now=NOW)
+        conn.commit()
+        context = service.finding_workflow_context(finding)
+        if known_workspace == 'mixed':
+            assert context['project_roots'] == sorted([str(tmp_path), str(alternate_root)])
+        candidate = service.create_workflow(content=context['content'], finding_id=finding)
+        if known_workspace is True:
+            assert candidate['provenance']['finding_workspace_id'] == 'workspace-1'
+            other = tmp_path / 'unrelated-project'
+            other.mkdir()
+            assert not service.workflows.preview(candidate['id'], project_root=other)['checks']['apply_allowed']
+            with pytest.raises(RuntimeError, match='baseline'):
+                service.workflows.apply(candidate['id'], project_root=other)
+        service.workflows.apply(candidate['id'], project_root=alternate_root if known_workspace == 'mixed' else tmp_path)
+        measured = service.measurements.measure(candidate['id'])
+        assert measured['before_count'] == 0
+        assert measured['cohort']['before_execution_unit_ids'] == []
+        assert measured['cohort']['measurement_state'] == 'not_measurable'
+        if known_workspace is not True:
+            assert measured['cohort']['scope_unavailable'] is True
+    finally:
+        conn.close()
+
+
+def test_post_cutover_finding_retains_project_scope(tmp_path):
+    from reflect.application import ReflectApplication
+    from reflect.backend_runtime import action_store_path
+    from reflect.store.snapshots import PublishedSnapshotStore
+    from reflect.store.sqlite import mark_snapshot
+    from reflect.store.user_state import UserStateStore
+    from reflect.store.user_state_migration import UserStateMigration
+    service, conn = _service(tmp_path)
+    try:
+        db = Path(conn.execute('PRAGMA database_list').fetchone()[2])
+        UserStateMigration(db, UserStateStore(action_store_path(db))).run()
+        rule = RuleDefinition(id='post-cutover', version=1, category='verification',
+                              title='New finding', description='Checks after migration')
+        service.repository.sync_rule_definitions([rule], now=NOW)
+        finding = service.repository.upsert_observation(ObservationDraft(
+            rule_id=rule.id, rule_version=1, scope_type='repo', scope_id='repo-1', repo_id='repo-1',
+            fingerprint='post-cutover', category='verification', title='New finding',
+            summary='Review checks', metric_name='unverified_change_sessions', metric_value=1,
+            metric_unit='executions', metric_direction='lower_is_better', baseline_query={'repo_id':'repo-1'},
+            impact_score=20, severity=Severity.LOW, confidence=0.8,
+            evidence=[EvidenceRef(entity_type='session', entity_id='session-1', session_id='session-1', summary_redacted='Recorded check')],
+        ), now=NOW)
+        conn.commit()
+        mark_snapshot(conn, ready=True)
+        PublishedSnapshotStore(db, reserve_bytes=0).publish(evidence_revision='post-cutover')
+        app = ReflectApplication(db)
+        with app.read() as current:
+            content = current.finding_workflow_context(finding)['content']
+        candidate = app.create_workflow(content=content, finding_id=finding)
+        other = tmp_path / 'other-project'
+        other.mkdir()
+        with app.workflow_action(candidate['id'], action_kind='review') as current:
+            preview = current.workflows.preview(candidate['id'], project_root=other)
+            assert not preview['checks']['apply_allowed']
+            assert current.conn.execute('SELECT count(*) FROM main.observation_sessions WHERE observation_id=?', (finding,)).fetchone()[0] == 1
+            assert current.conn.execute('SELECT count(*) FROM main.observation_evidence WHERE observation_id=?', (finding,)).fetchone()[0] == 1
     finally:
         conn.close()

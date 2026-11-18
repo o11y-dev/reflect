@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from reflect.improvements.scope import ImprovementScopeResolver
 from reflect.memory.models import (
     MemoryItem,
     MemoryProviderHealth,
@@ -38,23 +39,30 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     return payload
 
 
-def _path_scope_clause(path: str) -> tuple[str, list[str]]:
+def _path_scope_clause(conn: sqlite3.Connection, path: str) -> tuple[str, list[object]]:
     if not path:
         return "", []
-    resolved = str(Path(path).expanduser().resolve())
-    like = f"{resolved.rstrip('/')}/%"
+    requested = Path(path).expanduser().resolve()
+    resolved = str(requested)
+    roots = [str(root) for root in (requested, *requested.parents)]
+    prefix = f"{resolved.rstrip('/')}/"
+    scope = ImprovementScopeResolver(conn).path(requested)
     return (
-        """
+        f"""
         AND (
-          json_extract(source_metadata_json, '$.workspace_root') = ?
+          (m.source = 'graph_candidate'
+            AND json_extract(source_metadata_json, '$.scope_kind') = ?
+            AND json_extract(source_metadata_json, '$.scope_id') = ?)
+          OR (m.source <> 'graph_candidate' AND (
+          m.scope = 'user'
+          OR json_extract(source_metadata_json, '$.workspace_root') IN ({','.join('?' for _ in roots)})
           OR json_extract(source_metadata_json, '$.path') = ?
-          OR json_extract(source_metadata_json, '$.path') LIKE ?
-          OR json_extract(raw_attrs_json, '$.workspace_root') = ?
-          OR json_extract(raw_attrs_json, '$.path') = ?
-          OR json_extract(raw_attrs_json, '$.path') LIKE ?
+          OR substr(json_extract(source_metadata_json, '$.path'), 1, ?) = ?
+          ))
         )
         """,
-        [resolved, resolved, like, resolved, resolved, like],
+        ["repo" if scope.repo_id else "workspace", scope.repo_id or scope.workspace_id,
+         *roots, resolved, len(prefix), prefix],
     )
 
 
@@ -65,7 +73,7 @@ def _filter_clause(filters: dict | None) -> tuple[str, list[str]]:
     for column in ("type", "scope", "source", "provider", "validation_status"):
         value = filters.get(column)
         if value:
-            clauses.append(f"{column} = ?")
+            clauses.append(f"m.{column} = ?")
             params.append(str(value))
     if filters.get("stale"):
         clauses.append("COALESCE(stale_reason, '') <> ''")
@@ -193,12 +201,12 @@ class LocalSQLiteMemoryProvider:
         previous = self.conn.row_factory
         self.conn.row_factory = sqlite3.Row
         try:
-            path_clause, path_params = _path_scope_clause(path)
+            path_clause, path_params = _path_scope_clause(self.conn, path)
             filter_clause, filter_params = _filter_clause(filters)
             rows = self.conn.execute(
                 f"""
-                SELECT *
-                FROM memories
+                SELECT m.*
+                FROM memories m
                 WHERE 1 = 1
                   {path_clause}
                   {filter_clause}
@@ -219,15 +227,23 @@ class LocalSQLiteMemoryProvider:
         filters: dict | None = None,
         limit: int = 20,
     ) -> list[MemorySearchResult]:
-        if self.maintain_search_index:
-            self.rebuild_fts_if_empty()
+        use_fts = self.maintain_search_index
+        if use_fts:
+            if self.conn.in_transaction:
+                # Guidance pins a read snapshot. Lazy index maintenance must
+                # neither upgrade it to a writer nor commit the caller's reads.
+                use_fts = self.conn.execute("SELECT 1 FROM memory_fts LIMIT 1").fetchone() is not None
+            else:
+                self.rebuild_fts_if_empty()
         previous = self.conn.row_factory
         self.conn.row_factory = sqlite3.Row
         try:
-            path_clause, path_params = _path_scope_clause(path)
+            path_clause, path_params = _path_scope_clause(self.conn, path)
             filter_clause, filter_params = _filter_clause(filters)
+            if not (filters or {}).get("validation_status"):
+                filter_clause += " AND m.validation_status <> 'needs_review'"
             rows = None
-            if self.maintain_search_index:
+            if use_fts:
                 try:
                     rows = self.conn.execute(
                         f"""
@@ -293,31 +309,14 @@ class LocalSQLiteMemoryProvider:
         memory = self.inspect(memory_id)
         if not memory:
             return MemoryValidationResult(memory_id, "missing", error="Memory not found")
-        source_metadata = memory.get("source_metadata") or {}
-        raw_attrs = memory.get("raw_attrs") or {}
-        path = str(source_metadata.get("path") or raw_attrs.get("path") or "")
-        stale_reason = ""
-        if path:
-            source_path = Path(path).expanduser()
-            if not source_path.exists():
-                stale_reason = "source_path_missing"
-            elif memory.get("content_hash"):
-                try:
-                    content_hash = hashlib.sha256(source_path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
-                except (OSError, UnicodeDecodeError):
-                    stale_reason = "source_path_unreadable"
-                else:
-                    if content_hash != memory.get("content_hash"):
-                        stale_reason = "source_hash_changed"
-        expires_at = str(memory.get("expires_at") or "")
-        if expires_at:
-            try:
-                expires = datetime.fromisoformat(expires_at)
-            except ValueError:
-                expires = None
-            if expires and expires < datetime.now(tz=UTC):
-                stale_reason = "expired"
-        status = "stale" if stale_reason else "validated"
+        if memory.get("stale_reason") == "ambiguous_candidate_scope":
+            return MemoryValidationResult(
+                memory_id, "needs_review", stale_reason="ambiguous_candidate_scope",
+                error="Regenerate and review scoped evidence before reusing this memory",
+            )
+        result = self.check_source(memory)
+        stale_reason = result.stale_reason
+        status = result.status
         timestamp = utc_now()
         self.conn.execute(
             """
@@ -333,6 +332,62 @@ class LocalSQLiteMemoryProvider:
         )
         self.conn.commit()
         return MemoryValidationResult(memory_id, status, stale_reason=stale_reason)
+
+    def check_source(self, memory: dict) -> MemoryValidationResult:
+        """Check freshness without writes, including when called by read-only recall."""
+        memory_id = str(memory.get("id") or "")
+        source = memory.get("source_metadata") or {}
+        raw = memory.get("raw_attrs") or {}
+        reason = ""
+        path = str(source.get("path") or raw.get("path") or "")
+        if path and not source.get("manual_note") and source.get("source_kind") != "manual":
+            source_path = Path(path).expanduser().resolve()
+            workspace = str(source.get("workspace_root") or "")
+            if workspace and memory.get("scope") != "user" and not source_path.is_relative_to(Path(workspace).expanduser().resolve()):
+                reason = "source_outside_scope"
+            elif not source_path.is_file():
+                reason = "source_path_missing"
+            else:
+                try:
+                    actual = hashlib.sha256(source_path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+                except (OSError, UnicodeDecodeError):
+                    reason = "source_path_unreadable"
+                else:
+                    expected = memory.get("content_hash") or source.get("content_hash")
+                    if not expected:
+                        reason = "source_hash_missing"
+                    elif actual != expected:
+                        reason = "source_hash_changed"
+        expires_at = str(memory.get("expires_at") or "")
+        if expires_at:
+            try:
+                expires = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                if expires.tzinfo is None:
+                    expires = expires.replace(tzinfo=UTC)
+                if expires < datetime.now(tz=UTC):
+                    reason = "expired"
+            except ValueError:
+                reason = "invalid_expiry"
+        source_session = source.get("session_id")
+        if source_session and not self.conn.execute("SELECT 1 FROM sessions WHERE id = ?", (source_session,)).fetchone():
+            reason = "source_session_missing"
+        if reason:
+            return MemoryValidationResult(memory_id, "stale", stale_reason=reason)
+        if memory.get("stale_reason") == "ambiguous_candidate_scope":
+            return MemoryValidationResult(memory_id, "needs_review", stale_reason="ambiguous_candidate_scope")
+        if memory.get("source") == "graph_candidate":
+            return MemoryValidationResult(memory_id, "needs_review", stale_reason="generated_recommendation")
+        if not path and not source.get("manual_note") and source.get("source_kind") != "manual":
+            return MemoryValidationResult(memory_id, "unvalidated", stale_reason="source_not_locally_verifiable")
+        return MemoryValidationResult(memory_id, "validated")
+
+    def validate_sources(self) -> dict[str, int]:
+        """Refresh stored source freshness using the existing validation lifecycle."""
+        counts: dict[str, int] = {}
+        for (memory_id,) in self.conn.execute("SELECT id FROM memories").fetchall():
+            result = self.validate(str(memory_id))
+            counts[result.status] = counts.get(result.status, 0) + 1
+        return counts
 
     def _existing_id(self, table: str, value: str) -> str:
         if not value:

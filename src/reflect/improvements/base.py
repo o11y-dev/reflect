@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
 from typing import Any
 
+from reflect.improvements.analysis_scope import AnalysisScope
 from reflect.improvements.models import (
     EvidenceRef,
     ObservationDraft,
@@ -54,14 +55,16 @@ class BaseImprovementRule(ABC):
     workflow: WorkflowDefinition | None = None
 
     @abstractmethod
-    def detect(self, conn: sqlite3.Connection) -> list[ObservationDraft]:
+    def detect(self, conn: sqlite3.Connection, *, scope: AnalysisScope | None = None) -> list[ObservationDraft]:
         """Return deterministic findings from canonical Reflect SQLite state."""
 
-    def evaluate(self, conn: sqlite3.Connection) -> list[ObservationDraft]:
+    def evaluate(self, conn: sqlite3.Connection, *, scope: AnalysisScope | None = None) -> list[ObservationDraft]:
         """Run the detector and enforce the cross-rule persistence contract."""
         if not isinstance(self.definition, RuleDefinition):
             raise TypeError(f"{type(self).__name__}.definition must be a RuleDefinition")
-        findings = self.detect(conn)
+        findings = self.detect(conn) if scope is None or (
+            scope.session_ids is None and not scope.current_execution_ids
+        ) else self.detect(conn, scope=scope)
         if not isinstance(findings, list):
             raise TypeError(f"{type(self).__name__}.detect() must return list[ObservationDraft]")
 
@@ -111,7 +114,7 @@ class BaseImprovementRule(ABC):
         return WorkflowProposal(
             title=f"Workflow: {finding.title}",
             hypothesis=(
-                f"A reviewed {workflow.slug} workflow will {direction} "
+                f"A reviewed {workflow.slug} workflow aims to {direction} "
                 f"{finding.metric_name}. {finding.summary}"
             ),
             risk=workflow.risk,

@@ -13,9 +13,10 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-from reflect.improvements.models import WorkflowCandidateRecord
+from reflect.improvements.models import WorkflowCandidateRecord, WorkflowEvidenceLedger
 from reflect.improvements.repository import ImprovementRepository, utc_now
 from reflect.improvements.workflow_identity import WorkflowIdentity
+from reflect.store.user_state import StoredWorkflowDraft, UserStateStore
 
 _SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
@@ -31,12 +32,65 @@ class WorkflowService:
         self.conn = conn
         self.repository = ImprovementRepository(conn)
 
+    @staticmethod
+    def create_draft(
+        state: UserStateStore, *, title: str, content: dict[str, Any],
+    ) -> StoredWorkflowDraft:
+        """Save authored instructions without requiring an analysis writer.
+
+        Manual instructions carry no claim of observed support or measured
+        benefit. The same content validator is used before preview and apply.
+        """
+        normalized = WorkflowService._validate_content(content)
+        return state.save_draft(
+            f"draft_{uuid.uuid4().hex}", title=title, content=normalized,
+            evidence={"origin": "manual", "verification": "unverified"},
+            expected_revision=0,
+        )
+
+    @staticmethod
+    def suggestion_assessment(candidate: WorkflowCandidateRecord) -> dict:
+        """Assess stored procedure evidence without re-running discovery in a request."""
+        from pydantic import ValidationError
+
+        from reflect.improvements.models import ProcedureDefinition
+
+        content = candidate.content
+        reasons = []
+        try:
+            definition = ProcedureDefinition.model_validate(content.get('procedure_definition'))
+        except (ValidationError, TypeError):
+            definition = None
+            reasons.append('No source-backed task procedure; inspect the finding in Inbox.')
+        procedure = content.get('procedure') if isinstance(content.get('procedure'), dict) else {}
+        roots = procedure.get('checked_independent_sessions') or []
+        independent = content.get('independent_session_count', len(roots) if isinstance(roots, list) else 0)
+        if not isinstance(independent, int) or isinstance(independent, bool) or independent < 0:
+            independent = 0
+        if definition:
+            if definition.task_intent.state != 'identified' or not definition.task_intent.source_refs:
+                reasons.append('Task intent is missing or mixed.')
+            observed = [step for step in definition.steps if step.source_kind == 'observed']
+            if len(observed) < 2 or any(not step.source_refs for step in observed):
+                reasons.append('Fewer than two source-backed operations.')
+            if not definition.inputs or not definition.expected_output or any(not step.decision for step in definition.steps):
+                reasons.append('Inputs, decisions, or expected output are incomplete.')
+        if independent < 3:
+            reasons.append('Fewer than three independent source sessions.')
+        return {'eligible':not reasons, 'reasons':reasons,
+                'group_key':candidate.contract_signature,
+                'independent_session_count':independent,
+                'rank_reasons':(['Explicit task, ordered procedure, and decision points',
+                                  f'{independent} independent source sessions'] if not reasons else []),
+                'label':'Observed procedure — benefit unmeasured' if not reasons else 'Evidence incomplete'}
+
     def list(
         self,
         *,
         limit: int = 100,
         behavior_types: set[str] | None = None,
         statuses: set[str] | None = None,
+        recorded_only: bool = False,
     ) -> list[WorkflowCandidateRecord]:
         candidates = list(self.repository.iter_candidates())
         if behavior_types:
@@ -61,7 +115,9 @@ class WorkflowService:
             if not eligible:
                 continue
             representative = min(eligible, key=self._representative_sort_key)
-            ledger = self.repository.workflow_evidence_ledger(representative.id, limit=1)
+            ledger = self.repository.workflow_evidence_ledger(
+                representative.id, limit=1, recorded_only=recorded_only,
+            )
             ledger_observation_ids = set(ledger.observation_ids)
             evidence_members = [
                 item for item in members if item.observation_id in ledger_observation_ids
@@ -82,14 +138,19 @@ class WorkflowService:
         reviewable.sort(key=self._representative_sort_key)
         return reviewable[:limit]
 
-    def show(self, candidate_id: str) -> WorkflowCandidateRecord:
+    def show(
+        self, candidate_id: str, *, recorded_only: bool = False,
+        evidence_ledger: WorkflowEvidenceLedger | None = None,
+    ) -> WorkflowCandidateRecord:
         candidate = self.repository.get_candidate(candidate_id)
         if candidate is None:
             raise KeyError(f"Workflow candidate not found: {candidate_id}")
         members = list(
             self.repository.list_candidates_by_contract(candidate.contract_signature)
         )
-        ledger = self.repository.workflow_evidence_ledger(candidate.id, limit=1)
+        ledger = evidence_ledger or self.repository.workflow_evidence_ledger(
+            candidate.id, limit=1, recorded_only=recorded_only,
+        )
         ledger_observation_ids = set(ledger.observation_ids)
         evidence_members = [
             item for item in members if item.observation_id in ledger_observation_ids
@@ -105,7 +166,7 @@ class WorkflowService:
         )
 
     @staticmethod
-    def _representative_sort_key(candidate: WorkflowCandidateRecord) -> tuple[int, float, int, str]:
+    def _representative_sort_key(candidate: WorkflowCandidateRecord) -> tuple[int, int, int, int, str]:
         status_priority = {
             "approved": 0,
             "pending": 1,
@@ -113,9 +174,11 @@ class WorkflowService:
             "rejected": 3,
         }
         return (
-            status_priority.get(candidate.status.value, 9),
-            -candidate.confidence,
-            -candidate.support_execution_unit_count,
+            (4 if candidate.status.value == "rejected" and not candidate.checks.get("dismissal")
+             else status_priority.get(candidate.status.value, 9)),
+            0 if candidate.content.get("procedure") or candidate.content.get("observed_steps") else 1,
+            0 if WorkflowService.suggestion_assessment(candidate)['eligible'] else 1,
+            -WorkflowService.suggestion_assessment(candidate)['independent_session_count'],
             candidate.id,
         )
 
@@ -173,6 +236,9 @@ class WorkflowService:
             )
         return {
             "candidate_id": candidate_id,
+            "contract_signature": candidate.contract_signature,
+            "candidate_updated_at": candidate.updated_at,
+            "revision_hash": candidate.revision_hash,
             "project_root": str(root),
             "application_root": str(root),
             "application_repository": str(root),
@@ -337,8 +403,12 @@ class WorkflowService:
                 (version_id, candidate_id, version, json.dumps(candidate.content, sort_keys=True), applied_hash, now),
             )
 
-        self._atomic_write(target, content)
         intervention_id = f"intervention_{uuid.uuid4().hex}"
+        from reflect.workflow_journal import WorkflowFileJournal
+        journal = WorkflowFileJournal.for_connection(self.conn)
+        record = journal.begin(target=target, before=previous_content, after=content,
+                               intervention_id=intervention_id, operation='apply') if journal else None
+        self._atomic_write(target, content)
         try:
             evaluation_id = f"evaluation_{hashlib.sha256((version_id + ':artifact-integrity').encode()).hexdigest()[:24]}"
             self.conn.execute(
@@ -413,7 +483,11 @@ class WorkflowService:
         except Exception:
             self.conn.rollback()
             self._restore_file(target, previous_content)
+            if journal:
+                journal.finish(record)
             raise
+        if journal:
+            journal.finish(record)
         return {
             "candidate_id": candidate_id,
             "intervention_id": intervention_id,
@@ -505,6 +579,71 @@ class WorkflowService:
         )
         self.conn.commit()
         return self.show(candidate_id)
+
+    def dismiss_suggestion(self, candidate_id: str) -> dict[str, Any]:
+        """Dismiss the uninstalled variants represented by one inventory row."""
+        candidate = self.repository.get_candidate(candidate_id)
+        if candidate is None:
+            raise KeyError(candidate_id)
+        if candidate.lifecycle.deployment.value == "active":
+            raise RuntimeError("An active workflow must be rolled back, not dismissed")
+        now, batch = utc_now(), uuid.uuid4().hex
+        affected = []
+        for member in self.repository.list_candidates_by_contract(candidate.contract_signature):
+            if member.lifecycle.deployment.value == "active" or member.status.value not in {"pending", "stale"}:
+                continue
+            observation_status = self.conn.execute(
+                "SELECT status FROM observations WHERE id=?", (member.observation_id,),
+            ).fetchone()[0]
+            self.conn.execute(
+                """UPDATE workflow_candidates SET status='rejected', reviewer='local_operator',
+                   reviewed_at=?, updated_at=?, checks_json=json_set(checks_json,
+                   '$.dismissal', json(?)) WHERE id=?""",
+                (now, now, json.dumps({"batch": batch, "previous_status": member.status.value,
+                                      "observation_status": observation_status}), member.id),
+            )
+            self.conn.execute("UPDATE observations SET status='rejected', updated_at=? WHERE id=?",
+                              (now, member.observation_id))
+            self.repository.record_event(entity_type="workflow_candidate", entity_id=member.id,
+                                         event_type="dismissed", actor="local_operator",
+                                         details={"batch": batch}, now=now)
+            affected.append(member.id)
+        self.conn.commit()
+        return {"candidate_id": candidate_id, "affected_ids": affected, "status": "rejected"}
+
+    def restore_suggestion(self, candidate_id: str) -> dict[str, Any]:
+        """Undo one dismissal batch; do not resurrect unrelated rejected work."""
+        row = self.conn.execute(
+            "SELECT json_extract(checks_json, '$.dismissal.batch') FROM workflow_candidates WHERE id=?",
+            (candidate_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(candidate_id)
+        if not row[0]:
+            raise ValueError("This workflow has no reversible dismissal")
+        now, affected = utc_now(), []
+        members = self.conn.execute(
+            """SELECT id, observation_id, json_extract(checks_json, '$.dismissal')
+               FROM workflow_candidates WHERE status='rejected'
+               AND json_extract(checks_json, '$.dismissal.batch')=?""", (row[0],),
+        ).fetchall()
+        for member_id, observation_id, raw in members:
+            previous = json.loads(raw)
+            self.conn.execute(
+                """UPDATE workflow_candidates SET status=?, reviewer=NULL, reviewed_at=NULL,
+                   updated_at=?, checks_json=json_remove(checks_json, '$.dismissal') WHERE id=?""",
+                (previous["previous_status"], now, member_id),
+            )
+            self.conn.execute(
+                "UPDATE observations SET status=?, updated_at=? WHERE id=? AND status='rejected'",
+                (previous["observation_status"], now, observation_id),
+            )
+            self.repository.record_event(entity_type="workflow_candidate", entity_id=member_id,
+                                         event_type="restored", actor="local_operator",
+                                         details={"batch": row[0]}, now=now)
+            affected.append(member_id)
+        self.conn.commit()
+        return {"candidate_id": candidate_id, "affected_ids": affected, "status": "restored"}
 
     def refresh_integrity(self) -> dict[str, int]:
         """Mark active workflows stale when their rendered artifact drifts or disappears."""
@@ -606,6 +745,10 @@ class WorkflowService:
             raise RuntimeError(
                 "The applied workflow file changed after Reflect wrote it; refusing to overwrite those edits"
             )
+        from reflect.workflow_journal import WorkflowFileJournal
+        journal = WorkflowFileJournal.for_connection(self.conn)
+        record = journal.begin(target=target, before=current_content, after=row['previous_content'],
+                               intervention_id=row['intervention_id'], operation='rollback') if journal else None
         self._restore_file(target, row["previous_content"])
         now = utc_now()
         self.conn.execute(
@@ -629,6 +772,8 @@ class WorkflowService:
             now=now,
         )
         self.conn.commit()
+        if journal:
+            journal.finish(record)
         return {
             "candidate_id": candidate_id,
             "intervention_id": row["intervention_id"],
@@ -814,7 +959,13 @@ class WorkflowService:
                 (candidate.id, candidate.contract_signature),
             ).fetchall()
         ]
+        finding_roots = candidate.provenance.get("finding_project_roots", [])
+        finding_scope_matches = (not finding_roots and not candidate.provenance.get("finding_repo_id")) or any(
+            self._normalize_project_root(Path(path))[0] == root for path in finding_roots
+        )
         issues: list[str] = []
+        if not finding_scope_matches:
+            issues.append("Choose a project folder from this finding's repository evidence; another project cannot use its impact baseline.")
         if not root.exists():
             issues.append(f"Target project folder does not exist: {root}")
         elif not root.is_dir():
@@ -841,6 +992,7 @@ class WorkflowService:
             "target_available": not conflict_list,
             "apply_allowed": (
                 project_directory
+                and finding_scope_matches
                 and not unsafe_project_root
                 and invalid_parent is None
                 and target_supported
@@ -909,31 +1061,30 @@ class WorkflowService:
             str(step).strip() for step in candidate.content.get("verification", []) if str(step).strip()
         ]
         source_markdown = str(candidate.content.get("source_markdown") or "").strip()
-        if source_markdown:
-            return (
-                "---\n"
-                f"name: {candidate.content['slug']}\n"
-                f"description: {description_yaml}\n"
-                "---\n\n"
-                f"{source_markdown}\n"
-            )
         lines = [
             "---",
             f"name: {candidate.content['slug']}",
             f"description: {description_yaml}",
             "---",
             "",
-            f"# {candidate.title}",
-            "",
-            "## Workflow",
-            "",
-            *[f"{index}. {step}" for index, step in enumerate(steps, start=1)],
         ]
-        if abstain:
-            lines.extend(["", "## Abstain when", "", *[f"- {item}" for item in abstain]])
-        if verification:
-            lines.extend(["", "## Verification", "", *[f"- {item}" for item in verification]])
-        lines.extend(["", "Generated by Reflect as a reviewed local workflow.", ""])
+        if source_markdown:
+            lines.append(source_markdown)
+        else:
+            lines.extend([f"# {candidate.title}", "", "## Workflow", "",
+                          *[f"{index}. {step}" for index, step in enumerate(steps, start=1)]])
+        for heading, values in (
+            ("Preconditions", candidate.content.get("preconditions", [])),
+            ("Checkpoints", candidate.content.get("checkpoints", [])),
+            ("Abstain when", abstain),
+            ("Verification", verification),
+        ):
+            instructions = [str(item).strip() for item in values if str(item).strip()]
+            if instructions:
+                lines.extend(["", f"## {heading}", "", *[f"- {item}" for item in instructions]])
+        if not source_markdown:
+            lines.extend(["", "Generated by Reflect."])
+        lines.append("")
         return "\n".join(lines)
 
     @staticmethod

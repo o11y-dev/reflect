@@ -97,3 +97,15 @@ class TelemetryStats:
     model_costs: Counter[str] = field(default_factory=Counter)
     model_costs_usd: Counter[str] = field(default_factory=Counter)
     pricing_source: str = ""
+
+
+@dataclass(frozen=True)
+class SegmentPreparationStatus:
+    pending_count: int
+    pending_bytes: int
+    processed_on_disk_count: int
+    processed_on_disk_bytes: int
+    unclassified_count: int
+    unclassified_bytes: int
+    last_normalized_at: str | None
+    store_available: bool

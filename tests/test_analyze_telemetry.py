@@ -76,8 +76,8 @@ class TestAnalyzeOtlpTraces:
 
     def test_shell_commands_tracked(self, otlp_traces_file, tmp_path):
         stats = analyze_telemetry(tmp_path / "s", tmp_path / "sp", otlp_traces_file)
-        assert "pytest tests/ -v --tb=short" in stats.shell_commands
-        assert "alembic upgrade head" in stats.shell_commands
+        assert "pytest <path> -v --tb=<value>" in stats.shell_commands
+        assert "alembic upgrade <arg>" in stats.shell_commands
 
     def test_tool_durations_tracked(self, otlp_traces_file, tmp_path):
         stats = analyze_telemetry(tmp_path / "s", tmp_path / "sp", otlp_traces_file)

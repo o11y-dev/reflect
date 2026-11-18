@@ -3,6 +3,7 @@ from pathlib import Path
 
 from reflect.store.graph_normalize import rebuild_graph
 from reflect.store.migrate import migrate
+from reflect.store.pending_refresh import PendingRefreshState
 from reflect.store.sqlite import connect_sqlite
 from reflect.store.workspaces import WorkspaceResolver, backfill_session_context
 from reflect.views.report_tabs import _semantic_graph
@@ -120,11 +121,57 @@ def test_backfill_persists_hook_repository_metadata(tmp_path):
         result = backfill_session_context(conn, timestamp=now)
 
         assert result["sessions_updated"] == 1
+        assert PendingRefreshState(conn).capture().pending_for("graph") == {"session-hook-repo"}
         stored = conn.execute(
             "SELECT owner, name, branch, raw_json FROM repos"
         ).fetchone()
         assert tuple(stored[:3]) == ("o11y-dev", "reflect", "main")
         assert json.loads(stored[3])["remote_sha256"] == "b" * 64
+    finally:
+        conn.close()
+
+
+def test_codex_spawn_lineage_repairs_retained_and_late_parent_sessions(tmp_path, monkeypatch):
+    from reflect.store import migrate as migration_module
+
+    conn = connect_sqlite(tmp_path / "reflect.db")
+    now = "2026-11-18T12:00:00+00:00"
+    migrations = migration_module.load_migrations()
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(migration_module, "load_migrations", lambda: [m for m in migrations if m.version <= 57])
+            migrate(conn)
+        conn.execute("INSERT INTO agents(id,name,kind,created_at,updated_at) VALUES ('codex','codex','coding_agent',?,?)", (now, now))
+        for sid in ("parent", "child", "late-child", "conflicting", "self", "review"):
+            _insert_session(conn, sid, now, agent_id="codex")
+        key = "source.subagent.thread_spawn.parent_thread_id"
+        claims = (("child", "parent"), ("late-child", "late-parent"),
+                  ("conflicting", "parent"), ("conflicting", "late-parent"), ("self", "self"))
+        for seq, (child, parent) in enumerate(claims):
+            _insert_step(conn, child, f"spawn-{seq}", seq, now, {key: parent, "code.workspace.root": str(tmp_path)})
+            conn.execute("UPDATE steps SET origin_kind = 'native_session' WHERE id=?", (f"spawn-{seq}",))
+        _insert_step(conn, "review", "review-step", 0, now, {"gen_ai.request.model": "codex-auto-review"})
+        conn.commit()
+
+        migrate(conn)
+        assert dict(conn.execute("SELECT id,parent_session_id FROM sessions"))["child"] == "parent"
+        assert PendingRefreshState(conn).capture().pending_for("graph") == {"child"}
+
+        _insert_session(conn, "late-parent", now, agent_id="codex")
+        review_file = tmp_path / "rollout-review.jsonl"
+        review_file.write_text(json.dumps({"type": "session_meta", "payload": {
+            "id": "review", "source": {"subagent": {"other": "guardian_review"}},
+            "parent_thread_id": "parent",
+        }}) + "\n", encoding="utf-8")
+        changed: set[str] = set()
+        backfill_session_context(conn, timestamp=now, changed_session_ids=changed,
+                                 codex_native_files=[review_file])
+        links = dict(conn.execute("SELECT id,parent_session_id FROM sessions"))
+        assert links["late-child"] == "late-parent"
+        assert links["review"] == "parent"
+        assert {sid for sid, parent in links.items() if parent} == {"child", "late-child", "review"}
+        assert {"late-child", "review"} <= changed
+        assert backfill_session_context(conn, timestamp=now)["parents"] == 0
     finally:
         conn.close()
 
@@ -246,3 +293,23 @@ def test_preview_path_extraction_does_not_turn_shell_globs_into_folders(tmp_path
         assert "UI" not in labels
     finally:
         conn.close()
+
+
+def test_file_path_recovers_only_verified_repository(tmp_path):
+    repo = tmp_path / 'project'
+    (repo / '.git').mkdir(parents=True)
+    resolver = WorkspaceResolver()
+    identity = resolver.resolve({'gen_ai.client.file_path': str(repo / 'src' / 'app.py')})
+    assert identity is not None
+    assert identity.repo_root == str(repo)
+    assert identity.root_path == str(repo)
+    assert resolver.resolve({'gen_ai.client.file_path': str(tmp_path / 'notes.txt')}) is None
+
+
+def test_file_paths_from_multiple_repositories_remain_ambiguous(tmp_path):
+    roots = [tmp_path / name for name in ('one', 'two')]
+    for root in roots:
+        (root / '.git').mkdir(parents=True)
+    assert WorkspaceResolver().resolve_candidates(
+        [('gen_ai.client.file_path', str(root / 'app.py')) for root in roots]
+    ) is None

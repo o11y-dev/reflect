@@ -17,6 +17,7 @@ poetry run python scripts/test_local_agents.py --agent antigravity --agent copil
 poetry run python scripts/test_local_agents.py --agent opencode
 poetry run python scripts/test_local_agents.py --suite effectiveness --agent codex
 poetry run python scripts/test_local_agents.py --suite blog
+poetry run python scripts/test_local_agents.py --suite telemetry --agent codex --agent cursor --agent claude
 ```
 
 The suite disables or denies non-Reflect tools where each CLI supports that
@@ -42,3 +43,18 @@ contract plus exactly two completed task runs and the same selected memory per
 agent. The deterministic telemetry contract separately proves the expected
 12 sessions, 12 memory exposures, 24 logical MCP calls, and idempotent refresh
 for all six headless agents without making provider requests.
+
+The telemetry suite runs three two-prompt sessions per selected Codex, Cursor,
+or Claude CLI. It retains normal native session capture, exercises a failed
+check, recovery, edit-after-pass and re-verification in a temporary workspace,
+then copies only explicitly identified native sources and matching existing
+OTLP records into a temporary Reflect
+database. Two ingestions must produce identical canonical counts and usage,
+without any Reflect start/complete calls. Authentication and missing native
+capture are visible failures, not successful unsupported runs. It uses existing
+authentication and changes no persistent client configuration. Clients retain
+their normal session history; test code never ingests the user's global store.
+Artifacts survive pytest temporary-directory cleanup. Set
+`REFLECT_TELEMETRY_ARTIFACT_DIR` to choose their parent directory. Native capture
+that omits paired results remains an acceptance failure even if the workspace
+check succeeds; additional failed reruns followed by recovery are allowed.

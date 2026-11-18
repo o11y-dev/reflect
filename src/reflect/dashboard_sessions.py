@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,13 +19,13 @@ from reflect.dashboard_query_common import (
 )
 from reflect.graph import _compute_weekly_trends
 from reflect.store.hook_facts import HookFactRepository
+from reflect.store.sqlite import consistent_snapshot
 from reflect.telemetry_facts import (
     clean_subagent_name,
     extract_skill_name_from_path,
     extract_skill_name_from_preview,
     extract_skill_names_from_text,
     extract_subagent_name_from_tool,
-    extract_subagent_names_from_text,
 )
 from reflect.utils import logger
 
@@ -155,7 +156,7 @@ def _build_tool_inventory(
         attrs = event.get("attrs")
         if not isinstance(attrs, dict):
             attrs = {}
-        subagent_name = extract_subagent_name_from_tool(tool_name, attrs, preview)
+        subagent_name = extract_subagent_name_from_tool(tool_name, attrs, preview) if subagent_events is None else ""
         if subagent_name:
             subagents[subagent_name] += count
             subagent_sources[subagent_name][tool_name] += count
@@ -171,9 +172,15 @@ def _build_tool_inventory(
         if server_name:
             mcp_servers[server_name] += 1
 
+    seen_subagents: set[tuple[str, str]] = set()
     for event in subagent_events or []:
-        name = clean_subagent_name(event.get("name")) or "unknown"
+        name = clean_subagent_name(event.get("name")) or "Role not recorded"
         status = str(event.get("status") or "start").lower()
+        identity = str(event.get("agent_id") or event.get("event_id") or event.get("step_id") or "")
+        if identity and (status, identity) in seen_subagents:
+            continue
+        if identity:
+            seen_subagents.add((status, identity))
         if status == "stop":
             subagent_stops[name] += 1
         else:
@@ -193,7 +200,7 @@ def _build_tool_inventory(
         }
 
     return {
-        "tools": [tool_row(item) for item in tools.most_common()],
+        "tools": [tool_row(item) for item in sorted(tools.items(), key=lambda item: (-item[1], item[0]))],
         "skills": [
             {
                 "name": name,
@@ -241,29 +248,6 @@ def _add_skill_hints_to_inventory(
     if hinted:
         inventory["skills"] = [*inventory.get("skills", []), *hinted]
         inventory["total_skill_calls"] = int(inventory.get("total_skill_calls") or 0) + len(hinted)
-    return inventory
-
-
-def _add_subagent_hints_to_inventory(
-    inventory: dict[str, object], subagent_names: set[str]
-) -> dict[str, object]:
-    if not subagent_names:
-        return inventory
-    existing = {
-        str(item.get("name") or "")
-        for item in inventory.get("subagents", [])
-        if isinstance(item, dict)
-    }
-    hinted = [
-        {"name": name, "count": 1, "stops": 0, "sources": {}, "source": "conversation"}
-        for name in sorted(subagent_names)
-        if name not in existing
-    ]
-    if hinted:
-        inventory["subagents"] = [*inventory.get("subagents", []), *hinted]
-        inventory["total_subagent_starts"] = int(inventory.get("total_subagent_starts") or 0) + len(
-            hinted
-        )
     return inventory
 
 
@@ -418,6 +402,7 @@ def _sql_response_preview(attrs: dict[str, object], call: dict[str, object]) -> 
     return f"Assistant turn completed{status_text}; captured {token_text}."
 
 
+@consistent_snapshot
 def build_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
     from reflect.store.sqlite import connect_sqlite_read_only
     from reflect.views import (
@@ -454,6 +439,7 @@ def build_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
                 0
               ) AS duration_ms,
               (SELECT COUNT(*) FROM steps st WHERE st.session_id = s.id) AS event_count,
+              s.parent_session_id,
               COALESCE(sr.prompt_count, 0) AS prompt_count,
               COALESCE(sr.tool_call_count, 0) AS tool_call_count,
               COALESCE(sr.error_count, s.failure_count, 0) AS failure_count,
@@ -573,6 +559,9 @@ def build_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
             for tab_name in ("activity", "models", "costs", "tools", "mcp", "agents")
         }
         source_provenance = list_source_provenance(conn, session_ids={session_id})
+        from reflect.views.measurements import build_measurements
+
+        measurements = build_measurements(conn, session_ids={session_id}).model_dump()
         navigation_page = list_sessions(conn, limit=100, offset=0).model_dump()
     finally:
         conn.close()
@@ -590,12 +579,13 @@ def build_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
             mcp_servers[server] += int(row["count"] or 0)
     mcp_servers_by_count = dict(mcp_servers)
     events_by_type = {str(row["type"]): int(row["count"] or 0) for row in event_rows}
-    cost = float(session_row["estimated_cost_usd"] or 0.0)
+    cost = float(measurements["totals"]["estimated_cost_usd"])
     session_card = session_card_from_row(
         session_row,
         first_prompt=first_prompt,
         primary_model=primary_model,
         tools=tools_by_count,
+        measurement=measurements["sessions"].get(session_id),
     )
     quality_score = float(session_card["quality_score"])
     reported_quality_score = quality_score if session_card["quality_available"] else 0.0
@@ -805,15 +795,22 @@ def build_session_payload(db_path: Path, session_id: str) -> dict[str, object]:
         "session_list_total": navigation_page["total"],
         "focused_session_id": session_id,
         "first_event_ts": session_row["started_at"] or "",
+        "measurements": measurements,
         "last_event_ts": session_row["started_at"] or "",
     }
 
 
 def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | None:
-    from reflect.store.sqlite import connect_sqlite_read_only
+    from reflect.store.pending_refresh import analysis_coverage, derived_analysis_state
+    from reflect.store.sqlite import connect_sqlite_read_only, snapshot_incomplete
 
-    conn = connect_sqlite_read_only(db_path)
+    # Every SQL read below shares one pinned transaction. Captured events remain
+    # readable while refresh rebuilds derived evidence in separate transactions.
+    conn = connect_sqlite_read_only(db_path, profile=None)
     try:
+        coverage = analysis_coverage(conn, {session_id})
+        derived_state = derived_analysis_state(coverage, snapshot_ready=not snapshot_incomplete(conn))
+        usage_state = "preparing" if snapshot_incomplete(conn, "usage") else "ready"
         session = conn.execute(
             """
             SELECT s.*, COALESCE(a.name, '') AS agent
@@ -952,30 +949,49 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
             ],
             [
                 {
-                    "name": sql_attr(
-                        attrs := load_json_dict(step.get("raw_attrs_json")),
-                        "gen_ai.client.subagent_type",
-                        "ide.subagent_type",
-                        "subagent.type",
-                    )
-                    or "unknown",
-                    "status": "stop"
-                    if "stop"
-                    in str(
-                        sql_attr(attrs, "gen_ai.client.hook.event", "ide.hook.event")
-                        or step.get("summary")
-                        or ""
-                    ).lower()
-                    else "start",
-                    "source": "lifecycle",
+                    "name": event.get("agent_type") or "Role not recorded",
+                    "status": "stop" if event.get("event_name") == "SubagentStop" else "start",
+                    "source": "observed",
+                    "agent_id": event.get("agent_id"),
+                    "event_id": event.get("event_id"),
+                    "step_id": event.get("step_id"),
                 }
-                for step in steps
-                if (
-                    "subagent" in str(step.get("summary") or "").lower()
-                    or "subagent" in str(step.get("raw_attrs_json") or "").lower()
-                )
+                for event in hook_facts.agent_events_by_step.values()
             ],
         )
+        # Session Execution and Explore share canonical skill-use evidence.
+        from reflect.views.report_tabs import build_report_tab
+
+        skill_view = build_report_tab(conn, "tools", session_ids={session_id})
+        skill_rows = {row["name"]: row for row in tool_inventory["skills"]}
+        for name, count in skill_view["skills_by_count"].items():
+            skill_rows[name] = {"name": name, "count": count, "tools": {}, "source": "Observed read or invocation"}
+        tool_inventory["skills"] = sorted(skill_rows.values(), key=lambda row: (-row["count"], row["name"]))
+        tool_inventory["total_skill_calls"] = sum(row["count"] for row in skill_rows.values())
+        tool_inventory["skill_attempts"] = [
+            {"name": name, "count": count, "source": "Read attempted; successful load not confirmed"}
+            for name, count in skill_view["skill_attempts_by_count"].items()
+        ]
+        derived: dict[str, object] = {}
+        if usage_state == "ready":
+            from reflect.store.git_activity import git_activity
+            from reflect.views.measurements import build_measurements
+
+            measurements = build_measurements(conn, session_ids={session_id}).model_dump()
+            derived = {
+                "measurements": measurements,
+                "pricing_coverage": measurements["coverage"],
+                "cost_scope": measurements["scope"]["kind"],
+                "total_cost_usd": measurements["totals"]["estimated_cost_usd"],
+                "git_activity": git_activity(conn, session_ids={session_id}),
+            }
+        if derived_state == "ready":
+            from reflect.improvements.session_insights import read_session_insights
+
+            derived.update(
+                insights=read_session_insights(conn, session_ids={session_id}).get(session_id, []),
+                assessments=dict_rows(conn.execute("SELECT id,outcome,verification_passed FROM execution_units WHERE session_id=? ORDER BY started_at DESC,id LIMIT 20", (session_id,))),
+            )
     finally:
         conn.close()
 
@@ -1108,8 +1124,9 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
                     )
         if step["id"] in tools_by_step:
             tool = tools_by_step[step["id"]]
+            tool_attrs = {**attrs, **load_json_dict(tool.get("raw_attrs_json"))}
             tool_use_id = str(
-                sql_attr(attrs, "gen_ai.client.tool_use_id", "tool.id") or step["id"]
+                sql_attr(tool_attrs, "gen_ai.client.tool_use_id", "tool.id") or step["id"]
             )
             tool_key = (tool_use_id, str(tool["tool_name"] or ""), str(tool["status"] or ""))
             if tool_key not in seen_tools:
@@ -1130,25 +1147,27 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
                         ),
                     }
                 )
-                conversation.append(
-                    {
-                        "type": "tool_result",
-                        "ts": step["ended_at"] or base_ts,
-                        "tool_name": tool["tool_name"],
-                        "tool_use_id": tool_use_id,
-                        "success": tool["status"] != "error",
-                        "duration_ms": tool["duration_ms"] or 0,
-                        "preview": tool["output_preview_redacted"]
-                        or _sql_attr_text(
-                            attrs,
-                            "gen_ai.client.tool.output",
-                            "tool.output",
-                            "output",
-                            "error.message",
-                            limit=2000,
-                        ),
-                    }
-                )
+                if _tool_result_observed(tool, tool_attrs, event_type):
+                    conversation.append(
+                        {
+                            "type": "tool_result",
+                            "ts": step["ended_at"] or base_ts,
+                            "tool_name": tool["tool_name"],
+                            "tool_use_id": tool_use_id,
+                            "success": None if tool_attrs.get("reflect.tool.terminal") is False
+                            else {"ok": True, "error": False}.get(tool["status"]),
+                            "duration_ms": tool["duration_ms"] or 0,
+                            "preview": tool["output_preview_redacted"]
+                            or _sql_attr_text(
+                                tool_attrs,
+                                "gen_ai.client.tool.output",
+                                "tool.output",
+                                "output",
+                                "error.message",
+                                limit=2000,
+                            ),
+                        }
+                    )
         if step["id"] in mcp_by_step:
             mcp = mcp_by_step[step["id"]]
             conversation.append(
@@ -1157,7 +1176,8 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
                     "ts": base_ts,
                     "tool_name": mcp["tool_name"] or "",
                     "server": mcp["server_name"] or "",
-                    "success": mcp["status"] != "error",
+                    "success": None if load_json_dict(mcp.get("raw_attrs_json")).get("reflect.tool.terminal") is False
+                    else {"ok": True, "error": False}.get(mcp["status"]),
                 }
             )
         if agent_event := hook_facts.agent_event_for_step(step["id"]):
@@ -1167,7 +1187,7 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
                     if str(agent_event.get("event_name") or "").lower().endswith("stop")
                     else "subagent_start",
                     "ts": base_ts,
-                    "subagent_type": agent_event.get("agent_type") or "unknown",
+                    "subagent_type": agent_event.get("agent_type") or "Role not recorded",
                     "agent_id": agent_event.get("agent_id") or "",
                     "parent_agent_id": agent_event.get("parent_agent_id") or "",
                     "status": agent_event.get("status") or "",
@@ -1206,6 +1226,7 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
                 "name": step["summary"] or step["type"],
                 "event": event_type,
                 "agent": session_row.get("agent") or "",
+                "service": str(attrs.get("service.name") or ""),
                 "tool_name": (tools_by_step.get(step["id"]) or {}).get("tool_name", ""),
                 "mcp_tool": (mcp_by_step.get(step["id"]) or {}).get("tool_name", ""),
                 "mcp_server": (mcp_by_step.get(step["id"]) or {}).get("server_name", ""),
@@ -1322,21 +1343,19 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
             )
         },
     )
-    tool_inventory = _add_subagent_hints_to_inventory(
-        tool_inventory,
-        {
-            subagent_name
-            for event in conversation
-            if event.get("type") in {"prompt", "response"}
-            for subagent_name in extract_subagent_names_from_text(
-                str(event.get("preview") or event.get("content") or "")
-            )
-        },
-    )
     return {
         "session_id": session_id,
+        "session": {"id": session_id, "agent": session_row["agent"] or "unknown"},
+        "derived_state": derived_state,
+        "usage_state": usage_state,
+        "analysis_coverage": coverage,
+        "analysis_pending_reason": (
+            f"Historical analysis is pending. Run `reflect refresh --session {shlex.quote(session_id)}` to analyse this session."
+            if derived_state == "historical_pending" else ""
+        ),
         "conversation": conversation,
         "conversation_source": conversation_source,
+        **derived,
         "tool_inventory": tool_inventory,
         "telemetry": {
             "summary": {
@@ -1345,6 +1364,7 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
                 "errors": errors,
                 "warnings": sum(1 for log in telemetry_logs if log.get("severity") == "WARN"),
                 "services": len(services),
+                "service_names": sorted(services),
                 "anchor_ns": anchor_ns,
                 "duration_ms": timeline_duration_ms,
                 "truncated_spans": 0,
@@ -1357,6 +1377,26 @@ def load_session_detail(db_path: Path, session_id: str) -> dict[str, object] | N
         },
         "warnings": conversation_warnings,
     }
+
+
+def _tool_result_observed(tool: dict, attrs: dict, event_type: str) -> bool:
+    captured_event = sql_attr(attrs, "gen_ai.client.hook.event", "ide.hook.event", "event.name")
+    event = str(captured_event or event_type).rsplit(".", 1)[-1].lower()
+    if (
+        tool.get("output_preview_redacted") or tool.get("output_hash")
+        or tool.get("error_type") or tool.get("error_message_redacted")
+        or event in {"posttooluse", "posttoolusefailure", "aftermcpexecution", "aftershellexecution", "toolresult", "tool_result"}
+        or attrs.get("reflect.tool.terminal") is True
+        or any(attrs.get(key) is not None for key in ("gen_ai.client.tool.output", "tool.output", "process.exit.code"))
+    ):
+        return True
+    if attrs.get("reflect.tool.terminal") is False or event in {"pretooluse", "beforemcpexecution", "beforeshellexecution"} or (
+        captured_event and event in {"toolcall", "tool_call"}
+    ):
+        return False
+    # Retained canonical rows may carry an explicit terminal status without
+    # result text or the original provider event name.
+    return tool.get("status") in {"ok", "error"}
 
 
 def _native_session_path(session_row: dict[str, object]) -> Path | None:

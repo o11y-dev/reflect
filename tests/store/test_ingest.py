@@ -1,4 +1,7 @@
 import json
+from contextlib import closing
+
+import pytest
 
 from reflect.store.cursor_usage import apply_cursor_transcript_usage_estimates
 from reflect.store.ingest import (
@@ -118,6 +121,63 @@ def _write_codex_logs_file(path, *, session_id="codex-sess-1"):
         ]
     }
     path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize("trace_has_usage", [False, True])
+def test_codex_response_usage_fills_trace_session_gap_once(tmp_path, trace_has_usage):
+    traces = tmp_path / "otel-traces.jsonl"
+    logs = tmp_path / "otel-logs.jsonl"
+    attributes = {"conversation.id": "codex-sess-1"}
+    if trace_has_usage:
+        attributes["gen_ai.usage.output_tokens"] = "25"
+        attributes["gen_ai.request.model"] = "gpt-5.5"
+    _write_codex_trace_file(traces, attributes=attributes)
+    _write_codex_logs_file(logs)
+    payload = json.loads(logs.read_text())
+    records = payload["resourceLogs"][0]["scopeLogs"][0]["logRecords"]
+    records.append({"attributes": [
+        {"key": key, "value": {"stringValue": value}}
+        for key, value in {
+            "event.name": "codex.sse_event", "event.kind": "response.completed",
+            "event.timestamp": "2026-03-24T10:00:02Z", "conversation.id": "codex-sess-1",
+            "model": "gpt-5.5", "input_token_count": "100", "cached_token_count": "80",
+            "output_token_count": "25",
+        }.items()
+    ]})
+    logs.write_text(json.dumps(payload) + "\n")
+
+    with closing(connect_sqlite(tmp_path / "reflect.db")) as conn:
+        migrate(conn)
+        ingest_otlp_traces_file(conn, file_path=traces)
+        normalize_pending_raw_events(conn)
+        assert ingest_otlp_logs_file(conn, file_path=logs)["inserted"] == int(not trace_has_usage)
+        normalize_pending_raw_events(conn)
+        # Replay a copy at a new path with a different index in the input batch.
+        records.pop(0)
+        rotated = tmp_path / "otel-logs.rotated.jsonl"
+        rotated.write_text(json.dumps(payload) + "\n")
+        assert ingest_otlp_logs_file(conn, file_path=rotated)["inserted"] == 0
+        assert tuple(conn.execute(
+            "SELECT input_tokens, output_tokens, cache_read_tokens FROM sessions WHERE id='codex-sess-1'"
+        ).fetchone()) == ((0, 25, 0) if trace_has_usage else (20, 25, 80))
+        if not trace_has_usage:
+            # Later requests from the log source still count after the first
+            # enrichment has produced usage in the trace-owned session.
+            next_timestamp = next(attr for attr in records[0]["attributes"] if attr["key"] == "event.timestamp")
+            next_timestamp["value"]["stringValue"] = "2026-03-24T10:00:03Z"
+            rotated.write_text(json.dumps(payload) + "\n")
+            assert ingest_otlp_logs_file(conn, file_path=rotated)["inserted"] == 1
+            normalize_pending_raw_events(conn)
+            assert tuple(conn.execute(
+                "SELECT input_tokens, output_tokens, cache_read_tokens FROM sessions WHERE id='codex-sess-1'"
+            ).fetchone()) == (40, 50, 160)
+            from reflect.preparation_pipeline import reprice_sql_store
+            from reflect.pricing import ModelPricing, PricingTable
+
+            prices = PricingTable({"gpt-5.5": ModelPricing("gpt-5.5", 0.001, 0.002, None, 0.0001)}, "cache", 0)
+            reprice_sql_store(conn, session_ids={"codex-sess-1"}, pricing_table=prices, aliases={})
+            cost = conn.execute("SELECT estimated_cost_usd FROM sessions WHERE id='codex-sess-1'").fetchone()[0]
+            assert cost == pytest.approx(0.156)
 
 
 def _write_claude_logs_file(path):
@@ -621,7 +681,8 @@ def test_ingest_otlp_logs_normalizes_claude_api_request(tmp_path):
             "SELECT source_type, event_type, session_id, origin_kind, attrs_json FROM raw_events"
         ).fetchone()
         attrs = json.loads(row[4])
-        assert row[:4] == ("otlp_logs_json", "gen_ai.client.hook.Stop", "claude-sess-1", "native_otlp_log")
+        assert row[:4] == ("otlp_logs_json", "gen_ai.client.hook.Usage", "claude-sess-1", "native_otlp_log")
+        assert attrs["reflect.turn.terminal"] is False
         assert attrs["gen_ai.client.name"] == "claude"
         assert attrs["gen_ai.request.model"] == "claude-opus-4-6"
         assert attrs["gen_ai.usage.output_tokens"] == 7238
@@ -698,7 +759,7 @@ def test_normalize_codex_context_records_one_artifact_with_session_exposure(tmp_
         conn.close()
 
 
-def test_ingest_native_session_skips_session_already_created_from_otlp(tmp_path):
+def test_ingest_native_session_enriches_session_already_created_from_otlp(tmp_path):
     db = tmp_path / "reflect.db"
     logs = tmp_path / "otel-logs.json"
     session_file = tmp_path / "rollout-codex-native-sess-1.jsonl"
@@ -721,13 +782,13 @@ def test_ingest_native_session_skips_session_already_created_from_otlp(tmp_path)
             skip_unchanged=True,
         )
 
-        assert result == {"inserted": 0, "skipped": 0, "unchanged": 1}
-        assert conn.execute("SELECT COUNT(*) FROM raw_events").fetchone()[0] == 1
+        assert result == {"inserted": 6, "skipped": 0, "unchanged": 0}
+        assert conn.execute("SELECT COUNT(*) FROM raw_events").fetchone()[0] == 7
         assert conn.execute(
             "SELECT COUNT(*) FROM raw_events WHERE source_type = 'native_session'"
-        ).fetchone()[0] == 0
+        ).fetchone()[0] == 6
         assert normalize_pending_raw_events(conn) == {
-            "processed": 1,
+            "processed": 7,
             "failed": 0,
             "skipped": 0,
         }
@@ -821,10 +882,14 @@ def test_ingest_native_session_does_not_duplicate_normalized_otlp_tokens(tmp_pat
             skip_existing_sessions=True,
             skip_unchanged=True,
         )
-        assert result == {"inserted": 0, "skipped": 0, "unchanged": 1}
+        assert result == {"inserted": 6, "skipped": 0, "unchanged": 0}
         assert conn.execute(
             "SELECT COUNT(*) FROM raw_events WHERE source_type = 'native_session'"
-        ).fetchone()[0] == 0
+        ).fetchone()[0] == 6
+        assert conn.execute(
+            "SELECT COUNT(*) FROM raw_events WHERE source_type = 'native_session' "
+            "AND json_extract(attrs_json, '$.\"reflect.usage.enrichment_only\"') = 1"
+        ).fetchone()[0] == 6
     finally:
         conn.close()
 
@@ -875,8 +940,9 @@ def test_ingest_native_session_allows_updates_from_the_owning_file(tmp_path):
             skip_unchanged=True,
         )
 
-        assert result == {"inserted": 2, "skipped": 5, "unchanged": 0}
-        assert conn.execute("SELECT COUNT(*) FROM raw_events").fetchone()[0] == 8
+        assert result["replaced_native_events"] == 2
+        assert result["inserted"] == 3
+        assert result["skipped"] == 4
         assert conn.execute(
             """
             SELECT COUNT(*)
@@ -1099,5 +1165,33 @@ def test_ingest_local_spans_dedupes(tmp_path):
         ).fetchone()
         assert row[:3] == ("local_spans_jsonl", "PreToolUse", "sess-2")
         assert json.loads(row[3])["gen_ai.client.tool_name"] == "Read"
+    finally:
+        conn.close()
+
+
+def test_native_decoder_upgrade_repairs_dropped_mcp_namespace(tmp_path, monkeypatch):
+    import reflect.parsing as parsing
+    import reflect.store.ingest as ingestion
+    path = tmp_path / 'namespace.jsonl'
+    path.write_text('\n'.join(json.dumps(record) for record in [
+        {'type':'session_meta','payload':{'id':'namespace-session'},'timestamp':'2026-11-01T00:00:00Z'},
+        {'type':'response_item','payload':{'type':'function_call','name':'js','namespace':'mcp__cua_repl','call_id':'call1','arguments':'{}'},'timestamp':'2026-11-01T00:00:01Z'},
+        {'type':'response_item','payload':{'type':'function_call_output','call_id':'call1','output':'ok'},'timestamp':'2026-11-01T00:00:02Z'},
+    ]))
+    conn = connect_sqlite(tmp_path / 'db.sqlite')
+    try:
+        migrate(conn)
+        with monkeypatch.context() as old:
+            old.setattr(ingestion, 'NATIVE_DECODER_VERSION', 4)
+            old.setattr(parsing, 'qualify_mcp_tool_name', lambda name, namespace: name)
+            ingest_native_session_file(conn, file_path=path, agent='codex', skip_unchanged=True)
+            normalize_pending_raw_events(conn)
+        assert conn.execute('SELECT COUNT(*) FROM mcp_calls').fetchone()[0] == 0
+        repaired = ingest_native_session_file(conn, file_path=path, agent='codex', skip_unchanged=True)
+        assert repaired['replaced_native_events'] > 0
+        normalize_pending_raw_events(conn)
+        assert [row[0] for row in conn.execute('SELECT tool_name FROM tool_calls')] == ['mcp__cua_repl__js']
+        assert tuple(conn.execute('SELECT server_name,tool_name FROM mcp_calls').fetchone()) == ('cua_repl', 'js')
+        assert ingest_native_session_file(conn, file_path=path, agent='codex', skip_unchanged=True)['unchanged'] == 1
     finally:
         conn.close()

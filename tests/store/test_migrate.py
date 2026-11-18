@@ -1,5 +1,6 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
 
 from reflect.improvements.repository import _observation_id
 from reflect.improvements.rules import MissingVerificationRule
@@ -36,13 +37,103 @@ def _apply_migrations_through(conn, version: int) -> None:
     conn.commit()
 
 
+def test_provenance_covering_index_preserves_counts_without_raw_payload_reads(tmp_path):
+    from reflect.views.overview import list_source_provenance
+
+    conn = connect_sqlite(tmp_path / "provenance.db")
+    try:
+        through_40 = [migration for migration in load_migrations() if migration.version <= 40]
+        with patch("reflect.store.migrate.load_migrations", return_value=through_40):
+            migrate(conn)
+        conn.executemany("""INSERT INTO raw_events(id,source_id,source_type,event_type,
+            session_id,observed_at,received_at,attrs_json,content_hash,created_at,origin_kind)
+            VALUES (?, 'fixture','fixture','event',?,'2026-11-07','2026-11-07',?,?,
+                '2026-11-07',?)""", [
+            ("one", "selected", json.dumps({"large_output": "x" * 100_000}), "one", "hook"),
+            ("two", "selected", "{}", "two", "native"),
+            ("three", "other", "{}", "three", "hook"),
+        ])
+        conn.commit()
+        before = list_source_provenance(conn, session_ids={"selected"})
+        assert migrate(conn) == [41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
+        assert list_source_provenance(conn, session_ids={"selected"}) == before
+        plans = conn.execute("""EXPLAIN QUERY PLAN SELECT origin_kind,COUNT(*)
+            FROM raw_events WHERE session_id IN (?) GROUP BY origin_kind""", ("selected",)).fetchall()
+        assert any("COVERING INDEX idx_raw_events_session_origin" in row[-1] for row in plans)
+        assert conn.execute("SELECT COUNT(*) FROM raw_events").fetchone()[0] == 3
+        assert migrate(conn) == []
+    finally:
+        conn.close()
+
+
+def test_tool_outcome_migration_repairs_retained_results_without_usage_replay(tmp_path):
+    from reflect.store.ingest import ingest_local_spans_file
+    from reflect.store.normalize import normalize_pending_raw_events
+    from reflect.store.rollups import rebuild_rollups, rollup_rebuild_pending
+
+    conn = connect_sqlite(tmp_path / "outcomes.db")
+    try:
+        _apply_migrations_through(conn, 32)
+        events = []
+        for sid, output in (
+            ("bad", {"isError": True, "content": [{"type": "text", "text": "Disconnected"}]}),
+            ("quoted", {"exit_code": 0, "output": "Too many open files (os error 24)"}),
+        ):
+            for phase in ("PreToolUse", "PostToolUse"):
+                events.append({
+                    "name": phase, "traceId": sid, "spanId": sid + phase,
+                    "start_time_ns": 1791183100000000000, "end_time_ns": 1791183101000000000,
+                    "attributes": {
+                        "gen_ai.client.name": "copilot", "gen_ai.client.session_id": sid,
+                        "gen_ai.client.hook.event": phase, "gen_ai.client.tool_name": "run",
+                        "gen_ai.tool.call.id": sid,
+                        **({"gen_ai.client.tool.output": json.dumps(output), "gen_ai.usage.input_tokens": 7}
+                           if phase == "PostToolUse" else {}),
+                    },
+                })
+        path = tmp_path / "events.jsonl"
+        path.write_text("\n".join(json.dumps(e) for e in events))
+        ingest_local_spans_file(conn, file_path=path)
+        # Seed the historical schema without invoking the current task-identity reader.
+        with (
+            patch("reflect.store.normalize.refresh_command_projection"),
+            patch("reflect.store.normalize.TaskRunReconciler.reconcile"),
+            patch("reflect.store.normalize.PendingRefreshState.mark"),
+            patch("reflect.store.normalize.PendingRefreshState.mark_steps"),
+            patch("reflect.store.normalize.PendingRefreshState.capture") as pending_capture,
+            patch("reflect.store.normalize.PendingRefreshState.acknowledge"),
+        ):
+            pending_capture.return_value.pending_for.return_value = set()
+            normalize_pending_raw_events(conn)
+        # Simulate the old classifier, retaining original raw attributes/outputs.
+        conn.execute("UPDATE steps SET status = 'ok'")
+        conn.execute("UPDATE tool_calls SET status = 'ok', error_type = NULL, error_message_redacted = NULL")
+        with patch("reflect.store.rollups.refresh_tool_contributions"):
+            rebuild_rollups(conn)
+        conn.commit()
+        before_tokens = conn.execute("SELECT SUM(input_tokens) FROM sessions").fetchone()[0]
+        assert migrate(conn) == [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
+        assert conn.execute("SELECT status, failure_count FROM sessions WHERE id='bad'").fetchone() == ("error", 1)
+        assert conn.execute("SELECT failure_count FROM sessions WHERE id='quoted'").fetchone()[0] == 0
+        assert conn.execute("SELECT status, error_type, error_message_redacted FROM tool_calls WHERE session_id='bad'").fetchone() == ("error", "tool_error", "Disconnected")
+        assert conn.execute("SELECT SUM(input_tokens) FROM sessions").fetchone()[0] == before_tokens
+        assert normalize_pending_raw_events(conn)["processed"] == 0
+        assert rollup_rebuild_pending(conn)
+        rebuild_rollups(conn)
+        assert not rollup_rebuild_pending(conn)
+        assert conn.execute("SELECT error_count FROM session_rollups WHERE session_id='bad'").fetchone()[0] == 1
+        assert migrate(conn) == []
+    finally:
+        conn.close()
+
+
 def test_migrate_applies_initial_schema(tmp_path):
     db_path = tmp_path / "reflect.db"
     conn = connect_sqlite(db_path)
     try:
         applied = migrate(conn)
         assert applied == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58
         ]
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "raw_events" in tables
@@ -231,7 +322,7 @@ def test_token_provenance_migration_repairs_lifecycle_llm_calls(tmp_path):
         )
         conn.commit()
 
-        assert migrate(conn) == [32]
+        assert migrate(conn) == [32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
         provenance = dict(conn.execute("SELECT id, token_provenance FROM sessions"))
         assert provenance == {
             "estimated": "estimated_cursor_transcript",
@@ -257,7 +348,7 @@ def test_migrate_is_idempotent(tmp_path):
     conn = connect_sqlite(tmp_path / "reflect.db")
     try:
         assert migrate(conn) == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58
         ]
         assert migrate(conn) == []
     finally:
@@ -277,7 +368,7 @@ def test_relational_source_cursor_migration_preserves_existing_checkpoints(tmp_p
         )
         conn.commit()
 
-        assert migrate(conn) == [31, 32]
+        assert migrate(conn) == [31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
         row = conn.execute(
             """
             SELECT size_bytes, modified_ns, record_cursor_time, record_cursor_id
@@ -332,7 +423,7 @@ def test_context_artifact_migration_backfills_exposures_without_replaying_sessio
         )
         conn.commit()
 
-        assert migrate(conn) == [26, 27, 28, 29, 30, 31, 32]
+        assert migrate(conn) == [26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
 
         assert tuple(conn.execute(
             "SELECT memory_id, session_id FROM memory_exposures"
@@ -395,8 +486,9 @@ def test_migrate_serializes_concurrent_background_requests(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: run_migration(), range(2)))
 
-    assert sorted(len(result) for result in results) == [0, 32]
-    assert sorted(version for result in results for version in result) == list(range(1, 33))
+    versions = [migration.version for migration in load_migrations()]
+    assert sorted(len(result) for result in results) == [0, len(versions)]
+    assert sorted(version for result in results for version in result) == versions
 
 
 def test_migrate_uses_read_only_fast_path_when_schema_is_current(tmp_path):
@@ -420,11 +512,11 @@ def test_migrate_can_preserve_a_caller_owned_transaction(tmp_path):
         _apply_migrations_through(conn, 21)
         conn.execute("BEGIN IMMEDIATE")
 
-        assert migrate(conn, commit=False) == [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+        assert migrate(conn, commit=False) == [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
         assert conn.in_transaction is True
         assert conn.execute(
             "SELECT MAX(version) FROM schema_migrations"
-        ).fetchone()[0] == 32
+        ).fetchone()[0] == 58
 
         conn.rollback()
         assert conn.execute(
@@ -561,7 +653,7 @@ def test_logical_tool_call_migration_merges_invocation_and_result(tmp_path):
             )
         conn.commit()
 
-        assert migrate(conn) == [25, 26, 27, 28, 29, 30, 31, 32]
+        assert migrate(conn) == [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
         row = conn.execute(
             """
             SELECT logical_call_id, tool_name, status, duration_ms,
@@ -619,7 +711,7 @@ def test_mcp_identity_migration_merges_invocation_and_result(tmp_path):
             )
         conn.commit()
 
-        assert migrate(conn) == [27, 28, 29, 30, 31, 32]
+        assert migrate(conn) == [27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
         assert tuple(
             conn.execute(
                 """
@@ -700,7 +792,7 @@ def test_database_doctor_reports_pending_migrations(tmp_path):
     assert status["ok"] is False
     assert status["applied_migrations"] == []
     assert status["pending_migrations"] == [
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58
     ]
 
 
@@ -730,7 +822,7 @@ def test_migrate_adds_task_reconciliation_state_without_losing_phase_one_runs(tm
         )
         conn.commit()
 
-        assert migrate(conn) == [17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+        assert migrate(conn) == [17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
         row = conn.execute(
             """
             SELECT id, session_linked_at, session_outcome_recorded,
@@ -772,7 +864,7 @@ def test_migrate_adds_change_reviews_without_changing_phase_two_task_runs(tmp_pa
         )
         conn.commit()
 
-        assert migrate(conn) == [18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+        assert migrate(conn) == [18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
         assert tuple(
             conn.execute(
                 """
@@ -895,7 +987,7 @@ def test_migrate_reingests_codex_desktop_logs_and_removes_noisy_trace_session(tm
         )
         conn.commit()
 
-        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+        assert migrate(conn) == [19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
         assert conn.execute(
             "SELECT COUNT(*) FROM source_ingestion_state"
         ).fetchone()[0] == 0
@@ -947,7 +1039,7 @@ def test_retention_migration_keeps_unrecoverable_epoch_start(tmp_path):
         )
         conn.commit()
 
-        assert migrate(conn) == [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+        assert migrate(conn) == [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
         assert conn.execute(
             "SELECT started_at FROM sessions WHERE id = 'session-epoch'"
         ).fetchone()[0] == "1970-01-01T00:00:00+00:00"
@@ -1110,7 +1202,7 @@ def test_canonical_workflow_migration_removes_legacy_session_ledger_rebuild(tmp_
             (observation_id,),
         ).fetchone()[0] == 20
 
-        assert migrate(conn) == [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
+        assert migrate(conn) == [22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
         assert conn.execute(
             """
             SELECT value FROM store_metadata
@@ -1121,5 +1213,120 @@ def test_canonical_workflow_migration_removes_legacy_session_ledger_rebuild(tmp_
             "SELECT COUNT(*) FROM observation_sessions WHERE observation_id = ?",
             (observation_id,),
         ).fetchone()[0] == 20
+    finally:
+        conn.close()
+
+
+def test_evidence_integrity_migration_repairs_merged_failure_metadata(tmp_path):
+    from reflect.store.rollups import rebuild_rollups, rollup_rebuild_pending
+
+    conn = connect_sqlite(tmp_path / 'integrity.db')
+    try:
+        # Prior outcome migration has no data to classify in this empty legacy fixture.
+        conn.create_function('reflect_tool_failure', 2, lambda _event, _attrs: None)
+        _apply_migrations_through(conn, 34)
+        conn.execute("INSERT INTO sessions(id, started_at, status, input_tokens, created_at, updated_at) VALUES ('s', '2026-01-01', 'unknown', 123, 'now', 'now')")
+        conn.execute("INSERT INTO steps(id, session_id, seq, type, started_at, status, created_at, updated_at) VALUES ('step', 's', 1, 'tool_call', '2026-01-01', 'unknown', 'now', 'now')")
+        conn.execute("INSERT INTO tool_calls(id, step_id, session_id, tool_name, status, error_type, created_at, updated_at) VALUES ('call', 'step', 's', 'exec', 'unknown', 'tool_result', 'now', 'now')")
+        conn.execute("INSERT INTO steps(id, session_id, seq, type, started_at, status, created_at, updated_at) VALUES ('step2', 's', 2, 'tool_call', '2026-01-01', 'unknown', 'now', 'now')")
+        conn.execute("INSERT INTO tool_calls(id, step_id, session_id, tool_name, status, created_at, updated_at) VALUES ('call2', 'step2', 's', 'exec', 'error', 'now', 'now')")
+        conn.commit()
+        assert migrate(conn) == [35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
+        assert conn.execute('SELECT status FROM tool_calls').fetchone()[0] == 'error'
+        assert conn.execute('SELECT status FROM steps').fetchone()[0] == 'error'
+        assert conn.execute("SELECT COUNT(*) FROM steps WHERE status <> 'error'").fetchone()[0] == 0
+        assert rollup_rebuild_pending(conn)
+        rebuild_rollups(conn)
+        assert conn.execute('SELECT failure_count, input_tokens FROM sessions').fetchone() == (2, 123)
+        assert conn.execute('SELECT error_count FROM session_rollups').fetchone()[0] == 2
+        assert migrate(conn) == []
+    finally:
+        conn.close()
+
+
+def test_measurement_migration_preserves_legacy_tokens_but_rejects_config_model(tmp_path):
+    from reflect.preparation_pipeline import reprice_sql_store
+    from reflect.pricing import ModelPricing, PricingTable
+    from reflect.views.measurements import build_measurements
+
+    conn = connect_sqlite(tmp_path / "legacy-model.db")
+    try:
+        previous = [item for item in load_migrations() if item.version <= 38]
+        with patch("reflect.store.migrate.load_migrations", return_value=previous):
+            migrate(conn)
+        now = "2026-11-01T10:00:00Z"
+        attrs = {
+            "gen_ai.request.model": "fixture",
+            "gen_ai.request.model_source": "codex_config_default",
+            "gen_ai.usage.input_tokens": 100,
+            "gen_ai.usage.output_tokens": 20,
+            "gen_ai.usage.cache_read.input_tokens": 10,
+            "gen_ai.usage.cache_creation.input_tokens": 0,
+        }
+        conn.execute("""INSERT INTO sessions(id,started_at,input_tokens,output_tokens,
+            cache_read_tokens,reasoning_tokens,estimated_cost_usd,created_at,updated_at)
+            VALUES('legacy',?,100,20,10,5,9,?,?)""", (now, now, now))
+        conn.execute("""INSERT INTO steps(id,session_id,seq,type,started_at,raw_attrs_json,created_at,updated_at)
+            VALUES('legacy-step','legacy',1,'llm_call',?,?,?,?)""", (now, json.dumps(attrs), now, now))
+        conn.execute("""INSERT INTO llm_calls(id,step_id,session_id,request_model,response_model,
+            input_tokens,output_tokens,cache_read_input_tokens,reasoning_output_tokens,
+            estimated_cost_usd,raw_attrs_json,created_at,updated_at)
+            VALUES('legacy-call','legacy-step','legacy','fixture','fixture',100,20,10,5,9,?,?,?)""",
+            (json.dumps(attrs), now, now))
+        conn.commit()
+
+        assert migrate(conn) == [39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58]
+        for table in ("steps", "llm_calls"):
+            migrated = json.loads(conn.execute(f"SELECT raw_attrs_json FROM {table}").fetchone()[0])
+            assert migrated["reflect.model.provenance"] == "config_default"
+            assert {key: migrated[key] for key in attrs} == attrs
+        table = PricingTable({"fixture": ModelPricing("fixture", 3e-6, 15e-6, 3.75e-6, .3e-6)}, "fixture", 0)
+        for _ in range(2):
+            reprice_sql_store(conn, pricing_table=table, aliases={})
+            measured = build_measurements(conn)
+            assert measured.coverage["known_model_usage"] == 0
+            assert measured.coverage["priced_usage"] == 0
+            assert measured.coverage["cost_status"] == "unavailable"
+            assert measured.model_mix[0]["model"] is None
+            assert measured.totals["estimated_cost_usd"] == 0
+            assert (measured.totals["input_tokens"], measured.totals["output_tokens"],
+                    measured.totals["cache_read_tokens"], measured.totals["reasoning_tokens"]) == (100, 20, 10, 5)
+            assert conn.execute("SELECT input_tokens,output_tokens,cache_read_tokens,reasoning_tokens FROM sessions").fetchone() == (100, 20, 10, 5)
+            assert conn.execute("SELECT request_model,response_model FROM llm_calls").fetchone() == ("fixture", "fixture")
+        assert migrate(conn) == []
+    finally:
+        conn.close()
+
+
+def test_graph_rank_indexes_preserve_evidence_and_cover_only_metadata(tmp_path):
+    conn = connect_sqlite(tmp_path / "graph-rank.db")
+    try:
+        with patch("reflect.store.migrate.load_migrations", return_value=[
+            migration for migration in load_migrations() if migration.version <= 56
+        ]):
+            migrate(conn)
+        for identifier in ("source", "target"):
+            conn.execute("""INSERT INTO graph_nodes
+                (id,kind,label,session_id,attrs_json,created_at,updated_at)
+                VALUES (?,'Path',?,'session',?,'2026-01-01','2026-01-01')""",
+                (identifier, identifier, json.dumps({"evidence": "x" * 100_000})))
+        conn.execute("""INSERT INTO graph_edges
+            (id,source_node_id,target_node_id,kind,session_id,attrs_json,created_at,updated_at)
+            VALUES ('edge','source','target','touched_path','session',?,'2026-01-01','2026-01-01')""",
+            (json.dumps({"evidence": "y" * 100_000}),))
+        before = {table: conn.execute(f"SELECT * FROM {table}").fetchall()
+                  for table in ("graph_nodes", "graph_edges")}
+        conn.commit()
+        assert migrate(conn) == [57, 58]
+        for table, index, fields in (
+            ("graph_nodes", "idx_graph_nodes_rank", "id,kind,label,first_seen_at,last_seen_at,session_id,rowid"),
+            ("graph_edges", "idx_graph_edges_rank", "id,kind,weight,first_seen_at,last_seen_at,session_id,rowid"),
+        ):
+            assert conn.execute(f"SELECT * FROM {table}").fetchall() == before[table]
+            plan = conn.execute(f"EXPLAIN QUERY PLAN SELECT {fields} FROM {table} "
+                                f"INDEXED BY {index} WHERE session_id='session'").fetchall()
+            assert any(f"COVERING INDEX {index}" in row[-1] for row in plan)
+            assert "attrs_json" not in {row[2] for row in conn.execute(f"PRAGMA index_info({index})")}
+        assert migrate(conn) == []
     finally:
         conn.close()

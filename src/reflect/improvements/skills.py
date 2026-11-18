@@ -5,10 +5,12 @@ import json
 import re
 import sqlite3
 from collections.abc import Iterable
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
 from reflect.execution_units import ExecutionUnitRepository
+from reflect.improvements.analysis_scope import AnalysisScope
 from reflect.improvements.models import (
     SkillDetail,
     SkillInstallationRecord,
@@ -16,7 +18,7 @@ from reflect.improvements.models import (
     SkillMeasurementRecord,
     SkillOrigin,
     SkillRecord,
-    SkillUsageSessionRecord,
+    SkillUsageOccurrenceRecord,
     SkillVersionRecord,
     SkillVersionStatus,
     WorkflowCandidateRecord,
@@ -45,8 +47,8 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _skill_id(slug: str) -> str:
-    return f"skill_{_hash(slug)[:24]}"
+def _skill_id(identity_key: str) -> str:
+    return f"skill_{_hash(identity_key)[:24]}"
 
 
 def _normalize_slug(value: str) -> str:
@@ -59,21 +61,82 @@ class SkillRegistryService:
 
     def __init__(self, conn: sqlite3.Connection, *, initialize_schema: bool = True):
         self.conn = conn
+        self._registry_connection = None
+        attached = {row[1]: row[2] for row in conn.execute('PRAGMA database_list')}
+        self._state_path = Path(attached['user_state']) if attached.get('user_state') else None
         if initialize_schema:
             migrate(conn)
         self.repository = ImprovementRepository(conn)
         self.workflows = WorkflowService(conn)
         self.execution_units = ExecutionUnitRepository(conn)
 
+    @property
+    def registry_conn(self):
+        return self._registry_connection if self._registry_connection is not None else self.conn
+
+    @staticmethod
+    def _review_fingerprint(conn, schema, candidate_id):
+        review = conn.execute(f"""SELECT c.revision_hash,c.status,c.content_json,o.evidence_revision_hash
+            FROM {schema}.workflow_candidates c LEFT JOIN {schema}.workflow_review_ownership o ON o.candidate_id=c.id
+            WHERE c.id=?""", (candidate_id,)).fetchone()
+        installations = tuple(conn.execute(f"""SELECT i.id,i.status,i.applied_hash FROM {schema}.interventions i
+            JOIN {schema}.workflow_versions v ON v.id=i.workflow_version_id WHERE v.candidate_id=? ORDER BY i.id""",
+            (candidate_id,)))
+        return review, installations
+
+    @contextmanager
+    def _registry_transaction(self, candidate=None):
+        if self._state_path is None:
+            yield self.conn
+            return
+        from reflect.store.sqlite import connect_sqlite
+        from reflect.store.user_state_migration import _quoted
+
+        expected = self._review_fingerprint(self.conn, 'user_state', candidate.id) if candidate else None
+        context_rows = []
+        if candidate:
+            for table, predicate, params in (
+                ('rule_definitions', 'id IN (SELECT rule_id FROM observations WHERE id=?)', (candidate.observation_id,)),
+                ('task_archetypes', 'id=?', (candidate.task_archetype_id,)),
+                ('observations', 'id=?', (candidate.observation_id,)),
+                ('workflow_candidates', 'id=?', (candidate.id,)),
+            ):
+                names = [row[1] for row in self.conn.execute(f'PRAGMA main.table_info({_quoted(table)})')]
+                rows = self.conn.execute(f'SELECT * FROM main.{_quoted(table)} WHERE {predicate}', params).fetchall()
+                context_rows.append((table, names, rows))
+        with closing(connect_sqlite(self._state_path, strict_durability=True, timeout_ms=1000)) as registry:
+            registry.execute('BEGIN IMMEDIATE')
+            if candidate and self._review_fingerprint(registry, 'main', candidate.id) != expected:
+                yield None
+                return
+            for table, names, rows in context_rows:
+                registry.executemany(f'INSERT OR IGNORE INTO {_quoted(table)} ('
+                                     + ','.join(_quoted(name) for name in names) + ') VALUES ('
+                                     + ','.join('?' for _ in names) + ')', rows)
+            self._registry_connection = registry
+            try:
+                yield registry
+                registry.commit()
+            except BaseException:
+                registry.rollback()
+                raise
+            finally:
+                self._registry_connection = None
+
     def refresh(
         self,
         *,
         scan_paths: Iterable[Path] = (),
         commit: bool = True,
+        scope: AnalysisScope | None = None,
+        usage_scope: AnalysisScope | None = None,
+        usage_step_ids: set[str] | None = None,
     ) -> dict[str, int]:
         workflow_result = self.sync_workflow_candidates()
-        filesystem_result = self.sync_paths(scan_paths)
-        usage = self.sync_usage()
+        captured_paths = self._captured_skill_paths(
+            scope=usage_scope if usage_scope is not None else scope, step_ids=usage_step_ids)
+        filesystem_result = self.sync_paths([*scan_paths, *captured_paths])
+        usage = self.sync_usage(scope=usage_scope if usage_scope is not None else scope, step_ids=usage_step_ids)
         measurements = self.sync_measurements()
         if commit:
             self.conn.commit()
@@ -109,70 +172,108 @@ class SkillRegistryService:
             origin = self._origin_for(source_kind)
             rendered = self.workflows._render_skill(candidate)
             version_status, lifecycle = self._candidate_status(candidate)
-            skill_id, version_id, created = self._track_version(
-                slug=str(candidate.content.get("slug") or candidate.id),
-                name=str(candidate.content.get("slug") or candidate.title),
-                description=str(candidate.content.get("description") or candidate.hypothesis),
-                origin=origin,
-                content=rendered,
-                workflow=candidate.content,
-                source_kind=source_kind,
-                source_agent=source.get("agent"),
-                source_loop_id=source.get("loop_id"),
-                source_workflow_id=source.get("workflow_id"),
-                workflow_candidate_id=candidate.id,
-                version_status=version_status,
-                lifecycle=lifecycle,
-                now=candidate.updated_at,
-            )
-            tracked += 1
-            versions += int(created)
             ledger = self.repository.workflow_evidence_ledger(candidate.id, limit=200)
-            for observation_id in ledger.observation_ids or [candidate.observation_id]:
-                self._link_evidence(version_id, "observation", observation_id)
-            if source.get("loop_id"):
-                self._link_evidence(version_id, "loop", str(source["loop_id"]))
-            if source.get("workflow_id"):
-                self._link_evidence(version_id, "workflow", str(source["workflow_id"]))
-            for execution_unit in ledger.support_execution_units:
-                self._link_evidence(
-                    version_id,
-                    "execution_unit",
-                    execution_unit.execution_unit_id,
+            with self._registry_transaction(candidate) as registry:
+                if registry is None:
+                    continue
+                skill_id, version_id, created = self._track_version(
+                    identity_key=f"workflow:{candidate.contract_signature}",
+                    slug=str(candidate.content.get("slug") or candidate.id),
+                    name=str(candidate.content.get("slug") or candidate.title),
+                    description=str(candidate.content.get("description") or candidate.hypothesis),
+                    origin=origin,
+                    content=rendered,
+                    workflow=candidate.content,
+                    source_kind=source_kind,
+                    source_agent=source.get("agent"),
+                    source_loop_id=source.get("loop_id"),
+                    source_workflow_id=source.get("workflow_id"),
+                    workflow_candidate_id=candidate.id,
+                    version_status=version_status,
+                    lifecycle=lifecycle,
+                    now=candidate.updated_at,
                 )
-            installation_rows = self.conn.execute(
-                """
-                SELECT i.target_path, i.applied_hash, i.status, i.created_at, i.updated_at
-                FROM interventions i
-                JOIN workflow_versions wv ON wv.id = i.workflow_version_id
-                WHERE wv.candidate_id = ?
-                ORDER BY i.created_at
-                """,
-                (candidate.id,),
-            ).fetchall()
-            for install in installation_rows:
-                self._upsert_installation(
-                    skill_id=skill_id,
-                    version_id=version_id,
-                    path=Path(str(install[0])),
-                    installed_hash=install[1],
-                    status=str(install[2]),
-                    now=str(install[4] or install[3]),
-                )
-            if lifecycle != SkillLifecycleState.ACTIVE:
-                self.conn.execute(
+                tracked += 1
+                versions += int(created)
+                for observation_id in ledger.observation_ids or [candidate.observation_id]:
+                    self._link_evidence(version_id, "observation", observation_id)
+                if source.get("loop_id"):
+                    self._link_evidence(version_id, "loop", str(source["loop_id"]))
+                if source.get("workflow_id"):
+                    self._link_evidence(version_id, "workflow", str(source["workflow_id"]))
+                for execution_unit in ledger.support_execution_units:
+                    self._link_evidence(
+                        version_id,
+                        "execution_unit",
+                        execution_unit.execution_unit_id,
+                    )
+                installation_rows = self.registry_conn.execute(
                     """
-                    UPDATE skills
-                    SET lifecycle_state = ?, updated_at = ?
-                    WHERE id = ?
-                      AND NOT EXISTS (
-                        SELECT 1 FROM skill_installations
-                        WHERE skill_id = ? AND status = 'active'
-                      )
+                    SELECT i.target_path, i.applied_hash, i.status, i.created_at, i.updated_at
+                    FROM interventions i
+                    JOIN workflow_versions wv ON wv.id = i.workflow_version_id
+                    WHERE wv.candidate_id = ?
+                    ORDER BY i.created_at
                     """,
-                    (lifecycle.value, candidate.updated_at, skill_id, skill_id),
-                )
+                    (candidate.id,),
+                ).fetchall()
+                for install in installation_rows:
+                    installed_version = self.registry_conn.execute(
+                        "SELECT id FROM skill_versions WHERE skill_id=? AND content_hash=?",
+                        (skill_id, install[1]),
+                    ).fetchone()
+                    self._upsert_installation(
+                        skill_id=skill_id,
+                        version_id=str(installed_version[0]) if installed_version else None,
+                        path=Path(str(install[0])),
+                        installed_hash=install[1],
+                        status=str(install[2]),
+                        now=str(install[4] or install[3]),
+                    )
+                if lifecycle != SkillLifecycleState.ACTIVE:
+                    self.registry_conn.execute(
+                        """
+                        UPDATE skills
+                        SET lifecycle_state = ?, updated_at = ?
+                        WHERE id = ?
+                          AND NOT EXISTS (
+                            SELECT 1 FROM skill_installations
+                            WHERE skill_id = ? AND status = 'active'
+                          )
+                        """,
+                        (lifecycle.value, candidate.updated_at, skill_id, skill_id),
+                    )
         return {"skills": tracked, "versions_created": versions}
+
+    def _captured_skill_paths(self, *, scope: AnalysisScope | None, step_ids: set[str] | None) -> set[Path]:
+        """Discover exact skill files read by captured calls, including plugin paths."""
+        from reflect.tool_inputs import resolve_skill_path, skill_read_paths, tool_invocations
+        if (scope is not None and scope.session_ids == set()) or step_ids == set():
+            return set()
+        clauses, params = [], []
+        for column, values in (("tc.session_id", scope.session_ids if scope else None), ("tc.step_id", step_ids)):
+            if values is not None:
+                clauses.append(f"{column} IN ({','.join('?' for _ in values)})")
+                params.extend(sorted(values))
+        clauses.append("(tc.raw_attrs_json LIKE '%SKILL.md%' OR tc.input_preview_redacted LIKE '%SKILL.md%')")
+        rows = self.conn.execute(f"""SELECT tc.tool_name,tc.raw_attrs_json,tc.input_preview_redacted,
+            tc.output_preview_redacted,COALESCE(w.root_path,'') FROM tool_calls tc
+            JOIN sessions s ON s.id=tc.session_id LEFT JOIN workspaces w ON w.id=s.workspace_id
+            WHERE {' AND '.join(clauses)}""", params)
+        paths = set()
+        for name, raw, preview, output, workspace in rows:
+            for call in tool_invocations({"tool_name":name, "raw_attrs_json":raw,
+                                              "input_preview_redacted":preview, "output_preview_redacted":output}):
+                attrs = call['raw_attrs_json']
+                if not isinstance(attrs, dict):
+                    attrs = json.loads(attrs or '{}')
+                if not attrs.get('gen_ai.client.tool.input') and call.get('input_preview_redacted'):
+                    attrs = {**attrs, 'gen_ai.client.tool.input': call['input_preview_redacted']}
+                for path, _ in skill_read_paths(attrs, call['tool_name']):
+                    resolved = resolve_skill_path(path, attrs, workspace)
+                    if resolved and Path(resolved).is_file():
+                        paths.add(Path(resolved))
+        return paths
 
     def sync_paths(self, paths: Iterable[Path]) -> dict[str, int]:
         roots = [Path(item).expanduser().resolve() for item in paths]
@@ -186,186 +287,106 @@ class SkillRegistryService:
                 files.update(path for path in root.glob("*/SKILL.md") if path.is_file())
         now = utc_now()
         seen_paths: set[str] = set()
-        skills = 0
-        installations = 0
+        skills = installations = missing = 0
         for path in sorted(files):
+            # Filesystem work happens before reserving the action-store writer.
             parsed = self._parse_skill_file(path)
             if parsed is None:
                 continue
             slug, description, content = parsed
-            skill_id, version_id, _created = self._track_version(
-                slug=slug,
-                name=slug,
-                description=description,
-                origin=SkillOrigin.IMPORTED,
-                content=content,
-                workflow={},
-                source_kind="filesystem",
-                source_agent=None,
-                source_loop_id=None,
-                source_workflow_id=None,
-                workflow_candidate_id=None,
-                version_status=SkillVersionStatus.ACTIVE,
-                lifecycle=SkillLifecycleState.ACTIVE,
-                now=now,
-            )
             resolved = str(path.resolve())
             seen_paths.add(resolved)
-            self._upsert_installation(
-                skill_id=skill_id,
-                version_id=version_id,
-                path=path,
-                installed_hash=_hash(content),
-                status="active",
-                now=now,
-            )
-            skills += 1
-            installations += 1
-        missing = 0
-        for row in self.conn.execute(
-            "SELECT id, path FROM skill_installations WHERE status = 'active'"
-        ).fetchall():
-            installation_path = Path(str(row[1])).expanduser().resolve()
-            in_scan_scope = any(
-                installation_path == root or installation_path.is_relative_to(root)
-                for root in roots
-            )
-            if in_scan_scope and str(installation_path) not in seen_paths:
-                self.conn.execute(
-                    "UPDATE skill_installations SET status = 'missing', updated_at = ? WHERE id = ?",
-                    (now, row[0]),
-                )
-                missing += 1
-        self.conn.execute(
-            """
-            UPDATE skills
-            SET lifecycle_state = 'stale', updated_at = ?
-            WHERE origin = 'imported' AND lifecycle_state = 'active'
-              AND EXISTS (
-                SELECT 1 FROM skill_installations WHERE skill_id = skills.id
-              )
-              AND NOT EXISTS (
-                SELECT 1 FROM skill_installations
-                WHERE skill_id = skills.id AND status = 'active'
-              )
-            """,
-            (now,),
-        )
+            with self._registry_transaction() as registry:
+                generated = registry.execute("""SELECT s.id,v.id,i.installed_hash
+                    FROM skill_installations i JOIN skills s ON s.id=i.skill_id
+                    LEFT JOIN skill_versions v ON v.skill_id=s.id AND v.content_hash=i.installed_hash
+                    WHERE i.path=? AND s.identity_key LIKE 'workflow:%'""", (resolved,)).fetchone()
+                if generated and generated[2] != _hash(content) and self._state_path:
+                    # Drift is evidence, not permission to replace installation
+                    # intent. Workflow integrity analysis records it separately.
+                    continue
+                if generated and generated[2] == _hash(content):
+                    skill_id, version_id = str(generated[0]), generated[1]
+                else:
+                    skill_id, version_id, _ = self._track_version(
+                        identity_key=f"filesystem:{path.resolve()}", slug=slug, name=slug,
+                        description=description, origin=SkillOrigin.IMPORTED, content=content,
+                        workflow={}, source_kind="filesystem", source_agent=None,
+                        source_loop_id=None, source_workflow_id=None, workflow_candidate_id=None,
+                        version_status=SkillVersionStatus.ACTIVE, lifecycle=SkillLifecycleState.ACTIVE, now=now,
+                    )
+                self._upsert_installation(skill_id=skill_id, version_id=version_id, path=path,
+                                          installed_hash=_hash(content), status="active", now=now)
+                skills += 1
+                installations += 1
+        candidates = self.conn.execute("""SELECT i.id,i.path,i.installed_hash,s.identity_key
+            FROM skill_installations i JOIN skills s ON s.id=i.skill_id WHERE i.status='active'""").fetchall()
+        for installation_id, raw_path, expected_hash, identity in candidates:
+            path = Path(raw_path).expanduser().resolve()
+            if not any(path == root or path.is_relative_to(root) for root in roots) or str(path) in seen_paths:
+                continue
+            if self._state_path and str(identity).startswith('workflow:'):
+                continue
+            with self._registry_transaction() as registry:
+                result = registry.execute("""UPDATE skill_installations SET status='missing',updated_at=?
+                    WHERE id=? AND status='active' AND installed_hash IS ?""", (now, installation_id, expected_hash))
+                missing += result.rowcount
+        with self._registry_transaction() as registry:
+            registry.execute("""UPDATE skills SET lifecycle_state='stale',updated_at=?
+                WHERE origin='imported' AND lifecycle_state='active'
+                  AND EXISTS(SELECT 1 FROM skill_installations WHERE skill_id=skills.id)
+                  AND NOT EXISTS(SELECT 1 FROM skill_installations WHERE skill_id=skills.id AND status='active')""", (now,))
         return {"skills": skills, "installations": installations, "missing": missing}
 
-    def sync_usage(self) -> int:
-        rows = self.conn.execute(
-            """
-            SELECT gn.label, ge.session_id, MAX(COALESCE(ge.last_seen_at, ge.updated_at)),
-                   MAX(ge.weight)
-            FROM graph_edges ge
-            JOIN graph_nodes gn ON gn.id = ge.target_node_id
-            WHERE ge.kind = 'used_skill'
-              AND gn.kind = 'Skill'
-              AND ge.session_id IS NOT NULL
-            GROUP BY gn.label, ge.session_id
-            """
-        ).fetchall()
-        now = utc_now()
-        upserted = 0
-        for label, session_id, observed_at, weight in rows:
-            slug = _normalize_slug(str(label))
-            if not slug:
-                continue
-            skill_id = _skill_id(slug)
-            self._upsert_skill(
-                skill_id=skill_id,
-                slug=slug,
-                name=str(label),
-                description="Observed in local agent-session telemetry.",
-                origin=SkillOrigin.IMPORTED,
-                lifecycle=SkillLifecycleState.STALE,
-                current_version_id=None,
-                now=str(observed_at or now),
-            )
-            version_row = self.conn.execute(
-                "SELECT current_version_id FROM skills WHERE id = ?",
-                (skill_id,),
-            ).fetchone()
-            version_id = str(version_row[0]) if version_row and version_row[0] else None
-            timestamp = str(observed_at or now)
-            execution_row = self.conn.execute(
-                """
-                SELECT id FROM execution_units
-                WHERE session_id = ?
-                  AND started_at <= ?
-                  AND (ended_at IS NULL OR ended_at >= ?)
-                ORDER BY source_confidence DESC, started_at DESC
-                LIMIT 1
-                """,
-                (session_id, timestamp, timestamp),
-            ).fetchone()
-            if execution_row is None:
-                execution_unit_id = self.execution_units.ensure_session_fallback(
-                    str(session_id),
-                    now=timestamp,
-                )
-                if execution_unit_id is None:
-                    continue
-            else:
-                execution_unit_id = str(execution_row[0])
-            usage_id = f"skill_usage_{_hash(f'{skill_id}:{execution_unit_id}')[:24]}"
-            self.conn.execute(
-                """
-                INSERT INTO skill_usage(
-                  id, skill_id, skill_version_id, session_id, execution_unit_id,
-                  state, confidence,
-                  evidence_json, observed_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 'observed', ?, ?, ?, ?, ?)
-                ON CONFLICT(skill_id, execution_unit_id) DO UPDATE SET
-                  skill_version_id = excluded.skill_version_id,
-                  confidence = MAX(skill_usage.confidence, excluded.confidence),
-                  evidence_json = excluded.evidence_json,
-                  observed_at = excluded.observed_at,
-                  updated_at = excluded.updated_at
-                """,
-                (
-                    usage_id,
-                    skill_id,
-                    version_id,
-                    str(session_id),
-                    execution_unit_id,
-                    min(0.95, 0.55 + float(weight or 1) * 0.05),
-                    _json({"source": "behavioral_memory_graph", "edge_kind": "used_skill"}),
-                    timestamp,
-                    timestamp,
-                    timestamp,
-                ),
-            )
-            upserted += 1
-        return upserted
+    def sync_usage(self, *, scope: AnalysisScope | None = None, step_ids: set[str] | None = None) -> int:
+        from reflect.improvements.skill_usage import SkillUsageProjector
+
+        scope = scope or AnalysisScope()
+        return SkillUsageProjector(self.conn).refresh(
+            session_ids=scope.session_ids, step_ids=step_ids, now=utc_now(),
+        )
 
     def sync_measurements(self) -> int:
         rows = self.conn.execute(
             """
-            SELECT m.id, sv.skill_id, sv.id, m.metric_name, m.before_value,
+            SELECT m.id, identity.skill_id, sv.id, m.metric_name, m.before_value,
                    m.after_value, m.verdict, m.confidence, m.measured_at,
-                   m.cohort_json, m.before_count, m.after_count, m.delta
+                   m.cohort_json, m.before_count, m.after_count, m.delta,
+                   EXISTS (SELECT 1 FROM skill_installations si
+                           WHERE si.skill_id=identity.skill_id AND si.path=i.target_path)
             FROM measurements m
             JOIN interventions i ON i.id = m.intervention_id
             JOIN workflow_versions wv ON wv.id = i.workflow_version_id
-            JOIN skill_versions sv ON sv.id = (
-              SELECT latest.id FROM skill_versions latest
-              WHERE latest.workflow_candidate_id = wv.candidate_id
-              ORDER BY latest.version DESC LIMIT 1
-            )
+            JOIN (SELECT DISTINCT skill_id,workflow_candidate_id FROM skill_versions
+                  WHERE workflow_candidate_id IS NOT NULL) identity
+              ON identity.workflow_candidate_id=wv.candidate_id
+            LEFT JOIN skill_versions sv ON sv.skill_id=identity.skill_id
+              AND sv.content_hash=i.applied_hash
             ORDER BY m.measured_at
             """
         ).fetchall()
-        synced = 0
+        by_source: dict[str, list[tuple]] = {}
         for row in rows:
-            measurement_id = f"skill_measurement_{_hash(str(row[0]))[:24]}"
+            by_source.setdefault(str(row[0]), []).append(row)
+        synced = 0
+        for source_id, candidates in by_source.items():
+            measurement_id = f"skill_measurement_{_hash(source_id)[:24]}"
+            exact_path = [row for row in candidates if row[13]]
+            exact_hash = [row for row in candidates if row[2]]
+            resolved = exact_path or exact_hash or candidates
+            if len(resolved) != 1:
+                # A merged historical candidate does not establish which
+                # independently owned package received the intervention.
+                self.conn.execute("DELETE FROM skill_measurements WHERE id=?", (measurement_id,))
+                continue
+            row = resolved[0]
             details = {
                 "source_measurement_id": str(row[0]),
                 "cohort": _loads(row[9], {}),
                 "before_count": int(row[10]),
                 "after_count": int(row[11]),
                 "delta": row[12],
+                "version_attribution": "captured_applied_hash" if row[2] else "unknown",
             }
             self.conn.execute(
                 """
@@ -388,7 +409,7 @@ class SkillRegistryService:
                 (
                     measurement_id,
                     str(row[1]),
-                    str(row[2]),
+                    str(row[2]) if row[2] else None,
                     str(row[3]),
                     row[4],
                     row[5],
@@ -489,7 +510,24 @@ class SkillRegistryService:
             ).fetchall()
         }
 
-    def show(self, skill_id_or_slug: str) -> SkillDetail:
+    def resolve_id(self, skill_id_or_slug: str) -> str:
+        """Resolve an exact ID first, or a display slug with one source owner."""
+        matches = self.conn.execute(
+            "SELECT id FROM skills WHERE id=?", (skill_id_or_slug,)
+        ).fetchall()
+        if not matches:
+            matches = self.conn.execute(
+                "SELECT id FROM skills WHERE slug=? ORDER BY id", (skill_id_or_slug,)
+            ).fetchall()
+        if len(matches) > 1:
+            choices = ", ".join(str(item[0]) for item in matches)
+            raise ValueError(f"Ambiguous skill name {skill_id_or_slug!r}; use an exact skill ID: {choices}")
+        if not matches:
+            raise KeyError(f"Skill not found: {skill_id_or_slug}")
+        return str(matches[0][0])
+
+    def show(self, skill_id_or_slug: str, *, recorded_only: bool = False) -> SkillDetail:
+        resolved_id = self.resolve_id(skill_id_or_slug)
         row = self.conn.execute(
             """
             SELECT s.id, s.slug, s.name, s.description, s.origin, s.lifecycle_state,
@@ -504,9 +542,9 @@ class SkillRegistryService:
                    s.first_seen_at, s.last_seen_at, s.updated_at
             FROM skills s
             LEFT JOIN skill_versions sv ON sv.id = s.current_version_id
-            WHERE s.id = ? OR s.slug = ?
+            WHERE s.id = ?
             """,
-            (skill_id_or_slug, skill_id_or_slug),
+            (resolved_id,),
         ).fetchone()
         if row is None:
             raise KeyError(f"Skill not found: {skill_id_or_slug}")
@@ -542,7 +580,8 @@ class SkillRegistryService:
             """
             SELECT u.session_id, u.skill_version_id, u.state, u.outcome,
                    u.confidence, u.evidence_json, u.observed_at,
-                   s.title, a.name, s.started_at, s.status, w.root_path
+                   s.title, a.name, s.started_at, s.status, w.root_path,
+                   u.id, u.execution_unit_id, u.source_kind, u.source_id
             FROM skill_usage u
             JOIN sessions s ON s.id = u.session_id
             LEFT JOIN agents a ON a.id = s.agent_id
@@ -599,8 +638,8 @@ class SkillRegistryService:
                 }
                 for item in evidence_rows
             ],
-            usage_sessions=[
-                SkillUsageSessionRecord(
+            usage_occurrences=[
+                SkillUsageOccurrenceRecord(
                     session_id=str(item[0]),
                     skill_version_id=item[1],
                     state=str(item[2]),
@@ -613,24 +652,37 @@ class SkillRegistryService:
                     started_at=str(item[9]),
                     status=str(item[10]),
                     workspace=item[11],
+                    usage_id=str(item[12]),
+                    execution_unit_id=item[13],
+                    source_kind=str(item[14]),
+                    source_id=str(item[15]),
                 )
                 for item in usage_rows
             ],
             measurements=[
-                SkillMeasurementRecord(
-                    id=str(item[0]),
-                    skill_id=str(item[1]),
-                    skill_version_id=item[2],
-                    metric_name=str(item[3]),
-                    before_value=item[4],
-                    after_value=item[5],
-                    verdict=str(item[6]),
-                    confidence=float(item[7]),
-                    measured_at=str(item[8]),
-                    details=_loads(item[9], {}),
-                )
+                self._measurement_record(item, recorded_only=recorded_only)
                 for item in measurement_rows
             ],
+        )
+
+    def _measurement_record(self, row: tuple, *, recorded_only: bool = False) -> SkillMeasurementRecord:
+        from reflect.improvements.measurement import MeasurementService
+
+        details = _loads(row[9], {})
+        source_id = details.get("source_measurement_id")
+        current = MeasurementService(self.conn).list(measurement_id=source_id, limit=1) if source_id and not recorded_only else []
+        values = current[0] if current else {
+            "before_value": row[4], "after_value": row[5], "verdict": row[6], "confidence": row[7],
+        }
+        if current:
+            details = {**details, "cohort": values["cohort"], "delta": values["delta"]}
+            if "recorded_result" in values:
+                details["recorded_result"] = values["recorded_result"]
+        return SkillMeasurementRecord(
+            id=row[0], skill_id=row[1], skill_version_id=row[2], metric_name=row[3],
+            before_value=values["before_value"], after_value=values["after_value"],
+            verdict=values["verdict"], confidence=values["confidence"],
+            measured_at=row[8], details=details,
         )
 
     def workflow_candidate_for(self, skill_id_or_slug: str) -> str:
@@ -648,7 +700,7 @@ class SkillRegistryService:
     def skill_for_candidate(self, candidate_id: str) -> SkillRecord:
         row = self.conn.execute(
             """
-            SELECT s.slug FROM skills s JOIN skill_versions sv ON sv.skill_id = s.id
+            SELECT s.id FROM skills s JOIN skill_versions sv ON sv.skill_id = s.id
             WHERE sv.workflow_candidate_id = ?
             ORDER BY sv.version DESC LIMIT 1
             """,
@@ -675,17 +727,25 @@ class SkillRegistryService:
         version_status: SkillVersionStatus,
         lifecycle: SkillLifecycleState,
         now: str,
+        identity_key: str | None = None,
     ) -> tuple[str, str, bool]:
         normalized_slug = _normalize_slug(slug)
         if not normalized_slug:
             raise ValueError(f"Unsafe skill slug: {slug!r}")
-        skill_id = _skill_id(normalized_slug)
+        # Source-specific callers supply their canonical identity. The internal
+        # blueprint helper without a candidate uses its semantic procedure.
+        identity_key = identity_key or f"{source_kind}:{_hash(self._semantic_version_key(_json(workflow), _hash(content)))}"
+        existing_skill = self.registry_conn.execute(
+            "SELECT id FROM skills WHERE identity_key=?", (identity_key,)
+        ).fetchone()
+        skill_id = str(existing_skill[0]) if existing_skill else _skill_id(identity_key)
         content_hash = _hash(content)
         # Establish the stable skill identity before inserting a version. The
         # current version remains unset until the child row exists so both
         # sides of the foreign-key relationship are valid at every step.
         self._upsert_skill(
             skill_id=skill_id,
+            identity_key=identity_key,
             slug=normalized_slug,
             name=name,
             description=description,
@@ -694,13 +754,13 @@ class SkillRegistryService:
             current_version_id=None,
             now=now,
         )
-        existing = self.conn.execute(
+        existing = self.registry_conn.execute(
             "SELECT id FROM skill_versions WHERE skill_id = ? AND content_hash = ?",
             (skill_id, content_hash),
         ).fetchone()
         if existing:
             version_id = str(existing[0])
-            self.conn.execute(
+            self.registry_conn.execute(
                 """
                 UPDATE skill_versions
                 SET workflow_json = CASE WHEN ? <> '{}' THEN ? ELSE workflow_json END,
@@ -732,13 +792,13 @@ class SkillRegistryService:
             created = False
         else:
             version = int(
-                self.conn.execute(
+                self.registry_conn.execute(
                     "SELECT COALESCE(MAX(version), 0) + 1 FROM skill_versions WHERE skill_id = ?",
                     (skill_id,),
                 ).fetchone()[0]
             )
             version_id = f"skill_version_{_hash(f'{skill_id}:{content_hash}')[:24]}"
-            self.conn.execute(
+            self.registry_conn.execute(
                 """
                 INSERT INTO skill_versions(
                   id, skill_id, version, content_markdown, content_hash, workflow_json,
@@ -764,7 +824,7 @@ class SkillRegistryService:
                 ),
             )
             created = True
-        current_row = self.conn.execute(
+        current_row = self.registry_conn.execute(
             """
             SELECT s.current_version_id, sv.status
             FROM skills s LEFT JOIN skill_versions sv ON sv.id = s.current_version_id
@@ -790,6 +850,7 @@ class SkillRegistryService:
             current_version_id = None
         self._upsert_skill(
             skill_id=skill_id,
+            identity_key=identity_key,
             slug=normalized_slug,
             name=name,
             description=description,
@@ -804,6 +865,7 @@ class SkillRegistryService:
         self,
         *,
         skill_id: str,
+        identity_key: str,
         slug: str,
         name: str,
         description: str,
@@ -812,13 +874,14 @@ class SkillRegistryService:
         current_version_id: str | None,
         now: str,
     ) -> None:
-        self.conn.execute(
+        self.registry_conn.execute(
             """
             INSERT INTO skills(
-              id, slug, name, description, origin, lifecycle_state,
+              id, identity_key, slug, name, description, origin, lifecycle_state,
               current_version_id, first_seen_at, last_seen_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
+              slug = CASE WHEN excluded.description <> '' THEN excluded.slug ELSE skills.slug END,
               name = CASE WHEN excluded.description <> '' THEN excluded.name ELSE skills.name END,
               description = CASE WHEN excluded.description <> '' THEN excluded.description ELSE skills.description END,
               origin = CASE
@@ -836,6 +899,7 @@ class SkillRegistryService:
             """,
             (
                 skill_id,
+                identity_key,
                 slug,
                 name,
                 description,
@@ -861,7 +925,7 @@ class SkillRegistryService:
         evidence_id = (
             f"skill_evidence_{_hash(f'{version_id}:{entity_type}:{entity_id}:{relationship}')[:24]}"
         )
-        self.conn.execute(
+        self.registry_conn.execute(
             """
             INSERT INTO skill_evidence(
               id, skill_version_id, entity_type, entity_id, relationship, confidence, created_at
@@ -885,7 +949,7 @@ class SkillRegistryService:
         resolved = path.expanduser().resolve()
         target_kind, target_ref = self._installation_target(resolved)
         installation_id = f"skill_installation_{_hash(str(resolved))[:24]}"
-        self.conn.execute(
+        self.registry_conn.execute(
             """
             INSERT INTO skill_installations(
               id, skill_id, skill_version_id, target_kind, target_ref, path,
@@ -959,6 +1023,8 @@ class SkillRegistryService:
 
     @staticmethod
     def _origin_for(source_kind: str) -> SkillOrigin:
+        if source_kind == "user_authored":
+            return SkillOrigin.USER_AUTHORED
         if source_kind in {"agent_authored", "skill_extraction"}:
             return SkillOrigin.AGENT_AUTHORED
         if source_kind in {"manual_skill_file", "filesystem"}:

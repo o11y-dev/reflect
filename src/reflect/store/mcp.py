@@ -7,6 +7,17 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from reflect.store.pending_refresh import PendingRefreshState
+
+
+def qualify_mcp_tool_name(name: object, namespace: object = None) -> str:
+    """Preserve an explicitly recorded MCP namespace on native tool calls."""
+    tool = str(name or "").strip()
+    scope = str(namespace or "").strip()
+    if tool and scope.startswith("mcp__") and scope.removeprefix("mcp__") and not tool.startswith("mcp__"):
+        return f"{scope}__{tool}"
+    return tool
+
 
 def _first_text(attrs: dict[str, Any], *keys: str) -> str | None:
     for key in keys:
@@ -216,6 +227,7 @@ class MCPCallBackfill:
         changed_session_ids: set[str] | None = None,
     ) -> dict[str, int]:
         inserted = 0
+        touched_session_ids: set[str] = set()
         for where, params in self._session_scopes("tc", session_ids):
             rows = self.conn.execute(
                 f"""
@@ -267,8 +279,10 @@ class MCPCallBackfill:
                 )
                 if cursor.rowcount:
                     inserted += 1
+                    touched_session_ids.add(str(row[1]))
                     if changed_session_ids is not None:
                         changed_session_ids.add(str(row[1]))
+        PendingRefreshState(self.conn).mark(touched_session_ids)
         return {
             "inserted": inserted,
             "skipped_duplicates": 0,

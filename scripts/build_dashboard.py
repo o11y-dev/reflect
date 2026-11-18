@@ -13,15 +13,19 @@ OUTPUTS = (
 )
 CSS_SOURCES = (
     "css_foundation.css",
+    "css_demo.css",
     "css_improvements.css",
     "css_explore.css",
     "css_sessions.css",
     "css_conversation.css",
     "css_graphs.css",
+    "css_skill_usage.css",
 )
 JS_SOURCES = (
+    "js_demo.js",
     "js_bootstrap.js",
     "js_ledger.js",
+    "js_skill_usage.js",
     "js_navigation.js",
     "js_sessions.js",
     "js_impact.js",

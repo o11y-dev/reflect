@@ -18,11 +18,16 @@ from reflect.opencode_store import (
     OpenCodeMessageRecord,
     OpenCodeSessionRecord,
     OpenCodeSessionStore,
+    opencode_database_path,
     opencode_tool_success,
 )
 from reflect.raw_segments import readable_segment_paths
-from reflect.store.mcp import DEFAULT_MCP_CLASSIFIER
-from reflect.store.provenance import is_codex_otel_service
+from reflect.store.mcp import DEFAULT_MCP_CLASSIFIER, qualify_mcp_tool_name
+from reflect.store.provenance import (
+    is_codex_otel_service,
+    telemetry_session_id,
+    unassigned_codex_classification,
+)
 from reflect.utils import (
     _flatten_text_content,
     _json_dumps,
@@ -172,18 +177,7 @@ def _is_codex_runtime_internal_span(span: dict) -> bool:
     spans at the source boundary so bounded raw segments can be checkpointed and
     rotated without materializing runtime noise in canonical SQLite evidence.
     """
-    attrs = span.get("attributes") or {}
-    service = str(attrs.get("service.name") or "").lower()
-    if not is_codex_otel_service(service):
-        return False
-    useful_keys = {
-        "gen_ai.client.hook.event",
-        "gen_ai.client.session_id",
-        "session.id",
-        "conversation.id",
-        "event.name",
-    }
-    return not any(attrs.get(key) for key in useful_keys)
+    return unassigned_codex_classification(span.get("attributes") or {}) == "runtime_internal"
 
 
 def _load_otlp_logs(
@@ -247,22 +241,67 @@ def _coerce_int(value) -> int:
 
 
 def _usage_attrs_from_token_count(info: dict) -> dict[str, int]:
-    usage = info.get("last_token_usage") or info.get("total_token_usage") or {}
+    usage = info.get("last_token_usage") or {}
     if not isinstance(usage, dict):
         return {}
     input_tokens = _coerce_int(usage.get("input_tokens"))
     cached_tokens = _coerce_int(usage.get("cached_input_tokens"))
+    cache_write_tokens = _coerce_int(usage.get("cache_write_input_tokens"))
     output_tokens = _coerce_int(usage.get("output_tokens"))
     reasoning_tokens = _coerce_int(usage.get("reasoning_output_tokens"))
     attrs: dict[str, int] = {}
-    if input_tokens or cached_tokens:
-        attrs["gen_ai.usage.input_tokens"] = max(input_tokens - cached_tokens, 0)
+    if "input_tokens" in usage and "cached_input_tokens" in usage and input_tokens >= cached_tokens + cache_write_tokens:
+        attrs["gen_ai.usage.input_tokens"] = input_tokens - cached_tokens - cache_write_tokens
         attrs["gen_ai.usage.cache_read.input_tokens"] = cached_tokens
-    if output_tokens:
+    if "cache_write_input_tokens" in usage:
+        attrs["gen_ai.usage.cache_creation.input_tokens"] = cache_write_tokens
+    if "output_tokens" in usage:
         attrs["gen_ai.usage.output_tokens"] = output_tokens
-    if reasoning_tokens:
+    if "reasoning_output_tokens" in usage:
         attrs["gen_ai.usage.reasoning_output_tokens"] = reasoning_tokens
     return attrs
+
+
+def _native_tool_result_metadata(output: object) -> dict:
+    """Decode only the execution envelope, never arbitrary stdout/application JSON."""
+    value = output
+    if (isinstance(value, list) and len(value) == 1
+            and isinstance(value[0], dict)
+            and str(value[0].get("text") or "").startswith("Script running with cell ID ")):
+        value = value[0]["text"]
+    if (isinstance(value, list) and len(value) == 2
+            and all(isinstance(block, dict) for block in value)
+            and str(value[0].get("text") or "").startswith("Script completed\nWall time ")):
+        try:
+            candidate = _json_loads(value[1].get("text") or "")
+        except (ValueError, TypeError):
+            candidate = None
+        if isinstance(candidate, dict) and {"chunk_id", "wall_time_seconds", "output"} <= candidate.keys():
+            value = candidate
+    if isinstance(value, str):
+        # These are outer harness status lines. Never inspect application
+        # stdout after Final output for process/cell lifecycle evidence.
+        if re.match(r"\AScript running with cell ID \S+(?:\s|$)", value):
+            return {"reflect.tool.terminal": False}
+        try:
+            value = _json_loads(value)
+        except (ValueError, TypeError):
+            value = None
+        # Codex's native exec envelope places status before the Final output.
+        if value is None and isinstance(output, str) and output.startswith("Chunk ID:"):
+            header = output.split("Final output:", 1)[0]
+            if re.search(r"^Process running with session ID \S+\s*$", header, re.MULTILINE):
+                return {"reflect.tool.terminal": False}
+            match = re.search(r"^Process exited with code (-?\d+)\s*$", header, re.MULTILINE)
+            if match:
+                return {"process.exit.code": int(match.group(1)), "reflect.tool.terminal": True}
+    if isinstance(value, dict) and "output" in value:
+        code = value.get("exit_code")
+        if isinstance(code, int) and not isinstance(code, bool):
+            return {"process.exit.code": code, "reflect.tool.terminal": True}
+        if value.get("session_id") is not None:
+            return {"reflect.tool.terminal": False}
+    return {"reflect.tool.terminal": True}
 
 
 def _first_attr(attrs: dict, *names: str) -> str:
@@ -314,7 +353,12 @@ def _iter_codex_log_spans(records: Iterable[dict], since_ns: int = 0) -> Iterabl
             "session.id": session_id,
             "service.name": service,
             "reflect.telemetry.origin": "native_otlp_log",
+            "reflect.native.event_name": event_name,
+            "reflect.time.provenance": "observed" if ts_ns else "unavailable",
         }
+        turn_id = attrs.get("turn.id") or attrs.get("turn_id")
+        if turn_id:
+            base_attrs["gen_ai.client.turn_id"] = str(turn_id)
         model = str(attrs.get("slug") or attrs.get("model") or "").strip()
         if model:
             base_attrs["gen_ai.request.model"] = model
@@ -400,15 +444,17 @@ def _iter_codex_log_spans(records: Iterable[dict], since_ns: int = 0) -> Iterabl
             cached_tokens = _coerce_int(attrs.get("cached_token_count"))
             output_tokens = _coerce_int(attrs.get("output_token_count"))
             yield _make_flat_span(
-                "gen_ai.client.hook.Stop",
+                "gen_ai.client.hook.Usage",
                 ts_ns,
                 ts_ns,
                 {
                     **base_attrs,
-                    "gen_ai.client.hook.event": "Stop",
-                    "gen_ai.usage.input_tokens": max(input_tokens - cached_tokens, 0),
-                    "gen_ai.usage.output_tokens": output_tokens,
-                    "gen_ai.usage.cache_read.input_tokens": cached_tokens,
+                    "gen_ai.client.hook.event": "Usage",
+                    "reflect.turn.terminal": False,
+                    "reflect.usage.grain": "request",
+                    "reflect.usage.input_semantics": "uncached",
+                    **({"gen_ai.usage.input_tokens": input_tokens - cached_tokens, "gen_ai.usage.cache_read.input_tokens": cached_tokens} if "input_token_count" in attrs and "cached_token_count" in attrs and input_tokens >= cached_tokens else {}),
+                    **({"gen_ai.usage.output_tokens": output_tokens} if "output_token_count" in attrs else {}),
                 },
                 trace_id,
                 f"{index}:sse_response_completed",
@@ -445,6 +491,8 @@ def _iter_claude_log_spans(records: Iterable[dict], since_ns: int = 0) -> Iterab
             "session.id": session_id,
             "service.name": service,
             "reflect.telemetry.origin": "native_otlp_log",
+            "reflect.native.event_name": event_name,
+            "reflect.time.provenance": "observed" if ts_ns else "unavailable",
         }
         if attrs.get("model"):
             base_attrs["gen_ai.request.model"] = str(attrs["model"])
@@ -467,18 +515,20 @@ def _iter_claude_log_spans(records: Iterable[dict], since_ns: int = 0) -> Iterab
             start_ns = max(ts_ns - duration_ms * 1_000_000, 0) if duration_ms else ts_ns
             span_attrs = {
                 **base_attrs,
-                "gen_ai.client.hook.event": "Stop",
+                "gen_ai.client.hook.event": "Usage",
+                "reflect.turn.terminal": False,
+                "reflect.usage.grain": "request",
+                "reflect.usage.input_semantics": "uncached",
                 "gen_ai.client.status": "ok" if str(attrs.get("success") or "true").lower() != "false" else "error",
-                "gen_ai.usage.input_tokens": _coerce_int(attrs.get("input_tokens")),
-                "gen_ai.usage.output_tokens": _coerce_int(attrs.get("output_tokens")),
-                "gen_ai.usage.cache_read.input_tokens": _coerce_int(attrs.get("cache_read_tokens")),
-                "gen_ai.usage.cache_creation.input_tokens": _coerce_int(attrs.get("cache_creation_tokens")),
             }
+            for key, target in {"input_tokens": "input_tokens", "output_tokens": "output_tokens", "cache_read_tokens": "cache_read.input_tokens", "cache_creation_tokens": "cache_creation.input_tokens"}.items():
+                if key in attrs and attrs[key] is not None:
+                    span_attrs[f"gen_ai.usage.{target}"] = _coerce_int(attrs[key])
             cost = attrs.get("cost_usd")
             if cost not in (None, ""):
                 span_attrs["gen_ai.usage.cost_usd"] = str(cost)
             yield _make_flat_span(
-                "gen_ai.client.hook.Stop",
+                "gen_ai.client.hook.Usage",
                 start_ns,
                 ts_ns,
                 span_attrs,
@@ -703,16 +753,7 @@ def _discover_rich_session_files() -> list[tuple[str, Path]]:
     for agent, root, pattern in sources:
         candidates.extend((agent, path) for path in sorted(root.glob(pattern)))
 
-    opencode_capability = get_agent_capability("opencode")
-    assert opencode_capability is not None
-    if any(os.environ.get(name) for name in opencode_capability.env_names):
-        opencode_home = opencode_capability.home()
-    else:
-        data_home = Path(
-            os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")
-        ).expanduser()
-        opencode_home = data_home / "opencode"
-    opencode_db = opencode_home / "opencode.db"
+    opencode_db = opencode_database_path()
     if opencode_db.is_file():
         candidates.append(("opencode", opencode_db))
     return candidates
@@ -741,17 +782,41 @@ def _codex_session_identity(meta: dict, file_path: Path) -> tuple[str, str, dict
         "service.name": "codex",
     }
     codex_model = str(meta.get("model") or meta.get("last_known_model") or "").strip()
-    if not codex_model:
-        codex_model = _load_codex_default_model()
-        if codex_model:
-            base_attrs["gen_ai.request.model_source"] = "codex_config_default"
     if codex_model:
         base_attrs["gen_ai.request.model"] = codex_model
+        base_attrs["gen_ai.request.model_source"] = "session_metadata"
     if meta.get("model_provider"):
         base_attrs["gen_ai.system"] = str(meta["model_provider"])
     if meta.get("cwd"):
         base_attrs["code.workspace.root"] = str(meta["cwd"])
+    source = meta.get("source") or {}
+    if isinstance(source, dict):
+        subagent = source.get("subagent") or {}
+        spawn = subagent.get("thread_spawn") or {} if isinstance(subagent, dict) else {}
+        if isinstance(spawn, dict) and spawn.get("parent_thread_id"):
+            base_attrs["source.subagent.thread_spawn.parent_thread_id"] = spawn["parent_thread_id"]
     return session_id, trace_id, base_attrs
+
+
+def read_codex_parent_thread(file_path: Path) -> tuple[str, str] | None:
+    """Read explicit parent identity from the native session header only."""
+    try:
+        with file_path.open("rb") as stream:
+            record = _json_loads(stream.readline(1024 * 1024))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict) or record.get("type") != "session_meta":
+        return None
+    meta = record.get("payload")
+    if not isinstance(meta, dict):
+        return None
+    source = meta.get("source")
+    if not isinstance(source, dict) or not source.get("subagent"):
+        return None
+    child, parent = meta.get("id"), meta.get("parent_thread_id")
+    if isinstance(child, str) and child.strip() and isinstance(parent, str) and parent.strip():
+        return child.strip(), parent.strip()
+    return None
 
 
 def _iter_codex_context_spans(file_path: Path, *, max_records: int = 64) -> Iterable[dict]:
@@ -801,6 +866,7 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
     first_ts = 0
     last_ts = 0
     active_tools: dict[str, dict] = {}
+    cumulative_usage: dict | None = None
 
     for index, record in enumerate(records):
         ts_ns = _codex_record_timestamp_ns(record)
@@ -809,6 +875,24 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
             last_ts = max(last_ts, ts_ns)
         record_type = record.get("type")
         payload = record.get("payload") or {}
+
+        if record_type == "turn_context":
+            if payload.get("turn_id"):
+                base_attrs["gen_ai.client.turn_id"] = str(payload["turn_id"])
+            if payload.get("model"):
+                base_attrs["gen_ai.request.model"] = str(payload["model"])
+                base_attrs["gen_ai.request.model_source"] = "turn_context"
+            continue
+        base_attrs["reflect.time.provenance"] = "observed" if ts_ns else "unavailable"
+        base_attrs["reflect.native.record_id"] = f"codex:{index}"
+        if record_type == "event_msg" and payload.get("type") in {"task_started", "turn_started"} and payload.get("turn_id"):
+            base_attrs["gen_ai.client.turn_id"] = str(payload["turn_id"])
+        if record_type == "event_msg" and payload.get("type") in {"task_complete", "task_completed", "turn_complete", "turn_completed"}:
+            yield _make_flat_span("gen_ai.client.hook.Stop", ts_ns, ts_ns, {
+                **base_attrs, "gen_ai.client.hook.event": "Stop", "reflect.turn.terminal": True,
+                **({"gen_ai.client.turn_id": str(payload["turn_id"])} if payload.get("turn_id") else {}),
+            }, trace_id, f"{index}:terminal")
+            continue
 
         if record_type == "response_item":
             item_type = payload.get("type")
@@ -831,14 +915,17 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
                         f"{index}:user",
                     )
                 elif role == "assistant":
+                    terminal = payload.get("channel") == "final" or payload.get("phase") == "final_answer"
+                    event = "Stop" if terminal else "AssistantMessage"
                     span_attrs = {
                         **base_attrs,
-                        "gen_ai.client.hook.event": "Stop",
+                        "gen_ai.client.hook.event": event,
+                        "reflect.turn.terminal": terminal,
                     }
                     if text:
                         span_attrs["gen_ai.client.output"] = text
                     yield _make_flat_span(
-                        "gen_ai.client.hook.Stop",
+                        f"gen_ai.client.hook.{event}",
                         ts_ns,
                         ts_ns,
                         span_attrs,
@@ -847,7 +934,7 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
                     )
             elif item_type in {"function_call", "custom_tool_call"}:
                 call_id = str(payload.get("call_id") or payload.get("id") or f"{index}")
-                tool_name = str(payload.get("name") or "")
+                tool_name = qualify_mcp_tool_name(payload.get("name"), payload.get("namespace"))
                 arguments = (
                     payload.get("arguments")
                     if item_type == "function_call"
@@ -864,6 +951,7 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
                     {
                         **base_attrs,
                         "gen_ai.client.hook.event": "PreToolUse",
+                        "reflect.tool.identity_provenance": "observed" if payload.get("call_id") or payload.get("id") else "synthetic",
                         **_agent_tool_attrs(tool_name, arguments, call_id),
                     },
                     trace_id,
@@ -880,6 +968,7 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
                     {
                         **base_attrs,
                         "gen_ai.client.hook.event": "PostToolUse",
+                        **_native_tool_result_metadata(output),
                         "gen_ai.client.tool_name": str(start_info.get("tool_name") or payload.get("name") or ""),
                         "gen_ai.client.tool_use_id": call_id,
                         "gen_ai.tool.call.id": call_id,
@@ -889,16 +978,48 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
                     f"{index}:function_call_output:{call_id}",
                 )
         elif record_type == "event_msg" and payload.get("type") == "token_count":
-            usage_attrs = _usage_attrs_from_token_count(payload.get("info") or {})
+            info = payload.get("info") or {}
+            total = info.get("total_token_usage")
+            if isinstance(total, dict) and total == cumulative_usage:
+                continue
+            usage_attrs = _usage_attrs_from_token_count(info)
+            grain = "request"
+            if not usage_attrs and isinstance(total, dict):
+                grain = "session" if cumulative_usage is None else "interval"
+                if cumulative_usage is None:
+                    delta = total
+                elif all(_coerce_int(total.get(key)) >= _coerce_int(value) for key, value in cumulative_usage.items()):
+                    delta = {key: _coerce_int(value) - _coerce_int(cumulative_usage.get(key)) for key, value in total.items()}
+                else:
+                    # A counter reset does not identify the unobserved interval.
+                    cumulative_usage = total
+                    yield _make_flat_span("gen_ai.client.hook.Usage", ts_ns, ts_ns, {
+                        **base_attrs, "gen_ai.client.hook.event": "Usage",
+                        "reflect.usage.grain": "interval",
+                        "reflect.usage.unavailable_reason": "counter_reset",
+                    }, trace_id, f"{index}:counter_reset")
+                    continue
+                usage_attrs = _usage_attrs_from_token_count({"last_token_usage": delta})
+            if isinstance(total, dict):
+                cumulative_usage = total
             if not usage_attrs:
                 continue
+            usage_base = dict(base_attrs)
+            if grain != "request":
+                usage_base.pop("gen_ai.client.turn_id", None)
+                usage_base.pop("gen_ai.request.model", None)
+                usage_base.pop("gen_ai.request.model_source", None)
             yield _make_flat_span(
-                "gen_ai.client.hook.Stop",
+                "gen_ai.client.hook.Usage",
                 ts_ns,
                 ts_ns,
                 {
-                    **base_attrs,
-                    "gen_ai.client.hook.event": "Stop",
+                    **usage_base,
+                    "gen_ai.client.hook.event": "Usage",
+                    "reflect.usage.grain": grain,
+                    "reflect.usage.input_semantics": "uncached",
+                    "reflect.usage.time_provenance": "unknown_interval" if grain == "session" else "observed",
+                    "gen_ai.request.id": f"{trace_id}:{index}:usage",
                     **usage_attrs,
                 },
                 trace_id,
@@ -913,6 +1034,7 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
             {
                 **base_attrs,
                 "gen_ai.client.hook.event": "SessionStart",
+                "reflect.boundary.provenance": "observed_extent",
             },
             trace_id,
             "synthetic:session.start",
@@ -925,6 +1047,7 @@ def _iter_codex_session_spans(file_path: Path) -> Iterable[dict]:
             {
                 **base_attrs,
                 "gen_ai.client.hook.event": "SessionEnd",
+                "reflect.boundary.provenance": "observed_extent",
             },
             trace_id,
             "synthetic:session.end",
@@ -1054,6 +1177,17 @@ def _iter_claude_session_spans(file_path: Path) -> Iterable[dict]:
     first_ts = 0
     last_ts = 0
     trace_id = _stable_hex_id("claude", str(file_path), length=32)
+    last_request_record: dict[str, int] = {}
+    request_usage: dict[str, dict] = {}
+    for index, event in enumerate(events):
+        message = event.get("message") or {}
+        if event.get("type") == "assistant":
+            request_id = str(event.get("requestId") or message.get("id") or f"record:{index}")
+            last_request_record[request_id] = index
+            request_usage.setdefault(request_id, {}).update(message.get("usage") or {})
+    active_tools: dict[str, dict] = {}
+    seen_tools: set[str] = set()
+    turn_id = ""
     for index, event in enumerate(events):
         event_type = event.get("type")
         if event_type == "file-history-snapshot":
@@ -1068,50 +1202,110 @@ def _iter_claude_session_spans(file_path: Path) -> Iterable[dict]:
             "gen_ai.provider.name": "anthropic",
             "gen_ai.client.session_id": session_id,
             "session.id": session_id,
+            "reflect.time.provenance": "observed" if ts_ns else "unavailable",
+            "reflect.native.record_id": f"claude:{index}",
         }
+        if turn_id:
+            attrs["gen_ai.client.turn_id"] = turn_id
+            attrs["reflect.turn.identity_provenance"] = "prompt"
         if event.get("cwd"):
             attrs["code.workspace.root"] = event["cwd"]
         if event_type == "user":
-            yield _make_flat_span("gen_ai.client.hook.UserPromptSubmit", ts_ns, ts_ns, {
-                **attrs,
-                "gen_ai.client.hook.event": "UserPromptSubmit",
-                "gen_ai.client.prompt": _flatten_text_content(event.get("message", {}).get("content")),
-            }, trace_id, f"{index}:user")
+            content = event.get("message", {}).get("content")
+            for item in content if isinstance(content, list) else []:
+                if not isinstance(item, dict) or item.get("type") != "tool_result":
+                    continue
+                call_id = str(item.get("tool_use_id") or "")
+                start_info = active_tools.get(call_id, {})
+                result_event = "PostToolUseFailure" if item.get("is_error") else "PostToolUse"
+                yield _make_flat_span(f"gen_ai.client.hook.{result_event}", ts_ns, ts_ns, {
+                    **attrs,
+                    "gen_ai.client.hook.event": result_event,
+                    "gen_ai.client.tool_name": start_info.get("tool_name", ""),
+                    "gen_ai.client.tool_use_id": call_id,
+                    "gen_ai.tool.call.id": call_id,
+                    "gen_ai.client.tool.output": _flatten_text_content(item.get("content")),
+                    "reflect.tool.terminal": True,
+                    "reflect.tool.identity_provenance": "observed" if call_id else "synthetic",
+                }, trace_id, f"{index}:tool_result:{call_id}")
+            prompt_content = [item for item in content if isinstance(item, dict) and item.get("type") in {"text", "input_text"}] if isinstance(content, list) else content
+            prompt = _flatten_text_content(prompt_content)
+            if prompt and not event.get("isMeta"):
+                turn_id = str(event.get("uuid") or f"prompt:{index}")
+                yield _make_flat_span("gen_ai.client.hook.UserPromptSubmit", ts_ns, ts_ns, {
+                    **attrs,
+                    "gen_ai.client.turn_id": turn_id,
+                    "reflect.turn.identity_provenance": "prompt",
+                    "gen_ai.client.hook.event": "UserPromptSubmit",
+                    "gen_ai.client.prompt": prompt,
+                }, trace_id, f"{index}:user")
         elif event_type == "assistant":
             message = event.get("message", {}) or {}
-            usage = message.get("usage", {}) or {}
+            request_id = str(event.get("requestId") or message.get("id") or f"record:{index}")
+            final_record = last_request_record[request_id] == index
+            usage = request_usage[request_id] if final_record else {}
             model = message.get("model", "")
             content = message.get("content") or []
+            terminal = final_record and message.get("stop_reason") == "end_turn"
+            response_event = "Stop" if terminal else "AssistantMessage"
             response_attrs = {
                 **attrs,
-                "gen_ai.client.hook.event": "Stop",
+                "gen_ai.client.hook.event": response_event,
+                "reflect.turn.terminal": terminal,
                 "gen_ai.request.model": model,
-                "gen_ai.usage.input_tokens": int(usage.get("input_tokens", 0) or 0),
-                "gen_ai.usage.output_tokens": int(usage.get("output_tokens", 0) or 0),
-                "gen_ai.usage.cache_creation.input_tokens": int(usage.get("cache_creation_input_tokens", 0) or 0),
-                "gen_ai.usage.cache_read.input_tokens": int(usage.get("cache_read_input_tokens", 0) or 0),
+                "gen_ai.request.model_source": "native_request",
+                "gen_ai.request.id": request_id,
+                "reflect.usage.grain": "request",
+                "reflect.usage.input_semantics": "uncached",
             }
+            for key, target in {"input_tokens": "input_tokens", "output_tokens": "output_tokens", "cache_creation_input_tokens": "cache_creation.input_tokens", "cache_read_input_tokens": "cache_read.input_tokens"}.items():
+                if key in usage and usage[key] is not None:
+                    response_attrs[f"gen_ai.usage.{target}"] = int(usage[key])
+            cache_creation = usage.get("cache_creation") or {}
+            if isinstance(cache_creation, dict):
+                for ttl in ("5m", "1h"):
+                    value = cache_creation.get(f"ephemeral_{ttl}_input_tokens")
+                    if value is not None:
+                        response_attrs[f"gen_ai.usage.cache_creation.{ttl}_input_tokens"] = int(value)
             response_text = _flatten_text_content(content)
             if response_text:
                 response_attrs["gen_ai.client.output"] = response_text
             yield _make_flat_span(
-                "gen_ai.client.hook.Stop", ts_ns, ts_ns,
+                f"gen_ai.client.hook.{response_event}", ts_ns, ts_ns,
                 response_attrs, trace_id, f"{index}:assistant",
             )
             for tool_idx, item in enumerate(content):
                 if not isinstance(item, dict) or item.get("type") != "tool_use":
                     continue
+                call_id = str(item.get("id") or f"{index}:{tool_idx}")
+                if call_id in seen_tools:
+                    continue
+                seen_tools.add(call_id)
                 tool_name = item.get("name", "")
+                active_tools[call_id] = {"start_ns": ts_ns, "tool_name": tool_name}
                 tool_attrs = {
                     **attrs,
                     "gen_ai.client.hook.event": "PreToolUse",
+                    "reflect.tool.identity_provenance": "observed" if item.get("id") else "synthetic",
                     **_agent_tool_attrs(
                         tool_name,
                         item.get("input", {}),
-                        item.get("id"),
+                        call_id,
                     ),
                 }
                 yield _make_flat_span("gen_ai.client.hook.PreToolUse", ts_ns, ts_ns, tool_attrs, trace_id, f"{index}:tool_use:{tool_idx}")
+        elif event_type == "system" and event.get("subtype") == "api_error":
+            error = event.get("error") or {}
+            if not isinstance(error, dict):
+                error = {"message": str(error)}
+            connection = error.get("connection") or {}
+            yield _make_flat_span("gen_ai.client.hook.ApiError", ts_ns, ts_ns, {
+                **attrs,
+                "gen_ai.client.hook.event": "ApiError",
+                "error.type": connection.get("code", "provider_error") if isinstance(connection, dict) else "provider_error",
+                "error.message": str(error.get("formatted") or error.get("message") or "Provider request failed"),
+                "reflect.provider.retry_attempt": event.get("retryAttempt"),
+            }, trace_id, f"{index}:api_error")
         elif event_type == "summary":
             continue
     if first_ts:
@@ -1149,6 +1343,7 @@ def _iter_cursor_session_spans(file_path: Path) -> Iterable[dict]:
         if role not in ("user", "assistant"):
             continue
         ts_ns = _parse_timestamp_to_ns(event.get("timestamp"))
+        time_provenance = "observed" if ts_ns else "inferred"
         if not ts_ns:
             ts_ns = (fallback_ts_ns or 1) + (index * 1_000_000)
         first_ts = ts_ns if not first_ts else min(first_ts, ts_ns)
@@ -1158,6 +1353,8 @@ def _iter_cursor_session_spans(file_path: Path) -> Iterable[dict]:
             "gen_ai.provider.name": "cursor",
             "gen_ai.client.session_id": session_id,
             "session.id": session_id,
+            "reflect.time.provenance": time_provenance,
+            "reflect.native.record_id": f"cursor:{index}",
         }
         text = _flatten_text_content(event.get("message", {}).get("content"))
         if role == "user":
@@ -1168,9 +1365,10 @@ def _iter_cursor_session_spans(file_path: Path) -> Iterable[dict]:
             }, trace_id, f"{index}:user")
         elif role == "assistant":
             content = event.get("message", {}).get("content")
-            yield _make_flat_span("gen_ai.client.hook.Stop", ts_ns, ts_ns, {
+            yield _make_flat_span("gen_ai.client.hook.AssistantMessage", ts_ns, ts_ns, {
                 **attrs,
-                "gen_ai.client.hook.event": "Stop",
+                "gen_ai.client.hook.event": "AssistantMessage",
+                "reflect.turn.terminal": False,
                 "gen_ai.client.output": text,
             }, trace_id, f"{index}:assistant")
             if not isinstance(content, list):
@@ -1182,7 +1380,7 @@ def _iter_cursor_session_spans(file_path: Path) -> Iterable[dict]:
                 tool_attrs = _agent_tool_attrs(
                     tool_name,
                     item.get("input"),
-                    f"cursor-native:{index}:{tool_idx}",
+                    item.get("id") or f"cursor-native:{index}:{tool_idx}",
                 )
                 yield _make_flat_span(
                     "gen_ai.client.hook.PreToolUse",
@@ -1191,6 +1389,7 @@ def _iter_cursor_session_spans(file_path: Path) -> Iterable[dict]:
                     {
                         **attrs,
                         **tool_attrs,
+                        "reflect.tool.identity_provenance": "observed" if item.get("id") else "synthetic",
                         "gen_ai.client.hook.event": "PreToolUse",
                     },
                     trace_id,
@@ -1203,6 +1402,8 @@ def _iter_cursor_session_spans(file_path: Path) -> Iterable[dict]:
             "gen_ai.client.session_id": session_id,
             "session.id": session_id,
             "gen_ai.client.hook.event": "SessionStart",
+            "reflect.time.provenance": "inferred",
+            "reflect.boundary.provenance": "observed_extent",
         }, trace_id, "synthetic:session.start")
     if last_ts:
         yield _make_flat_span("gen_ai.client.hook.SessionEnd", last_ts, last_ts, {
@@ -1211,6 +1412,8 @@ def _iter_cursor_session_spans(file_path: Path) -> Iterable[dict]:
             "gen_ai.client.session_id": session_id,
             "session.id": session_id,
             "gen_ai.client.hook.event": "SessionEnd",
+            "reflect.time.provenance": "inferred",
+            "reflect.boundary.provenance": "observed_extent",
         }, trace_id, "synthetic:session.end")
 
 
@@ -1695,12 +1898,7 @@ def _shorten_mcp_server(server: str) -> str:
 
 
 def _extract_session_id(attrs: dict) -> str:
-    return (
-        attrs.get("gen_ai.client.session_id")
-        or attrs.get("session.id")
-        or attrs.get("ide.session_id")
-        or ""
-    )
+    return telemetry_session_id(attrs) or ""
 
 
 def _extract_model_name(attrs: dict) -> str:

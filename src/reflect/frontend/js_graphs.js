@@ -1,5 +1,62 @@
 /* ════════════════════ GRAPHS ════════════════════ */
 
+function presentGraphWidgets(panel, state, showData, message){
+  const busy = state === 'loading' || state === 'preparing';
+  const label = {
+    loading: showData ? 'Updating…' : 'Loading graph data…',
+    preparing: showData ? 'Updating…' : 'Loading graph data…',
+    stale: 'Published snapshot',
+    recorded: 'Analysis pending',
+    error: showData ? 'Update failed. Showing the last result.' : message || 'Could not load this widget.',
+  }[state] || '';
+  for (const widget of panel.querySelectorAll('.graph-widget')) {
+    const body = widget.querySelector('.graph-widget-body');
+    const content = widget.querySelector('.graph-widget-content');
+    const presentation = showData ? 'data' : 'placeholder';
+    widget.dataset.presentation = presentation;
+    widget.dataset.state = state;
+    widget.setAttribute('aria-busy', String(busy));
+    content.toggleAttribute('inert', !showData);
+    let notice = body.querySelector('.graph-widget-notice');
+    if (!notice) {
+      notice = document.createElement('div');
+      notice.className = 'graph-widget-notice';
+      const copy = document.createElement('span');
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'ledger-button';
+      retry.textContent = 'Retry';
+      const heading = widget.querySelector('h2');
+      retry.setAttribute('aria-label', `Retry ${heading.firstChild.textContent.trim()}`);
+      retry.addEventListener('click', () => {
+        heading.tabIndex = -1;
+        heading.focus({preventScroll:true});
+        hydrateExploreView('graph', {retry:true}).catch(() => {});
+      });
+      notice.append(copy, retry);
+      body.append(notice);
+    }
+    const copy = notice.querySelector('span');
+    if (copy.textContent !== label) copy.textContent = label;
+    notice.title = state === 'error' || state === 'stale' || state === 'recorded' ? message : '';
+    notice.querySelector('button').hidden = state !== 'error';
+    notice.hidden = !label;
+  }
+}
+
+function renderPublishedGraph(scope){
+  const panel = document.getElementById('tab-explore-graph');
+  if (panel.hidden) return;
+  try {
+    initGraphs();
+    renderedGraph = {scope, payload:sqlTab('graph')};
+  } catch (error) {
+    renderedGraph = null;
+    exploreGraphLifecycle.key = '';
+    throw error;
+  }
+}
+
 /* Tool color map */
 const TOOL_COLORS = {};
 (function assignToolColors(){
@@ -18,12 +75,33 @@ function svgWidth(el) {
   return el.clientWidth > 0 ? el.clientWidth : (window.innerWidth - 96);
 }
 
+class ExploreGraphLifecycle {
+  constructor(){ this.key = ''; this.cleanups = []; }
+  begin(data, scope){
+    const key = JSON.stringify([scope, data.graph_tool_transitions, data.graph_dep,
+      data.graph_semantic, data.graph_session_timeline, data.graph_cooccurrence]);
+    if (key === this.key) return false;
+    this.cleanups.splice(0).forEach(cleanup => cleanup());
+    for (const id of ['sankey-svg','dep-svg','semantic-graph-svg']) {
+      const el = document.getElementById(id);
+      if (el) { d3.select(el).interrupt(); el.replaceChildren(); }
+    }
+    this.key = key;
+    return true;
+  }
+  onDispose(cleanup){ this.cleanups.push(cleanup); }
+}
+const exploreGraphLifecycle = new ExploreGraphLifecycle();
+
 function initGraphs() {
+  if (!exploreGraphLifecycle.begin(sqlTab('graph'), exploreViewUrl('graph').url.toString())) return;
 
 /* ── 1. Tool Flow — manual arc diagram ── */
 (function buildSankey(){
   const el = document.getElementById('sankey-svg');
   const trans = sqlTab('graph').graph_tool_transitions || [];
+  const empty = document.getElementById('sankey-empty');
+  if (empty) empty.hidden = Boolean(trans.length);
   if (!el || !trans.length) {
     if (el) d3.select(el).selectAll('*').remove();
     return;
@@ -126,8 +204,8 @@ function initGraphs() {
   }
 
   if (!dep.nodes.length || !dep.links.length) {
-    document.getElementById('dep-svg').outerHTML =
-      '<div style="height:440px;display:flex;align-items:center;justify-content:center;color:var(--text-3);font-size:13px">No agent-to-tool activity captured for this report.</div>';
+    document.getElementById('dep-svg').style.height = '0px';
+    noteEl.textContent = 'No agent-to-tool activity captured for this report.';
     return;
   }
 
@@ -304,13 +382,17 @@ function initGraphs() {
   const tip = document.getElementById('semantic-graph-tip');
   if (!shell || !svgEl || !filter || !mode || !context || !legend || !tip) return;
   if (!initialGraph.nodes.length) {
-    shell.outerHTML = '<div class="semantic-graph-empty">No semantic graph rows found. Run reflect, then use reflect memory sync . to add local folder memories.</div>';
+    shell.hidden = true;
+    context.textContent = 'No semantic graph rows found for this selection.';
     filter.innerHTML = '<option value="">All sessions</option>';
     mode.disabled = true;
     legend.innerHTML = '';
     return;
   }
 
+  shell.hidden = false;
+  tip.classList.remove('is-visible');
+  const savedSession = filter.value, savedMode = mode.value;
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   let allNodes = [];
   let allEdges = [];
@@ -369,7 +451,7 @@ function initGraphs() {
     ).join('');
   }
 
-  useGraphData(initialGraph);
+  useGraphData(initialGraph, savedSession);
 
   function workspaceSessionIds(sessionId) {
     const sessionIds = new Set([sessionId]);
@@ -475,16 +557,29 @@ function initGraphs() {
   const viewport = svg.append('g');
   const linkLayer = viewport.append('g');
   const nodeLayer = viewport.append('g');
+  let disposed = false, fitTimer = null, userAdjusted = false;
   const zoom = d3.zoom()
     .scaleExtent([.18, 3.5])
-    .on('zoom', event => viewport.attr('transform', event.transform));
+    .on('zoom', event => {
+      if (event.sourceEvent) userAdjusted = true;
+      viewport.attr('transform', event.transform);
+    });
   svg.call(zoom);
 
   let simulation = null;
   let activeSession = '';
-  let activeMode = 'workspace';
+  let activeMode = savedMode || 'workspace';
+  exploreGraphLifecycle.onDispose(() => {
+    disposed = true;
+    simulation?.stop();
+    clearTimeout(fitTimer);
+    svg.interrupt().on('.zoom', null);
+    filter.onchange = null;
+    mode.onchange = null;
+  });
 
   function render(sessionId, relationshipMode = activeMode) {
+    if ((sessionId || '') !== activeSession || relationshipMode !== activeMode) userAdjusted = false;
     activeSession = sessionId || '';
     activeMode = relationshipMode || 'workspace';
     const focusedSessionIds = !activeSession
@@ -590,7 +685,9 @@ function initGraphs() {
         nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
       });
 
-    setTimeout(() => {
+    clearTimeout(fitTimer);
+    fitTimer = setTimeout(() => {
+      if (disposed || userAdjusted) return;
       const bounds = viewport.node()?.getBBox?.();
       if (!bounds || !Number.isFinite(bounds.width) || !bounds.width) return;
       const scale = Math.min(1.1, .88 / Math.max(bounds.width / W, bounds.height / H));
@@ -601,7 +698,7 @@ function initGraphs() {
   }
 
   let workspaceRequest = 0;
-  filter.addEventListener('change', async event => {
+  filter.onchange = async event => {
     const selectedSession = event.target.value;
     const requestId = ++workspaceRequest;
     mode.disabled = !selectedSession;
@@ -617,26 +714,29 @@ function initGraphs() {
       const response = await fetch(url.toString(), {headers: {Accept: 'application/json'}});
       if (!response.ok) throw new Error('workspace-graph-fetch-failed');
       const payload = await response.json();
-      if (requestId !== workspaceRequest) return;
+      if (disposed || requestId !== workspaceRequest) return;
       useGraphData(payload.graph_semantic || initialGraph, selectedSession);
       mode.disabled = false;
       render(selectedSession, mode.value);
     } catch (error) {
-      if (requestId !== workspaceRequest) return;
+      if (disposed || requestId !== workspaceRequest) return;
       useGraphData(initialGraph, selectedSession);
       render(selectedSession, mode.value);
       context.textContent = 'Workspace expansion was unavailable; showing the bounded local graph snapshot.';
     }
-  });
-  mode.addEventListener('change', event => render(activeSession, event.target.value));
-  mode.disabled = true;
-  window.addEventListener('resize', () => render(activeSession, activeMode));
-  render('');
+  };
+  mode.onchange = event => render(activeSession, event.target.value);
+  mode.disabled = !filter.value;
+  const resize = () => { if (!disposed) render(activeSession, activeMode); };
+  window.addEventListener('resize', resize);
+  exploreGraphLifecycle.onDispose(() => window.removeEventListener('resize', resize));
+  render(filter.value, activeMode);
 })();
 /* ── 3. Session Timeline ── */
 (function buildTimeline(){
   const sessions = sqlTab('graph').graph_session_timeline || [];
   if (!sessions.length) {
+    document.getElementById('timeline-legend').innerHTML = '';
     document.getElementById('timeline-wrap').innerHTML =
       '<p style="color:var(--text-3);font-size:13px">No timeline data</p>';
     return;
@@ -693,7 +793,11 @@ function initGraphs() {
 /* ── 4. Co-occurrence Matrix ── */
 (function buildMatrix(){
   const co = sqlTab('graph').graph_cooccurrence;
-  if (!co || !co.tools.length) return;
+  document.getElementById('matrix-empty').hidden = Boolean(co?.tools?.length);
+  if (!co?.tools?.length) {
+    document.getElementById('matrix-table').innerHTML = '';
+    return;
+  }
 
   const tools = co.tools;
   const matrix = co.matrix;
@@ -725,53 +829,6 @@ function initGraphs() {
     html += '</tr>';
   }
   tbl.innerHTML = html;
-})();
-
-/* ── 5. Latency Histograms ── */
-(function buildHistograms(){
-  const hist = sqlTab('graph').graph_latency_histograms;
-  if (!hist || !Object.keys(hist.tools).length) return;
-
-  const labels = hist.labels;
-  const bucketColors = [P.green, P.teal, P.blue, P.yellow, P.orange, P.red];
-  const grid = document.getElementById('hist-grid');
-  grid.innerHTML = '';
-
-  Object.entries(hist.tools).forEach(([tool, buckets]) => {
-    const maxVal = Math.max(...buckets, 1);
-    const item = document.createElement('div');
-    item.className = 'hist-item';
-
-    const lbl = document.createElement('div');
-    lbl.className = 'hist-label';
-    lbl.textContent = tool;
-    item.appendChild(lbl);
-
-    const bars = document.createElement('div');
-    bars.className = 'hist-bars';
-
-    const bLabels = document.createElement('div');
-    bLabels.className = 'hist-bLabels';
-
-    buckets.forEach((v, i) => {
-      const bar = document.createElement('div');
-      bar.className = 'hist-bar';
-      bar.style.height = Math.max((v / maxVal) * 80, 2) + 'px';
-      bar.style.background = bucketColors[i];
-      bar.style.opacity = '0.8';
-      bar.title = `${labels[i]}: ${v} calls`;
-      bars.appendChild(bar);
-
-      const bl = document.createElement('div');
-      bl.className = 'hist-bLabel';
-      bl.textContent = labels[i].replace('ms','').replace('-','-');
-      bLabels.appendChild(bl);
-    });
-
-    item.appendChild(bars);
-    item.appendChild(bLabels);
-    grid.appendChild(item);
-  });
 })();
 
 } // end initGraphs
@@ -870,22 +927,9 @@ function makeLine(id, labels, datasets, costAxis=false){
   });
 }
 
-function urlHasDashboardFilters(){
-  const params = currentParams();
-  return Boolean(
-    (params.get('q') || '').trim()
-    || (params.get('session') || '').trim()
-    || (params.get('agents') || '').trim()
-    || ((params.get('model') || 'all') !== 'all')
-    || ((params.get('status') || 'all') !== 'all')
-    || ((params.get('range') || 'all') !== 'all')
-    || ((params.get('sort') || 'recent') !== 'recent')
-  );
-}
-
-dashboardFilterActive = urlHasDashboardFilters();
 buildCohortComparison();
 
+setupDemoNavigation({evidence:showObservationEvidence, workflow:showWorkflowReview, impact:showImpactSessions});
 hideReportLoader();
 
 }

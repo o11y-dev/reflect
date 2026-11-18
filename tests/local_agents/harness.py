@@ -15,6 +15,7 @@ from pathlib import Path
 
 from reflect.context import ReflectContextService
 from reflect.improvements.service import ImprovementService
+from reflect.parsing import _extract_session_id, _flatten_otlp_attributes
 from reflect.store.sqlite import connect_sqlite
 
 SUCCESS_MARKER = "REFLECT_MCP_OK"
@@ -300,10 +301,27 @@ class AgentAdapter(ABC):
 
         return extract_final_message(stdout)
 
+    def build_telemetry(self, context: AgentTestContext, *, resume_session_id: str = "") -> AgentCommand:
+        """Retain normal native capture; the scenario uses no Reflect MCP calls."""
+        raise NotImplementedError(f"telemetry profile is not implemented for {self.name}")
+
 
 class ClaudeAdapter(AgentAdapter):
     name = "claude"
     executable_name = "claude"
+
+    def build_telemetry(self, context: AgentTestContext, *, resume_session_id: str = "") -> AgentCommand:
+        config = context.workspace / "claude-telemetry-mcp.json"
+        config.write_text('{"mcpServers": {}}', encoding="utf-8")
+        return AgentCommand(
+            argv=(context.executable, "--print", "--output-format", "json",
+                  "--strict-mcp-config", "--mcp-config", str(config),
+                  "--tools", "Bash,Read,Write,Edit", "--permission-mode", "dontAsk",
+                  "--allowedTools", "Bash(python3 verify.py),Read,Write,Edit",
+                  "--effort", "low", "--max-budget-usd", "0.50",
+                  *(("--resume", resume_session_id) if resume_session_id else ()), context.prompt),
+            cwd=context.workspace,
+        )
 
     def build(self, context: AgentTestContext) -> AgentCommand:
         config_path = context.workspace / "claude-mcp.json"
@@ -374,6 +392,15 @@ class CodexAdapter(AgentAdapter):
     name = "codex"
     executable_name = "codex"
 
+    def build_telemetry(self, context: AgentTestContext, *, resume_session_id: str = "") -> AgentCommand:
+        return AgentCommand(
+            argv=(context.executable, "exec", "--ignore-user-config", "--ignore-rules",
+                  "--skip-git-repo-check", "--sandbox", "workspace-write", "--json",
+                  "--config", 'approval_policy="never"',
+                  *(("resume", resume_session_id) if resume_session_id else ()), context.prompt),
+            cwd=context.workspace,
+        )
+
     def build(self, context: AgentTestContext) -> AgentCommand:
         server = context.stdio_server
         env = server["env"]
@@ -433,6 +460,14 @@ class CursorAdapter(AgentAdapter):
     name = "cursor"
     executable_name = "cursor-agent"
 
+    def build_telemetry(self, context: AgentTestContext, *, resume_session_id: str = "") -> AgentCommand:
+        return AgentCommand(
+            argv=(context.executable, "--print", "--output-format", "json", "--sandbox", "enabled",
+                  "--trust", "--auto-review", "--workspace", str(context.workspace),
+                  *(("--resume", resume_session_id) if resume_session_id else ()), context.prompt),
+            cwd=context.workspace,
+        )
+
     def build(self, context: AgentTestContext) -> AgentCommand:
         config_dir = context.workspace / ".cursor"
         config_dir.mkdir(parents=True, exist_ok=True)
@@ -445,7 +480,7 @@ class CursorAdapter(AgentAdapter):
                 context.executable,
                 "--print",
                 "--output-format",
-                "json",
+                "stream-json",
                 "--mode",
                 "ask",
                 "--sandbox",
@@ -465,7 +500,7 @@ class CursorAdapter(AgentAdapter):
                 context.executable,
                 "--print",
                 "--output-format",
-                "json",
+                "stream-json",
                 "--mode",
                 "ask",
                 "--sandbox",
@@ -681,16 +716,58 @@ def run_agent(command: AgentCommand, *, timeout_seconds: int) -> AgentResult:
     )
 
 
+def retain_session_otlp(sources: dict[str, list[Path]], output_dir: Path, session_id: str) -> dict[str, Path]:
+    """Copy exact-session OTLP records without unrelated batch members or text matches."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    retained = {}
+    for kind, paths in sources.items():
+        resource_key, scope_key, leaf_key = (
+            ("resourceSpans", "scopeSpans", "spans") if kind == "traces"
+            else ("resourceLogs", "scopeLogs", "logRecords")
+        )
+        target = output_dir / f"selected-{kind}.jsonl"
+        with target.open("w", encoding="utf-8") as out:
+            for path in paths:
+                if not path.exists():
+                    continue
+                with path.open(encoding="utf-8") as lines:
+                    for line in lines:
+                        if session_id not in line:
+                            continue
+                        try:
+                            payload = json.loads(line)
+                        except ValueError:
+                            continue
+                        resources = []
+                        for resource in payload.get(resource_key, []):
+                            resource_attrs = _flatten_otlp_attributes(resource.get("resource", {}).get("attributes", []))
+                            scopes = []
+                            for scope in resource.get(scope_key, []):
+                                leaves = [leaf for leaf in scope.get(leaf_key, []) if _extract_session_id({
+                                    **resource_attrs, **_flatten_otlp_attributes(leaf.get("attributes", [])),
+                                }) == session_id]
+                                if leaves:
+                                    scopes.append({**scope, leaf_key: leaves})
+                            if scopes:
+                                resources.append({**resource, scope_key: scopes})
+                        if resources:
+                            out.write(json.dumps({resource_key: resources}) + "\n")
+        if target.stat().st_size:
+            retained[kind] = target
+    return retained
+
+
 def extract_final_message(stdout: str) -> str:
     """Extract only the final assistant message from supported JSON output formats."""
 
     messages: list[str] = []
+    results: list[str] = []
     try:
         document = json.loads(stdout)
     except json.JSONDecodeError:
         document = None
     if isinstance(document, dict) and isinstance(document.get("response"), str):
-        messages.append(str(document["response"]))
+        results.append(str(document["response"]))
     for line in stdout.splitlines():
         try:
             payload = json.loads(line)
@@ -699,14 +776,14 @@ def extract_final_message(stdout: str) -> str:
         if not isinstance(payload, dict):
             continue
         if payload.get("type") == "result" and isinstance(payload.get("result"), str):
-            messages.append(str(payload["result"]))
+            results.append(str(payload["result"]))
         event_result = payload.get("result")
         if (
             payload.get("event") == "result"
             and isinstance(event_result, dict)
             and isinstance(event_result.get("response"), str)
         ):
-            messages.append(str(event_result["response"]))
+            results.append(str(event_result["response"]))
         item = payload.get("item")
         if (
             payload.get("type") == "item.completed"
@@ -720,6 +797,17 @@ def extract_final_message(stdout: str) -> str:
                 if isinstance(payload.get(key), str):
                     messages.append(str(payload[key]))
                     break
+            message = payload.get("message")
+            if isinstance(message, dict) and message.get("role") == "assistant":
+                content = message.get("content")
+                if isinstance(content, list):
+                    text = "".join(
+                        part["text"] for part in content
+                        if isinstance(part, dict) and part.get("type") == "text"
+                        and isinstance(part.get("text"), str)
+                    )
+                    if text:
+                        messages.append(text)
         data = payload.get("data")
         if (
             payload.get("type") == "assistant.message"
@@ -736,7 +824,8 @@ def extract_final_message(stdout: str) -> str:
             and isinstance(part.get("text"), str)
         ):
             messages.append(str(part["text"]))
-    return messages[-1].strip() if messages else ""
+    final_messages = messages or results
+    return final_messages[-1].strip() if final_messages else ""
 
 
 def read_completed_task(db_path: Path) -> tuple[str, str, int | None, str, str] | None:

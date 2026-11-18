@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+from collections import defaultdict
 from typing import Any
 
 from reflect.schema.base import ReflectModel
+from reflect.utils import _json_dumps
 
 
 class SessionRow(ReflectModel):
@@ -12,6 +14,7 @@ class SessionRow(ReflectModel):
     repo: str | None = None
     status: str
     title: str | None = None
+    parent_session_id: str | None = None
     started_at: str
     ended_at: str | None = None
     duration_ms: int
@@ -58,6 +61,37 @@ NOT (
 )
 """
 
+_FIRST_PROMPT = """substr(COALESCE(
+  (SELECT trim(cf.content_preview_redacted)
+   FROM conversation_facts cf JOIN steps st ON st.id = cf.step_id
+   WHERE cf.session_id = s.id AND cf.kind = 'prompt' AND cf.role = 'user'
+     AND trim(cf.content_preview_redacted) <> ''
+   ORDER BY st.seq LIMIT 1),
+  (SELECT first_prompt FROM (
+    SELECT st.seq, COALESCE(
+      NULLIF(trim(json_extract(st.raw_attrs_json, '$."gen_ai.client.prompt"')), ''),
+      NULLIF(trim(json_extract(st.raw_attrs_json, '$."gen_ai.client.prompt.text"')), ''),
+      NULLIF(trim(json_extract(st.raw_attrs_json, '$.prompt')), ''),
+      NULLIF(trim(json_extract(st.raw_attrs_json, '$.input')), '')
+    ) AS first_prompt
+    FROM steps st INDEXED BY idx_steps_session_type
+    WHERE st.session_id = s.id AND st.type IN ('conversation_event', 'llm_call')
+      AND st.raw_attrs_json LIKE '%gen_ai.client.prompt%'
+      AND json_valid(st.raw_attrs_json)
+  ) WHERE first_prompt IS NOT NULL ORDER BY seq LIMIT 1)
+), 1, 1024)"""
+
+
+def session_first_prompts(conn: sqlite3.Connection, session_ids: set[str]) -> dict[str, str]:
+    if not session_ids:
+        return {}
+    placeholders = ",".join("?" for _ in session_ids)
+    rows = conn.execute(
+        f"SELECT s.id, {_FIRST_PROMPT} FROM sessions s WHERE s.id IN ({placeholders})",
+        sorted(session_ids),
+    )
+    return {sid: prompt for sid, prompt in rows if prompt}
+
 
 def list_sessions(
     conn: sqlite3.Connection,
@@ -74,6 +108,7 @@ def list_sessions(
     max_cost: float | None = None,
     min_failures: int | None = None,
     include_context_only: bool = False,
+    session_ids: set[str] | None = None,
 ) -> SessionPage:
     """Return a paginated SQL-backed Sessions screen model."""
     page_limit = _clamp_limit(limit)
@@ -91,6 +126,10 @@ def list_sessions(
         include_context_only=include_context_only,
     )
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    if session_ids is not None:
+        where.append(f"s.id IN ({','.join('?' for _ in session_ids)})" if session_ids else "0=1")
+        params.extend(sorted(session_ids))
+        where_sql = f"WHERE {' AND '.join(where)}"
     total = conn.execute(
         f"""
         SELECT COUNT(*)
@@ -110,6 +149,7 @@ def list_sessions(
           r.full_name AS repo,
           s.status,
           s.title,
+          s.parent_session_id,
           CASE
             WHEN (s.started_at IS NULL OR s.started_at = '' OR substr(s.started_at, 1, 4) < '2000')
               AND s.ended_at IS NOT NULL AND s.ended_at <> '' AND substr(s.ended_at, 1, 4) >= '2000'
@@ -232,3 +272,95 @@ def _cursor_dicts(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
 
 def _clamp_limit(limit: int) -> int:
     return max(1, min(limit, 500))
+
+
+def select_session_scope(
+    conn: sqlite3.Connection, *, q: str = "", agents: set[str] | None = None,
+    model: str = "all", status: str = "all", date_from: str | None = None,
+    date_to: str | None = None, ids_only: bool = False,
+) -> list[dict[str, Any]]:
+    """Select the full canonical population before navigation pagination.
+
+    This is a bounded-column SQL projection, never a list of rendered cards or
+    their truncated top-N fields. Date selection means observed activity.
+    """
+    predicates = [_WORK_SESSION_PREDICATE]
+    params: list[Any] = []
+    if agents:
+        predicates.append(f"COALESCE(a.name,sr.agent,'') IN ({','.join('?' for _ in agents)})")
+        params.extend(sorted(agents))
+    if model != "all":
+        predicates.append("EXISTS(SELECT 1 FROM llm_calls lc WHERE lc.session_id=s.id AND COALESCE(NULLIF(lc.response_model,''),lc.request_model)=?)")
+        params.append(model)
+    if status == "completed":
+        predicates.append("s.status IN ('ok','completed','success')")
+    elif status == "active":
+        predicates.append("s.status NOT IN ('ok','completed','success')")
+    elif status == "failing":
+        predicates.append("COALESCE(sr.error_count,s.failure_count,0)>0")
+    elif status == "recovered":
+        predicates.append("s.recovered_failure_count>0")
+    date_parts = []
+    for operator, value in ((">=", date_from), ("<", date_to)):
+        if value:
+            date_parts.append(f"julianday(st.started_at){operator}julianday(?)")
+            params.append(value)
+    if date_parts:
+        predicates.append(f"EXISTS(SELECT 1 FROM steps st INDEXED BY idx_steps_measurement_times WHERE st.session_id=s.id AND {' AND '.join(date_parts)})")
+    if search := q.strip():
+        from reflect.native_session_titles import read_native_session_titles
+
+        candidates: dict[str, set[str]] = defaultdict(set)
+        for sid, agent in conn.execute(f"""SELECT s.id, COALESCE(a.name,sr.agent,'unknown')
+            FROM sessions s LEFT JOIN agents a ON a.id=s.agent_id
+            LEFT JOIN session_rollups sr ON sr.session_id=s.id
+            WHERE {' AND '.join(predicates)}""", params):
+            candidates[agent].add(sid)
+        title_matches = sorted(
+            sid for titles in read_native_session_titles(candidates).values()
+            for sid, title in titles.items() if search.casefold() in title.casefold()
+        )
+        terms = [
+            "instr(lower(s.id||' '||COALESCE(s.title,'')||' '||COALESCE(a.name,'')||' '||s.status),?)>0",
+        ]
+        params.append(search.lower())
+        if title_matches:
+            terms.append("s.id IN (SELECT value FROM json_each(?))")
+            params.append(_json_dumps(title_matches))
+        terms.append(f"instr(lower(COALESCE({_FIRST_PROMPT},'')),?)>0")
+        params.append(search.lower())
+        predicates.append(f"({' OR '.join(terms)})")
+    projection = "s.id" if ids_only else """s.id,s.id AS session_id,
+        COALESCE(a.name,sr.agent,'unknown') AS agent,s.status,s.title,
+        s.started_at,s.ended_at,s.token_provenance,
+        COALESCE(sr.prompt_count,0) AS prompt_count,
+        COALESCE(sr.tool_call_count,0) AS tool_calls,
+        COALESCE(sr.error_count,s.failure_count,0) AS failure_count,
+        COALESCE(sr.duration_ms,0) AS duration_ms,
+        COALESCE(sr.input_tokens,s.input_tokens) AS input_tokens,
+        COALESCE(sr.output_tokens,s.output_tokens) AS output_tokens,
+        COALESCE(sr.cache_write_tokens,s.cache_creation_tokens) AS cache_creation_tokens,
+        COALESCE(sr.cache_read_tokens,s.cache_read_tokens) AS cache_read_tokens,
+        COALESCE(sr.input_tokens,s.input_tokens)+COALESCE(sr.output_tokens,s.output_tokens)
+          +COALESCE(sr.cache_write_tokens,s.cache_creation_tokens)+COALESCE(sr.cache_read_tokens,s.cache_read_tokens) AS total_tokens,
+        s.estimated_cost_usd AS total_cost_usd,
+        (SELECT COALESCE(NULLIF(response_model,''),request_model) FROM llm_calls lc
+            WHERE lc.session_id=s.id GROUP BY COALESCE(NULLIF(response_model,''),request_model)
+            ORDER BY COUNT(*) DESC LIMIT 1) AS primary_model"""
+    return _cursor_dicts(conn.execute(f"""SELECT {projection}
+        FROM sessions s LEFT JOIN agents a ON a.id=s.agent_id
+        LEFT JOIN session_rollups sr ON sr.session_id=s.id
+        WHERE {' AND '.join(predicates)} ORDER BY s.started_at DESC,s.id""", params))
+
+
+def aggregate_session_scope(conn: sqlite3.Connection, session_ids: set[str]) -> dict[str, Any]:
+    clause = f"s.id IN ({','.join('?' for _ in session_ids)})" if session_ids else "0=1"
+    return _cursor_dicts(conn.execute(f"""SELECT COUNT(*) AS session_count,
+        COALESCE(SUM(sr.prompt_count),0) AS prompt_count,
+        COALESCE(SUM(sr.tool_call_count),0) AS tool_call_count,
+        COALESCE(SUM(COALESCE(sr.error_count,s.failure_count)),0) AS failure_count,
+        COALESCE(SUM(s.input_tokens),0) AS input_tokens,
+        COALESCE(SUM(s.output_tokens),0) AS output_tokens,
+        COALESCE(SUM(s.estimated_cost_usd),0) AS estimated_cost_usd
+        FROM sessions s LEFT JOIN session_rollups sr ON sr.session_id=s.id
+        WHERE {clause}""", sorted(session_ids)))[0]

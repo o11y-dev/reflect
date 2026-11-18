@@ -24,7 +24,8 @@ reflect</pre>
     </div>`;
     return;
   }
-  document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;color:#ff453a;font-family:monospace">Error decoding data: ' + message + '</div>';
+  document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;color:#ff453a;font-family:monospace"></div>';
+  document.body.firstElementChild.textContent = 'Unable to load report: ' + message;
 }
 
 function hasReportScopeFilters(){
@@ -40,16 +41,35 @@ function showReportLoader(message){
   const loader = document.getElementById('report-loader');
   const copy = document.getElementById('report-loader-copy');
   if (copy) copy.textContent = message || reportLoaderCopy();
-  if (loader) loader.classList.remove('is-hidden');
+  if (loader) {
+    loader.hidden = false;
+    loader.classList.remove('is-hidden');
+  }
 }
 
 function hideReportLoader(){
   const loader = document.getElementById('report-loader');
-  if (loader) loader.classList.add('is-hidden');
+  if (loader) {
+    loader.hidden = true;
+    loader.classList.add('is-hidden');
+  }
 }
 
 let preparationStatusPollTimer = null;
-const DASHBOARD_REFRESH_MIN_INTERVAL_MS = 30000;
+let preparationStatusPolling = false;
+let dashboardDocumentActive = true;
+function suspendDashboardReads(){
+  dashboardDocumentActive = false;
+  if (preparationStatusPollTimer) window.clearTimeout(preparationStatusPollTimer);
+  preparationStatusPollTimer = null;
+}
+window.addEventListener('pagehide', suspendDashboardReads);
+window.addEventListener('pageshow', event => {
+  dashboardDocumentActive = true;
+  if (event.persisted) startPreparationStatusPolling();
+});
+const DASHBOARD_REFRESH_MIN_INTERVAL_MS = 10000;
+let lastPublishedRevision = null;
 const PREPARATION_PHASES = Object.freeze({
   opening_store: 1,
   backing_up_store: 1,
@@ -58,6 +78,8 @@ const PREPARATION_PHASES = Object.freeze({
   ingesting_logs: 2,
   ingesting_sessions: 3,
   normalizing: 3,
+  publishing_usage: 4,
+  publishing_snapshot: 5,
   updating_canonical_state: 4,
   pruning_sessions: 4,
   refreshing_graph: 5,
@@ -165,7 +187,7 @@ function renderPreparationStatus(preparation, automaticRefresh){
       tone: 'running',
       kicker: `Telemetry refresh · ${phaseLabel}`,
       message: preparation.message || 'Refreshing local telemetry…',
-      detail: `Step ${phase || 1} of 5${elapsed ? ` · ${elapsed}` : ''}`,
+      detail: `${D.analysis_state === 'preparing' ? 'Usage available · analysis pending' : `Step ${phase || 1} of 5`}${elapsed ? ` · ${elapsed}` : ''}`,
       phase: phase || 1,
       active: true,
     });
@@ -201,14 +223,19 @@ function renderPreparationStatus(preparation, automaticRefresh){
         ? `Sessions refreshed. Run reflect refresh to reconcile ${deferredReplays.join(', ')}.`
         : previousCompletion === completion
           ? `${summary}. Local telemetry is current.`
-          : 'Refresh complete. Loading the new snapshot…',
+          : 'Refresh complete. Updating displayed results…',
       detail: formatNextRefresh(automaticRefresh),
       phase: 5,
     });
-    if (previousCompletion !== completion) {
-      window.setTimeout(() => window.location.reload(), 450);
-      return false;
-    }
+    return false;
+  }
+  if (D?._unpublishedNavigation) {
+    updatePreparationStatus({
+      tone: 'warning',
+      kicker: 'Report not loaded',
+      message: 'Published report is not loaded. Captured session activity is available.',
+      detail: formatNextRefresh(automaticRefresh),
+    });
     return false;
   }
   updatePreparationStatus({
@@ -221,6 +248,9 @@ function renderPreparationStatus(preparation, automaticRefresh){
 }
 
 async function pollPreparationStatus(){
+  if (!dashboardDocumentActive || preparationStatusPolling) return;
+  preparationStatusPolling = true;
+  preparationStatusPollTimer = null;
   try {
     const response = await fetch('/api/status', {
       headers: {Accept: 'application/json'},
@@ -228,71 +258,68 @@ async function pollPreparationStatus(){
     });
     if (!response.ok) throw new Error('status-unavailable');
     const payload = await response.json();
+    if (!dashboardDocumentActive) return;
     const preparationRunning = renderPreparationStatus(
       payload.preparation,
       payload.automatic_refresh,
     );
     renderRawStorageStatus(payload.raw_storage);
+    const revision = payload.publication
+      ? `${payload.publication.generation}:${payload.user_state_revision || 0}` : null;
+    if (revision && revision !== lastPublishedRevision) {
+      lastPublishedRevision = revision;
+      document.dispatchEvent(new CustomEvent('reflect-snapshot-published', {
+        cancelable:true, detail:{completion:payload.publication.completed_at, profile:'snapshot', revision},
+      }));
+    }
+    document.dispatchEvent(new CustomEvent('reflect-status-polled', {detail:payload}));
+    if (!dashboardDocumentActive) return;
     preparationStatusPollTimer = window.setTimeout(
       pollPreparationStatus,
-      preparationRunning ? 750 : DASHBOARD_REFRESH_MIN_INTERVAL_MS,
+      preparationRunning ? 1000 : DASHBOARD_REFRESH_MIN_INTERVAL_MS,
     );
   } catch {
+    if (!dashboardDocumentActive) return;
     updatePreparationStatus({
       tone: 'warning',
       kicker: 'Status unavailable',
       message: 'Dashboard data remains available while Reflect reconnects.',
-      detail: 'Retrying in 30s',
+      detail: 'Reconnecting in 10s',
     });
     preparationStatusPollTimer = window.setTimeout(
       pollPreparationStatus,
       DASHBOARD_REFRESH_MIN_INTERVAL_MS,
     );
+  } finally {
+    preparationStatusPolling = false;
   }
 }
 
 function startPreparationStatusPolling(){
-  if (!D?.sql_backed || !reportSupportsServerFiltering()) return;
+  if (!dashboardDocumentActive || !D?.sql_backed || !reportSupportsServerFiltering()) return;
   if (preparationStatusPollTimer) window.clearTimeout(preparationStatusPollTimer);
   pollPreparationStatus();
 }
 
 async function requestDashboardRefresh(){
-  if (!D?.sql_backed || !reportSupportsServerFiltering()) return;
-  try {
-    const statusResponse = await fetch('/api/status', {
-      headers: {Accept: 'application/json'},
-      cache: 'no-store',
-    });
-    if (!statusResponse.ok) return;
-    const statusPayload = await statusResponse.json();
-    if (!statusPayload.refresh_available) return;
-    const preparation = statusPayload.preparation || {};
-    if (statusPayload.automatic_refresh?.enabled) {
-      if (preparation.state === 'running') startPreparationStatusPolling();
-      return;
-    }
-    if (preparation.state === 'running') {
-      startPreparationStatusPolling();
-      return;
-    }
-    const finishedAt = Date.parse(preparation.finished_at || '');
-    if (Number.isFinite(finishedAt) && Date.now() - finishedAt < DASHBOARD_REFRESH_MIN_INTERVAL_MS) return;
-    const refreshResponse = await fetch('/api/refresh', {
-      method: 'POST',
-      headers: {Accept: 'application/json'},
-      cache: 'no-store',
-    });
-    if (!refreshResponse.ok) return;
-    const refreshPayload = await refreshResponse.json();
-    if (refreshPayload.preparation?.state === 'running') startPreparationStatusPolling();
-  } catch {}
+  // The backend owns scheduling; visiting or focusing a tab never starts a refresh.
+  startPreparationStatusPolling();
+}
+
+function isLocalDashboard(){
+  return window.location.pathname === '/' &&
+    ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
+}
+
+function dashboardReportSource(params = new URLSearchParams(window.location.search)){
+  return params.get('report') || (isLocalDashboard() && !params.get('data') ? '/api/data' : '');
 }
 
 async function loadDashboardData(){
+  if (!dashboardDocumentActive) return null;
   showReportLoader();
   const params = new URLSearchParams(window.location.search);
-  const report = params.get('report');
+  const report = dashboardReportSource(params);
   if (!report && !params.get('data')) {
     const publicHome = 'https://reflect.o11y.dev/';
     const currentPublicUrl = `${window.location.origin}${window.location.pathname}`;
@@ -305,9 +332,80 @@ async function loadDashboardData(){
   }
   try {
     if (report) {
-      const response = await fetch(reportUrlWithCurrentFilters(), {headers: {Accept: 'application/json'}});
-      if (!response.ok) throw new Error('report-fetch-failed');
-      return await response.json();
+      while (true) {
+        if (!dashboardDocumentActive) return null;
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 30000);
+        try {
+          const options = {headers: {Accept: 'application/json'}, signal: controller.signal, cache: 'no-store'};
+          const response = await fetch(reportUrlWithCurrentFilters(), options);
+          if (response.ok) return await response.json();
+          const pending = response.status === 503 ? await response.json() : null;
+          if (!dashboardDocumentActive) return null;
+          if (pending?.state !== 'preparing' && !(pending?.state === 'busy' && pending.reason === 'reading')) {
+            throw new Error('report-fetch-failed');
+          }
+          // These sections own independent reads; a cold session snapshot must
+          // not prevent their navigation and evidence from initializing.
+          if (params.get('tab') === 'explore' && params.get('view') === 'graph' && reportSupportsServerFiltering()) {
+            return {sql_backed:true, _unpublishedNavigation:true, snapshot_completed_at:null,
+              sessions:[], sqlite:{tabs:{}}};
+          }
+          if (pending.reason !== 'reading' && ['inbox','skills','workflows','impact'].includes(params.get('tab')) && reportSupportsServerFiltering()) {
+            return {sql_backed:true, _unpublishedNavigation:true, snapshot_completed_at:null,
+              sessions:[], sqlite:{tabs:{}}};
+          }
+          // A session link can navigate the completed card cache while its
+          // richer details refresh. Never reuse global totals as scoped data.
+          const sessionId = params.get('session');
+          if ((params.get('tab') === 'explore' || sessionId) && reportSupportsServerFiltering()) {
+            const cacheUrl = new URL(report, window.location.href);
+            cacheUrl.search = '';
+            const cachedResponse = await fetch(cacheUrl.toString(), options);
+            if (!dashboardDocumentActive) return null;
+            if (cachedResponse.ok) {
+              const cached = await cachedResponse.json();
+              cached._navigationFromCache = true;
+              cached._unfilteredNavigation = true;
+              return cached;
+            }
+            if (sessionId && cachedResponse.status === 503 && (await cachedResponse.json()).state === 'preparing') {
+              if (!dashboardDocumentActive) return null;
+              const detailResponse = await fetch('/api/session/' + encodeURIComponent(sessionId), options);
+              if (detailResponse.status === 404) {
+                return {sql_backed:true, _unpublishedNavigation:true, sessions:[], sqlite:{tabs:{}}};
+              }
+              if (detailResponse.ok) {
+                const detail = await detailResponse.json();
+                if (detail.session?.id === sessionId) {
+                  return {
+                    sql_backed:true, _unpublishedNavigation:true, snapshot_completed_at:null,
+                    sessions:[{id:sessionId, full_id:sessionId, agent:detail.session.agent,
+                      _navigationOnly:true, _initialDetail:detail}],
+                    sqlite:{tabs:{}},
+                  };
+                }
+              }
+            }
+          }
+          if (pending.reason === 'reading') {
+            showReportLoader(pending.error || 'Loading selected sessions in the background…');
+          } else {
+            if (!dashboardDocumentActive) return null;
+            const statusResponse = await fetch('/api/status', options);
+            if (!statusResponse.ok) throw new Error('Refresh status unavailable. Reload to retry.');
+            const status = await statusResponse.json();
+            if (status.preparation?.state === 'failed') {
+              throw new Error(status.preparation.error || 'Report preparation failed. Check the server log.');
+            }
+            const elapsed = formatPreparationElapsed(status.preparation?.started_at);
+            showReportLoader((status.preparation?.message || 'Preparing report…') + (elapsed ? ` · ${elapsed}` : ''));
+          }
+        } finally {
+          window.clearTimeout(timeout);
+        }
+        await new Promise(resolve => window.setTimeout(resolve, 2000));
+      }
     }
     const encoded = params.get('data');
     if (!encoded) throw new Error('no-data');
@@ -318,64 +416,99 @@ async function loadDashboardData(){
   } catch (e) {
     renderDashboardError(e.message, e.message);
     throw e;
-  }
-}
-
-async function loadImprovementData(){
-  if (!D || !D.sql_backed || !reportSupportsServerFiltering()) return IMPROVEMENT_DATA;
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 3000);
-  const requestOptions = {headers: {Accept: 'application/json'}, signal: controller.signal};
-  try {
-    const [findingResponse, workflowResponse, measurementResponse, ruleResponse] = await Promise.all([
-      fetch('/api/findings', requestOptions),
-      fetch('/api/workflows', requestOptions),
-      fetch('/api/impact', requestOptions),
-      fetch('/api/rules', requestOptions),
-    ]);
-    if (!findingResponse.ok || !workflowResponse.ok || !measurementResponse.ok || !ruleResponse.ok) return IMPROVEMENT_DATA;
-    const [loopResponse, skillResponse] = await Promise.all([
-      fetch('/api/loops', requestOptions),
-      fetch('/api/skills?limit=500', requestOptions),
-    ]);
-    const findingPayload = await findingResponse.json();
-    const workflows = await workflowResponse.json();
-    const measurements = await measurementResponse.json();
-    const rules = await ruleResponse.json();
-    const loops = loopResponse.ok ? await loopResponse.json() : {loops:[]};
-    const skills = skillResponse.ok ? await skillResponse.json() : {skills:[]};
-    return {
-      ...findingPayload,
-      observations: findingPayload.findings || [],
-      loops: loops.loops || [],
-      skills: skills.skills || [],
-      skill_total_count: Number(skills.total_count ?? (skills.skills || []).length),
-      skill_archived_count: Number(skills.archived_count || 0),
-      skill_counts_by_lifecycle: skills.counts_by_lifecycle || {},
-      workflows: workflows.workflows || [],
-      measurements: measurements.impact_checks || [],
-      rules: rules.rules || [],
-      rule_extension: rules.extension || {},
-    };
-  } catch {
-    return IMPROVEMENT_DATA;
   } finally {
-    window.clearTimeout(timeout);
+    hideReportLoader();
   }
 }
 
-function updateUrlParams(mutator){
+async function loadImprovementData(onResource = null){
+  if (!dashboardDocumentActive || !D || !D.sql_backed || (!isStaticDemo() && !reportSupportsServerFiltering())) return IMPROVEMENT_DATA;
+  const sequence = loadImprovementData.sequence = (loadImprovementData.sequence || 0) + 1;
+  const result = {...IMPROVEMENT_DATA, resources:{...IMPROVEMENT_DATA.resources}};
+  const requests = [
+    ['findings', '/api/findings', payload => ({
+      ...payload,
+      observations:payload.findings || [],
+      finding_total_count:Number(payload.finding_total_count ?? (payload.findings || []).length),
+      observation_record_count:Number(payload.observation_record_count ?? 0),
+      counts_by_status:payload.counts_by_status || {},
+    })],
+    ['workflows', '/api/workflows', payload => ({workflows:payload.workflows || []})],
+    ['impact', '/api/impact', payload => ({measurements:payload.impact_checks || []})],
+    ['rules', '/api/rules', payload => ({rules:payload.rules || [], rule_extension:payload.extension || {}})],
+    ['loops', '/api/loops', payload => ({loops:payload.loops || []})],
+    ['skills', '/api/skills?limit=500', payload => ({
+      skills:payload.skills || [],
+      skill_total_count:Number(payload.total_count ?? (payload.skills || []).length),
+      skill_archived_count:Number(payload.archived_count || 0),
+      skill_counts_by_lifecycle:payload.counts_by_lifecycle || {},
+      skill_analysis_state:payload.analysis_state || 'ready',
+      skill_evidence_state:payload.evidence_state || null,
+    })],
+  ];
+  for (const [name] of requests) {
+    result.resources[name] ||= {state:'preparing',loaded:false,loaded_at:null};
+  }
+  const publish = name => {
+    if (sequence === loadImprovementData.sequence && onResource) {
+      onResource({...result, resources:{...result.resources}}, name);
+    }
+  };
+  publish(null);
+  await Promise.all(requests.map(async ([name, url, project]) => {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 5000);
+      const requestOptions = {headers:{Accept:'application/json'},signal:controller.signal};
+      const loaded_at = IMPROVEMENT_DATA.resources?.[name]?.loaded_at ?? null;
+      const previous = IMPROVEMENT_DATA.resources?.[name];
+      const loaded = Boolean(previous?.loaded || loaded_at || ['ready','stale'].includes(previous?.state));
+      try {
+        const response = await reportReadResponse(url, requestOptions);
+        const payload = await response.json();
+        if (!response.ok) {
+          result.resources[name] = {
+            ...previous,
+            state:response.status === 503 && payload.state === 'preparing' ? 'preparing' : 'error',
+            loaded_at,
+            loaded,
+          };
+          return;
+        }
+        Object.assign(result, project(payload));
+        result.resources[name] = {
+          state:['stale','recorded'].includes(payload.publication?.state) ? payload.publication.state : 'ready',
+          loaded:true,
+          loaded_at:payload.publication?.snapshot_completed_at || payload.snapshot_completed_at
+            || payload.publication?.loaded_at || (payload.publication?.state === 'stale' ? null : new Date().toISOString()),
+          publication:{...payload.publication,
+            snapshot_completed_at:payload.publication?.snapshot_completed_at || payload.snapshot_completed_at || null},
+        };
+      } catch {
+        result.resources[name] = {...previous, state:'error', loaded_at, loaded};
+      } finally {
+        window.clearTimeout(timeout);
+        publish(name);
+      }
+    }));
+  return sequence === loadImprovementData.sequence ? result : IMPROVEMENT_DATA;
+}
+
+function updateUrlParams(mutator, {mode = 'replace', state = null} = {}){
   const url = new URL(window.location.href);
+  const previous = url.href;
   mutator(url.searchParams);
   const query = url.searchParams.toString();
-  window.history.replaceState({}, '', `${url.pathname}${query ? `?${query}` : ''}${url.hash}`);
+  const target = `${url.pathname}${query ? `?${query}` : ''}${url.hash}`;
+  if (url.href === previous) return;
+  window.history[mode === 'push' ? 'pushState' : 'replaceState'](state ?? (mode === 'replace' ? window.history.state : null), '', target);
 }
 
 function reportSupportsServerFiltering(){
-  const report = new URLSearchParams(window.location.search).get('report') || '/api/data';
+  const report = dashboardReportSource();
+  if (!report) return false;
   try {
     const url = new URL(report, window.location.href);
-    return url.pathname === '/api/data';
+    return url.origin === window.location.origin && url.pathname === '/api/data';
   } catch {
     return report === '/api/data' || report.endsWith('/api/data');
   }
@@ -383,7 +516,7 @@ function reportSupportsServerFiltering(){
 
 function reportUrlWithCurrentFilters(){
   const params = new URLSearchParams(window.location.search);
-  const report = params.get('report') || '/api/data';
+  const report = dashboardReportSource(params) || '/api/data';
   const url = new URL(report, window.location.href);
   ['q','agents','agent','model','status','range','session','tab','view'].forEach(key => {
     const value = params.get(key);
@@ -398,9 +531,28 @@ async function initApp(){
     hideReportLoader();
     return;
   }
-  IMPROVEMENT_DATA = await loadImprovementData();
+  try {
+    configureReportSource(D);
+    const report = new URLSearchParams(window.location.search).get('report') || '';
+    if (/showcase\.json(?:$|\?)/.test(report) && !isStaticDemo()) throw new Error('This sample is outdated. Reload the latest public example.');
+  } catch (error) {
+    renderDashboardError('sample-unavailable', error.message);
+    return;
+  }
+  let improvementSurfacesReady = false;
+  // The core dashboard is usable immediately; each analysis panel publishes
+  // independently as its bounded read completes.
+  loadImprovementData(partial => {
+    IMPROVEMENT_DATA = partial;
+    if (improvementSurfacesReady) buildImprovementSurfaces();
+  }).catch(() => {});
   const demoBadge = document.getElementById('demo-badge');
-  const reportParam = new URLSearchParams(window.location.search).get('report') || '';
-  const isLocalApiReport = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
-    && reportParam.replace(/^\//, '') === 'api/data';
-  if (demoBadge && isLocalApiReport) demoBadge.hidden = true;
+  const isLocalApiReport = isLocalDashboard() && reportSupportsServerFiltering();
+  if (isLocalApiReport) {
+    if (demoBadge) demoBadge.hidden = true;
+    document.title = 'Reflect Dashboard';
+    const report = new URL(dashboardReportSource(), window.location.href);
+    if (!report.search && !report.hash && !new URLSearchParams(window.location.search).has('data')) {
+      updateUrlParams(params => params.delete('report'));
+    }
+  }

@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
+from reflect.improvements.analysis_scope import AnalysisScope
 from reflect.improvements.contracts import (
     ContractEvaluationService,
     WorkflowContract,
 )
+from reflect.improvements.models import EvidenceRef, TaskIntent
 from reflect.improvements.repository import utc_now
 
 _ARCHETYPES: dict[str, dict[str, Any]] = {
@@ -65,6 +68,10 @@ def _classify_text(text: str) -> _ArchetypeMatch:
             for archetype_id, definition in _ARCHETYPES.items()
         }
     )
+    # References to a tracking issue are common in reviews and investigations;
+    # they do not establish a ticket-writing procedure.
+    if not re.search(r"\b(create|draft|file|open|update|refine)\b.{0,48}\b(ticket|jira|issue|story|work item)\b", normalized):
+        scores["ticket_creation"] = 0
     ranked = scores.most_common(2)
     archetype_id, score = ranked[0]
     runner_up_score = ranked[1][1] if len(ranked) > 1 else 0
@@ -91,13 +98,57 @@ class TaskArchetypeService:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
 
-    def refresh(self, *, session_ids: set[str] | None = None) -> dict[str, int]:
+    def intent_for_execution(self, execution_unit_id: str) -> TaskIntent:
+        """Use this execution's captured requests; never borrow neighboring intent."""
+        rows = self.conn.execute("""SELECT st.id,st.session_id,COALESCE(
+              (SELECT cf.content_preview_redacted FROM conversation_facts cf
+               WHERE cf.step_id=st.id AND cf.kind='prompt' AND cf.role='user'
+               ORDER BY cf.id LIMIT 1),
+              json_extract(st.raw_attrs_json,'$."gen_ai.client.prompt.text"'),
+              json_extract(st.raw_attrs_json,'$."gen_ai.client.prompt"'))
+            FROM execution_unit_steps us JOIN steps st ON st.id=us.step_id
+            WHERE us.execution_unit_id=? ORDER BY st.seq LIMIT 24""", (execution_unit_id,)).fetchall()
+        actions = {
+            'review': r'review|inspect (?:this |the )?(?:pull|merge) request',
+            'implementation': r'implement|build|refactor|add (?:a |the )?(?:feature|support)',
+            'debugging': r'debug|fix|diagnose|investigate (?:this |the |an? )?(?:incident|failure|outage)',
+            'testing': r'test|run (?:the )?tests',
+            'release': r'release|deploy|validate (?:this |the )?rollout',
+            'documentation': r'document|write (?:the |a )?(?:guide|documentation)',
+            'research': r'research|explore',
+            'ticket_creation': r'(?:create|draft|file|open) (?:the |a )?(?:ticket|issue)',
+        }
+        families, refs = set(), []
+        for step_id, session_id, text in rows:
+            if not text:
+                continue
+            clean = re.sub(r'```.*?```', '', str(text), flags=re.S)
+            clean = re.sub(r'(?m)^\s*>.*$', '', clean)
+            clean = re.sub(r'"[^"\n]*"', '', clean)
+            matched = {family for family, verbs in actions.items() if re.search(
+                rf'(?:^|[.!?]\s+|\b(?:and|then)\s+)(?:please\s+|can you\s+|could you\s+|help me\s+)*(?:{verbs})\b',
+                clean, re.I)}
+            if matched:
+                families.update(matched)
+                refs.append(EvidenceRef(entity_type='step',entity_id=step_id,step_id=step_id,
+                                        session_id=session_id,summary_redacted='Captured user task instruction.'))
+        # Validation is commonly a step within another explicitly requested task.
+        if len(families)>1:
+            families.discard('testing')
+        state = 'identified' if len(families)==1 else 'mixed' if families else 'unknown'
+        return TaskIntent(family=next(iter(families)) if state=='identified' else None,
+                          state=state,source_refs=refs,
+                          reason='Captured task instruction' if state=='identified' else
+                          'Multiple requested task families' if state=='mixed' else 'No explicit task instruction captured')
+
+    def refresh(self, *, session_ids: set[str] | None = None,
+                execution_unit_ids: set[str] | None = None) -> dict[str, int]:
         scoped_ids = (
             None
             if session_ids is None
             else sorted({str(item) for item in session_ids if item})
         )
-        if scoped_ids == []:
+        if scoped_ids == [] or execution_unit_ids == set():
             return {
                 "classified_execution_units": 0,
                 "excluded_execution_units": 0,
@@ -130,6 +181,7 @@ class TaskArchetypeService:
         execution_result = self._refresh_execution_units(
             now=now,
             scoped=scoped_ids is not None,
+            execution_unit_ids=execution_unit_ids,
         )
         self._drop_scope(scoped_ids)
         return {
@@ -157,7 +209,8 @@ class TaskArchetypeService:
         if scoped_ids is not None:
             self.conn.execute("DROP TABLE IF EXISTS reflect_archetype_session_scope")
 
-    def _refresh_execution_units(self, *, now: str, scoped: bool) -> dict[str, int]:
+    def _refresh_execution_units(self, *, now: str, scoped: bool,
+                                 execution_unit_ids: set[str] | None = None) -> dict[str, int]:
         scope_join = (
             "JOIN reflect_archetype_session_scope scope ON scope.session_id = tu.session_id"
             if scoped
@@ -168,6 +221,8 @@ class TaskArchetypeService:
             if scoped
             else "tua.execution_unit_id IS NULL OR tua.updated_at < tu.updated_at"
         )
+        params = sorted(execution_unit_ids) if execution_unit_ids is not None else []
+        unit_scope = f" AND tu.id IN ({','.join('?' for _ in params)})" if params else ""
         rows = self.conn.execute(
             f"""
             SELECT tu.id,
@@ -176,7 +231,14 @@ class TaskArchetypeService:
                        (
                          SELECT GROUP_CONCAT(step_excerpt, ' ')
                          FROM (
-                           SELECT substr(COALESCE(st.summary, ''), 1, 1000) AS step_excerpt
+                           SELECT substr(COALESCE(
+                             (SELECT NULLIF(cf.content_preview_redacted, '')
+                              FROM conversation_facts cf WHERE cf.step_id=st.id
+                                AND cf.kind='prompt' AND cf.role='user'
+                              ORDER BY cf.id LIMIT 1),
+                             NULLIF(json_extract(st.raw_attrs_json, '$."gen_ai.client.prompt.text"'), ''),
+                             NULLIF(json_extract(st.raw_attrs_json, '$."gen_ai.client.prompt"'), ''),
+                             st.summary, ''), 1, 1000) AS step_excerpt
                            FROM execution_unit_steps tus
                            JOIN steps st ON st.id = tus.step_id
                            WHERE tus.execution_unit_id = tu.id
@@ -206,12 +268,12 @@ class TaskArchetypeService:
             FROM execution_units tu
             {scope_join}
             LEFT JOIN execution_unit_archetypes tua ON tua.execution_unit_id = tu.id
-            WHERE ({freshness_predicate})
+            WHERE ({freshness_predicate}) {unit_scope}
               AND EXISTS(
                 SELECT 1 FROM execution_unit_steps linked
                 WHERE linked.execution_unit_id = tu.id
               )
-            """
+            """, params,
         ).fetchall()
         classified = 0
         excluded = 0
@@ -243,16 +305,13 @@ class TaskArchetypeService:
                             "matched_terms": sorted(set(match.matched_terms)),
                             "runner_up_score": match.runner_up_score,
                             "source_confidence": source_confidence,
+                            "task_intent": self.intent_for_execution(execution_unit_id).model_dump(mode="json"),
                         },
                         sort_keys=True,
                     ),
                     now,
                     now,
                 ),
-            )
-            self.conn.execute(
-                "UPDATE execution_units SET eligible = ?, updated_at = ? WHERE id = ?",
-                (int(eligible), now, execution_unit_id),
             )
             classified += 1
             excluded += int(not eligible)
@@ -304,7 +363,13 @@ class WorkflowAdherenceService:
         self.conn = conn
         self.contracts = ContractEvaluationService(conn)
 
-    def refresh(self) -> dict[str, int]:
+    def refresh(
+        self, *, scope: AnalysisScope | None = None,
+        execution_unit_ids: set[str] | None = None,
+    ) -> dict[str, int]:
+        scope = scope or AnalysisScope()
+        if scope.session_ids == set():
+            return {"exposures": 0}
         rows = self.conn.execute(
             """
             SELECT i.id, i.exposure_started_at, wc.id, wc.content_json,
@@ -331,8 +396,31 @@ class WorkflowAdherenceService:
             slug = str(content.get("slug") or "")
             contract = WorkflowContract.from_raw(content.get("workflow_contract"))
             limit = max(1, min(int(measurement_window), 100)) if contract else 100
+            # Select the complete comparable cohort before applying the delta.
+            # Missing exposures include newly admitted members of a moving window.
+            changed = sorted(execution_unit_ids) if execution_unit_ids is not None else None
+            changed_filter = "1=1"
+            changed_params: list[str] = []
+            if changed is not None:
+                changed_filter = f"eu.id IN ({','.join('?' for _ in changed)}) OR " if changed else ""
+                changed_filter += "NOT EXISTS (SELECT 1 FROM workflow_exposures we WHERE we.intervention_id=? AND we.execution_unit_id=eu.id)"
+                changed_params = [*changed, intervention_id]
             execution_units = self.conn.execute(
-                """
+                f"""
+                WITH cohort AS MATERIALIZED (
+                    SELECT eu.id,eu.session_id,eu.mcp_task_run_id,eu.status,eu.outcome,
+                           eu.verification_passed,eu.started_at
+                    FROM {scope.execution_units} eu
+                    JOIN execution_unit_archetypes eua ON eua.execution_unit_id=eu.id
+                    WHERE eu.started_at >= ?
+                      AND COALESCE(eu.repo_id, '') = COALESCE(?, '')
+                      AND (? IS NULL OR eua.task_archetype_id = ?)
+                      AND (? = 0 OR (
+                        eu.eligible = 1 AND eua.mixed = 0
+                        AND lower(COALESCE(eu.status, '')) IN ('completed', 'ok', 'success')
+                      ))
+                    ORDER BY eu.started_at,eu.id LIMIT ?
+                )
                 SELECT eu.id, eu.session_id, eu.mcp_task_run_id,
                        EXISTS(
                          SELECT 1
@@ -341,38 +429,19 @@ class WorkflowAdherenceService:
                          WHERE eus.execution_unit_id = eu.id
                            AND lower(st.raw_attrs_json) LIKE ?
                        ) AS invoked,
-                       EXISTS(
-                         SELECT 1
-                         FROM execution_unit_steps eus
-                         JOIN tool_calls tc ON tc.step_id = eus.step_id
-                         WHERE eus.execution_unit_id = eu.id AND (
-                           lower(COALESCE(tc.input_preview_redacted, '')) GLOB '*pytest*'
-                           OR lower(COALESCE(tc.input_preview_redacted, '')) GLOB '*ruff*'
-                           OR lower(COALESCE(tc.input_preview_redacted, '')) GLOB '* test*'
-                           OR lower(COALESCE(tc.input_preview_redacted, '')) GLOB '*build*'
-                         )
-                       ) AS verified,
                        eu.status, eu.outcome, eu.verification_passed
-                FROM execution_units eu
-                JOIN execution_unit_archetypes eua ON eua.execution_unit_id = eu.id
-                WHERE eu.started_at >= ?
-                  AND COALESCE(eu.repo_id, '') = COALESCE(?, '')
-                  AND (? IS NULL OR eua.task_archetype_id = ?)
-                  AND (? = 0 OR (
-                    eu.eligible = 1 AND eua.mixed = 0
-                    AND lower(COALESCE(eu.status, '')) IN ('completed', 'ok', 'success')
-                  ))
-                ORDER BY eu.started_at, eu.id
-                LIMIT ?
+                FROM cohort eu WHERE {changed_filter}
+                ORDER BY eu.started_at,eu.id
                 """,
                 (
-                    f"%{slug.lower()}%",
                     exposed_at,
                     repo_id,
                     archetype_id,
                     archetype_id,
                     int(contract is not None),
                     limit,
+                    f"%{slug.lower()}%",
+                    *changed_params,
                 ),
             ).fetchall()
             task_run_ids = [str(item[2]) for item in execution_units if item[2]]
@@ -389,10 +458,10 @@ class WorkflowAdherenceService:
                             "reported_milestones": reported_by_run.get(
                                 str(item[2]) if item[2] else "", {}
                             ),
-                            "status": item[5],
-                            "outcome": item[6],
+                            "status": item[4],
+                            "outcome": item[5],
                             "verification_passed": (
-                                None if item[7] is None else bool(item[7])
+                                None if item[6] is None else bool(item[6])
                             ),
                             "workflow_slug_observed": bool(item[3]),
                         }
@@ -407,7 +476,6 @@ class WorkflowAdherenceService:
                 session_id = str(execution_unit[1])
                 task_run_id = str(execution_unit[2]) if execution_unit[2] else None
                 slug_invoked = bool(execution_unit[3])
-                legacy_verified = bool(execution_unit[4])
                 reported = reported_by_run.get(task_run_id or "", {})
                 structured_evidence = milestone_evidence_by_run.get(task_run_id or "", {})
                 if contract is not None:
@@ -422,10 +490,10 @@ class WorkflowAdherenceService:
                     observed_roles = []
                     signal_fingerprints = []
                     invoked = bool(slug_invoked)
-                    followed = invoked and bool(legacy_verified)
-                    corroborated = bool(legacy_verified)
+                    followed = False
+                    corroborated = False
                     evaluation = None
-                state = "followed" if followed else "invoked" if invoked else "ignored"
+                state = "followed" if followed else "invoked" if invoked else "unknown"
                 exposure_id = f"exposure_{intervention_id}_{execution_unit_id}"
                 self.conn.execute(
                     """
@@ -436,6 +504,8 @@ class WorkflowAdherenceService:
                     ON CONFLICT(intervention_id, execution_unit_id) DO UPDATE SET
                       state = excluded.state,
                       evidence_json = excluded.evidence_json
+                    WHERE (workflow_exposures.state,workflow_exposures.evidence_json)
+                      IS NOT (excluded.state,excluded.evidence_json)
                     """,
                     (
                         exposure_id,

@@ -2,28 +2,16 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from reflect.models import SegmentPreparationStatus
 from reflect.store.migrate import load_migrations
 from reflect.store.sqlite import (
-    DEFAULT_BUSY_TIMEOUT_MS,
     DEFAULT_WAL_AUTOCHECKPOINT,
+    busy_timeout_ms,
     connect_sqlite_read_only,
 )
-
-
-@dataclass(frozen=True)
-class SegmentPreparationStatus:
-    pending_count: int
-    pending_bytes: int
-    processed_on_disk_count: int
-    processed_on_disk_bytes: int
-    unclassified_count: int
-    unclassified_bytes: int
-    last_normalized_at: str | None
-    store_available: bool
 
 
 def inspect_segment_preparation(
@@ -50,7 +38,7 @@ def inspect_segment_preparation(
         store_available=False,
     )
     try:
-        conn = connect_sqlite_read_only(db_path)
+        conn = connect_sqlite_read_only(db_path, profile=None)
     except (OSError, sqlite3.DatabaseError):
         return unavailable
     try:
@@ -137,14 +125,20 @@ def inspect_database(conn: sqlite3.Connection) -> dict[str, Any]:
         and pragmas["journal_mode"] == "wal"
         and pragmas["synchronous"] in {1, 2}
         and pragmas["wal_autocheckpoint"] == DEFAULT_WAL_AUTOCHECKPOINT
-        and pragmas["busy_timeout"] == DEFAULT_BUSY_TIMEOUT_MS
+        and pragmas["busy_timeout"] == busy_timeout_ms()
     )
 
     pending = [version for version in expected if version not in applied_set]
     unknown = [version for version in applied if version not in expected_set]
     ok = not pending and not unknown and not foreign_key_issues and pragma_ok
+    from reflect.task_inbox import TaskEventInbox
+    database_path = next((row[2] for row in conn.execute("PRAGMA database_list") if row[1] == "main"), "")
+    task_inbox = TaskEventInbox(Path(database_path)).health() if database_path else None
+    if task_inbox and task_inbox["projection_errors"]:
+        ok = False
     return {
         "ok": ok,
+        "task_inbox": task_inbox,
         "expected_migrations": expected,
         "applied_migrations": applied,
         "pending_migrations": pending,

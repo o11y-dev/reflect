@@ -13,6 +13,7 @@ from reflect.changes import (
     ChangeReviewAnswer,
     ChangeReviewService,
 )
+from reflect.guidance_efficiency import GuidanceEfficiencyService
 from reflect.improvements.contracts import WorkflowContract, WorkflowMilestoneEvidence
 from reflect.improvements.milestones import (
     WorkflowMilestoneResult,
@@ -44,6 +45,7 @@ from reflect.task_runs import (
     MCPTaskRunResult,
     MCPTaskRunService,
     MCPTaskRunStatus,
+    TaskStart,
 )
 from reflect.usage import UsageService
 
@@ -120,6 +122,9 @@ class ReflectContextAnswer(AskAnswer):
     task_run_id: str | None = None
     selected_skills: list[ContextSkill] = Field(default_factory=list)
     next_action: ContextNextAction | None = None
+    tracking_state: str | None = None
+    runtime_session_id: str | None = None
+    link_state: str | None = None
 
 
 class TaskCompletionAnswer(MCPTaskRunResult):
@@ -165,60 +170,83 @@ class ReflectContextService:
         memory_provider: str = "local_sqlite",
         memory_limit: int = 5,
     ) -> ReflectContextAnswer:
-        resolved_path = (path or Path.cwd()).expanduser().resolve()
-        answer = self.improvements.ask(question, task_file=task_file, path=resolved_path)
-        limitations = list(answer.limitations)
-        try:
-            rows = self.memory.select_context(
-                question,
-                path=resolved_path,
-                provider=memory_provider,
-                limit=max(1, min(memory_limit, 20)),
-            )
-        except Exception as exc:  # noqa: BLE001 - context must preserve local guidance
-            rows = []
-            limitations.append(f"Memory provider {memory_provider!r} was unavailable: {exc}")
+        from reflect.store.sqlite import read_transaction, snapshot_incomplete
 
-        memories = [
-            self._context_memory(row, memory_provider)
-            for row in rows
-        ]
-        memories = [memory for memory in memories if memory.validation_status != "stale"]
-        unvalidated = sum(
-            1
-            for memory in memories
-            if memory.provider == "local_sqlite" and memory.validation_status != "validated"
-        )
-        if unvalidated:
-            limitations.append(
-                f"{unvalidated} matching local memory item(s) are unvalidated context, not approved guidance."
-            )
+        with read_transaction(self.conn):
+            resolved_path = (path or Path.cwd()).expanduser().resolve()
+            if snapshot_incomplete(self.conn):
+                answer = AskAnswer(
+                    question=question,
+                    answer="Telemetry insights are unavailable until the snapshot refresh completes.",
+                    guidance=[], evidence=[], confidence=0,
+                    limitations=["The telemetry snapshot is incomplete; only independent memory context is available."],
+                )
+            else:
+                answer = self.improvements.ask(question, task_file=task_file, path=resolved_path)
+            limitations = list(answer.limitations)
+            try:
+                rows = self.memory.select_context(
+                    question,
+                    path=resolved_path,
+                    provider=memory_provider,
+                    limit=max(1, min(memory_limit, 20)),
+                )
+            except Exception as exc:  # noqa: BLE001 - context must preserve local guidance
+                rows = []
+                limitations.append(f"Memory provider {memory_provider!r} was unavailable: {exc}")
 
-        answer_text = answer.answer
-        confidence = answer.confidence
-        if memories and not answer.evidence:
-            answer_text = (
-                f"Reflect found {len(memories)} scoped memory item(s), but no matching approved workflow. "
-                "Treat memory as context and verify it against the current repository state."
+            memories = [
+                self._context_memory(row, memory_provider)
+                for row in rows
+            ]
+            memories = [memory for memory in memories if memory.validation_status != "stale"]
+            unvalidated = sum(
+                1
+                for memory in memories
+                if memory.provider == "local_sqlite" and memory.validation_status != "validated"
             )
-            confidence = min(0.8, sum(memory.confidence for memory in memories) / len(memories))
-        elif memories:
-            answer_text = (
-                f"Reflect found {len(answer.evidence)} workflow or observation item(s) and "
-                f"{len(memories)} scoped memory item(s). Use approved guidance first and treat memory "
-                "as supporting context."
-            )
+            if unvalidated:
+                limitations.append(
+                    f"{unvalidated} matching local memory item(s) are unvalidated context, not approved guidance."
+                )
 
-        return ReflectContextAnswer(
-            **answer.model_dump(exclude={"answer", "evidence", "confidence", "limitations"}),
-            answer=answer_text,
-            evidence=answer.evidence,
-            confidence=confidence,
-            limitations=list(dict.fromkeys(limitations)),
-            memories=memories,
-        )
+            answer_text = answer.answer
+            confidence = answer.confidence
+            if memories and not answer.evidence:
+                answer_text = (
+                    f"Reflect found {len(memories)} scoped memory item(s), but no matching approved workflow. "
+                    "Treat memory as context and verify it against the current repository state."
+                )
+                confidence = min(0.8, sum(memory.confidence for memory in memories) / len(memories))
+            elif memories:
+                answer_text = (
+                    f"Reflect found {len(answer.evidence)} workflow or observation item(s) and "
+                    f"{len(memories)} scoped memory item(s). Use approved guidance first and treat memory "
+                    "as supporting context."
+                )
+
+            return ReflectContextAnswer(
+                **answer.model_dump(exclude={"answer", "evidence", "confidence", "limitations"}),
+                answer=answer_text,
+                evidence=answer.evidence,
+                confidence=confidence,
+                limitations=list(dict.fromkeys(limitations)),
+                memories=memories,
+            )
 
     def begin_task(
+        self, question: str, *, task_file: Path | None = None, path: Path | None = None,
+        memory_provider: str = "local_sqlite", memory_limit: int = 5,
+        runtime_session_id: str | None = None, runtime_agent: str | None = None,
+    ) -> ReflectContextAnswer:
+        answer, start = self.prepare_task(
+            question, task_file=task_file, path=path, memory_provider=memory_provider,
+            memory_limit=memory_limit, runtime_session_id=runtime_session_id, runtime_agent=runtime_agent,
+        )
+        self.task_runs.apply_start(start)
+        return answer.model_copy(update={"tracking_state": "applied"})
+
+    def prepare_task(
         self,
         question: str,
         *,
@@ -226,19 +254,24 @@ class ReflectContextService:
         path: Path | None = None,
         memory_provider: str = "local_sqlite",
         memory_limit: int = 5,
-    ) -> ReflectContextAnswer:
-        """Return task guidance and record a privacy-safe MCP guidance run."""
+        runtime_session_id: str | None = None,
+        runtime_agent: str | None = None,
+    ) -> tuple[ReflectContextAnswer, TaskStart]:
+        """Freeze guidance and task metadata without writing to the store."""
 
         resolved_path = (path or Path.cwd()).expanduser().resolve()
         resolved_task = task_file.expanduser().resolve() if task_file else None
-        answer = self.ask(
-            question,
-            task_file=resolved_task,
-            path=resolved_path,
-            memory_provider=memory_provider,
-            memory_limit=memory_limit,
-        )
-        selected_skills = self._selected_skills(answer.workflow_id)
+        from reflect.store.sqlite import read_transaction
+
+        with read_transaction(self.conn):
+            answer = self.ask(
+                question,
+                task_file=resolved_task,
+                path=resolved_path,
+                memory_provider=memory_provider,
+                memory_limit=memory_limit,
+            )
+            selected_skills = self._selected_skills(answer.workflow_id)
         skill_refs = [
             MCPSelectedSkillRef(
                 skill_id=skill.skill_id,
@@ -256,25 +289,33 @@ class ReflectContextService:
             )
             for memory in answer.memories
         ]
-        task_run_id = self.task_runs.start(
+        start = TaskStart.capture(
             question=question,
             workspace_path=resolved_path,
             task_file_path=resolved_task,
             workflow_id=answer.workflow_id,
             selected_skills=skill_refs,
             selected_memories=memory_refs,
+            runtime_session_id=runtime_session_id,
+            runtime_agent=runtime_agent,
+            session_hint=self.usage.runtime_session_hint(),
         )
         return answer.model_copy(
             update={
-                "task_run_id": task_run_id,
+                "task_run_id": start.task_run_id,
                 "selected_skills": selected_skills,
+                "runtime_session_id": start.runtime_session_id,
+                "link_state": start.status().link_state.value,
                 "next_action": ContextNextAction(
                     tool="reflect_complete",
-                    arguments={"task_run_id": task_run_id},
+                    arguments={"task_run_id": start.task_run_id,
+                               **({"runtime_session_id": start.runtime_session_id,
+                                   "runtime_agent": start.runtime_agent or ""}
+                                  if start.runtime_session_id else {})},
                     when="After completing task validation and before the final response.",
                 ),
             }
-        )
+        ), start
 
     def complete_task(
         self,
@@ -283,6 +324,8 @@ class ReflectContextService:
         outcome: MCPTaskOutcome | str,
         verification_passed: bool | None = None,
         summary_redacted: str = "",
+        runtime_session_id: str | None = None,
+        runtime_agent: str | None = None,
     ) -> TaskCompletionAnswer:
         """Record the agent-reported outcome for one MCP guidance run."""
 
@@ -291,6 +334,8 @@ class ReflectContextService:
             outcome=outcome,
             verification_passed=verification_passed,
             summary_redacted=summary_redacted,
+            runtime_session_id=runtime_session_id,
+            runtime_agent=runtime_agent,
         )
         return TaskCompletionAnswer(
             **result.model_dump(mode="python"),
@@ -335,6 +380,7 @@ class ReflectContextService:
         all_findings = self.improvements.list_findings(limit=500, scope=scope)
         findings = all_findings[page_offset : page_offset + page_limit]
         attribution_complete = self.improvements.repository.finding_evidence_complete()
+        analysis_state, coverage, limitations = self.improvements.repository.analysis_readiness(scope)
         serialized: list[dict[str, Any]] = []
         for finding in findings:
             evidence_count = len(finding.evidence)
@@ -382,16 +428,20 @@ class ReflectContextService:
             "provenance": "local_telemetry",
             "resolved_scope": scope.model_dump(mode="json"),
             "attribution_complete": attribution_complete,
+            "analysis_state": analysis_state,
+            "analysis_pending": analysis_state != "ready",
+            "evidence_state": "current" if analysis_state == "ready" else "recorded",
+            "analysis_coverage": coverage,
             "freshness": {
                 "evidence_cutoff": evidence_cutoff,
                 "last_successful_refresh": last_successful_refresh,
                 "excluded_new_sessions": excluded_new_sessions,
                 "safe_for_before_after": bool(
                     evidence_cutoff and last_successful_refresh and attribution_complete
-                    and excluded_new_sessions == 0
+                    and excluded_new_sessions == 0 and analysis_state == "ready"
                 ),
             },
-            "limitations": (
+            "limitations": limitations + (
                 []
                 if attribution_complete
                 else [
@@ -452,10 +502,14 @@ class ReflectContextService:
     ) -> dict[str, Any]:
         """Inspect persisted impact checks without recomputing measurements."""
 
+        from reflect.store.sqlite import snapshot_incomplete
+
+        pending = snapshot_incomplete(self.conn)
+        evidence_state = {"analysis_pending": pending, "evidence_state": "recorded" if pending else "current"}
         bounded_limit = max(1, min(limit, 100))
         if impact_id:
             try:
-                comparison = self.improvements.measurements.sessions(impact_id)
+                comparison = self.improvements.measurements.sessions(impact_id, recorded_only=pending)
             except KeyError:
                 return {
                     "found": False,
@@ -466,27 +520,21 @@ class ReflectContextService:
             impact_check = next(
                 (
                     item
-                    for item in self.improvements.measurements.list(limit=500)
-                    if item["id"] == impact_id
+                    for item in self.improvements.measurements.list(limit=1, measurement_id=impact_id, recorded_only=pending)
                 ),
                 None,
             )
             return {
                 "found": True,
+                **evidence_state,
                 "provenance": "reflect_measurement_ledger",
                 "impact_check": impact_check,
                 "comparison": comparison,
             }
 
-        query_limit = 500 if workflow_id else bounded_limit
-        impact_checks = self.improvements.measurements.list(limit=query_limit)
-        if workflow_id:
-            impact_checks = [
-                item
-                for item in impact_checks
-                if item["candidate_id"] == workflow_id
-            ][:bounded_limit]
+        impact_checks = self.improvements.measurements.list(limit=bounded_limit, candidate_id=workflow_id, recorded_only=pending)
         return {
+            **evidence_state,
             "impact_checks": impact_checks,
             "count": len(impact_checks),
             "provenance": "reflect_measurement_ledger",
@@ -496,6 +544,18 @@ class ReflectContextService:
         """Return a read-only task lifecycle snapshot."""
 
         return self.task_runs.status(task_run_id)
+
+    def guidance_efficiency(
+        self, *, repo_id: str, task_archetype_id: str, model: str, limit: int = 100
+    ) -> dict[str, Any]:
+        """Compare observed, verified task units with and without Reflect guidance."""
+
+        return GuidanceEfficiencyService(self.conn).compare(
+            repo_id=repo_id,
+            task_archetype_id=task_archetype_id,
+            model=model,
+            limit=limit,
+        )
 
     def record_milestone(
         self,
@@ -738,15 +798,15 @@ class ReflectContextService:
         source_execution_units = self.agent_inspection.skill_source_execution_units(
             version.id
         )
-        usage_sessions = [
+        usage_occurrences = [
             item
-            for item in detail.usage_sessions
-            if item.skill_version_id in {None, version.id}
+            for item in detail.usage_occurrences
+            if version_row is None or item.skill_version_id == version.id
         ]
         measurements = [
             item
             for item in detail.measurements
-            if item.skill_version_id in {None, version.id}
+            if version_row is None or item.skill_version_id == version.id
         ]
         return {
             "found": True,
@@ -760,8 +820,8 @@ class ReflectContextService:
                 "source_execution_units": [
                     item.model_dump(mode="json") for item in source_execution_units
                 ],
-                "usage_sessions": [
-                    item.model_dump(mode="json") for item in usage_sessions[:50]
+                "usage_occurrences": [
+                    item.model_dump(mode="json") for item in usage_occurrences[:50]
                 ],
                 "measurements": [
                     item.model_dump(mode="json") for item in measurements[:50]
@@ -779,10 +839,9 @@ class ReflectContextService:
         return ContextMemory(
             id=str(row.get("id") or row.get("memory_id") or ""),
             content=str(
-                row.get("context_content")
-                or row.get("content_preview_redacted")
-                or row.get("content")
-                or ""
+                row["context_content"] if "context_content" in row else (
+                    row.get("content_preview_redacted") or row.get("content") or ""
+                )
             )[:4_000],
             type=str(row.get("type") or ""),
             scope=str(row.get("scope") or ""),

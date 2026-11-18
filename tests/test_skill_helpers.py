@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections import Counter
+from unittest.mock import patch
 
 from reflect.models import TelemetryStats
 from reflect.skill_extraction import (
@@ -479,11 +480,16 @@ class TestBuildGraphEvidence:
             )
         conn.commit()
 
+        conn.execute("PRAGMA query_only = ON")
         evidence = _build_graph_evidence(conn, session_ids={"sess-a", "sess-b"})
 
         assert evidence["source"] == "sql-graph"
         assert evidence["scoped_session_count"] == 2
         assert evidence["recurring_patterns"]
+        assert _build_graph_evidence(conn, session_ids=set())["recurring_patterns"] == []
+        assert _build_graph_evidence(conn, session_ids={"sess-a"})["skill_clusters"] == []
+        assert conn.execute("PRAGMA query_only").fetchone()[0] == 1
+        assert conn.in_transaction is False
         assert any(item["name"] == "reflect-skills" for item in evidence["skill_clusters"])
 
 
@@ -618,7 +624,12 @@ class TestBuildSkillEvidenceBundleFromSql:
         )
         conn.commit()
 
-        bundle = _build_skill_evidence_bundle_from_sql(conn, session_ids={"sess-a", "sess-b"})
+        conn.execute("PRAGMA query_only = ON")
+        procedure_bundle = {"schema_version": 1, "selection": {}, "procedures": []}
+        with patch("reflect.improvements.procedures.ProcedureEvidenceRepository.bundle", return_value=procedure_bundle) as procedures:
+            bundle = _build_skill_evidence_bundle_from_sql(conn, session_ids={"sess-a", "sess-b"})
+        procedures.assert_called_once_with(session_ids={"sess-a", "sess-b"})
+        assert bundle["procedure_evidence"] == procedure_bundle
 
         assert bundle is not None
         assert bundle["selection_policy"]["evidence_source"] == "sql"

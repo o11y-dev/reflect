@@ -1,293 +1,175 @@
-"""Regression coverage for the public Reflect landing page."""
+"""Public landing navigation, compatibility and privacy behavior contracts."""
 
 import json
 import re
+import shutil
+import subprocess
 import tomllib
 from html.parser import HTMLParser
 from pathlib import Path
 
+import pytest
+
+from reflect.agent_capabilities import AGENT_CAPABILITIES, AgentSupport
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
-LANDING_PAGE = REPO_ROOT / "docs" / "index.html"
-SHOWCASE_REPORT = REPO_ROOT / "docs" / "reports" / "showcase.json"
+LANDING_PAGE = REPO_ROOT / "docs/index.html"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 
-class _LandingPageParser(HTMLParser):
-    def __init__(self) -> None:
+class _Page(HTMLParser):
+    def __init__(self):
         super().__init__(convert_charrefs=True)
-        self.ids: set[str] = set()
-        self.hrefs: list[str] = []
+        self.elements: list[tuple[str, dict]] = []
+        self.agent_rows: dict[str, list[str]] = {}
+        self.current_agent: str | None = None
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+    def handle_starttag(self, tag, attrs):
         attributes = dict(attrs)
-        if attributes.get("id"):
-            self.ids.add(str(attributes["id"]))
-        if tag == "a" and attributes.get("href"):
-            self.hrefs.append(str(attributes["href"]))
+        self.elements.append((tag, attributes))
+        if tag == "tr" and attributes.get("data-agent"):
+            self.current_agent = attributes["data-agent"]
+            self.agent_rows[self.current_agent] = []
+
+    def handle_data(self, data):
+        if self.current_agent:
+            self.agent_rows[self.current_agent].append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "tr":
+            self.current_agent = None
 
 
-def _landing_text() -> str:
-    return LANDING_PAGE.read_text(encoding="utf-8")
+def _page():
+    page = _Page()
+    page.feed(LANDING_PAGE.read_text())
+    return page
 
 
-def test_landing_page_has_clear_product_and_conversion_path():
-    text = _landing_text()
-
-    assert "See How Agents Work." in text
-    assert "Improve What Happens Next." in text
-    assert text.count("Evidence, Not Vibes.") == 1
-    assert "Behavioral Memory Graph" not in text
-    assert 'class="eyebrow"' not in text
-    assert "From Agent Work to Measured Improvement" in text
-    assert "Private by Default. People Stay in Control." in text
-    assert "From Install to Agent-Ready Evidence in 60 Seconds." in text
-    assert "Explore the Live Dashboard" in text
-    assert "Reflect turns AI coding sessions into shared evidence" in text
-    assert "Decide What Becomes Reusable." in text
-    assert "six read-only MCP inspection tools, and approval-gated changes" in text
-    assert "optional memory providers such as OMEGA" in text
-    assert "Bring Your Memory Provider." in text
-    assert "Use Reflect Where You Already Work." in text
-    assert "Reflect on One Session. Improve How AI Work Scales." in text
-    assert "Ask Through Your Agent. See the Evidence in Reflect." in text
-    assert "curl -fsSL https://reflect.o11y.dev/install.sh | sh" in text
-    assert 'href="./install.sh">Review the Install Script</a>' in text
-    assert '"downloadUrl": "https://reflect.o11y.dev/install.sh"' in text
-    assert "prefers pipx, then uv, then an isolated pip environment" in text
-
-
-def test_landing_page_has_task_oriented_scenario_tiles():
-    text = _landing_text()
-
-    assert text.count('class="scenario-card"') == 7
-    assert text.count('class="scenario-prompt"') == 7
-    assert 'class="agent-syntax" data-agent-syntax' in text
-    assert 'data-agent-prefix="$" aria-pressed="true"' in text
-    assert 'data-agent-prefix="/" aria-pressed="false"' in text
-    assert "For other agents, choose Reflect from the skill picker." in text
-    assert text.count('data-reflect-skill="reflect"') == 5
-    assert text.count('data-reflect-skill="reflect-usage"') == 1
-    assert text.count('data-reflect-skill="reflect-skills"') == 1
-    for prompt in (
-        "Explain our AI budget need and what should improve.",
-        "Explain why this session stalled or failed.",
-        "Rank what we should improve first.",
-        "Find repeated behavior worth turning into a reusable skill.",
-        "Explain how an agent should work in this repository.",
-        "Find what we already learned about the release gate.",
-        "Check whether agent telemetry and integrations are healthy.",
-    ):
-        assert prompt in text
-    assert "reflect --week" not in text
-    assert 'class="scenario-command"' not in text
-    assert 'href="#scenarios"' in text
-
-
-def test_landing_page_balances_personal_and_organizational_search_questions():
-    text = _landing_text()
-
-    assert 'class="agent-window" data-agent-qa' in text
-    assert text.count('class="agent-prompt-button') == 6
-    assert text.count('class="agent-answer"') == 6
-    for question in (
-        "Why did my AI coding agent hit its token budget limit?",
-        "Why did this AI coding session fail?",
-        "How can I improve the way I work with AI agents?",
-        "Where do tokens and cost go across AI agent work?",
-        "How can proven AI practices scale across teams, repositories, and agents?",
-        "What evidence supports increasing AI capacity and budget?",
-    ):
-        assert f'data-question="{question}"' in text
-    assert "When the evidence cannot prove an exact cause" in text
-    assert "Cost is shown only where model-pricing evidence is recognized." in text
-    assert "personal question about one session" in text
-    assert "practices that scale across the organization" in text
-    assert '<meta name="keywords"' not in text
-    assert 'href="#questions"' in text
-
-
-def test_landing_page_question_window_is_accessible_and_interactive():
-    text = _landing_text()
-
-    assert "Evidence, Not Vibes." in text
-    assert "Local evidence connected" in text
-    assert "Personal reflection" in text
-    assert "Organizational reflection" in text
-    assert text.count('aria-controls="answer-') == 6
-    prompt_states = re.findall(
-        r'<button class="agent-prompt-button[^"]*"[^>]*aria-pressed="(true|false)"',
-        text,
+def _run_node(source, script, **values):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is required for public website interaction checks")
+    result = subprocess.run(
+        [node, "-e", script], input=json.dumps({"source": source, **values}),
+        text=True, capture_output=True, timeout=10,
     )
-    assert prompt_states.count("true") == 1
-    assert prompt_states.count("false") == 5
-    assert 'aria-live="polite"' in text
-    assert 'id="agent-active-question"' in text
-    assert 'id="agent-typed-question"' in text
-    assert 'aria-label="Ask selected question"' in text
-    assert "prefers-reduced-motion: reduce" in text
-    assert "window.setInterval" in text
-    assert "typedQuestion.textContent" in text
-    assert "answer.hidden = answer.id !== answerId" in text
+    assert result.returncode == 0, result.stderr or result.stdout
 
 
-def test_landing_page_lists_every_memory_provider_with_honest_support_levels():
-    text = _landing_text()
-
-    assert text.count('class="provider-card"') == 8
-    assert text.count('class="provider-icon') == 8
-    for provider_name in (
-        "Local SQLite",
-        "OMEGA",
-        "Agent Memory",
-        "LiteLLM",
-        "Memory Palace",
-        "Mem0",
-        "Graphiti",
-        "TencentDB Agent Memory",
-    ):
-        assert f"<strong>{provider_name}</strong>" in text
-    assert "Connected Providers" in text
-    assert "Discovery Adapters" in text
-    assert text.count("Discovery only") == 3
+def test_landing_navigation_and_asset_targets_resolve():
+    page = _page()
+    ids = [attrs["id"] for _, attrs in page.elements if "id" in attrs]
+    assert len(ids) == len(set(ids)), "Duplicate IDs break accessible navigation"
+    anchors = [attrs for tag, attrs in page.elements if tag == "a"]
+    assert any(a.get("href") == "#install" for a in anchors)
+    assert any(a.get("href") == "./report.html?report=reports/showcase.json" for a in anchors)
+    assert any(a.get("href") == "https://github.com/o11y-dev/reflect" for a in anchors)
+    for anchor in anchors:
+        href = anchor.get("href", "")
+        if href.startswith("#"):
+            assert href[1:] in ids
+    for tag, attrs in page.elements:
+        target = attrs.get("src", "") if tag in {"script", "img"} else ""
+        if target and not target.startswith(("http", "data:")):
+            assert (LANDING_PAGE.parent / target).is_file(), target
 
 
-def test_landing_page_keeps_showcase_metrics_current():
-    text = _landing_text()
-    report = json.loads(SHOWCASE_REPORT.read_text(encoding="utf-8"))
-
-    assert f"{report['unique_sessions']:,} sessions · {len(report['agents'])} agents" in text
-    assert f"{report['avg_quality_score']:.1f}" in text
-    assert f"{report['total_spans']:,}" in text
-    assert f"{report['tool_calls']:,}" in text
-    assert f"{report['tool_failures']:,}" in text
-    assert f"{report['mcp_calls']:,}" in text
-    assert f"${sum(report['model_costs_usd'].values()):.2f}" in text
-    assert f"{report['subagent_launches']:,}" in text
-    assert "Cost covers sessions with recognized model-pricing evidence." in text
-
-
-def test_landing_page_agent_rail_uses_accessible_logo_marks():
-    text = _landing_text()
-
-    assert text.count('class="agent-logo') == 7
-    assert text.count('aria-hidden="true"><svg width="20" height="20"') == 6
-    for agent_name in (
-        "Claude Code",
-        "Codex",
-        "Cursor",
-        "GitHub Copilot",
-        "Gemini CLI",
-        "OpenCode",
-        "Antigravity",
-    ):
-        assert f"<span>{agent_name}</span>" in text
+def test_install_support_matrix_matches_canonical_capabilities():
+    page = _page()
+    rows = {
+        attrs["data-agent"]: attrs["data-support"]
+        for _, attrs in page.elements if "data-support" in attrs
+    }
+    expected = {agent.key: agent.support.value for agent in AGENT_CAPABILITIES
+                if agent.support != AgentSupport.PLANNED}
+    assert rows == expected
+    for agent in AGENT_CAPABILITIES:
+        if agent.key in rows:
+            visible = " ".join(page.agent_rows[agent.key])
+            assert agent.display_name in visible
+            assert agent.support.value in visible
+            assert agent.telemetry_path in visible
+    metadata = tomllib.loads(PYPROJECT.read_text())
+    assert metadata["project"]["requires-python"] == ">=3.12"
+    assert metadata["project"]["urls"]["Homepage"] == "https://reflect.o11y.dev/"
 
 
-def test_landing_page_repo_proof_progressively_loads_github_stats():
-    text = _landing_text()
-
-    assert 'class="repo-proof nav-repo-proof" href="https://github.com/o11y-dev/reflect"' in text
-    nav_start = text.index('<nav class="nav"')
-    nav_end = text.index("</nav>", nav_start)
-    repo_proof = text.index('class="repo-proof nav-repo-proof"')
-    assert nav_start < repo_proof < nav_end
-    assert 'id="repo-stats" aria-live="polite" aria-atomic="true" aria-busy="true"' in text
-    assert 'id="repo-release">Latest release</span>' in text
-    assert 'id="repo-stars">Stars</span>' in text
-    assert 'id="repo-forks">Forks</span>' in text
-    assert "new Intl.NumberFormat" in text
-    assert "Promise.allSettled" in text
-    assert "https://api.github.com/repos/o11y-dev/reflect" in text
-    assert "https://api.github.com/repos/o11y-dev/reflect/releases/latest" in text
-    assert "localStorage.setItem(cacheKey" in text
-    assert "stats.setAttribute('aria-busy', 'false')" in text
-    assert ".textContent =" in text
-    assert ".innerHTML =" not in text
+def test_structured_metadata_is_valid_and_matches_public_product():
+    text = LANDING_PAGE.read_text()
+    match = re.search(r'<script type="application/ld\+json">(.*?)</script>', text, re.S)
+    assert match is not None
+    graph = json.loads(match.group(1))["@graph"]
+    app = next(item for item in graph if item["@type"] == "SoftwareApplication")
+    assert app["operatingSystem"] == "macOS, Linux"
+    assert app["url"] == "https://reflect.o11y.dev/"
+    assert app["downloadUrl"] == "https://reflect.o11y.dev/install.sh"
+    assert app["license"] == "https://www.apache.org/licenses/LICENSE-2.0"
+    assert app["offers"]["price"] == "0"
 
 
-def test_landing_page_meets_static_accessibility_contracts():
-    text = _landing_text()
-    parser = _LandingPageParser()
-    parser.feed(text)
-    parser.close()
-
-    assert '<a class="skip-link" href="#main-content">' in text
-    assert '<main id="main-content">' in text
-    assert 'aria-label="Primary Navigation"' in text
-    assert ":focus-visible" in text
-    assert "@media (prefers-reduced-motion:reduce)" in text
-    assert "touch-action:manipulation" in text
-    assert "scroll-margin-top" in text
-    assert "color-scheme:dark" in text
-    assert "transition:all" not in text.replace(" ", "")
-    assert "outline:none" not in text.replace(" ", "")
-    assert "user-scalable=no" not in text
-    assert "maximum-scale=1" not in text
-
-    fragment_links = {href[1:] for href in parser.hrefs if href.startswith("#")}
-    assert fragment_links <= parser.ids
-
-
-def test_landing_page_has_complete_social_and_structured_metadata():
-    text = _landing_text()
-
-    assert "Improve and Scale AI Agent Work Across Teams" in text
-    assert "shared evidence for better procedures" in text
-    assert '<meta property="og:image" content="https://reflect.o11y.dev/og-image-v2.png">' in text
-    assert '<meta property="og:image:type" content="image/png">' in text
-    assert '<meta property="og:image:width" content="1200">' in text
-    assert '<meta property="og:image:height" content="630">' in text
-    assert '<meta property="og:image:alt"' in text
-    assert '<meta name="twitter:card" content="summary_large_image">' in text
-    assert '<meta name="twitter:image:alt"' in text
-    assert '"@type": "SoftwareApplication"' in text
-    assert '"license": "https://www.apache.org/licenses/LICENSE-2.0"' in text
-
-    metadata_match = re.search(
-        r'<script type="application/ld\+json">\s*(.*?)\s*</script>',
-        text,
-        re.DOTALL,
-    )
-    assert metadata_match is not None
-    metadata = json.loads(metadata_match.group(1))
-    graph = metadata["@graph"]
-    faq = next(node for node in graph if node["@type"] == "FAQPage")
-    assert len(faq["mainEntity"]) == 6
-    assert all(
-        item["@type"] == "Question"
-        and item["acceptedAnswer"]["@type"] == "Answer"
-        and item["acceptedAnswer"]["text"] in text
-        for item in faq["mainEntity"]
-    )
+@pytest.mark.parametrize("origin,path,query,enabled", [
+    ("https://reflect.o11y.dev", "/", "", True),
+    ("https://reflect.o11y.dev", "/report.html", "?report=reports/showcase.json", True),
+    ("http://127.0.0.1:8765", "/", "", False),
+    ("http://localhost:8000", "/report.html", "?report=reports/showcase.json", False),
+    ("https://reflect.o11y.dev", "/report.html", "?report=/api/data", False),
+    ("https://reflect.o11y.dev", "/report.html", "?report=private.json", False),
+    ("https://other.example", "/", "", False),
+])
+def test_analytics_only_loads_on_public_landing_and_known_synthetic_report(origin, path, query, enabled):
+    source = (REPO_ROOT / "docs/assets/public-analytics.js").read_text()
+    _run_node(source, r"""
+const assert=require('node:assert/strict'),vm=require('node:vm');
+const input=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
+const inserted=[];
+const window={location:{origin:input.origin,pathname:input.path,search:input.query}};
+const document={createElement:()=>({}),head:{appendChild:item=>inserted.push(item)}};
+vm.runInNewContext(input.source,{window,document,URLSearchParams,Date});
+const track=window.ReflectPublicAnalytics.track;
+track('example_open',{scenario:'retry-recovery',step:'evidence',placement:'hero',prompt:'PRIVATE'});
+track('unknown_event',{scenario:'private-project'});
+track('install_copy',{scenario:'PRIVATE',step:'PRIVATE',placement:'PRIVATE',url:'PRIVATE'});
+if(input.enabled){
+  assert.equal(inserted.length,1);assert.match(inserted[0].src,/GTM-MDT7FMNC/);
+  const events=window.dataLayer.filter(item=>item.event!=='gtm.js');
+  assert.deepEqual(JSON.parse(JSON.stringify(events)),[
+    {event:'reflect_example_open',scenario:'retry-recovery',step:'evidence',placement:'hero'},
+    {event:'reflect_install_copy'}]);
+  assert.ok(!JSON.stringify(window.dataLayer).includes('PRIVATE'));
+}else{assert.equal(inserted.length,0);assert.equal(window.dataLayer,undefined);}
+""", origin=origin, path=path, query=query, enabled=enabled)
 
 
-def test_landing_page_frames_improvement_around_work_not_individuals():
-    text = _landing_text()
+@pytest.mark.parametrize("clipboard_state", ["success", "denied", "missing"])
+def test_install_copy_reports_actual_clipboard_result(clipboard_state):
+    source = (REPO_ROOT / "docs/assets/landing.js").read_text()
+    _run_node(source, r"""
+const assert=require('node:assert/strict'),vm=require('node:vm');
+const input=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
+const callbacks={},events=[],writes=[];
+const button={disabled:false,addEventListener:(event,fn)=>callbacks[event]=fn};
+const status={textContent:''},command={textContent:'curl -fsSL https://reflect.o11y.dev/install.sh | sh'};
+const document={getElementById:id=>({'copy-install':button,'copy-status':status,'install-command':command})[id],
+  querySelectorAll:()=>[]};
+const navigator=input.clipboard_state==='missing'?{}:{clipboard:{writeText:async text=>{
+  writes.push(text);if(input.clipboard_state==='denied')throw Error('denied');}}};
+const window={ReflectPublicAnalytics:{track:(...args)=>events.push(args)}};
+vm.runInNewContext(input.source,{window,document,navigator});
+(async()=>{await callbacks.click();assert.equal(button.disabled,false);
+  if(input.clipboard_state==='success'){
+    assert.deepEqual(writes,[command.textContent]);assert.match(status.textContent,/Copied/);
+    assert.equal(events.length,1);assert.equal(events[0][0],'install_copy');
+  }else{assert.equal(events.length,0);assert.match(status.textContent,/select.*command/i);}
+})().catch(error=>{console.error(error);process.exitCode=1;});
+""", clipboard_state=clipboard_state)
 
-    for discouraged_framing in (
-        "Developer-Controlled",
-        "Developer Rework",
-        "helping the developer",
-        "developer-reviewed",
-        "developer review",
-        "so developers can",
-    ):
-        assert discouraged_framing not in text
-    assert "better procedures, smarter capacity decisions" in text
-    assert "People Stay in Control." in text
 
-
-def test_landing_page_social_image_is_shipped_at_declared_dimensions():
-    public_image = REPO_ROOT / "docs" / "og-image-v2.png"
-    packaged_image = REPO_ROOT / "src" / "reflect" / "data" / "og-image-v2.png"
-
-    public_bytes = public_image.read_bytes()
-    assert public_bytes == packaged_image.read_bytes()
-    assert public_bytes[:8] == b"\x89PNG\r\n\x1a\n"
-    assert int.from_bytes(public_bytes[16:20], "big") == 1200
-    assert int.from_bytes(public_bytes[20:24], "big") == 630
-
-    package_data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))[
-        "tool"
-    ]["setuptools"]["package-data"]["reflect"]
+def test_social_image_is_shipped_at_declared_dimensions():
+    public = (REPO_ROOT / "docs/og-image-v2.png").read_bytes()
+    assert public == (REPO_ROOT / "src/reflect/data/og-image-v2.png").read_bytes()
+    assert public[:8] == b"\x89PNG\r\n\x1a\n"
+    assert int.from_bytes(public[16:20], "big") == 1200
+    assert int.from_bytes(public[20:24], "big") == 630
+    package_data = tomllib.loads(PYPROJECT.read_text())["tool"]["setuptools"]["package-data"]["reflect"]
     assert "data/og-image-v2.png" in package_data

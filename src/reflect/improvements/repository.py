@@ -9,6 +9,7 @@ from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from typing import Any
 
+from reflect.improvements.analysis_scope import AnalysisScope
 from reflect.improvements.models import (
     EvidenceRef,
     FindingEvidenceLedger,
@@ -33,6 +34,9 @@ from reflect.improvements.models import (
 )
 from reflect.improvements.scope import session_scope_predicate
 from reflect.improvements.workflow_identity import WorkflowIdentity
+from reflect.store.pending_refresh import analysis_coverage, derived_analysis_state
+from reflect.store.sqlite import snapshot_incomplete
+from reflect.store.user_state import UserStateSnapshot
 
 _ACTIVE_OBSERVATION_STATUSES = {
     ObservationStatus.NEW.value,
@@ -96,8 +100,13 @@ def _observation_id(draft: ObservationDraft) -> str:
 class ImprovementRepository:
     """SQLite persistence for the versioned improvement ledger."""
 
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn: sqlite3.Connection, *, review_state: UserStateSnapshot | None = None):
         self.conn = conn
+        from reflect.store.snapshots import active_review_state
+        self.review_state = review_state if review_state is not None else active_review_state(conn)
+        self._has_state_attachment = self.review_state is not None and any(
+            row[1] == 'user_state' for row in conn.execute('PRAGMA database_list')
+        )
 
     def sync_rule_definitions(self, definitions: Iterable[RuleDefinition], *, now: str) -> None:
         for definition in definitions:
@@ -289,7 +298,10 @@ class ImprovementRepository:
         seen_ids: set[str],
         *,
         now: str,
+        scope: AnalysisScope | None = None,
     ) -> int:
+        if scope is not None and scope.session_ids == set():
+            return 0
         placeholders = ",".join("?" for _ in seen_ids)
         query = """
             UPDATE observations
@@ -307,13 +319,15 @@ class ImprovementRepository:
         if seen_ids:
             query += f" AND id NOT IN ({placeholders})"
             params.extend(sorted(seen_ids))
+        scope_predicate = scope.observation_predicate() if scope else "1=1"
+        query += f" AND {scope_predicate}"
         resolved = self.conn.execute(query, params).rowcount
         self.conn.execute(
-            """
+            f"""
             UPDATE workflow_candidates
             SET status = 'stale',
                 checks_json = json_set(
-                  COALESCE(NULLIF(checks_json, ''), '{}'),
+                  COALESCE(NULLIF(checks_json, ''), '{{}}'),
                   '$.stale_reason',
                   'source_observation_resolved'
                 ),
@@ -322,9 +336,10 @@ class ImprovementRepository:
               AND observation_id IN (
                 SELECT id FROM observations
                 WHERE rule_id = ? AND rule_version = ? AND status = 'resolved'
+                  AND last_evaluated_at = ? AND {scope_predicate}
               )
             """,
-            (now, definition.id, definition.version),
+            (now, definition.id, definition.version, now),
         )
         return resolved
 
@@ -348,7 +363,7 @@ class ImprovementRepository:
         rule_id, occurrence_count, affected_session_count, confidence, scope_type, scope_id = row
         existing = self.conn.execute(
             """
-            SELECT id, status, checks_json
+            SELECT id, status, checks_json, provenance_json
             FROM workflow_candidates
             WHERE observation_id = ? AND action_type = ?
             """,
@@ -362,6 +377,9 @@ class ImprovementRepository:
             "source": source_kind,
         }
         if existing:
+            if _loads(existing[3], {}).get("source") == "user_authored":
+                # A later detector proposal cannot replace explicit user instructions.
+                return str(existing[0])
             checks = _loads(existing[2], {})
             if existing[1] == WorkflowStatus.STALE.value and checks.get("stale_reason") == "source_observation_resolved":
                 checks.pop("stale_reason", None)
@@ -518,6 +536,26 @@ class ImprovementRepository:
             """,
             (now, observation_id),
         )
+        # A new evidence variant must not resurrect a dismissed inventory row.
+        dismissal = self.conn.execute(
+            """SELECT json_extract(checks_json, '$.dismissal.batch') FROM workflow_candidates
+               WHERE contract_signature=? AND status='rejected'
+                 AND json_extract(checks_json, '$.dismissal.batch') IS NOT NULL LIMIT 1""",
+            (identity.contract_signature,),
+        ).fetchone()
+        if dismissal:
+            observation_status = self.conn.execute(
+                "SELECT status FROM observations WHERE id=?", (observation_id,),
+            ).fetchone()[0]
+            changed = self.conn.execute(
+                """UPDATE workflow_candidates SET status='rejected',
+                   checks_json=json_set(checks_json, '$.dismissal', json(?))
+                   WHERE id=? AND status='pending'""",
+                (_json({"batch": dismissal[0], "previous_status": "pending",
+                        "observation_status": observation_status}), candidate_id),
+            ).rowcount
+            if changed:
+                self.conn.execute("UPDATE observations SET status='rejected' WHERE id=?", (observation_id,))
         return candidate_id
 
     def list_observations(
@@ -629,8 +667,7 @@ class ImprovementRepository:
         return scoped
 
     def get_observation(self, observation_id: str) -> ObservationRecord | None:
-        rows = self.conn.execute(
-            """
+        query = """
             SELECT o.id, o.rule_id, o.rule_version, o.scope_type, o.scope_id, o.repo_id,
                    o.fingerprint, o.category, o.title, o.summary, o.metric_name,
                    o.metric_value, o.metric_unit, o.metric_direction, o.baseline_value,
@@ -641,9 +678,12 @@ class ImprovementRepository:
             FROM observations o
             LEFT JOIN workflow_candidates wc ON wc.observation_id = o.id
             WHERE o.id = ?
-            """,
-            (observation_id,),
-        ).fetchall()
+            """
+        rows = self.conn.execute(query, (observation_id,)).fetchall()
+        if not rows and self._has_state_attachment:
+            query = query.replace('FROM observations o', 'FROM user_state.observations o').replace(
+                'LEFT JOIN workflow_candidates wc', 'LEFT JOIN user_state.workflow_candidates wc')
+            rows = self.conn.execute(query, (observation_id,)).fetchall()
         return self._observation_from_row(rows[0]) if rows else None
 
     def observation_provenance_session_count(self, observation_ids: Iterable[str]) -> int:
@@ -774,6 +814,7 @@ class ImprovementRepository:
         *,
         scope: ImprovementScope | None,
         limit: int,
+        recorded_only: bool = False,
     ) -> tuple[int, list[WorkflowExecutionUnitRecord]]:
         placeholders = ",".join("?" for _ in observation_ids)
         scope_sql = ""
@@ -823,7 +864,7 @@ class ImprovementRepository:
               LEFT JOIN agents a ON a.id = eu.agent_id
               LEFT JOIN workspaces w ON w.id = eu.workspace_id
               LEFT JOIN repos r ON r.id = eu.repo_id
-              WHERE eu.eligible = 1 {scope_sql}
+              WHERE {"1" if recorded_only else "eu.eligible = 1"} {scope_sql}
               GROUP BY eu.id, eu.session_id, s.title, a.name, eu.started_at,
                        eu.ended_at, eu.status, eu.outcome, eu.verification_passed,
                        w.root_path, r.full_name, eu.source
@@ -846,8 +887,8 @@ class ImprovementRepository:
                 started_at=str(row[4]),
                 ended_at=str(row[5]) if row[5] else None,
                 status=str(row[6]),
-                outcome=str(row[7]) if row[7] else None,
-                verification_passed=None if row[8] is None else bool(row[8]),
+                outcome=str(row[7]) if row[7] and not recorded_only else None,
+                verification_passed=None if recorded_only or row[8] is None else bool(row[8]),
                 workspace=str(row[9] or ""),
                 source=str(row[10]),
                 evidence_count=int(row[11] or 0),
@@ -860,6 +901,19 @@ class ImprovementRepository:
             for row in rows
         ]
 
+    def _candidate_select(self) -> str:
+        if not self._has_state_attachment:
+            return _CANDIDATE_SELECT_SQL
+        # Saved candidates survive source pruning. This union is deliberately
+        # restricted to workflow navigation, never canonical aggregate queries.
+        return _CANDIDATE_SELECT_SQL.replace('FROM workflow_candidates wc', '''FROM (
+            SELECT * FROM main.workflow_candidates
+            UNION ALL
+            SELECT saved.* FROM user_state.workflow_candidates saved
+            JOIN user_state.workflow_review_ownership owned ON owned.candidate_id=saved.id
+            WHERE NOT EXISTS (SELECT 1 FROM main.workflow_candidates current WHERE current.id=saved.id)
+        ) wc''')
+
     def list_candidates(
         self,
         *,
@@ -867,7 +921,7 @@ class ImprovementRepository:
         offset: int = 0,
     ) -> list[WorkflowCandidateRecord]:
         rows = self.conn.execute(
-            f"{_CANDIDATE_SELECT_SQL} {_CANDIDATE_ORDER_SQL} LIMIT ? OFFSET ?",
+            f"{self._candidate_select()} {_CANDIDATE_ORDER_SQL} LIMIT ? OFFSET ?",
             (max(1, min(limit, 500)), max(0, offset)),
         ).fetchall()
         return [self._candidate_from_row(row) for row in rows]
@@ -887,9 +941,12 @@ class ImprovementRepository:
         self,
         contract_signature: str,
     ) -> list[WorkflowCandidateRecord]:
+        if self.review_state is not None:
+            return [candidate for candidate in self.iter_candidates()
+                    if candidate.contract_signature == contract_signature]
         rows = self.conn.execute(
             f"""
-            {_CANDIDATE_SELECT_SQL}
+            {self._candidate_select()}
             WHERE wc.contract_signature = ?
             {_CANDIDATE_ORDER_SQL}
             """,
@@ -899,7 +956,7 @@ class ImprovementRepository:
 
     def get_candidate(self, candidate_id: str) -> WorkflowCandidateRecord | None:
         row = self.conn.execute(
-            f"{_CANDIDATE_SELECT_SQL} WHERE wc.id = ?",
+            f"{self._candidate_select()} WHERE wc.id = ?",
             (candidate_id,),
         ).fetchone()
         return self._candidate_from_row(row) if row else None
@@ -953,6 +1010,7 @@ class ImprovementRepository:
         candidate_id: str,
         *,
         limit: int = 50,
+        recorded_only: bool = False,
     ) -> WorkflowEvidenceLedger:
         candidate = self.get_candidate(candidate_id)
         if candidate is None:
@@ -969,6 +1027,13 @@ class ImprovementRepository:
         evidence_candidates = current_candidates or grouped_candidates or [candidate]
         candidate_ids = [item.id for item in evidence_candidates]
         observation_ids = [item.observation_id for item in evidence_candidates]
+        # Server-owned provenance retains the grouped finding's context. It does
+        # not widen the observation/cohort used for impact measurement.
+        observation_ids = sorted(set(observation_ids) | {
+            observation_id for item in evidence_candidates
+            for observation_id in item.provenance.get("finding_observation_ids", [])
+            if self.get_observation(observation_id) is not None
+        })
         observation_placeholders = ", ".join("?" for _ in observation_ids)
         candidate_placeholders = ", ".join("?" for _ in candidate_ids)
         bounded_limit = max(1, min(limit, 200))
@@ -980,6 +1045,7 @@ class ImprovementRepository:
             observation_ids,
             scope=None,
             limit=bounded_limit,
+            recorded_only=recorded_only,
         )
         exposure_rows = self.conn.execute(
             f"""
@@ -1011,13 +1077,13 @@ class ImprovementRepository:
                 started_at=str(row[4]),
                 ended_at=str(row[5]) if row[5] else None,
                 status=str(row[6]),
-                outcome=str(row[7]) if row[7] else None,
-                verification_passed=None if row[8] is None else bool(row[8]),
+                outcome=str(row[7]) if row[7] and not recorded_only else None,
+                verification_passed=None if recorded_only or row[8] is None else bool(row[8]),
                 workspace=str(row[9] or ""),
                 source=str(row[10]),
                 evidence_count=1,
-                evidence_summaries=self._exposure_summaries(row[11], row[12]),
-                exposure_state=str(row[11]),
+                evidence_summaries=self._exposure_summaries(row[11], row[12], recorded_only=recorded_only),
+                exposure_state=None if recorded_only else str(row[11]),
             )
             for row in exposure_rows
         ]
@@ -1079,26 +1145,10 @@ class ImprovementRepository:
             """,
             (feedback_id, session_id, outcome, reason_redacted, actor, timestamp),
         )
-        self.conn.execute(
-            """
-            INSERT INTO session_outcomes(
-              id, session_id, outcome, source, confidence, verification_json, created_at, updated_at
-            ) VALUES (?, ?, ?, 'operator_feedback', 1, ?, ?, ?)
-            ON CONFLICT(session_id, source) DO UPDATE SET
-              outcome = excluded.outcome,
-              confidence = excluded.confidence,
-              verification_json = excluded.verification_json,
-              updated_at = excluded.updated_at
-            """,
-            (
-                f"outcome_{hashlib.sha256((session_id + ':operator').encode()).hexdigest()[:24]}",
-                session_id,
-                outcome,
-                _json({"feedback_id": feedback_id, "has_reason": bool(reason_redacted)}),
-                timestamp,
-                timestamp,
-            ),
-        )
+        # Human feedback is durable here; canonical outcomes are projected by
+        # the evidence writer, never through an immutable attached publication.
+        if self.conn.execute("SELECT 1 FROM main.sqlite_master WHERE type='table' AND name='session_outcomes'").fetchone():
+            self.project_feedback_outcome(session_id, outcome, feedback_id, reason_redacted, timestamp)
         self.record_event(
             entity_type="session",
             entity_id=session_id,
@@ -1109,6 +1159,50 @@ class ImprovementRepository:
         )
         self.conn.commit()
         return feedback_id
+
+    def project_feedback_outcome(self, session_id, outcome, feedback_id, reason_redacted, timestamp):
+        self.conn.execute(
+            """
+            INSERT INTO session_outcomes(
+              id, session_id, outcome, source, confidence, verification_json, created_at, updated_at
+            ) VALUES (?, ?, ?, 'operator_feedback', 1, ?, ?, ?)
+            ON CONFLICT(session_id, source) DO UPDATE SET
+              outcome = excluded.outcome,
+              confidence = excluded.confidence,
+              verification_json = excluded.verification_json,
+              updated_at = excluded.updated_at
+            WHERE session_outcomes.verification_json != excluded.verification_json
+            """,
+            (
+                f"outcome_{hashlib.sha256((session_id + ':operator').encode()).hexdigest()[:24]}",
+                session_id,
+                outcome,
+                _json({"feedback_id": feedback_id, "has_reason": bool(reason_redacted)}),
+                timestamp,
+                timestamp,
+            ),
+        )
+
+    def analysis_readiness(
+        self, scope: ImprovementScope | None = None,
+    ) -> tuple[str, dict[str, dict[str, int]], list[str]]:
+        """Keep retained findings visibly pending within the selected session scope."""
+        session_ids = None
+        if scope is not None:
+            predicate, params = session_scope_predicate(scope)
+            session_ids = {str(row[0]) for row in self.conn.execute(
+                f"SELECT s.id FROM sessions s WHERE {predicate}", params,
+            )}
+        coverage = analysis_coverage(self.conn, session_ids)
+        state = derived_analysis_state(coverage, snapshot_ready=not snapshot_incomplete(self.conn))
+        limitations = []
+        if state != "ready":
+            reason = "retained history in this scope" if state == "historical_pending" else "this scope"
+            limitations.append(
+                f"Derived analysis is pending for {reason}. Retained findings are not ready "
+                "for before/after comparison; refresh the selected sessions or all history."
+            )
+        return state, coverage, limitations
 
     def summary(
         self,
@@ -1138,13 +1232,12 @@ class ImprovementRepository:
         active = int(
             self.conn.execute("SELECT COUNT(*) FROM interventions WHERE status = 'active'").fetchone()[0]
         )
-        measured = self.conn.execute(
-            """
-            SELECT SUM(CASE WHEN verdict = 'improved' THEN 1 ELSE 0 END), COUNT(*)
-            FROM measurements WHERE verdict <> 'insufficient_data'
-            """
-        ).fetchone()
-        rate = None if not measured or not measured[1] else float(measured[0] or 0) / int(measured[1])
+        from reflect.improvements.measurement import MeasurementService
+
+        measured = Counter(item["verdict"] for item in MeasurementService(self.conn).iter_results()
+                           if item["verdict"] != "insufficient_data")
+        rate = measured["improved"] / measured.total() if measured.total() else None
+        analysis_state, coverage, limitations = self.analysis_readiness(scope)
         return ImprovementSummary(
             generated_at=utc_now(),
             observations=observations,
@@ -1155,6 +1248,9 @@ class ImprovementRepository:
             resolved_scope=scope,
             eligible_session_count=scope.eligible_session_count if scope else 0,
             attribution_complete=self.finding_evidence_complete(),
+            analysis_state=analysis_state,
+            analysis_coverage=coverage,
+            limitations=limitations,
         )
 
     def finding_evidence_complete(self) -> bool:
@@ -1475,14 +1571,14 @@ class ImprovementRepository:
         return str(row[0]) if row and row[0] else None
 
     @staticmethod
-    def _exposure_summaries(state: str, evidence_json: str) -> list[str]:
+    def _exposure_summaries(state: str, evidence_json: str, *, recorded_only: bool = False) -> list[str]:
         evidence = _loads(evidence_json, {})
         details = [f"Workflow exposure classified as {state}."]
         if evidence.get("slug_observed"):
             details.append("The workflow slug was observed in session telemetry.")
         if evidence.get("verification_observed"):
             details.append("Verification activity was observed after workflow use.")
-        return details
+        return [f"Recorded classification (current validation pending): {detail}" for detail in details] if recorded_only else details
 
     def _observation_from_row(self, row: tuple[Any, ...]) -> ObservationRecord:
         return ObservationRecord(
@@ -1535,7 +1631,7 @@ class ImprovementRepository:
             ).fetchall()
         }
         lifecycle = self._workflow_lifecycle(str(row[0]), WorkflowStatus(row[14]))
-        return WorkflowCandidateRecord(
+        candidate = WorkflowCandidateRecord(
             id=row[0],
             observation_id=row[1],
             action_type=row[2],
@@ -1560,6 +1656,8 @@ class ImprovementRepository:
             active_intervention_id=row[20],
             lifecycle=lifecycle,
         )
+
+        return self.review_state.overlay(candidate) if self.review_state else candidate
 
     def _workflow_lifecycle(
         self,
@@ -1603,17 +1701,12 @@ class ImprovementRepository:
                 else WorkflowInstallationState.REMOVED
             )
 
-        measurement = self.conn.execute(
-            """
-            SELECT m.verdict
-            FROM measurements m
-            JOIN interventions i ON i.id = m.intervention_id
-            JOIN workflow_versions wv ON wv.id = i.workflow_version_id
-            WHERE wv.candidate_id = ?
-            ORDER BY m.measured_at DESC LIMIT 1
-            """,
-            (candidate_id,),
-        ).fetchone()
+        from reflect.improvements.measurement import MeasurementService
+
+        measurements = MeasurementService(self.conn).list(
+            limit=1, candidate_id=candidate_id, recorded_only=snapshot_incomplete(self.conn),
+        )
+        measurement = measurements[0] if measurements else None
         measurement_state = WorkflowMeasurementState.NOT_STARTED
         if deployment is WorkflowDeploymentState.ACTIVE:
             measurement_state = WorkflowMeasurementState.COLLECTING
@@ -1622,7 +1715,7 @@ class ImprovementRepository:
                 "improved": WorkflowMeasurementState.IMPROVED,
                 "unchanged": WorkflowMeasurementState.NO_EFFECT,
                 "regressed": WorkflowMeasurementState.REGRESSED,
-            }.get(str(measurement[0]), WorkflowMeasurementState.COLLECTING)
+            }.get(measurement["verdict"], WorkflowMeasurementState.COLLECTING)
 
         display = (
             review.value

@@ -52,12 +52,17 @@ class WorkflowMilestoneService:
         state: WorkflowMilestoneState | str,
         idempotency_key: str,
         evidence: WorkflowMilestoneEvidence | None = None,
+        task_status: dict | None = None,
+        dry_run: bool = False,
+        commit: bool = True,
+        recorded_at: str | None = None,
     ) -> WorkflowMilestoneResult:
         normalized_state = WorkflowMilestoneState(state)
         key = idempotency_key.strip()
         if not key or len(key) > 200:
             raise ValueError("idempotency_key must contain 1-200 characters")
-        task_row = self.conn.execute(
+        task_row = (task_status["status"], json.dumps(task_status["selected_skills"]),
+                    task_status.get("execution_unit_id")) if task_status else self.conn.execute(
             """
             SELECT status, selected_skills_json, execution_unit_id
             FROM mcp_task_runs WHERE id = ?
@@ -115,31 +120,36 @@ class WorkflowMilestoneService:
         ).fetchone()
         if existing:
             details = json.loads(str(existing[0]))
-            if details.get("binding_hash") != binding_hash:
+            # Late ingestion can bind an execution unit after the checkpoint was
+            # accepted. That is not a change to the caller's idempotency payload.
+            if any(details.get(key) != value for key, value in binding.items()
+                   if key not in {"execution_unit_id", "corroborated"}):
                 raise ValueError("idempotency_key is already bound to a different milestone")
             return WorkflowMilestoneResult(
                 event_id=event_id,
                 created=False,
                 recorded_at=str(existing[1]),
-                **binding,
+                **{key: details.get(key) for key in binding},
             )
         if str(task_row[0]) != "started":
             raise ValueError(
                 "Completed task runs accept only an idempotent replay of an existing milestone"
             )
 
-        now = utc_now()
+        now = recorded_at or utc_now()
         details: dict[str, Any] = {**binding, "binding_hash": binding_hash}
-        self.conn.execute(
-            """
-            INSERT INTO improvement_events(
-              id, entity_type, entity_id, event_type, actor, details_json, created_at
-            ) VALUES (?, 'mcp_task_run', ?, 'workflow_milestone',
-                      'agent_milestone', ?, ?)
-            """,
-            (event_id, task_run_id, json.dumps(details, sort_keys=True), now),
-        )
-        self.conn.commit()
+        if not dry_run:
+            self.conn.execute(
+                """
+                INSERT INTO improvement_events(
+                  id, entity_type, entity_id, event_type, actor, details_json, created_at
+                ) VALUES (?, 'mcp_task_run', ?, 'workflow_milestone',
+                          'agent_milestone', ?, ?)
+                """,
+                (event_id, task_run_id, json.dumps(details, sort_keys=True), now),
+            )
+            if commit:
+                self.conn.commit()
         return WorkflowMilestoneResult(
             event_id=event_id,
             created=True,

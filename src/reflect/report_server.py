@@ -13,19 +13,12 @@ from pathlib import Path
 from urllib import request as urllib_request
 
 import click
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
 
 from reflect.dashboard_server import start_publish_server
 from reflect.parsing import _canonical_otlp_traces_path
 from reflect.preparation import (
-    PreparationCoordinator,
-    PreparationRequest,
-    PreparationScheduler,
     SQLiteSnapshotInspector,
 )
-from reflect.preparation_pipeline import prepare_sql_report_db
 from reflect.raw_segments import readable_segment_paths
 from reflect.store.sqlite import connect_sqlite_read_only
 
@@ -103,7 +96,11 @@ class ReportServerDaemon:
             str(self.config.port),
             "--db-path",
             str(self.config.db_path),
+            "--state-dir",
+            str(self._pid_file.parent),
         ]
+        if not self.config.open_browser:
+            command.append('--no-open-browser')
         if self.config.otlp_traces is not None:
             command.extend(["--otlp-traces", str(self.config.otlp_traces)])
         if self.config.refresh:
@@ -271,35 +268,6 @@ def has_sql_report_snapshot(db_path: Path) -> bool:
         return False
 
 
-def render_preparation_summary(
-    console: Console,
-    preparation: dict[str, object],
-) -> None:
-    ingest = preparation["ingest"]
-    normalize = preparation["normalize"]
-    rollups = preparation["rollups"]
-    assert isinstance(ingest, dict)
-    assert isinstance(normalize, dict)
-    assert isinstance(rollups, dict)
-    summary = Table.grid(padding=(0, 2))
-    summary.add_column(style="bold")
-    summary.add_column(justify="right")
-    for label, value in (
-        ("Inserted", ingest["inserted"]),
-        ("Skipped", ingest["skipped"]),
-        ("Normalized", normalize["processed"]),
-        ("Sessions", rollups["session_rollups"]),
-    ):
-        summary.add_row(label, f"{int(value):,}")
-    console.print(
-        Panel(
-            summary,
-            title="[bold orange3]REFLECT[/bold orange3]",
-            border_style="orange3",
-        )
-    )
-
-
 def run_browser_report(
     *,
     otlp_traces: Path | None,
@@ -313,7 +281,6 @@ def run_browser_report(
     if refresh_interval_seconds <= 0:
         raise ValueError("refresh_interval_seconds must be positive")
 
-    console = Console()
     include_native_sessions = False
     if refresh:
         if demo:
@@ -330,65 +297,33 @@ def run_browser_report(
                 == _canonical_otlp_traces_path().expanduser().resolve()
             )
 
-    requires_fresh_snapshot = not has_sql_report_snapshot(db_path)
-    prepared_synchronously = False
+    from reflect.store.snapshots import PublishedSnapshotStore
+    store = PublishedSnapshotStore(db_path)
+    published = store.current()
+    if published is not None:
+        with store.acquire(published) as publication:
+            requires_fresh_snapshot = not has_sql_report_snapshot(publication.path)
+    else:
+        requires_fresh_snapshot = not has_sql_report_snapshot(db_path)
     if not refresh:
         if requires_fresh_snapshot:
             raise click.ClickException(
                 f"No report snapshot found at {db_path}. Enable refresh to create one."
             )
         click.echo("Serving the current snapshot without refreshing telemetry.")
-    elif requires_fresh_snapshot:
-        with console.status("[bold orange3]reflecting...[/bold orange3]", spinner="dots"):
-            preparation = prepare_sql_report_db(
-                db_path,
-                otlp_traces=otlp_traces,
-                include_native_sessions=include_native_sessions,
-            )
-        render_preparation_summary(console, preparation)
-        prepared_synchronously = True
 
-    scheduler = None
-    if refresh:
-        def prepare_in_background(progress):
-            return prepare_sql_report_db(
-                db_path,
-                otlp_traces=otlp_traces,
-                include_native_sessions=include_native_sessions,
-                progress=progress,
-            )
-
-        coordinator = PreparationCoordinator(
-            prepare_in_background,
-            request=PreparationRequest(
-                sources=tuple(
-                    source
-                    for source, enabled in (
-                        ("otlp", otlp_traces is not None),
-                        ("native_sessions", include_native_sessions),
-                    )
-                    if enabled
-                ),
-            ),
-        )
-        scheduler = PreparationScheduler(
-            coordinator,
-            interval_seconds=refresh_interval_seconds,
-            run_immediately=not prepared_synchronously,
-        )
-        click.echo(
-            "Serving the current snapshot; refreshing telemetry automatically "
-            f"every {refresh_interval_seconds} seconds."
-        )
-
+    from reflect.backend_runtime import BackendJobRunner
+    from reflect.config import analysis_window_days
     from reflect.gateway import raw_storage_status
 
-    start_publish_server(
-        db_path=db_path,
-        preparation_scheduler=scheduler,
-        raw_storage_status_loader=raw_storage_status,
-        open_browser=open_browser,
-    )
+    arguments = {"otlp_traces": str(otlp_traces) if otlp_traces else None,
+                 "include_native_sessions": include_native_sessions,
+                 "analysis_days": analysis_window_days()}
+    runner = BackendJobRunner(db_path, refresh_arguments=arguments if refresh else None,
+                              refresh_interval=refresh_interval_seconds)
+    start_publish_server(db_path=db_path, backend_runner=runner,
+                         raw_storage_status_loader=raw_storage_status,
+                         open_browser=open_browser)
 
 
 def _run_daemon(config: ReportServerConfig, daemon: ReportServerDaemon) -> None:
@@ -413,6 +348,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Reflect browser report server")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--db-path", type=Path, required=True)
+    parser.add_argument("--state-dir", type=Path)
     parser.add_argument("--otlp-traces", type=Path)
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument(
@@ -435,7 +371,8 @@ def main() -> None:
         refresh_interval_seconds=args.refresh_interval_seconds,
         open_browser=args.open_browser,
     )
-    state_dir = Path(os.environ.get("REFLECT_HOME", Path.home() / ".reflect")) / "state"
+    from reflect.backend_lifecycle import backend_state_dir
+    state_dir = args.state_dir or backend_state_dir(config.db_path)
     _run_daemon(config, ReportServerDaemon(config, state_dir=state_dir))
 
 

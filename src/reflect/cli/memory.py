@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 import click
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from reflect.cli.common import REFLECT_HOME, echo_json, require_snapshot_schema
+from reflect.cli.backend import request, submit
+from reflect.cli.common import REFLECT_HOME, echo_json
 from reflect.shell_completion import (
     complete_memory_candidate_id,
     complete_memory_id,
@@ -22,7 +23,7 @@ from reflect.shell_completion import (
 )
 
 if TYPE_CHECKING:
-    from reflect.memory import MemoryService
+    pass
 
 
 @click.group()
@@ -30,25 +31,6 @@ def memory() -> None:
     """Evidence-backed local and provider memory commands."""
 
 
-def _open_memory_service(
-    db_path: Path,
-    *,
-    read_only: bool = False,
-) -> tuple[sqlite3.Connection, MemoryService]:
-    from reflect.memory import MemoryService
-    from reflect.store.migrate import migrate
-    from reflect.store.sqlite import connect_sqlite, connect_sqlite_read_only
-
-    if read_only:
-        require_snapshot_schema(
-            db_path,
-            refresh_hint=f"Run `reflect memory sync --db-path {db_path}` first.",
-        )
-        conn = connect_sqlite_read_only(db_path)
-    else:
-        conn = connect_sqlite(db_path)
-        migrate(conn)
-    return conn, MemoryService(conn, maintain_search_index=not read_only)
 
 
 def _memory_filters(
@@ -82,12 +64,8 @@ def _memory_filters(
 )
 @click.option("--json", "as_json", is_flag=True, help="Print provider health as JSON.")
 def memory_providers(db_path: Path, as_json: bool) -> None:
-    """List memory providers and health."""
-    conn, service = _open_memory_service(db_path, read_only=True)
-    try:
-        health = service.provider_health()
-    finally:
-        conn.close()
+    'List memory providers and health.'
+    health = request(db_path, 'GET', '/api/memories/providers')
     if as_json:
         echo_json(health)
         return
@@ -112,21 +90,10 @@ def memory_providers(db_path: Path, as_json: bool) -> None:
     "--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db"
 )
 @click.option("--json", "as_json", is_flag=True, help="Print sync result as JSON.")
-def memory_sync(path: Path | None, db_path: Path, as_json: bool) -> None:
-    """Sync local folder instruction memories. PATH defaults to the current directory."""
-    target = path or Path.cwd()
-    conn, service = _open_memory_service(db_path)
-    try:
-        result = service.sync_path(target, home_root=Path.home())
-    finally:
-        conn.close()
-    if as_json:
-        echo_json(result)
-        return
-    click.echo(
-        "Synced memories "
-        f"(path={target}, discovered={result['discovered']}, inserted={result['inserted']}, updated={result['updated']})"
-    )
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the durable background job.")
+def memory_sync(path: Path | None, db_path: Path, as_json: bool, wait: bool = True) -> None:
+    'Sync local folder instruction memories. PATH defaults to the current directory.'
+    submit(db_path, '/api/memories/sync', {'path': str((path or Path.cwd()).resolve())}, wait=wait, as_json=as_json)
 
 
 @memory.command("list")
@@ -172,25 +139,8 @@ def memory_list(
     limit: int,
     as_json: bool,
 ) -> None:
-    """List memories for PATH. PATH defaults to the current directory."""
-    conn, service = _open_memory_service(db_path, read_only=True)
-    try:
-        rows = service.list_memories(
-            path=path or Path.cwd(),
-            all_memories=all_memories,
-            filters=_memory_filters(
-                type=memory_type,
-                scope=scope,
-                source=source,
-                provider=provider,
-                stale=stale,
-                validated=validated,
-                unvalidated=unvalidated,
-            ),
-            limit=limit,
-        )
-    finally:
-        conn.close()
+    'List memories for PATH. PATH defaults to the current directory.'
+    rows = request(db_path, 'GET', '/api/memories', params={**_memory_filters(type=memory_type, scope=scope, source=source, provider=provider, stale=stale, validated=validated, unvalidated=unvalidated), 'path': str((path or Path.cwd()).resolve()), 'all_memories': all_memories, 'limit': limit})
     if as_json:
         echo_json(rows)
         return
@@ -246,18 +196,8 @@ def memory_search(
     limit: int,
     as_json: bool,
 ) -> None:
-    """Search memories, optionally scoped to PATH."""
-    conn, service = _open_memory_service(db_path, read_only=True)
-    try:
-        rows = service.search(
-            query,
-            path=path or Path.cwd(),
-            filters=_memory_filters(type=memory_type, scope=scope),
-            provider=provider,
-            limit=limit,
-        )
-    finally:
-        conn.close()
+    'Search memories, optionally scoped to PATH.'
+    rows = request(db_path, 'GET', '/api/memories/search', params={**_memory_filters(type=memory_type, scope=scope), 'query': query, 'path': str((path or Path.cwd()).resolve()), 'provider': provider or 'local_sqlite', 'limit': limit})
     if as_json:
         echo_json(rows)
         return
@@ -282,14 +222,8 @@ def memory_search(
 )
 @click.option("--json", "as_json", is_flag=True, help="Print memory as JSON.")
 def memory_inspect(memory_id: str, db_path: Path, as_json: bool) -> None:
-    """Inspect one memory by ID."""
-    conn, service = _open_memory_service(db_path, read_only=True)
-    try:
-        row = service.inspect(memory_id)
-    finally:
-        conn.close()
-    if row is None:
-        raise click.ClickException(f"Memory not found: {memory_id}")
+    'Inspect one memory by ID.'
+    row = request(db_path, 'GET', '/api/memories/' + quote(memory_id, safe=''))
     if as_json:
         echo_json(row)
         return
@@ -301,16 +235,10 @@ def memory_inspect(memory_id: str, db_path: Path, as_json: bool) -> None:
 @click.option(
     "--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db"
 )
-def memory_forget(memory_id: str, db_path: Path) -> None:
-    """Delete one local memory by ID."""
-    conn, service = _open_memory_service(db_path)
-    try:
-        removed = service.forget(memory_id)
-    finally:
-        conn.close()
-    if not removed:
-        raise click.ClickException(f"Memory not found: {memory_id}")
-    click.echo(f"Forgot memory {memory_id}")
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the durable background job.")
+def memory_forget(memory_id: str, db_path: Path, wait: bool = True) -> None:
+    'Delete one local memory by ID.'
+    submit(db_path, '/api/memories/' + quote(memory_id, safe='') + '/forget', {}, wait=wait)
 
 
 @memory.command("validate")
@@ -326,28 +254,12 @@ def memory_forget(memory_id: str, db_path: Path) -> None:
     "--db-path", type=click.Path(path_type=Path), default=REFLECT_HOME / "state" / "reflect.db"
 )
 @click.option("--json", "as_json", is_flag=True, help="Print validation result as JSON.")
+@click.option("--wait/--no-wait", default=True, show_default=True, help="Wait for the durable background job.")
 def memory_validate(
     memory_id: str | None, candidate_id: str | None, db_path: Path, as_json: bool
-) -> None:
-    """Validate a memory or promote a candidate."""
-    if not memory_id and not candidate_id:
-        raise click.ClickException("Pass MEMORY_ID or --candidate CANDIDATE_ID")
-    conn, service = _open_memory_service(db_path)
-    try:
-        if candidate_id:
-            promoted = service.promote_candidate(candidate_id)
-            result = service.validate(str(promoted["id"]))
-        else:
-            result = service.validate(str(memory_id))
-    finally:
-        conn.close()
-    if as_json:
-        echo_json(result)
-        return
-    click.echo(
-        f"Memory {result['memory_id']}: {result['status']}"
-        + (f" ({result['stale_reason']})" if result.get("stale_reason") else "")
-    )
+, wait: bool = True) -> None:
+    'Validate a memory or promote a candidate.'
+    submit(db_path, '/api/memories/validate', {'memory_id': memory_id, 'candidate_id': candidate_id}, wait=wait, as_json=as_json)
 
 
 @memory.command("candidates")
@@ -356,7 +268,7 @@ def memory_validate(
     "--session",
     "session_id",
     default="",
-    help="Limit candidates to one session ID.",
+    help="Show patterns observed in this session, with support counted within its repository/workspace.",
     shell_complete=complete_session_id,
 )
 @click.option(
@@ -371,12 +283,8 @@ def memory_candidates(
     limit: int,
     as_json: bool,
 ) -> None:
-    """List graph-derived memory candidates for PATH."""
-    conn, service = _open_memory_service(db_path)
-    try:
-        rows = service.candidates(path=path or Path.cwd(), session_id=session_id, limit=limit)
-    finally:
-        conn.close()
+    'List graph-derived memory candidates for PATH.'
+    rows = request(db_path, 'GET', '/api/memories/candidates', params={'path': str((path or Path.cwd()).resolve()), 'session_id': session_id, 'limit': limit})
     if as_json:
         echo_json(rows)
         return

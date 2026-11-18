@@ -93,6 +93,8 @@ class TestHelp:
 
     def test_refresh_ingests_hook_span_directory(self, runner, tmp_path, monkeypatch):
         db_path = tmp_path / "reflect.db"
+        from tests.backend_helpers import bind_backend, complete_submission
+        backend = bind_backend(monkeypatch, db_path)
         spans_dir = tmp_path / "spans"
         spans_dir.mkdir()
         monkeypatch.setattr(core, "default_otlp_traces", lambda: None)
@@ -115,7 +117,7 @@ class TestHelp:
             encoding="utf-8",
         )
 
-        result = runner.invoke(
+        result = complete_submission(backend, runner.invoke(
             main,
             [
                 "refresh",
@@ -126,7 +128,7 @@ class TestHelp:
                 str(db_path),
                 "--json",
             ],
-        )
+        ))
 
         assert result.exit_code == 0, result.output
         with sqlite3.connect(db_path) as conn:
@@ -134,30 +136,77 @@ class TestHelp:
                 "SELECT COUNT(*) FROM sessions WHERE id = 'sess-refresh-spans'"
             ).fetchone()[0] == 1
 
+
+    def test_refresh_reports_lock_contention_without_a_traceback(self, runner, tmp_path, monkeypatch):
+        from reflect.store.ingest import ingest_local_spans_file
+        from reflect.store.migrate import migrate
+        from reflect.store.sqlite import connect_sqlite
+
+        db_path = tmp_path / "reflect.db"
+        spans = tmp_path / "pending.jsonl"
+        spans.write_text(json.dumps({
+            "name": "Stop", "spanId": "pending-span",
+            "start_time_ns": 100, "end_time_ns": 200,
+            "attributes": {"gen_ai.client.session_id": "pending-session"},
+        }) + "\n")
+        empty_spans = tmp_path / "empty-spans"
+        empty_spans.mkdir()
+        monkeypatch.setattr(core, "default_otlp_traces", lambda: None)
+        monkeypatch.setattr("reflect.store.sqlite.DEFAULT_BUSY_TIMEOUT_MS", 10)
+        from tests.backend_helpers import bind_backend, execute_job
+        backend = bind_backend(monkeypatch, db_path)
+        writer = connect_sqlite(db_path)
+        try:
+            migrate(writer)
+            ingest_local_spans_file(writer, file_path=spans)
+            writer.execute("BEGIN IMMEDIATE")
+            result = runner.invoke(main, [
+                "refresh", "--no-native-sessions", "--no-wait", "--db-path", str(db_path),
+                "--spans-dir", str(empty_spans),
+            ])
+            assert result.exit_code == 0, result.output
+            job_id = result.output.split()[0]
+            assert backend.jobs.get(job_id).state == "queued"
+            assert "Traceback" not in result.output
+            assert writer.execute(
+                "SELECT normalized_status FROM raw_events"
+            ).fetchone()[0] == "pending"
+        finally:
+            writer.rollback()
+            writer.close()
+        execute_job(backend, job_id)
+
     def test_db_doctor_help(self, runner):
         result = runner.invoke(main, ["db", "doctor", "--help"])
         assert result.exit_code == 0
         assert "doctor" in result.output.lower() or "Usage" in result.output
 
-    def test_db_doctor_reports_healthy_store(self, runner, tmp_path):
+    def test_db_doctor_reports_healthy_store(self, runner, tmp_path, monkeypatch):
         db_path = tmp_path / "reflect.db"
-        migrate_result = runner.invoke(main, ["db", "migrate", "--db-path", str(db_path)])
+        from tests.backend_helpers import bind_backend, complete_submission
+        backend = bind_backend(monkeypatch, db_path)
+        migrate_result = complete_submission(backend, runner.invoke(main, ["db", "migrate", "--db-path", str(db_path)]))
         assert migrate_result.exit_code == 0
 
         result = runner.invoke(main, ["db", "doctor", "--db-path", str(db_path)])
 
         assert result.exit_code == 0
-        assert "SQLite store health: ok" in result.output
-        assert "Foreign keys: ok" in result.output
+        assert json.loads(result.output)["ok"] is True
+        assert json.loads(result.output)["foreign_key_issues"] == []
 
-    def test_db_doctor_fails_for_pending_migrations(self, runner, tmp_path):
+
+    def test_db_doctor_fails_for_pending_migrations(self, runner, tmp_path, monkeypatch):
         db_path = tmp_path / "reflect.db"
+        from tests.backend_helpers import bind_backend
+        bind_backend(monkeypatch, db_path)
 
         result = runner.invoke(main, ["db", "doctor", "--db-path", str(db_path)])
 
         assert result.exit_code != 0
-        assert "Pending migrations: 1, 2, 3, 4, 5, 6" in result.output
-        assert "SQLite store health: needs attention" in result.output
+        assert '"pending_migrations"' in result.output
+        assert "health checks failed" in result.output
+        assert not db_path.exists()
+
 
 
     def test_skill_drift_checks_all_packaged_reflect_helpers(self, tmp_path):
@@ -183,8 +232,10 @@ class TestHelp:
         assert result.exit_code != 0
         assert "Pass exactly one of --otlp or --spans-file" in result.output
 
-    def test_ingest_spans_file(self, runner, tmp_path):
+    def test_ingest_spans_file(self, runner, tmp_path, monkeypatch):
         db_path = tmp_path / "reflect.db"
+        from tests.backend_helpers import bind_backend, complete_submission
+        backend = bind_backend(monkeypatch, db_path)
         spans_file = tmp_path / "spans.jsonl"
         spans_file.write_text(json.dumps({
             "name": "PreToolUse",
@@ -195,18 +246,21 @@ class TestHelp:
             "attributes": {"gen_ai.client.session_id": "sess-cli"},
         }) + "\n")
 
-        result = runner.invoke(main, [
+        result = complete_submission(backend, runner.invoke(main, [
             "ingest",
             "--db-path", str(db_path),
             "--spans-file", str(spans_file),
-        ])
+        ]))
 
         assert result.exit_code == 0
-        assert "inserted=1" in result.output
+        assert result.job_result["inserted"] == 1
 
-    def test_ingest_spans_file_refreshes_cost_aliases(self, runner, tmp_path):
+
+    def test_ingest_spans_file_refreshes_cost_aliases(self, runner, tmp_path, monkeypatch):
         reflect_home = tmp_path / ".reflect"
         db_path = tmp_path / "reflect.db"
+        from tests.backend_helpers import bind_backend, complete_submission
+        backend = bind_backend(monkeypatch, db_path)
         spans_file = tmp_path / "spans.jsonl"
         spans_file.write_text(json.dumps(make_span(
             "UserPromptSubmit",
@@ -217,11 +271,11 @@ class TestHelp:
         )) + "\n")
 
         with patch.dict(os.environ, {"REFLECT_HOME": str(reflect_home)}, clear=False):
-            result = runner.invoke(main, [
+            result = complete_submission(backend, runner.invoke(main, [
                 "ingest",
                 "--db-path", str(db_path),
                 "--spans-file", str(spans_file),
-            ])
+            ]))
 
         assert result.exit_code == 0
         alias_payload = json.loads((reflect_home / "config" / "model-aliases.json").read_text())
@@ -233,6 +287,7 @@ class TestHelp:
             ).fetchone()[0]
         assert cost > 0
         assert session_cost == cost
+
 
     def test_reprice_preserves_session_tokens_when_llm_rows_have_no_usage(self, tmp_path):
         from reflect.store.migrate import migrate
@@ -297,7 +352,7 @@ class TestHelp:
         assert tokens[1] == 456
         assert tokens[2] > 0
 
-    def test_reprice_uses_cursor_parent_hook_model_for_native_subagent_tokens(self, tmp_path):
+    def test_reprice_does_not_borrow_cursor_parent_model_for_native_subagent_tokens(self, tmp_path):
         from reflect.store.migrate import migrate
         from reflect.store.sqlite import connect_sqlite
 
@@ -360,7 +415,7 @@ class TestHelp:
 
         assert child[0] == 1000
         assert child[1] == 500
-        assert child[2] > 0
+        assert child[2] == 0
 
     def test_reprice_can_scope_updates_to_changed_sessions(self, tmp_path):
         from reflect.store.migrate import migrate
@@ -425,8 +480,10 @@ class TestHelp:
         assert session_costs["sess-changed"] > 0
         assert session_costs["sess-untouched"] == 0
 
-    def test_db_normalize(self, runner, tmp_path):
+    def test_db_normalize(self, runner, tmp_path, monkeypatch):
         db_path = tmp_path / "reflect.db"
+        from tests.backend_helpers import bind_backend, complete_submission
+        backend = bind_backend(monkeypatch, db_path)
         spans_file = tmp_path / "spans.jsonl"
         spans_file.write_text(json.dumps({
             "name": "UserPromptSubmit",
@@ -440,20 +497,23 @@ class TestHelp:
                 "gen_ai.request.model": "claude-4.6-opus",
             },
         }) + "\n")
-        ingest_result = runner.invoke(main, [
+        ingest_result = complete_submission(backend, runner.invoke(main, [
             "ingest",
             "--db-path", str(db_path),
             "--spans-file", str(spans_file),
-        ])
+        ]))
         assert ingest_result.exit_code == 0
 
-        result = runner.invoke(main, ["db", "normalize", "--db-path", str(db_path)])
+        result = complete_submission(backend, runner.invoke(main, ["db", "normalize", "--db-path", str(db_path)]))
 
         assert result.exit_code == 0
-        assert "processed=0" in result.output
+        assert result.job_result["processed"] == 0
 
-    def test_memory_sync_lists_and_searches_instructions(self, runner, tmp_path):
+
+    def test_memory_sync_lists_and_searches_instructions(self, runner, tmp_path, monkeypatch):
         db_path = tmp_path / "reflect.db"
+        from tests.backend_helpers import bind_backend, complete_submission
+        backend = bind_backend(monkeypatch, db_path)
         workspace = tmp_path / "repo"
         home = tmp_path / "home"
         workspace.mkdir()
@@ -471,14 +531,13 @@ class TestHelp:
         (home / ".codex" / "memories" / "memory_summary.md").write_text("# summary\n", encoding="utf-8")
 
         with patch.dict(os.environ, {"HOME": str(home)}, clear=False):
-            result = runner.invoke(
+            result = complete_submission(backend, runner.invoke(
                 main,
                 ["memory", "sync", str(workspace), "--db-path", str(db_path)],
-            )
+            ))
 
         assert result.exit_code == 0
-        assert "Synced memories" in result.output
-        assert "discovered=7" in result.output
+        assert result.job_result["discovered"] == 7
 
         list_result = runner.invoke(
             main,
@@ -509,8 +568,11 @@ class TestHelp:
         assert ("user", "codex_memory_summary", "filesystem_instruction_scan", "local_sqlite") in rows
         assert ("user", "cursor_plan", "filesystem_instruction_scan", "local_sqlite") in rows
 
-    def test_db_rebuild_graph(self, runner, tmp_path):
+
+    def test_db_rebuild_graph(self, runner, tmp_path, monkeypatch):
         db_path = tmp_path / "reflect.db"
+        from tests.backend_helpers import bind_backend, complete_submission
+        backend = bind_backend(monkeypatch, db_path)
         spans_file = tmp_path / "spans.jsonl"
         spans_file.write_text(json.dumps({
             "name": "PreToolUse",
@@ -524,21 +586,23 @@ class TestHelp:
                 "gen_ai.client.tool_name": "Read",
             },
         }) + "\n")
-        assert runner.invoke(main, [
+        assert complete_submission(backend, runner.invoke(main, [
             "ingest",
             "--db-path", str(db_path),
             "--spans-file", str(spans_file),
-        ]).exit_code == 0
-        assert runner.invoke(main, ["db", "normalize", "--db-path", str(db_path)]).exit_code == 0
+        ])).exit_code == 0
+        assert complete_submission(backend, runner.invoke(main, ["db", "normalize", "--db-path", str(db_path)])).exit_code == 0
 
-        result = runner.invoke(main, ["db", "rebuild-graph", "--db-path", str(db_path)])
+        result = complete_submission(backend, runner.invoke(main, ["db", "rebuild-graph", "--db-path", str(db_path)]))
 
         assert result.exit_code == 0
-        assert "Rebuilt graph" in result.output
-        assert "nodes=" in result.output
+        assert result.job_result["nodes"] > 0
 
-    def test_db_rebuild_rollups(self, runner, tmp_path):
+
+    def test_db_rebuild_rollups(self, runner, tmp_path, monkeypatch):
         db_path = tmp_path / "reflect.db"
+        from tests.backend_helpers import bind_backend, complete_submission
+        backend = bind_backend(monkeypatch, db_path)
         spans_file = tmp_path / "spans.jsonl"
         spans_file.write_text(json.dumps({
             "name": "PreToolUse",
@@ -552,18 +616,18 @@ class TestHelp:
                 "gen_ai.client.tool_name": "Read",
             },
         }) + "\n")
-        assert runner.invoke(main, [
+        assert complete_submission(backend, runner.invoke(main, [
             "ingest",
             "--db-path", str(db_path),
             "--spans-file", str(spans_file),
-        ]).exit_code == 0
-        assert runner.invoke(main, ["db", "normalize", "--db-path", str(db_path)]).exit_code == 0
+        ])).exit_code == 0
+        assert complete_submission(backend, runner.invoke(main, ["db", "normalize", "--db-path", str(db_path)])).exit_code == 0
 
-        result = runner.invoke(main, ["db", "rebuild-rollups", "--db-path", str(db_path)])
+        result = complete_submission(backend, runner.invoke(main, ["db", "rebuild-rollups", "--db-path", str(db_path)]))
 
         assert result.exit_code == 0
-        assert "Rebuilt rollups" in result.output
-        assert "sessions=1" in result.output
+        assert result.job_result["session_rollups"] == 1
+
 
 
 class TestBrowserMode:
@@ -590,6 +654,14 @@ class TestBrowserMode:
 
 
 class TestBrowserReportCommandSurface:
+    @staticmethod
+    def _prepare_report(**kwargs):
+        from tests.backend_helpers import execute_job
+        backend = kwargs['backend_runner']
+        backend.jobs.initialize()
+        job = backend.jobs.submit('refresh', backend.refresh_arguments)
+        execute_job(backend, job.job_id)
+
     def test_report_subcommand_is_removed(self, runner):
         result = runner.invoke(main, ["report", "--help"])
         assert result.exit_code != 0
@@ -604,13 +676,10 @@ class TestBrowserReportCommandSurface:
                 "--db-path", str(db_path),
             ])
         assert result.exit_code == 0
-        assert "REFLECT" in result.output
         assert mock_server.call_args.kwargs["db_path"] == db_path
-        conn = sqlite3.connect(db_path)
-        try:
-            assert conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0] > 0
-        finally:
-            conn.close()
+        assert not db_path.exists()
+        assert mock_server.call_args.kwargs["backend_runner"].refresh_arguments is not None
+        self._prepare_report(**mock_server.call_args.kwargs)
 
     def test_existing_snapshot_refreshes_in_background(self, runner, otlp_file, tmp_path):
         db_path = tmp_path / "reflect.db"
@@ -619,22 +688,16 @@ class TestBrowserReportCommandSurface:
             otlp_traces=otlp_file,
             include_native_sessions=False,
         )
-        with patch("reflect.report_server.start_publish_server") as mock_server, \
-             patch("reflect.report_server.prepare_sql_report_db", return_value={"refreshed": True}) as mock_prepare:
-            result = runner.invoke(main, [
-                "--foreground",
-                "--otlp-traces", str(otlp_file),
-                "--db-path", str(db_path),
-            ])
+        with patch('reflect.report_server.start_publish_server') as mock_server, \
+             patch('reflect.preparation_pipeline.prepare_sql_report_db') as mock_prepare:
+            result = runner.invoke(main, ['--foreground', '--otlp-traces', str(otlp_file), '--db-path', str(db_path)])
             assert result.exit_code == 0
-            assert "refreshing telemetry automatically every 300 seconds" in result.output
             mock_prepare.assert_not_called()
-            scheduler = mock_server.call_args.kwargs["preparation_scheduler"]
-            assert scheduler is not None
-            assert scheduler.coordinator.start() is True
-            assert scheduler.coordinator.wait(timeout=2) is True
-            mock_prepare.assert_called_once()
-            assert "defer_otlp_replay" not in mock_prepare.call_args.kwargs
+            backend = mock_server.call_args.kwargs['backend_runner']
+            assert backend.refresh_interval == 300
+            assert backend.refresh_arguments['otlp_traces'] == str(otlp_file)
+            assert 'defer_otlp_replay' not in backend.refresh_arguments
+        self._prepare_report(**mock_server.call_args.kwargs)
 
     def test_existing_snapshot_can_be_served_without_refresh(self, otlp_file, tmp_path):
         db_path = tmp_path / "reflect.db"
@@ -653,7 +716,27 @@ class TestBrowserReportCommandSurface:
             )
 
         mock_prepare.assert_not_called()
-        assert mock_server.call_args.kwargs["preparation_scheduler"] is None
+        assert mock_server.call_args.kwargs["backend_runner"].refresh_arguments is None
+
+    @pytest.mark.parametrize("incomplete", [False, True])
+    def test_unprepared_report_requires_refresh(self, tmp_path, incomplete):
+        import click
+
+        from reflect.store.migrate import migrate
+        from reflect.store.sqlite import connect_sqlite, mark_snapshot
+
+        db_path = tmp_path / "reflect.db"
+        if incomplete:
+            conn = connect_sqlite(db_path)
+            migrate(conn)
+            mark_snapshot(conn, ready=False)
+            conn.close()
+        with patch("reflect.report_server.start_publish_server") as server, \
+             patch("reflect.preparation_pipeline.prepare_sql_report_db") as prepare, \
+             pytest.raises(click.ClickException, match="Enable refresh"):
+            core.run_browser_report(otlp_traces=None, demo=False, db_path=db_path, refresh=False)
+        server.assert_not_called()
+        prepare.assert_not_called()
 
     def test_foreground_report_ingests_inferred_otlp_logs(self, runner, tmp_path):
         otlp_file = tmp_path / "otel-traces.json"
@@ -680,7 +763,7 @@ class TestBrowserReportCommandSurface:
             }],
         }) + "\n", encoding="utf-8")
 
-        with patch("reflect.report_server.start_publish_server"):
+        with patch("reflect.report_server.start_publish_server", side_effect=self._prepare_report):
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "--foreground",
@@ -689,9 +772,6 @@ class TestBrowserReportCommandSurface:
             ])
 
         assert result.exit_code == 0
-        assert "REFLECT" in result.output
-        assert "Inserted" in result.output
-        assert "Normalized" in result.output
         conn = sqlite3.connect(db_path)
         try:
             row = conn.execute(
@@ -706,7 +786,7 @@ class TestBrowserReportCommandSurface:
         finally:
             conn.close()
 
-    def test_report_summary_breaks_native_sessions_down_by_agent(self, runner, tmp_path):
+    def test_background_report_ingests_native_sessions(self, runner, tmp_path):
         otlp_file = tmp_path / "otel-traces.json"
         otlp_file.write_text(json.dumps({"resourceSpans": []}) + "\n", encoding="utf-8")
         cursor_file = tmp_path / "cursor-native-session.jsonl"
@@ -734,7 +814,7 @@ class TestBrowserReportCommandSurface:
             encoding="utf-8",
         )
 
-        with patch("reflect.report_server.start_publish_server"), \
+        with patch("reflect.report_server.start_publish_server", side_effect=self._prepare_report), \
              patch("reflect.report_server.default_otlp_traces", return_value=otlp_file), \
              patch("reflect.preparation_pipeline._discover_rich_session_files", return_value=[("cursor", cursor_file)]):
             db_path = tmp_path / "reflect.db"
@@ -744,10 +824,13 @@ class TestBrowserReportCommandSurface:
             ])
 
         assert result.exit_code == 0
-        assert "Inserted" in result.output
-        assert "Sessions" in result.output
+        conn = sqlite3.connect(db_path)
+        try:
+            assert conn.execute("SELECT COUNT(*) FROM session_rollups").fetchone()[0] > 0
+        finally:
+            conn.close()
 
-    def test_report_reprices_token_rows_with_session_model_hint(self, runner, tmp_path):
+    def test_report_preserves_unknown_request_model_despite_session_hint(self, runner, tmp_path):
         session_id = "copilot-priced-session"
         model_hint = make_span(
             "PostToolUse",
@@ -768,7 +851,7 @@ class TestBrowserReportCommandSurface:
         otlp_file = tmp_path / "copilot-traces.json"
         otlp_file.write_text(wrap_otlp([model_hint, token_row], agent="copilot") + "\n", encoding="utf-8")
 
-        with patch("reflect.report_server.start_publish_server"):
+        with patch("reflect.report_server.start_publish_server", side_effect=self._prepare_report):
             db_path = tmp_path / "reflect.db"
             result = runner.invoke(main, [
                 "--foreground",
@@ -788,26 +871,45 @@ class TestBrowserReportCommandSurface:
                 """,
                 (session_id,),
             ).fetchone()
-            assert row[0] == "gpt-4o"
-            assert row[1] > 0
+            assert row[0] is None
+            assert row[1] == 0
             assert conn.execute(
                 "SELECT total_cost FROM session_rollups WHERE session_id = ?",
                 (session_id,),
-            ).fetchone()[0] > 0
+            ).fetchone()[0] == 0
+            assert conn.execute("SELECT SUM(input_tokens) FROM llm_calls WHERE session_id=?", (session_id,)).fetchone()[0] == 1000
         finally:
             conn.close()
 
 _FAKE_SKILLS = [
-    {"name": "debug-loop", "description": "Iterative debug workflow", "content": "## Steps\n1. Do the thing"},
-    {"name": "context-reset", "description": "Clear and re-establish scope", "content": "## Steps\n1. Reset"},
-    {"name": "test-first", "description": "Write tests before fixing", "content": "## Steps\n1. Test"},
+    {"name": "debug-loop", "description": "Iterative debug workflow", "content": "## Steps\n1. Do the thing", "evidence": {"session_ids": ["sess-default-001"]}},
+    {"name": "context-reset", "description": "Clear and re-establish scope", "content": "## Steps\n1. Reset", "evidence": {"session_ids": ["sess-default-001"]}},
+    {"name": "test-first", "description": "Write tests before fixing", "content": "## Steps\n1. Test", "evidence": {"session_ids": ["sess-default-001"]}},
 ]
 _R = lambda code, out, err="": type("R", (), {"returncode": code, "stdout": out, "stderr": err})()  # noqa: E731
 
 
 class TestSkillsSubcommand:
+    def invoke_discovery(self, runner, command, args, **kwargs):
+        from reflect.backend_runtime import _execute_job
+        from tests.backend_helpers import bind_backend
+        db = Path(args[args.index('--db-path') + 1]) if '--db-path' in args else self.discovery_db
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            backend = bind_backend(monkeypatch, db, refresh_arguments={'otlp_traces': None, 'include_native_sessions': False})
+            def wait_for_job(_db, job_id):
+                job = backend.jobs.get(job_id)
+                dependency = job.arguments.get('_depends_on')
+                if dependency and backend.jobs.get(dependency).state == 'queued':
+                    wait_for_job(_db, dependency)
+                if backend.jobs.claim(job_id, owner='fixture'):
+                    _execute_job(db, backend.jobs.path, job_id, 'fixture')
+                return backend.jobs.get(job_id).response()
+            monkeypatch.setattr('reflect.cli.backend.wait_for_job', wait_for_job)
+            return runner.invoke(command, [*args, '--wait'], **kwargs)
+
     @pytest.fixture(autouse=True)
     def _isolated_skills_db(self, tmp_path):
+        self.discovery_db = tmp_path / "skills-reflect.db"
         skills_group = main.commands["skills"]
         parameters = [
             next(item for item in skills_group.params if item.name == "db_path"),
@@ -817,9 +919,12 @@ class TestSkillsSubcommand:
                 if item.name == "db_path"
             ),
         ]
+        # Historical OTLP fixtures must stay in scope for drafting tests.
+        time_range = next(item for item in skills_group.commands["discover"].params if item.name == "period")
+        parameters.append(time_range)
         originals = [parameter.default for parameter in parameters]
         for parameter in parameters:
-            parameter.default = tmp_path / "skills-reflect.db"
+            parameter.default = "all" if parameter.name == "period" else tmp_path / "skills-reflect.db"
         try:
             with patch(
                 "reflect.core.shutil.which",
@@ -832,7 +937,7 @@ class TestSkillsSubcommand:
 
     def test_skills_missing_explicit_agent_is_a_clean_cli_error(self, runner, tmp_path):
         with patch("reflect.core.shutil.which", return_value=None):
-            result = runner.invoke(
+            result = self.invoke_discovery(runner,
                 main,
                 [
                     "skills",
@@ -856,7 +961,7 @@ class TestSkillsSubcommand:
         tmp_path,
     ):
         with patch("subprocess.run", side_effect=FileNotFoundError("agent disappeared")):
-            result = runner.invoke(
+            result = self.invoke_discovery(runner,
                 main,
                 [
                     "skills",
@@ -887,7 +992,7 @@ class TestSkillsSubcommand:
         fake_output = json.dumps([_FAKE_SKILLS[0]])
         with patch("subprocess.run", return_value=_R(0, fake_output)), \
              patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
-            result = runner.invoke(main, [
+            result = self.invoke_discovery(runner, main, [
                 "skills", "discover", "--yes", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
@@ -896,7 +1001,7 @@ class TestSkillsSubcommand:
             ])
         assert result.exit_code == 0
         assert not skill_dest.exists()
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(__import__("reflect.backend_runtime", fromlist=["action_store_path"]).action_store_path(db_path))
         try:
             row = conn.execute(
                 """
@@ -911,13 +1016,13 @@ class TestSkillsSubcommand:
         finally:
             conn.close()
         assert row == ("pending", "debug-loop", "agent_authored", "claude", "skill")
-        assert "Nothing was installed" in result.output
+        assert '"installed": false' in result.output
 
     def test_skills_passes_evidence_bundle_to_agent(self, runner, otlp_file, tmp_path):
         fake_output = json.dumps([_FAKE_SKILLS[0]])
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]):
-            result = runner.invoke(main, [
+            result = self.invoke_discovery(runner, main, [
                 "skills", "discover", "--yes", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
@@ -988,8 +1093,8 @@ class TestSkillsSubcommand:
         }
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]), \
-             patch("reflect.core._build_skill_evidence_bundle_from_sql", return_value=sql_bundle):
-            result = runner.invoke(main, [
+             patch("reflect.skill_extraction._build_skill_evidence_bundle_from_sql", return_value=sql_bundle):
+            result = self.invoke_discovery(runner, main, [
                 "skills", "discover", "--yes", "--agent", "claude", "--refresh",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
@@ -1002,15 +1107,58 @@ class TestSkillsSubcommand:
         assert '"graph_evidence"' in prompt
         assert '"source": "sql-graph"' in prompt
 
-    def test_skills_partial_selection_stages_only_selected(self, runner, otlp_file, tmp_path):
-        """User selects only skill #1 from a list of 3."""
+    def test_skills_discovery_reads_real_sql_evidence_after_refresh_and_from_snapshot(
+        self, runner, otlp_file, tmp_path,
+    ):
+        args = [
+            "skills", "discover", "--yes", "--agent", "codex",
+            "--otlp-traces", str(otlp_file),
+            "--sessions-dir", str(tmp_path / "sessions"),
+            "--spans-dir", str(tmp_path / "spans"),
+            "--db-path", str(tmp_path / "discovery.db"),
+        ]
+        # Only the external agent is stubbed: preparation, read-only connection,
+        # SQL selection, graph queries, and prompt assembly use production code.
+        with patch("subprocess.run", return_value=_R(0, "[]")) as agent:
+            for refresh_args in (["--refresh"], []):
+                result = self.invoke_discovery(runner, main, [*args, *refresh_args])
+                assert result.exit_code == 0, result.output
+                assert "SQL graph evidence unavailable" not in result.output
+                prompt = agent.call_args[0][0][-1]
+                assert '"evidence_source": "sql"' in prompt
+                assert '"procedure_evidence"' in prompt
+                assert '"graph_evidence"' in prompt
+        assert agent.call_count == 2
+        from reflect.store.sqlite import SnapshotNotReadyError, connect_sqlite, mark_snapshot
+        # A readiness error during evidence loading must also stop extraction.
+        with patch("reflect.skill_extraction._build_skill_evidence_bundle_from_sql",
+                   side_effect=SnapshotNotReadyError("The snapshot is incomplete. Wait for the active refresh.")), \
+             patch("subprocess.run", return_value=_R(0, "[]")) as agent:
+            result = self.invoke_discovery(runner, main, args)
+        assert result.exit_code != 0
+        assert "No reusable skill candidates" not in result.output
+        agent.assert_not_called()
+        conn = connect_sqlite(tmp_path / "discovery.db")
+        try:
+            mark_snapshot(conn, ready=False)
+            conn.commit()
+        finally:
+            conn.close()
+        with patch("subprocess.run", return_value=_R(0, "[]")) as agent:
+            result = self.invoke_discovery(runner, main, args)
+        assert result.exit_code == 0, result.output
+        assert "snapshot is incomplete" not in result.output
+        agent.assert_called_once()
+
+    def test_skills_async_discovery_stages_all_drafts_for_later_review(self, runner, otlp_file, tmp_path):
+        """Async extraction retains all drafts pending explicit workflow review."""
         skill_dest = tmp_path / "skills"
         db_path = tmp_path / "reflect.db"
         fake_output = json.dumps(_FAKE_SKILLS)
         with patch("subprocess.run", return_value=_R(0, fake_output)), \
              patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
-            # --yes is NOT passed; input "1" selects only the first skill, then "y" confirms
-            result = runner.invoke(main, [
+            # Candidate review is a separate action after extraction.
+            result = self.invoke_discovery(runner, main, [
                 "skills", "discover", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
@@ -1019,7 +1167,7 @@ class TestSkillsSubcommand:
             ], input="1\n")
         assert result.exit_code == 0
         assert not skill_dest.exists()
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(__import__("reflect.backend_runtime", fromlist=["action_store_path"]).action_store_path(db_path))
         try:
             slugs = {
                 row[0]
@@ -1027,7 +1175,7 @@ class TestSkillsSubcommand:
             }
         finally:
             conn.close()
-        assert slugs == {"debug-loop"}
+        assert slugs == {skill["name"] for skill in _FAKE_SKILLS}
 
     def test_skills_does_not_select_or_write_agent_install_targets(self, runner, otlp_file, tmp_path):
         skill_output = json.dumps([_FAKE_SKILLS[0]])
@@ -1038,10 +1186,8 @@ class TestSkillsSubcommand:
             {"name": "Cursor", "detected": True, "global_path": str(second_dest)},
         ]
         with patch("subprocess.run", return_value=_R(0, skill_output)), \
-             patch("reflect.core._detect_agents", return_value=agents), \
-             patch("reflect.core._select_skills", return_value=[_FAKE_SKILLS[0]]), \
-             patch("reflect.core._select_skill_install_agents") as selector:
-            result = runner.invoke(main, [
+             patch("reflect.core._detect_agents", return_value=agents):
+            result = self.invoke_discovery(runner, main, [
                 "skills", "discover", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
@@ -1050,7 +1196,6 @@ class TestSkillsSubcommand:
             ])
 
         assert result.exit_code == 0
-        assert not selector.called
         assert not (first_dest / "debug-loop" / "SKILL.md").exists()
         assert not (second_dest / "debug-loop" / "SKILL.md").exists()
 
@@ -1059,7 +1204,7 @@ class TestSkillsSubcommand:
         fake_output = json.dumps([_FAKE_SKILLS[0]])
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]):
-            runner.invoke(main, [
+            self.invoke_discovery(runner, main, [
                 "skills", "discover", "--yes", "--agent", "agy",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
@@ -1075,7 +1220,7 @@ class TestSkillsSubcommand:
         fake_output = json.dumps([_FAKE_SKILLS[0]])
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]):
-            runner.invoke(main, [
+            self.invoke_discovery(runner, main, [
                 "skills", "discover", "--yes", "--agent", "codex",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
@@ -1090,7 +1235,7 @@ class TestSkillsSubcommand:
         fake_output = json.dumps([_FAKE_SKILLS[0]])
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]):
-            runner.invoke(main, [
+            self.invoke_discovery(runner, main, [
                 "skills", "discover", "--yes", "--agent", "cursor-agent",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
@@ -1117,7 +1262,7 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", side_effect=fake_run) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]), \
              patch("reflect.core.shutil.which", side_effect=fake_which):
-            result = runner.invoke(main, [
+            result = self.invoke_discovery(runner, main, [
                 "skills", "discover", "--yes",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
@@ -1132,7 +1277,7 @@ class TestSkillsSubcommand:
         noisy_error = "ERROR: SecItemCopyMatching failed -50\n" + ("minified-js" * 500)
         with patch("subprocess.run", return_value=_R(1, "", noisy_error)), \
              patch("reflect.core._detect_agents", return_value=[]):
-            result = runner.invoke(main, [
+            result = self.invoke_discovery(runner, main, [
                 "skills", "discover", "--yes", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
@@ -1148,7 +1293,7 @@ class TestSkillsSubcommand:
         fake_output = json.dumps([_FAKE_SKILLS[0]])
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]):
-            runner.invoke(main, [
+            self.invoke_discovery(runner, main, [
                 "skills", "discover", "--yes", "--agent", "copilot",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
@@ -1164,7 +1309,7 @@ class TestSkillsSubcommand:
         fake_output = json.dumps([_FAKE_SKILLS[0]])
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]):
-            runner.invoke(main, [
+            self.invoke_discovery(runner, main, [
                 "skills", "discover", "--yes", "--agent", "opencode",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
@@ -1181,7 +1326,7 @@ class TestSkillsSubcommand:
         with patch("subprocess.run", return_value=_R(0, fake_output)) as mock_run, \
              patch("reflect.core._detect_agents", return_value=[]), \
              patch("reflect.core.shutil.which", side_effect=lambda b: "/usr/bin/agy" if b == "agy" else None):
-            runner.invoke(main, [
+            self.invoke_discovery(runner, main, [
                 "skills", "discover", "--yes",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
@@ -1193,7 +1338,7 @@ class TestSkillsSubcommand:
 
     def test_skills_no_agent_available_exits(self, runner, otlp_file, tmp_path):
         with patch("reflect.core.shutil.which", return_value=None):
-            result = runner.invoke(main, [
+            result = self.invoke_discovery(runner, main, [
                 "skills",
                 "discover",
                 "--otlp-traces", str(otlp_file),
@@ -1205,7 +1350,7 @@ class TestSkillsSubcommand:
     def test_skills_agent_failure_exits_nonzero(self, runner, otlp_file, tmp_path):
         with patch("subprocess.run", return_value=_R(1, "", "error")), \
              patch("reflect.core._detect_agents", return_value=[]):
-            result = runner.invoke(main, [
+            result = self.invoke_discovery(runner, main, [
                 "skills", "discover", "--yes", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
@@ -1216,7 +1361,7 @@ class TestSkillsSubcommand:
     def test_skills_bad_json_exits_nonzero(self, runner, otlp_file, tmp_path):
         with patch("subprocess.run", return_value=_R(0, "not json")), \
              patch("reflect.core._detect_agents", return_value=[]):
-            result = runner.invoke(main, [
+            result = self.invoke_discovery(runner, main, [
                 "skills", "discover", "--yes", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
@@ -1230,7 +1375,7 @@ class TestSkillsSubcommand:
         fenced_output = '```json\n' + json.dumps([_FAKE_SKILLS[0]]) + '\n```'
         with patch("subprocess.run", return_value=_R(0, fenced_output)), \
              patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
-            result = runner.invoke(main, [
+            result = self.invoke_discovery(runner, main, [
                 "skills", "discover", "--yes", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
@@ -1245,7 +1390,7 @@ class TestSkillsSubcommand:
         fenced_output = '```\n' + json.dumps([_FAKE_SKILLS[0]]) + '\n```'
         with patch("subprocess.run", return_value=_R(0, fenced_output)), \
              patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
-            result = runner.invoke(main, [
+            result = self.invoke_discovery(runner, main, [
                 "skills", "discover", "--yes", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
@@ -1260,7 +1405,7 @@ class TestSkillsSubcommand:
         noisy_output = json.dumps([_FAKE_SKILLS[0]]) + "\n\nI found one strong candidate skill."
         with patch("subprocess.run", return_value=_R(0, noisy_output)), \
              patch("reflect.core._detect_agents", return_value=self._agent_fixture(skill_dest)):
-            result = runner.invoke(main, [
+            result = self.invoke_discovery(runner, main, [
                 "skills", "discover", "--yes", "--agent", "claude",
                 "--otlp-traces", str(otlp_file),
                 "--sessions-dir", str(tmp_path / "s"),
@@ -1438,7 +1583,7 @@ class TestUpdateAdvisor:
         assert "live" in result.output
         assert "gpt-4o" in result.output
 
-    def test_doctor_cost_appends_aliases_without_overwriting(self, runner, tmp_path):
+    def test_doctor_cost_appends_aliases_without_overwriting(self, runner, tmp_path, monkeypatch):
         reflect_home = tmp_path / ".reflect"
         alias_path = reflect_home / "config" / "model-aliases.json"
         alias_path.parent.mkdir(parents=True)
@@ -1486,15 +1631,16 @@ class TestUpdateAdvisor:
         finally:
             conn.close()
 
+        from tests.backend_helpers import bind_backend, complete_submission
+        backend = bind_backend(monkeypatch, db_path)
         with patch.dict(os.environ, {"REFLECT_HOME": str(reflect_home)}, clear=False):
-            result = runner.invoke(main, ["doctor", "cost", "--db-path", str(db_path)])
+            result = complete_submission(backend, runner.invoke(main, ["doctor", "cost", "--db-path", str(db_path)]))
 
         assert result.exit_code == 0
         payload = json.loads(alias_path.read_text())
         assert payload["aliases"]["claude-4-sonnet-20250514"] == "manual-target"
         assert payload["aliases"]["claude-4-5-sonnet-20250929"] == "claude-sonnet-4-5"
-        assert "New aliases" in result.output
-        assert "1" in result.output
+        assert len(result.job_result["added_aliases"]) == 1
 
     def test_prepare_sql_report_db_applies_cursor_usage_before_rollups(
         self,

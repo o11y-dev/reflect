@@ -44,6 +44,7 @@ class WorkflowContract(ReflectModel):
     """Versioned procedure definition evaluated against comparable executions."""
 
     signature_hash: str = Field(min_length=1, max_length=256)
+    procedure_signature: str | None = Field(default=None, min_length=1, max_length=256)
     applicability: WorkflowContractApplicability = Field(
         default_factory=WorkflowContractApplicability
     )
@@ -82,6 +83,8 @@ class WorkflowEvidence(ReflectModel):
     outcome: str | None = None
     verification_passed: bool | None = None
     workflow_slug_observed: bool = False
+    procedure_signature: str | None = None
+    review_target_consistent: bool = False
 
 
 class ContractEvaluation(ReflectModel):
@@ -121,13 +124,13 @@ def evaluate_contract(
     required_roles = [milestone.resolved_role for milestone in required]
     required_ids = [milestone.id for milestone in required]
     coverage = ordered_role_coverage(evidence.observed_roles, required_roles)
+    if contract.procedure_signature and evidence.procedure_signature != contract.procedure_signature:
+        coverage = 0.0
+    if any(role.startswith('review_') for role in required_roles) and not evidence.review_target_consistent:
+        coverage = 0.0
     status_ok = evidence.status.lower() in {"completed", "ok", "success"}
-    outcome_ok = (evidence.outcome or "success").lower() not in {
-        "failure",
-        "partial",
-        "abandoned",
-    }
-    successful_outcome = status_ok and outcome_ok and evidence.verification_passed is not False
+    outcome_ok = evidence.outcome == "success"
+    successful_outcome = status_ok and outcome_ok and evidence.verification_passed is True
     corroborated = (
         coverage >= contract.validation.minimum_evidence_coverage and successful_outcome
     )
@@ -158,6 +161,7 @@ class ContractEvaluationService:
         *,
         evidence: WorkflowEvidenceRepository | None = None,
     ):
+        self.conn = conn
         self.evidence = evidence or WorkflowEvidenceRepository(conn)
 
     def evaluate_units(
@@ -167,11 +171,19 @@ class ContractEvaluationService:
     ) -> dict[str, EvaluatedContractEvidence]:
         execution_unit_ids = [str(unit["execution_unit_id"]) for unit in execution_units]
         signals_by_execution = self.evidence.signals_for_execution_units(execution_unit_ids)
+        signatures = {}
+        if contract.procedure_signature:
+            from reflect.improvements.procedures import ProcedureEvidenceRepository
+            signatures = ProcedureEvidenceRepository(self.conn).signatures(execution_unit_ids, signals_by_execution)
         evaluated: dict[str, EvaluatedContractEvidence] = {}
         for unit in execution_units:
             execution_unit_id = str(unit["execution_unit_id"])
             signals = signals_by_execution.get(execution_unit_id, [])
             observed_roles = workflow_roles(signals)
+            from reflect.execution_assessment import attrs_dict
+            from reflect.improvements.workflow_roles import review_operation
+            review_targets = {operation[0] for signal in signals if signal.kind == 'tool'
+                              if (operation := review_operation(signal.name, attrs_dict(signal.preview)))}
             evaluation = evaluate_contract(
                 contract,
                 WorkflowEvidence(
@@ -181,6 +193,8 @@ class ContractEvaluationService:
                     outcome=str(unit["outcome"]) if unit.get("outcome") else None,
                     verification_passed=unit.get("verification_passed"),
                     workflow_slug_observed=bool(unit.get("workflow_slug_observed")),
+                    procedure_signature=signatures.get(execution_unit_id),
+                    review_target_consistent=len(review_targets) == 1,
                 ),
             )
             evaluated[execution_unit_id] = EvaluatedContractEvidence(

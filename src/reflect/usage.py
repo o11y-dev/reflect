@@ -7,6 +7,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from reflect.schema.base import ReflectModel
+from reflect.store.pending_refresh import analysis_coverage, derived_analysis_state
+from reflect.store.sqlite import snapshot_incomplete
+from reflect.views.measurements import MeasurementView, build_measurements
 
 
 class UsageTotals(ReflectModel):
@@ -66,6 +69,11 @@ class UsageReport(ReflectModel):
     tools: list[UsageBreakdown]
     limitations: list[str]
     token_provenance: TokenProvenance
+    measurements: MeasurementView
+    git_activity: dict
+    insights: dict
+    analysis_state: str
+    analysis_coverage: dict[str, dict[str, int]]
 
 
 class RuntimeSessionHint(ReflectModel):
@@ -132,17 +140,35 @@ class UsageService:
             where_sql, params = "s.id = ?", [resolved_id]
             scope = "session"
 
-        totals = self._totals(where_sql, params)
+        ids = {str(row[0]) for row in self.conn.execute(self._scope_cte(where_sql) + "SELECT id FROM scoped_sessions", params)}
+        days = {"day": 1, "week": 7, "month": 30}.get(period) if global_scope else None
+        date_from = (self.now-timedelta(days=days)).isoformat() if days else None
+        date_to = self.now.isoformat() if days else None
+        totals = self._totals(where_sql, params, date_from=date_from, date_to=date_to)
+        if days:
+            limitations.append("Activity counts include observed events in the selected UTC window. Duration is summed session wall time clipped to that window; recovered failures count matching observed failure-to-success tool sequences.")
+        measurements = build_measurements(self.conn, session_ids=ids,
+            date_from=date_from, date_to=date_to)
+        coverage = analysis_coverage(self.conn, ids)
+        analysis_state = derived_analysis_state(coverage, snapshot_ready=not snapshot_incomplete(self.conn))
+        if analysis_state == "historical_pending":
+            limitations.append("Derived analysis is pending for retained history; explicitly refresh the selected session or all history. Observed usage remains available.")
+        elif analysis_state == "preparing":
+            limitations.append("Derived analysis is refreshing; observed usage remains available and pending insights are withheld.")
+        from reflect.improvements.session_insights import read_session_insights
+        from reflect.store.git_activity import git_activity
+        for key, value in measurements.totals.items():
+            if key in UsageTotals.model_fields:
+                setattr(totals, key, value)
         token_provenance = self._token_provenance(where_sql, params)
-        unpriced_sessions = self._unpriced_token_sessions(where_sql, params)
         if token_provenance.estimated_sessions:
             limitations.append(
                 f"{token_provenance.estimated_sessions} session(s) use transcript-derived "
                 "token estimates, not exact provider counts."
             )
             limitations.append(
-                "Model token totals exclude transcript-derived estimates because their "
-                "model attribution is not exact; agent and overall totals retain them."
+                "Transcript-derived estimates retain an unknown model attribution; "
+                "agent and overall observed totals retain their usage."
             )
         if token_provenance.unavailable_sessions:
             limitations.append(
@@ -151,10 +177,10 @@ class UsageService:
                 "Use output size when captured, then LLM calls, tool calls, and duration "
                 "as inference-only proxies."
             )
-        if unpriced_sessions:
+        if measurements.coverage["cost_status"] != "complete":
             limitations.append(
-                f"Cost is unavailable or zero-priced for {unpriced_sessions} token-bearing "
-                "session(s); $0 is not proof that provider usage was free."
+                "Cost coverage is " + str(measurements.coverage["cost_status"])
+                + "; observed cost is a known subtotal. Missing rates or models do not imply free usage."
             )
         return UsageReport(
             scope=scope,
@@ -163,11 +189,19 @@ class UsageService:
             resolution=resolution,
             session=selected_session,
             totals=totals,
-            agents=self._agent_breakdown(where_sql, params),
-            models=self._model_breakdown(where_sql, params),
-            tools=self._tool_breakdown(where_sql, params),
+            agents=self._agent_breakdown(measurements),
+            models=[UsageBreakdown(name=row["model"] or "unknown", count=row["calls"],
+                input_tokens=row["input_tokens"],output_tokens=row["output_tokens"],
+                estimated_cost_usd=row["cost_usd"]) for row in measurements.model_mix],
+            tools=self._tool_breakdown(where_sql, params, date_from=date_from, date_to=date_to),
             limitations=limitations,
             token_provenance=token_provenance,
+            measurements=measurements,
+            git_activity=git_activity(self.conn, session_ids=ids,
+                date_from=measurements.scope["date_from"], date_to=measurements.scope["date_to"]),
+            insights=read_session_insights(self.conn, session_ids=ids) if analysis_state == "ready" else {},
+            analysis_state=analysis_state,
+            analysis_coverage=coverage,
         )
 
     def _resolve_session(self, explicit_session_id: str | None) -> tuple[str, str, str | None]:
@@ -277,25 +311,85 @@ class UsageService:
         days = {"day": 1, "week": 7, "month": 30}.get(period)
         if days is not None:
             since = self.now - timedelta(days=days)
-            conditions.append("julianday(s.started_at) >= julianday(?)")
-            params.append(since.isoformat())
+            conditions.append("EXISTS(SELECT 1 FROM steps st WHERE st.session_id=s.id AND julianday(st.started_at)>=julianday(?) AND julianday(st.started_at)<julianday(?))")
+            params.extend([since.isoformat(), self.now.isoformat()])
         if agent:
             conditions.append("(lower(a.name) = lower(?) OR lower(a.id) = lower(?))")
             params.extend([agent, agent])
         return " AND ".join(conditions) or "1 = 1", params
 
     @staticmethod
-    def _scope_cte(where_sql: str) -> str:
+    def _scope_cte(where_sql: str, date_from: str | None = None, date_to: str | None = None,
+                   *, materialize: bool = False) -> str:
+        step_filter = ""
+        step_source = "steps st JOIN scoped_sessions scoped ON scoped.id=st.session_id"
+        if date_from and date_to:
+            step_filter = """AND julianday(st.started_at) >= julianday(?)
+                AND julianday(st.started_at) < julianday(?)
+                AND COALESCE(json_extract(st.raw_attrs_json, '$."reflect.time.provenance"'), 'observed') != 'inferred'"""
+            # This covering index filters times/provenance before fetching the
+            # few matching fact rows. Keep selected sessions outside the join;
+            # otherwise SQLite may scan every retained event or its wide blobs.
+            step_source = """scoped_sessions scoped CROSS JOIN steps st
+                INDEXED BY idx_steps_measurement_times ON scoped.id=st.session_id"""
+        materialized = "MATERIALIZED " if materialize else ""
         return f"""
-        WITH scoped_sessions AS (
+        WITH scoped_sessions AS {materialized}(
           SELECT s.id
           FROM sessions s
           LEFT JOIN agents a ON a.id = s.agent_id
           WHERE {where_sql}
+        ), scoped_steps AS {materialized}(
+          SELECT st.id, st.session_id, st.started_at, st.type, st.summary,
+            json_object('gen_ai.client.turn_id',json_extract(st.raw_attrs_json, '$."gen_ai.client.turn_id"'),
+              'gen_ai.client.generation_id',json_extract(st.raw_attrs_json, '$."gen_ai.client.generation_id"'),
+              'gen_ai.client.hook.event',json_extract(st.raw_attrs_json, '$."gen_ai.client.hook.event"')) AS raw_attrs_json
+          FROM {step_source}
+          WHERE 1=1 {step_filter}
         )
         """
 
-    def _totals(self, where_sql: str, params: list[object]) -> UsageTotals:
+    def activity_totals(self, *, session_ids: set[str], date_from: str, date_to: str) -> UsageTotals:
+        """Share windowed activity across CLI/MCP and dashboard overview."""
+        ids = sorted(session_ids)
+        where = f"s.id IN ({','.join('?' for _ in ids)})" if ids else "0=1"
+        return self._totals(where, ids, date_from=date_from, date_to=date_to)
+
+    def _totals(self, where_sql: str, params: list[object], *, date_from: str | None = None,
+                date_to: str | None = None) -> UsageTotals:
+        if date_from and date_to:
+            cte = self._scope_cte(where_sql, date_from, date_to, materialize=True)
+            row = self.conn.execute(cte + """
+              SELECT (SELECT COUNT(*) FROM scoped_sessions),
+                (SELECT COUNT(*) FROM (
+                  SELECT st.session_id, COALESCE(
+                    json_extract(st.raw_attrs_json, '$."gen_ai.client.turn_id"'),
+                    json_extract(st.raw_attrs_json, '$."gen_ai.client.generation_id"'), st.id)
+                  FROM scoped_steps st WHERE
+                    lower(COALESCE(json_extract(st.raw_attrs_json, '$."gen_ai.client.hook.event"'), st.summary))='userpromptsubmit'
+                    OR EXISTS(SELECT 1 FROM conversation_facts cf WHERE cf.step_id=st.id AND cf.kind='prompt' AND cf.role='user')
+                  GROUP BY 1,2)),
+                (SELECT COUNT(*) FROM tool_calls tc JOIN scoped_steps st ON st.id=tc.step_id),
+                (SELECT COUNT(*) FROM tool_calls tc JOIN scoped_steps st ON st.id=tc.step_id WHERE tc.status='error'),
+                (SELECT COUNT(*) FROM (
+                  SELECT tc.status, LEAD(tc.status) OVER (
+                    PARTITION BY tc.session_id, tc.tool_name, tc.input_hash ORDER BY st.started_at,tc.id) AS next_status
+                  FROM tool_calls tc JOIN scoped_steps st ON st.id=tc.step_id
+                  WHERE NULLIF(tc.input_hash,'') IS NOT NULL) WHERE status='error' AND next_status='ok'),
+                (SELECT COALESCE(SUM(MAX(0, MIN(julianday(COALESCE(s.ended_at,?)),julianday(?))
+                    - MAX(julianday(s.started_at),julianday(?))))*86400000,0)
+                 FROM sessions s JOIN scoped_sessions scoped ON scoped.id=s.id),
+                (SELECT COUNT(*) FROM llm_calls lc JOIN scoped_steps st ON st.id=lc.step_id),
+                (SELECT COUNT(*) FROM mcp_calls mc JOIN tool_calls tc ON tc.id=mc.tool_call_id
+                    JOIN scoped_steps st ON st.id=tc.step_id),
+                (SELECT COUNT(*) FROM (
+                  SELECT ae.session_id,COALESCE(NULLIF(ae.agent_id,''),ae.event_id,ae.step_id)
+                  FROM agent_events ae JOIN scoped_steps st ON st.id=ae.step_id
+                  WHERE ae.event_name='SubagentStart' GROUP BY 1,2))
+            """, [*params, date_from, date_to, date_to, date_to, date_from]).fetchone()
+            return UsageTotals(sessions=int(row[0]), prompts=int(row[1]), tool_calls=int(row[2]),
+                failures=int(row[3]), recovered_failures=int(row[4]), duration_ms=round(row[5]),
+                llm_calls=int(row[6]), mcp_calls=int(row[7]), subagent_launches=int(row[8]))
         cte = self._scope_cte(where_sql)
         row = self.conn.execute(
             cte
@@ -344,30 +438,15 @@ class UsageService:
         if table not in {"llm_calls", "mcp_calls"}:
             raise ValueError(f"Unsupported usage table: {table}")
         source = (
-            "llm_calls item JOIN scoped_sessions scoped ON scoped.id = item.session_id"
+            "llm_calls item JOIN scoped_steps st ON st.id = item.step_id"
             if table == "llm_calls"
             else "mcp_calls item "
             "JOIN tool_calls tc ON tc.id = item.tool_call_id "
-            "JOIN scoped_sessions scoped ON scoped.id = tc.session_id"
+            "JOIN scoped_steps st ON st.id = tc.step_id"
         )
         row = self.conn.execute(
             self._scope_cte(where_sql)
             + f"SELECT COUNT(*) FROM {source}",
-            params,
-        ).fetchone()
-        return int(row[0])
-
-    def _unpriced_token_sessions(self, where_sql: str, params: list[object]) -> int:
-        row = self.conn.execute(
-            self._scope_cte(where_sql)
-            + """
-            SELECT COUNT(*)
-            FROM sessions s
-            JOIN scoped_sessions scoped ON scoped.id = s.id
-            WHERE s.input_tokens + s.output_tokens + s.cache_creation_tokens
-                  + s.cache_read_tokens + s.reasoning_tokens > 0
-              AND s.estimated_cost_usd <= 0
-            """,
             params,
         ).fetchone()
         return int(row[0])
@@ -431,101 +510,41 @@ class UsageService:
             + """
             SELECT COUNT(*)
             FROM (
-              SELECT st.session_id, st.id AS identity
-              FROM steps st
-              JOIN scoped_sessions scoped ON scoped.id = st.session_id
-              WHERE lower(st.type) IN ('subagent', 'subagent_start')
-                 OR lower(COALESCE(json_extract(st.raw_attrs_json, '$."gen_ai.client.hook.event"'), '')) = 'subagentstart'
-              UNION
-              SELECT tc.session_id, tc.step_id AS identity
-              FROM tool_calls tc
-              JOIN scoped_sessions scoped ON scoped.id = tc.session_id
-              WHERE lower(tc.tool_name) IN ('agent', 'subagent', 'task', 'spawn_agent', 'delegate')
+              SELECT ae.session_id,COALESCE(NULLIF(ae.agent_id,''),ae.event_id,ae.step_id) AS identity
+              FROM agent_events ae JOIN scoped_steps st ON st.id=ae.step_id
+              WHERE ae.event_name='SubagentStart' GROUP BY 1,2
             )
             """,
             params,
         ).fetchone()
         return int(row[0])
 
-    def _agent_breakdown(self, where_sql: str, params: list[object]) -> list[UsageBreakdown]:
-        rows = self.conn.execute(
-            self._scope_cte(where_sql)
-            + """
-            SELECT
-              COALESCE(NULLIF(a.name, ''), 'unknown'), COUNT(*),
-              COALESCE(SUM(s.input_tokens), 0), COALESCE(SUM(s.output_tokens), 0),
-              COALESCE(SUM(s.estimated_cost_usd), 0)
-            FROM scoped_sessions scoped
-            JOIN sessions s ON s.id = scoped.id
-            LEFT JOIN agents a ON a.id = s.agent_id
-            GROUP BY COALESCE(NULLIF(a.name, ''), 'unknown')
-            ORDER BY COUNT(*) DESC, 1
-            LIMIT 10
-            """,
-            params,
-        ).fetchall()
-        return [self._breakdown(row) for row in rows]
+    def _agent_breakdown(self, measurements: MeasurementView) -> list[UsageBreakdown]:
+        agents = {str(row[0]): str(row[1] or "unknown") for row in self.conn.execute(
+            "SELECT s.id,a.name FROM sessions s LEFT JOIN agents a ON a.id=s.agent_id")}
+        result: dict[str, UsageBreakdown] = {}
+        for sid, values in measurements.sessions.items():
+            name = agents.get(sid, "unknown")
+            item = result.setdefault(name, UsageBreakdown(name=name, count=0))
+            item.count += 1
+            item.input_tokens += int(values.get("input_tokens") or 0)
+            item.output_tokens += int(values.get("output_tokens") or 0)
+            item.estimated_cost_usd += float(values.get("known_cost_usd") or 0)
+        return sorted(result.values(), key=lambda row: (-row.count, row.name))
 
-    def _model_breakdown(self, where_sql: str, params: list[object]) -> list[UsageBreakdown]:
+    def _tool_breakdown(self, where_sql: str, params: list[object], *,
+                        date_from: str | None = None, date_to: str | None = None) -> list[UsageBreakdown]:
         rows = self.conn.execute(
-            self._scope_cte(where_sql)
-            + """
-            , model_calls AS (
-              SELECT
-                COALESCE(NULLIF(l.response_model, ''), NULLIF(l.request_model, ''), 'unknown') AS model,
-                COUNT(*) AS call_count,
-                COALESCE(SUM(l.estimated_cost_usd), 0) AS estimated_cost_usd
-              FROM llm_calls l
-              JOIN scoped_sessions scoped ON scoped.id = l.session_id
-              GROUP BY COALESCE(NULLIF(l.response_model, ''), NULLIF(l.request_model, ''), 'unknown')
-            ), canonical_usage AS (
-              SELECT DISTINCT
-                l.session_id,
-                COALESCE(NULLIF(l.response_model, ''), NULLIF(l.request_model, ''), 'unknown') AS model,
-                l.input_tokens,
-                l.output_tokens,
-                l.cache_creation_input_tokens,
-                l.cache_read_input_tokens,
-                l.reasoning_output_tokens
-              FROM llm_calls l
-              JOIN scoped_sessions scoped ON scoped.id = l.session_id
-              WHERE l.input_tokens + l.output_tokens + l.cache_creation_input_tokens
-                    + l.cache_read_input_tokens + l.reasoning_output_tokens > 0
-            ), model_usage AS (
-              SELECT
-                model,
-                COALESCE(SUM(input_tokens), 0) AS input_tokens,
-                COALESCE(SUM(output_tokens), 0) AS output_tokens
-              FROM canonical_usage
-              GROUP BY model
-            )
-            SELECT
-              calls.model,
-              calls.call_count,
-              COALESCE(usage.input_tokens, 0),
-              COALESCE(usage.output_tokens, 0),
-              calls.estimated_cost_usd
-            FROM model_calls calls
-            LEFT JOIN model_usage usage ON usage.model = calls.model
-            ORDER BY calls.call_count DESC, calls.model
-            LIMIT 10
-            """,
-            params,
-        ).fetchall()
-        return [self._breakdown(row) for row in rows]
-
-    def _tool_breakdown(self, where_sql: str, params: list[object]) -> list[UsageBreakdown]:
-        rows = self.conn.execute(
-            self._scope_cte(where_sql)
+            self._scope_cte(where_sql, date_from, date_to)
             + """
             SELECT tc.tool_name, COUNT(*), 0, 0, 0
             FROM tool_calls tc
-            JOIN scoped_sessions scoped ON scoped.id = tc.session_id
+            JOIN scoped_steps st ON st.id = tc.step_id
             GROUP BY tc.tool_name
             ORDER BY COUNT(*) DESC, tc.tool_name
             LIMIT 10
             """,
-            params,
+            [*params, date_from, date_to] if date_from and date_to else params,
         ).fetchall()
         return [self._breakdown(row) for row in rows]
 

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from reflect.dashboard_query_common import session_card_from_row
@@ -16,14 +16,29 @@ from reflect.improvements.models import (
 )
 from reflect.improvements.repository import ImprovementRepository
 from reflect.improvements.skills import SkillRegistryService
-from reflect.preparation import (
-    PreparationCoordinator,
-    PreparationProgress,
-    PreparationScheduler,
-    PreparationStage,
-)
 from reflect.store.migrate import migrate
 from reflect.store.sqlite import connect_sqlite
+
+
+def _job_client(db_path, *, refresh=True):
+    from reflect.backend_api import install_backend
+    from reflect.backend_runtime import BackendJobRunner
+    runner = BackendJobRunner(db_path, refresh_arguments={'otlp_traces': None, 'include_native_sessions': False} if refresh else None)
+    runner.jobs.initialize()
+    app = build_dashboard_app(docs_dir=db_path.parent, db_path=db_path)
+    install_backend(app, runner, token='fixture', port=8765)
+    client = TestClient(app, base_url='http://127.0.0.1:8765', headers={'Authorization': 'Bearer fixture'})
+    return client, runner
+
+
+def _publish_report(db_path):
+    from contextlib import closing
+
+    from reflect.store.snapshots import PublishedSnapshotStore
+    from reflect.store.sqlite import mark_snapshot
+    with closing(connect_sqlite(db_path)) as conn:
+        mark_snapshot(conn, ready=True)
+    PublishedSnapshotStore(db_path, reserve_bytes=0).publish(evidence_revision="fixture")
 
 
 def test_session_cards_explain_why_cost_is_unavailable():
@@ -356,6 +371,8 @@ def _seed_sql_report_db(db_path):
             """,
             (now,),
         )
+        from reflect.store.command_patterns import refresh_command_projection
+        refresh_command_projection(conn)
         conn.commit()
     finally:
         conn.close()
@@ -545,15 +562,53 @@ def _add_sql_codex_sibling_session(db_path):
         conn.close()
 
 
+@pytest.mark.parametrize("prepared", [False, True])
+def test_dashboard_api_displays_codex_title_without_persisting_it(tmp_path, monkeypatch, prepared):
+    from reflect.dashboard_read_executor import DashboardReadExecutor
+
+    home = tmp_path / "codex"
+    home.mkdir()
+    index = home / "session_index.jsonl"
+    index.write_text(
+        '{"id":"sess-sql","thread_name":"Review SQL dashboard"}\n', encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    _publish_report(db_path)
+    executor = DashboardReadExecutor() if prepared else None
+    try:
+        client = TestClient(build_dashboard_app(docs_dir=tmp_path, db_path=db_path, read_executor=executor))
+        result = client.get("/api/data?range=all")
+        assert result.status_code == 200
+        session = next(row for row in result.json()["sessions"] if row["id"] == "sess-sql")
+        assert session["native_title"] == "Review SQL dashboard"
+        assert session["first_prompt"].startswith("Fix the failing SQL dashboard tests")
+        assert "Review SQL dashboard" not in db_path.with_suffix(".dashboard-responses.json").read_text()
+
+        index.write_text('{"id":"sess-sql","thread_name":"Verify saved title"}\n', encoding="utf-8")
+        renamed = next(row for row in client.get("/api/data?range=all").json()["sessions"] if row["id"] == "sess-sql")
+        assert renamed["native_title"] == "Verify saved title"
+        for term in ("verify saved title", "failing sql dashboard tests"):
+            result = client.get("/api/data", params={"q": term, "range": "all"})
+            assert [row["id"] for row in result.json()["sessions"]] == ["sess-sql"]
+        tools = client.get("/api/explore/tools", params={"q": "verify saved title", "range": "all"})
+        assert tools.json()["tools_by_count"]
+    finally:
+        if executor is not None:
+            executor.close()
+
+
 def test_dashboard_api_embeds_sql_view_models(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
     client = TestClient(app)
 
-    response = client.get("/api/data")
-    usage = client.get("/api/explore/usage").json()
-    tools = client.get("/api/explore/tools").json()
+    response = client.get("/api/data?range=all")
+    usage = client.get("/api/explore/usage?range=all").json()
+    tools = client.get("/api/explore/tools?range=all").json()
     context = client.get("/api/explore/context").json()
 
     assert response.status_code == 200
@@ -575,12 +630,13 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
 
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
     client = TestClient(app)
 
-    response = client.get("/api/data")
+    response = client.get("/api/data?range=all&tab=explore&view=usage")
     context = client.get("/api/explore/context").json()
-    tools = client.get("/api/explore/tools").json()
+    tools = client.get("/api/explore/tools?range=all").json()
     assert response.status_code == 200
     payload = response.json()
     assert payload["sql_backed"] is True
@@ -588,7 +644,7 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path):
     assert payload["sqlite"]["overview"]["session_count"] == 1
     assert context["specs"]["requirements_by_status"] == {"validated": 1}
     assert context["scoped"] is False
-    assert tools["skills_by_count"] == {"review-skill": 1, "sql-review": 1}
+    assert tools["skills_by_count"] == {}  # Names and file mentions alone do not establish use.
     tabs = payload["sqlite"]["tabs"]
     assert tabs["usage"]["unique_sessions"] == 1
     assert tabs["usage"]["prompt_submits"] == 1
@@ -597,48 +653,50 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path):
     assert tabs["activity"]["events_by_type"] == {"llm_call": 2, "tool_call": 2}
     assert tabs["costs"]["model_costs"]["gpt-5.4"] == 0.42
     assert payload["sessions"][0]["id"] == "sess-sql"
-    assert payload["sessions"][0]["first_prompt"] == "SQL session"
+    assert payload["sessions"][0]["title"] == "SQL session"
+    assert payload["sessions"][0]["first_prompt"].startswith("Fix the failing SQL dashboard tests")
     assert payload["sessions"][0]["duration_ms"] == 120000
     assert payload["sessions"][0]["quality_score"] > 0
     assert tabs["usage"]["avg_quality_score"] > 0
     assert tabs["activity"]["activity_by_day"]["2026-05-01"] == 3
     assert tabs["activity"]["activity_by_hour"]["10"] == 4
     assert tabs["usage"]["total_cost_usd"] == 0.42
-    assert tabs["usage"]["input_cost_usd"] > 0
-    assert tabs["usage"]["output_cost_usd"] > 0
-    assert tabs["usage"]["cache_read_cost_usd"] > 0
+    assert tabs["usage"]["input_cost_usd"] == 0  # Historical aggregate has no rate breakdown.
+    assert tabs["usage"]["output_cost_usd"] == 0
+    assert tabs["usage"]["cache_read_cost_usd"] == 0
     assert tools["tools_by_count"] == {
         "exec_command": 1,
         "mcp__mcp-issue-tracker__jira_search": 1,
     }
     assert tabs["mcp"]["mcp_servers_by_count"] == {"mcp-issue-tracker": 1}
     assert "docker run" not in next(iter(tabs["mcp"]["mcp_servers_by_count"]))
-    assert tools["skills_by_count"] == {"review-skill": 1, "sql-review": 1}
-    assert tools["subagent_types_by_count"] == {"research-helper": 1}
-    assert tools["top_commands"] == [{"command": "poetry run pytest", "count": 1}]
+    assert tools["skills_by_count"] == {}  # Names and file mentions alone do not establish use.
+    assert tools["subagent_types_by_count"] == {}  # The prompt requests a helper; no launch was captured.
+    assert tools["top_commands"] == [{"command": "pytest", "count": 1}]
     assert tools["unique_commands"] == 1
     assert tools["shell_executions"] == 1
     assert tools["tool_percentiles"][0]["tool"] == "exec_command"
     assert tabs["agents"]["agent_comparison"][0]["name"] == "codex"
     assert tabs["observations"]["strengths"]
     assert tabs["observations"]["observations"]
-    assert tabs["observations"]["recommendations"]
+    assert tabs["observations"]["recommendations"] == []
     assert tabs["observations"]["token_economy"]
     observations = tabs["observations"]
-    assert any("Reduce MCP context bloat" in rec for rec in observations["recommendations"])
+    assert all(item["name"] not in {"Cache Saver", "Zero Failures"} for item in observations["achievements"])
     assert all("SQL view models" not in rec for rec in observations["recommendations"])
     assert tabs["usage"]["pricing_source"] == "local"
     assert all("SQL" not in item and "SQLite" not in item for item in observations["strengths"])
     assert all("SQL" not in item and "SQLite" not in item for item in observations["observations"])
     assert all("SQL has" not in item and "SQL-observed" not in item for item in observations["recommendations"])
     assert all(achievement["name"] != "SQL Report Store" for achievement in observations["achievements"])
-    assert observations["practical_examples"]
+    assert observations["practical_examples"] == []
     assert len(observations["achievements"]) >= 5
     assert tabs["costs"]["total_cache_creation_tokens"] == 10
     assert tabs["costs"]["total_cache_read_tokens"] == 90
     assert observations["token_economy"]["total_tokens"] == 250
-    assert observations["token_economy"]["cache_hit_pct"] == 75
-    graph = client.get("/api/explore/graph").json()
+    assert observations["token_economy"]["cache_read_share_pct"] == pytest.approx(90 / 220 * 100)
+    assert "cache_hit_pct" not in observations["token_economy"]
+    graph = client.get("/api/explore/graph?range=all").json()
     assert graph["graph_dep"]["nodes"]
     assert {node["type"] for node in graph["graph_dep"]["nodes"]} >= {
         "agent",
@@ -673,7 +731,7 @@ def test_dashboard_api_uses_sql_when_db_is_configured(tmp_path):
     assert tool_inventory["tools"][0]["name"] == "exec_command"
     assert tool_inventory["tools"][0]["count"] == 1
     assert {skill["name"] for skill in tool_inventory["skills"]} >= {"review-skill", "sql-review"}
-    assert {subagent["name"] for subagent in tool_inventory["subagents"]} >= {"research-helper"}
+    assert tool_inventory["subagents"] == []  # A prompt mention is not a captured launch.
     assert tool_inventory["mcp_tools"][0]["name"].endswith("/jira_search")
 
 
@@ -683,6 +741,14 @@ def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
     observation_id = _seed_improvement_ledger(db_path)
     project_root = tmp_path / "project"
     (project_root / ".git").mkdir(parents=True)
+    from reflect.backend_runtime import action_store_path
+    from reflect.store.sqlite import mark_snapshot
+    from reflect.store.user_state import UserStateStore
+    from reflect.store.user_state_migration import UserStateMigration
+    with connect_sqlite(db_path) as conn:
+        mark_snapshot(conn, ready=True)
+    UserStateMigration(db_path, UserStateStore(action_store_path(db_path))).run()
+    _publish_report(db_path)
     app = build_dashboard_app(
         docs_dir=tmp_path,
         db_path=db_path,
@@ -734,7 +800,7 @@ def test_dashboard_improvement_endpoints_expose_durable_ledger(tmp_path):
     skill_detail = client.get(f"/api/skills/{skill_id}")
     assert skill_detail.status_code == 200
     assert skill_detail.json()["versions"][0]["status"] == "pending"
-    assert skill_detail.json()["usage_sessions"] == []
+    assert skill_detail.json()["usage_occurrences"] == []
     assert measurements.status_code == 200
     assert measurements.json() == {"impact_checks": []}
     assert missing_measurement_sessions.status_code == 404
@@ -850,6 +916,7 @@ def test_dashboard_improvement_get_endpoints_are_read_only(tmp_path, monkeypatch
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
     _seed_improvement_ledger(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     def reject_refresh(*_args, **_kwargs):
@@ -873,89 +940,159 @@ def test_dashboard_improvement_get_endpoints_are_read_only(tmp_path, monkeypatch
 
 
 def test_dashboard_api_reports_background_preparation_status(tmp_path):
-    db_path = tmp_path / "reflect.db"
-    _seed_sql_report_db(db_path)
-    worker = PreparationCoordinator(lambda _progress: {"refreshed_sessions": 1})
-    app = build_dashboard_app(
-        docs_dir=tmp_path,
-        db_path=db_path,
-        preparation_worker=worker,
-    )
-    client = TestClient(app)
+    client, runner = _job_client(tmp_path / 'reflect.db')
+    assert client.get('/api/status').json()['preparation']['state'] == 'idle'
+    job = client.post('/api/refresh').json()
+    assert client.get('/api/status').json()['job']['job_id'] == job['job_id']
+    runner.jobs.claim(job['job_id'], owner='fixture')
+    runner.jobs.update(job['job_id'], owner='fixture', progress={'stage': 'ingest'})
+    assert client.get('/api/status').json()['job']['progress']['stage'] == 'ingest'
+    runner.jobs.update(job['job_id'], owner='fixture', state='succeeded', result={'refreshed_sessions': 1})
+    assert client.get('/api/status').json()['preparation']['state'] == 'complete'
+    assert client.get('/api/status').json()['job']['result'] == {'refreshed_sessions': 1}
 
-    initial_status = client.get("/api/status").json()
-    assert initial_status["preparation"]["state"] == "idle"
-    assert initial_status["refresh_available"] is True
-    assert worker.start() is True
-    assert worker.wait(timeout=2) is True
 
-    status = client.get("/api/status").json()["preparation"]
-    assert status["state"] == "complete"
-    assert status["generation"] == 1
-    assert status["result"]["details"] == {"refreshed_sessions": 1}
+@pytest.mark.parametrize("initial_store", ["missing", "empty", "outdated", "incomplete"])
+def test_dashboard_starts_before_initial_snapshot_and_recovers(tmp_path, initial_store):
+    from reflect.backend_runtime import _execute_job
+    from reflect.store.sqlite import mark_snapshot
+    db_path = tmp_path / 'reflect.db'
+    if initial_store == 'empty':
+        db_path.touch()
+    elif initial_store == 'outdated':
+        with connect_sqlite(db_path) as conn:
+            conn.execute('CREATE TABLE old_schema(id INTEGER)')
+    elif initial_store == 'incomplete':
+        _seed_sql_report_db(db_path)
+        with connect_sqlite(db_path) as conn:
+            mark_snapshot(conn, ready=False)
+    client, runner = _job_client(db_path)
+    response = client.post('/api/refresh')
+    assert response.status_code == 202
+    for url in ('/api/data', '/api/data?agents=cursor', '/api/explore/usage', '/api/findings'):
+        pending = client.get(url)
+        assert pending.status_code == 503
+        assert pending.json()['state'] == 'preparing'
+        assert pending.headers['Retry-After'] == '2'
+    job = response.json()
+    assert runner.jobs.claim(job['job_id'], owner='fixture')
+    _execute_job(db_path, runner.jobs.path, job['job_id'], 'fixture')
+    assert runner.jobs.get(job['job_id']).state == 'succeeded'
+    assert client.get('/api/data?range=all').status_code == 200
+    assert client.get('/api/status').json()['publication']['generation']
+
+
+def test_dashboard_without_optional_server_dependencies_prepares_artifact(tmp_path, monkeypatch):
+    import sys
+
+    from reflect.dashboard_server import _serve_dashboard
+    monkeypatch.setitem(sys.modules, 'uvicorn', None)
+    with pytest.raises(RuntimeError, match='requires FastAPI and uvicorn'):
+        _serve_dashboard(8765, tmp_path, db_path=tmp_path / 'reflect.db', open_browser=False)
+    assert not (tmp_path / '_reflect_data.json').exists()
+    assert not (tmp_path / 'reflect.db').exists()
+
+
+def test_dashboard_initial_preparation_can_publish_an_empty_report(tmp_path):
+    from reflect.backend_runtime import _execute_job
+    db_path = tmp_path / 'reflect.db'
+    client, runner = _job_client(db_path)
+    assert client.get('/api/data').status_code == 503
+    job = client.post('/api/refresh').json()
+    runner.jobs.claim(job['job_id'], owner='fixture')
+    _execute_job(db_path, runner.jobs.path, job['job_id'], 'fixture')
+    assert runner.jobs.get(job['job_id']).state == 'succeeded'
+    assert client.get('/api/data').status_code == 200
+    assert client.get('/api/data').json()['sessions'] == []
+
+
+def test_dashboard_artifact_fallback_surfaces_preparation_failure(tmp_path):
+    client, runner = _job_client(tmp_path / 'reflect.db')
+    job = client.post('/api/refresh').json()
+    runner.jobs.claim(job['job_id'], owner='fixture')
+    runner.jobs.update(job['job_id'], owner='fixture', state='failed', error='source is unavailable')
+    status = client.get('/api/status').json()
+    assert status['preparation']['state'] == 'failed'
+    assert status['job']['error'] == 'source is unavailable'
+    assert client.get('/api/data').status_code == 503
+    assert not (tmp_path / '_reflect_data.json').exists()
 
 
 def test_dashboard_status_exposes_automatic_refresh_and_raw_storage(tmp_path):
-    db_path = tmp_path / "reflect.db"
-    _seed_sql_report_db(db_path)
-    scheduler = PreparationScheduler(
-        PreparationCoordinator(lambda _progress: {"refreshed_sessions": 1}),
-        interval_seconds=300,
-        run_immediately=False,
-    )
-    app = build_dashboard_app(
-        docs_dir=tmp_path,
-        db_path=db_path,
-        preparation_scheduler=scheduler,
-        raw_storage_status_loader=lambda: {
-            "accepting_telemetry": False,
-            "raw_bytes": 4_294_967_296,
-            "raw_limit_bytes": 4_294_967_296,
-            "usage_ratio": 1.0,
-        },
-    )
-    client = TestClient(app)
-
-    assert scheduler.start() is True
-    status = client.get("/api/status").json()
-
-    assert status["automatic_refresh"]["enabled"] is True
-    assert status["automatic_refresh"]["interval_seconds"] == 300
-    assert status["automatic_refresh"]["next_run_at"]
-    assert status["raw_storage"]["accepting_telemetry"] is False
-    assert status["raw_storage"]["raw_limit_bytes"] == 4_294_967_296
-    assert scheduler.close(timeout=1) is True
+    client, runner = _job_client(tmp_path / 'reflect.db')
+    runner.raw_storage_status_loader = lambda: {'accepting_telemetry': False, 'raw_bytes': 4294967296, 'raw_limit_bytes': 4294967296, 'usage_ratio': 1.0}
+    status = client.get('/api/status').json()
+    assert status['automatic_refresh']['enabled'] is True
+    assert status['automatic_refresh']['interval_seconds'] == 300
+    assert status['raw_storage']['accepting_telemetry'] is False
+    assert status['raw_storage']['raw_limit_bytes'] == 4294967296
 
 
 def test_dashboard_refresh_endpoint_starts_background_preparation(tmp_path):
-    db_path = tmp_path / "reflect.db"
-    _seed_sql_report_db(db_path)
-    worker = PreparationCoordinator(lambda _progress: {"refreshed_sessions": 1})
-    app = build_dashboard_app(
-        docs_dir=tmp_path,
-        db_path=db_path,
-        preparation_worker=worker,
-    )
-    client = TestClient(app)
-
-    response = client.post("/api/refresh")
-
-    assert response.status_code in {200, 202}
-    assert response.json()["refresh_available"] is True
-    assert worker.wait(timeout=2) is True
-    assert worker.snapshot().generation == 1
+    client, runner = _job_client(tmp_path / 'reflect.db')
+    response = client.post('/api/refresh')
+    assert response.status_code == 202
+    job = response.json()
+    assert job['state'] == 'queued'
+    assert runner.jobs.get(job['job_id']).kind == 'refresh'
+    assert client.post('/api/refresh').json()['job_id'] == job['job_id']
 
 
 def test_dashboard_refresh_endpoint_rejects_snapshot_only_server(tmp_path):
+    client, runner = _job_client(tmp_path / 'reflect.db', refresh=False)
+    response = client.post('/api/refresh')
+    assert response.status_code == 409
+    assert 'disabled' in response.json()['detail']
+    assert runner.jobs.list() == []
+
+
+def test_dashboard_does_not_create_exporters_from_agent_environment(tmp_path, monkeypatch):
+    from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    calls = []
+
+    def unexpected_exporter(*args, **kwargs):
+        calls.append(True)
+        raise AssertionError("Dashboard must not initialize agent telemetry exporters")
+
+    monkeypatch.setattr(OTLPSpanExporter, "__init__", unexpected_exporter)
+    monkeypatch.setattr(OTLPMetricExporter, "__init__", unexpected_exporter)
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
-    app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
-    client = TestClient(app)
+    _publish_report(db_path)
+    with TestClient(build_dashboard_app(docs_dir=tmp_path, db_path=db_path)) as client:
+        assert client.get("/api/data").status_code == 200
+    assert calls == []
 
-    response = client.post("/api/refresh")
 
-    assert response.status_code == 409
-    assert response.json()["refresh_available"] is False
+def test_dashboard_totals_and_search_include_sessions_beyond_navigation_page(tmp_path):
+    from reflect.dashboard_queries import build_dashboard_payload
+
+    db_path = tmp_path / "population.db"
+    _seed_sql_report_db(db_path)
+    conn = connect_sqlite(db_path)
+    try:
+        for i in range(505):
+            conn.execute(
+                """INSERT INTO sessions(id,agent_id,started_at,status,title,input_tokens,
+                   output_tokens,estimated_cost_usd,created_at,updated_at)
+                   VALUES (?, 'agent-codex', ?, 'completed', ?, 10, 2, 0.01, ?, ?)""",
+                (f"population-{i}", "2026-04-01T00:00:00Z", f"Older population {i}",
+                 "2026-04-01T00:00:00Z", "2026-04-01T00:00:00Z"),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    payload = build_dashboard_payload(db_path, limit=10, lazy_all_tabs=True, include_comparison=False)
+    assert len(payload["sessions"]) == 10
+    assert payload["sqlite"]["overview"]["session_count"] == 506
+    assert payload["measurements"]["totals"]["input_tokens"] == 5170
+    assert payload["measurements"]["totals"]["estimated_cost_usd"] == pytest.approx(5.47)
+    older = build_dashboard_payload(db_path, q="Older population 504", lazy_all_tabs=True, include_comparison=False)
+    assert older["sqlite"]["overview"]["session_count"] == 1
+    assert older["sessions"][0]["id"] == "population-504"
 
 
 def test_dashboard_minimal_snapshot_skips_all_tab_builders(tmp_path, monkeypatch):
@@ -982,6 +1119,39 @@ def test_dashboard_minimal_snapshot_skips_all_tab_builders(tmp_path, monkeypatch
     }
 
 
+def test_pending_navigation_preserves_explicit_empty_tab_selection(tmp_path, monkeypatch):
+    from reflect.dashboard_queries import build_dashboard_payload
+
+    db_path = tmp_path / "reflect.db"
+    _seed_sql_report_db(db_path)
+    conn = connect_sqlite(db_path)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO store_metadata(key,value,updated_at) VALUES (?, ?, ?)",
+            ("prepared_snapshot", "incomplete", "2026-11-08T00:00:00Z"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    def fail_if_built(*_args, **_kwargs):
+        raise AssertionError("pending Sessions navigation must not build lazy report tabs")
+
+    monkeypatch.setattr("reflect.views.build_report_tab", fail_if_built)
+    monkeypatch.setattr("reflect.views.build_report_tabs", fail_if_built)
+    payload = build_dashboard_payload(
+        db_path, q="sess-sql", lazy_heavy_tabs=True,
+        include_comparison=False, base_tab_names=set(),
+    )
+
+    assert payload["analysis_state"] == "preparing"
+    assert payload["sessions"][0]["id"] == "sess-sql"
+    assert payload["sessions"][0]["first_prompt"].startswith("Fix the failing SQL dashboard tests")
+    assert payload["measurements"]["totals"]["input_tokens"] > 0
+    assert payload["sqlite"]["tabs"]["activity"]["events_by_type"] == {}
+    assert payload["sqlite"]["tabs"]["tools"]["tools_by_count"] == {}
+
+
 def test_snapshot_server_defers_heavy_graph_cache(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
@@ -991,53 +1161,55 @@ def test_snapshot_server_defers_heavy_graph_cache(tmp_path, monkeypatch):
 
     monkeypatch.setattr("reflect.views.report_tabs.build_report_tabs", fail_if_built)
     monkeypatch.setattr("reflect.views.report_tabs._build_tools", fail_if_built)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     assert TestClient(app).get("/api/data").status_code == 200
 
 
 def test_dashboard_api_serves_current_snapshot_during_background_preparation(tmp_path):
-    db_path = tmp_path / "reflect.db"
+    db_path = tmp_path / 'reflect.db'
     _seed_sql_report_db(db_path)
-    started = threading.Event()
-    release = threading.Event()
+    _publish_report(db_path)
+    client, runner = _job_client(db_path)
+    job = client.post('/api/refresh').json()
+    runner.jobs.claim(job['job_id'], owner='fixture')
+    runner.jobs.update(job['job_id'], owner='fixture', progress={'stage': 'refreshing_graph', 'message': 'Refreshing the evidence graph...'})
+    with connect_sqlite(db_path) as writer:
+        writer.execute('BEGIN IMMEDIATE')
+        writer.execute("DELETE FROM sessions WHERE id='sess-sql'")
+        response = client.get('/api/data?range=all')
+        assert response.status_code == 200
+        assert response.json()['sessions'][0]['id'] == 'sess-sql'
+        status = client.get('/api/status').json()
+        assert status['preparation']['state'] == 'running'
+        assert status['job']['progress']['stage'] == 'refreshing_graph'
+        assert status['job']['progress']['message'] == 'Refreshing the evidence graph...'
+        writer.rollback()
 
-    def prepare(report_progress):
-        report_progress(
-            PreparationProgress(
-                stage=PreparationStage.REFRESHING_GRAPH,
-                message="Refreshing the evidence graph...",
-            )
-        )
-        started.set()
-        release.wait(timeout=2)
-        return {"refreshed_sessions": 1}
 
-    worker = PreparationCoordinator(prepare)
-    app = build_dashboard_app(
-        docs_dir=tmp_path,
-        db_path=db_path,
-        preparation_worker=worker,
-    )
-    client = TestClient(app)
-
-    assert worker.start() is True
-    assert started.wait(timeout=1) is True
-    response = client.get("/api/data")
-
-    assert response.status_code == 200
-    assert response.json()["sessions"][0]["id"] == "sess-sql"
-    preparation = client.get("/api/status").json()["preparation"]
-    assert preparation["state"] == "running"
-    assert preparation["stage"] == "refreshing_graph"
-    assert preparation["message"] == "Refreshing the evidence graph..."
-    release.set()
-    assert worker.wait(timeout=2) is True
+def test_initial_data_requests_wait_for_the_single_completion_cache_load(tmp_path, monkeypatch):
+    db_path = tmp_path / 'reflect.db'
+    _seed_sql_report_db(db_path)
+    calls = []
+    def load(*args, **kwargs):
+        calls.append(1)
+        return {'sessions': [{'id': 'prepared'}]}
+    monkeypatch.setattr('reflect.dashboard_server.build_dashboard_payload', load)
+    client, runner = _job_client(db_path)
+    for _ in range(2):
+        assert client.get('/api/data').status_code == 503
+    assert calls == []
+    assert client.get('/api/status').status_code == 200
+    _publish_report(db_path)
+    assert client.get('/api/data').json()['sessions'][0]['id'] == 'prepared'
+    assert calls == [1]
 
 
 def test_dashboard_filtered_bootstrap_skips_heavy_tabs(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     original = __import__("reflect.dashboard_queries", fromlist=["build_dashboard_payload"]).build_dashboard_payload
@@ -1049,7 +1221,7 @@ def test_dashboard_filtered_bootstrap_skips_heavy_tabs(tmp_path, monkeypatch):
 
     monkeypatch.setattr("reflect.dashboard_server.build_dashboard_payload", capture_payload)
 
-    response = TestClient(app).get("/api/data", params={"agents": "codex"})
+    response = TestClient(app).get("/api/data", params={"agents": "codex", "range": "all"})
 
     assert response.status_code == 200
     assert calls[-1]["lazy_heavy_tabs"] is True
@@ -1066,7 +1238,7 @@ def test_dashboard_filtered_bootstrap_skips_heavy_tabs(tmp_path, monkeypatch):
     calls.clear()
     usage = TestClient(app).get(
         "/api/data",
-        params={"agents": "codex", "tab": "explore", "view": "usage"},
+        params={"agents": "codex", "tab": "explore", "view": "usage", "range": "all"},
     )
 
     assert usage.status_code == 200
@@ -1077,8 +1249,8 @@ def test_dashboard_filtered_bootstrap_skips_heavy_tabs(tmp_path, monkeypatch):
     payload = usage.json()
     tabs = payload["sqlite"]["tabs"]
     assert tabs["usage"]["shell_executions"] == 1
-    assert tabs["usage"]["subagent_launches"] == 1
-    assert tabs["usage"]["subagent_types_by_count"] == {"research-helper": 1}
+    assert tabs["usage"]["subagent_launches"] == 0
+    assert tabs["usage"]["subagent_types_by_count"] == {}
     assert tabs["usage"]["source_provenance"]
     assert tabs["usage"]["agent_cost_over_time"] == [
         {"day": "2026-05-01", "agent": "codex", "total_cost": 0.42},
@@ -1091,6 +1263,7 @@ def test_dashboard_session_filter_uses_focused_fast_path(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
     _add_sql_codex_sibling_session(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     def _raise_broad_payload(*args, **kwargs):
@@ -1111,13 +1284,13 @@ def test_dashboard_session_filter_uses_focused_fast_path(tmp_path, monkeypatch):
     selected_session = next(session for session in payload["sessions"] if session["id"] == "sess-sql")
     assert selected_session["first_prompt"].startswith("Fix the failing SQL dashboard tests")
     assert selected_session["primary_model"] == "gpt-5.4"
-    assert selected_session["skills"] == {"review-skill": 1, "sql-review": 1}
+    assert selected_session["skills"] == {}
     assert tabs["tools"]["tools_by_count"] == {
         "exec_command": 1,
         "mcp__mcp-issue-tracker__jira_search": 1,
     }
-    assert tabs["tools"]["skills_by_count"] == {"review-skill": 1, "sql-review": 1}
-    assert tabs["tools"]["subagent_types_by_count"] == {"research-helper": 1}
+    assert tabs["tools"]["skills_by_count"] == {}
+    assert tabs["tools"]["subagent_types_by_count"] == {}
     assert tabs["mcp"]["mcp_servers_by_count"] == {"mcp-issue-tracker": 1}
     assert "docker run" not in next(iter(tabs["mcp"]["mcp_servers_by_count"]))
     assert tabs["activity"]["events_by_type"] == {"llm_call": 2, "tool_call": 2}
@@ -1142,6 +1315,7 @@ def test_dashboard_session_filter_uses_focused_fast_path(tmp_path, monkeypatch):
 def test_dashboard_explore_api_uses_product_view_names(tmp_path, monkeypatch):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
     client = TestClient(app)
 
@@ -1170,6 +1344,8 @@ def test_dashboard_explore_api_uses_product_view_names(tmp_path, monkeypatch):
         {"day": "2026-05-01", "agent": "codex", "total_cost": 0.42},
     ]
     assert tools.json()["view"] == "tools"
+    assert tools.json()["events_by_type"] == {"llm_call": 2, "tool_call": 2}
+    assert filtered_tools.json()["events_by_type"] == {}
     assert tools.json()["tools_by_count"] == {
         "exec_command": 1,
         "mcp__mcp-issue-tracker__jira_search": 1,
@@ -1222,6 +1398,7 @@ def test_dashboard_session_detail_keeps_llm_input_tokens_on_response_turns(tmp_p
         conn.commit()
     finally:
         conn.close()
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     detail = TestClient(app).get("/api/session/sess-sql")
@@ -1259,6 +1436,7 @@ def test_dashboard_session_detail_keeps_one_placeholder_for_explicit_prompt_even
         conn.commit()
     finally:
         conn.close()
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     detail = TestClient(app).get("/api/session/sess-sql")
@@ -1275,6 +1453,7 @@ def test_dashboard_session_filter_navigation_cards_include_first_prompts(tmp_pat
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
     _add_sql_codex_sibling_session(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     response = TestClient(app).get("/api/data", params={"session": "sess-codex-2"})
@@ -1323,6 +1502,7 @@ def test_dashboard_session_detail_shows_tokenless_stop_response_turns(tmp_path):
         conn.commit()
     finally:
         conn.close()
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     detail = TestClient(app).get("/api/session/sess-sql")
@@ -1383,6 +1563,7 @@ def test_dashboard_session_detail_reads_hook_fact_contract(tmp_path):
         conn.commit()
     finally:
         conn.close()
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     detail = TestClient(app).get("/api/session/sess-sql")
@@ -1454,6 +1635,7 @@ def test_observation_sessions_endpoint_populates_ledger_without_candidate(tmp_pa
         conn.commit()
     finally:
         conn.close()
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
     client = TestClient(app)
 
@@ -1536,6 +1718,7 @@ def test_observation_sessions_endpoint_reflects_grouped_finding(tmp_path):
         conn.commit()
     finally:
         conn.close()
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
     client = TestClient(app)
 
@@ -1578,6 +1761,7 @@ def test_dashboard_sql_session_detail_prefers_native_assistant_responses(tmp_pat
         conn.commit()
     finally:
         conn.close()
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     response = TestClient(app).get("/api/session/sess-sql")
@@ -1597,6 +1781,7 @@ def test_dashboard_sql_session_detail_prefers_native_assistant_responses(tmp_pat
 def test_dashboard_api_filters_by_session_param_from_sql(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     response = TestClient(app).get("/api/data", params={"session": "sess-sql"})
@@ -1619,6 +1804,7 @@ def test_dashboard_api_uses_canonical_events_when_rollup_is_missing(tmp_path):
         conn.commit()
     finally:
         conn.close()
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     payload = TestClient(app).get("/api/data", params={"session": "sess-sql"}).json()
@@ -1629,9 +1815,18 @@ def test_dashboard_api_uses_canonical_events_when_rollup_is_missing(tmp_path):
 
 
 def test_dashboard_api_applies_sql_filters_and_comparison(tmp_path, monkeypatch):
+    from datetime import UTC, datetime
+
+    class SnapshotTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 5, 2, tzinfo=UTC)
+
+    monkeypatch.setattr("reflect.dashboard_queries.datetime", SnapshotTime)
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
     _add_sql_baseline_session(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
     dashboard_module = __import__("reflect.dashboard_queries", fromlist=["_sql_dashboard_metrics"])
     original_metrics = dashboard_module._sql_dashboard_metrics
@@ -1683,6 +1878,7 @@ def test_dashboard_api_session_scope_wins_with_agent_filter(tmp_path):
     _seed_sql_report_db(db_path)
     _add_sql_baseline_session(db_path)
     _add_sql_codex_sibling_session(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     response = TestClient(app).get("/api/data", params={"agents": "codex", "session": "sess-sql"})
@@ -1700,6 +1896,7 @@ def test_dashboard_api_session_scope_wins_with_agent_filter(tmp_path):
 def test_dashboard_api_scopes_sql_tab_view_models(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     response = TestClient(app).get("/api/data", params={"agents": "missing-agent"})
@@ -1719,6 +1916,7 @@ def test_dashboard_api_scopes_sql_tab_view_models(tmp_path):
 def test_dashboard_usage_empty_scope_keeps_widget_contracts_empty(tmp_path):
     db_path = tmp_path / "reflect.db"
     _seed_sql_report_db(db_path)
+    _publish_report(db_path)
     app = build_dashboard_app(docs_dir=tmp_path, db_path=db_path)
 
     response = TestClient(app).get(

@@ -3,1089 +3,285 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>reflect — Improve and Scale AI Agent Work Across Teams</title>
-  <meta name="description" content="Turn AI coding sessions into shared evidence for better procedures, smarter capacity decisions, and reusable practices that scale across agents, repositories, and teams.">
+  <title>Reflect — Keep what your agents figure out</title>
+  <meta name="description" content="Find where coding agents get stuck, review useful routines as reusable skills, and check whether they help on future tasks. Open source and local first.">
   <link rel="canonical" href="https://reflect.o11y.dev/">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#050505">
-
   <meta property="og:type" content="website">
-  <meta property="og:site_name" content="reflect.o11y.dev">
-  <meta property="og:title" content="reflect — Improve and Scale AI Agent Work Across Teams">
-  <meta property="og:description" content="Turn AI coding sessions into shared evidence for better procedures, smarter capacity decisions, and reusable practices across the organization.">
+  <meta property="og:site_name" content="Reflect">
+  <meta property="og:title" content="Keep what your agents figure out.">
+  <meta property="og:description" content="Find repeated mistakes. Review reusable skills. Check whether they helped. Open source. Runs locally.">
   <meta property="og:url" content="https://reflect.o11y.dev/">
   <meta property="og:image" content="https://reflect.o11y.dev/og-image-v2.png">
-  <meta property="og:image:secure_url" content="https://reflect.o11y.dev/og-image-v2.png">
   <meta property="og:image:type" content="image/png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="reflect — See How Agents Work. Improve What Happens Next.">
-
+  <meta property="og:image:alt" content="Reflect — see how agents work and improve what happens next.">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="reflect — Improve and Scale AI Agent Work Across Teams">
-  <meta name="twitter:description" content="Turn AI coding sessions into shared evidence for better procedures, smarter capacity decisions, and reusable practices across the organization.">
+  <meta name="twitter:title" content="Keep what your agents figure out.">
+  <meta name="twitter:description" content="Find repeated mistakes. Review reusable skills. Check whether they helped.">
   <meta name="twitter:image" content="https://reflect.o11y.dev/og-image-v2.png">
-  <meta name="twitter:image:alt" content="reflect — See How Agents Work. Improve What Happens Next.">
-
+  <meta name="twitter:image:alt" content="Reflect — see how agents work and improve what happens next.">
   <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@graph": [
-      {
-        "@type": "SoftwareApplication",
-        "name": "reflect",
-        "applicationCategory": "DeveloperApplication",
-        "operatingSystem": "macOS, Linux",
-        "description": "Evidence-backed improvement for AI agent work. Reflect turns local sessions into better procedures, smarter capacity decisions, reusable practices, and measured improvements across teams.",
-        "url": "https://reflect.o11y.dev/",
-        "downloadUrl": "https://reflect.o11y.dev/install.sh",
-        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-        "license": "https://www.apache.org/licenses/LICENSE-2.0"
-      },
-      {
-        "@type": "Organization",
-        "name": "o11y.dev",
-        "url": "https://reflect.o11y.dev/",
-        "sameAs": ["https://github.com/o11y-dev"]
-      },
-      {
-        "@type": "FAQPage",
-        "mainEntity": [
-          {
-            "@type": "Question",
-            "name": "Why did my AI coding agent hit its token budget limit?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "Reflect breaks down observed input, output, cache creation, and cache-read tokens by session and model, then connects that usage to tool and MCP calls, retries, context churn, continuations, and outcomes. When the evidence cannot prove an exact cause, Reflect keeps the attribution unknown instead of inventing one."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "Why did this AI coding session fail?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "Reflect puts prompts, responses, tool and MCP calls, errors, retries, subagents, files, verification, and outcomes on a synchronized local timeline so the first visible failure or recovery gap can be found."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "How can I improve the way I work with AI agents?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "Reflect finds recurring friction and successful routines in past sessions, then suggests bounded changes to context, prompts, tools, verification, workflows, or skills. The evidence remains available for review before any practice becomes reusable."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "Where do tokens and cost go across AI agent work?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "Reflect shows observed token usage, cache behavior, estimated cost, model mix, tool activity, failures, retries, context churn, and large-session concentration across one session or the full local history. Cost is shown only where model-pricing evidence is recognized."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "How can proven AI practices scale across teams, repositories, and agents?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "Reflect turns selected session evidence into reviewable, versioned workflows and skills. Proven practices can then move across agents, repositories, and teams, while later sessions measure whether they actually helped."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "What evidence supports increasing AI capacity and budget?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "Reflect connects local usage and cost to delivered work, identifies avoidable waste, documents improvement commitments, and prepares an evidence-backed internal request for review."
-            }
-          }
-        ]
-      }
-    ]
-  }
+  {"@context":"https://schema.org","@graph":[
+    {"@type":"SoftwareApplication","name":"Reflect","applicationCategory":"DeveloperApplication",
+     "operatingSystem": "macOS, Linux","description":"Local-first coding-agent telemetry and evidence-backed workflow improvement.",
+     "url":"https://reflect.o11y.dev/","downloadUrl":"https://reflect.o11y.dev/install.sh",
+     "offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"license":"https://www.apache.org/licenses/LICENSE-2.0"},
+    {"@type":"Organization","name":"o11y.dev","url":"https://o11y.dev/","sameAs":["https://github.com/o11y-dev"]}
+  ]}
   </script>
-
-  <!-- Google Tag Manager -->
-  <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
-  new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
-  j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
-  'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
-  })(window,document,'script','dataLayer','GTM-MDT7FMNC');</script>
-  <!-- End Google Tag Manager -->
+  <script src="./assets/public-analytics.js" defer></script>
+  <script src="./assets/landing.js" defer></script>
   <style>
-    :root{
-      color-scheme:dark;
-      --bg:#050505;
-      --bg-soft:#090908;
-      --panel:#11110f;
-      --panel-strong:#171613;
-      --ink:#f5f2ea;
-      --muted:#beb8ad;
-      --muted-strong:#d7d1c6;
-      --line:rgba(245,242,234,.14);
-      --line-strong:rgba(245,242,234,.24);
-      --signal:#f28a1a;
-      --signal-bright:#ffae4c;
-      --signal-soft:rgba(242,138,26,.12);
-      --good:#65d6a5;
-      --shadow:0 28px 90px rgba(0,0,0,.48);
-      --radius:8px;
-      --shell:1200px;
-    }
+    :root{color-scheme:dark;--bg:#050505;--panel:#10100f;--panel-2:#191917;--ink:#f5f2ea;--muted:#beb8ad;--line:#35342f;--orange:#f28a1a;--action:#ff5f00;--green:#48d597;--blue:#75b8ff;--purple:#b99aff;--yellow:#e7f72d;--red:#ff6b5c;--radius:8px}
     *{box-sizing:border-box}
-    html{min-height:100%;scroll-behavior:smooth;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}
-    body{margin:0;min-height:100%;overflow-x:hidden;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text','Helvetica Neue',system-ui,sans-serif;line-height:1.6}
-    body::before{content:"";position:fixed;inset:0;z-index:-2;background:radial-gradient(circle at 78% -4%,rgba(242,138,26,.18),transparent 32%),radial-gradient(circle at 12% 18%,rgba(242,138,26,.07),transparent 28%),linear-gradient(180deg,#0b0b0a 0%,#050505 52%,#080706 100%)}
-    body::after{content:"";position:fixed;inset:0;z-index:-1;opacity:.28;pointer-events:none;background-image:linear-gradient(rgba(245,242,234,.028) 1px,transparent 1px),linear-gradient(90deg,rgba(245,242,234,.028) 1px,transparent 1px);background-size:42px 42px;mask-image:linear-gradient(to bottom,black,transparent 72%)}
-    a{color:inherit}
-    h1,h2,h3,p{overflow-wrap:break-word}
-    h1,h2,h3{text-wrap:balance}
-    section[id]{scroll-margin-top:92px}
-    code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
-    .skip-link{position:fixed;left:16px;top:12px;z-index:100;transform:translateY(-160%);padding:10px 14px;border-radius:6px;background:var(--ink);color:var(--bg);font-weight:800;text-decoration:none;transition:transform .16s ease}
-    .skip-link:focus{transform:translateY(0)}
-    .site-shell{width:min(var(--shell),calc(100% - 40px));margin:0 auto}
-    .site-header{position:sticky;top:0;z-index:20;padding-top:max(16px,env(safe-area-inset-top));background:linear-gradient(180deg,rgba(5,5,5,.96),rgba(5,5,5,.72) 72%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
-    .nav{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:58px;border-bottom:1px solid var(--line)}
-    .brand{display:inline-flex;align-items:center;gap:12px;min-width:0;text-decoration:none}
-    .mark{width:38px;height:38px;position:relative;display:grid;place-items:center;flex:0 0 auto;filter:drop-shadow(0 0 18px rgba(242,138,26,.24))}
-    .mark::before{content:"";position:absolute;inset:0 -1px 1px;clip-path:polygon(50% 0,100% 92%,0 92%);background:var(--ink)}
-    .mark::after{content:"";position:absolute;left:50%;top:60%;transform:translate(-50%,-50%);width:12px;height:12px;border:4px solid var(--signal);border-radius:999px;background:var(--bg);z-index:1;box-shadow:0 0 20px rgba(242,138,26,.55)}
-    .brand-copy{display:grid;line-height:1.12}
-    .brand-name{font-size:15px;font-weight:850;letter-spacing:.01em}
-    .nav-links{display:flex;align-items:center;gap:4px;color:var(--muted-strong);font-size:13px;font-weight:700}
-    .nav-links a{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:8px 11px;border:1px solid transparent;border-radius:6px;text-decoration:none;touch-action:manipulation;transition:color .16s ease,background-color .16s ease,border-color .16s ease,transform .16s ease}
-    .nav-links a:hover{color:var(--ink);background:rgba(245,242,234,.06);border-color:var(--line)}
-    .nav-links .nav-cta{margin-left:6px;color:#160c03;background:var(--signal);border-color:var(--signal)}
-    .nav-links .nav-cta:hover{color:#160c03;background:var(--signal-bright);border-color:var(--signal-bright);transform:translateY(-1px)}
-    .nav-links a:focus-visible,.brand:focus-visible,.button:focus-visible,.repo-proof:focus-visible,.footer a:focus-visible,.skip-link:focus-visible{outline:2px solid var(--signal-bright);outline-offset:3px}
-    main{padding:28px 0 0}
-    .hero{display:grid;grid-template-columns:minmax(0,1.08fr) minmax(390px,.92fr);gap:28px;align-items:start;min-height:0;padding:16px 0 66px}
-    .hero-copy{position:relative;min-width:0;padding:12px 12px 34px 0}
-    h1{margin:0;max-width:780px;font-size:clamp(3.3rem,7.1vw,6.75rem);font-weight:900;letter-spacing:-.06em;line-height:.88}
-    h1 .signal{display:block;color:var(--signal-bright)}
-    .lede{max-width:720px;margin:28px 0 0;color:#e5dfd3;font-size:clamp(1.05rem,1.5vw,1.25rem);line-height:1.62;text-wrap:pretty}
-    .hero-proof{display:flex;flex-wrap:wrap;gap:8px;margin:26px 0 0;padding:0;list-style:none}
-    .hero-proof li{display:inline-flex;align-items:center;gap:7px;min-height:34px;padding:6px 10px;border:1px solid var(--line);border-radius:5px;background:rgba(245,242,234,.035);color:var(--muted-strong);font-size:12px;font-weight:750}
-    .hero-proof li::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--good);box-shadow:0 0 12px rgba(101,214,165,.46)}
-    .cta-row{display:flex;flex-wrap:wrap;gap:11px;margin-top:32px}
-    .button{display:inline-flex;align-items:center;justify-content:center;gap:9px;min-height:50px;padding:13px 18px;border:1px solid var(--line-strong);border-radius:6px;text-decoration:none;font-weight:850;touch-action:manipulation;transition:transform .16s ease,background-color .16s ease,border-color .16s ease,color .16s ease}
-    .button:hover{transform:translateY(-1px)}
-    .button-primary{border-color:var(--signal);background:var(--signal);color:#160c03;box-shadow:0 18px 44px rgba(242,138,26,.22)}
-    .button-primary:hover{background:var(--signal-bright);border-color:var(--signal-bright)}
-    .button-secondary{background:rgba(245,242,234,.045);color:var(--ink)}
-    .button-secondary:hover{background:rgba(245,242,234,.085);border-color:rgba(245,242,234,.34)}
-    .arrow{font-size:17px;line-height:1;transition:transform .16s ease}
-    .button:hover .arrow{transform:translateX(2px)}
-    .signal-board{position:relative;min-width:0;border:1px solid var(--line-strong);border-radius:var(--radius);background:linear-gradient(155deg,rgba(27,26,23,.96),rgba(10,10,9,.98));box-shadow:var(--shadow);overflow:hidden}
-    .signal-board::before{content:"";position:absolute;right:-130px;top:-150px;width:360px;height:360px;border:1px solid rgba(242,138,26,.22);border-radius:50%;box-shadow:inset 0 0 90px rgba(242,138,26,.06);pointer-events:none}
-    .board-head{position:relative;display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:22px 22px 18px;border-bottom:1px solid var(--line)}
-    .board-label{margin:0 0 4px;color:var(--muted);font-size:11px;font-weight:850;letter-spacing:.15em;text-transform:uppercase}
-    .board-title{margin:0;font-size:20px;letter-spacing:-.02em}
-    .quality{text-align:right;font-size:36px;font-weight:900;line-height:1;color:var(--signal-bright);font-variant-numeric:tabular-nums}
-    .quality small{display:block;margin-top:6px;color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
-    .board-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-bottom:1px solid var(--line)}
-    .board-metric{min-width:0;padding:17px 20px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
-    .board-metric:nth-child(3n){border-right:0}
-    .board-metric:nth-last-child(-n+3){border-bottom:0}
-    .metric-value{display:block;font-size:23px;font-weight:880;letter-spacing:-.035em;font-variant-numeric:tabular-nums}
-    .metric-label{display:block;margin-top:2px;color:var(--muted);font-size:11px;font-weight:750;text-transform:uppercase;letter-spacing:.08em}
-    .cost-note{margin:0;padding:9px 20px;border-bottom:1px solid var(--line);color:var(--muted);font-size:10px;line-height:1.45;text-align:right}
-    .board-section{padding:20px 22px}
-    .board-section + .board-section{border-top:1px solid var(--line)}
-    .agent-bars{display:grid;gap:10px;margin-top:13px}
-    .agent-row{display:grid;grid-template-columns:70px minmax(0,1fr) 52px;gap:10px;align-items:center;color:var(--muted-strong);font-size:12px}
-    .agent-row strong{text-align:right;color:var(--ink);font-variant-numeric:tabular-nums}
-    .bar{height:7px;overflow:hidden;border-radius:999px;background:#292621}
-    .bar span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--signal),var(--signal-bright))}
-    .signals{display:grid;gap:10px;margin:13px 0 0;padding:0;list-style:none}
-    .signals li{display:grid;grid-template-columns:8px minmax(0,1fr);gap:10px;align-items:start;color:#dfd8cd;font-size:13px;line-height:1.48}
-    .signals li::before{content:"";width:7px;height:7px;margin-top:6px;background:var(--signal)}
-    .agent-rail{padding:17px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-    .agent-rail-inner{display:flex;align-items:center;justify-content:space-between;gap:22px}
-    .rail-label{flex:0 0 auto;color:var(--muted);font-size:11px;font-weight:850;letter-spacing:.13em;text-transform:uppercase}
-    .agent-list{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin:0;padding:0;list-style:none;color:var(--muted-strong);font-size:12px;font-weight:780}
-    .agent-list li{display:inline-flex;align-items:center;gap:8px;min-height:36px;padding:6px 10px 6px 7px;border:1px solid var(--line);border-radius:5px;background:rgba(245,242,234,.028);white-space:nowrap}
-    .agent-logo{display:grid;place-items:center;width:23px;height:23px;flex:0 0 auto;border:1px solid rgba(245,242,234,.13);border-radius:4px;background:#12110f;color:var(--ink)}
-    .agent-logo svg{display:block;width:15px;height:15px;fill:currentColor}
-    .agent-logo-codex{font:900 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--signal-bright)}
-    .agent-logo-antigravity svg{fill:none;stroke:currentColor;stroke-width:1.8}
-    .repo-proof{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:14px;align-items:center;margin-top:14px;padding:15px 17px;border:1px solid var(--line);border-radius:var(--radius);background:rgba(17,17,15,.82);color:var(--muted-strong);text-decoration:none;touch-action:manipulation;transition:background-color .16s ease,border-color .16s ease,transform .16s ease}
-    .repo-proof:hover{transform:translateY(-1px);border-color:rgba(242,138,26,.36);background:rgba(22,21,18,.96)}
-    .repo-mark{display:grid;place-items:center;width:40px;height:40px;border-radius:50%;background:var(--ink);color:var(--bg)}
-    .repo-mark svg{display:block;width:24px;height:24px;fill:currentColor}
-    .repo-identity{display:grid;min-width:0;line-height:1.3}
-    .repo-identity strong{overflow:hidden;color:var(--ink);font-size:15px;font-weight:850;text-overflow:ellipsis;white-space:nowrap}
-    .repo-identity small{color:var(--muted);font-size:11px;font-weight:700;letter-spacing:.04em}
-    .repo-stats{display:flex;align-items:center;justify-content:flex-end;gap:16px;min-width:0;font-size:13px;font-variant-numeric:tabular-nums}
-    .repo-stat{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
-    .repo-stat svg{display:block;width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-    .repo-arrow{display:grid;place-items:center;width:32px;height:32px;border:1px solid var(--line);border-radius:5px;color:var(--signal-bright);font-size:16px;transition:transform .16s ease,border-color .16s ease}
-    .repo-proof:hover .repo-arrow{transform:translate(1px,-1px);border-color:rgba(242,138,26,.42)}
-    .nav-repo-proof{grid-template-columns:auto minmax(0,1fr) auto;grid-template-rows:auto auto;gap:1px 10px;min-width:320px;max-width:390px;margin:0 auto 0 8px;padding:7px 9px;border-radius:6px}
-    .nav-repo-proof .repo-mark{grid-column:1;grid-row:1/3;width:32px;height:32px}
-    .nav-repo-proof .repo-mark svg{width:19px;height:19px}
-    .nav-repo-proof .repo-identity{grid-column:2;grid-row:1}
-    .nav-repo-proof .repo-identity strong{font-size:13px}
-    .nav-repo-proof .repo-identity small{display:none}
-    .nav-repo-proof .repo-stats{grid-column:2;grid-row:2;justify-content:flex-start;gap:10px;font-size:11px;line-height:1.2}
-    .nav-repo-proof .repo-stat{gap:4px}
-    .nav-repo-proof .repo-stat svg{width:14px;height:14px}
-    .nav-repo-proof .repo-arrow{grid-column:3;grid-row:1/3;width:28px;height:28px;align-self:center}
-    .content-section{padding:108px 0 0}
-    .section-intro{display:grid;grid-template-columns:minmax(0,.8fr) minmax(320px,.55fr);gap:40px;align-items:end;margin-bottom:34px}
-    .kicker{margin:0 0 10px;color:var(--signal-bright);font-size:11px;font-weight:880;letter-spacing:.17em;text-transform:uppercase}
-    .section-intro h2{margin:0;max-width:800px;font-size:clamp(2.3rem,4.4vw,4.5rem);line-height:.98;letter-spacing:-.045em}
-    .section-intro > p{margin:0;color:var(--muted-strong);font-size:16px;line-height:1.72;text-wrap:pretty}
-    .bento{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px}
-    .feature-card{position:relative;min-width:0;overflow:hidden;border:1px solid var(--line);border-radius:var(--radius);background:rgba(17,17,15,.9);padding:26px}
-    .feature-card:hover{border-color:rgba(242,138,26,.36);background:rgba(22,21,18,.96)}
-    .feature-card-large{grid-column:span 7;min-height:340px}
-    .feature-card-side{grid-column:span 5;min-height:340px}
-    .feature-card-third{grid-column:span 4;min-height:250px}
-    .feature-index{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin-bottom:38px;border:1px solid rgba(242,138,26,.42);border-radius:4px;background:var(--signal-soft);color:var(--signal-bright);font-size:11px;font-weight:900;font-variant-numeric:tabular-nums}
-    .feature-card h3{margin:0;max-width:480px;font-size:clamp(1.45rem,2.3vw,2rem);line-height:1.1;letter-spacing:-.025em}
-    .feature-card p{margin:12px 0 0;max-width:560px;color:var(--muted-strong);font-size:14px;line-height:1.68;text-wrap:pretty}
-    .evidence-stack{display:grid;gap:8px;margin-top:28px}
-    .evidence-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 12px;border:1px solid var(--line);border-radius:5px;background:#0b0b0a;color:var(--muted-strong);font-size:12px}
-    .evidence-row strong{color:var(--ink);font-variant-numeric:tabular-nums}
-    .agent-syntax{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:-10px 0 22px;color:var(--muted);font-size:11px}
-    .agent-syntax-label{margin-right:2px;font-weight:850;letter-spacing:.1em;text-transform:uppercase}
-    .agent-syntax-options{display:flex;align-items:center;gap:6px}
-    .agent-syntax-button{display:flex;align-items:center;gap:7px;padding:6px 9px;border:1px solid var(--line);border-radius:5px;background:#0b0b0a;color:var(--muted-strong);font:inherit;cursor:pointer}
-    .agent-syntax-button code{color:inherit;font:750 11px/1 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
-    .agent-syntax-button:hover{border-color:rgba(242,138,26,.32);color:var(--ink)}
-    .agent-syntax-button[aria-pressed="true"]{border-color:rgba(242,138,26,.45);background:var(--signal-soft);color:var(--signal-bright)}
-    .agent-syntax-note{margin-left:4px}
-    .scenario-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px}
-    .scenario-card{position:relative;display:flex;min-width:0;min-height:230px;grid-column:span 4;flex-direction:column;padding:24px;border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(145deg,rgba(21,20,18,.94),rgba(10,10,9,.98));overflow:hidden;transition:transform .16s ease,border-color .16s ease,background-color .16s ease}
-    .scenario-card:nth-child(1),.scenario-card:nth-child(2),.scenario-card:nth-child(6),.scenario-card:nth-child(7){grid-column:span 6}
-    .scenario-card:hover{transform:translateY(-2px);border-color:rgba(242,138,26,.38);background:linear-gradient(145deg,rgba(28,25,20,.96),rgba(11,11,9,.99))}
-    .scenario-top{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:32px}
-    .scenario-icon{display:grid;place-items:center;width:36px;height:36px;border:1px solid rgba(242,138,26,.34);border-radius:6px;background:var(--signal-soft);color:var(--signal-bright);font-size:15px;font-weight:900}
-    .scenario-label{color:var(--muted);font-size:10px;font-weight:850;letter-spacing:.12em;text-transform:uppercase}
-    .scenario-card h3{margin:0;font-size:clamp(1.2rem,2vw,1.55rem);line-height:1.12;letter-spacing:-.025em}
-    .scenario-card p{margin:10px 0 22px;color:var(--muted-strong);font-size:13px;line-height:1.62;text-wrap:pretty}
-    .scenario-prompt{display:flex;width:100%;align-items:flex-start;gap:8px;margin-top:auto;padding:10px 11px;border:1px solid var(--line);border-radius:5px;background:#070706;color:#f7dfbf;font:500 11px/1.45 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;overflow-wrap:anywhere}
-    .scenario-invocation{flex:0 0 auto;color:var(--signal-bright);font-weight:850}
-    .scenario-prompt-copy{min-width:0}
-    .agent-window{overflow:hidden;border:1px solid var(--line-strong);border-radius:10px;background:#0a0a09;box-shadow:0 24px 80px rgba(0,0,0,.42)}
-    .agent-window-bar{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:13px 16px;border-bottom:1px solid var(--line);background:rgba(23,22,19,.94)}
-    .agent-window-identity{display:flex;align-items:center;gap:10px;min-width:0}
-    .agent-window-mark{display:grid;place-items:center;width:32px;height:32px;flex:0 0 auto;border:1px solid rgba(242,138,26,.4);border-radius:7px;background:var(--signal-soft);color:var(--signal-bright);font-size:13px;font-weight:950}
-    .agent-window-name{display:block;color:var(--ink);font-size:13px;font-weight:850;line-height:1.2}
-    .agent-window-status{display:flex;align-items:center;gap:6px;margin-top:3px;color:var(--muted);font-size:10px;line-height:1.2}
-    .agent-window-status::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--good);box-shadow:0 0 10px rgba(101,214,165,.46)}
-    .agent-window-slogan{color:var(--muted-strong);font-size:11px;font-weight:850;letter-spacing:.08em;text-transform:uppercase}
-    .agent-window-body{display:grid;grid-template-columns:minmax(280px,.64fr) minmax(0,1.36fr);min-height:520px}
-    .agent-prompt-library{min-width:0;padding:20px;border-right:1px solid var(--line);background:rgba(5,5,5,.5)}
-    .agent-prompt-group + .agent-prompt-group{margin-top:22px}
-    .agent-prompt-heading{margin:0 0 8px;color:var(--muted);font-size:9px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}
-    .agent-prompt-options{display:grid;gap:7px}
-    .agent-prompt-button{display:grid;width:100%;grid-template-columns:18px minmax(0,1fr);gap:9px;align-items:start;padding:10px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--muted-strong);font:inherit;text-align:left;cursor:pointer;transition:border-color .16s ease,background-color .16s ease,color .16s ease}
-    .agent-prompt-button:hover{border-color:var(--line);background:rgba(245,242,234,.035);color:var(--ink)}
-    .agent-prompt-button.is-active{border-color:rgba(242,138,26,.32);background:var(--signal-soft);color:var(--ink)}
-    .agent-prompt-arrow{color:var(--signal-bright);font:850 12px/1.5 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
-    .agent-prompt-copy{font-size:12px;line-height:1.48;text-wrap:pretty}
-    .agent-conversation{display:flex;min-width:0;flex-direction:column;padding:30px;background:radial-gradient(circle at 78% 4%,rgba(242,138,26,.07),transparent 31%),#0d0d0b}
-    .agent-thread{display:grid;flex:1;align-content:start;gap:18px}
-    .agent-message{min-width:0;max-width:90%;padding:15px 16px;border:1px solid var(--line);border-radius:8px}
-    .agent-message-user{justify-self:end;border-color:rgba(242,138,26,.28);background:rgba(242,138,26,.09)}
-    .agent-message-reflect{justify-self:start;background:rgba(20,19,17,.94)}
-    .agent-message-label{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:8px;color:var(--muted);font-size:9px;font-weight:900;letter-spacing:.12em;text-transform:uppercase}
-    .agent-message-label strong{color:var(--signal-bright);font-size:10px}
-    .agent-evidence-label{display:inline-flex;align-items:center;gap:5px;color:var(--good);letter-spacing:.08em}
-    .agent-evidence-label::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor}
-    .agent-message p{margin:0;color:var(--muted-strong);font-size:14px;line-height:1.72;text-wrap:pretty}
-    .agent-message-user p{color:var(--ink);font-weight:650}
-    .agent-answer[hidden]{display:none}
-    .agent-answer-signals{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
-    .agent-answer-signals span{display:inline-flex;padding:4px 7px;border:1px solid var(--line);border-radius:999px;background:#090908;color:var(--muted);font-size:9px;font-weight:800;letter-spacing:.05em}
-    .agent-composer{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;margin-top:26px;padding:12px 12px 12px 14px;border:1px solid var(--line-strong);border-radius:8px;background:#080807}
-    .agent-composer-prompt{color:var(--signal-bright);font:900 14px/1 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
-    .agent-typed-question{min-height:20px;color:#f6ead8;font:500 12px/1.65 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;overflow-wrap:anywhere}
-    .agent-typed-question::after{content:"";display:inline-block;width:1px;height:13px;margin-left:3px;vertical-align:-2px;background:var(--signal-bright);animation:agent-caret 1s steps(1,end) infinite}
-    .agent-send{display:grid;place-items:center;width:31px;height:31px;border:1px solid rgba(242,138,26,.38);border-radius:6px;background:var(--signal);color:#160b02;font-size:15px;font-weight:950;cursor:pointer;transition:transform .16s ease,background-color .16s ease}
-    .agent-send:hover{transform:translateY(-1px);background:var(--signal-bright)}
-    @keyframes agent-caret{0%,48%{opacity:1}49%,100%{opacity:0}}
-    .graph-mini{position:absolute;right:-18px;bottom:-28px;width:230px;height:170px;opacity:.68}
-    .graph-node{position:absolute;width:13px;height:13px;border:2px solid var(--signal);border-radius:50%;background:#0b0b0a;box-shadow:0 0 18px rgba(242,138,26,.34)}
-    .graph-node::after{content:"";position:absolute;left:11px;top:4px;width:74px;height:1px;background:rgba(245,242,234,.28);transform-origin:left center}
-    .graph-node:nth-child(1){left:26px;top:72px}.graph-node:nth-child(1)::after{transform:rotate(-31deg)}
-    .graph-node:nth-child(2){left:94px;top:30px}.graph-node:nth-child(2)::after{width:64px;transform:rotate(42deg)}
-    .graph-node:nth-child(3){left:146px;top:82px}.graph-node:nth-child(3)::after{width:52px;transform:rotate(-28deg)}
-    .graph-node:nth-child(4){left:194px;top:54px}.graph-node:nth-child(4)::after{display:none}
-    .graph-node:nth-child(5){left:84px;top:124px}.graph-node:nth-child(5)::after{width:62px;transform:rotate(-37deg)}
-    .process{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;border:1px solid var(--line);border-radius:var(--radius);background:rgba(17,17,15,.82);overflow:hidden}
-    .process-step{position:relative;min-width:0;padding:30px;border-right:1px solid var(--line)}
-    .process-step:last-child{border-right:0}
-    .step-number{display:block;margin-bottom:54px;color:var(--signal-bright);font-size:12px;font-weight:900;letter-spacing:.14em;font-variant-numeric:tabular-nums}
-    .process-step h3{margin:0;font-size:22px;letter-spacing:-.025em}
-    .process-step p{margin:10px 0 0;color:var(--muted-strong);font-size:14px;line-height:1.68}
-    .command{display:inline-flex;margin-top:20px;padding:7px 9px;border:1px solid var(--line);border-radius:4px;background:#080807;color:#f7dfbf;font-size:12px;overflow-wrap:anywhere}
-    .trust-panel{display:grid;grid-template-columns:minmax(0,.84fr) minmax(360px,.7fr);gap:50px;align-items:center;padding:44px;border:1px solid rgba(242,138,26,.28);border-radius:var(--radius);background:linear-gradient(135deg,rgba(242,138,26,.1),rgba(17,17,15,.96) 46%,rgba(10,10,9,.98));box-shadow:var(--shadow)}
-    .trust-panel h2{margin:0;font-size:clamp(2.2rem,4vw,4rem);line-height:1;letter-spacing:-.045em}
-    .trust-panel p{margin:18px 0 0;color:#ded7cb;line-height:1.74;text-wrap:pretty}
-    .trust-list{display:grid;gap:10px;margin:0;padding:0;list-style:none}
-    .trust-list li{display:grid;grid-template-columns:30px minmax(0,1fr);gap:12px;align-items:start;padding:13px;border:1px solid var(--line);border-radius:6px;background:rgba(5,5,5,.44);color:var(--muted-strong);font-size:13px}
-    .check{display:grid;place-items:center;width:30px;height:30px;border-radius:4px;background:var(--signal-soft);color:var(--signal-bright);font-weight:900}
-    .trust-list strong{display:block;margin-bottom:2px;color:var(--ink);font-size:14px}
-    .memory-panel{padding:34px;border:1px solid var(--line);border-radius:var(--radius);background:linear-gradient(145deg,rgba(20,19,17,.96),rgba(8,8,7,.98));box-shadow:var(--shadow)}
-    .memory-head{display:grid;grid-template-columns:minmax(0,.82fr) minmax(320px,.55fr);gap:36px;align-items:end;margin-bottom:28px}
-    .memory-head h2{margin:0;font-size:clamp(2.1rem,3.7vw,3.7rem);line-height:1;letter-spacing:-.04em}
-    .memory-head > p{margin:0;color:var(--muted-strong);font-size:15px;line-height:1.7;text-wrap:pretty}
-    .provider-group + .provider-group{margin-top:24px;padding-top:24px;border-top:1px solid var(--line)}
-    .provider-group-head{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:12px}
-    .provider-group-head h3{margin:0;font-size:13px;letter-spacing:.1em;text-transform:uppercase}
-    .provider-group-head span{color:var(--muted);font-size:12px}
-    .provider-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
-    .provider-grid-discovery{grid-template-columns:repeat(3,minmax(0,1fr))}
-    .provider-card{display:grid;grid-template-columns:42px minmax(0,1fr);gap:12px;align-items:center;min-width:0;padding:14px;border:1px solid var(--line);border-radius:7px;background:rgba(5,5,5,.58)}
-    .provider-card:hover{border-color:rgba(242,138,26,.35);background:rgba(242,138,26,.045)}
-    .provider-icon{display:grid;place-items:center;width:42px;height:42px;border:1px solid rgba(242,138,26,.3);border-radius:7px;background:var(--signal-soft);color:var(--signal-bright)}
-    .provider-icon svg{width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
-    .provider-icon-text{font-size:17px;font-weight:900;letter-spacing:-.05em}
-    .provider-copy{min-width:0}
-    .provider-copy strong{display:block;overflow:hidden;color:var(--ink);font-size:13px;line-height:1.25;text-overflow:ellipsis;white-space:nowrap}
-    .provider-copy small{display:block;margin-top:4px;color:var(--muted);font-size:11px;line-height:1.35}
-    .provider-status{display:inline-flex;margin-top:7px;padding:3px 6px;border:1px solid rgba(242,138,26,.25);border-radius:999px;color:var(--signal-bright);font-size:9px;font-weight:850;letter-spacing:.09em;text-transform:uppercase}
-    .provider-status-discovery{border-color:var(--line-strong);color:var(--muted-strong)}
-    .install-panel{display:grid;grid-template-columns:minmax(0,.72fr) minmax(420px,.8fr);gap:42px;align-items:center;padding:42px;border:1px solid var(--line-strong);border-radius:var(--radius);background:linear-gradient(155deg,rgba(26,25,22,.96),rgba(10,10,9,.98));box-shadow:var(--shadow)}
-    .install-panel h2{margin:0;font-size:clamp(2.25rem,4.4vw,4.2rem);line-height:.98;letter-spacing:-.045em}
-    .install-panel p{margin:18px 0 0;color:var(--muted-strong);line-height:1.7}
-    .install-links{display:flex;flex-wrap:wrap;gap:9px 18px;margin-top:22px;font-size:13px;font-weight:750}
-    .install-links a{color:var(--signal-bright);text-underline-offset:4px}
-    .terminal{min-width:0;overflow:hidden;border:1px solid var(--line);border-radius:7px;background:#070706;box-shadow:0 20px 60px rgba(0,0,0,.42)}
-    .terminal-head{display:flex;align-items:center;gap:7px;padding:12px 14px;border-bottom:1px solid var(--line);color:var(--muted);font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
-    .terminal-dot{width:7px;height:7px;border-radius:50%;background:#4a4741}
-    .terminal-dot:first-child{background:var(--signal)}
-    pre{margin:0;padding:20px;overflow:auto;color:#f8e7d0;font:500 13px/1.75 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;tab-size:2}
-    pre:focus-visible{outline:2px solid var(--signal-bright);outline-offset:-3px}
-    .prompt{color:var(--signal-bright)}
-    .comment{color:#8e887e}
-    .closing{padding:112px 0 58px;text-align:center}
-    .closing .kicker{margin-bottom:14px}
-    .closing h2{max-width:870px;margin:0 auto;font-size:clamp(2.8rem,6vw,6rem);line-height:.92;letter-spacing:-.055em}
-    .closing p{max-width:680px;margin:22px auto 0;color:var(--muted-strong);font-size:17px;line-height:1.7}
-    .closing .cta-row{justify-content:center}
-    .footer{display:flex;align-items:center;justify-content:space-between;gap:22px;margin-top:38px;padding:24px 0 max(32px,env(safe-area-inset-bottom));border-top:1px solid var(--line);color:var(--muted);font-size:13px}
-    .footer-copy{max-width:650px}
-    .footer-links{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px 18px}
-    .footer a{color:var(--muted-strong);text-decoration:none}
-    .footer a:hover{color:var(--signal-bright)}
-    @media (max-width:980px){
-      .nav-links a:not(.nav-cta){display:none}
-      .hero{grid-template-columns:1fr;min-height:auto;padding-top:38px}
-      .hero-copy{padding-right:0}
-      .signal-board{max-width:720px}
-      .section-intro{grid-template-columns:1fr;gap:16px}
-      .feature-card-large,.feature-card-side{grid-column:span 12}
-      .feature-card-third{grid-column:span 6}
-      .scenario-card,.scenario-card:nth-child(n){grid-column:span 6}
-      .agent-window-body{grid-template-columns:1fr;min-height:0}
-      .agent-prompt-library{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;border-right:0;border-bottom:1px solid var(--line)}
-      .agent-prompt-group + .agent-prompt-group{margin-top:0}
-      .process{grid-template-columns:1fr}
-      .process-step{border-right:0;border-bottom:1px solid var(--line)}
-      .process-step:last-child{border-bottom:0}
-      .step-number{margin-bottom:24px}
-      .trust-panel,.install-panel{grid-template-columns:1fr}
-      .memory-head{grid-template-columns:1fr;gap:16px}
-      .provider-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
-      .terminal{max-width:760px}
-    }
-    @media (max-width:720px){
-      .site-shell{width:min(100% - 28px,var(--shell))}
-      .site-header{padding-top:max(10px,env(safe-area-inset-top))}
-      .nav{min-height:54px}
-      .nav-links{display:none}
-      .nav-repo-proof{min-width:0;max-width:330px;margin-left:auto}
-      main{padding-top:26px}
-      .hero{gap:14px;padding:14px 0 42px}
-      h1{font-size:clamp(3.2rem,16vw,5.2rem)}
-      .hero-copy{padding-top:20px}
-      .lede{font-size:16px}
-      .button{width:100%}
-      .agent-rail-inner{align-items:flex-start;flex-direction:column}
-      .agent-list{justify-content:flex-start}
-      .content-section{padding-top:78px}
-      .feature-card-third{grid-column:span 12}
-      .scenario-card,.scenario-card:nth-child(n){grid-column:span 12;min-height:0}
-      .agent-window-bar{align-items:flex-start}
-      .agent-window-slogan{display:none}
-      .agent-prompt-library{grid-template-columns:1fr;padding:16px}
-      .agent-prompt-group + .agent-prompt-group{margin-top:4px}
-      .agent-conversation{padding:20px}
-      .agent-message{max-width:100%}
-      .feature-card{min-height:0;padding:22px}
-      .feature-index{margin-bottom:30px}
-      .graph-mini{opacity:.42}
-      .trust-panel,.install-panel{padding:26px 22px;gap:30px}
-      .memory-panel{padding:26px 22px}
-      .provider-grid,.provider-grid-discovery{grid-template-columns:repeat(2,minmax(0,1fr))}
-      .footer{align-items:flex-start;flex-direction:column}
-      .footer-links{justify-content:flex-start}
-    }
-    @media (max-width:440px){
-      .brand-copy{display:none}
-      .nav-repo-proof{max-width:280px;padding:6px 7px;gap-inline:7px}
-      .nav-repo-proof .repo-arrow{display:none}
-      .nav-repo-proof .repo-stats{gap:6px;font-size:10px}
-      .board-head{padding:18px}
-      .quality{font-size:30px}
-      .board-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
-      .board-metric{padding:14px}
-      .board-metric:nth-child(3n){border-right:1px solid var(--line)}
-      .board-metric:nth-child(2n){border-right:0}
-      .board-metric:nth-last-child(-n+3){border-bottom:1px solid var(--line)}
-      .board-metric:nth-last-child(-n+2){border-bottom:0}
-      .metric-value{font-size:20px}
-      .board-section{padding:18px}
-      .agent-row{grid-template-columns:58px minmax(0,1fr) 46px}
-      .install-panel{padding-inline:18px}
-      .memory-panel{padding-inline:18px}
-      .provider-grid,.provider-grid-discovery{grid-template-columns:1fr}
-      .provider-group-head{align-items:flex-start;flex-direction:column;gap:4px}
-      pre{padding:16px;font-size:12px}
-    }
-    @media (prefers-reduced-motion:reduce){
-      html{scroll-behavior:auto}
-      *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
-    }
+    html{scroll-behavior:smooth;scrollbar-color:#5d574d var(--bg);-webkit-font-smoothing:antialiased}
+    body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 -apple-system,BlinkMacSystemFont,'SF Pro Text','Helvetica Neue',sans-serif}
+    ::selection{background:var(--orange);color:var(--bg)}
+    a{color:inherit;text-underline-offset:.24em;text-decoration-thickness:1px}
+    a:hover{color:var(--orange)}
+    a,button,summary{touch-action:manipulation}
+    button{font:inherit;cursor:pointer}
+    button:disabled{opacity:.65;cursor:wait}
+    :focus-visible{outline:2px solid var(--orange);outline-offset:4px}
+    [id]{scroll-margin-top:96px}
+    h1,h2,h3{line-height:1.15;letter-spacing:-.03em;text-wrap:balance}
+    h1{font-size:clamp(3.2rem,6.4vw,5.75rem);line-height:1.02;margin:0;max-width:12ch;font-weight:800}
+    h2{font-size:clamp(2rem,3.4vw,3.25rem);margin:0 0 22px;max-width:24ch}
+    h3{font-size:1.35rem;margin:0 0 12px}
+    p{max-width:70ch;margin:0 0 20px}
+    code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9em;overflow-wrap:anywhere}
+    .shell{width:min(1200px,calc(100% - 48px));margin:0 auto}
+    .skip-link{position:fixed;left:16px;top:-100px;z-index:30;padding:10px 16px;background:var(--ink);color:var(--bg);border-radius:6px}
+    .skip-link:focus{top:12px}
+    .skip-link:hover{color:var(--bg)}
+    .site-header{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid var(--line)}
+    .nav{display:flex;align-items:center;justify-content:space-between;gap:20px;min-height:80px}
+    .brand{display:inline-flex;align-items:center;gap:12px;text-decoration:none;color:var(--ink);font-size:1.5rem;font-weight:800;letter-spacing:-.02em}
+    .brand:hover{color:var(--ink)}
+    .mark{width:36px;height:36px;position:relative;display:inline-block;flex:none}
+    .mark::before{content:"";position:absolute;inset:0;clip-path:polygon(50% 0,100% 92%,0 92%);background:var(--ink)}
+    .mark::after{content:"";position:absolute;left:50%;top:60%;transform:translate(-50%,-50%);width:10px;height:10px;border:4px solid var(--orange);border-radius:50%;background:var(--bg)}
+    .nav-links{display:flex;gap:24px;align-items:center;font-size:.9rem}
+    .nav-links a{text-decoration:none;min-height:44px;display:inline-flex;align-items:center;gap:8px}
+    .nav-star{border:1px solid #676154;border-radius:6px;padding:8px 13px;font-weight:650}
+    .nav-star svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.7}
+    .hero{display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:center;padding:76px 0 64px}
+    .lede{font-size:1.18rem;color:var(--muted);margin:28px 0;max-width:38ch;line-height:1.6}
+    .actions{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+    .button{display:inline-flex;justify-content:center;align-items:center;gap:9px;min-height:48px;border:1px solid #777063;padding:10px 18px;border-radius:6px;background:transparent;color:var(--ink);font-weight:650;text-decoration:none;transition:background-color .16s ease,border-color .16s ease}
+    .button:hover{color:var(--ink);background:var(--panel-2);border-color:var(--ink)}
+    .button-primary{background:var(--action);color:var(--bg);border-color:var(--action)}
+    .button-primary:hover{background:#ff7933;border-color:#ff7933;color:var(--bg)}
+    .trust-line{margin:22px 0 0;color:var(--muted);font-size:.88rem}
+    .example{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+    .example-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:18px 22px;border-bottom:1px solid var(--line);font-size:.84rem;color:var(--muted)}
+    .example-heading strong{color:var(--ink);font-size:1rem}
+    .example-body{padding:26px 22px}
+    .example-body h2{font-size:1.65rem;margin-bottom:22px;max-width:25ch}
+    .evidence-table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;text-align:left;font-size:.86rem}
+    .evidence-table th{color:var(--muted);font-weight:500;padding:0 10px 12px 0;border-bottom:1px solid var(--line)}
+    .evidence-table td{padding:14px 10px 14px 0;border-bottom:1px solid var(--line);white-space:nowrap}
+    .evidence-table td:last-child,.evidence-table th:last-child{text-align:right;padding-right:0}
+    .failed{color:var(--red)}
+    .finding{margin:18px 0 0;font-size:.94rem;color:var(--ink)}
+    .finding strong{text-decoration:underline;text-decoration-color:var(--yellow);text-underline-offset:5px;text-decoration-thickness:2px;font-weight:500}
+    .example-link{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 22px;border-top:1px solid var(--line);font-size:.9rem;text-decoration:none;color:var(--orange)}
+    .example-link:hover{background:var(--panel-2)}
+    .example-link svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.7;flex:none}
+    .benefits{display:grid;grid-template-columns:repeat(3,1fr);gap:36px;padding:36px 0 64px;border-bottom:1px solid var(--line)}
+    .benefit svg{width:25px;height:25px;stroke:currentColor;stroke-width:1.6;fill:none;margin-bottom:15px}
+    .benefit p{color:var(--muted);font-size:.96rem;margin:0}
+    .evidence-color{color:var(--blue)}.skill-color{color:var(--purple)}.pass-color{color:var(--green)}
+    .section{padding:78px 0;border-bottom:1px solid var(--line)}
+    .section-intro{color:var(--muted);font-size:1.08rem;max-width:63ch;margin-bottom:32px}
+    .story-list{display:grid;gap:0}
+    .story{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr) auto;gap:24px;align-items:center;padding:26px 0;border-top:1px solid var(--line)}
+    .story h3{margin:0}.story p{margin:0;color:var(--muted);font-size:.95rem}
+    .story a{color:var(--orange);font-size:.9rem;white-space:nowrap;padding:10px 0}
+    .picture{margin:36px 0 0}.picture img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:var(--radius)}
+    .picture figcaption{margin-top:12px;font-size:.85rem;color:var(--muted)}
+    .privacy{display:grid;grid-template-columns:1fr 1fr;gap:56px}
+    .privacy p{color:var(--muted)}
+    .privacy ul{margin:0;padding-left:20px;color:var(--muted)}
+    .privacy li{margin-bottom:14px}.privacy strong{color:var(--ink);font-weight:600}
+    .install-grid{display:grid;grid-template-columns:.85fr 1.15fr;gap:56px;align-items:start}
+    .compatibility{color:var(--ink);font-size:1rem}.compatibility span{color:var(--muted)}
+    .terminal{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+    .terminal-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);color:var(--muted);font-size:.86rem}
+    .copy-button{padding:8px 14px;min-height:42px;border:1px solid #777063;border-radius:6px;background:transparent;color:var(--ink);font-size:.88rem}
+    .copy-button:hover{background:var(--panel-2);border-color:var(--ink)}
+    .terminal pre{margin:0;padding:22px 18px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7;font-size:.9rem}
+    .copy-status{font-size:.85rem;min-height:2.8em;margin:12px 0;color:var(--muted)}
+    .install-links{display:flex;gap:20px;flex-wrap:wrap;font-size:.88rem}
+    .setup-note{margin-top:24px;color:var(--muted);font-size:.92rem}
+    .first-use{margin:38px 0 0;padding:0;list-style:none;counter-reset:step;display:grid;gap:0}
+    .first-use li{counter-increment:step;display:grid;grid-template-columns:30px 1fr;gap:14px;padding:18px 0;border-bottom:1px solid var(--line)}
+    .first-use li::before{content:counter(step);color:var(--orange);font-variant-numeric:tabular-nums}
+    .first-use strong{display:block;font-weight:600}.first-use p{font-size:.92rem;color:var(--muted);margin:6px 0 0}
+    details{border-bottom:1px solid var(--line);padding:20px 0}
+    summary{cursor:pointer;font-size:1.05rem;font-weight:600;padding:6px 0;min-height:44px}
+    details>p,details>div{margin:16px 0 4px;color:var(--muted)}
+    .support-wrap{overflow-x:auto}
+    .support-table{width:100%;border-collapse:collapse;text-align:left;font-size:.9rem;min-width:540px}
+    .support-table th{color:var(--ink);font-weight:600}.support-table th,.support-table td{border-bottom:1px solid var(--line);padding:12px 14px 12px 0;vertical-align:top}
+    .support-table th:first-child{width:26%}.support-table td:nth-child(2){white-space:nowrap}
+    .advanced{display:grid;grid-template-columns:.85fr 1.15fr;gap:56px}.advanced h2{font-size:2.2rem}
+    .closing{padding:78px 0 70px;text-align:center}.closing h2{margin:0 auto 20px;max-width:24ch}.closing p{margin:0 auto 28px;color:var(--muted);max-width:48ch}.closing .actions{justify-content:center}
+    footer{display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap;padding:24px 0 38px;border-top:1px solid var(--line);font-size:.85rem;color:var(--muted)}
+    footer nav{display:flex;gap:24px;flex-wrap:wrap}footer a{padding:8px 0}
+    @media(max-width:1000px){.hero{gap:30px}h1{font-size:clamp(3.2rem,6vw,5rem)}.nav-links{gap:16px}.privacy,.install-grid,.advanced{gap:32px}.story{grid-template-columns:1fr 1.2fr}.story a{grid-column:2}}
+    @media(max-width:760px){.shell{width:calc(100% - 36px)}.nav{min-height:70px}.nav-links{gap:12px}.nav-detail{display:none!important}.nav-star{font-size:.82rem;padding:8px 10px}.brand{font-size:1.25rem;gap:8px}.mark{width:30px;height:30px}.mark::after{width:8px;height:8px;border-width:3px}.hero{grid-template-columns:1fr;padding:46px 0 30px;gap:36px}h1{font-size:clamp(3.1rem,11.8vw,5rem);max-width:13ch}.lede{max-width:42ch;font-size:1.08rem}.hero .actions{gap:10px}.hero .button{font-size:.94rem;padding:11px 14px}.benefits{grid-template-columns:1fr;gap:28px;padding:22px 0 42px}.benefit{display:grid;grid-template-columns:28px 1fr;column-gap:16px}.benefit svg{grid-row:1/3;margin:1px 0}.benefit p{grid-column:2}.benefit h3{margin-bottom:8px}.section{padding:48px 0}.story{grid-template-columns:1fr;gap:12px}.story a{grid-column:auto;justify-self:start}.privacy,.install-grid,.advanced{grid-template-columns:1fr;gap:24px}.install-grid h2{margin-bottom:18px}.first-use{margin-top:24px}.closing{padding:48px 0}.closing h2{font-size:2.3rem}footer{gap:10px}footer nav{gap:18px}.example-body{padding:24px 18px}.example-heading,.example-link{padding:16px 18px}.example-heading{gap:10px}.example-body h2{font-size:1.55rem}.evidence-table{font-size:.81rem}.finding{font-size:.9rem}}
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important;animation:none!important}}
   </style>
 </head>
 <body>
-<!-- Google Tag Manager (noscript) -->
-<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-MDT7FMNC"
-height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
-<!-- End Google Tag Manager (noscript) -->
-  <a class="skip-link" href="#main-content">Skip to Main Content</a>
-
+  <a class="skip-link" href="#main-content">Skip to main content</a>
   <header class="site-header">
-    <div class="site-shell">
-      <nav class="nav" aria-label="Primary Navigation">
-        <a class="brand" href="./" aria-label="reflect home">
-          <span class="mark" aria-hidden="true"></span>
-          <span class="brand-copy">
-            <span class="brand-name" translate="no">reflect</span>
-          </span>
-        </a>
-        <a class="repo-proof nav-repo-proof" href="https://github.com/o11y-dev/reflect" aria-label="View o11y-dev/reflect on GitHub">
-          <span class="repo-mark" aria-hidden="true">
-            <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12 .7A11.5 11.5 0 0 0 8.36 23.1c.58.1.79-.25.79-.56v-2.23c-3.22.7-3.9-1.37-3.9-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.77 2.72 1.26 3.38.96.1-.75.41-1.26.74-1.55-2.57-.29-5.27-1.28-5.27-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.16 1.18a10.9 10.9 0 0 1 5.75 0c2.19-1.49 3.16-1.18 3.16-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.71 5.38-5.29 5.67.42.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z"/></svg>
-          </span>
-          <span class="repo-identity">
-            <strong translate="no">o11y-dev/reflect</strong>
-            <small>Local-first · Open source · Apache 2.0</small>
-          </span>
-          <span class="repo-stats" id="repo-stats" aria-live="polite" aria-atomic="true" aria-busy="true">
-            <span class="repo-stat"><svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 13 11 22l-9-9V2h11l7 7Z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg><span id="repo-release">Latest release</span></span>
-            <span class="repo-stat"><svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01Z"/></svg><span id="repo-stars">Stars</span></span>
-            <span class="repo-stat"><svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="12" cy="19" r="2"/><path d="M6 7v2c0 2 2 3 6 3s6-1 6-3V7M12 12v5"/></svg><span id="repo-forks">Forks</span></span>
-          </span>
-          <span class="repo-arrow" aria-hidden="true">↗</span>
-        </a>
+    <div class="shell">
+      <nav class="nav" aria-label="Primary navigation">
+        <a class="brand" href="./" aria-label="Reflect home"><span class="mark" aria-hidden="true"></span><span translate="no">reflect</span></a>
         <div class="nav-links">
-          <a href="#product">Product</a>
-          <a href="#scenarios">Use Cases</a>
-          <a href="#questions">Questions</a>
-          <a href="#how-it-works">How It Works</a>
-          <a href="#install">Install</a>
-          <a class="nav-cta" href="./report.html?report=reports/showcase.json">Open Live Demo</a>
+          <a class="nav-detail" href="#examples">Examples</a>
+          <a class="nav-detail" href="#install">Install</a>
+          <a class="nav-star" href="https://github.com/o11y-dev/reflect" data-public-event="github_click" data-placement="header"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z"/></svg>Star on GitHub</a>
         </div>
       </nav>
     </div>
   </header>
-
   <main id="main-content">
-    <div class="site-shell">
+    <div class="shell">
       <section class="hero" aria-labelledby="hero-title">
-        <div class="hero-copy">
-          <h1 id="hero-title">See How Agents Work. <span class="signal">Improve What Happens Next.</span></h1>
-          <p class="lede">
-            Reflect turns AI coding sessions into shared evidence for better procedures, smarter capacity decisions, and reusable practices that scale across agents, repositories, and teams.
-          </p>
-          <ul class="hero-proof" aria-label="Product principles">
-            <li>Local first</li>
-            <li>Open source</li>
-            <li>Vendor neutral</li>
-            <li>OpenTelemetry native</li>
-          </ul>
-          <div class="cta-row">
-            <a class="button button-primary" href="./report.html?report=reports/showcase.json">Explore the Live Dashboard <span class="arrow" aria-hidden="true">→</span></a>
-            <a class="button button-secondary" href="#install">Install in 60 Seconds</a>
+        <div>
+          <h1 id="hero-title">Keep what your agents figure out.</h1>
+          <p class="lede">Reflect shows where coding agents get stuck, helps you turn useful routines into skills you review, and checks whether those skills help on future tasks.</p>
+          <div class="actions">
+            <a class="button button-primary" href="./report.html?report=reports/showcase.json" data-public-event="example_open" data-scenario="retry-recovery" data-placement="landing-hero">Explore an example</a>
+            <a class="button" href="#install">Install Reflect</a>
           </div>
+          <p class="trust-line">Open source. Runs locally. You approve changes.</p>
         </div>
-
-        <aside class="signal-board" aria-label="Example analysis from the showcase dataset">
-          <div class="board-head">
-            <div>
-              <p class="board-label">Showcase Dataset</p>
-              <h2 class="board-title">184 sessions · 5 agents</h2>
-            </div>
-            <div class="quality">64.8<small>Avg Quality</small></div>
+        <aside class="example" aria-label="Illustrative retry example">
+          <div class="example-heading"><strong>A retry worth investigating</strong><span>Illustrative sample</span></div>
+          <div class="example-body">
+            <h2>Why did the agent run the same failing command three times?</h2>
+            <table class="evidence-table">
+              <caption style="position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)">Synthetic command attempts, each returning ModuleNotFoundError</caption>
+              <thead><tr><th scope="col">Attempt</th><th scope="col">Command</th><th scope="col">Result</th></tr></thead>
+              <tbody>
+                <tr><td>1</td><td><code>pytest -q</code></td><td class="failed">Failed</td></tr>
+                <tr><td>2</td><td><code>pytest -q</code></td><td class="failed">Failed</td></tr>
+                <tr><td>3</td><td><code>pytest -q</code></td><td class="failed">Failed</td></tr>
+              </tbody>
+            </table>
+            <p class="finding"><strong>Same command. Same error. No relevant edit.</strong></p>
           </div>
-          <div class="board-metrics">
-            <div class="board-metric"><strong class="metric-value">49,101</strong><span class="metric-label">Spans</span></div>
-            <div class="board-metric"><strong class="metric-value">16,009</strong><span class="metric-label">Tool Calls</span></div>
-            <div class="board-metric"><strong class="metric-value">691</strong><span class="metric-label">Tool Failures</span></div>
-            <div class="board-metric"><strong class="metric-value">1,554</strong><span class="metric-label">MCP Calls</span></div>
-            <div class="board-metric"><strong class="metric-value">$0.12</strong><span class="metric-label">Priced Cost</span></div>
-            <div class="board-metric"><strong class="metric-value">227</strong><span class="metric-label">Subagents</span></div>
-          </div>
-          <p class="cost-note">Cost covers sessions with recognized model-pricing evidence.</p>
-          <div class="board-section">
-            <p class="board-label">Agent Activity</p>
-            <div class="agent-bars">
-              <div class="agent-row"><span>Cursor</span><div class="bar"><span style="width:100%"></span></div><strong>23.1K</strong></div>
-              <div class="agent-row"><span>Claude</span><div class="bar"><span style="width:70%"></span></div><strong>16.1K</strong></div>
-              <div class="agent-row"><span>Copilot</span><div class="bar"><span style="width:39%"></span></div><strong>9.1K</strong></div>
-              <div class="agent-row"><span>Gemini</span><div class="bar"><span style="width:4%"></span></div><strong>783</strong></div>
-            </div>
-          </div>
-          <div class="board-section">
-            <p class="board-label">Observed Evidence</p>
-            <ul class="signals">
-              <li>See exactly where retries, failures, and context churn slow work down.</li>
-              <li>Find successful routines worth turning into reusable skills and workflows.</li>
-              <li>Measure whether an applied improvement helped future sessions.</li>
-            </ul>
-          </div>
+          <a class="example-link" href="./report.html?report=reports/showcase.json" data-public-event="example_open" data-scenario="retry-recovery" data-placement="example"><span>Inspect the evidence and proposed skill</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></a>
         </aside>
       </section>
+      <section class="benefits" aria-label="What Reflect helps you do">
+        <article class="benefit">
+          <svg class="evidence-color" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg>
+          <h3>Find repeated mistakes.</h3><p>Inspect failed calls, retries, and the work surrounding them. Follow a finding back to its evidence.</p>
+        </article>
+        <article class="benefit">
+          <svg class="skill-color" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/></svg>
+          <h3>Keep useful routines.</h3><p>Review a proposed skill and its exact changes before making it available to an agent.</p>
+        </article>
+        <article class="benefit">
+          <svg class="pass-color" viewBox="0 0 24 24" aria-hidden="true"><path d="m4 12 5 5L20 6"/></svg>
+          <h3>Check whether it helped.</h3><p>Compare later tasks and see when there is enough evidence to judge a change. Missing evidence stays visible.</p>
+        </article>
+      </section>
 
-      <div class="agent-rail" aria-label="Supported AI coding agents">
-        <div class="agent-rail-inner">
-          <span class="rail-label">One View Across</span>
-          <ul class="agent-list">
-            <li><span class="agent-logo" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M17.304 3.541h-3.672l6.696 16.918H24Zm-10.608 0L0 20.459h3.744l1.37-3.553h7.005l1.369 3.553h3.744L10.536 3.541Zm-.371 10.223 2.291-5.946 2.292 5.946Z"/></svg></span><span>Claude Code</span></li>
-            <li><span class="agent-logo agent-logo-codex" aria-hidden="true">&lt;/&gt;</span><span>Codex</span></li>
-            <li><span class="agent-logo" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M11.503.131 1.891 5.678a.84.84 0 0 0-.42.726v11.188c0 .3.162.575.42.724l9.609 5.55a1 1 0 0 0 .998 0l9.61-5.55a.84.84 0 0 0 .42-.724V6.404a.84.84 0 0 0-.42-.726L12.497.131a1.01 1.01 0 0 0-.996 0M2.657 6.338h18.55c.263 0 .43.287.297.515L12.23 22.918c-.062.107-.229.064-.229-.06V12.335a.59.59 0 0 0-.295-.51l-9.11-5.257c-.109-.063-.064-.23.061-.23"/></svg></span><span>Cursor</span></li>
-            <li><span class="agent-logo" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M23.922 16.997C23.061 18.492 18.063 22.02 12 22.02S.939 18.492.078 16.997A.64.64 0 0 1 0 16.741v-2.869c0-.075.018-.149.053-.22.372-.935 1.347-2.292 2.605-2.656.167-.429.414-1.055.644-1.517a10.1 10.1 0 0 1-.052-1.086c0-1.331.282-2.499 1.132-3.368.397-.406.89-.717 1.474-.952C7.255 2.937 9.248 1.98 11.978 1.98c2.731 0 4.767.957 6.166 2.093.584.235 1.077.546 1.474.952.85.869 1.132 2.037 1.132 3.368 0 .368-.014.733-.052 1.086.23.462.477 1.088.644 1.517 1.258.364 2.233 1.721 2.605 2.656a.84.84 0 0 1 .053.22v2.869a.64.64 0 0 1-.078.256M4 11.746v6.585c1.435.779 4.514 2.179 8 2.179s6.565-1.4 8-2.179v-6.585c-.793.9-2.057 1.259-3.965 1.259-1.59 0-2.738-.545-3.508-1.492a4.4 4.4 0 0 1-.355-.508h-.344a4.4 4.4 0 0 1-.355.508c-.77.947-1.918 1.492-3.508 1.492-1.908 0-3.172-.359-3.965-1.259m10.5 2.509a1 1 0 0 1 1 1v2a1 1 0 1 1-2 0v-2a1 1 0 0 1 1-1m-5 0a1 1 0 0 1 1 1v2a1 1 0 1 1-2 0v-2a1 1 0 0 1 1-1"/></svg></span><span>GitHub Copilot</span></li>
-            <li><span class="agent-logo" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"/></svg></span><span>Gemini CLI</span></li>
-            <li><span class="agent-logo" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24"><path d="M22 24H2V0h20zM17 4.8H7v14.4h10z"/></svg></span><span>OpenCode</span></li>
-            <li><span class="agent-logo agent-logo-antigravity" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><ellipse cx="12" cy="12" rx="9" ry="4.5"/><path d="M12 3v3m0 12v3"/></svg></span><span>Antigravity</span></li>
-          </ul>
-        </div>
-      </div>
-
-      <section class="content-section" id="product" aria-labelledby="product-title">
-        <div class="section-intro">
-          <div>
-            <p class="kicker">From Agent Work to Measured Improvement</p>
-            <h2 id="product-title">Understand the Run. Decide What Improves.</h2>
-          </div>
-          <p>Reflect connects sessions, workspaces, repositories, tools, skills, outcomes, and local memory so evidence can explain what happened, guide better procedures, and show what is ready to scale.</p>
-        </div>
-
-        <div class="bento">
-          <article class="feature-card feature-card-large">
-            <span class="feature-index">01</span>
-            <h3>Diagnose Sessions Without Reconstructing Them by Hand.</h3>
-            <p>Follow prompts, responses, tool and MCP calls, failures, retries, subagents, token use, cost, and outcomes on one synchronized timeline—even when evidence arrives through native sessions and hooks.</p>
-            <div class="evidence-stack" aria-label="Example session evidence">
-              <div class="evidence-row"><span>Repeated tool failure</span><strong>3 retries</strong></div>
-              <div class="evidence-row"><span>Context handoff gap</span><strong>2 sessions</strong></div>
-              <div class="evidence-row"><span>Visible verification</span><strong>Missing</strong></div>
-            </div>
-          </article>
-
-          <article class="feature-card feature-card-side">
-            <span class="feature-index">02</span>
-            <h3>See the Evidence Behind the Work.</h3>
-            <p>Move beyond isolated transcripts. Stable hook, native-trace, workspace, repository, MCP, and delegation identities connect sessions to the work they actually performed.</p>
-            <div class="graph-mini" aria-hidden="true">
-              <span class="graph-node"></span><span class="graph-node"></span><span class="graph-node"></span><span class="graph-node"></span><span class="graph-node"></span>
-            </div>
-          </article>
-
-          <article class="feature-card feature-card-third">
-            <span class="feature-index">03</span>
-            <h3>Find Loops That Create Rework.</h3>
-            <p>Detect repeated inputs, failed recovery, broad exploration, late verification, and patterns that consume time without changing state or improving the work.</p>
-          </article>
-          <article class="feature-card feature-card-third">
-            <span class="feature-index">04</span>
-            <h3>Decide What Becomes Reusable.</h3>
-            <p>Review evidence-backed workflow and skill proposals, inspect the exact change, install approved versions into the right repository or agent, and retain their history.</p>
-          </article>
-          <article class="feature-card feature-card-third">
-            <span class="feature-index">05</span>
-            <h3>Measure Whether Improvement Is Real.</h3>
-            <p>Compare later sessions against the original cohort before claiming that a workflow, skill, or rule improved the outcome.</p>
-          </article>
+      <section class="section" id="examples" aria-labelledby="examples-title">
+        <h2 id="examples-title">Follow one finding all the way through.</h2>
+        <p class="section-intro">Open an example, inspect the recorded work, review the proposed routine, and look at later tasks. All public examples use synthetic data. No installation required.</p>
+        <div class="story-list">
+          <article class="story"><h3>Break a retry loop.</h3><p>Three identical failures reveal a missing precondition. Inspect the evidence, the reviewed skill, and comparable later tasks.</p><a href="./report.html?report=reports/showcase.json&amp;example=retry-recovery" data-public-event="example_open" data-scenario="retry-recovery" data-placement="example">Explore the retry example</a></article>
+          <article class="story"><h3>Keep a routine that worked.</h3><p>A useful procedure appears across independent tasks. See what is worth preserving and what a person reviews.</p><a href="./report.html?report=reports/showcase.json&amp;example=preserve-routine" data-public-event="example_open" data-scenario="preserve-routine" data-placement="example">Explore the useful routine</a></article>
+          <article class="story"><h3>Know when it is too early.</h3><p>An available skill is only the beginning. See how Reflect keeps insufficient evidence distinct from measured improvement.</p><a href="./report.html?report=reports/showcase.json&amp;example=insufficient-evidence" data-public-event="example_open" data-scenario="insufficient-evidence" data-placement="example">Explore the evidence gap</a></article>
         </div>
       </section>
 
-      <section class="content-section" id="scenarios" aria-labelledby="scenarios-title">
-        <div class="section-intro">
-          <div>
-            <p class="kicker">Ask Through Your Agent</p>
-            <h2 id="scenarios-title">Use Reflect Where You Already Work.</h2>
-          </div>
-          <p>Start with a normal engineering or business question. The agent uses Reflect's local evidence to explain the work, recommend follow-up actions, and prepare evidence for personal learning, team decisions, or internal requests.</p>
-        </div>
-
-        <div class="agent-syntax" data-agent-syntax>
-          <span class="agent-syntax-label">Agent syntax</span>
-          <span class="agent-syntax-options" role="group" aria-label="Choose an agent invocation style">
-            <button class="agent-syntax-button" type="button" data-agent-prefix="$" aria-pressed="true"><span>Codex</span><code>$reflect</code></button>
-            <button class="agent-syntax-button" type="button" data-agent-prefix="/" aria-pressed="false"><span>Slash</span><code>/reflect</code></button>
-          </span>
-          <span class="agent-syntax-note">For other agents, choose Reflect from the skill picker.</span>
-        </div>
-
-        <div class="scenario-grid">
-          <article class="scenario-card">
-            <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">$</span><span class="scenario-label">Budget Evidence</span></div>
-            <h3>Why does our team need more AI budget?</h3>
-            <p>Let the agent connect exact usage to past work, separate productive growth from avoidable waste, recommend improvements, and prepare a reviewed internal request.</p>
-            <code class="scenario-prompt"><span class="scenario-invocation" data-reflect-skill="reflect-usage">$reflect-usage</span><span class="scenario-prompt-copy">Explain our AI budget need and what should improve.</span></code>
-          </article>
-
-          <article class="scenario-card">
-            <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">↳</span><span class="scenario-label">Session Diagnosis</span></div>
-            <h3>Why did this session stall or fail?</h3>
-            <p>Open the synchronized conversation, timeline, tool activity, subagents, workspace context, failures, and cost evidence.</p>
-            <code class="scenario-prompt"><span class="scenario-invocation" data-reflect-skill="reflect">$reflect</span><span class="scenario-prompt-copy">Explain why this session stalled or failed.</span></code>
-          </article>
-
-          <article class="scenario-card">
-            <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">!</span><span class="scenario-label">Recurring Friction</span></div>
-            <h3>What should we improve first?</h3>
-            <p>Rank repeated problems by impact, then inspect the exact observations and source sessions behind each recommendation.</p>
-            <code class="scenario-prompt"><span class="scenario-invocation" data-reflect-skill="reflect">$reflect</span><span class="scenario-prompt-copy">Rank what we should improve first.</span></code>
-          </article>
-
-          <article class="scenario-card">
-            <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">∞</span><span class="scenario-label">Loops to Skills</span></div>
-            <h3>Can this repeated behavior become reusable?</h3>
-            <p>Review bounded loop evidence and let an agent author one pending workflow packaged as a skill for deliberate approval.</p>
-            <code class="scenario-prompt"><span class="scenario-invocation" data-reflect-skill="reflect-skills">$reflect-skills</span><span class="scenario-prompt-copy">Find repeated behavior worth turning into a reusable skill.</span></code>
-          </article>
-
-          <article class="scenario-card">
-            <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">?</span><span class="scenario-label">Repository Guidance</span></div>
-            <h3>How should an agent work in this repository?</h3>
-            <p>Retrieve reviewed workflows, linked evidence, and folder-scoped memory instead of relying on generic advice.</p>
-            <code class="scenario-prompt"><span class="scenario-invocation" data-reflect-skill="reflect">$reflect</span><span class="scenario-prompt-copy">Explain how an agent should work in this repository.</span></code>
-          </article>
-
-          <article class="scenario-card">
-            <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">◇</span><span class="scenario-label">Memory Recall</span></div>
-            <h3>What have we already learned here?</h3>
-            <p>Search local, provenance-aware memory for a repository decision, release practice, debugging path, or prior constraint.</p>
-            <code class="scenario-prompt"><span class="scenario-invocation" data-reflect-skill="reflect">$reflect</span><span class="scenario-prompt-copy">Find what we already learned about the release gate.</span></code>
-          </article>
-
-          <article class="scenario-card">
-            <div class="scenario-top"><span class="scenario-icon" aria-hidden="true">✓</span><span class="scenario-label">Instrumentation Health</span></div>
-            <h3>Are the agents actually observable?</h3>
-            <p>Check hook installation, native telemetry, local files, gateway state, detected agents, pricing, and integration support.</p>
-            <code class="scenario-prompt"><span class="scenario-invocation" data-reflect-skill="reflect">$reflect</span><span class="scenario-prompt-copy">Check whether agent telemetry and integrations are healthy.</span></code>
-          </article>
-        </div>
+      <section class="section privacy" aria-labelledby="privacy-title">
+        <div><h2 id="privacy-title">Your work stays on your machine.</h2><p>Reflect reads local agent telemetry and supported native session stores into a local SQLite database. The dashboard, CLI, and MCP tools work from that evidence.</p></div>
+        <ul>
+          <li><strong>Text capture is a choice.</strong> Prompt and response capture is opt-in; metadata capture is the setup default.</li>
+          <li><strong>You review changes.</strong> Workflow discovery does not silently install a skill. Approval and installation are explicit actions.</li>
+          <li><strong>Unknown stays unknown.</strong> A completed command, an agent's report, and a verified result are different kinds of evidence.</li>
+        </ul>
       </section>
 
-      <section class="content-section" id="questions" aria-labelledby="questions-title">
-        <div class="section-intro">
+      <section class="section" id="install" aria-labelledby="install-title">
+        <div class="install-grid">
           <div>
-            <p class="kicker">Personal Insight to Organizational Learning</p>
-            <h2 id="questions-title">Reflect on One Session. Improve How AI Work Scales.</h2>
+            <h2 id="install-title">Install Reflect.<br>Find your first useful result.</h2>
+            <p class="section-intro">Start with one supported agent and one real task. Inspect what happened before deciding what to change.</p>
+            <p class="compatibility">macOS or Linux <span>·</span> Python 3.12+</p>
+            <a href="#agent-support">Check your agent's support</a>
           </div>
-          <p>Start with a personal question about one session, then follow the same local evidence into shared procedures, capacity decisions, and practices that scale across the organization.</p>
-        </div>
-
-        <div class="agent-window" data-agent-qa>
-          <div class="agent-window-bar">
-            <div class="agent-window-identity">
-              <span class="agent-window-mark" aria-hidden="true">R</span>
-              <span>
-                <strong class="agent-window-name">Reflect</strong>
-                <span class="agent-window-status">Local evidence connected</span>
-              </span>
+          <div>
+            <div class="terminal">
+              <div class="terminal-head"><span>Install and configure locally</span><button class="copy-button" type="button" id="copy-install" aria-describedby="copy-status">Copy command</button></div>
+              <pre><code id="install-command">curl -fsSL https://reflect.o11y.dev/install.sh | sh</code></pre>
             </div>
-            <span class="agent-window-slogan">Evidence, Not Vibes.</span>
-          </div>
-
-          <div class="agent-window-body">
-            <div class="agent-prompt-library" aria-label="Try a Reflect question">
-              <div class="agent-prompt-group">
-                <p class="agent-prompt-heading">Personal reflection</p>
-                <div class="agent-prompt-options">
-                  <button class="agent-prompt-button is-active" type="button" data-question="Why did my AI coding agent hit its token budget limit?" data-answer-id="answer-token-budget" aria-controls="answer-token-budget" aria-pressed="true">
-                    <span class="agent-prompt-arrow" aria-hidden="true">›</span>
-                    <span class="agent-prompt-copy">Why did my AI coding agent hit its token budget limit?</span>
-                  </button>
-                  <button class="agent-prompt-button" type="button" data-question="Why did this AI coding session fail?" data-answer-id="answer-session-failure" aria-controls="answer-session-failure" aria-pressed="false">
-                    <span class="agent-prompt-arrow" aria-hidden="true">›</span>
-                    <span class="agent-prompt-copy">Why did this AI coding session fail?</span>
-                  </button>
-                  <button class="agent-prompt-button" type="button" data-question="How can I improve the way I work with AI agents?" data-answer-id="answer-personal-improvement" aria-controls="answer-personal-improvement" aria-pressed="false">
-                    <span class="agent-prompt-arrow" aria-hidden="true">›</span>
-                    <span class="agent-prompt-copy">How can I improve the way I work with AI agents?</span>
-                  </button>
-                </div>
-              </div>
-
-              <div class="agent-prompt-group">
-                <p class="agent-prompt-heading">Organizational reflection</p>
-                <div class="agent-prompt-options">
-                  <button class="agent-prompt-button" type="button" data-question="Where do tokens and cost go across AI agent work?" data-answer-id="answer-organization-cost" aria-controls="answer-organization-cost" aria-pressed="false">
-                    <span class="agent-prompt-arrow" aria-hidden="true">›</span>
-                    <span class="agent-prompt-copy">Where do tokens and cost go across AI agent work?</span>
-                  </button>
-                  <button class="agent-prompt-button" type="button" data-question="How can proven AI practices scale across teams, repositories, and agents?" data-answer-id="answer-organization-scale" aria-controls="answer-organization-scale" aria-pressed="false">
-                    <span class="agent-prompt-arrow" aria-hidden="true">›</span>
-                    <span class="agent-prompt-copy">How can proven AI practices scale across teams, repositories, and agents?</span>
-                  </button>
-                  <button class="agent-prompt-button" type="button" data-question="What evidence supports increasing AI capacity and budget?" data-answer-id="answer-organization-capacity" aria-controls="answer-organization-capacity" aria-pressed="false">
-                    <span class="agent-prompt-arrow" aria-hidden="true">›</span>
-                    <span class="agent-prompt-copy">What evidence supports increasing AI capacity and budget?</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div class="agent-conversation">
-              <div class="agent-thread" aria-live="polite" aria-atomic="true">
-                <div class="agent-message agent-message-user">
-                  <span class="agent-message-label">You</span>
-                  <p id="agent-active-question">Why did my AI coding agent hit its token budget limit?</p>
-                </div>
-
-                <div class="agent-message agent-message-reflect">
-                  <span class="agent-message-label"><strong>Reflect</strong><span class="agent-evidence-label">Local evidence</span></span>
-
-                  <article class="agent-answer" id="answer-token-budget">
-                    <p>Reflect breaks down observed input, output, cache creation, and cache-read tokens by session and model, then connects that usage to tool and MCP calls, retries, context churn, continuations, and outcomes. When the evidence cannot prove an exact cause, Reflect keeps the attribution unknown instead of inventing one.</p>
-                    <div class="agent-answer-signals" aria-label="Evidence used"><span>Token breakdown</span><span>Retries</span><span>Context</span></div>
-                  </article>
-
-                  <article class="agent-answer" id="answer-session-failure" hidden>
-                    <p>Reflect puts prompts, responses, tool and MCP calls, errors, retries, subagents, files, verification, and outcomes on a synchronized local timeline so the first visible failure or recovery gap can be found.</p>
-                    <div class="agent-answer-signals" aria-label="Evidence used"><span>Timeline</span><span>Errors</span><span>Verification</span></div>
-                  </article>
-
-                  <article class="agent-answer" id="answer-personal-improvement" hidden>
-                    <p>Reflect finds recurring friction and successful routines in past sessions, then suggests bounded changes to context, prompts, tools, verification, workflows, or skills. The evidence remains available for review before any practice becomes reusable.</p>
-                    <div class="agent-answer-signals" aria-label="Evidence used"><span>Patterns</span><span>Tools</span><span>Skills</span></div>
-                  </article>
-
-                  <article class="agent-answer" id="answer-organization-cost" hidden>
-                    <p>Reflect shows observed token usage, cache behavior, estimated cost, model mix, tool activity, failures, retries, context churn, and large-session concentration across one session or the full local history. Cost is shown only where model-pricing evidence is recognized.</p>
-                    <div class="agent-answer-signals" aria-label="Evidence used"><span>Usage</span><span>Cost</span><span>Waste</span></div>
-                  </article>
-
-                  <article class="agent-answer" id="answer-organization-scale" hidden>
-                    <p>Reflect turns selected session evidence into reviewable, versioned workflows and skills. Proven practices can then move across agents, repositories, and teams, while later sessions measure whether they actually helped.</p>
-                    <div class="agent-answer-signals" aria-label="Evidence used"><span>Workflows</span><span>Skills</span><span>Impact</span></div>
-                  </article>
-
-                  <article class="agent-answer" id="answer-organization-capacity" hidden>
-                    <p>Reflect connects local usage and cost to delivered work, identifies avoidable waste, documents improvement commitments, and prepares an evidence-backed internal request for review.</p>
-                    <div class="agent-answer-signals" aria-label="Evidence used"><span>Delivered work</span><span>Capacity</span><span>Budget</span></div>
-                  </article>
-                </div>
-              </div>
-
-              <div class="agent-composer" aria-label="Selected Reflect question">
-                <span class="agent-composer-prompt" aria-hidden="true">›</span>
-                <span class="agent-typed-question" id="agent-typed-question">Why did my AI coding agent hit its token budget limit?</span>
-                <button class="agent-send" type="button" aria-label="Ask selected question">↑</button>
-              </div>
-            </div>
+            <p class="copy-status" id="copy-status" role="status" aria-live="polite">Copy this command when you are at your development machine.</p>
+            <div class="install-links"><a href="./install.sh">Review the install script</a><a href="https://github.com/o11y-dev/reflect#quick-start">Other installation options</a></div>
+            <p class="setup-note">On a new installation, the script installs Reflect and runs <code>reflect setup</code>. Setup configures local telemetry, hooks, and selected agent integrations. Interactive setup lets you choose integrations and text-capture settings; non-interactive setup uses available agents with metadata capture.</p>
+            <details><summary>Package managers and existing installs</summary><p>The installer prefers pipx, then uv, then an isolated pip environment. For an existing installation it updates the package while preserving setup. Review the script above before running it.</p></details>
           </div>
         </div>
+        <ol class="first-use" aria-label="First useful result">
+          <li><div><strong>Choose one agent during setup.</strong><p>Use an agent listed as supported below. Optional prompt and response capture remains your choice.</p></div></li>
+          <li><div><strong>Check capture with <code>reflect doctor</code>.</strong><p>Review the integration status. Configured integrations still need a task to produce evidence.</p></div></li>
+          <li><div><strong>Run a normal coding task.</strong><p>Let the selected agent edit, check, and finish the work as it normally would.</p></div></li>
+          <li><div><strong>Run <code>reflect refresh</code>, then <code>reflect</code>.</strong><p>Open the captured session and inspect its tool calls, check results, and available usage.</p></div></li>
+          <li><div><strong>Ask your agent to explain one finding.</strong><p>Use the Reflect skill: “Explain why this session repeated the same command.” Review reusable skills after you understand the evidence.</p></div></li>
+        </ol>
+        <details id="agent-support">
+          <summary>Agent support and capture coverage</summary>
+          <div class="support-wrap"><table class="support-table">
+            <caption>Support follows Reflect's capability registry. Available evidence differs by agent.</caption>
+            <thead><tr><th scope="col">Agent</th><th scope="col">Support</th><th scope="col">Capture path</th></tr></thead>
+            <tbody>
+              <tr data-agent="claude" data-support="Supported"><th scope="row">Claude Code</th><td>Supported</td><td>Native OTel + hooks + native sessions</td></tr>
+              <tr data-agent="codex" data-support="Supported"><th scope="row">OpenAI Codex CLI</th><td>Supported</td><td>Native OTel + native sessions</td></tr>
+              <tr data-agent="cursor" data-support="Supported"><th scope="row">Cursor</th><td>Supported</td><td>Session/log adapters + optional hooks</td></tr>
+              <tr data-agent="copilot" data-support="Supported"><th scope="row">GitHub Copilot</th><td>Supported</td><td>Native OTel + hooks + native sessions</td></tr>
+              <tr data-agent="opencode" data-support="Supported"><th scope="row">OpenCode</th><td>Supported</td><td>Native SQLite sessions + hooks</td></tr>
+              <tr data-agent="windsurf" data-support="Supported"><th scope="row">Windsurf</th><td>Supported</td><td>Hooks + configuration snapshots</td></tr>
+              <tr data-agent="antigravity" data-support="Partial"><th scope="row">Antigravity</th><td>Partial</td><td>Reflect MCP task runs; native tool telemetry unverified</td></tr>
+              <tr data-agent="gemini" data-support="Historical"><th scope="row">Gemini CLI</th><td>Historical</td><td>Historical native OTel + session adapter</td></tr>
+            </tbody>
+          </table></div>
+        </details>
       </section>
 
-      <section class="content-section" id="how-it-works" aria-labelledby="how-title">
-        <div class="section-intro">
-          <div>
-            <p class="kicker">How It Works</p>
-            <h2 id="how-title">Private by Default. People Stay in Control.</h2>
-          </div>
-          <p>Connect once, ask through your agent, and use the visual UI whenever you want the complete evidence and review path.</p>
-        </div>
-        <div class="process">
-          <article class="process-step">
-            <span class="step-number">01 / Capture</span>
-            <h3>Connect Your Agents.</h3>
-            <p>Reflect configures local OTLP collection and reads supported native session stores without forcing every agent through one vendor gateway.</p>
-            <code class="command" translate="no">reflect setup</code>
-          </article>
-          <article class="process-step">
-            <span class="step-number">02 / Ask</span>
-            <h3>Work Through Your Agent.</h3>
-            <p>Ask natural questions about usage, failures, repeated work, repository guidance, and improvement. Reflect gives the agent bounded, provenance-aware evidence.</p>
-            <code class="command" translate="no">Use Reflect to explain this work.</code>
-          </article>
-          <article class="process-step">
-            <span class="step-number">03 / Review</span>
-            <h3>Explore the Evidence Visually.</h3>
-            <p>Open the UI to inspect sessions and costs, review exact workflow or skill changes, approve or reject them, and see their later impact.</p>
-            <code class="command" translate="no">reflect</code>
-          </article>
-        </div>
-      </section>
-
-      <section class="content-section" aria-labelledby="trust-title">
-        <div class="trust-panel">
-          <div>
-            <p class="kicker">Local-First Architecture</p>
-            <h2 id="trust-title">Your Engineering Telemetry Stays Yours.</h2>
-            <p>Reflect keeps its evidence graph and workflow ledger in local SQLite. Its read-only MCP gives agents scoped context with provenance, while optional memory providers such as OMEGA remain independently installed and clearly separated from Reflect-verified evidence.</p>
-          </div>
-          <ul class="trust-list">
-            <li><span class="check" aria-hidden="true">✓</span><span><strong>Local by default</strong>Traces, session stores, the SQLite ledger, and dashboard data remain on your machine.</span></li>
-            <li><span class="check" aria-hidden="true">✓</span><span><strong>Text capture is optional</strong>Use metadata-only telemetry or opt into prompt and response capture deliberately.</span></li>
-            <li><span class="check" aria-hidden="true">✓</span><span><strong>OpenTelemetry native</strong>Keep your own collector, backend, retention, and governance model.</span></li>
-            <li><span class="check" aria-hidden="true">✓</span><span><strong>Agent-ready context</strong>Expose a bounded task lifecycle, six read-only MCP inspection tools, and approval-gated changes.</span></li>
-          </ul>
-        </div>
-      </section>
-
-      <section class="content-section" aria-labelledby="memory-title">
-        <div class="memory-panel">
-          <div class="memory-head">
-            <div>
-              <p class="kicker">Memory, With Boundaries</p>
-              <h2 id="memory-title">Bring Your Memory Provider.</h2>
-            </div>
-            <p>Reflect keeps evidence and provenance in its own local ledger, then connects to optional memory systems without confusing external recall with verified session facts.</p>
-          </div>
-
-          <div class="provider-group">
-            <div class="provider-group-head">
-              <h3>Connected Providers</h3>
-              <span>Available for configured memory operations</span>
-            </div>
-            <div class="provider-grid">
-              <article class="provider-card">
-                <span class="provider-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="7" ry="3"></ellipse><path d="M5 5v7c0 1.7 3.1 3 7 3s7-1.3 7-3V5"></path><path d="M5 12v7c0 1.7 3.1 3 7 3s7-1.3 7-3v-7"></path></svg></span>
-                <span class="provider-copy"><strong>Local SQLite</strong><small>Default source of truth</small><span class="provider-status">Built in</span></span>
-              </article>
-              <article class="provider-card">
-                <span class="provider-icon provider-icon-text" aria-hidden="true">Ω</span>
-                <span class="provider-copy"><strong>OMEGA</strong><small>Local semantic memory</small><span class="provider-status">Integrated</span></span>
-              </article>
-              <article class="provider-card">
-                <span class="provider-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="7" cy="7" r="2.5"></circle><circle cx="17" cy="7" r="2.5"></circle><circle cx="12" cy="17" r="2.5"></circle><path d="m9 8.5 2 6M15 8.5l-2 6M9.5 7h5"></path></svg></span>
-                <span class="provider-copy"><strong>Agent Memory</strong><small>Generic HTTP memory</small><span class="provider-status">Connected</span></span>
-              </article>
-              <article class="provider-card">
-                <span class="provider-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m13 2-8 12h7l-1 8 8-12h-7z"></path></svg></span>
-                <span class="provider-copy"><strong>LiteLLM</strong><small>Proxy memory endpoint</small><span class="provider-status">Connected</span></span>
-              </article>
-              <article class="provider-card">
-                <span class="provider-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 9h18M5 9V6l7-4 7 4v3M6 9v9M10 9v9M14 9v9M18 9v9M3 18h18M2 22h20"></path></svg></span>
-                <span class="provider-copy"><strong>Memory Palace</strong><small>Compatible HTTP memory</small><span class="provider-status">Connected</span></span>
-              </article>
-            </div>
-          </div>
-
-          <div class="provider-group">
-            <div class="provider-group-head">
-              <h3>Discovery Adapters</h3>
-              <span>Installation and health visibility in this release</span>
-            </div>
-            <div class="provider-grid provider-grid-discovery">
-              <article class="provider-card">
-                <span class="provider-icon provider-icon-text" aria-hidden="true">m0</span>
-                <span class="provider-copy"><strong>Mem0</strong><small>Health and discovery</small><span class="provider-status provider-status-discovery">Discovery only</span></span>
-              </article>
-              <article class="provider-card">
-                <span class="provider-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"></circle><circle cx="12" cy="5" r="2"></circle><circle cx="19" cy="9" r="2"></circle><circle cx="15" cy="19" r="2"></circle><path d="m6.5 10.5 4-4M14 5.8l3.2 2M18 11l-2 6M13.2 17.5 6.8 13"></path></svg></span>
-                <span class="provider-copy"><strong>Graphiti</strong><small>Health and discovery</small><span class="provider-status provider-status-discovery">Discovery only</span></span>
-              </article>
-              <article class="provider-card">
-                <span class="provider-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 18H5a4 4 0 0 1-.5-8A7.5 7.5 0 0 1 19 8a5 5 0 0 1 0 10h-2"></path><ellipse cx="12" cy="14" rx="4" ry="2"></ellipse><path d="M8 14v5c0 1.1 1.8 2 4 2s4-.9 4-2v-5"></path></svg></span>
-                <span class="provider-copy"><strong>TencentDB Agent Memory</strong><small>Health and discovery</small><span class="provider-status provider-status-discovery">Discovery only</span></span>
-              </article>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="content-section" id="install" aria-labelledby="install-title">
-        <div class="install-panel">
-          <div>
-            <p class="kicker">Start Locally</p>
-            <h2 id="install-title">From Install to Agent-Ready Evidence in 60 Seconds.</h2>
-            <p>Run one reviewable script. It prefers pipx, then uv, then an isolated pip environment, configures a fresh installation, and upgrades an existing installation through its current owner.</p>
-            <div class="install-links">
-              <a href="https://github.com/o11y-dev/reflect">Read the Documentation</a>
-              <a href="./install.sh">Review the Install Script</a>
-              <a href="https://pypi.org/project/o11y-reflect/">View on PyPI</a>
-            </div>
-          </div>
-          <div class="terminal">
-            <div class="terminal-head"><span class="terminal-dot"></span><span class="terminal-dot"></span><span class="terminal-dot"></span><span>Quick Start</span></div>
-            <pre tabindex="0"><code translate="no"><span class="prompt">$</span> curl -fsSL https://reflect.o11y.dev/install.sh | sh
-
-<span class="comment"># Then ask in your coding agent</span>
-<span class="prompt">›</span> Use Reflect to explain why our team needs more AI budget.
-
-<span class="comment"># Open the visual overview</span>
-<span class="prompt">$</span> reflect</code></pre>
-          </div>
+      <section class="section advanced" aria-labelledby="details-title">
+        <div><h2 id="details-title">A closer look, when you need it.</h2><p class="section-intro">Inspect usage, share reviewed routines, and connect existing tools. Start with the evidence from your own work.</p></div>
+        <div>
+          <details><summary>Where did the tokens and cost go?</summary><p>Explore observed input, output, and cache usage alongside tools and task activity. Cost depends on available model and pricing evidence. Missing usage is not treated as zero, and provider invoices remain a separate source.</p></details>
+          <details><summary>Can this support team capacity decisions?</summary><p>Use scoped usage and workflow evidence to explain demand and proposed improvements. A high token count alone does not establish waste, and a change in outcomes does not automatically establish that a skill caused it.</p></details>
+          <details><summary>How do skills and memory fit together?</summary><p>Reflect keeps telemetry evidence and reviewable skills in its local store. Optional memory integrations can supply additional context. External recall remains distinct from verified session evidence. <a href="https://github.com/o11y-dev/reflect#memory">Read about memory integrations</a>.</p></details>
+          <details><summary>What does the public example contain?</summary><p>The report uses a fictional, deterministic dataset processed through Reflect. Its sessions, skills, and outcomes are illustrative. It contains no exported private sessions. The local dashboard shows your own captured evidence.</p></details>
+          <details><summary>What does this website measure?</summary><p>The public website records example interactions, GitHub clicks, and successful install-command copies through its existing analytics integration. A click does not establish a star, and a copied command does not establish an installation. Local dashboard navigation is excluded.</p></details>
         </div>
       </section>
 
       <section class="closing" aria-labelledby="closing-title">
-        <p class="kicker">Ask. Review. Improve.</p>
-        <h2 id="closing-title">Ask Through Your Agent. See the Evidence in Reflect.</h2>
-        <p>Get the immediate explanation in the conversation, then use the visual UI to inspect the source evidence, control what becomes reusable, and measure what helped.</p>
-        <div class="cta-row">
-          <a class="button button-primary" href="./report.html?report=reports/showcase.json">Explore the Live Dashboard <span class="arrow" aria-hidden="true">→</span></a>
-          <a class="button button-secondary" href="https://github.com/o11y-dev/reflect">View reflect on GitHub</a>
-        </div>
+        <h2 id="closing-title">Make the next session better informed.</h2>
+        <p>Explore one complete example now. Star Reflect to find it when you are back at your laptop.</p>
+        <div class="actions"><a class="button" href="./report.html?report=reports/showcase.json" data-public-event="example_open" data-scenario="retry-recovery" data-placement="footer">Explore an example</a><a class="button" href="https://github.com/o11y-dev/reflect" data-public-event="github_click" data-placement="footer">Star on GitHub</a></div>
       </section>
-
-      <footer class="footer">
-        <span class="footer-copy">Built on OpenTelemetry GenAI semantic conventions. Local first, vendor neutral, and open source under Apache 2.0.</span>
-        <span class="footer-links"><a href="#questions">Questions</a><a href="./report.html?report=reports/showcase.json">Live Dashboard</a><a href="https://github.com/o11y-dev/reflect">GitHub</a><a href="https://pypi.org/project/o11y-reflect/">PyPI</a></span>
+      <footer>
+        <span>Reflect · Local first · Open source · Apache 2.0</span>
+        <nav aria-label="Footer"><a href="#install">Install</a><a href="https://github.com/o11y-dev/reflect" data-public-event="github_click" data-placement="footer">GitHub</a><a href="https://pypi.org/project/o11y-reflect/">PyPI</a><a href="https://github.com/o11y-dev/reflect#readme">Documentation</a></nav>
       </footer>
     </div>
   </main>
-  <script>
-    (() => {
-      const syntaxSwitcher = document.querySelector('[data-agent-syntax]');
-      if (syntaxSwitcher) {
-        const syntaxButtons = Array.from(syntaxSwitcher.querySelectorAll('[data-agent-prefix]'));
-        const invocations = Array.from(document.querySelectorAll('[data-reflect-skill]'));
-        syntaxButtons.forEach((button) => {
-          button.addEventListener('click', () => {
-            const prefix = button.getAttribute('data-agent-prefix') || '';
-            syntaxButtons.forEach((candidate) => {
-              candidate.setAttribute('aria-pressed', String(candidate === button));
-            });
-            invocations.forEach((invocation) => {
-              invocation.textContent = `${prefix}${invocation.getAttribute('data-reflect-skill') || 'reflect'}`;
-            });
-          });
-        });
-      }
-
-      const qa = document.querySelector('[data-agent-qa]');
-      if (!qa) return;
-
-      const promptButtons = Array.from(qa.querySelectorAll('[data-question]'));
-      const answers = Array.from(qa.querySelectorAll('.agent-answer'));
-      const activeQuestion = qa.querySelector('#agent-active-question');
-      const typedQuestion = qa.querySelector('#agent-typed-question');
-      const sendButton = qa.querySelector('.agent-send');
-      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      let selectedButton = promptButtons[0];
-      let typingTimer = null;
-
-      const reveal = (button) => {
-        const answerId = button.getAttribute('data-answer-id');
-        const question = button.getAttribute('data-question') || '';
-        activeQuestion.textContent = question;
-        answers.forEach((answer) => {
-          answer.hidden = answer.id !== answerId;
-        });
-      };
-
-      const ask = (button) => {
-        if (!button) return;
-        if (typingTimer) window.clearInterval(typingTimer);
-        selectedButton = button;
-        promptButtons.forEach((candidate) => {
-          const active = candidate === button;
-          candidate.classList.toggle('is-active', active);
-          candidate.setAttribute('aria-pressed', String(active));
-        });
-
-        const question = button.getAttribute('data-question') || '';
-        if (reduceMotion) {
-          typedQuestion.textContent = question;
-          reveal(button);
-          return;
-        }
-
-        typedQuestion.textContent = '';
-        let characterIndex = 0;
-        typingTimer = window.setInterval(() => {
-          characterIndex += 1;
-          typedQuestion.textContent = question.slice(0, characterIndex);
-          if (characterIndex >= question.length) {
-            window.clearInterval(typingTimer);
-            typingTimer = null;
-            reveal(button);
-          }
-        }, 12);
-      };
-
-      promptButtons.forEach((button) => {
-        button.addEventListener('click', () => ask(button));
-      });
-      sendButton.addEventListener('click', () => ask(selectedButton));
-    })();
-
-    (() => {
-      const stats = document.getElementById('repo-stats');
-      const release = document.getElementById('repo-release');
-      const stars = document.getElementById('repo-stars');
-      const forks = document.getElementById('repo-forks');
-      if (!stats || !release || !stars || !forks) return;
-
-      const cacheKey = 'reflect.github-proof.v1';
-      const cacheTtlMs = 30 * 60 * 1000;
-      const compactNumber = new Intl.NumberFormat(undefined, {
-        notation: 'compact',
-        maximumFractionDigits: 1,
-      });
-      const apply = (value) => {
-        if (!value || typeof value !== 'object') return;
-        if (typeof value.release === 'string' && value.release) release.textContent = value.release;
-        if (Number.isFinite(value.stars)) stars.textContent = `${compactNumber.format(value.stars)} stars`;
-        if (Number.isFinite(value.forks)) forks.textContent = `${compactNumber.format(value.forks)} forks`;
-      };
-
-      let cached = null;
-      try {
-        cached = JSON.parse(localStorage.getItem(cacheKey) || 'null');
-      } catch (_error) {
-        cached = null;
-      }
-      if (cached && Date.now() - Number(cached.cachedAt || 0) < cacheTtlMs) {
-        apply(cached);
-        stats.setAttribute('aria-busy', 'false');
-        return;
-      }
-
-      const headers = {Accept: 'application/vnd.github+json'};
-      Promise.allSettled([
-        fetch('https://api.github.com/repos/o11y-dev/reflect', {headers}).then((response) => {
-          if (!response.ok) throw new Error(`GitHub repository request failed: ${response.status}`);
-          return response.json();
-        }),
-        fetch('https://api.github.com/repos/o11y-dev/reflect/releases/latest', {headers}).then((response) => {
-          if (!response.ok) throw new Error(`GitHub release request failed: ${response.status}`);
-          return response.json();
-        }),
-      ]).then(([repositoryResult, releaseResult]) => {
-        const value = {cachedAt: Date.now()};
-        if (repositoryResult.status === 'fulfilled') {
-          value.stars = Number(repositoryResult.value.stargazers_count);
-          value.forks = Number(repositoryResult.value.forks_count);
-        }
-        if (releaseResult.status === 'fulfilled') {
-          value.release = String(releaseResult.value.tag_name || '');
-        }
-        apply(value);
-        try {
-          localStorage.setItem(cacheKey, JSON.stringify(value));
-        } catch (_error) {
-          // Storage may be disabled; live values still remain visible for this page load.
-        }
-      }).finally(() => {
-        stats.setAttribute('aria-busy', 'false');
-      });
-    })();
-  </script>
 </body>
 </html>

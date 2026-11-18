@@ -458,3 +458,25 @@ def test_opencode_store_discovery_honors_xdg_data_home(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
 
     assert ("opencode", source) in _discover_rich_session_files()
+
+
+def test_scoped_ingestion_keeps_shared_raw_identity_and_global_checkpoint(tmp_path):
+    native = tmp_path / 'opencode.db'
+    _write_opencode_store(native)
+    with sqlite3.connect(native) as source:
+        source.execute("INSERT INTO session SELECT 'other-session',NULL,directory,title,time_created,time_updated FROM session LIMIT 1")
+    conn = connect_sqlite(tmp_path / 'reflect.db')
+    try:
+        migrate(conn)
+        scoped = ingest_native_session_file(conn, file_path=native, agent='opencode',
+                                             session_ids=('open-session-1',), skip_unchanged=True)
+        assert scoped['scanned_sessions'] == 1
+        count = conn.execute('SELECT COUNT(*) FROM raw_events').fetchone()[0]
+        global_result = ingest_native_session_file(conn, file_path=native, agent='opencode', skip_unchanged=True)
+        assert global_result['scanned_sessions'] == 2
+        # The selected session is the same evidence when subsequently seen globally.
+        assert global_result['skipped'] >= count
+        assert conn.execute("SELECT COUNT(*) FROM source_ingestion_state WHERE source_type='native_session'").fetchone()[0] == 2
+        assert ingest_native_session_file(conn, file_path=native, agent='opencode', skip_unchanged=True)['unchanged'] == 1
+    finally:
+        conn.close()
